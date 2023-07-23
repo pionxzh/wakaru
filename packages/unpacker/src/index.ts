@@ -1,13 +1,13 @@
 import path from 'node:path'
 import fs from 'node:fs/promises'
-import type { ASTPath, ArrowFunctionExpression, ExpressionStatement, FunctionExpression, Literal, ObjectProperty, Statement, VariableDeclaration } from 'jscodeshift'
+import type { ArrowFunctionExpression, FunctionExpression, Literal, ObjectProperty, Statement, VariableDeclaration } from 'jscodeshift'
 import jscodeshift from 'jscodeshift'
 // @ts-expect-error - no types
 import getParser from 'jscodeshift/src/getParser'
-import { renameFunctionParameters } from './utils'
+import { isIIFE, renameFunctionParameters } from './utils'
 import { Module } from './Module'
 
-export default async function unpack() {
+export async function unpack() {
     const input = path.resolve('../../testcases/webpack/dist/index.js')
     const code = await fs.readFile(input, 'utf-8')
     const parser = getParser()
@@ -45,17 +45,7 @@ export default async function unpack() {
      * })
      */
     const body = root.get().node.program.body as Statement[]
-    const webpackBootstrap = body.find((node) => {
-        if (node.type === 'ExpressionStatement') {
-            const expression = (node as ExpressionStatement).expression
-            if (expression.type === 'CallExpression') {
-                const callee = expression.callee
-                return callee.type === 'FunctionExpression'
-                    || callee.type === 'ArrowFunctionExpression'
-            }
-        }
-        return false
-    })
+    const webpackBootstrap = body.find(node => isIIFE(node))
     if (!webpackBootstrap) return null
 
     // @ts-expect-error - skip type check
@@ -93,6 +83,20 @@ export default async function unpack() {
         const module = new Module(key, moduleContent, false)
         modules.add(module)
     })
+
+    /** Build the entry module */
+    const lastStatement = statementsInBootstrap[statementsInBootstrap.length - 1]
+    if (isIIFE(lastStatement)) {
+        // @ts-expect-error - skip type check
+        const entryModule = lastStatement.expression.callee.body.body
+        const moduleContent = j(entryModule)
+        const module = new Module('entry.js', moduleContent, true)
+        modules.add(module)
+    }
+    else {
+        // TODO: find a proper way to split the entry module
+        throw new Error('Entry module is not an IIFE')
+    }
 }
 
 unpack()
