@@ -1,0 +1,32 @@
+{
+  "name": "unminify-kit",
+  "type": "module",
+  "version": "0.0.1",
+  "packageManager": "pnpm@8.6.3",
+  "description": "🔪📦 Unminify and beautify bundled code",
+  "author": "pionxzh",
+  "license": "MIT",
+  "homepage": "https://github.com/pionxzh/unminify-kit",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "test": "turbo run test",
+    "test:update": "turbo run test:update",
+    "test:watch": "turbo run test:watch",
+    "test:type": "turbo run test:type",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint:fix"
+  },
+  "devDependencies": {
+    "@pionxzh/eslint-config-ts": "^0.2.0",
+    "@types/fs-extra": "^11.0.1",
+    "@types/node": "^18.11.18",
+    "eslint": "^8.32.0",
+    "turbo": "^1.7.0",
+    "typescript": "^4.9.4",
+    "vitest": "^0.28.3"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "name": "unminify",
+  "type": "module",
+  "version": "0.0.1",
+  "packageManager": "pnpm@8.6.3",
+  "description": "🔪📦 Unminify and beautify bundled code",
+  "author": "Pionxzh",
+  "license": "MIT",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.cjs",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --sourcemap --clean",
+    "test": "vitest run --globals",
+    "test:update": "vitest run --update --globals",
+    "test:watch": "vitest watch --globals",
+    "test:type": "tsc --noEmit",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix"
+  },
+  "dependencies": {
+    "5to6-codemod": "^1.8.0",
+    "@babel/core": "^7.20.12",
+    "@babel/preset-env": "^7.20.2",
+    "@babel/types": "^7.20.7",
+    "eslint": "^8.32.0",
+    "fs-extra": "^11.1.0",
+    "globby": "^11.1.0",
+    "jscodeshift": "^0.14.0",
+    "lebab": "^3.1.1",
+    "picocolors": "^1.0.0",
+    "prettier": "^2.8.3",
+    "yargs": "^17.6.2"
+  },
+  "devDependencies": {
+    "@types/jscodeshift": "^0.11.6",
+    "@types/prettier": "^2.7.2",
+    "@types/yargs": "^17.0.20",
+    "tsup": "^6.5.0",
+    "typescript": "^4.9.4",
+    "vitest": "^0.28.3"
+  }
+}
