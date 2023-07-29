@@ -1,4 +1,6 @@
 import type { ASTPath, ArrowFunctionExpression, ExpressionStatement, FunctionExpression, JSCodeshift, Node, Statement } from 'jscodeshift'
+import prettier from 'prettier/standalone'
+import babelParser from 'prettier/parser-babel'
 
 export function isTopLevel(j: JSCodeshift, node: ASTPath<Node>): boolean {
     return j.Program.check(node.parentPath.node)
@@ -23,4 +25,11 @@ export function isIIFE(node: Statement): node is ExpressionStatement {
     const callee = expression.callee
     return callee.type === 'FunctionExpression'
         || callee.type === 'ArrowFunctionExpression'
+}
+
+export function prettierFormat(code: string) {
+    return prettier.format(code, {
+        parser: 'babel',
+        plugins: [babelParser],
+    })
 }
