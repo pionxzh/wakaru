@@ -34,6 +34,7 @@
     "lint:fix": "eslint src --fix"
   },
   "dependencies": {
+    "ast-types": "^0.14.2",
     "jscodeshift": "^0.14.0",
     "picocolors": "^1.0.0",
     "prettier": "^2.8.8"

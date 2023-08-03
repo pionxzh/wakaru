@@ -90,6 +90,9 @@ importers:
 
   packages/unpacker:
     dependencies:
+      ast-types:
+        specifier: ^0.14.2
+        version: 0.14.2
       jscodeshift:
         specifier: ^0.14.0
         version: 0.14.0(@babel/preset-env@7.22.9)
@@ -2607,7 +2610,6 @@ packages:
     engines: {node: '>=4'}
     dependencies:
       tslib: 2.6.0
-    dev: true
 
   /ast-types@0.15.2:
     resolution: {integrity: sha512-c27loCv9QkZinsa5ProX751khO9DJl/AcB5c2KNtA6NRvHKS0PgLfcftz72KVq504vB0Gku5s2kUZzDBvQWvHg==}

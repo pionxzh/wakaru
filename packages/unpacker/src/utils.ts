@@ -1,9 +1,14 @@
-import type { ASTPath, ArrowFunctionExpression, ExpressionStatement, FunctionExpression, JSCodeshift, Node, Statement } from 'jscodeshift'
+import type { ASTPath, ArrowFunctionExpression, Collection, ExpressionStatement, FunctionExpression, JSCodeshift, Node, Statement } from 'jscodeshift'
 import prettier from 'prettier/standalone'
 import babelParser from 'prettier/parser-babel'
 
 export function isTopLevel(j: JSCodeshift, node: ASTPath<Node>): boolean {
     return j.Program.check(node.parentPath.node)
+}
+
+export function pruneComments(j: JSCodeshift, collection: Collection<any>): void {
+    // @ts-expect-error - Comment type is wrong
+    collection.find(j.Comment).forEach(path => path.prune())
 }
 
 export function renameFunctionParameters(j: JSCodeshift, node: FunctionExpression | ArrowFunctionExpression, parameters: string[]): void {
