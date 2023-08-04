@@ -16,6 +16,7 @@ export function renameFunctionParameters(j: JSCodeshift, node: FunctionExpressio
         if (param.type === 'Identifier') {
             j(node)
                 .find(j.Identifier, { name: param.name })
+                .filter(path => path.scope.node === node)
                 .forEach((path) => {
                     path.node.name = parameters[index]
                 })
