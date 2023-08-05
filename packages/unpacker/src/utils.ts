@@ -14,12 +14,24 @@ export function pruneComments(j: JSCodeshift, collection: Collection<any>): void
 export function renameFunctionParameters(j: JSCodeshift, node: FunctionExpression | ArrowFunctionExpression, parameters: string[]): void {
     node.params.forEach((param, index) => {
         if (param.type === 'Identifier') {
-            j(node)
-                .find(j.Identifier, { name: param.name })
-                .filter(path => path.scope.node === node)
-                .forEach((path) => {
-                    path.node.name = parameters[index]
-                })
+            const oldName = param.name
+            const newName = parameters[index]
+
+            // Only get the immediate function scope
+            const functionScope = j(node).closestScope().get()
+
+            // Check if the name is in the current scope and rename it
+            if (functionScope.scope.getBindings()[oldName]) {
+                j(functionScope)
+                    .find(j.Identifier, { name: oldName })
+                    .forEach((path) => {
+                        // Exclude MemberExpression properties
+                        if (!(path.parent.node.type === 'MemberExpression' && path.parent.node.property === path.node)
+                            && path.scope.node === functionScope.node) {
+                            path.node.name = newName
+                        }
+                    })
+            }
         }
     })
 }
