@@ -9,4 +9,6 @@ b()
 
 getC().then(console.log)
 
+// const M1 = await import('./1.js')
+
 M1()
