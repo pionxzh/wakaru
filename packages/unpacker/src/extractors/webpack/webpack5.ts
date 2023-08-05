@@ -1,9 +1,9 @@
 import { isIIFE, renameFunctionParameters } from '@unminify/ast-utils'
-import { Module } from '../Module'
-import { wrapDeclarationWithExport } from '../utils'
-import type { ArrowFunctionExpression, Collection, FunctionExpression, Identifier, JSCodeshift, Literal, ObjectProperty, Statement, VariableDeclaration } from 'jscodeshift'
+import { Module } from '../../Module'
+import { convertRequireHelpersForWebpack5 } from './requireHelpers'
+import type { ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, ObjectProperty, Statement, VariableDeclaration } from 'jscodeshift'
 
-export function getModules(j: JSCodeshift, root: Collection<any>): Set<Module> | null {
+export function getModulesForWebpack5(j: JSCodeshift, root: Collection<any>): Set<Module> | null {
     /**
      * Webpack 5 Bundle Structure
      *
@@ -66,7 +66,10 @@ export function getModules(j: JSCodeshift, root: Collection<any>): Set<Module> |
         if (functionExpression.body.type !== 'BlockStatement') return
 
         renameFunctionParameters(j, functionExpression, ['module', 'exports', 'require'])
-        const moduleContent = convertRequireHelpers(j, j({ type: 'Program', body: functionExpression.body.body }))
+
+        const moduleContent = j({ type: 'Program', body: functionExpression.body.body })
+        convertRequireHelpersForWebpack5(j, moduleContent)
+
         const module = new Module(moduleId, moduleContent, false)
         modules.add(module)
     })
@@ -87,77 +90,4 @@ export function getModules(j: JSCodeshift, root: Collection<any>): Set<Module> |
     }
 
     return modules
-}
-
-/**
- * define `__esModule` on exports
- * makeNamespaceObject => `require.r`
- *
- * define getter functions for harmony exports
- * definePropertyGetters => `require.d`
- */
-function convertRequireHelpers(j: JSCodeshift, collection: Collection<any>) {
-    // remove `require.r` call as it's not needed in source code
-    const requireR = collection.find(j.CallExpression, {
-        callee: {
-            type: 'MemberExpression',
-            object: { type: 'Identifier', name: 'require' },
-            property: { type: 'Identifier', name: 'r' },
-        },
-    })
-
-    const isESM = requireR.size() > 0
-
-    requireR.remove()
-
-    /**
-     * Convert `require.d(exports, { "default": getter, [key]: getter })` to
-     *
-     * ```js
-     * module.exports = {
-     *     default: () => (moduleContent),
-     *     [key]: () => (moduleContent),
-     * }
-     * ```
-     */
-    const requireD = collection.find(j.CallExpression, {
-        callee: {
-            type: 'MemberExpression',
-            object: { type: 'Identifier', name: 'require' },
-            property: { type: 'Identifier', name: 'd' },
-        },
-    })
-    requireD.forEach((path) => {
-        const defineObject = path.node.arguments[1]
-        if (defineObject.type !== 'ObjectExpression') return
-
-        const properties = defineObject.properties as ObjectProperty[]
-        properties.forEach((property) => {
-            if (property.key.type !== 'Literal' && property.key.type !== 'Identifier') {
-                console.warn('Unexpected export key type:', property.key.type)
-                return
-            }
-            const key = ((property.key as Literal).value || (property.key as unknown as Identifier).name) as string
-            const value = property.value as unknown as FunctionExpression | ArrowFunctionExpression
-
-            if (value.body.type !== 'Identifier') {
-                console.warn('Unexpected export value type:', value.body.type)
-                return
-            }
-
-            const exportName = key
-            const declarationName = value.body.name
-
-            wrapDeclarationWithExport(j, collection, exportName, declarationName)
-        })
-    })
-    requireD.remove()
-
-    /**
-     * Convert `var module0 = require(module)` to `import`
-     *
-     * Replace module0.property with module0_property
-     */
-
-    return collection
 }

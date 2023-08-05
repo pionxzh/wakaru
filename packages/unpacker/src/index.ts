@@ -4,8 +4,8 @@ import jscodeshift from 'jscodeshift'
 
 // @ts-expect-error - no types
 import getParser from 'jscodeshift/src/getParser'
-import { getModules as getModulesForWebpack4 } from './extractors/webpack4'
-import { getModules as getModulesForWebpack5 } from './extractors/webpack5'
+
+import { getModulesFromWebpack } from './extractors/webpack'
 import { prettierFormat } from './utils'
 import type { Module } from './Module'
 
@@ -17,9 +17,7 @@ export async function unpack() {
     const j = jscodeshift.withParser(parser)
     const root = j(code)
 
-    const modules: Set<Module> | null
-       = getModulesForWebpack5(j, root)
-      || getModulesForWebpack4(j, root)
+    const modules: Set<Module> | null = getModulesFromWebpack(j, root)
 
     if (!modules) {
         console.error('Failed to locate modules')

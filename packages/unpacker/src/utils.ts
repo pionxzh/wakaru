@@ -2,6 +2,9 @@ import babelParser from 'prettier/parser-babel'
 import prettier from 'prettier/standalone'
 import type { Collection, JSCodeshift } from 'jscodeshift'
 
+/**
+ * Find the declaration and wrap it with `export` keyword
+ */
 export function wrapDeclarationWithExport(
     j: JSCodeshift,
     collection: Collection<any>,
