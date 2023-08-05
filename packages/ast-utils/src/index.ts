@@ -1,0 +1,5 @@
+export { isIIFE } from './isIIFE'
+export { isTopLevel } from './isTopLevel'
+export { renameFunctionParameters } from './renameFunctionParameters'
+export { splitVariableDeclarators } from './splitVariableDeclarators'
+export { pruneComments } from './pruneComments'

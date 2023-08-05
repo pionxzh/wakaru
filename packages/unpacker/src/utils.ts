@@ -1,40 +1,6 @@
-import type { ASTPath, ArrowFunctionExpression, ClassDeclaration, Collection, ExpressionStatement, FunctionDeclaration, FunctionExpression, JSCodeshift, Node, Statement, VariableDeclaration } from 'jscodeshift'
-import prettier from 'prettier/standalone'
 import babelParser from 'prettier/parser-babel'
-
-export function isTopLevel(j: JSCodeshift, node: ASTPath<Node>): boolean {
-    return j.Program.check(node.parentPath.node)
-}
-
-export function pruneComments(j: JSCodeshift, collection: Collection<any>): void {
-    // @ts-expect-error - Comment type is wrong
-    collection.find(j.Comment).forEach(path => path.prune())
-}
-
-export function renameFunctionParameters(j: JSCodeshift, node: FunctionExpression | ArrowFunctionExpression, parameters: string[]): void {
-    node.params.forEach((param, index) => {
-        if (param.type === 'Identifier') {
-            const oldName = param.name
-            const newName = parameters[index]
-
-            // Only get the immediate function scope
-            const functionScope = j(node).closestScope().get()
-
-            // Check if the name is in the current scope and rename it
-            if (functionScope.scope.getBindings()[oldName]) {
-                j(functionScope)
-                    .find(j.Identifier, { name: oldName })
-                    .forEach((path) => {
-                        // Exclude MemberExpression properties
-                        if (!(path.parent.node.type === 'MemberExpression' && path.parent.node.property === path.node)
-                            && path.scope.node === functionScope.node) {
-                            path.node.name = newName
-                        }
-                    })
-            }
-        }
-    })
-}
+import prettier from 'prettier/standalone'
+import type { Collection, JSCodeshift } from 'jscodeshift'
 
 export function wrapDeclarationWithExport(
     j: JSCodeshift,
@@ -55,7 +21,7 @@ export function wrapDeclarationWithExport(
         return
     }
     const declarationPath = declarations[0].parent?.parent
-    const declarationNode = declarationPath.value
+    const declarationNode = declarationPath?.value
     if (!declarationNode) {
         console.warn('Failed to locate declaration node:', declarationName)
         return
@@ -68,23 +34,38 @@ export function wrapDeclarationWithExport(
     && !j.FunctionDeclaration.check(declarationNode)
     && !j.ClassDeclaration.check(declarationNode)) {
         console.warn(`Declaration is not a variable, function or class: ${declarationName}, the type is ${declarationNode.type}`)
+        console.warn(j(declarationPath).toSource())
         return
     }
 
-    const exportDeclaration = exportName === 'default'
-        ? j.exportDefaultDeclaration(declarationNode)
-        : j.exportNamedDeclaration(declarationNode)
+    if (j.VariableDeclaration.check(declarationNode) && declarationNode.declarations.length > 1) {
+        // special case for multiple variable declarators
+        // e.g. `var a = 1, b = 2`
+        const declarators = declarationNode.declarations
+        const exportDeclarator = declarators.find((declarator) => {
+            return j.VariableDeclarator.check(declarator) && j.Identifier.check(declarator.id) && declarator.id.name === declarationName
+        })
+        if (!exportDeclarator) {
+            console.warn(`Failed to locate export variable declarator: ${declarationName}`)
+            return
+        }
+        const newVariableDeclaration = j.variableDeclaration(declarationNode.kind, [exportDeclarator])
+        const newDeclaration = exportName === 'default'
+            ? j.exportDefaultDeclaration(newVariableDeclaration)
+            : j.exportNamedDeclaration(newVariableDeclaration)
+        const filteredDeclaration = j.variableDeclaration(
+            declarationNode.kind,
+            declarators.filter(declarator => declarator !== exportDeclarator),
+        )
+        j(declarationPath).replaceWith(filteredDeclaration).insertBefore(newDeclaration)
+    }
+    else {
+        const exportDeclaration = exportName === 'default'
+            ? j.exportDefaultDeclaration(declarationNode)
+            : j.exportNamedDeclaration(declarationNode)
 
-    j(declarationPath).replaceWith(exportDeclaration)
-}
-
-export function isIIFE(node: Statement): node is ExpressionStatement {
-    if (node.type !== 'ExpressionStatement') return false
-    const expression = (node as ExpressionStatement).expression
-    if (expression.type !== 'CallExpression') return false
-    const callee = expression.callee
-    return callee.type === 'FunctionExpression'
-        || callee.type === 'ArrowFunctionExpression'
+        j(declarationPath).replaceWith(exportDeclaration)
+    }
 }
 
 export function prettierFormat(code: string) {
