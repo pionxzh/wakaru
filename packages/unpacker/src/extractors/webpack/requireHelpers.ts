@@ -1,4 +1,3 @@
-import { wrapDeclarationWithExport } from '../../utils'
 import type { ExpressionKind } from 'ast-types/gen/kinds'
 import type { Collection, ExportDefaultDeclaration, ExportNamedDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, ObjectProperty } from 'jscodeshift'
 
@@ -199,20 +198,16 @@ export function convertExportGetter(
     if (isESM) {
         // Generate export { ... }
         exportGetterMap.forEach((exportValue, exportName) => {
-            if (j.Identifier.check(exportValue)) {
-                wrapDeclarationWithExport(j, collection, exportName, exportValue.name)
-            }
-            else {
-                const exportDeclaration = exportName === 'default'
-                    ? buildDefaultExport(j, exportValue)
-                    : buildNamedExport(j, exportName, exportValue)
+            const exportDeclaration = exportName === 'default'
+                ? buildDefaultExport(j, exportValue)
+                : buildNamedExport(j, exportName, exportValue)
                 // Add export { ... } to the end of the module
-                collection.paths()[0].node.body.push(exportDeclaration)
-            }
+            collection.paths()[0].node.body.push(exportDeclaration)
         })
     }
     else {
         // Generate module.exports = { ... }
+        // TODO: module.exports.property = ...?
         if (exportGetterMap.size > 0) {
             const left = j.memberExpression(j.identifier('module'), j.identifier('exports'))
             const right = j.objectExpression(Array.from(exportGetterMap.entries()).map(([key, value]) => {
