@@ -1,7 +1,7 @@
 import type { ArrayExpression, Collection, FunctionExpression, Identifier, JSCodeshift, Literal, MemberExpression } from 'jscodeshift'
 import type { ExpressionKind } from 'ast-types/gen/kinds'
 import { Module } from '../Module'
-import { renameFunctionParameters } from '../utils'
+import { renameFunctionParameters, wrapDeclarationWithExport } from '../utils'
 
 export function getModules(j: JSCodeshift, root: Collection<any>): Set<Module> | null {
     /**
@@ -147,7 +147,18 @@ function convertRequireHelpers(j: JSCodeshift, collection: Collection<any>) {
             return
         }
 
-        definition.set(key.value as string, exportValue)
+        if (isESM) {
+            // Find the declaration of moduleContent
+            // and wrap it with `export` keyword
+            if (exportValue.type === 'Identifier') {
+                wrapDeclarationWithExport(j, collection, key.value as string, exportValue.name)
+            }
+        }
+        else {
+            // Convert `require.d(exports, key, function() { return moduleContent })` to
+            // `module.exports = { ... }`
+            definition.set(key.value as string, exportValue)
+        }
     })
     requireD.remove()
 

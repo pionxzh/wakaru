@@ -1,6 +1,6 @@
 import type { ArrowFunctionExpression, ClassDeclaration, Collection, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, ObjectProperty, Statement, VariableDeclaration } from 'jscodeshift'
 import { Module } from '../Module'
-import { isIIFE, isTopLevel, renameFunctionParameters } from '../utils'
+import { isIIFE, isTopLevel, renameFunctionParameters, wrapDeclarationWithExport } from '../utils'
 
 export function getModules(j: JSCodeshift, root: Collection<any>): Set<Module> | null {
     /**
@@ -145,36 +145,9 @@ function convertRequireHelpers(j: JSCodeshift, collection: Collection<any>) {
             }
 
             const exportName = key
-            const exportValueName = value.body.name
+            const declarationName = value.body.name
 
-            let declarations: Collection<VariableDeclaration> | Collection<FunctionDeclaration> | Collection<ClassDeclaration>
-            declarations = collection.find(j.VariableDeclaration, {
-                declarations: [{
-                    type: 'VariableDeclarator',
-                    id: { type: 'Identifier', name: exportValueName },
-                }],
-            }).filter(node => isTopLevel(j, node))
-            if (declarations.size() === 0) {
-                declarations = collection.find(j.FunctionDeclaration, {
-                    id: { type: 'Identifier', name: exportValueName },
-                }).filter(node => isTopLevel(j, node))
-            }
-            if (declarations.size() === 0) {
-                declarations = collection.find(j.ClassDeclaration, {
-                    id: { type: 'Identifier', name: exportValueName },
-                }).filter(node => isTopLevel(j, node))
-            }
-
-            if (declarations.size() === 0) {
-                console.warn('Failed to locate export value:', exportValueName)
-                return
-            }
-
-            const declaration = declarations.get().value
-            const exportDeclaration = exportName === 'default'
-                ? j.exportDefaultDeclaration(declaration)
-                : j.exportNamedDeclaration(declaration)
-            declarations.replaceWith(exportDeclaration)
+            wrapDeclarationWithExport(j, collection, exportName, declarationName)
         })
     })
     requireD.remove()

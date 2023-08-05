@@ -1,4 +1,4 @@
-import type { ASTPath, ArrowFunctionExpression, Collection, ExpressionStatement, FunctionExpression, JSCodeshift, Node, Statement } from 'jscodeshift'
+import type { ASTPath, ArrowFunctionExpression, ClassDeclaration, Collection, ExpressionStatement, FunctionDeclaration, FunctionExpression, JSCodeshift, Node, Statement, VariableDeclaration } from 'jscodeshift'
 import prettier from 'prettier/standalone'
 import babelParser from 'prettier/parser-babel'
 
@@ -34,6 +34,48 @@ export function renameFunctionParameters(j: JSCodeshift, node: FunctionExpressio
             }
         }
     })
+}
+
+export function wrapDeclarationWithExport(
+    j: JSCodeshift,
+    collection: Collection<any>,
+    exportName: string,
+    declarationName: string,
+): void {
+    const globalScope = collection.get().scope
+
+    if (!globalScope.getBindings()[declarationName]) {
+        console.warn('Failed to locate export value:', declarationName)
+        return
+    }
+
+    const declarations = globalScope.getBindings()[declarationName]
+    if (declarations.length !== 1) {
+        console.warn(`Expected exactly one class declaration for ${declarationName}, found ${declarations.length} instead`)
+        return
+    }
+    const declarationPath = declarations[0].parent?.parent
+    const declarationNode = declarationPath.value
+    if (!declarationNode) {
+        console.warn('Failed to locate declaration node:', declarationName)
+        return
+    }
+
+    // Skip program nodes
+    if (j.Program.check(declarationNode)) return
+
+    if (!j.VariableDeclaration.check(declarationNode)
+    && !j.FunctionDeclaration.check(declarationNode)
+    && !j.ClassDeclaration.check(declarationNode)) {
+        console.warn(`Declaration is not a variable, function or class: ${declarationName}, the type is ${declarationNode.type}`)
+        return
+    }
+
+    const exportDeclaration = exportName === 'default'
+        ? j.exportDefaultDeclaration(declarationNode)
+        : j.exportNamedDeclaration(declarationNode)
+
+    j(declarationPath).replaceWith(exportDeclaration)
 }
 
 export function isIIFE(node: Statement): node is ExpressionStatement {
