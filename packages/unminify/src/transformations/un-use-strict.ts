@@ -1,6 +1,6 @@
+import { isTopLevel } from '@unminify/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import { isTopLevel } from '../utils/isTopLevel'
 
 /**
  * Remove 'use strict' directives

@@ -1,6 +1,6 @@
-import type { ConditionalExpression, IfStatement } from 'jscodeshift'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ConditionalExpression, IfStatement } from 'jscodeshift'
 
 /**
  * `a ? b() : c ? d() : e()`

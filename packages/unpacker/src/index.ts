@@ -1,13 +1,13 @@
-import path from 'node:path'
 import fs from 'node:fs/promises'
-import type { ArrowFunctionExpression, ClassDeclaration, Collection, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, ObjectProperty, VariableDeclaration } from 'jscodeshift'
+import path from 'node:path'
 import jscodeshift from 'jscodeshift'
+
 // @ts-expect-error - no types
 import getParser from 'jscodeshift/src/getParser'
-import { isTopLevel, prettierFormat, pruneComments } from './utils'
-import type { Module } from './Module'
-import { getModules as getModulesForWebpack5 } from './extractors/webpack5'
 import { getModules as getModulesForWebpack4 } from './extractors/webpack4'
+import { getModules as getModulesForWebpack5 } from './extractors/webpack5'
+import { prettierFormat } from './utils'
+import type { Module } from './Module'
 
 export async function unpack() {
     // const input = path.resolve('../../testcases/webpack/dist/index.js')
@@ -16,8 +16,6 @@ export async function unpack() {
     const parser = getParser()
     const j = jscodeshift.withParser(parser)
     const root = j(code)
-
-    pruneComments(j, root)
 
     const modules: Set<Module> | null
        = getModulesForWebpack5(j, root)

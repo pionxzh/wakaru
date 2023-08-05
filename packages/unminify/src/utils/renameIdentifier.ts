@@ -5,6 +5,6 @@ export function renameIdentifier(
     from: string,
     to: string,
 ): void {
-    const { root, j } = context
+    const { root } = context
     root.findVariableDeclarators(from).renameTo(to)
 }

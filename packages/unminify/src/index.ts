@@ -1,13 +1,14 @@
-import * as path from 'path'
+import * as path from 'node:path'
 import fsa from 'fs-extra'
-import type { FileInfo, Transform } from 'jscodeshift'
+import * as globby from 'globby'
 import jscodeshift from 'jscodeshift'
+
 // @ts-expect-error - no types
 import getParser from 'jscodeshift/src/getParser'
-import * as globby from 'globby'
 import { transformationMap } from './transformations'
 import { arraify } from './utils/arraify'
 import type { MaybeArray } from './utils/types'
+import type { FileInfo, Transform } from 'jscodeshift'
 
 export async function codemod(
     paths: string[],

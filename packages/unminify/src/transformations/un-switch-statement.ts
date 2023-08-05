@@ -1,6 +1,6 @@
-import type { ConditionalExpression, Identifier, Literal, LogicalExpression } from 'jscodeshift'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ConditionalExpression, Identifier, Literal, LogicalExpression } from 'jscodeshift'
 
 interface Case { test: Literal | null; consequent: any }
 

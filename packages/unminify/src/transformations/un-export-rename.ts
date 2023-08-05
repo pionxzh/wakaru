@@ -1,7 +1,7 @@
-import type { ASTPath, ExportNamedDeclaration } from 'jscodeshift'
+import { isTopLevel } from '@unminify/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
-import { isTopLevel } from '../utils/isTopLevel'
+import type { ASTPath, ExportNamedDeclaration } from 'jscodeshift'
 
 /**
  * const a = 1

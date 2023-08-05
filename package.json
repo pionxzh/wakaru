@@ -21,12 +21,12 @@
     "lint:fix": "turbo run lint:fix"
   },
   "devDependencies": {
-    "@pionxzh/eslint-config-ts": "^0.2.0",
+    "@pionxzh/eslint-config-ts": "^0.5.1",
     "@types/fs-extra": "^11.0.1",
     "@types/node": "^18.11.18",
-    "eslint": "^8.32.0",
-    "turbo": "^1.7.0",
-    "typescript": "^4.9.4",
-    "vitest": "^0.28.3"
+    "eslint": "^8.46.0",
+    "turbo": "^1.10.12",
+    "typescript": "^5.1.6",
+    "vitest": "^0.34.1"
   }
 }

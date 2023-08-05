@@ -1,8 +1,8 @@
-import type { Argv } from 'yargs'
+import c from 'picocolors'
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
-import c from 'picocolors'
 import { version } from '../package.json'
+import type { Argv } from 'yargs'
 
 interface UnminifyOptions {
     input: string

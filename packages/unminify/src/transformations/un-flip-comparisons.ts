@@ -1,7 +1,7 @@
-import type { Identifier } from '@babel/types'
-import type { BinaryExpression, Literal } from 'jscodeshift'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
+import type { Identifier } from '@babel/types'
+import type { BinaryExpression, Literal } from 'jscodeshift'
 
 const qualityOperators = ['==', '===', '!=', '!==']
 const relationalOperators = ['<', '>', '<=', '>=']

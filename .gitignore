@@ -24,3 +24,4 @@ dist
 .lh
 
 tsconfig.tsbuildinfo
+.turbo

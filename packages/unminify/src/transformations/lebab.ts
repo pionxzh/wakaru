@@ -1,7 +1,7 @@
-import type { LebabRule } from 'lebab'
 import { transform } from 'lebab'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
+import type { LebabRule } from 'lebab'
 
 const allLebabRules: LebabRule[] = [
     // 'class',

@@ -1,24 +1,25 @@
-import type { Transform } from 'jscodeshift'
 // @ts-expect-error - no types
 import cjs from '5to6-codemod/transforms/cjs.js'
+
 // @ts-expect-error - no types
 import exports from '5to6-codemod/transforms/exports.js'
-import unVoid0 from './un-void-0'
-import unBoolean from './un-boolean'
-import unEsHelper from './un-es-helper'
-import unIfStatement from './un-if-statement'
-import unNumberLiteral from './un-number-literal'
 import functionToArrow from './function-to-arrow'
-import unVariableMerging from './un-variable-merging'
-import unSequenceExpression from './un-sequence-expression'
-import unES6Class from './un-es6-class'
-import unUseStrict from './un-use-strict'
-import unExportRename from './un-export-rename'
 import lebab from './lebab'
 import moduleMapping from './module-mapping'
-import unFlipComparisons from './un-flip-comparisons'
 import prettier from './prettier'
+import unBoolean from './un-boolean'
+import unEsHelper from './un-es-helper'
+import unES6Class from './un-es6-class'
+import unExportRename from './un-export-rename'
+import unFlipComparisons from './un-flip-comparisons'
+import unIfStatement from './un-if-statement'
+import unNumberLiteral from './un-number-literal'
+import unSequenceExpression from './un-sequence-expression'
 import unSwitchStatement from './un-switch-statement'
+import unUseStrict from './un-use-strict'
+import unVariableMerging from './un-variable-merging'
+import unVoid0 from './un-void-0'
+import type { Transform } from 'jscodeshift'
 
 export const transformationMap: {
     [name: string]: Transform

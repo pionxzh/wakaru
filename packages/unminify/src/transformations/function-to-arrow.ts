@@ -1,7 +1,7 @@
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
 import { containsThisExpression } from '../utils/containsThisExpression'
 import { createArrowFunctionExpression } from '../utils/createArrowFunctionExpression'
+import wrap from '../wrapAstTransformation'
+import type { ASTTransformation } from '../wrapAstTransformation'
 
 /**
  * function add(a, b) { return a + b }

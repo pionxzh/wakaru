@@ -1,5 +1,5 @@
-import prettier from 'prettier/standalone'
 import babelParser from 'prettier/parser-babel'
+import prettier from 'prettier/standalone'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 

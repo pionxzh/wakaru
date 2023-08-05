@@ -1,6 +1,7 @@
-import type { ArrowFunctionExpression, ClassDeclaration, Collection, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, ObjectProperty, Statement, VariableDeclaration } from 'jscodeshift'
+import { isIIFE, renameFunctionParameters } from '@unminify/ast-utils'
 import { Module } from '../Module'
-import { isIIFE, isTopLevel, renameFunctionParameters, wrapDeclarationWithExport } from '../utils'
+import { wrapDeclarationWithExport } from '../utils'
+import type { ArrowFunctionExpression, Collection, FunctionExpression, Identifier, JSCodeshift, Literal, ObjectProperty, Statement, VariableDeclaration } from 'jscodeshift'
 
 export function getModules(j: JSCodeshift, root: Collection<any>): Set<Module> | null {
     /**

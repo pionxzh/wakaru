@@ -1,7 +1,8 @@
-import type { ArrayExpression, Collection, FunctionExpression, Identifier, JSCodeshift, Literal, MemberExpression } from 'jscodeshift'
-import type { ExpressionKind } from 'ast-types/gen/kinds'
+import { renameFunctionParameters } from '@unminify/ast-utils'
 import { Module } from '../Module'
-import { renameFunctionParameters, wrapDeclarationWithExport } from '../utils'
+import { wrapDeclarationWithExport } from '../utils'
+import type { ExpressionKind } from 'ast-types/gen/kinds'
+import type { ArrayExpression, Collection, FunctionExpression, Identifier, JSCodeshift, Literal } from 'jscodeshift'
 
 export function getModules(j: JSCodeshift, root: Collection<any>): Set<Module> | null {
     /**
