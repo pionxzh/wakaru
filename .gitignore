@@ -25,3 +25,5 @@ dist
 
 tsconfig.tsbuildinfo
 .turbo
+
+!testcases/**/dist

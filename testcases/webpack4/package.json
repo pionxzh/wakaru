@@ -1,9 +1,10 @@
 {
   "name": "testcase-webpack4",
-  "version": "1.0.0",
-  "description": "Boilerplate for React apps",
+  "version": "0.0.1",
+  "private": true,
+  "packageManager": "pnpm@8.6.3",
+  "author": "Pionxzh",
   "license": "MIT",
-  "main": "index.js",
   "scripts": {
     "build": "cross-env NODE_OPTIONS=\"--openssl-legacy-provider\" webpack --mode production"
   },

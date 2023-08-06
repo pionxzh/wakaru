@@ -1,3 +1,4 @@
 packages:
   - 'packages/*'
-  - 'testcases/*'
+  # exclude testcases
+  - '!testcases/*'

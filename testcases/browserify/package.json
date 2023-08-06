@@ -1,0 +1,17 @@
+{
+  "name": "testcase-browserify",
+  "version": "0.0.1",
+  "private": true,
+  "packageManager": "pnpm@8.6.3",
+  "author": "Pionxzh",
+  "license": "MIT",
+  "scripts": {
+    "build": "browserify src/index.js -o dist/index.js"
+  },
+  "dependencies": {
+    "is-array": "^1.0.1"
+  },
+  "devDependencies": {
+    "browserify": "^17.0.0"
+  }
+}
