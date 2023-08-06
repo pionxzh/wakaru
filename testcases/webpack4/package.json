@@ -6,7 +6,9 @@
   "author": "Pionxzh",
   "license": "MIT",
   "scripts": {
-    "build": "cross-env NODE_OPTIONS=\"--openssl-legacy-provider\" webpack --mode production"
+    "build": "cross-env NODE_OPTIONS=\"--openssl-legacy-provider\" webpack --mode production",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix"
   },
   "dependencies": {
     "history": "^4.10.1",

@@ -1,1 +1,1 @@
-export const FETCH_DATA: string = "main => FETCH_DATA";
+export const FETCH_DATA = 'main => FETCH_DATA'

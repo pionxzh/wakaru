@@ -6,7 +6,9 @@
   "author": "Pionxzh",
   "license": "MIT",
   "scripts": {
-    "build": "browserify src/index.js -o dist/index.js"
+    "build": "browserify src/index.js -o dist/index.js",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix"
   },
   "dependencies": {
     "is-array": "^1.0.1"

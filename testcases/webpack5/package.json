@@ -7,7 +7,9 @@
   "author": "Pionxzh",
   "license": "MIT",
   "scripts": {
-    "build": "webpack"
+    "build": "webpack",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix"
   },
   "devDependencies": {
     "webpack": "^5.88.2",

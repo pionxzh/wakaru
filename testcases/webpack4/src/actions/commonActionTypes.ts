@@ -1,5 +1,5 @@
-export const START: string = "_START";
-export const STOP: string = "_STOP";
-export const RESET: string = "_RESET";
-export const SUCCESS: string = "_SUCCESS";
-export const ERROR: string = "_ERROR";
+export const START = '_START'
+export const STOP = '_STOP'
+export const RESET = '_RESET'
+export const SUCCESS = '_SUCCESS'
+export const ERROR = '_ERROR'

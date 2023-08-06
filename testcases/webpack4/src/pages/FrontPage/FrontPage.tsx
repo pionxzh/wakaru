@@ -1,9 +1,9 @@
-import * as React from "react";
-import { IFrontPage } from "./";
+import * as React from 'react'
+import type { IFrontPage } from './'
 
 class FrontPage extends React.Component<IFrontPage, {}> {
     componentDidMount(): void {
-        this.props.fetchData();
+        this.props.fetchData()
     }
 
     render(): JSX.Element {
@@ -11,8 +11,8 @@ class FrontPage extends React.Component<IFrontPage, {}> {
             <div>
                 <h1>Front page</h1>
             </div>
-        );
+        )
     }
 }
 
-export default FrontPage;
+export default FrontPage

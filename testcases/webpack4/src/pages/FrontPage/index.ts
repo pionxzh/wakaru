@@ -1,30 +1,30 @@
-import { connect, MapDispatchToProps, MapStateToProps } from "react-redux";
-import { compose } from "redux";
+import { connect } from 'react-redux'
+import { compose } from 'redux'
 
-import { IGlobalStore } from "../../reducers/index";
-import { IActionCreator } from "../../interfaces/IReducers";
+import { fetchData } from '../../actions/MainActions/index'
+import FrontPage from './FrontPage'
+import type { IActionCreator } from '../../interfaces/IReducers'
+import type { IGlobalStore } from '../../reducers/index'
 
-import { fetchData } from "../../actions/MainActions/index";
-
-import FrontPage from "./FrontPage";
+import type { MapDispatchToProps, MapStateToProps } from 'react-redux'
 
 interface IStateProps {
-    data: string[];
+    data: string[]
 }
 interface IDispatchProps {
-    fetchData: IActionCreator;
+    fetchData: IActionCreator
 }
 
-export type IFrontPage = IStateProps & IDispatchProps;
+export type IFrontPage = IStateProps & IDispatchProps
 
-const mapStateToProps: MapStateToProps<IStateProps, {}, IGlobalStore> = ({main}) => ({
+const mapStateToProps: MapStateToProps<IStateProps, {}, IGlobalStore> = ({ main }) => ({
     data: main.data,
-});
+})
 
 const mapDispatchToProps: MapDispatchToProps<IDispatchProps, {}> = {
     fetchData,
-};
+}
 
 export default compose(
     connect(mapStateToProps, mapDispatchToProps),
-)(FrontPage);
+)(FrontPage)
