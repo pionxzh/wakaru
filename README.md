@@ -29,13 +29,13 @@ Most of them cannot even beautify the code correctly. So I decided to build my o
 ## Installation
 
 ```bash
-npm install unminify-kit
+npm install @unminify-kit/core
 ```
 
 ## Command Line
 
 ```bash
-npx unminify-kit [input] [options]
+npx @unminify-kit/core [input] [options]
 ```
 
 ## Legal Disclaimer
