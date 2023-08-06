@@ -3,33 +3,45 @@ import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack5 } from './requireHelpers'
 import type { ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, ObjectProperty, Statement, VariableDeclaration } from 'jscodeshift'
 
-export function getModulesForWebpack5(j: JSCodeshift, root: Collection): Set<Module> | null {
-    /**
-     * Webpack 5 Bundle Structure
-     *
-     * (() => { // webpackBootstrap
-     *   var __webpack_modules__ = ({
-     *     "{path}": ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
-     *        // module content...
-     *     }),
-     *     ...
-     *   })
-     *  var __webpack_module_cache__ = {}
-     *
-     *  // Webpack Runtime...
-     *
-     * // Entry Module...
-     *
-     * // will be like this if this part only contains module require
-     * __webpack_require__("{path}")
-     *
-     * // or
-     *
-     * // This entry need to be wrapped in an IIFE because it need to be isolated against other modules in the chunk.
-     * (() => {
-     *   // entry module content...
-     * })
-     */
+/**
+ * Find the modules map in webpack 5 bootstrap.
+ *
+ * Webpack 5 Bundle Structure
+ *
+ * ```js
+ * (() => { // webpackBootstrap
+ *   var __webpack_modules__ = ({
+ *     "{path}": ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
+ *        // module content...
+ *     }),
+ *     ...
+ *   })
+ *  var __webpack_module_cache__ = {}
+ *
+ *  // Webpack Runtime...
+ *
+ *  // Entry Module...
+ *
+ *  // simple entry
+ *  __webpack_require__("{path}")
+ *
+ *  // or complex entry
+ *
+ *  // This entry need to be wrapped in an IIFE because it need to be isolated against other modules in the chunk.
+ *  (() => {
+ *    // entry module content...
+ *  })
+ * })
+ * ```
+ */
+export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
+{
+    modules: Set<Module>
+    moduleIdMapping: Map<number, string>
+} | null {
+    const modules = new Set<Module>()
+    const moduleIdMapping = new Map<number, string>()
+
     const body = root.get().node.program.body as Statement[]
     const webpackBootstrap = body.find(node => isIIFE(node))
     if (!webpackBootstrap) return null
@@ -54,8 +66,6 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection): Set<Mod
         })
     })
     if (!webpackModules) return null
-
-    const modules = new Set<Module>()
 
     /** Build the module map */
     // @ts-expect-error - skip type check
@@ -89,5 +99,6 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection): Set<Mod
         console.warn('Entry module is not an IIFE')
     }
 
-    return modules
+    if (modules.size === 0) return null
+    return { modules, moduleIdMapping }
 }

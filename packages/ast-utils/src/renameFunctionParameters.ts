@@ -5,6 +5,7 @@ export function renameFunctionParameters(j: JSCodeshift, node: FunctionExpressio
         if (param.type === 'Identifier') {
             const oldName = param.name
             const newName = parameters[index]
+            if (!newName || oldName === newName) return
 
             // Only get the immediate function scope
             const functionScope = j(node).closestScope().get()
