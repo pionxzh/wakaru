@@ -1,5 +1,5 @@
 {
-  "name": "@unminify/unpacker",
+  "name": "@unminify-kit/unpacker",
   "type": "module",
   "version": "0.0.1",
   "packageManager": "pnpm@8.6.3",
@@ -34,7 +34,7 @@
     "lint:fix": "eslint src --fix"
   },
   "dependencies": {
-    "@unminify/ast-utils": "workspace:*",
+    "@unminify-kit/ast-utils": "workspace:*",
     "ast-types": "^0.14.2",
     "jscodeshift": "^0.14.0",
     "picocolors": "^1.0.0",

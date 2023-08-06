@@ -81,7 +81,7 @@ importers:
       '@babel/types':
         specifier: ^7.20.7
         version: 7.22.5
-      '@unminify/ast-utils':
+      '@unminify-kit/ast-utils':
         specifier: workspace:*
         version: link:../ast-utils
       eslint:
@@ -130,7 +130,7 @@ importers:
 
   packages/unpacker:
     dependencies:
-      '@unminify/ast-utils':
+      '@unminify-kit/ast-utils':
         specifier: workspace:*
         version: link:../ast-utils
       ast-types:

@@ -1,4 +1,4 @@
-import { isTopLevel } from '@unminify/ast-utils'
+import { isTopLevel } from '@unminify-kit/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ASTPath, ExportNamedDeclaration } from 'jscodeshift'

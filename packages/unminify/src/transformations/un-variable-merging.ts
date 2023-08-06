@@ -1,4 +1,4 @@
-import { splitVariableDeclarators } from '@unminify/ast-utils'
+import { splitVariableDeclarators } from '@unminify-kit/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 

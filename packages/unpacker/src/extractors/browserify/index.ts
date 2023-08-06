@@ -1,4 +1,4 @@
-import { isFunctionExpression, renameFunctionParameters } from '@unminify/ast-utils'
+import { isFunctionExpression, renameFunctionParameters } from '@unminify-kit/ast-utils'
 import { Module } from '../../Module'
 import type { ModuleMapping } from './ModuleMapping'
 import type { ArrayExpression, ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, ObjectExpression } from 'jscodeshift'

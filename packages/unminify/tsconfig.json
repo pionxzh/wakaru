@@ -17,7 +17,7 @@
     "skipLibCheck": true,
     "useDefineForClassFields": true,
     "paths": {
-      "@unminify/ast-utils": ["../ast-utils/src/index.ts"]
+      "@unminify-kit/ast-utils": ["../ast-utils/src/index.ts"]
     }
   },
   "include": [

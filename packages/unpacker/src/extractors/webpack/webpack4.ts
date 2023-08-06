@@ -1,4 +1,4 @@
-import { renameFunctionParameters } from '@unminify/ast-utils'
+import { renameFunctionParameters } from '@unminify-kit/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack4 } from './requireHelpers'
 import type { ModuleMapping } from '../browserify/ModuleMapping'

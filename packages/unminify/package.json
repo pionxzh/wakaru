@@ -1,5 +1,5 @@
 {
-  "name": "@unminify/kit",
+  "name": "@unminify-kit/kit",
   "type": "module",
   "version": "0.0.1",
   "packageManager": "pnpm@8.6.3",
@@ -38,7 +38,7 @@
     "@babel/core": "^7.20.12",
     "@babel/preset-env": "^7.20.2",
     "@babel/types": "^7.20.7",
-    "@unminify/ast-utils": "workspace:*",
+    "@unminify-kit/ast-utils": "workspace:*",
     "eslint": "^8.32.0",
     "fs-extra": "^11.1.0",
     "globby": "^11.1.0",
