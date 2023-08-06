@@ -17,9 +17,9 @@
   },
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --sourcemap --clean",
-    "test": "vitest run",
-    "test:update": "vitest run --update",
-    "test:watch": "vitest watch",
+    "test": "vitest run --globals",
+    "test:update": "vitest run --update --globals",
+    "test:watch": "vitest watch --globals",
     "test:type": "tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix"
