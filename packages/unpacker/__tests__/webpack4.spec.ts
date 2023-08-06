@@ -8,6 +8,8 @@ describe('Webpack 4', () => {
         const result = unpack(source)
         if (!result) throw new Error('Failed to unpack')
 
+        expect(result.moduleIdMapping).toMatchSnapshot()
+
         expect(result.modules.size).toBe(52)
 
         const modules = [...result.modules.values()]

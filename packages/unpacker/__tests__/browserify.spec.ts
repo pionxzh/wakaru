@@ -8,6 +8,8 @@ describe('Browserify', () => {
         const result = unpack(source)
         if (!result) throw new Error('Failed to unpack')
 
+        expect(result.moduleIdMapping).toMatchSnapshot()
+
         expect(result.modules.size).toBe(4)
 
         const modules = [...result.modules.values()]

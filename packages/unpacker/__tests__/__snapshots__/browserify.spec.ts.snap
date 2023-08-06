@@ -1,6 +1,14 @@
 // Vitest Snapshot v1
 
 exports[`Browserify > testcases/browserify 1`] = `
+Map {
+  1 => "is-array",
+  2 => "./calculator",
+  3 => "./greeting",
+}
+`;
+
+exports[`Browserify > testcases/browserify 2`] = `
 [
   {
     "code": "/**
