@@ -10,7 +10,7 @@ import type { Collection, ExportDefaultDeclaration, ExportNamedDeclaration, Func
  * `require.r` is a webpack helper function
  * that defines `__esModule` on exports.
  */
-export function convertRequireR(j: JSCodeshift, collection: Collection<any>) {
+export function convertRequireR(j: JSCodeshift, collection: Collection) {
     const requireR = collection.find(j.CallExpression, {
         callee: {
             type: 'MemberExpression',
@@ -42,7 +42,7 @@ type ExportsGetterMap = Map<string, ExpressionKind>
  * })
  * ```
  */
-export function convertExportsGetterForWebpack4(j: JSCodeshift, collection: Collection<any>): ExportsGetterMap {
+export function convertExportsGetterForWebpack4(j: JSCodeshift, collection: Collection): ExportsGetterMap {
     const requireD = collection.find(j.CallExpression, {
         callee: {
             type: 'MemberExpression',
@@ -127,7 +127,7 @@ export function convertExportsGetterForWebpack4(j: JSCodeshift, collection: Coll
  * })
  * ```
  */
-export function convertExportsGetterForWebpack5(j: JSCodeshift, collection: Collection<any>): ExportsGetterMap {
+export function convertExportsGetterForWebpack5(j: JSCodeshift, collection: Collection): ExportsGetterMap {
     const requireD = collection.find(j.CallExpression, {
         callee: {
             type: 'FunctionExpression',
@@ -220,13 +220,13 @@ export function convertExportGetter(
     }
 }
 
-export function convertRequireHelpersForWebpack4(j: JSCodeshift, collection: Collection<any>) {
+export function convertRequireHelpersForWebpack4(j: JSCodeshift, collection: Collection) {
     const isESM = convertRequireR(j, collection)
     const exportGetterMap = convertExportsGetterForWebpack4(j, collection)
     convertExportGetter(j, collection, isESM, exportGetterMap)
 }
 
-export function convertRequireHelpersForWebpack5(j: JSCodeshift, collection: Collection<any>) {
+export function convertRequireHelpersForWebpack5(j: JSCodeshift, collection: Collection) {
     const isESM = convertRequireR(j, collection)
     const exportGetterMap = convertExportsGetterForWebpack5(j, collection)
     convertExportGetter(j, collection, isESM, exportGetterMap)

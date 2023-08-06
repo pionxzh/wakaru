@@ -3,7 +3,7 @@ import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack4 } from './requireHelpers'
 import type { ArrayExpression, Collection, JSCodeshift } from 'jscodeshift'
 
-export function getModulesForWebpack4(j: JSCodeshift, root: Collection<any>): Set<Module> | null {
+export function getModulesForWebpack4(j: JSCodeshift, root: Collection): Set<Module> | null {
     /**
      * Find the modules array in webpack bootstrap
      *

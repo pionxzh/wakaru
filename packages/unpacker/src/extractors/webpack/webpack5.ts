@@ -3,7 +3,7 @@ import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack5 } from './requireHelpers'
 import type { ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, ObjectProperty, Statement, VariableDeclaration } from 'jscodeshift'
 
-export function getModulesForWebpack5(j: JSCodeshift, root: Collection<any>): Set<Module> | null {
+export function getModulesForWebpack5(j: JSCodeshift, root: Collection): Set<Module> | null {
     /**
      * Webpack 5 Bundle Structure
      *
