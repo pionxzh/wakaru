@@ -1,5 +1,5 @@
 {
-  "name": "@unminify-kit/kit",
+  "name": "@unminify-kit/unminify",
   "type": "module",
   "version": "0.0.1",
   "packageManager": "pnpm@8.6.3",
@@ -26,9 +26,9 @@
   },
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --sourcemap --clean",
-    "test": "vitest run --globals",
-    "test:update": "vitest run --update --globals",
-    "test:watch": "vitest watch --globals",
+    "test": "vitest run",
+    "test:update": "vitest run --update",
+    "test:watch": "vitest watch",
     "test:type": "tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix"
