@@ -30,7 +30,11 @@ export async function unpack() {
     // write modules to file
     const modulesOutput = path.resolve('preview.js')
     const modulesCode = Array.from(modules)
-        .map(module => `\n\n/**** ${module.id} ****/\n\n${prettierFormat(module.ast.toSource())}`).join('\n')
+        .map((module) => {
+            const moduleId = moduleIdMapping.get(module.id) ?? module.id
+            const entryMark = module.isEntry ? ' (entry)' : ''
+            return `\n\n/**** ${moduleId}${entryMark} ****/\n\n${prettierFormat(module.ast.toSource())}`
+        }).join('\n')
     await fs.writeFile(modulesOutput, modulesCode, 'utf-8')
 }
 

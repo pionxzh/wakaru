@@ -1,6 +1,7 @@
 import { isIIFE, renameFunctionParameters } from '@unminify/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack5 } from './requireHelpers'
+import type { ModuleMapping } from '../browserify/ModuleMapping'
 import type { ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, ObjectProperty, Statement, VariableDeclaration } from 'jscodeshift'
 
 /**
@@ -37,7 +38,7 @@ import type { ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshi
 export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
 {
     modules: Set<Module>
-    moduleIdMapping: Map<number, string>
+    moduleIdMapping: ModuleMapping
 } | null {
     const modules = new Set<Module>()
     const moduleIdMapping = new Map<number, string>()
