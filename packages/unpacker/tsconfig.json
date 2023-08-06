@@ -15,13 +15,11 @@
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "skipLibCheck": true,
-    "useDefineForClassFields": true,
-    "paths": {
-      "@unminify-kit/ast-utils": ["../ast-utils/src/index.ts"]
-    }
+    "useDefineForClassFields": true
   },
   "include": [
-    "src"
+    "src",
+    "__tests__"
   ],
   "exclude": [
     "node_modules",
