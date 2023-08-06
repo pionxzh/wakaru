@@ -1,3 +1,4 @@
+import { isFunctionExpression } from '@unminify/ast-utils'
 import type { ExpressionKind } from 'ast-types/gen/kinds'
 import type { Collection, ExportDefaultDeclaration, ExportNamedDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, ObjectProperty } from 'jscodeshift'
 
@@ -155,8 +156,7 @@ export function convertExportsGetterForWebpack5(j: JSCodeshift, collection: Coll
                 return
             }
             const exportName = ((property.key as Literal).value || (property.key as unknown as Identifier).name) as string
-            if (!j.FunctionExpression.check(property.value)
-             && !j.ArrowFunctionExpression.check(property.value)) {
+            if (!isFunctionExpression(j, property.value)) {
                 console.warn('convertExportsGetterForWebpack5: Unexpected export value type:', property.value.type)
                 return
             }

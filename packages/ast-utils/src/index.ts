@@ -1,3 +1,4 @@
+export { isFunctionExpression } from './isFunctionExpression'
 export { isIIFE } from './isIIFE'
 export { isTopLevel } from './isTopLevel'
 export { renameFunctionParameters } from './renameFunctionParameters'

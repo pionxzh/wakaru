@@ -1,4 +1,4 @@
-import { renameFunctionParameters } from '@unminify/ast-utils'
+import { isFunctionExpression, renameFunctionParameters } from '@unminify/ast-utils'
 import { Module } from '../../Module'
 import type { ArrayExpression, ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, ObjectExpression } from 'jscodeshift'
 
@@ -43,7 +43,7 @@ export function getModulesFromBrowserify(j: JSCodeshift, root: Collection):
                 && typeof prop.key.value === 'number'
                 && j.ArrayExpression.check(prop.value)
                 && prop.value.elements.length === 2
-                && (j.FunctionExpression.check(prop.value.elements[0]) || j.ArrowFunctionExpression.check(prop.value.elements[0]))
+                && isFunctionExpression(j, prop.value.elements[0])
                 && j.ObjectExpression.check(prop.value.elements[1])
                 && prop.value.elements[1].properties.every(prop => j.Property.check(prop) && j.Literal.check(prop.key) && typeof prop.key.value === 'string' && j.Literal.check(prop.value) && typeof prop.value.value === 'number'),
                 )
