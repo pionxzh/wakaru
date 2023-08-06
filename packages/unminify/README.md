@@ -1,8 +1,27 @@
-# Transformations
+# @unminify-kit/unminify
 
 If you have been working with minified code, you may have noticed that it is not very readable. This is where these transformations come in. They are a set of functions that can be used to modify the code in a way that makes it more readable. The transformations are not limited to just minified code, they can be used to modify any code.
 
-## Babel
+- [@unminify-kit/unminify](#unminify-kitunminify)
+    - [`lebab`](#lebab)
+    - [`un-boolean`](#un-boolean)
+    - [`un-void-0`](#un-void-0)
+    - [`un-number-literal`](#un-number-literal)
+    - [`un-sequence-expression`](#un-sequence-expression)
+    - [`un-variable-merging`](#un-variable-merging)
+    - [`un-if-statement`](#un-if-statement)
+    - [`un-es6-class`](#un-es6-class)
+  - [Clean Up](#clean-up)
+    - [`un-es-helper`](#un-es-helper)
+    - [`un-strict`](#un-strict)
+  - [Style](#style)
+    - [`function-to-arrow`](#function-to-arrow)
+    - [`prettier`](#prettier)
+
+### `lebab`
+
+We use [lebab](https://github.com/lebab/lebab) as a base to unminify the code.\
+With the help of lebab, we can save the work of writing a lot of rules.
 
 ### `un-boolean`
 
@@ -38,7 +57,7 @@ Reverse: [babel-plugin-minify-numeric-literals](https://babeljs.io/docs/en/babel
 + 1000
 
 - -2e4
-+ 20000
++ -20000
 ```
 
 ### `un-sequence-expression`
@@ -107,7 +126,7 @@ And this rule will try to do more by adopting `Early Exit` pattern(on statement 
 + e();
 ```
 
-### un-es6-class
+### `un-es6-class`
 
 This transformation will try to build the class definition from the constructor and the prototype.\
 Reverse: `Typescript`'s `Class` transpilation
@@ -174,3 +193,8 @@ This transformation converts a function declaration to an arrow function(if poss
 +   return 1;
 + }
 ```
+
+### `prettier`
+
+This transformation formats the code with [prettier](https://prettier.io/).
+We usually use this rule to format the code after all the other transformations.
