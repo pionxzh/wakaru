@@ -27,4 +27,3 @@ tsconfig.tsbuildinfo
 .turbo
 
 !testcases/**/dist
-packages/unpacker/preview.js
