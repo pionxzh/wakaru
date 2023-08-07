@@ -1,9 +1,22 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
+import type { NumericLiteral } from 'jscodeshift'
 
 /**
+ * Transform value of number literal to its original value
+ * Including:
+ * - Decimal (Base 10)
+ * - Float (Base 10)
+ * - Binary (Base 2)
+ * - Octal (Base 8)
+ * - Hexadecimal (Base 16)
+ * - Exponential notation
+ *
+ * @example
+ * 0b101010 -> 42
+ * 0o777 -> 511
+ * 0x123 -> 291
  * 1e3 -> 1000
- * -2e4 -> -20000
  *
  * @see https://babeljs.io/docs/en/babel-plugin-minify-numeric-literals
  */
@@ -13,13 +26,12 @@ export const transformAST: ASTTransformation = (context) => {
     root
         .find(j.Literal)
         .forEach((path) => {
-            const { node } = path
-            const { value } = node
+            const node = path.node as any as NumericLiteral
+            const { value, raw } = node
             if (typeof value !== 'number') return
 
-            const raw = j(node).toSource().toLowerCase()
-            if (raw.includes('e')) {
-                path.replace(j.literal(value))
+            if (raw && raw !== value.toString()) {
+                path.replace(j.numericLiteral(value))
             }
         })
 }

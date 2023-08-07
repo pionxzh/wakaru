@@ -5,11 +5,21 @@ const inlineTest = defineInlineTest(transform)
 
 inlineTest('transform number literal exponential notation',
   `
-1e3
+65536
+123.4
+0b101010
+0o777
+-0x123
+4.2e2
 -2e4
 `,
   `
-1000
+65536
+123.4
+42
+511
+-291
+420
 -20000
 `,
 )
