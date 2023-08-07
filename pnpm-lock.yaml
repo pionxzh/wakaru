@@ -118,6 +118,9 @@ importers:
       '@types/yargs':
         specifier: ^17.0.20
         version: 17.0.24
+      ast-types:
+        specifier: ^0.14.2
+        version: 0.14.2
       tsup:
         specifier: ^6.5.0
         version: 6.7.0(typescript@4.9.5)
