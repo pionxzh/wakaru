@@ -3,7 +3,7 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
 /**
- * Remove 'use strict' directives
+ * Remove the 'use strict' directives
  *
  * @see https://babeljs.io/docs/en/babel-plugin-transform-minify-booleans
  */

@@ -2,7 +2,12 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
 /**
- * Remove `Object.defineProperty(exports, '__esModule', { value: true })`
+ * Removes the `__esModule` flag from the module.
+ *
+ * @example
+ * ```diff
+ * - Object.defineProperty(exports, '__esModule', { value: true })
+ * ```
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

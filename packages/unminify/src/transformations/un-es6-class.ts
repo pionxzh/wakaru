@@ -2,9 +2,14 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
 /**
+  * Restore `Class` definition from the constructor and the prototype.
+  * Currently, this transformation only supports output from TypeScript.
+  *
   * @TODO: extends
   * @TODO: rename the remaining old constructor name
+  * @TODO: babel
   *
+  * @example
   * var Foo = (function() {
   *   function t(name) {
   *     this.name = name;
@@ -32,11 +37,8 @@ import type { ASTTransformation } from '../wrapAstTransformation'
   *   }
   * }
   *
-  * Actually, this is for TypeScript ES6 class transpile result
-  * This transformation won't being able to handle the result from babel
-  *
-  * Just put it here for reference.
   * @see https://babeljs.io/docs/en/babel-plugin-transform-classes
+  * @see https://www.typescriptlang.org/play?target=1#code/MYGwhgzhAEBiD29oG8BQ1oDswFsCmAXNBAC4BOAlpgObrRjWFYCuOARnmXXcPJqWWbAS8MgAps+IgKrUAlCjoYSACwoQAdJLzQAvFlx4l0Veo0Md+gIwAOOgF86IeNUbiFaDBl794IPBrO1GIARAASeCDOIQA0Jmqa2nIA3A50pGAkFMDEJJnZALJ4qvAAJmIexj4QfgFBYgDkGVk5+CWlDXJpGM3Z0FQZmMCWWHgA7nCIoQBmiCFd9kA
   */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

@@ -2,6 +2,9 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
 /**
+ * Transform minified `boolean` to their simpler forms.
+ *
+ * @example
  * !0 -> true
  * !1 -> false
  *

@@ -2,6 +2,9 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
 /**
+ * Separate sequence expressions into multiple statements.
+ *
+ * @example
  * `a(), b(), c()` -> `a(); b(); c();`
  * `return a(), b()` -> `a(); return b()`
  *

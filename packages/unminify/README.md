@@ -4,12 +4,16 @@ If you have been working with minified code, you may have noticed that it is not
 
 - [@unminify-kit/unminify](#unminify-kitunminify)
     - [`lebab`](#lebab)
+  - [Readability](#readability)
     - [`un-boolean`](#un-boolean)
     - [`un-void-0`](#un-void-0)
     - [`un-number-literal`](#un-number-literal)
     - [`un-sequence-expression`](#un-sequence-expression)
     - [`un-variable-merging`](#un-variable-merging)
+    - [`un-flip-operator`](#un-flip-operator)
     - [`un-if-statement`](#un-if-statement)
+    - [`un-switch-statement`](#un-switch-statement)
+  - [Syntax Upgrade](#syntax-upgrade)
     - [`un-es6-class`](#un-es6-class)
   - [Clean Up](#clean-up)
     - [`un-es-helper`](#un-es-helper)
@@ -23,9 +27,11 @@ If you have been working with minified code, you may have noticed that it is not
 We use [lebab](https://github.com/lebab/lebab) as a base to unminify the code.\
 With the help of lebab, we can save the work of writing a lot of rules.
 
+## Readability
+
 ### `un-boolean`
 
-This transformation converts `!0` to `true` and `!1` to `false`.\
+Transform minified `boolean` to their simpler forms.\
 Reverse: [babel-plugin-transform-minify-booleans](https://babeljs.io/docs/en/babel-plugin-transform-minify-booleans)
 
 ```diff
@@ -38,7 +44,7 @@ Reverse: [babel-plugin-transform-minify-booleans](https://babeljs.io/docs/en/bab
 
 ### `un-void-0`
 
-This transformation converts `void 0` to `undefined`.\
+Transform `void 0` to `undefined`.\
 Reverse: [babel-plugin-transform-undefined-to-void](https://babeljs.io/docs/en/babel-plugin-transform-undefined-to-void)
 
 ```diff
@@ -47,8 +53,7 @@ Reverse: [babel-plugin-transform-undefined-to-void](https://babeljs.io/docs/en/b
 ```
 
 ### `un-number-literal`
-
-This transformation converts minified number literals to their decimal representation.\
+Transform number literal to its decimal representation.\
 Reverse: [babel-plugin-minify-numeric-literals](https://babeljs.io/docs/en/babel-plugin-minify-numeric-literals)
 
 
@@ -56,13 +61,16 @@ Reverse: [babel-plugin-minify-numeric-literals](https://babeljs.io/docs/en/babel
 - 1e3
 + 1000
 
-- -2e4
-+ -20000
+- 0b101010
++ 42
+
+- 0x123
++ 291
 ```
 
 ### `un-sequence-expression`
 
-This transformation splits sequence expressions into multiple statements.\
+Separate sequence expressions into multiple statements.\
 Reverse: [babel-helper-to-multiple-sequence-expressions](https://babeljs.io/docs/en/babel-helper-to-multiple-sequence-expressions)
 
 ```diff
@@ -71,35 +79,48 @@ Reverse: [babel-helper-to-multiple-sequence-expressions](https://babeljs.io/docs
 + b()
 + c()
 
-- return a(), b(), c()
+- return a(), b()
++ a()
++ return b()
+
+- while (a(), b(), c++ > 0) {}
 + a()
 + b()
-+ return c()
++ while (c++ > 0) {}
 ```
 
 ### `un-variable-merging`
 
-This transformation splits variable declarations into multiple statements.\
+Separate variable declarators into multiple statements.\
 Reverse: [babel-plugin-transform-merge-sibling-variables](https://babeljs.io/docs/en/babel-plugin-transform-merge-sibling-variables)
 
 ```diff
-- var a = 1, b = 2, c = 3;
+- var a = 1, b = true, c = func(d):
 + var a = 1;
-+ var b = 2;
-+ var c = 3;
++ var b = true;
++ var c = func(d);
+```
 
-- let d = 1, e = 2;
-+ let d = 1;
-+ let e = 2;
+### `un-flip-operator`
 
-- const f = 1, g = 2;
-+ const f = 1;
-+ const g = 2;
+Flips comparisons that are in the form of "literal comes first" to "literal comes second".\
+Reverse: [babel-plugin-minify-flip-comparisons](https://babeljs.io/docs/en/babel-plugin-minify-flip-comparisons)
+
+```diff
+
+```diff
+- if ("dark" === theme) {}
++ if (theme === "dark") {}
+
+- while (10 < count) {}
++ while (count > 10) {}
 ```
 
 ### `un-if-statement`
 
-This transformation unwraps nested ternary expressions into if-else statements.\
+Unwraps nested ternary expressions into if-else statements.\
+Conditionally returns early if possible.
+
 Reverse: [babel-plugin-minify-guarded-expressions](https://babeljs.io/docs/en/babel-plugin-minify-guarded-expressions)
 
 ```diff
@@ -113,7 +134,7 @@ Reverse: [babel-plugin-minify-guarded-expressions](https://babeljs.io/docs/en/ba
 + }
 ```
 
-And this rule will try to do more by adopting `Early Exit` pattern(on statement level).
+This rule will try to do more by adopting `Early Exit` pattern (on statement level).\
 // TODO
 ```diff
 - a ? b() : c ? d() : e()
@@ -126,9 +147,35 @@ And this rule will try to do more by adopting `Early Exit` pattern(on statement 
 + e();
 ```
 
+### `un-switch-statement`
+
+Unwraps nested ternary expressions into switch statement.
+
+```diff
+- foo == 'bar' ? bar() : foo == 'baz' ? baz() : foo == 'qux' || foo == 'quux' ? qux() : quux()
++ switch (foo) {
++   case 'bar':
++     bar()
++     break
++   case 'baz':
++     baz()
++     break
++   case 'qux':
++   case 'quux':
++     qux()
++     break
++   default:
++     quux()
++ }
+```
+
+## Syntax Upgrade
+
 ### `un-es6-class`
 
-This transformation will try to build the class definition from the constructor and the prototype.\
+Restore `Class` definition from the constructor and the prototype.\
+Currently, this transformation only supports output from **TypeScript**.
+
 Reverse: `Typescript`'s `Class` transpilation
 
 ```diff
@@ -165,7 +212,7 @@ Reverse: `Typescript`'s `Class` transpilation
 
 ### `un-es-helper`
 
-This transformation removes the `__esModule` flag.
+Removes the `__esModule` flag from the module.
 
 ```diff
 - Object.defineProperty(exports, "__esModule", { value: true });
@@ -173,7 +220,7 @@ This transformation removes the `__esModule` flag.
 
 ### `un-strict`
 
-This transformation removes the `"use strict"` directive.
+Removes the `"use strict"` directive.
 
 ```diff
 - "use strict";

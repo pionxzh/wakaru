@@ -3,13 +3,14 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
 /**
- * ```js
+ * Separate variable declarators into multiple statements.
+ *
+ * @example
  * var a = 1, b = true, c = func(d)
  * ->
  * var a = 1
  * var b = true
  * var c = func(d)
- * ```
  *
  * @see https://babeljs.io/docs/en/babel-plugin-transform-merge-sibling-variables
  */

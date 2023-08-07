@@ -3,6 +3,10 @@ import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ConditionalExpression, IfStatement } from 'jscodeshift'
 
 /**
+ * Unwraps nested ternary expressions into if-else statements.
+ * Conditionally returns early if possible.
+ *
+ * @example
  * `a ? b() : c ? d() : e()`
  * ->
  * if(a) { b() }
@@ -28,7 +32,8 @@ export const transformAST: ASTTransformation = (context) => {
     /**
      * Nested ternary expression
      *
-     * we can only confidently transform the nested ternary expression under ExpressionStatement
+     * we can only confidently transform the nested ternary
+     * expression under ExpressionStatement.
      * use "Early return" to avoid deeply nested if statement
      * `a ? b() : c ? d() : e()`
      * ->

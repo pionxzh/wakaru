@@ -3,7 +3,7 @@ import type { ASTTransformation } from '../wrapAstTransformation'
 import type { NumericLiteral } from 'jscodeshift'
 
 /**
- * Transform value of number literal to its original value.
+ * Transform number literal to its decimal representation.
  *
  * Including:
  * - Decimal (Base 10)

@@ -2,6 +2,9 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
 /**
+ * Transform `void 0` to `undefined`.
+ *
+ * @example
  * void 0 -> undefined
  *
  * @see https://babeljs.io/docs/en/babel-plugin-transform-undefined-to-void

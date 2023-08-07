@@ -10,6 +10,7 @@ interface Case { test: Literal | null; consequent: any }
  * This is a really special case.
  * I'm not sure which minifier does this kind of crazy thing.
  *
+ * @example
  * foo == 'bar' ? bar() : foo == 'baz' ? baz() : foo == 'qux' || foo == 'quux' ? qux() : quux()
  * ->
  * switch (foo) {
