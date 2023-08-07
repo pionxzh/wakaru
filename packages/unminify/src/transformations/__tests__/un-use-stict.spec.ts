@@ -1,21 +1,17 @@
-import { defineInlineTest } from 'jscodeshift/src/testUtils'
-
 import transform from '../un-use-strict'
+import { defineInlineTest } from './test-utils'
 
-defineInlineTest(
-    transform,
-    {},
+const inlineTest = defineInlineTest(transform)
+
+inlineTest('remove \'use strict\'',
   `
 'use strict'
 `,
   `
 `,
-  'remove \'use strict\'',
 )
 
-defineInlineTest(
-    transform,
-    {},
+inlineTest('remove \'use strict\' with comments',
   `
 // comment
 // another comment
@@ -32,5 +28,4 @@ function foo(str) {
     return str === 'use strict'
 }
 `,
-  'remove \'use strict\' with comments',
 )

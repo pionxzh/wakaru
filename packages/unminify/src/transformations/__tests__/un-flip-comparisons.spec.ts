@@ -1,10 +1,9 @@
-import { defineInlineTest } from 'jscodeshift/src/testUtils'
-
 import transform from '../un-flip-comparisons'
+import { defineInlineTest } from './test-utils'
 
-defineInlineTest(
-    transform,
-    {},
+const inlineTest = defineInlineTest(transform)
+
+inlineTest('flip comparisons back',
   `
 const a = undefined === foo
 const b = null !== foo
@@ -29,5 +28,4 @@ const g = bar < 1
 const h = bar >= 1
 const i = bar <= 1
 `,
-  'flip comparisons back',
 )

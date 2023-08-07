@@ -1,10 +1,9 @@
-import { defineInlineTest } from 'jscodeshift/src/testUtils'
-
 import transform from '../un-export-rename'
+import { defineInlineTest } from './test-utils'
 
-defineInlineTest(
-    transform,
-    {},
+const inlineTest = defineInlineTest(transform)
+
+inlineTest('merge variable declaration and export declaration',
   `
 const a = 1;
 export const b = a;
@@ -12,12 +11,9 @@ export const b = a;
   `
 export const b = 1;
 `,
-  'merge variable declaration and export declaration',
 )
 
-defineInlineTest(
-    transform,
-    {},
+inlineTest('merge function declaration and export declaration',
     `
 function a() {}
 export const b = a;
@@ -25,12 +21,9 @@ export const b = a;
     `
 export function b() {}
 `,
-    'merge function declaration and export declaration',
 )
 
-defineInlineTest(
-    transform,
-    {},
+inlineTest('merge class declaration and export declaration',
     `
 class o {}
 export const App = o
@@ -38,12 +31,9 @@ export const App = o
     `
 export class App {}
 `,
-    'merge class declaration and export declaration',
 )
 
-defineInlineTest(
-    transform,
-    {},
+inlineTest('merge class expression and export declaration',
     `
 const o = class {};
 export const App = o;
@@ -51,5 +41,4 @@ export const App = o;
     `
 export const App = class {};
 `,
-    'merge class expression and export declaration',
 )

@@ -1,10 +1,9 @@
-import { defineInlineTest } from 'jscodeshift/src/testUtils'
-
 import transform from '../un-number-literal'
+import { defineInlineTest } from './test-utils'
 
-defineInlineTest(
-    transform,
-    {},
+const inlineTest = defineInlineTest(transform)
+
+inlineTest('transform number literal exponential notation',
   `
 1e3
 -2e4
@@ -13,5 +12,4 @@ defineInlineTest(
 1000
 -20000
 `,
-  'transform number literal exponential notation',
 )

@@ -1,10 +1,9 @@
-import { defineInlineTest } from 'jscodeshift/src/testUtils'
-
 import transform from '../un-switch-statement'
+import { defineInlineTest } from './test-utils'
 
-defineInlineTest(
-    transform,
-    {},
+const inlineTest = defineInlineTest(transform)
+
+inlineTest('should transform ternary to switch statement',
 `
 foo == 'bar'
 ? bar()
@@ -38,12 +37,9 @@ default:
   }
 };
 `,
-'should transform ternary to switch statement',
 )
 
-defineInlineTest(
-    transform,
-    {},
+inlineTest('should transform ternary which contains multiple conditions to switch statement',
   `
 foo == 'bar'
   ? bar()
@@ -89,12 +85,9 @@ default:
   }
 };
 `,
-  'should transform ternary which contains multiple conditions to switch statement',
 )
 
-defineInlineTest(
-    transform,
-    {},
+inlineTest('should transform ternary which contains multiple conditions to switch statement (no default)',
 `
 foo == 'bar'
   ? bar()
@@ -122,5 +115,4 @@ case 'quux':
   }
 };
 `,
-'should transform ternary which contains multiple conditions to switch statement (no default)',
 )
