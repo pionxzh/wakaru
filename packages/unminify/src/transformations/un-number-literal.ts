@@ -3,7 +3,8 @@ import type { ASTTransformation } from '../wrapAstTransformation'
 import type { NumericLiteral } from 'jscodeshift'
 
 /**
- * Transform value of number literal to its original value
+ * Transform value of number literal to its original value.
+ *
  * Including:
  * - Decimal (Base 10)
  * - Float (Base 10)

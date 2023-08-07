@@ -16,8 +16,8 @@ export const transformAST: ASTTransformation = (context) => {
                 property: { type: 'Identifier', name: 'defineProperty' },
             },
             arguments: [
-                { type: 'Identifier', name: 'exports' },
-                { type: 'Literal', value: '__esModule' },
+                { type: 'Identifier', name: 'exports' } as const,
+                { type: 'Literal', value: '__esModule' } as const,
             ],
         },
     })
