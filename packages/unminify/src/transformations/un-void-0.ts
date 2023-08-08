@@ -6,6 +6,7 @@ import type { ASTTransformation } from '../wrapAstTransformation'
  *
  * @example
  * void 0 -> undefined
+ * void 99 -> undefined
  *
  * @see https://babeljs.io/docs/en/babel-plugin-transform-undefined-to-void
  */
@@ -20,9 +21,9 @@ export const transformAST: ASTTransformation = (context) => {
         .forEach((p) => {
             if (!j.Literal.check(p.node.argument)) return
 
-            const { value } = p.node.argument
-            if (value !== 0) return
-            p.replace(j.identifier('undefined'))
+            if (j.Literal.check(p.node.argument)) {
+                p.replace(j.identifier('undefined'))
+            }
         })
 }
 

@@ -15,3 +15,29 @@ if(undefined !== a) {
 }
 `,
 )
+
+inlineTest('transform void literal to undefined',
+  `
+void 0
+void 99
+void(0)
+`,
+  `
+undefined
+undefined
+undefined
+`,
+)
+
+inlineTest('should not transform void function call',
+  `
+void function() {
+  console.log('a')
+}
+`,
+  `
+void function() {
+  console.log('a')
+}
+`,
+)
