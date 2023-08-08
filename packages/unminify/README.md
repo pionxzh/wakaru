@@ -14,6 +14,7 @@ If you have been working with minified code, you may have noticed that it is not
     - [`un-if-statement`](#un-if-statement)
     - [`un-switch-statement`](#un-switch-statement)
   - [Syntax Upgrade](#syntax-upgrade)
+    - [`un-template-literal`](#un-template-literal)
     - [`un-es6-class`](#un-es6-class)
   - [Clean Up](#clean-up)
     - [`un-es-helper`](#un-es-helper)
@@ -178,6 +179,15 @@ Unwraps nested ternary expressions into switch statement.
 ```
 
 ## Syntax Upgrade
+
+### `un-template-literal`
+
+Restore template literal syntax from string concatenation.
+
+```diff
+- "the ".concat(first, " take the ").concat(second, " and ").concat(third);
++ `the ${first} take the ${second} and ${third}`
+```
 
 ### `un-es6-class`
 
