@@ -28,7 +28,7 @@
     "eslint": "^8.46.0",
     "esno": "^0.17.0",
     "globby": "^11.1.0",
-    "prettier": "^2.8.3",
+    "prettier": "^3.0.1",
     "turbo": "^1.10.12",
     "typescript": "^5.1.6",
     "vitest": "^0.34.1"

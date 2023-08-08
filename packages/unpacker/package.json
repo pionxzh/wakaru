@@ -29,16 +29,15 @@
   "dependencies": {
     "@unminify-kit/ast-utils": "workspace:*",
     "ast-types": "^0.14.2",
-    "jscodeshift": "^0.14.0",
-    "picocolors": "^1.0.0",
-    "prettier": "^2.8.8"
+    "jscodeshift": "^0.15.0",
+    "picocolors": "^1.0.0"
   },
   "devDependencies": {
-    "@babel/types": "^7.20.7",
+    "@babel/types": "^7.22.10",
     "@types/jscodeshift": "^0.11.6",
-    "tsup": "^6.5.0",
-    "typescript": "^4.9.4",
-    "vitest": "^0.28.3"
+    "tsup": "^7.2.0",
+    "typescript": "^5.1.6",
+    "vitest": "^0.34.1"
   },
   "publishConfig": {
     "exports": {
