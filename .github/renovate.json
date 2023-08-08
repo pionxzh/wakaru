@@ -1,0 +1,28 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:base",
+    ":combinePatchMinorReleases",
+    ":label(dependencies)",
+    ":disablePeerDependencies",
+    ":automergeLinters",
+    ":automergeTesters",
+    ":timezone(Asia/Taipei)"
+  ],
+  "rangeStrategy": "bump",
+  "schedule": [
+    "after 9am and before 9pm every weekend"
+  ],
+  "packageRules": [
+    { "matchPackagePatterns": ["^@types/"], "groupName": "TypeScript types" },
+    { "depTypeList": ["devDependencies"], "enabled": false }
+  ],
+  "ignoreDeps": [
+    "node",
+    "pnpm"
+  ],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "testcases/**"
+  ]
+}
