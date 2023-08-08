@@ -40,15 +40,27 @@ const i = 3;
 `,
 )
 
-inlineTest('variable declaration in for statement should not be transformed',
+inlineTest('variable declaration that is not used in for statement should not be splitted',
   `
-for (var i = 0, b = true, c = ''; i < 10; i++) {
-    console.log(i);
+for (var i = 0, j = 0, k = 0; j < 10; k++) {
+  console.log(k);
 }
 `,
   `
-for (var i = 0, b = true, c = ''; i < 10; i++) {
-    console.log(i);
+var i = 0;
+for (var j = 0, k = 0; j < 10; k++) {
+  console.log(k);
 }
+`,
+)
+
+inlineTest('variable declaration with kind other than var should not be splitted',
+  `
+for (let i = 0, j = 0, k = 0; j < 10; k++) {}
+for (const i = 0, j = 0, k = 0; j < 10; k++) {}
+`,
+  `
+for (let i = 0, j = 0, k = 0; j < 10; k++) {}
+for (const i = 0, j = 0, k = 0; j < 10; k++) {}
 `,
 )

@@ -101,6 +101,14 @@ Reverse: [babel-plugin-transform-merge-sibling-variables](https://babeljs.io/doc
 + var c = func(d);
 ```
 
+Separate variable declarators that are not used in for statements.
+
+```diff
+- for (var i = 0, j = 0, k = 0; j < 10; k++) {}
++ var i = 0
++ for (var j = 0, k = 0; j < 10; k++) {}
+```
+
 ### `un-flip-operator`
 
 Flips comparisons that are in the form of "literal comes first" to "literal comes second".\
