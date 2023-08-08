@@ -4,75 +4,77 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-dependencies:
-  history:
-    specifier: ^4.10.1
-    version: 4.10.1
-  react:
-    specifier: ^16.14.0
-    version: 16.14.0
-  react-dom:
-    specifier: ^16.14.0
-    version: 16.14.0(react@16.14.0)
-  react-redux:
-    specifier: ^5.1.2
-    version: 5.1.2(react@16.14.0)(redux@4.0.0)
-  react-router-dom:
-    specifier: ^4.3.1
-    version: 4.3.1(react@16.14.0)
-  react-router-redux:
-    specifier: ^5.0.0-alpha.9
-    version: 5.0.0-alpha.9(react@16.14.0)
-  redux:
-    specifier: ^4.0.0
-    version: 4.0.0
-  redux-saga:
-    specifier: ^0.16.2
-    version: 0.16.2
+importers:
 
-devDependencies:
-  '@types/history':
-    specifier: ^4.7.11
-    version: 4.7.11
-  '@types/react':
-    specifier: ^16.14.43
-    version: 16.14.43
-  '@types/react-dom':
-    specifier: ^16.9.19
-    version: 16.9.19
-  '@types/react-redux':
-    specifier: ^6.0.21
-    version: 6.0.21
-  '@types/react-router-dom':
-    specifier: ^4.3.5
-    version: 4.3.5
-  '@types/react-router-redux':
-    specifier: ^5.0.15
-    version: 5.0.15
-  babel-core:
-    specifier: ^6.26.0
-    version: 6.26.0
-  babel-loader:
-    specifier: ^7.1.5
-    version: 7.1.5(babel-core@6.26.0)(webpack@4.4.0)
-  babel-preset-env:
-    specifier: ^1.6.1
-    version: 1.6.1
-  babel-preset-react:
-    specifier: ^6.24.1
-    version: 6.24.1
-  cross-env:
-    specifier: ^7.0.3
-    version: 7.0.3
-  typescript:
-    specifier: ^2.9.2
-    version: 2.9.2
-  webpack:
-    specifier: ^4.4.0
-    version: 4.4.0(webpack-cli@2.0.13)
-  webpack-cli:
-    specifier: ^2.0.13
-    version: 2.0.13(webpack@4.4.0)
+  .:
+    dependencies:
+      history:
+        specifier: ^4.10.1
+        version: 4.10.1
+      react:
+        specifier: ^16.14.0
+        version: 16.14.0
+      react-dom:
+        specifier: ^16.14.0
+        version: 16.14.0(react@16.14.0)
+      react-redux:
+        specifier: ^5.1.2
+        version: 5.1.2(react@16.14.0)(redux@4.2.1)
+      react-router-dom:
+        specifier: ^4.3.1
+        version: 4.3.1(react@16.14.0)
+      react-router-redux:
+        specifier: ^5.0.0-alpha.9
+        version: 5.0.0-alpha.9(react@16.14.0)
+      redux:
+        specifier: ^4.2.1
+        version: 4.2.1
+      redux-saga:
+        specifier: ^0.16.2
+        version: 0.16.2
+    devDependencies:
+      '@types/history':
+        specifier: ^4.7.11
+        version: 4.7.11
+      '@types/react':
+        specifier: ^16.14.44
+        version: 16.14.44
+      '@types/react-dom':
+        specifier: ^16.9.19
+        version: 16.9.19
+      '@types/react-redux':
+        specifier: ^6.0.21
+        version: 6.0.21
+      '@types/react-router-dom':
+        specifier: ^4.3.5
+        version: 4.3.5
+      '@types/react-router-redux':
+        specifier: ^5.0.15
+        version: 5.0.15
+      babel-core:
+        specifier: ^6.26.0
+        version: 6.26.0
+      babel-loader:
+        specifier: ^7.1.5
+        version: 7.1.5(babel-core@6.26.0)(webpack@4.4.0)
+      babel-preset-env:
+        specifier: ^1.6.1
+        version: 1.6.1
+      babel-preset-react:
+        specifier: ^6.24.1
+        version: 6.24.1
+      cross-env:
+        specifier: ^7.0.3
+        version: 7.0.3
+      typescript:
+        specifier: ^2.9.2
+        version: 2.9.2
+      webpack:
+        specifier: ^4.4.0
+        version: 4.4.0(webpack-cli@2.0.13)
+      webpack-cli:
+        specifier: ^2.0.13
+        version: 2.0.13(webpack@4.4.0)
 
 packages:
 
@@ -102,7 +104,6 @@ packages:
     engines: {node: '>=6.9.0'}
     dependencies:
       regenerator-runtime: 0.13.11
-    dev: false
 
   /@mrmlnc/readdir-enhanced@2.2.1:
     resolution: {integrity: sha512-bPHp6Ji8b41szTOcaP63VlnbbO5Ny6dwAATtY6JTjh5N2OLrb5Qk/Th5cRkRQhkWCt+EJsYrNB0MiL+Gpn6e3g==}
@@ -162,21 +163,21 @@ packages:
   /@types/react-dom@16.9.19:
     resolution: {integrity: sha512-xC8D280Bf6p0zguJ8g62jcEOKZiUbx9sIe6O3tT/lKfR87A7A6g65q13z6D5QUMIa/6yFPkNhqjF5z/VVZEYqQ==}
     dependencies:
-      '@types/react': 16.14.43
+      '@types/react': 16.14.44
     dev: true
 
   /@types/react-redux@6.0.21:
     resolution: {integrity: sha512-B23h4GtBEB+j0+MmBG+mT+c7CzLsYVgM3+iJqzeREPAn7O2JvbGF/EEDKNBu9XQ+LiHBHJHb65zEXNa+mg2+HQ==}
     dependencies:
-      '@types/react': 16.14.43
-      redux: 4.0.0
+      '@types/react': 16.14.44
+      redux: 4.2.1
     dev: true
 
   /@types/react-router-dom@4.3.5:
     resolution: {integrity: sha512-eFajSUASYbPHg2BDM1G8Btx+YqGgvROPIg6sBhl3O4kbDdYXdFdfrgQFf/pcBuQVObjfT9AL/dd15jilR5DIEA==}
     dependencies:
       '@types/history': 4.7.11
-      '@types/react': 16.14.43
+      '@types/react': 16.14.44
       '@types/react-router': 5.1.20
     dev: true
 
@@ -184,20 +185,20 @@ packages:
     resolution: {integrity: sha512-ntkxextBqhd8/Q7nDAp5Tfv/we15WPfsVvVjd+FDyxkT1LfoAtkakzMN/ZqhJwd+S94GOgDXXSFVQvygKA4QzA==}
     dependencies:
       '@types/history': 4.7.11
-      '@types/react': 16.14.43
+      '@types/react': 16.14.44
       '@types/react-router': 5.1.20
-      redux: 4.0.0
+      redux: 4.2.1
     dev: true
 
   /@types/react-router@5.1.20:
     resolution: {integrity: sha512-jGjmu/ZqS7FjSH6owMcD5qpq19+1RS9DeVRqfl1FeBMxTDQAGwlMWOcs52NDoXaNKyG3d1cYQFMs9rCrb88o9Q==}
     dependencies:
       '@types/history': 4.7.11
-      '@types/react': 16.14.43
+      '@types/react': 16.14.44
     dev: true
 
-  /@types/react@16.14.43:
-    resolution: {integrity: sha512-7zdjv7jvoLLQg1tTvpQsm+hyNUMT2mPlNV1+d0I8fbGhkJl82spopMyBlu4wb1dviZAxpGdk5eHu/muacknnfw==}
+  /@types/react@16.14.44:
+    resolution: {integrity: sha512-TvEx2X0MrSioYQpUSiWe122KeHNmOm5cZd4czKroIc7/cST4IaIgoCplQQ87xucEpOmRtNykq7vR6/4fo93Y+g==}
     dependencies:
       '@types/prop-types': 15.7.5
       '@types/scheduler': 0.16.3
@@ -4791,7 +4792,7 @@ packages:
     resolution: {integrity: sha512-fBASbA6LnOU9dOU2eW7aQ8xmYBSXUIWr+UmF9b1efZBazGNO+rcXT/icdKnYm2pTwcRylVUYwW7H1PHfLekVzA==}
     dev: false
 
-  /react-redux@5.1.2(react@16.14.0)(redux@4.0.0):
+  /react-redux@5.1.2(react@16.14.0)(redux@4.2.1):
     resolution: {integrity: sha512-Ns1G0XXc8hDyH/OcBHOxNgQx9ayH3SPxBnFCOidGKSle8pKihysQw2rG/PmciUQRoclhVBO8HMhiRmGXnDja9Q==}
     peerDependencies:
       react: ^0.14.0 || ^15.0.0-0 || ^16.0.0-0
@@ -4805,7 +4806,7 @@ packages:
       react: 16.14.0
       react-is: 16.13.1
       react-lifecycles-compat: 3.0.4
-      redux: 4.0.0
+      redux: 4.2.1
     dev: false
 
   /react-router-dom@4.3.1(react@16.14.0):
@@ -4982,11 +4983,10 @@ packages:
     resolution: {integrity: sha512-iIjKnRThI5sKPEASpUvySemjzwqwI13e3qP7oLub+FycCRDysLSAOwt958niZW6LhxfmS6Qm1BzbU70w/Koc4w==}
     dev: false
 
-  /redux@4.0.0:
-    resolution: {integrity: sha512-NnnHF0h0WVE/hXyrB6OlX67LYRuaf/rJcbWvnHHEPCF/Xa/AZpwhs/20WyqzQae5x4SD2F9nPObgBh2rxAgLiA==}
+  /redux@4.2.1:
+    resolution: {integrity: sha512-LAUYz4lc+Do8/g7aeRa8JkyDErK6ekstQaqWQrNRW//MY1TvCEpMtpTWvlQ+FPbWCx+Xixu/6SHt5N0HR+SB4w==}
     dependencies:
-      loose-envify: 1.4.0
-      symbol-observable: 1.2.0
+      '@babel/runtime': 7.22.6
 
   /regenerate@1.4.2:
     resolution: {integrity: sha512-zrceR/XhGYU/d/opr2EKO7aRHUeiBI8qjtfHqADTwZd6Szfy16la6kqD0MIUs5z5hx6AaKa+PixpPrR289+I0A==}
@@ -4998,7 +4998,6 @@ packages:
 
   /regenerator-runtime@0.13.11:
     resolution: {integrity: sha512-kY1AZVr2Ra+t+piVaJ4gxaFaReZVH40AKNo7UCX6W+dEwBo/2oZJzqfuN1qLq1oL45o56cPaTXELwrTh8Fpggg==}
-    dev: false
 
   /regenerator-transform@0.10.1:
     resolution: {integrity: sha512-PJepbvDbuK1xgIgnau7Y90cwaAmO/LCLMI2mPvaXq2heGMR3aWW5/BQvYrhJ8jgmQjXewXvBjzfqKcVOmhjZ6Q==}
@@ -5672,10 +5671,6 @@ packages:
     resolution: {integrity: sha512-Kb3PrPYz4HanVF1LVGuAdW6LoVgIwjUYJGzFe7NDrBLCN4lsV/5J0MFurV+ygS4bRVwrCEt2c7MQ1R2a72oJDw==}
     engines: {node: '>=0.10.0'}
     dev: true
-
-  /symbol-observable@1.2.0:
-    resolution: {integrity: sha512-e900nM8RRtGhlV36KGEU9k65K3mPb1WV70OdjfxlG2EAuM1noi/E/BaW/uMhL7bPEssK8QV57vN3esixjUvcXQ==}
-    engines: {node: '>=0.10.0'}
 
   /tapable@1.1.3:
     resolution: {integrity: sha512-4WK/bYZmj8xLr+HUCODHGF1ZFzsYffasLUgEiMBY4fgtltdO6B4WJtlSbPaDTLpYTcGVwM2qLnFTICEcNxs3kA==}
