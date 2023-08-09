@@ -1,5 +1,6 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
+import type { SequenceExpression, VariableDeclaration } from 'jscodeshift'
 
 /**
  * Separate sequence expressions into multiple statements.
@@ -21,8 +22,7 @@ export const transformAST: ASTTransformation = (context) => {
             },
         })
         .forEach((path) => {
-            const { node: { argument } } = path
-            if (!j.SequenceExpression.check(argument)) return
+            const argument = path.node.argument as SequenceExpression
 
             const { expressions } = argument
             const [last, ...rest] = [...expressions].reverse()
@@ -51,8 +51,7 @@ export const transformAST: ASTTransformation = (context) => {
             },
         })
         .forEach((path) => {
-            const { node: { test } } = path
-            if (!j.SequenceExpression.check(test)) return
+            const test = path.node.test as SequenceExpression
 
             const { expressions } = test
             const [last, ...rest] = [...expressions].reverse()
@@ -70,8 +69,7 @@ export const transformAST: ASTTransformation = (context) => {
             },
         })
         .forEach((path) => {
-            const { node: { test } } = path
-            if (!j.SequenceExpression.check(test)) return
+            const test = path.node.test as SequenceExpression
 
             const { expressions } = test
             const [last, ...rest] = [...expressions].reverse()
@@ -89,8 +87,7 @@ export const transformAST: ASTTransformation = (context) => {
             },
         })
         .forEach((path) => {
-            const { node: { test } } = path
-            if (!j.SequenceExpression.check(test)) return
+            const test = path.node.test as SequenceExpression
 
             const { expressions } = test
             const [last, ...rest] = [...expressions].reverse()
@@ -108,8 +105,7 @@ export const transformAST: ASTTransformation = (context) => {
             },
         })
         .forEach((path) => {
-            const { node: { discriminant } } = path
-            if (!j.SequenceExpression.check(discriminant)) return
+            const discriminant = path.node.discriminant as SequenceExpression
 
             const { expressions } = discriminant
             const [last, ...rest] = [...expressions].reverse()
@@ -127,8 +123,7 @@ export const transformAST: ASTTransformation = (context) => {
             },
         })
         .forEach((path) => {
-            const { node: { argument } } = path
-            if (!j.SequenceExpression.check(argument)) return
+            const argument = path.node.argument as SequenceExpression
 
             const { expressions } = argument
             const [last, ...rest] = [...expressions].reverse()
@@ -186,8 +181,7 @@ export const transformAST: ASTTransformation = (context) => {
             },
         })
         .forEach((path) => {
-            const { node: { init } } = path
-            if (!j.SequenceExpression.check(init)) return
+            const init = path.node.init as SequenceExpression
 
             const { expressions } = init
             const replacement: any[] = expressions.map(e => j.expressionStatement(e))
@@ -211,8 +205,7 @@ export const transformAST: ASTTransformation = (context) => {
             },
         })
         .forEach((path) => {
-            const { node: { init } } = path
-            if (!j.VariableDeclaration.check(init)) return
+            const init = path.node.init as VariableDeclaration
             const { declarations } = init
             const replacement: any[] = []
             const initDeclarators: any[] = []
@@ -248,8 +241,7 @@ export const transformAST: ASTTransformation = (context) => {
             },
         })
         .forEach((path) => {
-            const { node: { expression } } = path
-            if (!j.SequenceExpression.check(expression)) return
+            const expression = path.node.expression as SequenceExpression
 
             const { expressions } = expression
             const replacement = expressions.map(e => j.expressionStatement(e))

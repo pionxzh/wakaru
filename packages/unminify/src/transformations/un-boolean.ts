@@ -1,5 +1,6 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
+import type { Literal } from 'jscodeshift'
 
 /**
  * Transform minified `boolean` to their simpler forms.
@@ -19,9 +20,7 @@ export const transformAST: ASTTransformation = (context) => {
             argument: { type: 'Literal' },
         })
         .forEach((p) => {
-            if (!j.Literal.check(p.node.argument)) return
-
-            const { value } = p.node.argument
+            const { value } = p.node.argument as Literal
             const is01 = value === 0 || value === 1
             if (!is01) return
             p.replace(j.booleanLiteral(!value))

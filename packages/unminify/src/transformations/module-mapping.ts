@@ -1,5 +1,6 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
+import type { Literal } from 'jscodeshift'
 
 /**
  * // params: { 29: 'index.js' }
@@ -23,10 +24,9 @@ export const transformAST: ASTTransformation<Params> = (context, params = { modu
             arguments: args => args.length === 1 && j.Literal.check(args[0]),
         })
         .forEach((p) => {
-            if (!j.Literal.check(p.node.arguments[0])) return
-
-            const { value } = p.node.arguments[0]
+            const { value } = p.node.arguments[0] as Literal
             if (typeof value !== 'number' && typeof value !== 'string') return
+
             const replacement = moduleMapping[value]
             if (typeof replacement !== 'undefined') {
                 p.node.arguments[0] = j.literal(`default-${replacement}.js`)

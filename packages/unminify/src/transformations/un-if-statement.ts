@@ -89,10 +89,7 @@ export const transformAST: ASTTransformation = (context) => {
             },
         })
         .forEach((path) => {
-            const { node } = path
-            if (!j.ConditionalExpression.check(node.argument)) return
-
-            const { test, consequent, alternate } = node.argument
+            const { test, consequent, alternate } = path.node.argument as ConditionalExpression
             const consequentReturn = j.blockStatement([j.returnStatement(consequent)])
             const alternateReturn = j.blockStatement([j.returnStatement(alternate)])
             const replacement = j.ifStatement(test, consequentReturn, alternateReturn)

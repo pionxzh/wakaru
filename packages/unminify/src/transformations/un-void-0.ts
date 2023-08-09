@@ -19,8 +19,6 @@ export const transformAST: ASTTransformation = (context) => {
             argument: { type: 'Literal' },
         })
         .forEach((p) => {
-            if (!j.Literal.check(p.node.argument)) return
-
             if (j.Literal.check(p.node.argument)) {
                 p.replace(j.identifier('undefined'))
             }
