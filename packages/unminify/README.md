@@ -1,6 +1,6 @@
 # @unminify-kit/unminify
 
-If you have been working with minified code, you may have noticed that it is not very readable. This is where these transformations come in. They are a set of functions that can be used to modify the code in a way that makes it more readable. The transformations are not limited to just minified code, they can be used to modify any code.
+If you have been working with minified code, you may have noticed that it is not very readable. This is where these transformations come in. They are a set of functions that can be used to modify the code in a way that makes it more readable.
 
 - [@unminify-kit/unminify](#unminify-kitunminify)
     - [`lebab`](#lebab)
@@ -24,6 +24,7 @@ If you have been working with minified code, you may have noticed that it is not
   - [Style](#style)
     - [`function-to-arrow`](#function-to-arrow)
     - [`prettier`](#prettier)
+    - [TODO](#todo)
 
 ### `lebab`
 
@@ -288,3 +289,11 @@ This transformation converts a function declaration to an arrow function(if poss
 
 This transformation formats the code with [prettier](https://prettier.io/).
 We usually use this rule to format the code after all the other transformations.
+
+### TODO
+
+- [ ] `un-async-await`
+- [ ] `un-optional-chaining`
+- [ ] `un-nullish-coalescing-operator`
+- [ ] [`babel-plugin-minify-builtins`](https://babeljs.io/docs/babel-plugin-minify-builtins)
+- [ ] [`babel-plugin-minify-type-constructors`](https://babeljs.io/docs/babel-plugin-minify-type-constructors)
