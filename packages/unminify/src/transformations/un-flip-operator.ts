@@ -68,7 +68,7 @@ const isRightValid = (j: JSCodeshift, node: ExpressionKind) => {
  * `undefined === foo` -> `foo === undefined`
  * `null !== bar` -> `bar !== null`
  *
- * @see https://babeljs.io/docs/en/babel-plugin-minify-flip-comparisons (reversed)
+ * @see https://babeljs.io/docs/babel-plugin-minify-flip-comparisons (reversed)
  * @see https://eslint.org/docs/latest/rules/yoda
  * @see https://github.com/eslint/eslint/blob/main/lib/rules/yoda.js
  */

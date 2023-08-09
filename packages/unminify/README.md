@@ -34,7 +34,7 @@ With the help of lebab, we can save the work of writing a lot of rules.
 ### `un-boolean`
 
 Transform minified `boolean` to their simpler forms.\
-Reverse: [babel-plugin-transform-minify-booleans](https://babeljs.io/docs/en/babel-plugin-transform-minify-booleans)
+Reverse: [babel-plugin-transform-minify-booleans](https://babeljs.io/docs/babel-plugin-transform-minify-booleans)
 
 ```diff
 - !0
@@ -47,7 +47,7 @@ Reverse: [babel-plugin-transform-minify-booleans](https://babeljs.io/docs/en/bab
 ### `un-void-0`
 
 Transform `void 0` to `undefined`.\
-Reverse: [babel-plugin-transform-undefined-to-void](https://babeljs.io/docs/en/babel-plugin-transform-undefined-to-void)
+Reverse: [babel-plugin-transform-undefined-to-void](https://babeljs.io/docs/babel-plugin-transform-undefined-to-void)
 
 ```diff
 - if(input === void 0) {}
@@ -56,7 +56,7 @@ Reverse: [babel-plugin-transform-undefined-to-void](https://babeljs.io/docs/en/b
 
 ### `un-infinity`
 Transform `1 / 0` to `Infinity`.\
-Reverse: [babel-plugin-minify-infinity](https://babeljs.io/docs/en/babel-plugin-minify-infinity)
+Reverse: [babel-plugin-minify-infinity](https://babeljs.io/docs/babel-plugin-minify-infinity)
 
 
 ```diff
@@ -68,7 +68,7 @@ Reverse: [babel-plugin-minify-infinity](https://babeljs.io/docs/en/babel-plugin-
 
 ### `un-number-literal`
 Transform number literal to its decimal representation.\
-Reverse: [babel-plugin-minify-numeric-literals](https://babeljs.io/docs/en/babel-plugin-minify-numeric-literals)
+Reverse: [babel-plugin-minify-numeric-literals](https://babeljs.io/docs/babel-plugin-minify-numeric-literals)
 
 
 ```diff
@@ -85,7 +85,7 @@ Reverse: [babel-plugin-minify-numeric-literals](https://babeljs.io/docs/en/babel
 ### `un-sequence-expression`
 
 Separate sequence expressions into multiple statements.\
-Reverse: [babel-helper-to-multiple-sequence-expressions](https://babeljs.io/docs/en/babel-helper-to-multiple-sequence-expressions)
+Reverse: [babel-helper-to-multiple-sequence-expressions](https://babeljs.io/docs/babel-helper-to-multiple-sequence-expressions)
 
 ```diff
 - a(), b(), c()
@@ -106,7 +106,7 @@ Reverse: [babel-helper-to-multiple-sequence-expressions](https://babeljs.io/docs
 ### `un-variable-merging`
 
 Separate variable declarators into multiple statements.\
-Reverse: [babel-plugin-transform-merge-sibling-variables](https://babeljs.io/docs/en/babel-plugin-transform-merge-sibling-variables)
+Reverse: [babel-plugin-transform-merge-sibling-variables](https://babeljs.io/docs/babel-plugin-transform-merge-sibling-variables)
 
 ```diff
 - var a = 1, b = true, c = func(d):
@@ -126,7 +126,7 @@ Separate variable declarators that are not used in for statements.
 ### `un-flip-operator`
 
 Flips comparisons that are in the form of "literal comes first" to "literal comes second".\
-Reverse: [babel-plugin-minify-flip-comparisons](https://babeljs.io/docs/en/babel-plugin-minify-flip-comparisons)
+Reverse: [babel-plugin-minify-flip-comparisons](https://babeljs.io/docs/babel-plugin-minify-flip-comparisons)
 
 ```diff
 
@@ -143,7 +143,7 @@ Reverse: [babel-plugin-minify-flip-comparisons](https://babeljs.io/docs/en/babel
 Unwraps nested ternary expressions into if-else statements.\
 Conditionally returns early if possible.
 
-Reverse: [babel-plugin-minify-guarded-expressions](https://babeljs.io/docs/en/babel-plugin-minify-guarded-expressions)
+Reverse: [babel-plugin-minify-guarded-expressions](https://babeljs.io/docs/babel-plugin-minify-guarded-expressions)
 
 ```diff
 - a ? b() : c ? d() : e()

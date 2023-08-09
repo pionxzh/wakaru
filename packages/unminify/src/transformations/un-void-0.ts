@@ -8,7 +8,7 @@ import type { ASTTransformation } from '../wrapAstTransformation'
  * void 0 -> undefined
  * void 99 -> undefined
  *
- * @see https://babeljs.io/docs/en/babel-plugin-transform-undefined-to-void
+ * @see https://babeljs.io/docs/babel-plugin-transform-undefined-to-void
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

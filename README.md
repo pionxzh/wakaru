@@ -8,7 +8,7 @@ The ultimate goal of this project is to improve the readability of the minified 
 This is useful for you to reverse engineer without the source code.
 
 It provides a set of rules to reverse the minification process from:
-- **Most** of [babel-preset-minify](https://babeljs.io/docs/en/babel-preset-minify)
+- **Most** of [babel-preset-minify](https://babeljs.io/docs/babel-preset-minify)
 - **Some** of [terser](https://terser.org)
 - **Some** of transpilation from [Typescript](https://www.typescriptlang.org/)
 - ... and more

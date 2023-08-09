@@ -8,7 +8,7 @@ import type { ASTTransformation } from '../wrapAstTransformation'
  * `a(), b(), c()` -> `a(); b(); c();`
  * `return a(), b()` -> `a(); return b()`
  *
- * @see https://babeljs.io/docs/en/babel-helper-to-multiple-sequence-expressions
+ * @see https://babeljs.io/docs/babel-helper-to-multiple-sequence-expressions
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

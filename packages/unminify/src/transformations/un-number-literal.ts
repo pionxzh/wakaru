@@ -19,7 +19,7 @@ import type { NumericLiteral } from 'jscodeshift'
  * 0x123 -> 291
  * 1e3 -> 1000
  *
- * @see https://babeljs.io/docs/en/babel-plugin-minify-numeric-literals
+ * @see https://babeljs.io/docs/babel-plugin-minify-numeric-literals
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

@@ -37,7 +37,7 @@ import type { ASTTransformation } from '../wrapAstTransformation'
   *   }
   * }
   *
-  * @see https://babeljs.io/docs/en/babel-plugin-transform-classes
+  * @see https://babeljs.io/docs/babel-plugin-transform-classes
   * @see https://www.typescriptlang.org/play?target=1#code/MYGwhgzhAEBiD29oG8BQ1oDswFsCmAXNBAC4BOAlpgObrRjWFYCuOARnmXXcPJqWWbAS8MgAps+IgKrUAlCjoYSACwoQAdJLzQAvFlx4l0Veo0Md+gIwAOOgF86IeNUbiFaDBl794IPBrO1GIARAASeCDOIQA0Jmqa2nIA3A50pGAkFMDEJJnZALJ4qvAAJmIexj4QfgFBYgDkGVk5+CWlDXJpGM3Z0FQZmMCWWHgA7nCIoQBmiCFd9kA
   */
 export const transformAST: ASTTransformation = (context) => {

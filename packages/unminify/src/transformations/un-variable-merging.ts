@@ -20,7 +20,7 @@ import type { ForStatement } from 'jscodeshift'
  * for (var j = 0, k = 0; j < 10; k++) {}
  *
  *
- * @see https://babeljs.io/docs/en/babel-plugin-transform-merge-sibling-variables
+ * @see https://babeljs.io/docs/babel-plugin-transform-merge-sibling-variables
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

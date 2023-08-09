@@ -23,7 +23,7 @@ import type { ConditionalExpression, IfStatement } from 'jscodeshift'
  * `x || a()` -> `if (!x) { a() }`
  * `x ?? a()` -> `if (x == null) { a() }`
  *
- * @see https://babeljs.io/docs/en/babel-plugin-minify-simplify#reduce-statement-into-expression
+ * @see https://babeljs.io/docs/babel-plugin-minify-simplify#reduce-statement-into-expression
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

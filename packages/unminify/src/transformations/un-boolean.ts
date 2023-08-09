@@ -8,7 +8,7 @@ import type { ASTTransformation } from '../wrapAstTransformation'
  * !0 -> true
  * !1 -> false
  *
- * @see https://babeljs.io/docs/en/babel-plugin-transform-minify-booleans
+ * @see https://babeljs.io/docs/babel-plugin-transform-minify-booleans
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
