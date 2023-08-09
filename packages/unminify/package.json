@@ -36,12 +36,12 @@
     "jscodeshift": "^0.15.0",
     "lebab": "^3.2.1",
     "picocolors": "^1.0.0",
-    "prettier": "^3.0.1",
+    "prettier": "^2.8.8",
     "yargs": "^17.7.2"
   },
   "devDependencies": {
     "@types/jscodeshift": "^0.11.6",
-    "@types/prettier": "^3.0.0",
+    "@types/prettier": "^2.7.3",
     "@types/yargs": "^17.0.24",
     "ast-types": "^0.14.2",
     "tsup": "^7.2.0",
