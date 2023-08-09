@@ -7,6 +7,7 @@ If you have been working with minified code, you may have noticed that it is not
   - [Readability](#readability)
     - [`un-boolean`](#un-boolean)
     - [`un-void-0`](#un-void-0)
+    - [`un-infinity`](#un-infinity)
     - [`un-number-literal`](#un-number-literal)
     - [`un-sequence-expression`](#un-sequence-expression)
     - [`un-variable-merging`](#un-variable-merging)
@@ -51,6 +52,18 @@ Reverse: [babel-plugin-transform-undefined-to-void](https://babeljs.io/docs/en/b
 ```diff
 - if(input === void 0) {}
 + if(input === undefined) {}
+```
+
+### `un-infinity`
+Transform `1 / 0` to `Infinity`.\
+Reverse: [babel-plugin-minify-infinity](https://babeljs.io/docs/en/babel-plugin-minify-infinity)
+
+
+```diff
+- 1 / 0
++ Infinity
+- -1 / 0
++ -Infinity
 ```
 
 ### `un-number-literal`
