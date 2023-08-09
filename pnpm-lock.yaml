@@ -69,6 +69,9 @@ importers:
       '@babel/core':
         specifier: ^7.22.10
         version: 7.22.10
+      '@babel/helper-validator-identifier':
+        specifier: ^7.22.5
+        version: 7.22.5
       '@babel/preset-env':
         specifier: ^7.22.10
         version: 7.22.10(@babel/core@7.22.10)

@@ -11,6 +11,7 @@ If you have been working with minified code, you may have noticed that it is not
     - [`un-number-literal`](#un-number-literal)
     - [`un-sequence-expression`](#un-sequence-expression)
     - [`un-variable-merging`](#un-variable-merging)
+    - [`un-bracket-notation`](#un-bracket-notation)
     - [`un-flip-operator`](#un-flip-operator)
     - [`un-if-statement`](#un-if-statement)
     - [`un-switch-statement`](#un-switch-statement)
@@ -123,6 +124,17 @@ Separate variable declarators that are not used in for statements.
 + for (var j = 0, k = 0; j < 10; k++) {}
 ```
 
+### `un-bracket-notation`
+Transform bracket notation to dot notation.\
+Reverse: [babel-plugin-transform-member-expression-literals](https://babeljs.io/docs/babel-plugin-transform-member-expression-literals)
+
+```diff
+- obj['prop']
++ obj.prop
+
+- obj['var']
++ obj['var']
+```
 ### `un-flip-operator`
 
 Flips comparisons that are in the form of "literal comes first" to "literal comes second".\
