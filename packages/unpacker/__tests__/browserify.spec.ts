@@ -10,7 +10,7 @@ describe('Browserify', () => {
 
         expect(result.moduleIdMapping).toMatchSnapshot()
 
-        expect(result.modules.size).toBe(4)
+        expect(result.modules.length).toBe(4)
 
         const modules = [...result.modules.values()]
             .map(({ id, isEntry, code }) => ({ id, isEntry, code }))

@@ -2,6 +2,7 @@
   "name": "@unminify-kit/core",
   "type": "module",
   "version": "0.0.1",
+  "private": true,
   "packageManager": "pnpm@8.6.3",
   "description": "🔪📦 Unminify and beautify bundled code",
   "author": "pionxzh",

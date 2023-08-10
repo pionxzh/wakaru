@@ -1,7 +1,7 @@
 import { renameFunctionParameters } from '@unminify-kit/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack4 } from './requireHelpers'
-import type { ModuleMapping } from '../browserify/ModuleMapping'
+import type { ModuleMapping } from '../../ModuleMapping'
 import type { ArrayExpression, Collection, JSCodeshift } from 'jscodeshift'
 
 /**
@@ -24,7 +24,7 @@ export function getModulesForWebpack4(j: JSCodeshift, root: Collection):
     moduleIdMapping: ModuleMapping
 } | null {
     const modules = new Set<Module>()
-    const moduleIdMapping = new Map<number, string>()
+    const moduleIdMapping: ModuleMapping = {}
 
     const moduleFactory = root.find(j.CallExpression, {
         callee: {

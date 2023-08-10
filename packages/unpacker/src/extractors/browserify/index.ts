@@ -1,6 +1,6 @@
 import { isFunctionExpression, renameFunctionParameters } from '@unminify-kit/ast-utils'
 import { Module } from '../../Module'
-import type { ModuleMapping } from './ModuleMapping'
+import type { ModuleMapping } from '../../ModuleMapping'
 import type { ArrayExpression, ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, ObjectExpression } from 'jscodeshift'
 
 /**
@@ -30,7 +30,7 @@ export function getModulesFromBrowserify(j: JSCodeshift, root: Collection):
     moduleIdMapping: ModuleMapping
 } | null {
     const modules = new Set<Module>()
-    const moduleIdMapping = new Map<number, string>()
+    const moduleIdMapping: ModuleMapping = {}
 
     const moduleDefinition = root.find(j.CallExpression, {
         callee: {
@@ -93,11 +93,11 @@ export function getModulesFromBrowserify(j: JSCodeshift, root: Collection):
                 const shortName = property.key.value
                 const moduleId = property.value.value
 
-                const prevShortName = moduleIdMapping.get(moduleId)
+                const prevShortName = moduleIdMapping[moduleId]
                 if (!!prevShortName && prevShortName !== shortName) {
                     console.warn(`Module ${moduleId} has multiple short names: ${prevShortName} and ${shortName}`)
                 }
-                moduleIdMapping.set(moduleId, shortName)
+                moduleIdMapping[moduleId] = shortName
             })
         })
     })

@@ -43,7 +43,7 @@
     "@types/jscodeshift": "^0.11.6",
     "@types/prettier": "^2.7.3",
     "@types/yargs": "^17.0.24",
-    "ast-types": "^0.14.2",
+    "ast-types": "^0.16.1",
     "tsup": "^7.2.0",
     "typescript": "^5.1.6",
     "vitest": "^0.34.1"

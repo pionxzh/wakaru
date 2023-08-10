@@ -10,7 +10,7 @@ describe('Webpack 5', () => {
 
         expect(result.moduleIdMapping).toMatchSnapshot()
 
-        expect(result.modules.size).toBe(5)
+        expect(result.modules.length).toBe(5)
 
         const modules = [...result.modules.values()]
             .map(({ id, isEntry, code }) => ({ id, isEntry, code }))

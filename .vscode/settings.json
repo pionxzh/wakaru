@@ -22,10 +22,12 @@
     "arraify",
     "debundle",
     "Declarators",
+    "heroicons",
     "jscodeshift",
     "lebab",
     "picocolors",
     "retidy",
+    "splitpanes",
     "testcase",
     "testcases",
     "unminify"
