@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  ast-types@0.16.1:
+    hash: 4gd42rgxtvnbt3gp6vymw5tusq
+    path: patches/ast-types@0.16.1.patch
+
 importers:
 
   .:

@@ -1,7 +1,7 @@
 import { isTopLevel } from '@unminify-kit/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
-import type { ASTPath, ExportNamedDeclaration } from 'jscodeshift'
+import type { ASTPath, Collection, ExportNamedDeclaration, ExportSpecifier, Identifier, JSCodeshift, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 /**
  * const a = 1
@@ -35,30 +35,50 @@ import type { ASTPath, ExportNamedDeclaration } from 'jscodeshift'
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 
-    // export const a = <something>
+    // export const a = <Identifier>
     root
         .find(j.ExportNamedDeclaration, {
             declaration: {
                 type: 'VariableDeclaration',
+                declarations: [{
+                    type: 'VariableDeclarator',
+                    id: {
+                        type: 'Identifier',
+                    },
+                    init: {
+                        type: 'Identifier',
+                    },
+                }],
+
             },
         })
         .forEach((path) => {
-            const { declaration } = path.node
+            const declaration = path.node.declaration as VariableDeclaration
+            const variableDeclarations = declaration.declarations as VariableDeclarator[]
 
-            if (!j.VariableDeclaration.check(declaration)) return
-            if (declaration.declarations.length !== 1) return
-            const variableDeclaration = declaration.declarations[0]
-            if (!j.VariableDeclarator.check(variableDeclaration)) return
+            variableDeclarations.forEach((variableDeclarator) => {
+                if (j.Identifier.check(variableDeclarator.id) && j.Identifier.check(variableDeclarator.init)) {
+                    const id = variableDeclarator.id as Identifier
+                    const init = variableDeclarator.init as Identifier
 
-            const { id, init } = variableDeclaration
-            if (!j.Identifier.check(id) || !j.Identifier.check(init)) return
+                    const newName = id.name
+                    const oldName = init.name
 
-            const targetName = id.name
-            const sourceName = init.name
-            const comments = path.node.comments
+                    // remove the declarator from the declaration
+                    if (variableDeclarations.length === 1) {
+                        path.prune()
+                    }
+                    else {
+                        const index = variableDeclarations.indexOf(variableDeclarator)
+                        if (index > -1) {
+                            variableDeclarations.splice(index, 1)
+                        }
+                    }
 
-            console.log(`Inline export ${sourceName} -> ${targetName}`)
-            inlineExport(context, path, targetName, sourceName, comments)
+                    inlineExport(context, path, oldName)
+                    renameInRoot(j, root, oldName, newName)
+                }
+            })
         })
 
     // redeclare export
@@ -71,18 +91,17 @@ export const transformAST: ASTTransformation = (context) => {
             }],
         })
         .forEach((path) => {
-            const { specifiers } = path.node
+            const specifiers = path.node.specifiers as ExportSpecifier[]
             if (!(specifiers && j.ExportSpecifier.check(specifiers[0]))) return
 
             const { local, exported } = specifiers[0]
             if (!j.Identifier.check(local) || !j.Identifier.check(exported)) return
 
-            const targetName = exported.name
-            const sourceName = local.name
-            const comments = path.node.comments
+            const newName = exported.name
+            const oldName = local.name
 
-            // console.log(`Rename export ${sourceName} -> ${targetName}`)
-            inlineExport(context, path, targetName, sourceName, comments)
+            inlineExport(context, path, oldName)
+            renameInRoot(j, root, oldName, newName)
         })
 }
 
@@ -91,11 +110,10 @@ export default wrap(transformAST)
 function inlineExport(
     context: Context,
     path: ASTPath<ExportNamedDeclaration>,
-    targetName: string,
-    sourceName: string,
-    comments?: any,
+    name: string,
 ) {
     const { root, j } = context
+    const comments = path.node.comments
 
     const variableSource = root
         .find(j.VariableDeclaration, {
@@ -103,7 +121,7 @@ function inlineExport(
                 type: 'VariableDeclarator',
                 id: {
                     type: 'Identifier',
-                    name: sourceName,
+                    name,
                 },
             }],
         })
@@ -113,7 +131,7 @@ function inlineExport(
         .find(j.FunctionDeclaration, {
             id: {
                 type: 'Identifier',
-                name: sourceName,
+                name,
             },
         })
         .filter(path => isTopLevel(j, path))
@@ -122,34 +140,29 @@ function inlineExport(
         .find(j.ClassDeclaration, {
             id: {
                 type: 'Identifier',
-                name: sourceName,
+                name,
             },
         })
         .filter(path => isTopLevel(j, path))
 
     if (variableSource.length === 1) {
-        const node = variableSource.get().node
-        const { kind, declarations } = node
-        const sourceDeclaration = declarations[0]
-        if (!j.VariableDeclarator.check(sourceDeclaration)) return
+        const node = variableSource.get().node as VariableDeclaration
+        const kind = node.kind
+        const declarations = node.declarations as VariableDeclarator[]
+        const sourceDeclarator = declarations.find(declarator => j.Identifier.check(declarator.id) && declarator.id.name === name)!
 
-        const { id: sourceId, init: sourceInit } = sourceDeclaration
-        if (!j.Identifier.check(sourceId)) return
+        const { init: sourceInit } = sourceDeclarator
 
         // wrap the declaration with the export
         const variableDeclarator = j.variableDeclarator(
-            j.identifier(sourceName),
+            j.identifier(name),
             sourceInit,
         )
         const exportNamedDeclaration = j.exportNamedDeclaration(
-            j.variableDeclaration(kind, [
-                variableDeclarator,
-            ]),
+            j.variableDeclaration(kind, [variableDeclarator]),
         )
         exportNamedDeclaration.comments = comments
         variableSource.replaceWith(exportNamedDeclaration)
-
-        renameTopLevelVariableDeclaration(context, sourceName, targetName)
     }
     else if (functionSource.length === 1) {
         const sourceDeclaration = functionSource.get().node
@@ -161,7 +174,7 @@ function inlineExport(
         // wrap the declaration with the export
         const exportNamedDeclaration = j.exportNamedDeclaration(
             j.functionDeclaration(
-                j.identifier(sourceName),
+                j.identifier(name),
                 params,
                 body,
                 generator,
@@ -170,8 +183,6 @@ function inlineExport(
         )
         exportNamedDeclaration.comments = comments
         functionSource.replaceWith(exportNamedDeclaration)
-
-        renameTopLevelFunction(context, sourceName, targetName)
     }
     else if (classSource.length === 1) {
         const sourceDeclaration = classSource.get().node
@@ -183,124 +194,20 @@ function inlineExport(
         // wrap the declaration with the export
         const exportNamedDeclaration = j.exportNamedDeclaration(
             j.classDeclaration(
-                j.identifier(sourceName),
+                j.identifier(name),
                 body,
                 superClass,
             ),
         )
         exportNamedDeclaration.comments = comments
         classSource.replaceWith(exportNamedDeclaration)
-
-        renameClassDeclaration(context, sourceName, targetName)
-    }
-    if (variableSource.length === 1 || functionSource.length === 1 || classSource.length === 1) {
-        // remove the original declaration
-        path.prune()
     }
 }
 
-function renameTopLevelVariableDeclaration(
-    context: Context,
-    sourceName: string,
-    targetName: string,
-) {
-    const { root } = context
-    // console.log(`Rename variable declaration ${sourceName} -> ${targetName}`)
+function renameInRoot(j: JSCodeshift, root: Collection<any>, oldName: string, newName: string) {
+    const rootScope = root.find(j.Program).get().scope
+    const binding = rootScope.getBindings()[oldName]?.[0]
+    if (!binding) return
 
-    root.findVariableDeclarators(sourceName)
-        .filter(path => path.scope.isGlobal)
-        .renameTo(targetName)
-}
-
-function renameTopLevelFunction(
-    context: Context,
-    sourceName: string,
-    targetName: string,
-) {
-    const { root, j } = context
-    const path = root.find(j.FunctionDeclaration, {
-        id: {
-            type: 'Identifier',
-            name: sourceName,
-        },
-    }).get()
-    if (!j.Identifier.check(path.node.id)) return
-
-    const { params, body, generator, async } = path.node
-
-    // transform `function a() {}` to `const a = function() {}`
-    const variableDeclarator = j.variableDeclarator(
-        j.identifier(sourceName),
-        j.functionExpression(
-            null,
-            params,
-            body,
-            generator,
-            async,
-        ),
-    )
-    const variableDeclaration = j.variableDeclaration('const', [
-        variableDeclarator,
-    ])
-    path.replace(variableDeclaration)
-
-    // rename all references to the function
-    root.findVariableDeclarators(sourceName)
-        .filter(path => path.scope.isGlobal)
-        .renameTo(targetName)
-
-    // transform `const a = function() {}` back to `function a() {}`
-    const functionDeclaration = j.functionDeclaration(
-        j.identifier(targetName),
-        params,
-        body,
-        generator,
-        async,
-    )
-    console.log(path.node.type)
-    path.replace(functionDeclaration)
-}
-
-function renameClassDeclaration(
-    context: Context,
-    sourceName: string,
-    targetName: string,
-) {
-    const { root, j } = context
-    const path = root.find(j.ClassDeclaration, {
-        id: {
-            type: 'Identifier',
-            name: sourceName,
-        },
-    }).get()
-    if (!j.Identifier.check(path.node.id)) return
-
-    const { body, superClass } = path.node
-
-    // transform `class a {}` to `const a = class {}`
-    const variableDeclarator = j.variableDeclarator(
-        j.identifier(sourceName),
-        j.classExpression(
-            null,
-            body,
-            superClass,
-        ),
-    )
-    const variableDeclaration = j.variableDeclaration('const', [
-        variableDeclarator,
-    ])
-    path.replace(variableDeclaration)
-
-    // rename all references to the class
-    root.findVariableDeclarators(sourceName)
-        .filter(path => path.scope.isGlobal)
-        .renameTo(targetName)
-
-    // transform `const a = class {}` back to `class a {}`
-    const classDeclaration = j.classDeclaration(
-        j.identifier(targetName),
-        body,
-        superClass,
-    )
-    path.replace(classDeclaration)
+    rootScope.rename(oldName, newName)
 }
