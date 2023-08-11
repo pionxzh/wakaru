@@ -1,3 +1,4 @@
+import { transformToMultiStatementContext } from '../utils/transformToMultiStatementContext'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ForStatement } from 'jscodeshift'
@@ -38,9 +39,9 @@ export const transformAST: ASTTransformation = (context) => {
             if (p.parent?.node.type === 'ForStatement') {
                 const { init, test, update } = p.parent.node as ForStatement
                 if (init && j.VariableDeclaration.check(init) && init.kind === 'var') {
-                    const initDeclarations = init.declarations
+                    const initDeclarators = init.declarations
                     // filter out the declarations that are used in test or update
-                    const usedDeclarations = initDeclarations.filter((d) => {
+                    const usedDeclarators = initDeclarators.filter((d) => {
                         if (!j.VariableDeclarator.check(d)) return false
 
                         const { id } = d
@@ -54,11 +55,18 @@ export const transformAST: ASTTransformation = (context) => {
                         return false
                     })
 
-                    if (usedDeclarations.length === initDeclarations.length) return
-                    init.declarations = usedDeclarations
+                    if (usedDeclarators.length === initDeclarators.length) return
+                    init.declarations = usedDeclarators
 
-                    const otherDeclarations = initDeclarations.filter(d => !usedDeclarations.includes(d))
-                    j(p.parent).insertBefore(j.variableDeclaration(init.kind, otherDeclarations))
+                    const otherDeclarators = initDeclarators.filter(d => !usedDeclarators.includes(d))
+                    const otherDeclarations = otherDeclarators.map(d => j.variableDeclaration(init.kind, [d]))
+                    const replacements = [...otherDeclarations, p.parent.node]
+                    transformToMultiStatementContext(j, p.parent, replacements)
+
+                    if (init.declarations.length === 0) {
+                        p.prune()
+                        return
+                    }
                 }
 
                 return
@@ -67,7 +75,8 @@ export const transformAST: ASTTransformation = (context) => {
             const { kind, declarations } = p.node
             if (declarations.length <= 1) return
 
-            j(p).replaceWith(declarations.map(d => j.variableDeclaration(kind, [d])))
+            const replacements = declarations.map(d => j.variableDeclaration(kind, [d]))
+            transformToMultiStatementContext(j, p, replacements)
         })
 }
 
