@@ -16,9 +16,16 @@ c();
 
 inlineTest('split return sequence expression',
   `
+if(a) return b(), c();
+
 return a(), b(), c()
 `,
   `
+if (a) {
+  b();
+  return c();
+}
+
 a();
 b();
 return c();
@@ -125,11 +132,13 @@ try {
 
 inlineTest('split throw sequence expression',
 `
-throw a(), b()
+if(e !== null) throw a(), e
 `,
 `
-a();
-throw b();
+if (e !== null) {
+  a();
+  throw e;
+}
 `,
 )
 

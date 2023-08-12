@@ -13,13 +13,13 @@ export const transformAST: ASTTransformation = (context) => {
 
     root
         .find(j.FunctionDeclaration)
-        .filter((path) => {
-            if (j.MethodDefinition.check(path.parent)) return false
-            if (j.Property.check(path.parent)) return false
-            if (containsThisExpression(path.node)) return false
-            return true
-        })
         .forEach((path) => {
+            if (j.MethodDefinition.check(path.parent.node)) return
+            if (j.Property.check(path.parent.node)) return
+            if (j.ExportDeclaration.check(path.parentPath.node)) return
+            if (j.ExportDefaultDeclaration.check(path.parent.node)) return
+            if (containsThisExpression(path.node)) return
+
             const { node } = path
             const { id } = node
             if (!id) return
