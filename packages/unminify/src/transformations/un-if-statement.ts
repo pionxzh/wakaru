@@ -77,53 +77,53 @@ export const transformAST: ASTTransformation = (context) => {
      * x == 'a' || x == 'b' || x == 'c' && x == 'd'
      */
 
-    /**
-     * Return simple ternary expression
-     *
-     * `return x ? a() : b()` -> `if (x) { return a() } else { return b() }`
-     */
-    root
-        .find(j.ReturnStatement, {
-            argument: {
-                type: 'ConditionalExpression',
-            },
-        })
-        .forEach((path) => {
-            const { test, consequent, alternate } = path.node.argument as ConditionalExpression
-            const consequentReturn = j.blockStatement([j.returnStatement(consequent)])
-            const alternateReturn = j.blockStatement([j.returnStatement(alternate)])
-            const replacement = j.ifStatement(test, consequentReturn, alternateReturn)
-            j(path).replaceWith(replacement)
-        })
+    // /**
+    //  * Return simple ternary expression
+    //  *
+    //  * `return x ? a() : b()` -> `if (x) { return a() } else { return b() }`
+    //  */
+    // root
+    //     .find(j.ReturnStatement, {
+    //         argument: {
+    //             type: 'ConditionalExpression',
+    //         },
+    //     })
+    //     .forEach((path) => {
+    //         const { test, consequent, alternate } = path.node.argument as ConditionalExpression
+    //         const consequentReturn = j.blockStatement([j.returnStatement(consequent)])
+    //         const alternateReturn = j.blockStatement([j.returnStatement(alternate)])
+    //         const replacement = j.ifStatement(test, consequentReturn, alternateReturn)
+    //         j(path).replaceWith(replacement)
+    //     })
 
-    /**
-     * Return simple logical expression
-     * `return x && a()` -> `if (x) { return a() }`
-     * `return x || a()` -> `if (!x) { return a() }`
-     * `return x ?? a()` -> `if (x == null) { return a() }`
-     */
-    root
-        .find(j.ReturnStatement, {
-            argument: {
-                type: 'LogicalExpression',
-                operator: (operator: string) => ['&&', '||', '??'].includes(operator),
-            },
-        })
-        .forEach((path) => {
-            const { node } = path
-            if (!j.LogicalExpression.check(node.argument)) return
+    // /**
+    //  * Return simple logical expression
+    //  * `return x && a()` -> `if (x) { return a() }`
+    //  * `return x || a()` -> `if (!x) { return a() }`
+    //  * `return x ?? a()` -> `if (x == null) { return a() }`
+    //  */
+    // root
+    //     .find(j.ReturnStatement, {
+    //         argument: {
+    //             type: 'LogicalExpression',
+    //             operator: (operator: string) => ['&&', '||', '??'].includes(operator),
+    //         },
+    //     })
+    //     .forEach((path) => {
+    //         const { node } = path
+    //         if (!j.LogicalExpression.check(node.argument)) return
 
-            const { operator, left, right } = node.argument
-            const test = operator === '&&'
-                ? left
-                : operator === '||'
-                    ? j.unaryExpression('!', left)
-                    : j.binaryExpression('==', left, NullIdentifier)
-            const consequent = j.blockStatement([j.returnStatement(right)])
-            const alternate = null
-            const replacement = j.ifStatement(test, consequent, alternate)
-            j(path).replaceWith(replacement)
-        })
+    //         const { operator, left, right } = node.argument
+    //         const test = operator === '&&'
+    //             ? left
+    //             : operator === '||'
+    //                 ? j.unaryExpression('!', left)
+    //                 : j.binaryExpression('==', left, NullIdentifier)
+    //         const consequent = j.blockStatement([j.returnStatement(right)])
+    //         const alternate = null
+    //         const replacement = j.ifStatement(test, consequent, alternate)
+    //         j(path).replaceWith(replacement)
+    //     })
 
     /**
      * Simple ternary expression
@@ -142,6 +142,7 @@ export const transformAST: ASTTransformation = (context) => {
             if (j.SequenceExpression.check(path.parentPath.node)) return
             if (j.VariableDeclarator.check(path.parentPath.node)) return
             if (j.AssignmentExpression.check(path.parentPath.node)) return
+            if (j.ReturnStatement.check(path.parentPath.node)) return
             if (j.ArrowFunctionExpression.check(path.parentPath.node)) return
 
             const { node } = path
@@ -166,14 +167,23 @@ export const transformAST: ASTTransformation = (context) => {
             operator: (operator: string) => ['&&', '||', '??'].includes(operator),
         })
         .forEach((path) => {
+            if (j.Property.check(path.parentPath.node)) return
+            if (j.MemberExpression.check(path.parentPath.node)) return
             if (j.IfStatement.check(path.parentPath.node)) return
             if (j.LogicalExpression.check(path.parentPath.node)) return
+            if (j.ForStatement.check(path.parentPath.node)) return
+            if (j.ReturnStatement.check(path.parentPath.node)) return
             // TODO: need to come up with a better way to handle LogicalExpression in SequenceExpression
             if (j.SequenceExpression.check(path.parentPath.node)) return
             if (j.VariableDeclarator.check(path.parentPath.node)) return
             if (j.AssignmentExpression.check(path.parentPath.node)) return
+            if (j.AssignmentPattern.check(path.parentPath.node)) return
+            if (j.CallExpression.check(path.parentPath.node)) return
             if (j.ConditionalExpression.check(path.parentPath.node)) return
             if (j.ArrowFunctionExpression.check(path.parentPath.node)) return
+            if (j.ExportDeclaration.check(path.parentPath.node)) return
+            if (j.ExportDefaultDeclaration.check(path.parentPath.node)) return
+            if (j.UnaryExpression.check(path.parentPath.node)) return
 
             const { node } = path
             const { operator, left, right } = node
