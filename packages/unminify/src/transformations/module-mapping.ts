@@ -13,7 +13,7 @@ interface Params {
 }
 export const transformAST: ASTTransformation<Params> = (context, params = { moduleMapping: {} }) => {
     const { root, j } = context
-    const { moduleMapping } = params
+    const { moduleMapping = {} } = params
 
     root
         .find(j.CallExpression, {
