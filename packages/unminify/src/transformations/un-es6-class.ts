@@ -1,5 +1,6 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
+import type { AssignmentExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, MemberExpression, VariableDeclarator } from 'jscodeshift'
 
 /**
   * Restore `Class` definition from the constructor and the prototype.
@@ -17,9 +18,10 @@ import type { ASTTransformation } from '../wrapAstTransformation'
   *   }
   *   t.prototype.logger = function logger() {
   *     console.log("Hello", this.name);
-  *   };
+  *   }
   *   t.staticMethod = function staticMethod() {
-  *   return t;
+  *       console.log('static method')
+  *   }
   * })();
   *
   * ->
@@ -29,6 +31,9 @@ import type { ASTTransformation } from '../wrapAstTransformation'
   *     this.name = 'bar'
   *     this.age = 18
   *   }
+  *   get message() {
+  *     return 'Hello' + this.name
+  *   }
   *   logger() {
   *     console.log("Hello", this.name);
   *   }
@@ -37,6 +42,7 @@ import type { ASTTransformation } from '../wrapAstTransformation'
   *   }
   * }
   *
+  * TODO: useDefineForClassFields
   * @see https://babeljs.io/docs/babel-plugin-transform-classes
   * @see https://www.typescriptlang.org/play?target=1#code/MYGwhgzhAEBiD29oG8BQ1oDswFsCmAXNBAC4BOAlpgObrRjWFYCuOARnmXXcPJqWWbAS8MgAps+IgKrUAlCjoYSACwoQAdJLzQAvFlx4l0Veo0Md+gIwAOOgF86IeNUbiFaDBl794IPBrO1GIARAASeCDOIQA0Jmqa2nIA3A50pGAkFMDEJJnZALJ4qvAAJmIexj4QfgFBYgDkGVk5+CWlDXJpGM3Z0FQZmMCWWHgA7nCIoQBmiCFd9kA
   */
@@ -47,122 +53,145 @@ export const transformAST: ASTTransformation = (context) => {
         .find(j.VariableDeclaration, {
             declarations: [
                 {
+                    type: 'VariableDeclarator',
                     id: {
                         type: 'Identifier',
                     },
                     init: {
                         type: 'CallExpression',
                         callee: {
-                            type: (node: any) => node === 'FunctionExpression' || node === 'ArrowFunctionExpression',
+                            type: 'FunctionExpression',
+                            body: {
+                                type: 'BlockStatement',
+                                body: [
+                                    {
+                                        type: 'FunctionDeclaration',
+                                        id: {
+                                            type: 'Identifier',
+                                        },
+                                    },
+                                ],
+                            },
                         },
+                        arguments: args => args.length === 0,
                     },
                 },
             ],
         })
         .forEach((p) => {
-            const { declarations } = p.node
-            if (!declarations) return
-            const decl = declarations[0]
-            if (!decl || !j.VariableDeclarator.check(decl)) return
-            const { id, init } = decl
-            if (!id || !init || !j.Identifier.check(id) || !j.CallExpression.check(init)) return
-            const { name } = id
-            if (!name) return
-            const { callee } = init
-            if (!(j.FunctionExpression.check(callee) || j.ArrowFunctionExpression.check(callee))) return
-            const { body } = callee
-            if (!body || !j.BlockStatement.check(body)) return
-            const { body: bodyBody } = body
-            if (!bodyBody) return
+            const decl = p.node.declarations[0] as unknown as VariableDeclarator
+            const className = (decl.id as Identifier).name
+            const init = decl.init as CallExpression
+            const callee = init.callee as FunctionExpression
+            const bodyBody = callee.body.body
+            if (bodyBody.length < 2) return
+
+            const lastBodyNode = bodyBody[bodyBody.length - 1]
+            if (!j.ReturnStatement.check(lastBodyNode)) return
+            if (!j.Identifier.check(lastBodyNode.argument)) return
+
+            const internalName = lastBodyNode.argument.name
 
             const bodyList: any[] = []
 
-            let internalName = ''
             bodyBody.forEach((bodyNode) => {
-                // drop the last return statement
+                // skip the last return statement
                 if (j.ReturnStatement.check(bodyNode)) return
 
                 // constructor
-                if (j.FunctionDeclaration.check(bodyNode)) {
-                    const { id, params, body } = bodyNode
-                    if (!id || !params || !body) return
-                    const { name } = id
-                    if (!name) return
-                    internalName = name
-                    const { body: bodyBody } = body
-                    if (!bodyBody || bodyBody.length === 0) return
-                    const constructor = j.classMethod(
-                        'constructor',
-                        j.identifier('constructor'),
+                if (j.FunctionDeclaration.check(bodyNode) && bodyNode.id?.name === internalName) {
+                    const { params, body } = bodyNode
+                    if (params.length === 0 && body.body.length === 0) {
+                        // empty constructor
+                        return
+                    }
+
+                    const value = j.functionExpression(
+                        null,
                         params,
                         body,
+                    )
+                    const constructor = j.methodDefinition(
+                        'constructor',
+                        j.identifier('constructor'),
+                        value,
+                        false,
                     )
                     bodyList.push(constructor)
                     return
                 }
 
-                if (j.ExpressionStatement.check(bodyNode) && j.AssignmentExpression.check(bodyNode.expression)) {
-                    const { left, right } = bodyNode.expression
-                    if (!left || !right
-                        || !j.MemberExpression.check(left)
-                        || !j.Identifier.check(left.property)) return
-
-                    const methodName = left.property.name
-
-                    const isPrototypeMethod = j(left).find(j.MemberExpression, {
-                        object: {
-                            type: 'Identifier',
-                            name: internalName,
+                // class instance method
+                // TheClass.prototype.method = function () {}
+                if (j.match(bodyNode, {
+                    type: 'ExpressionStatement',
+                    expression: {
+                        type: 'AssignmentExpression',
+                        operator: '=',
+                        left: {
+                            type: 'MemberExpression',
+                            object: {
+                                type: 'MemberExpression',
+                                object: {
+                                    type: 'Identifier',
+                                    name: internalName,
+                                },
+                                property: {
+                                    type: 'Identifier',
+                                    name: 'prototype',
+                                },
+                            },
+                            property: {
+                                type: 'Identifier' as any,
+                            },
                         },
-                        property: {
-                            type: 'Identifier',
-                            name: 'prototype',
+                        right: {
+                            type: 'FunctionExpression' as any,
                         },
-                    }).size() > 0
+                    },
+                })) {
+                    const { left, right } = (bodyNode as ExpressionStatement).expression as AssignmentExpression
+                    const methodName = ((left as MemberExpression).property as Identifier).name
+                    const classMethod = j.methodDefinition(
+                        'method',
+                        j.identifier(methodName),
+                        right as FunctionExpression,
+                        false,
+                    )
+                    bodyList.push(classMethod)
+                }
 
-                    const isStatic = left.object.type === 'Identifier'
-                        && left.object.name === internalName
-                        && left.property.type === 'Identifier'
-                        && left.property.name !== 'prototype'
-
-                    if (j.FunctionExpression.check(right)) {
-                        // prototype method -> class method
-                        // t.prototype.logger = function logger()...
-                        if (isPrototypeMethod) {
-                            const { params, body } = right
-                            const classMethod = j.classMethod(
-                                'method',
-                                j.identifier(methodName),
-                                params,
-                                body,
-                            )
-                            bodyList.push(classMethod)
-                        }
-
-                        // static method
-                        else if (isStatic) {
-                            const { params, body } = right
-                            const staticMethod = j.classMethod(
-                                'method',
-                                j.identifier(methodName),
-                                params,
-                                j.blockStatement(body.body),
-                                false,
-                                true,
-                            )
-                            bodyList.push(staticMethod)
-                        }
-                    }
-                    else if (isStatic) {
-                        // static property
-                        const staticProperty = j.classProperty(
-                            j.identifier(methodName),
-                            right,
-                            null,
-                            true,
-                        )
-                        bodyList.push(staticProperty)
-                    }
+                // class static method
+                // TheClass.method = function () {}
+                else if (j.match(bodyNode, {
+                    type: 'ExpressionStatement',
+                    expression: {
+                        type: 'AssignmentExpression',
+                        operator: '=',
+                        left: {
+                            type: 'MemberExpression',
+                            object: {
+                                type: 'Identifier',
+                                name: internalName,
+                            },
+                            property: {
+                                type: 'Identifier' as any,
+                            },
+                        },
+                        right: {
+                            type: 'FunctionExpression' as any,
+                        },
+                    },
+                })) {
+                    const { left, right } = (bodyNode as ExpressionStatement).expression as AssignmentExpression
+                    const methodName = ((left as MemberExpression).property as Identifier).name
+                    const staticMethod = j.methodDefinition(
+                        'method',
+                        j.identifier(methodName),
+                        right as FunctionExpression,
+                        true,
+                    )
+                    bodyList.push(staticMethod)
                 }
 
                 // getter / setter
@@ -203,11 +232,11 @@ export const transformAST: ASTTransformation = (context) => {
                     if (getterFn.size() > 0) {
                         const { value } = getterFn.nodes()[0]
                         if (!value || !j.FunctionExpression.check(value)) return
-                        const classMethod = j.classMethod(
+                        const classMethod = j.methodDefinition(
                             'get',
                             j.identifier(propName),
-                            [],
-                            j.blockStatement(value.body.body),
+                            value,
+                            false,
                         )
                         bodyList.push(classMethod)
                     }
@@ -215,11 +244,11 @@ export const transformAST: ASTTransformation = (context) => {
                     if (setterFn.size() > 0) {
                         const { value } = setterFn.nodes()[0]
                         if (!value || !j.FunctionExpression.check(value)) return
-                        const classMethod = j.classMethod(
+                        const classMethod = j.methodDefinition(
                             'set',
                             j.identifier(propName),
-                            value.params,
-                            j.blockStatement(value.body.body),
+                            value,
+                            false,
                         )
                         bodyList.push(classMethod)
                     }
@@ -228,7 +257,7 @@ export const transformAST: ASTTransformation = (context) => {
 
             const classBody = j.classBody(bodyList)
             const classDeclaration = j.classDeclaration(
-                j.identifier(name),
+                j.identifier(className),
                 classBody,
             )
             p.replace(classDeclaration)
