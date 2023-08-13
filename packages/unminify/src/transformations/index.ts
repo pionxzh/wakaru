@@ -28,6 +28,7 @@ import type { Transform } from 'jscodeshift'
 export const transformationMap: {
     [name: string]: Transform
 } = {
+    prettier,
     'module-mapping': moduleMapping,
     'un-sequence-expression1': unSequenceExpression,
     lebab,
@@ -50,5 +51,5 @@ export const transformationMap: {
     'un-sequence-expression3': unSequenceExpression,
     'un-es6-class': unES6Class,
     'un-async-await': unAsyncAwait,
-    prettier,
+    'prettier2': prettier,
 }

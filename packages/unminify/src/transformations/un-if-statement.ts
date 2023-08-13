@@ -1,6 +1,8 @@
+import { transformToMultiStatementContext } from '../utils/transformToMultiStatementContext'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { ConditionalExpression, IfStatement } from 'jscodeshift'
+import type { StatementKind } from 'ast-types/lib/gen/kinds'
+import type { ConditionalExpression } from 'jscodeshift'
 
 /**
  * Unwraps nested ternary expressions into if-else statements.
@@ -41,35 +43,38 @@ export const transformAST: ASTTransformation = (context) => {
      * if(c) { d() }
      * e()
      */
-    while (true) {
-        const conditionExpressionNodes = root.find(j.ConditionalExpression, (node) => {
-            return node.consequent.type === 'ConditionalExpression' || node.alternate.type === 'ConditionalExpression'
+    root
+        .find(j.ExpressionStatement, {
+            expression: (node) => {
+                if (!j.ConditionalExpression.check(node)) return false
+                return j.ConditionalExpression.check(node.consequent)
+                || j.ConditionalExpression.check(node.alternate)
+            },
         })
-        if (!conditionExpressionNodes.size()) break
+        .forEach((path) => {
+            const conditionExpressionNode = path.node.expression as ConditionalExpression
 
-        const path = conditionExpressionNodes.paths()[0]
-        if (path.parentPath.node.type !== 'ExpressionStatement') break
+            const replacements: StatementKind[] = []
+            let tail: ConditionalExpression['alternate'] | null = null
+            const deNested = (conditionExpressionNode: ConditionalExpression) => {
+                const ifStatementNode = j.ifStatement(
+                    conditionExpressionNode.test,
+                    j.blockStatement([j.expressionStatement(conditionExpressionNode.consequent)]),
+                )
+                replacements.push(ifStatementNode)
 
-        const prepend: IfStatement[] = []
-        let tail: any = null
-        const deNested = (conditionExpressionNode: ConditionalExpression) => {
-            const ifStatementNode = j.ifStatement(
-                conditionExpressionNode.test,
-                j.blockStatement([j.expressionStatement(conditionExpressionNode.consequent)]),
-            )
-            prepend.push(ifStatementNode)
-            if (j.ConditionalExpression.check(conditionExpressionNode.alternate)) {
-                deNested(conditionExpressionNode.alternate)
+                if (j.ConditionalExpression.check(conditionExpressionNode.alternate)) {
+                    deNested(conditionExpressionNode.alternate)
+                }
+                else {
+                    tail = conditionExpressionNode.alternate
+                }
             }
-            else {
-                tail = conditionExpressionNode.alternate
-            }
-        }
-        deNested(path.node)
-        j(path).closest(j.ExpressionStatement).insertBefore(prepend)
-        if (tail) j(path).replaceWith(tail)
-        else j(path).remove()
-    }
+            deNested(conditionExpressionNode)
+
+            if (tail) replacements.push(j.expressionStatement(tail))
+            transformToMultiStatementContext(j, path, replacements)
+        })
 
     /**
      * Nested logical expression
@@ -137,13 +142,26 @@ export const transformAST: ASTTransformation = (context) => {
             return j.ConditionalExpression.check(node.expression)
         })
         .forEach((path) => {
+            if (j.Property.check(path.parentPath.node)) return
+            if (j.MemberExpression.check(path.parentPath.node)) return
             if (j.IfStatement.check(path.parentPath.node)) return
             if (j.LogicalExpression.check(path.parentPath.node)) return
+            if (j.ForStatement.check(path.parentPath.node)) return
+            if (j.WhileStatement.check(path.parentPath.node)) return
+            if (j.DoWhileStatement.check(path.parentPath.node)) return
+            if (j.ReturnStatement.check(path.parentPath.node)) return
+            // TODO: need to come up with a better way to handle LogicalExpression in SequenceExpression
             if (j.SequenceExpression.check(path.parentPath.node)) return
             if (j.VariableDeclarator.check(path.parentPath.node)) return
             if (j.AssignmentExpression.check(path.parentPath.node)) return
-            if (j.ReturnStatement.check(path.parentPath.node)) return
+            if (j.AssignmentPattern.check(path.parentPath.node)) return
+            if (j.CallExpression.check(path.parentPath.node)) return
+            if (j.ConditionalExpression.check(path.parentPath.node)) return
             if (j.ArrowFunctionExpression.check(path.parentPath.node)) return
+            if (j.ExportDeclaration.check(path.parentPath.node)) return
+            if (j.ExportDefaultDeclaration.check(path.parentPath.node)) return
+            if (j.BinaryExpression.check(path.parentPath.node)) return
+            if (j.UnaryExpression.check(path.parentPath.node)) return
 
             const { node } = path
             if (!j.ConditionalExpression.check(node.expression)) return
@@ -152,7 +170,7 @@ export const transformAST: ASTTransformation = (context) => {
             const consequentStatement = j.blockStatement([j.expressionStatement(consequent)])
             const alternateStatement = j.blockStatement([j.expressionStatement(alternate)])
             const replacement = j.ifStatement(test, consequentStatement, alternateStatement)
-            j(path).replaceWith(replacement)
+            transformToMultiStatementContext(j, path, [replacement])
         })
 
     /**
@@ -172,6 +190,8 @@ export const transformAST: ASTTransformation = (context) => {
             if (j.IfStatement.check(path.parentPath.node)) return
             if (j.LogicalExpression.check(path.parentPath.node)) return
             if (j.ForStatement.check(path.parentPath.node)) return
+            if (j.WhileStatement.check(path.parentPath.node)) return
+            if (j.DoWhileStatement.check(path.parentPath.node)) return
             if (j.ReturnStatement.check(path.parentPath.node)) return
             // TODO: need to come up with a better way to handle LogicalExpression in SequenceExpression
             if (j.SequenceExpression.check(path.parentPath.node)) return
@@ -183,6 +203,7 @@ export const transformAST: ASTTransformation = (context) => {
             if (j.ArrowFunctionExpression.check(path.parentPath.node)) return
             if (j.ExportDeclaration.check(path.parentPath.node)) return
             if (j.ExportDefaultDeclaration.check(path.parentPath.node)) return
+            if (j.BinaryExpression.check(path.parentPath.node)) return
             if (j.UnaryExpression.check(path.parentPath.node)) return
 
             const { node } = path
@@ -197,7 +218,7 @@ export const transformAST: ASTTransformation = (context) => {
             const consequent = j.blockStatement([j.expressionStatement(right)])
             const alternate = null
             const replacement = j.ifStatement(test, consequent, alternate)
-            j(path).replaceWith(replacement)
+            transformToMultiStatementContext(j, path.parent, [replacement])
         })
 }
 
