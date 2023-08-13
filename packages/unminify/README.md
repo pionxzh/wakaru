@@ -1,9 +1,8 @@
 # @unminify-kit/unminify
 
-If you have been working with minified code, you may have noticed that it is not very readable. This is where these transformations come in. They are a set of functions that can be used to modify the code in a way that makes it more readable.
+This package contains a set of transformations that can be used to unminify code.
 
-- [@unminify-kit/unminify](#unminify-kitunminify)
-    - [`lebab`](#lebab)
+- Rules
   - [Readability](#readability)
     - [`un-boolean`](#un-boolean)
     - [`un-void-0`](#un-void-0)
@@ -18,18 +17,15 @@ If you have been working with minified code, you may have noticed that it is not
   - [Syntax Upgrade](#syntax-upgrade)
     - [`un-template-literal`](#un-template-literal)
     - [`un-es6-class`](#un-es6-class)
-    - [`un-async-await`](#un-async-await)
+    - [`un-async-await` (Experimental)](#un-async-await-experimental)
   - [Clean Up](#clean-up)
     - [`un-es-helper`](#un-es-helper)
     - [`un-strict`](#un-strict)
   - [Style](#style)
     - [`prettier`](#prettier)
-    - [TODO](#todo)
-
-### `lebab`
-
-We use [lebab](https://github.com/lebab/lebab) as a base to unminify the code.\
-With the help of lebab, we can save the work of writing a lot of rules.
+  - [Extra](#extra)
+    - [`lebab`](#lebab)
+  - [TODO](#todo)
 
 ## Readability
 
@@ -220,7 +216,19 @@ Restore template literal syntax from string concatenation.
 Restore `Class` definition from the constructor and the prototype.\
 Currently, this transformation only supports output from **TypeScript**.
 
-Reverse: `Typescript`'s `Class` transpilation
+Supported features:
+- constructor
+- instance properties
+- instance methods
+- static methods
+- static properties
+- getters and setters
+- async method (has limitations from [`un-async-await`](#un-async-await-experimental))
+
+Unsupported features:
+- inheritance
+- decorators
+- private flag(#)
 
 ```diff
 - var Foo = (function() {
@@ -252,7 +260,14 @@ Reverse: `Typescript`'s `Class` transpilation
 + }
 ```
 
-### `un-async-await`
+### `un-async-await` (Experimental)
+
+Restore async/await from helper `__awaiter` and `__generator`.\
+Currently, this transformation only supports output from **TypeScript**.
+
+And it does not handled control flow properly, as it needs to be done by graph analysis.
+
+Please aware there are tons of edge cases that are not covered by this rule.
 
 ```diff
 -function func() {
@@ -311,8 +326,19 @@ Removes the `"use strict"` directive.
 This transformation formats the code with [prettier](https://prettier.io/).
 We usually use this rule to format the code after all the other transformations.
 
-### TODO
+## Extra
 
+### `lebab`
+
+> Lebab transpiles your ES5 code to ES6/ES7. It does exactly the opposite of what Babel does.
+
+We use [lebab](https://github.com/lebab/lebab) as a base to unminify the code.\
+With the help of lebab, we can save the repetitive work of writing the transformations ourselves.
+
+## TODO
+
+- [ ] Better comments preservation
+- [ ] Support variant of syntax downgrade from `TypeScript`, `Babel` and `SWC`
 - [ ] `un-optional-chaining`
 - [ ] `un-nullish-coalescing-operator`
 - [ ] [`babel-plugin-minify-builtins`](https://babeljs.io/docs/babel-plugin-minify-builtins)
