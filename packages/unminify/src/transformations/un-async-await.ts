@@ -98,9 +98,19 @@ export const transformAST: ASTTransformation = (context) => {
  * //                        entering a finally block.
  */
 
-// ES2015 Generator Helpers: __generator
+/**
+ * ES2015 Generator Helpers: __generator
+ *
+ * ```js
+ * function generatorFn() {
+ *  return __generator(thisArg, bodyFn);
+ * }
+ * ```
+ */
 export function transform__generator(context: Context) {
     const { root, j } = context
+
+    // https://github.com/microsoft/TypeScript/blob/634d3a1db5c69c1425119a74045790a4d1dc3046/src/compiler/transformers/generators.ts#L161
 
     root
         .find(j.BlockStatement, {
@@ -160,7 +170,7 @@ export function transform__generator(context: Context) {
              * ]
              */
             const statementsList: any[][] = []
-            cases.forEach((caseStatement) => {
+            cases?.length > 0 && cases.forEach((caseStatement) => {
                 if (!j.Literal.check(caseStatement.test) || typeof caseStatement.test.value !== 'number') return
 
                 const index = caseStatement.test.value
@@ -169,7 +179,17 @@ export function transform__generator(context: Context) {
                 const previousStatements = statementsList[index - 1] || []
 
                 caseStatement.consequent.forEach((statement) => {
-                    // __state.trys.push([0, 1, 3, 4]);
+                    /**
+                     * __state.trys.push([0, 1, 3, 4]);
+                     *
+                     * Mark the start of a protected region.
+                     * [
+                     *   startOfTry,
+                     *   startOfCatch,
+                     *   startOfFinally,
+                     *   nextLabel
+                     * ]
+                     */
                     const isStateTrys = j.match(statement, {
                         type: 'ExpressionStatement',
                         expression: {
@@ -203,35 +223,18 @@ export function transform__generator(context: Context) {
                         return
                     }
 
-                    if (!j.ReturnStatement.check(statement)) {
-                        // `_a.label = 1;`
-                        // not sure about the use case for this
-                        // let's skip it first
-                        const stateLabelAssignment = j.match(statement, {
-                            type: 'ExpressionStatement',
-                            // @ts-expect-error
-                            expression: {
-                                type: 'AssignmentExpression',
-                                operator: '=',
-                                left: {
-                                    type: 'MemberExpression',
-                                    object: {
-                                        type: 'Identifier',
-                                        name: generatorStateName,
-                                    },
-                                    property: {
-                                        type: 'Identifier',
-                                        name: 'label',
-                                    },
-                                },
-                            },
-                        })
-                        if (stateLabelAssignment) {
-                            return
-                        }
-
-                        const stateSentCall = j(statement).find(j.CallExpression, {
-                            callee: {
+                    /**
+                     * `__state.label = 1;`
+                     * goto the label
+                     * but now we don't need it, skip first
+                     */
+                    const stateLabelAssignment = j.match(statement, {
+                        type: 'ExpressionStatement',
+                        // @ts-expect-error
+                        expression: {
+                            type: 'AssignmentExpression',
+                            operator: '=',
+                            left: {
                                 type: 'MemberExpression',
                                 object: {
                                     type: 'Identifier',
@@ -239,55 +242,82 @@ export function transform__generator(context: Context) {
                                 },
                                 property: {
                                     type: 'Identifier',
-                                    name: 'sent',
+                                    name: 'label',
                                 },
                             },
-                        })
-                        if (stateSentCall.length > 0) {
-                            // if the statement parent is ExpressionStatement
-                            // means no one is using the return value
-                            // `_a.sent()`
-                            if (j.ExpressionStatement.check(statement)
-                                && stateSentCall.length === 1
-                                && statement.expression === stateSentCall.get().node) {
-                                return
-                            }
-
-                            // if this is in the catch block
-                            // replace the state.sent() call to Identifier('error')
-                            const isCatchBlock = trysList.some(trys => trys[1] === index)
-                            if (isCatchBlock) {
-                                stateSentCall.replaceWith(j.identifier('error'))
-                                currentStatements.push(statement)
-                                return
-                            }
-
-                            // replace the state.sent() call with the return value
-                            // the value will be get from the last item in the
-                            // statements array
-                            const lastStatement = previousStatements.at(-1)
-                            // It should be the yield statement
-                            if (j.ExpressionStatement.check(lastStatement)
-                                && j.YieldExpression.check(lastStatement.expression)) {
-                                const yieldExpression = lastStatement.expression as YieldExpression
-                                const argument = yieldExpression.argument as ExpressionKind
-                                const yieldArgument = j.yieldExpression(argument)
-                                stateSentCall.replaceWith(yieldArgument)
-                                previousStatements.pop()
-                                if (j.ExpressionStatement.check(statement)) {
-                                    currentStatements.push(j.expressionStatement(statement.expression))
-                                }
-                                else {
-                                    currentStatements.push(statement)
-                                }
-                                return
-                            }
-                        }
-
-                        currentStatements.push(statement)
+                        },
+                    })
+                    if (stateLabelAssignment) {
                         return
                     }
 
+                    /**
+                     * `__state.sent()`
+                     */
+                    const stateSentCall = j(statement).find(j.CallExpression, {
+                        callee: {
+                            type: 'MemberExpression',
+                            object: {
+                                type: 'Identifier',
+                                name: generatorStateName,
+                            },
+                            property: {
+                                type: 'Identifier',
+                                name: 'sent',
+                            },
+                        },
+                    })
+                    if (stateSentCall.length > 0) {
+                        // if the statement parent is ExpressionStatement
+                        // means no one is using the return value
+                        // it's a empty `__state.sent()`
+                        if (j.ExpressionStatement.check(statement)
+                            && stateSentCall.length === 1
+                            && statement.expression === stateSentCall.get().node) {
+                            return
+                        }
+
+                        // if this is in the catch block
+                        // replace the `__state.sent()` call to Identifier('error')
+                        // this will be the error argument in the catch block
+                        const isCatchBlock = trysList.some(trys => trys[1] === index)
+                        if (isCatchBlock) {
+                            stateSentCall.replaceWith(j.identifier('error'))
+                        }
+
+                        // replace `__state.sent()` with the return value
+                        // the value will be get from the last item in the
+                        // statements array
+                        const lastStatement = previousStatements.at(-1)
+                        // It should be the yield statement
+                        if (j.ExpressionStatement.check(lastStatement)
+                            && j.YieldExpression.check(lastStatement.expression)) {
+                            const yieldExpression = lastStatement.expression as YieldExpression
+                            const argument = yieldExpression.argument as ExpressionKind
+                            const yieldArgument = j.yieldExpression(argument)
+                            stateSentCall.replaceWith(yieldArgument)
+                            previousStatements.pop()
+                            if (j.ExpressionStatement.check(statement)) {
+                                currentStatements.push(j.expressionStatement(statement.expression))
+                            }
+                            else {
+                                currentStatements.push(statement)
+                            }
+                            return
+                        }
+                    }
+
+                    /**
+                     * return [opcode, argument]
+                     *
+                     * This naive implementation will not work in control flow.
+                     * We need to collect all the `__state.label`, `__state.sent()`
+                     * and `__state.trys` statements, and the return opcode to
+                     * build the control flow graph.
+                     *
+                     * And then do a data flow analysis to reconstruct the
+                     * correct flow.
+                     */
                     if (j.match(statement, {
                         type: 'ReturnStatement',
                         argument: {
@@ -301,6 +331,7 @@ export function transform__generator(context: Context) {
                         const opcode = (arrayExpression.elements[0] as Literal).value
                         const argument = (arrayExpression.elements[1] || null) as ExpressionKind | null
 
+                        let result: any
                         switch (opcode) {
                             case 0:
                                 // next(value?)
@@ -310,34 +341,36 @@ export function transform__generator(context: Context) {
                                 break
                             case 2:
                                 // return(value)
-                                argument && currentStatements.push(j.returnStatement(argument))
+                                result = argument ? j.returnStatement(argument) : null
                                 break
                             case 3:
                                 // break(label)
                                 break
                             case 4:
                                 // yield(value)
-                                currentStatements.push(j.expressionStatement(j.yieldExpression(argument)))
+                                result = j.expressionStatement(j.yieldExpression(argument))
                                 break
                             case 5:
                                 // yield*(value)
-                                currentStatements.push(j.expressionStatement(j.yieldExpression(j.yieldExpression(argument))))
+                                result = j.expressionStatement(j.yieldExpression(j.yieldExpression(argument)))
                                 break
                             case 6:
                                 // catch(error)
-                                // currentStatements.push(j.throwStatement(argument))
                                 break
                             case 7:
                                 // endfinally
                                 break
                             default:
-                                currentStatements.push(statement)
+                                result = statement
                         }
+
+                        if (result) currentStatements.push(result)
+                        return
                     }
+
+                    currentStatements.push(statement)
                 })
             })
-
-            if (statementsList.length === 0) return
 
             path.parent.node.generator = true
 
@@ -396,7 +429,17 @@ export function transform__generator(context: Context) {
         })
 }
 
-// ES2017 async/await: __awaiter
+/**
+ * ES2017 async/await: __awaiter
+ *
+ * ```js
+ * function asyncAwait() {
+ *   return __awaiter(thisArg, _arguments, promise, generatorFn)
+ * ```
+ *
+ * Currently arguments and promise are not handled.
+ * More samples for the usage of __awaiter are needed.
+ */
 export function transform__awaiter(context: Context) {
     const { root, j } = context
 
