@@ -23,7 +23,6 @@ If you have been working with minified code, you may have noticed that it is not
     - [`un-es-helper`](#un-es-helper)
     - [`un-strict`](#un-strict)
   - [Style](#style)
-    - [`function-to-arrow`](#function-to-arrow)
     - [`prettier`](#prettier)
     - [TODO](#todo)
 
@@ -306,19 +305,6 @@ Removes the `"use strict"` directive.
 ```
 
 ## Style
-
-### `function-to-arrow`
-
-This transformation converts a function declaration to an arrow function(if possible).
-
-```diff
-- function foo() {
--   return 1;
-- }
-+ const foo = () => {
-+   return 1;
-+ }
-```
 
 ### `prettier`
 

@@ -3,7 +3,7 @@ import cjs from '5to6-codemod/transforms/cjs.js'
 
 // @ts-expect-error - no types
 import exports from '5to6-codemod/transforms/exports.js'
-import functionToArrow from './function-to-arrow'
+
 import lebab from './lebab'
 import moduleMapping from './module-mapping'
 import prettier from './prettier'
@@ -42,6 +42,5 @@ export const transformationMap: {
     'un-if-statement': unIfStatement,
     'un-sequence-expression3': unSequenceExpression,
     'un-es6-class': unES6Class,
-    'function-to-arrow': functionToArrow,
     prettier,
 }
