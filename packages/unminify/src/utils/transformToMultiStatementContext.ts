@@ -25,10 +25,11 @@ export function transformToMultiStatementContext(
             return
         }
 
-        if (j.ExpressionStatement.check(parentNode)) {
-            j(currentPath).replaceWith(replacements)
-            return
-        }
+        // if (j.ExpressionStatement.check(parentNode)) {
+        //     j(currentPath).replaceWith(replacements)
+        //     // parentNode.expression = false
+        //     return
+        // }
 
         // Handle IfStatement without block
         if (j.IfStatement.check(parentNode)) {
@@ -63,38 +64,48 @@ export function transformToMultiStatementContext(
             // @ts-expect-error
             (j.WhileStatement.check(parentNode) && parentNode.test === currentPath.node)
             // @ts-expect-error
-         || (j.DoWhileStatement.check(parentNode) && parentNode.test === currentPath.node)
+            || (j.DoWhileStatement.check(parentNode) && parentNode.test === currentPath.node)
             // @ts-expect-error
-            || (j.ForStatement.check(parentNode) && (parentNode.init === currentPath.node || parentNode.update === currentPath.node))) {
-            const blockified = j.callExpression(j.arrowFunctionExpression([], j.blockStatement(replacements)), [])
-            if (j.WhileStatement.check(parentNode) || j.DoWhileStatement.check(parentNode)) {
-                parentNode.test = blockified
-            }
-            else if (j.ForStatement.check(parentNode) && parentNode.init === currentPath.node) {
-                parentNode.init = blockified
-            }
-            // @ts-expect-error
-            else if (j.ForStatement.check(parentNode) && parentNode.update === currentPath.node) {
-                parentNode.update = blockified
-            }
+            || (j.ForStatement.check(parentNode) && (parentNode.init === currentPath.node || parentNode.update === currentPath.node))
+        ) {
+            // const blockified = j.callExpression(j.arrowFunctionExpression([], j.blockStatement(replacements)), [])
+            // if (j.WhileStatement.check(parentNode) || j.DoWhileStatement.check(parentNode)) {
+            //     parentNode.test = blockified
+            // }
+            // else if (j.ForStatement.check(parentNode) && parentNode.init === currentPath.node) {
+            //     parentNode.init = blockified
+            // }
+            // // @ts-expect-error
+            // else if (j.ForStatement.check(parentNode) && parentNode.update === currentPath.node) {
+            //     parentNode.update = blockified
+            // }
 
             return
         }
 
-        if (j.ForStatement.check(parentNode) && parentNode.body === currentPath.node) {
+        // Handle loop body
+        if ((j.ForStatement.check(parentNode) && parentNode.body === currentPath.node)
+         || (j.ForInStatement.check(parentNode) && parentNode.body === currentPath.node)
+         || (j.ForOfStatement.check(parentNode) && parentNode.body === currentPath.node)
+         || (j.WhileStatement.check(parentNode) && parentNode.body === currentPath.node)
+         || (j.DoWhileStatement.check(parentNode) && parentNode.body === currentPath.node)
+        ) {
             parentNode.body = j.blockStatement(replacements)
             return
         }
 
         if (j.LabeledStatement.check(parentNode) && parentNode.body === currentPath.node) {
-            parentNode.body = j.blockStatement(replacements)
+            // parentNode.body = j.blockStatement(replacements)
+            // eslint-disable-next-line no-useless-return
+            return // adding a block statement here would be problematic
         }
 
         // ... potentially handle more cases ...
     }
     catch (e) {
         console.error(e)
-        console.error(source)
-        console.error(replacements.map(r => j(r).toSource()))
+        console.error('Source:', source)
+
+        replacements.forEach(r => console.error(j(r).toSource()))
     }
 }
