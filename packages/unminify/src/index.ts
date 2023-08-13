@@ -28,19 +28,52 @@ export function runTransformations<P extends Record<string, any>>(
         report: () => {},
     }
 
-    let changed = false
-
     const transformFns = arraify(transforms)
-    const result = transformFns.reduce<string>((code, transform) => {
-        const result = transform({ path, source: code }, api, params)
-        changed = changed || (!!result && result !== code)
-        return result ?? code
-    }, fileInfo.source)
+    let code = fileInfo.source
+    for (const transform of transformFns) {
+        try {
+            const newResult = transform({ path, source: code }, api, params)
+            if (newResult) code = newResult
+        }
+        catch (err: any) {
+            if ('loc' in err) {
+                console.error(err)
+
+                const padLeft = (str: string, len: number, char: string) => {
+                    const count = len > str.length ? len - str.length : 0
+                    return `${char.repeat(count)}${str}`
+                }
+                function printLine(line: number, column?: number) {
+                    const lines = code.split('\n')
+                    const lineNumber = padLeft(line.toString(), 5, ' ')
+                    const lineContent = lines[line - 1]
+                    const linePrefix = `${lineNumber} | `
+                    console.error(linePrefix + lineContent)
+
+                    if (column !== undefined) {
+                        const linePointer = `${' '.repeat(linePrefix.length + column - 1)}^`
+                        console.error(linePointer)
+                    }
+                }
+
+                const loc: any = err.loc
+                printLine(loc.line - 2)
+                printLine(loc.line - 1)
+                printLine(loc.line, loc.column)
+                printLine(loc.line + 1)
+                printLine(loc.line + 2)
+            }
+            else {
+                console.error(err)
+            }
+
+            break
+        }
+    }
 
     return {
         path,
-        code: result,
-        skipped: !changed,
+        code,
     }
 }
 
