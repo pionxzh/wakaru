@@ -1,7 +1,7 @@
 import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
-import type { ArrayExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, Literal, ReturnStatement, SwitchStatement, YieldExpression } from 'jscodeshift'
+import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
+import type { ArrayExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, Literal, ReturnStatement, SwitchStatement, ThisExpression, YieldExpression } from 'jscodeshift'
 
 // cSpell:words trys endfinally
 
@@ -65,6 +65,10 @@ import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
   *   yield 3;
   * }
   */
+export const transformAST: ASTTransformation = (context) => {
+    transform__generator(context)
+    transform__awaiter(context)
+}
 
 /**
  * __generator opcode map:
@@ -93,10 +97,11 @@ import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
  * //  7: endfinally       - Ends a finally block, resuming the last instruction prior to
  * //                        entering a finally block.
  */
-export const transformAST: ASTTransformation = (context) => {
+
+// ES2015 Generator Helpers: __generator
+export function transform__generator(context: Context) {
     const { root, j } = context
 
-    // __generator
     root
         .find(j.BlockStatement, {
             body: (body: any) => {
@@ -124,14 +129,13 @@ export const transformAST: ASTTransformation = (context) => {
         })
         .forEach((path) => {
             if (!j.FunctionDeclaration.check(path.parent.node)
-             && !j.FunctionExpression.check(path.parent.node)) return
+                && !j.FunctionExpression.check(path.parent.node)) return
 
             // find the switch statement in __generator
             // collect all the return statements in cases
             // map it to appropriate statements based on
             // the opcode
             // replace the switch statement with the new statements
-
             const returnStatement = path.node.body.find(statement => j.ReturnStatement.check(statement)) as ReturnStatement
             const generatorCallExpression = returnStatement.argument as CallExpression
             const generatorFunctionExpression = generatorCallExpression.arguments[1] as FunctionExpression
@@ -240,13 +244,12 @@ export const transformAST: ASTTransformation = (context) => {
                             },
                         })
                         if (stateSentCall.length > 0) {
-                            console.log('stateSentCall', index, j(statement).toSource())
                             // if the statement parent is ExpressionStatement
                             // means no one is using the return value
                             // `_a.sent()`
                             if (j.ExpressionStatement.check(statement)
-                            && stateSentCall.length === 1
-                            && statement.expression === stateSentCall.get().node) {
+                                && stateSentCall.length === 1
+                                && statement.expression === stateSentCall.get().node) {
                                 return
                             }
 
@@ -254,7 +257,6 @@ export const transformAST: ASTTransformation = (context) => {
                             // replace the state.sent() call to Identifier('error')
                             const isCatchBlock = trysList.some(trys => trys[1] === index)
                             if (isCatchBlock) {
-                                console.log('catch block', j(statement).toSource())
                                 stateSentCall.replaceWith(j.identifier('error'))
                                 currentStatements.push(statement)
                                 return
@@ -266,13 +268,12 @@ export const transformAST: ASTTransformation = (context) => {
                             const lastStatement = previousStatements.at(-1)
                             // It should be the yield statement
                             if (j.ExpressionStatement.check(lastStatement)
-                            && j.YieldExpression.check(lastStatement.expression)) {
+                                && j.YieldExpression.check(lastStatement.expression)) {
                                 const yieldExpression = lastStatement.expression as YieldExpression
                                 const argument = yieldExpression.argument as ExpressionKind
                                 const yieldArgument = j.yieldExpression(argument)
                                 stateSentCall.replaceWith(yieldArgument)
                                 previousStatements.pop()
-                                console.log('replaced', j(lastStatement).toSource())
                                 if (j.ExpressionStatement.check(statement)) {
                                     currentStatements.push(j.expressionStatement(statement.expression))
                                 }
@@ -298,32 +299,36 @@ export const transformAST: ASTTransformation = (context) => {
                         const returnStatement = statement as ReturnStatement
                         const arrayExpression = returnStatement.argument as ArrayExpression
                         const opcode = (arrayExpression.elements[0] as Literal).value
-                        const argument = arrayExpression.elements[1] || null as ExpressionKind | null
+                        const argument = (arrayExpression.elements[1] || null) as ExpressionKind | null
 
                         switch (opcode) {
                             case 0:
-                                currentStatements.push(j.expressionStatement(j.awaitExpression(argument)))
+                                // next(value?)
                                 break
                             case 1:
-                                currentStatements.push(j.throwStatement(argument))
+                                // throw(error)
                                 break
                             case 2:
+                                // return(value)
                                 argument && currentStatements.push(j.returnStatement(argument))
                                 break
                             case 3:
-                                // currentStatements.push(j.breakStatement(argument))
+                                // break(label)
                                 break
                             case 4:
+                                // yield(value)
                                 currentStatements.push(j.expressionStatement(j.yieldExpression(argument)))
                                 break
                             case 5:
+                                // yield*(value)
                                 currentStatements.push(j.expressionStatement(j.yieldExpression(j.yieldExpression(argument))))
                                 break
                             case 6:
-                                currentStatements.push(j.throwStatement(argument))
+                                // catch(error)
+                                // currentStatements.push(j.throwStatement(argument))
                                 break
                             case 7:
-                                // currentStatements.push(j.expressionStatement(j.identifier('endfinally')))
+                                // endfinally
                                 break
                             default:
                                 currentStatements.push(statement)
@@ -337,12 +342,18 @@ export const transformAST: ASTTransformation = (context) => {
             path.parent.node.generator = true
 
             const mappedStatements: any[] = []
+
             // map statements based on the trysList
             statementsList.forEach((statements, index) => {
-                const trys = trysList.find(trys => trys.includes(index))
+                const trys = trysList.find((trys) => {
+                    const start = trys[0]
+                    const end = trys[3] || trys[2] || trys[1]
+                    if (start === null || end === null) return false
+                    return index >= start && index < end
+                })
                 if (trys) {
                     if (trys[0] === index) {
-                        const [tryStart, catchStart, finallyStart, next] = trys
+                        const [tryStart = null, catchStart = null, finallyStart = null, next = null] = trys
                         if (tryStart === null) return
 
                         // end should always be catch or finally, single try block is impossible
@@ -371,6 +382,7 @@ export const transformAST: ASTTransformation = (context) => {
                         const tryStatement = j.tryStatement(tryBlock, catchClause, finallyBlock)
                         mappedStatements.push(tryStatement)
                     }
+                    // other index in trys list should be ignored
                 }
                 else {
                     mappedStatements.push(...statements)
@@ -381,6 +393,47 @@ export const transformAST: ASTTransformation = (context) => {
                 return j.ReturnStatement.check(statement)
             })
             path.node.body.splice(returnStatementIndex, 1, ...mappedStatements)
+        })
+}
+
+// ES2017 async/await: __awaiter
+export function transform__awaiter(context: Context) {
+    const { root, j } = context
+
+    root
+        .find(j.ReturnStatement, {
+            argument: {
+                type: 'CallExpression',
+                callee: {
+                    type: 'Identifier',
+                    name: '__awaiter',
+                },
+                arguments: (args) => {
+                    return args.length === 4
+                        && j.ThisExpression.check(args[0])
+                        && j.FunctionExpression.check(args[3])
+                        && args[3].generator === true
+                },
+            },
+        })
+        .forEach((path) => {
+            if (!j.BlockStatement.check(path.parent.node)) return
+            if (!j.FunctionDeclaration.check(path.parent.parent.node)) return
+
+            const callExpression = path.node.argument as CallExpression
+            const args = callExpression.arguments as [ThisExpression, unknown, unknown, FunctionExpression]
+            const generatorFn = args[3]
+            const statements = generatorFn.body.body
+
+            // replace all yield expressions with await expressions
+            j(statements).find(j.YieldExpression).replaceWith((path) => {
+                return j.awaitExpression(path.node.argument as ExpressionKind)
+            })
+
+            // unwrap the __awaiter call and move the statements to the parent function
+            // mark the parent function as async
+            path.parent.parent.node.async = true
+            path.replace(...statements)
         })
 }
 

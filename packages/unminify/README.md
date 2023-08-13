@@ -292,7 +292,6 @@ We usually use this rule to format the code after all the other transformations.
 
 ### TODO
 
-- [ ] `un-async-await`
 - [ ] `un-optional-chaining`
 - [ ] `un-nullish-coalescing-operator`
 - [ ] [`babel-plugin-minify-builtins`](https://babeljs.io/docs/babel-plugin-minify-builtins)
