@@ -18,6 +18,7 @@ If you have been working with minified code, you may have noticed that it is not
   - [Syntax Upgrade](#syntax-upgrade)
     - [`un-template-literal`](#un-template-literal)
     - [`un-es6-class`](#un-es6-class)
+    - [`un-async-await`](#un-async-await)
   - [Clean Up](#clean-up)
     - [`un-es-helper`](#un-es-helper)
     - [`un-strict`](#un-strict)
@@ -250,6 +251,40 @@ Reverse: `Typescript`'s `Class` transpilation
 +   }
 +   static instance = new Foo("foo");
 + }
+```
+
+### `un-async-await`
+
+```diff
+-function func() {
+-  return __awaiter(this, void 0, void 0, function () {
+-    var result, json;
+-    return __generator(this, function (_a) {
+-      switch (_a.label) {
+-        case 0:
+-          console.log('Before sleep');
+-          return [4 /*yield*/, sleep(1000)];
+-        case 1:
+-          _a.sent();
+-          return [4 /*yield*/, fetch('')];
+-        case 2:
+-          result = _a.sent();
+-          return [4 /*yield*/, result.json()];
+-        case 3:
+-          json = _a.sent();
+-          return [2 /*return*/, json];
+-      }
+-    });
+-  });
+-}
++async function func() {
++  var result, json;
++  console.log('Before sleep');
++  await sleep(1000);
++  result = await fetch('');
++  json = await result.json();
++  return json;
++}
 ```
 
 ## Clean Up
