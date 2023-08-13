@@ -1,7 +1,6 @@
-import { containsThisExpression } from '../utils/containsThisExpression'
-import { createArrowFunctionExpression } from '../utils/createArrowFunctionExpression'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
+import type { FunctionDeclaration, JSCodeshift } from 'jscodeshift'
 
 /**
  * function add(a, b) { return a + b }
@@ -18,7 +17,7 @@ export const transformAST: ASTTransformation = (context) => {
             if (j.Property.check(path.parent.node)) return
             if (j.ExportDeclaration.check(path.parentPath.node)) return
             if (j.ExportDefaultDeclaration.check(path.parent.node)) return
-            if (containsThisExpression(path.node)) return
+            if (j(path.node).find(j.ThisExpression).size() > 0) return
 
             const { node } = path
             const { id } = node
@@ -29,6 +28,18 @@ export const transformAST: ASTTransformation = (context) => {
             ])
             j(path).replaceWith(variableDeclaration)
         })
+}
+
+function createArrowFunctionExpression(j: JSCodeshift, fn: FunctionDeclaration) {
+    const { params, body, async, comments } = fn
+    const arrowFunction = j.arrowFunctionExpression(
+        params,
+        body,
+        false,
+    )
+    arrowFunction.async = async
+    arrowFunction.comments = comments
+    return arrowFunction
 }
 
 export default wrap(transformAST)

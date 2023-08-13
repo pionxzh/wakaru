@@ -2,9 +2,10 @@
 import { isIdentifierName, isKeyword, isStrictReservedWord } from '@babel/helper-validator-identifier'
 
 /**
-   * Check if the input `name` is a valid identifier name
-   * and isn't a reserved word.
-   */
+ * Copied from https://github.com/babel/babel/blob/6e04ebdb33da39d3ad5b6bbda8c42ff3daa8dab2/packages/babel-types/src/validators/isValidIdentifier.ts#L11
+ * Check if the input `name` is a valid identifier name
+ * and isn't a reserved word.
+ */
 export default function isValidIdentifier(
     name: string,
     reserved = true,
