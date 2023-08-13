@@ -1,7 +1,7 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { ExpressionKind } from 'ast-types/gen/kinds'
 import type { ArrayExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, Literal, ReturnStatement, SwitchStatement, YieldExpression } from 'jscodeshift'
+import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 
 // cSpell:words trys endfinally
 

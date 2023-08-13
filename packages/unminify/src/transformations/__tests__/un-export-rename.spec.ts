@@ -73,7 +73,7 @@ export const App = class {};
 )
 
 // FIXME: https://github.com/facebook/jscodeshift/issues/263
-// JSCodeShift and `ast-type` didn't create the correct scope for BlockStatement
+// JSCodeShift and `ast-types` didn't create the correct scope for BlockStatement
 // inlineTest('should handle the scope correctly',
 //   `
 // const a = 1;

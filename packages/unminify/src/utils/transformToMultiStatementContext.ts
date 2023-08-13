@@ -1,4 +1,4 @@
-import type { StatementKind } from 'ast-types/gen/kinds'
+import type { StatementKind } from 'ast-types/lib/gen/kinds'
 import type { ASTPath, JSCodeshift } from 'jscodeshift'
 
 export function transformToMultiStatementContext(

@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  ast-types: ^0.16.1
+
 patchedDependencies:
   ast-types@0.16.1:
     hash: 4gd42rgxtvnbt3gp6vymw5tusq
@@ -228,8 +231,8 @@ importers:
         specifier: workspace:*
         version: link:../ast-utils
       ast-types:
-        specifier: ^0.14.2
-        version: 0.14.2
+        specifier: ^0.16.1
+        version: 0.16.1(patch_hash=4gd42rgxtvnbt3gp6vymw5tusq)
       jscodeshift:
         specifier: ^0.15.0
         version: 0.15.0
@@ -2370,7 +2373,7 @@ packages:
   /@types/jscodeshift@0.11.6:
     resolution: {integrity: sha512-3lJ4DajWkk4MZ1F7q+1C7jE0z0xOtbu0VU/Kg3wdPq2DUvJjySSlu3B5Q/bICrTxugLhONBO7inRUWsymOID/A==}
     dependencies:
-      ast-types: 0.14.2
+      ast-types: 0.16.1(patch_hash=4gd42rgxtvnbt3gp6vymw5tusq)
       recast: 0.20.5
     dev: true
 
@@ -2858,29 +2861,6 @@ packages:
   /assign-symbols@1.0.0:
     resolution: {integrity: sha512-Q+JC7Whu8HhmTdBph/Tq59IoRtoy6KAm5zzPv00WdujX82lbAL8K7WVjne7vdCsAmbF4AYaDOPyO3k0kl8qIrw==}
     engines: {node: '>=0.10.0'}
-    dev: false
-
-  /ast-types@0.10.1:
-    resolution: {integrity: sha512-UY7+9DPzlJ9VM8eY0b2TUZcZvF+1pO0hzMtAyjBYKhOmnvRlqYNYnWdtsMj0V16CGaMlpL0G1jnLbLo4AyotuQ==}
-    engines: {node: '>= 0.8'}
-    dev: false
-
-  /ast-types@0.11.7:
-    resolution: {integrity: sha512-2mP3TwtkY/aTv5X3ZsMpNAbOnyoC/aMJwJSoaELPkHId0nSQgFcnU4dRW3isxiz7+zBexk0ym3WNVjMiQBnJSw==}
-    engines: {node: '>=4'}
-    dev: false
-
-  /ast-types@0.14.2:
-    resolution: {integrity: sha512-O0yuUDnZeQDL+ncNGlJ78BiO4jnYI3bvMsD5prT0/nsgijG/LpNBIr63gTjVTNsiGkgQhiyCShTgxt8oXOrklA==}
-    engines: {node: '>=4'}
-    dependencies:
-      tslib: 2.6.1
-
-  /ast-types@0.15.2:
-    resolution: {integrity: sha512-c27loCv9QkZinsa5ProX751khO9DJl/AcB5c2KNtA6NRvHKS0PgLfcftz72KVq504vB0Gku5s2kUZzDBvQWvHg==}
-    engines: {node: '>=4'}
-    dependencies:
-      tslib: 2.6.1
     dev: false
 
   /ast-types@0.16.1(patch_hash=4gd42rgxtvnbt3gp6vymw5tusq):
@@ -5502,7 +5482,7 @@ packages:
     resolution: {integrity: sha512-y7ANxCWmMW8xLOaiopiRDlyjQ9ajKRENBH+2wjntIbk3A6ZR1+BLQttkmSHMY7Arl+AAZFwJ10grg2T6f1WI8A==}
     engines: {node: '>= 0.8'}
     dependencies:
-      ast-types: 0.10.1
+      ast-types: 0.16.1(patch_hash=4gd42rgxtvnbt3gp6vymw5tusq)
       core-js: 2.6.12
       esprima: 4.0.1
       private: 0.1.8
@@ -5513,7 +5493,7 @@ packages:
     resolution: {integrity: sha512-O/7qXi51DPjRVdbrpNzoBQH5dnAPQNbfoOFyRiUwreTMJfIHYOEBzwuH+c0+/BTSJ3CQyKs6ILSWXhESH6Op3A==}
     engines: {node: '>= 4'}
     dependencies:
-      ast-types: 0.11.7
+      ast-types: 0.16.1(patch_hash=4gd42rgxtvnbt3gp6vymw5tusq)
       esprima: 4.0.1
       private: 0.1.8
       source-map: 0.6.1
@@ -5523,7 +5503,7 @@ packages:
     resolution: {integrity: sha512-E5qICoPoNL4yU0H0NoBDntNB0Q5oMSNh9usFctYniLBluTthi3RsQVBXIJNbApOlvSwW/RGxIuokPcAc59J5fQ==}
     engines: {node: '>= 4'}
     dependencies:
-      ast-types: 0.14.2
+      ast-types: 0.16.1(patch_hash=4gd42rgxtvnbt3gp6vymw5tusq)
       esprima: 4.0.1
       source-map: 0.6.1
       tslib: 2.6.1
@@ -5534,7 +5514,7 @@ packages:
     engines: {node: '>= 4'}
     dependencies:
       assert: 2.0.0
-      ast-types: 0.15.2
+      ast-types: 0.16.1(patch_hash=4gd42rgxtvnbt3gp6vymw5tusq)
       esprima: 4.0.1
       source-map: 0.6.1
       tslib: 2.6.1

@@ -1,5 +1,5 @@
 import { isFunctionExpression } from '@unminify-kit/ast-utils'
-import type { ExpressionKind } from 'ast-types/gen/kinds'
+import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { Collection, ExportDefaultDeclaration, ExportNamedDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, ObjectProperty } from 'jscodeshift'
 
 /**

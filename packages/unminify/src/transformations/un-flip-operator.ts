@@ -1,6 +1,6 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { ExpressionKind } from 'ast-types/gen/kinds'
+import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { BinaryExpression, JSCodeshift } from 'jscodeshift'
 
 const equalityOperators = [

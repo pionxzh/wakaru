@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "@unminify-kit/ast-utils": "workspace:*",
-    "ast-types": "^0.14.2",
+    "ast-types": "^0.16.1",
     "jscodeshift": "^0.15.0",
     "picocolors": "^1.0.0"
   },
