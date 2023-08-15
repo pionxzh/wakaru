@@ -35,7 +35,7 @@
     "jscodeshift": "^0.15.0",
     "lebab": "^3.2.1",
     "picocolors": "^1.0.0",
-    "prettier": "^2.8.8",
+    "prettier": "^3.0.2",
     "yargs": "^17.7.2"
   },
   "devDependencies": {
