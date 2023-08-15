@@ -1,9 +1,3 @@
-// @ts-expect-error - no types
-import cjs from '5to6-codemod/transforms/cjs.js'
-
-// @ts-expect-error - no types
-import exports from '5to6-codemod/transforms/exports.js'
-
 import lebab from './lebab'
 import moduleMapping from './module-mapping'
 import prettier from './prettier'
@@ -12,6 +6,7 @@ import unBoolean from './un-boolean'
 import unBracketNotation from './un-bracket-notation'
 import unEsHelper from './un-es-helper'
 import unES6Class from './un-es6-class'
+import unEsm from './un-esm'
 import unExportRename from './un-export-rename'
 import unFlipComparisons from './un-flip-operator'
 import unIfStatement from './un-if-statement'
@@ -32,8 +27,7 @@ export const transformationMap: {
     'module-mapping': moduleMapping,
     'un-sequence-expression1': unSequenceExpression,
     lebab,
-    cjs,
-    exports,
+    'un-esm': unEsm,
     'un-export-rename': unExportRename,
     'un-use-strict': unUseStrict,
     'un-es-helper': unEsHelper,
@@ -51,5 +45,5 @@ export const transformationMap: {
     'un-sequence-expression3': unSequenceExpression,
     'un-es6-class': unES6Class,
     'un-async-await': unAsyncAwait,
-    'prettier2': prettier,
+    'prettier-last': prettier,
 }
