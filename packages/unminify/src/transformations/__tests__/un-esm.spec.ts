@@ -74,8 +74,6 @@ inlineTest('named export function', 'module.exports.foo = function() {};', 'expo
 inlineTest('named export function with name', 'module.exports.foo = function bar() {};', 'export const foo = function bar() {};')
 inlineTest('named export class', 'module.exports.foo = class {};', 'export const foo = class {};')
 
-// TODO: a new rule to convert export const foo = function() {} to export function foo() {}
-
 inlineTest('named exports strategy',
   `
 function same() {}

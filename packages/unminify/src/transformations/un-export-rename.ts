@@ -3,6 +3,8 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ASTPath, Collection, ExportNamedDeclaration, ExportSpecifier, Identifier, JSCodeshift, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
+// TODO: convert export const foo = function() {} to export function foo() {} ?
+
 /**
  * const a = 1
  * export const b = a
@@ -31,6 +33,7 @@ import type { ASTPath, Collection, ExportNamedDeclaration, ExportSpecifier, Iden
  * export default x
  * ->
  * export default <anything>
+ * // TODO: wrong: removing the x variable declaration will cause error
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
