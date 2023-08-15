@@ -12,21 +12,42 @@ import type { ASTTransformation } from '../wrapAstTransformation'
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 
-    const defineEsModule = root.find(j.ExpressionStatement, {
-        expression: {
-            type: 'CallExpression',
-            callee: {
-                type: 'MemberExpression',
-                object: { type: 'Identifier', name: 'Object' },
-                property: { type: 'Identifier', name: 'defineProperty' },
+    /**
+     * Target: ES5+
+     * Object.defineProperty(exports, '__esModule', { value: true })
+     */
+    root
+        .find(j.ExpressionStatement, {
+            expression: {
+                type: 'CallExpression',
+                callee: {
+                    type: 'MemberExpression',
+                    object: { type: 'Identifier', name: 'Object' },
+                    property: { type: 'Identifier', name: 'defineProperty' },
+                },
+                arguments: [
+                    { type: 'Identifier', name: 'exports' } as const,
+                    { type: 'Literal', value: '__esModule' } as const,
+                ],
             },
-            arguments: [
-                { type: 'Identifier', name: 'exports' } as const,
-                { type: 'Literal', value: '__esModule' } as const,
-            ],
-        },
-    })
-    defineEsModule.remove()
+        })
+        .remove()
+
+    /**
+     * Target: ES3
+     * exports.__esModule = true
+     */
+    root
+        .find(j.AssignmentExpression, {
+            left: {
+                type: 'MemberExpression',
+                object: { type: 'Identifier', name: 'exports' },
+                property: { type: 'Identifier', name: '__esModule' },
+            },
+            operator: '=',
+            right: { type: 'Literal', value: true },
+        })
+        .remove()
 }
 
 export default wrap(transformAST)
