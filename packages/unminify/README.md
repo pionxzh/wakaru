@@ -122,6 +122,7 @@ Separate variable declarators that are not used in for statements.
 ```
 
 ### `un-bracket-notation`
+
 Transform bracket notation to dot notation.\
 Reverse: [babel-plugin-transform-member-expression-literals](https://babeljs.io/docs/babel-plugin-transform-member-expression-literals)
 
@@ -132,6 +133,16 @@ Reverse: [babel-plugin-transform-member-expression-literals](https://babeljs.io/
 - obj['var']
 + obj['var']
 ```
+
+### `un-while`
+
+Transform `for(;;)` to `while(true)`.
+
+```diff
+- for (;;) {}
++ while (true) {}
+```
+
 ### `un-flip-operator`
 
 Flips comparisons that are in the form of "literal comes first" to "literal comes second".\

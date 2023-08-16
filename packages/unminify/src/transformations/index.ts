@@ -18,6 +18,7 @@ import unTemplateLiteral from './un-template-literal'
 import unUseStrict from './un-use-strict'
 import unVariableMerging from './un-variable-merging'
 import unVoid0 from './un-void-0'
+import unWhile from './un-while'
 import type { Transform } from 'jscodeshift'
 
 export const transformationMap: {
@@ -36,6 +37,7 @@ export const transformationMap: {
     'un-infinity': unInfinity,
     'un-number-literal': unNumberLiteral,
     'un-template-literal': unTemplateLiteral,
+    'un-while': unWhile,
     'un-bracket-notation': unBracketNotation,
     'un-flip-comparisons': unFlipComparisons,
     'un-variable-merging': unVariableMerging,
