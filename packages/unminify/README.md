@@ -213,6 +213,33 @@ Unwraps nested ternary expressions into switch statement.
 
 ## Syntax Upgrade
 
+### `un-esm`
+
+Transform CommonJS's `require` and `module.exports` to ES6's `import` and `export`.
+
+```diff
+- const foo = require('foo')
+- var { bar } = require('bar')
+- var baz = require('baz').baz
+- require('side-effect')
++ import foo from 'foo'
++ import { bar } from 'bar'
++ import { baz } from 'baz'
++ import 'side-effect'
+```
+
+```diff
+- module.exports.foo = 1
+- exports.bar = bar
++ export const foo = 1
++ export { bar }
+```
+
+```diff
+- module.exports.default = foo
++ export default foo
+```
+
 ### `un-template-literal`
 
 Restore template literal syntax from string concatenation.
