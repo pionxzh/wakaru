@@ -100,8 +100,8 @@ importers:
         specifier: ^3.0.3
         version: 3.0.3(@fortawesome/fontawesome-svg-core@6.4.2)(vue@3.3.4)
       '@headlessui/vue':
-        specifier: ^1.7.15
-        version: 1.7.15(vue@3.3.4)
+        specifier: ^1.7.16
+        version: 1.7.16(vue@3.3.4)
       '@heroicons/vue':
         specifier: ^2.0.18
         version: 2.0.18(vue@3.3.4)
@@ -2143,8 +2143,8 @@ packages:
       vue: 3.3.4
     dev: false
 
-  /@headlessui/vue@1.7.15(vue@3.3.4):
-    resolution: {integrity: sha512-3ozVEgQ8mw09nWvUPN+8S6C8l3SM0lVT1aEN/+oP5Y4LF0WNMM9UrVisVTN9LLQ06v/X3EFA0blyL/vg8XNZlg==}
+  /@headlessui/vue@1.7.16(vue@3.3.4):
+    resolution: {integrity: sha512-nKT+nf/q6x198SsyK54mSszaQl/z+QxtASmgMEJtpxSX2Q0OPJX0upS/9daDyiECpeAsvjkoOrm2O/6PyBQ+Qg==}
     engines: {node: '>=10'}
     peerDependencies:
       vue: ^3.2.0
