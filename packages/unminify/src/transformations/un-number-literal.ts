@@ -4,6 +4,7 @@ import type { NumericLiteral } from 'jscodeshift'
 
 /**
  * Transform number literal to its decimal representation.
+ * A comment will be added to the end of the line to indicate the original representation.
  *
  * Including:
  * - Decimal (Base 10)
@@ -32,7 +33,15 @@ export const transformAST: ASTTransformation = (context) => {
             if (typeof value !== 'number') return
 
             if (raw && raw !== value.toString()) {
-                path.replace(j.numericLiteral(value))
+                const originalComment = path.node.comments || []
+                console.log(path.parent.node.type)
+                const operator = j.UnaryExpression.check(path.parent.node) && path.parent.node.operator === '-'
+                    ? '-'
+                    : ''
+                const comment = j.commentBlock(` ${operator}${raw} `, false, true)
+                const decimalRepresentation = j.numericLiteral(value)
+                decimalRepresentation.comments = [...originalComment, comment]
+                path.replace(decimalRepresentation)
             }
         })
 }

@@ -66,18 +66,19 @@ Reverse: [babel-plugin-minify-infinity](https://babeljs.io/docs/babel-plugin-min
 
 ### `un-number-literal`
 Transform number literal to its decimal representation.\
+A comment will be added to the end of the line to indicate the original representation.\
 Reverse: [babel-plugin-minify-numeric-literals](https://babeljs.io/docs/babel-plugin-minify-numeric-literals)
 
 
 ```diff
 - 1e3
-+ 1000
++ 1000 /* 1e3 */
 
 - 0b101010
-+ 42
++ 42 /* 0b101010 */
 
 - 0x123
-+ 291
++ 291 /* 0x123 */
 ```
 
 ### `un-sequence-expression`
