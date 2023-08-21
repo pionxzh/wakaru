@@ -13,9 +13,6 @@ import type { ASTTransformation } from '../wrapAstTransformation'
  * - `ArrowFunctionExpression`
  * - `SwitchCase`
  *
- * Our many rules rely on having a `BlockStatement` to safely insert new nodes.
- * And this can potentially improve the readability.
- *
  * @example
  * for (let i = 0; i < 10; i++) console.log(i)
  * ->

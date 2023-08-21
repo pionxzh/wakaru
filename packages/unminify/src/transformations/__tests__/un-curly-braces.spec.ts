@@ -1,4 +1,4 @@
-import transform from '../un-block-statement'
+import transform from '../un-curly-braces'
 import { defineInlineTest } from './test-utils'
 
 const inlineTest = defineInlineTest(transform)
