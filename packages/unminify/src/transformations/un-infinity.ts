@@ -8,6 +8,7 @@ import type { ASTTransformation } from '../wrapAstTransformation'
  * `1 / 0` -> `Infinity`
  *
  * @see https://babeljs.io/docs/babel-plugin-minify-infinity
+ * @see Terser: `keep_infinity`
  * @see https://github.com/terser/terser/blob/931f8a5fd548795faae0da1fa9eafa3f2ad1647b/lib/compress/index.js#L2641
  */
 export const transformAST: ASTTransformation = (context) => {

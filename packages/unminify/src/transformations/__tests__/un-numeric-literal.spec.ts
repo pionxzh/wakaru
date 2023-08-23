@@ -1,4 +1,4 @@
-import transform from '../un-number-literal'
+import transform from '../un-numeric-literal'
 import { defineInlineTest } from './test-utils'
 
 const inlineTest = defineInlineTest(transform)

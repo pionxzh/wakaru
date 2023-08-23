@@ -1,4 +1,4 @@
-import transform from '../un-while'
+import transform from '../un-while-loop'
 import { defineInlineTest } from './test-utils'
 
 const inlineTest = defineInlineTest(transform)

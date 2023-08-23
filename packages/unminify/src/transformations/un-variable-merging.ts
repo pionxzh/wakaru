@@ -22,6 +22,7 @@ import type { ForStatement } from 'jscodeshift'
  *
  *
  * @see https://babeljs.io/docs/babel-plugin-transform-merge-sibling-variables
+ * @see https://github.com/terser/terser/blob/master/test/compress/join-vars.js
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

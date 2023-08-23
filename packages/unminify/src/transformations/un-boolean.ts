@@ -10,6 +10,7 @@ import type { Literal } from 'jscodeshift'
  * !1 -> false
  *
  * @see https://babeljs.io/docs/babel-plugin-transform-minify-booleans
+ * @see Terser: `booleans_as_integers`
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

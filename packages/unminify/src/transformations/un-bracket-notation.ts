@@ -10,8 +10,8 @@ import type { Literal } from 'jscodeshift'
  * obj['bar'] -> obj.bar
  * obj['var'] -> obj['var']
  *
- * @see
- * https://babeljs.io/docs/babel-plugin-transform-member-expression-literals
+ * @see https://babeljs.io/docs/babel-plugin-transform-member-expression-literals
+ * @see https://github.com/terser/terser/blob/master/test/compress/properties.js
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

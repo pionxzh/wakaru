@@ -11,6 +11,7 @@ import type { SequenceExpression, VariableDeclaration } from 'jscodeshift'
  * `return a(), b()` -> `a(); return b()`
  *
  * @see https://babeljs.io/docs/babel-helper-to-multiple-sequence-expressions
+ * @see https://github.com/terser/terser/blob/master/test/compress/sequences.js
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

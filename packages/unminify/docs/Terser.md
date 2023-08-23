@@ -1,0 +1,83 @@
+# Terser
+
+This is the tracking list of support status of the reversion of [compressor options](https://github.com/terser/terser#compress-options) in Terser.
+
+- ~~Strike through~~ means the option is invalid, or not possible to be reversed, or out of the scope of this project.
+- The question mark `?` means the viability of the option is not being thoroughly considered.
+- We will replicate the behavior of some rules in Terser as they do a great job on readability improvement.
+
+---
+
+- [ ] arguments
+  - TODO: priority `low`.
+  - We can do the same thing this rule does as some obfuscator might use arguments to obfuscate.
+- [ ] arrows
+  - TODO: priority `low`.
+  - We can improve `function-to-arrow` rule to follow the same strategy.
+- [X] ~~booleans_as_integers~~
+  - `a === true` will be converted to `a == 1`.
+  - It is risky to reverse a loose equality.
+- [X] booleans
+  - `un-boolean`
+- [X] ~~collapse_vars~~: Lossy compression. No valuable pattern to be reversed.
+- [ ] comparisons
+- [ ] computed_props
+  - TODO:
+- [X] conditionals
+  - `un-if-statement`
+- [X] ~~dead_code~~
+- [X] ~~defaults~~
+- [X] ~~directives~~
+- [X] ~~drop_console~~
+- [X] ~~drop_debugger~~
+- [X] ~~ecma~~
+- [X] ~~evaluate~~: Lossy compression.
+- [X] ~~expression~~
+- [X] ~~global_defs~~
+- [X] ~~hoist_funs~~
+- [X] ~~hoist_props~~: Lossy compression.
+- [X] ~~hoist_vars~~
+- [X] ~~ie8~~
+- [X] if_return
+  - `un-if-statement`
+- [X] ~~inline~~
+- [X] join_vars
+  - `un-variable-merging`
+- [X] ~~keep_classnames~~
+- [X] ~~keep_fargs~~
+- [X] ~~keep_fnames~~
+- [X] keep_infinity
+- [ ] loops
+  - TODO: priority `high`. We already covered part of the cases.
+  - `un-while-loop`.
+- [X] ~~module~~
+- [X] ~~negate_iife~~: No readability improvement.
+- [X] ~~passes~~
+- [X] properties
+  - `un-bracket-notation`
+- [X] ~~pure_funcs~~
+- [X] ~~pure_getters~~
+- [X] ~~reduce_funcs~~
+- [X] ~~reduce_vars~~: Lossy compression.
+- [X] sequences
+  - `un-sequence-expression`
+- [X] ~~side_effects~~
+- [X] ~~switches~~: Lossy compression.
+- [X] ~~top_retain~~
+- [X] ~~toplevel~~
+- [X] ~~typeofs~~: No readability improvement.
+- [X] ~~unsafe~~
+  - It did a great job on readability improvement. And we don't need to reverse it.
+- [ ] unsafe_arrows
+  - See `arrows`.
+- [X] ~~unsafe_comps~~: Lossy compression.
+- [X] ~~unsafe_Function~~
+- [X] ~~unsafe_math~~: Lossy compression.
+- [X] ~~unsafe_symbols~~: Lossy compression.
+- [X] ~~unsafe_methods~~: No readability improvement.
+- [ ] unsafe_proto
+  - TODO: priority `medium`.
+- [X] ~~unsafe_regexp~~
+- [x] unsafe_undefined:
+  - `un-void-0`
+- [X] ~~unused~~

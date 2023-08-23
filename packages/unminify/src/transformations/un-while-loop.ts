@@ -14,7 +14,7 @@ import type { ASTTransformation } from '../wrapAstTransformation'
  * ->
  * while(true) { ... }
  *
- *
+ * @see https://github.com/terser/terser/blob/27c0a3b47b429c605e2243df86044fc00815060f/test/compress/loops.js#L217
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

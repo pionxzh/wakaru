@@ -7,7 +7,7 @@ This package contains a set of transformations that can be used to unminify code
     - [`un-boolean`](#un-boolean)
     - [`un-void-0`](#un-void-0)
     - [`un-infinity`](#un-infinity)
-    - [`un-number-literal`](#un-number-literal)
+    - [`un-numeric-literal`](#un-numeric-literal)
     - [`un-sequence-expression`](#un-sequence-expression)
     - [`un-variable-merging`](#un-variable-merging)
     - [`un-bracket-notation`](#un-bracket-notation)
@@ -64,8 +64,8 @@ Reverse: [babel-plugin-minify-infinity](https://babeljs.io/docs/babel-plugin-min
 + -Infinity
 ```
 
-### `un-number-literal`
-Transform number literal to its decimal representation.\
+### `un-numeric-literal`
+Transform numeric literal to its decimal representation.\
 A comment will be added to the end of the line to indicate the original representation.\
 Reverse: [babel-plugin-minify-numeric-literals](https://babeljs.io/docs/babel-plugin-minify-numeric-literals)
 
@@ -135,7 +135,7 @@ Reverse: [babel-plugin-transform-member-expression-literals](https://babeljs.io/
 + obj['var']
 ```
 
-### `un-while`
+### `un-while-loop`
 
 Transform `for(;;)` to `while(true)`.
 
