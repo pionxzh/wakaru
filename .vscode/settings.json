@@ -33,5 +33,11 @@
     "testcase",
     "testcases",
     "unminify"
-  ]
+  ],
+  "markdown.extension.toc.omittedFromToc": {
+    "packages/unminify/README.md": [
+      "## Table of Contents"
+    ]
+  },
+  "markdown.extension.toc.levels": "2..6"
 }
