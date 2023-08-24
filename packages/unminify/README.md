@@ -1,6 +1,14 @@
 # @unminify-kit/unminify
 
 This package offers a comprehensive set of transformation rules designed to unminify and enhance the readability of code.
+
+It covered most of patterns that are used by the following tools:
+- [Terser](https://terser.org/) (Check the [Progress](./docs/Terser.md))
+- [Babel](https://babeljs.io/) (Check the [Progress](./docs/Babel.md))
+- [SWC](https://swc.rs/) (Check the [Progress](./docs/SWC.md))
+- [TypeScript](https://www.typescriptlang.org/)
+
+## Table of Contents
 - Rules
   - [Readability](#readability)
     - [`un-boolean`](#un-boolean)
@@ -176,8 +184,8 @@ Reverse: [babel-plugin-minify-guarded-expressions](https://babeljs.io/docs/babel
 + }
 ```
 
-This rule will try to do more by adopting `Early Exit` pattern (on statement level).\
-// TODO
+This rule will try to do more by adopting `Early Exit` pattern (on statement level).
+
 ```diff
 - a ? b() : c ? d() : e()
 + if(a) {
@@ -303,7 +311,7 @@ Unsupported features:
 Restore async/await from helper `__awaiter` and `__generator`.\
 Currently, this transformation only supports output from **TypeScript**.
 
-And it does not handled control flow properly, as it needs control glow / graph analysis.
+And it does not handled control flow properly, as it needs graph analysis.
 
 Please aware there are tons of edge cases that are not covered by this rule.
 

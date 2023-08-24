@@ -1,54 +1,44 @@
 # Unminify Kit
 
-🔪📦 An collection of jscodeshift rules to unminify your code.
+🔪📦 Reverse-engineer bundled JavaScript code and bring it back to a human-friendly format.
 
-## Introduction
+## 🌟 Features
 
-The ultimate goal of this project is to improve the readability of the minified code.\
-This is useful for you to reverse engineer without the source code.
+### Unpacker
 
-It provides a set of rules to reverse the minification process from:
-- **Most** of [babel-preset-minify](https://babeljs.io/docs/babel-preset-minify)
-- **Some** of [terser](https://terser.org)
-- **Some** of transpilation from [Typescript](https://www.typescriptlang.org/)
-- ... and more
+Converts bundled JavaScript into separate modules
 
-## Why?
+Supports the following bundlers:
+  - [webpack](https://webpack.js.org/)
+  - [browserify](http://browserify.org/)
 
-I have intermittently worked on plugins for io games for a long time.\
-So reading through minified code to understand the game logic is a common task for me.
+### Unminify
 
-I have tried many tools to unminify the code, but none of them can meet my needs.\
-Most of them cannot even beautify the code correctly. So I decided to build my own one.
+Converts transpiled code back to its readable form and restores downgraded syntaxes.
 
+Supports the following transpilers:
+  - [Terser](https://terser.org/)
+  - [Babel](https://babeljs.io/)
+  - [SWC](https://swc.rs/)
+  - [TypeScript](https://www.typescriptlang.org/)
 
-## Features
+See [Unminify Documentation](./packages/unminify/README.md) for the full list of supported rules.
 
--
+## 🕹 Try it out
 
-## Installation
+Test the tool and see it in action: [Playground](https://unminify-kit.github.io/playground/)
 
-```bash
-npm install @unminify-kit/core
-```
-
-## Command Line
+## 🖥 Command Line Interface
 
 ```bash
-npx @unminify-kit/core [input] [options]
+npx @unminify-kit/core [options] <file>
 ```
+
+
+## Motivation
+
+Over the course of developing plugins for io games, the need to understand game logic behind minified code became a recurring challenge. Existing tools often failed to produce readable code, and were often limited to a single bundler or transpiler. Unminify Kit was created to address these issues, and provide a single tool capable of handling a wide variety of bundlers and transpilers.
 
 ## Legal Disclaimer
 
-Usage of unminify-kit for attacking targets without prior mutual consent is illegal. It's the end user's responsibility to obey all applicable local, state and federal laws. Developers assume no liability and are not responsible for any misuse or damage caused by this program.
-
-## Similar Projects
-
-- [lebab](https://github.com/lebab/lebab)
-- [retidy](https://github.com/Xmader/retidy)
-- [unminify](https://github.com/shapesecurity/unminify)
-- [5to6-codemod](https://github.com/5to6/5to6-codemod)
-
-- [debundle](https://github.com/1egoman/debundle)
-- [de4js](https://github.com/lelinhtinh/de4js)
-- [webpack-unpack](https://github.com/goto-bus-stop/webpack-unpack)
+Usage of unminify-kit for attacking targets without prior mutual consent is illegal. It is the end user's responsibility to obey all applicable local, state and federal laws. Developers assume no liability and are not responsible for any misuse or damage caused by this program.
