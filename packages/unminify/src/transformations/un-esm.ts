@@ -20,7 +20,7 @@ interface Params {
 }
 
 /**
- * Transform cjs require/exports syntax to esm import/export syntax
+ * Converts cjs require/exports syntax to esm import/export syntax
  *
  * @example
  * var foo = require('foo')
@@ -51,6 +51,7 @@ export const transformAST: ASTTransformation<Params> = (context, params) => {
  * Limitations:
  * - require with variable cannot be transformed
  */
+// TODO: hoist
 function transformImport(context: Context, hoist: boolean) {
     const { root, j } = context
 

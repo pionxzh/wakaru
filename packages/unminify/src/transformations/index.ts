@@ -4,9 +4,9 @@ import prettier from './prettier'
 import unAsyncAwait from './un-async-await'
 import unBoolean from './un-boolean'
 import unBracketNotation from './un-bracket-notation'
-import unEsHelper from './un-es-helper'
 import unES6Class from './un-es6-class'
 import unEsm from './un-esm'
+import unEsModuleFlag from './un-esmodule-flag'
 import unExportRename from './un-export-rename'
 import unFlipComparisons from './un-flip-operator'
 import unIfStatement from './un-if-statement'
@@ -31,7 +31,7 @@ export const transformationMap: {
     'un-esm': unEsm,
     'un-export-rename': unExportRename,
     'un-use-strict': unUseStrict,
-    'un-es-helper': unEsHelper,
+    'un-esmodule-flag': unEsModuleFlag,
     'un-boolean': unBoolean,
     'un-undefined': unUndefined,
     'un-infinity': unInfinity,

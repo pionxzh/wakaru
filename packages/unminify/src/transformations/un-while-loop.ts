@@ -2,7 +2,7 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
 /**
- * Transform `for(;;)` to `while(true)`.
+ * Converts `for(;;)` to `while(true)`.
  *
  * This is the reverse of the following transformation:
  * - SWC `jsc.minify.loop`

@@ -3,7 +3,7 @@ import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Literal } from 'jscodeshift'
 
 /**
- * Transform minified `boolean` to their simpler forms.
+ * Converts minified `boolean` to simple `true`/`false`.
  *
  * @example
  * !0 -> true

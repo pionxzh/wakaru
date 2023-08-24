@@ -2,7 +2,7 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
 /**
- * Transform `1 / 0` to `Infinity`.
+ * Converts `1 / 0` to `Infinity`.
  *
  * @example
  * `1 / 0` -> `Infinity`

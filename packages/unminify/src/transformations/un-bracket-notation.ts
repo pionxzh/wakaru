@@ -4,7 +4,7 @@ import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Literal } from 'jscodeshift'
 
 /**
- * Transform member expression property literals into plain identifiers
+ * Converts member expression property literals into plain identifiers
  *
  * @example
  * obj['bar'] -> obj.bar

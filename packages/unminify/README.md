@@ -1,7 +1,6 @@
 # @unminify-kit/unminify
 
-This package contains a set of transformations that can be used to unminify code.
-
+This package offers a comprehensive set of transformation rules designed to unminify and enhance the readability of code.
 - Rules
   - [Readability](#readability)
     - [`un-boolean`](#un-boolean)
@@ -19,8 +18,8 @@ This package contains a set of transformations that can be used to unminify code
     - [`un-es6-class`](#un-es6-class)
     - [`un-async-await` (Experimental)](#un-async-await-experimental)
   - [Clean Up](#clean-up)
-    - [`un-es-helper`](#un-es-helper)
-    - [`un-strict`](#un-strict)
+    - [`un-esmodule-flag`](#un-esmodule-flag)
+    - [`un-use-strict`](#un-use-strict)
   - [Style](#style)
     - [`prettier`](#prettier)
   - [Extra](#extra)
@@ -31,7 +30,7 @@ This package contains a set of transformations that can be used to unminify code
 
 ### `un-boolean`
 
-Transform minified `boolean` to their simpler forms.\
+Converts minified `boolean` to simple `true`/`false`.\
 Reverse: [babel-plugin-transform-minify-booleans](https://babeljs.io/docs/babel-plugin-transform-minify-booleans)
 
 ```diff
@@ -44,7 +43,7 @@ Reverse: [babel-plugin-transform-minify-booleans](https://babeljs.io/docs/babel-
 
 ### `un-undefined`
 
-Transform `void 0` to `undefined`.\
+Converts `void 0` to `undefined`.\
 Reverse: [babel-plugin-transform-undefined-to-void](https://babeljs.io/docs/babel-plugin-transform-undefined-to-void)
 
 ```diff
@@ -53,7 +52,7 @@ Reverse: [babel-plugin-transform-undefined-to-void](https://babeljs.io/docs/babe
 ```
 
 ### `un-infinity`
-Transform `1 / 0` to `Infinity`.\
+Converts `1 / 0` to `Infinity`.\
 Reverse: [babel-plugin-minify-infinity](https://babeljs.io/docs/babel-plugin-minify-infinity)
 
 
@@ -65,8 +64,8 @@ Reverse: [babel-plugin-minify-infinity](https://babeljs.io/docs/babel-plugin-min
 ```
 
 ### `un-numeric-literal`
-Transform numeric literal to its decimal representation.\
-A comment will be added to the end of the line to indicate the original representation.\
+Converts numeric literal to its decimal representation.\
+A comment will be added to indicate the original value.\
 Reverse: [babel-plugin-minify-numeric-literals](https://babeljs.io/docs/babel-plugin-minify-numeric-literals)
 
 
@@ -124,7 +123,7 @@ Separate variable declarators that are not used in for statements.
 
 ### `un-bracket-notation`
 
-Transform bracket notation to dot notation.\
+Converts bracket notation to dot notation.\
 Reverse: [babel-plugin-transform-member-expression-literals](https://babeljs.io/docs/babel-plugin-transform-member-expression-literals)
 
 ```diff
@@ -137,7 +136,7 @@ Reverse: [babel-plugin-transform-member-expression-literals](https://babeljs.io/
 
 ### `un-while-loop`
 
-Transform `for(;;)` to `while(true)`.
+Converts `for(;;)` to `while(true)`.
 
 ```diff
 - for (;;) {}
@@ -216,7 +215,7 @@ Unwraps nested ternary expressions into switch statement.
 
 ### `un-esm`
 
-Transform CommonJS's `require` and `module.exports` to ES6's `import` and `export`.
+Converts CommonJS's `require` and `module.exports` to ES6's `import` and `export`.
 
 ```diff
 - const foo = require('foo')
@@ -304,7 +303,7 @@ Unsupported features:
 Restore async/await from helper `__awaiter` and `__generator`.\
 Currently, this transformation only supports output from **TypeScript**.
 
-And it does not handled control flow properly, as it needs to be done by graph analysis.
+And it does not handled control flow properly, as it needs control glow / graph analysis.
 
 Please aware there are tons of edge cases that are not covered by this rule.
 
@@ -342,7 +341,7 @@ Please aware there are tons of edge cases that are not covered by this rule.
 
 ## Clean Up
 
-### `un-es-helper`
+### `un-esmodule-flag`
 
 Removes the `__esModule` flag from the module.
 
@@ -350,7 +349,7 @@ Removes the `__esModule` flag from the module.
 - Object.defineProperty(exports, "__esModule", { value: true });
 ```
 
-### `un-strict`
+### `un-use-strict`
 
 Removes the `"use strict"` directive.
 
@@ -362,8 +361,7 @@ Removes the `"use strict"` directive.
 
 ### `prettier`
 
-This transformation formats the code with [prettier](https://prettier.io/).
-We usually use this rule to format the code after all the other transformations.
+This transformation formats the code with [prettier](https://prettier.io/), typically applied after all other transformations.
 
 ## Extra
 
@@ -372,13 +370,15 @@ We usually use this rule to format the code after all the other transformations.
 > Lebab transpiles your ES5 code to ES6/ES7. It does exactly the opposite of what Babel does.
 
 We use [lebab](https://github.com/lebab/lebab) as a base to unminify the code.\
-With the help of lebab, we can save the repetitive work of writing the transformations ourselves.
+By utilizing lebab, we can save the repetitive work of writing the transformations ourselves.
 
 ## TODO
 
-- [ ] Better comments preservation
-- [ ] Support variant of syntax downgrade from `TypeScript`, `Babel` and `SWC`
+- [ ] Convert `React.createElement` to JSX.
+- [ ] Convert
+- [ ] Improve comment retention.
+- [ ] Address syntax downgrades from tools like `TypeScript`, `Babel` and `SWC`.
 - [ ] `un-optional-chaining`
-- [ ] `un-nullish-coalescing-operator`
-- [ ] [`babel-plugin-minify-builtins`](https://babeljs.io/docs/babel-plugin-minify-builtins)
-- [ ] [`babel-plugin-minify-type-constructors`](https://babeljs.io/docs/babel-plugin-minify-type-constructors)
+- [ ] `un-nullish-coalescing`
+- [ ] `un-string-literal` to decode printable unicode
+- [ ] [Terser loops](https://github.com/terser/terser/blob/27c0a3b47b429c605e2243df86044fc00815060f/test/compress/loops.js#L217) contains several useful patterns

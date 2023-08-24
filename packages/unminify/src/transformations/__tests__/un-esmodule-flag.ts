@@ -1,4 +1,4 @@
-import transform from '../un-es-helper'
+import transform from '../un-esmodule-flag'
 import { defineInlineTest } from './test-utils'
 
 const inlineTest = defineInlineTest(transform)

@@ -2,7 +2,7 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
 /**
- * Transform `void 0` to `undefined`.
+ * Converts `void 0` to `undefined`.
  *
  * @example
  * void 0 -> undefined
