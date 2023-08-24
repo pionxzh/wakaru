@@ -5,7 +5,7 @@ This package contains a set of transformations that can be used to unminify code
 - Rules
   - [Readability](#readability)
     - [`un-boolean`](#un-boolean)
-    - [`un-void-0`](#un-void-0)
+    - [`un-undefined`](#un-undefined)
     - [`un-infinity`](#un-infinity)
     - [`un-numeric-literal`](#un-numeric-literal)
     - [`un-sequence-expression`](#un-sequence-expression)
@@ -42,7 +42,7 @@ Reverse: [babel-plugin-transform-minify-booleans](https://babeljs.io/docs/babel-
 + false
 ```
 
-### `un-void-0`
+### `un-undefined`
 
 Transform `void 0` to `undefined`.\
 Reverse: [babel-plugin-transform-undefined-to-void](https://babeljs.io/docs/babel-plugin-transform-undefined-to-void)

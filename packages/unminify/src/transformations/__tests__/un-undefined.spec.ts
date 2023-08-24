@@ -1,4 +1,4 @@
-import transform from '../un-void-0'
+import transform from '../un-undefined'
 import { defineInlineTest } from './test-utils'
 
 const inlineTest = defineInlineTest(transform)

@@ -15,9 +15,9 @@ import unNumericLiteral from './un-numeric-literal'
 import unSequenceExpression from './un-sequence-expression'
 import unSwitchStatement from './un-switch-statement'
 import unTemplateLiteral from './un-template-literal'
+import unUndefined from './un-undefined'
 import unUseStrict from './un-use-strict'
 import unVariableMerging from './un-variable-merging'
-import unVoid0 from './un-void-0'
 import unWhileLoop from './un-while-loop'
 import type { Transform } from 'jscodeshift'
 
@@ -33,7 +33,7 @@ export const transformationMap: {
     'un-use-strict': unUseStrict,
     'un-es-helper': unEsHelper,
     'un-boolean': unBoolean,
-    'un-void-0': unVoid0,
+    'un-undefined': unUndefined,
     'un-infinity': unInfinity,
     'un-numeric-literal': unNumericLiteral,
     'un-template-literal': unTemplateLiteral,

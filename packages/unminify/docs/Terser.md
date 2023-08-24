@@ -79,5 +79,5 @@ This is the tracking list of support status of the reversion of [compressor opti
   - TODO: priority `medium`.
 - [X] ~~unsafe_regexp~~
 - [x] unsafe_undefined:
-  - `un-void-0`
+  - `un-undefined`
 - [X] ~~unused~~

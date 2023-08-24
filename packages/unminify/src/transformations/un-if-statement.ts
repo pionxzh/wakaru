@@ -26,6 +26,7 @@ import type { ConditionalExpression } from 'jscodeshift'
  * `x ?? a()` -> `if (x == null) { a() }`
  *
  * @see https://babeljs.io/docs/babel-plugin-minify-simplify#reduce-statement-into-expression
+ * @see https://babeljs.io/docs/babel-plugin-minify-guarded-expressions
  * @see https://github.com/terser/terser/blob/master/test/compress/if_return.js
  * @see https://github.com/terser/terser/blob/master/test/compress/conditionals.js
  */
