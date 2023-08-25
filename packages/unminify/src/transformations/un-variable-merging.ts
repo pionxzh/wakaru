@@ -58,16 +58,14 @@ export const transformAST: ASTTransformation = (context) => {
 
                     if (usedDeclarators.length === initDeclarators.length) return
                     init.declarations = usedDeclarators
+                    if (init.declarations.length === 0) {
+                        p.parent.node.init = null
+                    }
 
                     const otherDeclarators = initDeclarators.filter(d => !usedDeclarators.includes(d))
                     const otherDeclarations = otherDeclarators.map(d => j.variableDeclaration(init.kind, [d]))
                     const replacements = [...otherDeclarations, p.parent.node]
                     transformToMultiStatementContext(j, p.parent, replacements)
-
-                    if (init.declarations.length === 0) {
-                        p.prune()
-                        return
-                    }
                 }
 
                 return

@@ -64,3 +64,14 @@ for (let i = 0, j = 0, k = 0; j < 10; k++) {}
 for (const i = 0, j = 0, k = 0; j < 10; k++) {}
 `,
 )
+
+inlineTest('should prune empty variable declaration in for statement',
+  `
+for (var i = 0; j < 10; k++) {}
+`,
+  `
+var i = 0;
+for (; j < 10; k++)
+  {}
+`,
+)
