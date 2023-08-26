@@ -75,9 +75,9 @@ This is the tracking list of support status of the reversion of [compressor opti
 - [X] ~~unsafe_math~~: Lossy compression.
 - [X] ~~unsafe_symbols~~: Lossy compression.
 - [X] ~~unsafe_methods~~: No readability improvement.
-- [ ] unsafe_proto
-  - TODO: priority `medium`.
+- [X] unsafe_proto
+  - `un-builtin-prototype`
 - [X] ~~unsafe_regexp~~
-- [x] unsafe_undefined:
+- [X] unsafe_undefined:
   - `un-undefined`
 - [X] ~~unused~~

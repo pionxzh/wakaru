@@ -4,6 +4,7 @@ import prettier from './prettier'
 import unAsyncAwait from './un-async-await'
 import unBoolean from './un-boolean'
 import unBracketNotation from './un-bracket-notation'
+import unBuiltinPrototype from './un-builtin-prototype'
 import unES6Class from './un-es6-class'
 import unEsm from './un-esm'
 import unEsModuleFlag from './un-esmodule-flag'
@@ -41,6 +42,7 @@ export const transformationMap: {
     'un-bracket-notation': unBracketNotation,
     'un-flip-comparisons': unFlipComparisons,
     'un-variable-merging': unVariableMerging,
+    'un-builtin-prototype': unBuiltinPrototype,
     'un-sequence-expression2': unSequenceExpression,
     'un-switch-statement': unSwitchStatement,
     'un-if-statement': unIfStatement,
