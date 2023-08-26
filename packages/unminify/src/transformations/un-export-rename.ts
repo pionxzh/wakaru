@@ -3,37 +3,41 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ASTPath, Collection, ExportNamedDeclaration, ExportSpecifier, Identifier, JSCodeshift, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
-// TODO: convert export const foo = function() {} to export function foo() {} ?
-
 /**
+ * @example
  * const a = 1
  * export const b = a
  * ->
  * export const b = 1
  *
+ * @example
  * function a() {}
  * export const b = a
  * ->
  * export function b() {}
  *
+ * @example
  * class o {}
  * export const App = o
  * ->
  * export class App {}
  *
+ * @example
  * const o = class {}
  * export const App = o
  * ->
  * export const App = class {}
  *
+ * @example
  * const o = { a: 1 }
  * export { Game as o }
+ * ->
+ * export const Game = { a: 1 }
  *
+ * @example
+ * // export default will not be modified
  * const x = <anything>
  * export default x
- * ->
- * export default <anything>
- * // TODO: wrong: removing the x variable declaration will cause error
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

@@ -31,15 +31,22 @@ inlineTest('merge function expression and export declaration with complex scope'
 function test() {
     function a() {}
 }
-function a() {}
+function a(n) {
+    if (n < 2) return n;
+    return a(n - 1) + a(n - 2);
+}
 
-export const b = a;
+export const fib = a;
 `,
 `
 function test() {
     function a() {}
 }
-export function b() {}
+
+export function fib(n) {
+    if (n < 2) return n;
+    return fib(n - 1) + fib(n - 2);
+}
 `)
 
 inlineTest('merge arrow function expression and export declaration',
@@ -69,6 +76,17 @@ export const App = o;
 `,
     `
 export const App = class {};
+`,
+)
+
+inlineTest('do not modify export default',
+    `
+const o = class {};
+export default o;
+`,
+    `
+const o = class {};
+export default o;
 `,
 )
 
