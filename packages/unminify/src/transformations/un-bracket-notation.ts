@@ -26,8 +26,8 @@ export const transformAST: ASTTransformation = (context) => {
             const property = p.node.property as Literal
             if (typeof property.value !== 'string') return
 
-            if (property.value.match(/^\d+$/)) {
-                const newProp = Number.parseInt(property.value, 10)
+            if (property.value.match(/^\d+(\.\d+)?$/)) {
+                const newProp = Number.parseFloat(property.value)
                 if (newProp.toString() === property.value) {
                     property.value = newProp
                 }

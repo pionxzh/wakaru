@@ -9,12 +9,18 @@ obj['bar'];
 obj['bar'].baz;
 obj['bar']['baz'];
 obj['bar'].baz['qux'];
+
+obj['\u0EB3']; // valid unicode
+obj['\u001B']; // escape character
 `,
     `
 obj.bar;
 obj.bar.baz;
 obj.bar.baz;
 obj.bar.baz.qux;
+
+obj.ຳ; // valid unicode
+obj['\u001B']; // escape character
 `,
 )
 
@@ -25,6 +31,12 @@ obj['0'];
 obj['00'];
 obj['-0'];
 obj['-1'];
+obj['1_1'];
+
+obj['3.14'];
+obj['3.14e-10'];
+obj['3.'];
+obj['3..7'];
 `,
     `
 obj[1];
@@ -32,6 +44,12 @@ obj[0];
 obj['00'];
 obj['-0'];
 obj['-1'];
+obj['1_1'];
+
+obj[3.14];
+obj['3.14e-10'];
+obj['3.'];
+obj['3..7'];
 `,
 )
 
