@@ -4,11 +4,12 @@ import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Literal } from 'jscodeshift'
 
 /**
- * Converts member expression property literals into plain identifiers
+ * Simplify bracket notation.
  *
  * @example
  * obj['bar'] -> obj.bar
  * obj['var'] -> obj['var']
+ * arr['1'] -> arr[1]
  *
  * @see https://babeljs.io/docs/babel-plugin-transform-member-expression-literals
  * @see https://github.com/terser/terser/blob/master/test/compress/properties.js

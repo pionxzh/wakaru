@@ -133,7 +133,7 @@ Separate variable declarators that are not used in for statements.
 
 ### `un-bracket-notation`
 
-Converts bracket notation to dot notation.\
+Simplify bracket notation.\
 Reverse: [babel-plugin-transform-member-expression-literals](https://babeljs.io/docs/babel-plugin-transform-member-expression-literals)
 
 ```diff
