@@ -19,9 +19,50 @@ import type { ASTTransformation } from '../wrapAstTransformation'
  * @see https://babeljs.io/docs/babel-plugin-minify-type-constructors
  */
 export const transformAST: ASTTransformation = (context) => {
-    // const { root, j } = context
+    const { root, j } = context
 
-    // TODO: implement
+    /**
+     * +x -> Number(x)
+     *
+     * Unsafe Warning:
+     * 1. BigInt
+     *   - +1n // throw TypeError
+     */
+    root.find(j.UnaryExpression, { operator: '+', argument: { type: 'Identifier' } }).replaceWith(({ node }) => {
+        return j.callExpression(j.identifier('Number'), [node.argument])
+    })
+
+    /**
+     * x + '' -> String(x)
+     *
+     * Unsafe Warning:
+     * 1. Multiple concatenations.
+     *   - This is more like a reminder for developers.
+     *   - Our current implementation should not fail in this case.
+     *   - var x = 5; x + 5 + '' // '10'
+     *   - var x = 5; x + '' + 5 // '55'
+     * 2. Symbol
+     *   - Symbol('foo') + '' // throw TypeError
+     */
+    root.find(j.BinaryExpression, {
+        operator: '+',
+        right: { type: 'Literal', value: '' },
+    }).forEach((path) => {
+        // 'str' + '' will be simplified to 'str'
+        if (j.Literal.check(path.node.left) && typeof path.node.left.value === 'string') {
+            path.replace(path.node.left)
+            return
+        }
+
+        path.replace(j.callExpression(j.identifier('String'), [path.node.left]))
+    })
+
+    /**
+     * [,,,] -> Array(3)
+     */
+    root.find(j.ArrayExpression, { elements: elements => elements.every(element => element === null) }).replaceWith(({ node }) => {
+        return j.callExpression(j.identifier('Array'), [j.literal(node.elements.length)])
+    })
 }
 
 export default wrap(transformAST)

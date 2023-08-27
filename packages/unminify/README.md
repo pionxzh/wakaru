@@ -22,6 +22,7 @@ It covered most of patterns that are used by the following tools:
   - [`un-flip-operator`](#un-flip-operator)
   - [`un-if-statement`](#un-if-statement)
   - [`un-switch-statement`](#un-switch-statement)
+  - [`un-type-constructor` (Unsafe\*)](#un-type-constructor-unsafe)
   - [`un-builtin-prototype`](#un-builtin-prototype)
 - [Syntax Upgrade](#syntax-upgrade)
   - [`un-esm`](#un-esm)
@@ -222,28 +223,47 @@ Unwraps nested ternary expressions into switch statement.
 + }
 ```
 
+### `un-type-constructor` (Unsafe)
+
+Restore type constructors from minified code.
+
+```diff
+- +x;
++ Number(x);
+
+- x + "";
++ String(x);
+
+- [,,,];
++ Array(3);
+```
+
+Unsafe:
+- BigInt: `+1n` will throw `TypeError`
+- Symbol: `Symbol('foo') + ""` will throw `TypeError`
+
 ### `un-builtin-prototype`
 
 Convert function calls on instances of built-in objects to equivalent calls on their prototypes.
 
 ```diff
--[].splice.apply(a, [1, 2, b, c]);
-+Array.prototype.splice.apply(a, [1, 2, b, c]);
+- [].splice.apply(a, [1, 2, b, c]);
++ Array.prototype.splice.apply(a, [1, 2, b, c]);
 
--(function() {}).call.apply(console.log, console, ["foo"]),
-+Function.prototype.call.apply(console.log, console, ["foo"]),
+- (function() {}).call.apply(console.log, console, ["foo"]),
++ Function.prototype.call.apply(console.log, console, ["foo"]),
 
--0..toFixed.call(Math.PI, 2);
-+Number.prototype.toFixed.call(Math.PI, 2);
+- 0..toFixed.call(Math.PI, 2);
++ Number.prototype.toFixed.call(Math.PI, 2);
 
--({}).hasOwnProperty.call(d, "foo");
-+Object.prototype.hasOwnProperty.call(d, "foo");
+- ({}).hasOwnProperty.call(d, "foo");
++ Object.prototype.hasOwnProperty.call(d, "foo");
 
--/t/.test.call(/foo/, "bar");
-+RegExp.prototype.test.call(/foo/, "bar");
+- /t/.test.call(/foo/, "bar");
++ RegExp.prototype.test.call(/foo/, "bar");
 
--"".indexOf.call(e, "bar");
-+String.prototype.indexOf.call(e, "bar");
+- "".indexOf.call(e, "bar");
++ String.prototype.indexOf.call(e, "bar");
 ```
 
 ## Syntax Upgrade

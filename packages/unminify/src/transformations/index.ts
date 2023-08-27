@@ -5,6 +5,7 @@ import unAsyncAwait from './un-async-await'
 import unBoolean from './un-boolean'
 import unBracketNotation from './un-bracket-notation'
 import unBuiltinPrototype from './un-builtin-prototype'
+import unCurlyBraces from './un-curly-braces'
 import unES6Class from './un-es6-class'
 import unEsm from './un-esm'
 import unEsModuleFlag from './un-esmodule-flag'
@@ -16,6 +17,7 @@ import unNumericLiteral from './un-numeric-literal'
 import unSequenceExpression from './un-sequence-expression'
 import unSwitchStatement from './un-switch-statement'
 import unTemplateLiteral from './un-template-literal'
+import unTypeConstructor from './un-type-constructor'
 import unUndefined from './un-undefined'
 import unUseStrict from './un-use-strict'
 import unVariableMerging from './un-variable-merging'
@@ -38,10 +40,12 @@ export const transformationMap: {
     'un-infinity': unInfinity,
     'un-numeric-literal': unNumericLiteral,
     'un-template-literal': unTemplateLiteral,
+    'un-curly-braces': unCurlyBraces,
     'un-while-loop': unWhileLoop,
     'un-bracket-notation': unBracketNotation,
     'un-flip-comparisons': unFlipComparisons,
     'un-variable-merging': unVariableMerging,
+    'un-type-constructor': unTypeConstructor,
     'un-builtin-prototype': unBuiltinPrototype,
     'un-sequence-expression2': unSequenceExpression,
     'un-switch-statement': unSwitchStatement,

@@ -36,7 +36,7 @@ This is the tracking list of support status of the reversion of [babel-preset-mi
 - [ ] minify-simplify
   - `un-if-statement`
 - [X] ~~transform-simplify-comparison-operators~~
-- [ ] minify-type-constructors
-  - TODO: priority `medium`.
+- [X] minify-type-constructors
+  - `un-type-constructors`
 - [X] transform-undefined-to-void
   - `un-undefined`
