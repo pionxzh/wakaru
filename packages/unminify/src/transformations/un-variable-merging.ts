@@ -37,7 +37,7 @@ export const transformAST: ASTTransformation = (context) => {
             ],
         })
         .forEach((p) => {
-            if (p.parent?.node.type === 'ForStatement') {
+            if (j.ForStatement.check(p.parent.node)) {
                 const { init, test, update } = p.parent.node as ForStatement
                 if (init && j.VariableDeclaration.check(init) && init.kind === 'var') {
                     const initDeclarators = init.declarations
@@ -47,6 +47,9 @@ export const transformAST: ASTTransformation = (context) => {
 
                         const { id } = d
                         if (!j.Identifier.check(id)) return false
+
+                        // check if the name is declared outside of the for statement
+                        if (p.parent?.parent?.scope.lookup(id.name)) return true
 
                         const name = id.name
                         const isUsedInTest = test && j(test).find(j.Identifier, { name }).size() > 0

@@ -75,3 +75,15 @@ for (; j < 10; k++)
   {}
 `,
 )
+
+inlineTest('should not split if there is a same variable declaration in parent scope',
+  `
+var i = 99;
+for (var i = 0, j = 0, k = 0; j < 10; j++) {}
+`,
+  `
+var i = 99;
+var k = 0;
+for (var i = 0, j = 0; j < 10; j++) {}
+`,
+)
