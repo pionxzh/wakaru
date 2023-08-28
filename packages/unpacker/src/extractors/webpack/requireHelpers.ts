@@ -52,25 +52,25 @@ export function convertExportsGetterForWebpack4(j: JSCodeshift, collection: Coll
         },
         arguments: [{
             type: 'Identifier' as const,
-        /**
-         * The first argument is the exports object
-         * But it's not always called `exports`
-         * The common case is this `exports` object
-         * is come from the function parameter
-         * ```js
-         * function(module, exports, require) {
-         *   require.d(exports, key, function() { return moduleContent })
-         * }
-         * ```
-         *
-         * But another case is this `exports` object
-         * is just an object created in the module
-         * ```js
-         * var exports = {}
-         * require.d(exports, key, function() { return moduleContent })
-         * ```
-         */
-        // name: 'exports' as const,
+            /**
+             * The first argument is the exports object
+             * But it's not always called `exports`
+             * The common case is this `exports` object
+             * is come from the function parameter
+             * ```js
+             * function(module, exports, require) {
+             *   require.d(exports, key, function() { return moduleContent })
+             * }
+             * ```
+             *
+             * But another case is this `exports` object
+             * is just an object created in the module
+             * ```js
+             * var exports = {}
+             * require.d(exports, key, function() { return moduleContent })
+             * ```
+             */
+            // name: 'exports' as const,
         }, {
             type: 'Literal' as const,
         }, {

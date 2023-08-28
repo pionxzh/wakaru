@@ -1,6 +1,6 @@
-// Vitest Snapshot v1
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`Webpack 5 > testcases/webpack5 1`] = `Map {}`;
+exports[`Webpack 5 > testcases/webpack5 1`] = `{}`;
 
 exports[`Webpack 5 > testcases/webpack5 2`] = `
 [
