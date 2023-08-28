@@ -2,7 +2,7 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
 /**
- * Converts `for(;;)` to `while(true)`.
+ * Converts for loop without init and update to while loop.
  *
  * This is the reverse of the following transformation:
  * - SWC `jsc.minify.loop`
@@ -14,21 +14,28 @@ import type { ASTTransformation } from '../wrapAstTransformation'
  * ->
  * while(true) { ... }
  *
+ * @example
+ * for(; ? ;) { ... }
+ * ->
+ * while(? ) { ... }
+ *
+ * @see Terser: `loops`
  * @see https://github.com/terser/terser/blob/27c0a3b47b429c605e2243df86044fc00815060f/test/compress/loops.js#L217
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 
+    // for(; ? ;) { ... }
     root
         .find(j.ForStatement, {
             init: null,
-            test: null,
             update: null,
         })
         .forEach((p) => {
+            const test = p.node.test ?? j.booleanLiteral(true)
             p.replace(
                 j.whileStatement(
-                    j.booleanLiteral(true),
+                    test,
                     p.node.body,
                 ),
             )

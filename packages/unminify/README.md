@@ -22,7 +22,7 @@ It covered most of patterns that are used by the following tools:
   - [`un-flip-operator`](#un-flip-operator)
   - [`un-if-statement`](#un-if-statement)
   - [`un-switch-statement`](#un-switch-statement)
-  - [`un-type-constructor` (Unsafe\*)](#un-type-constructor-unsafe)
+  - [`un-type-constructor` (Unsafe)](#un-type-constructor-unsafe)
   - [`un-builtin-prototype`](#un-builtin-prototype)
 - [Syntax Upgrade](#syntax-upgrade)
   - [`un-esm`](#un-esm)
@@ -148,11 +148,18 @@ Reverse: [babel-plugin-transform-member-expression-literals](https://babeljs.io/
 
 ### `un-while-loop`
 
-Converts `for(;;)` to `while(true)`.
+Converts for loop without init and update to while loop.
 
 ```diff
 - for (;;) {}
 + while (true) {}
+
+- for (; i < 10;) {
+-  console.log(i);
+- }
++ while (i < 10) {
++   console.log(i);
++ }
 ```
 
 ### `un-flip-operator`
