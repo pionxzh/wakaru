@@ -43,8 +43,7 @@ It covered most of patterns that are used by the following tools:
 
 ### `un-boolean`
 
-Converts minified `boolean` to simple `true`/`false`.\
-Reverse: [babel-plugin-transform-minify-booleans](https://babeljs.io/docs/babel-plugin-transform-minify-booleans)
+Converts minified `boolean` to simple `true`/`false`.
 
 ```diff
 - !0
@@ -56,8 +55,7 @@ Reverse: [babel-plugin-transform-minify-booleans](https://babeljs.io/docs/babel-
 
 ### `un-undefined`
 
-Converts `void 0` to `undefined`.\
-Reverse: [babel-plugin-transform-undefined-to-void](https://babeljs.io/docs/babel-plugin-transform-undefined-to-void)
+Converts `void 0` to `undefined`.
 
 ```diff
 - if(input === void 0) {}
@@ -65,8 +63,7 @@ Reverse: [babel-plugin-transform-undefined-to-void](https://babeljs.io/docs/babe
 ```
 
 ### `un-infinity`
-Converts `1 / 0` to `Infinity`.\
-Reverse: [babel-plugin-minify-infinity](https://babeljs.io/docs/babel-plugin-minify-infinity)
+Converts `1 / 0` to `Infinity`.
 
 
 ```diff
@@ -78,8 +75,7 @@ Reverse: [babel-plugin-minify-infinity](https://babeljs.io/docs/babel-plugin-min
 
 ### `un-numeric-literal`
 Converts numeric literal to its decimal representation.\
-A comment will be added to indicate the original value.\
-Reverse: [babel-plugin-minify-numeric-literals](https://babeljs.io/docs/babel-plugin-minify-numeric-literals)
+A comment will be added to indicate the original value.
 
 
 ```diff
@@ -95,8 +91,7 @@ Reverse: [babel-plugin-minify-numeric-literals](https://babeljs.io/docs/babel-pl
 
 ### `un-sequence-expression`
 
-Separate sequence expressions into multiple statements.\
-Reverse: [babel-helper-to-multiple-sequence-expressions](https://babeljs.io/docs/babel-helper-to-multiple-sequence-expressions)
+Separate sequence expressions into multiple statements.
 
 ```diff
 - a(), b(), c()
@@ -116,8 +111,7 @@ Reverse: [babel-helper-to-multiple-sequence-expressions](https://babeljs.io/docs
 
 ### `un-variable-merging`
 
-Separate variable declarators into multiple statements.\
-Reverse: [babel-plugin-transform-merge-sibling-variables](https://babeljs.io/docs/babel-plugin-transform-merge-sibling-variables)
+Separate variable declarators into multiple statements.
 
 ```diff
 - var a = 1, b = true, c = func(d):
@@ -136,8 +130,7 @@ Separate variable declarators that are not used in for statements.
 
 ### `un-bracket-notation`
 
-Simplify bracket notation.\
-Reverse: [babel-plugin-transform-member-expression-literals](https://babeljs.io/docs/babel-plugin-transform-member-expression-literals)
+Simplify bracket notation.
 
 ```diff
 - obj['prop']
@@ -165,8 +158,7 @@ Converts for loop without init and update to while loop.
 
 ### `un-flip-operator`
 
-Flips comparisons that are in the form of "literal comes first" to "literal comes second".\
-Reverse: [babel-plugin-minify-flip-comparisons](https://babeljs.io/docs/babel-plugin-minify-flip-comparisons)
+Flips comparisons that are in the form of "literal comes first" to "literal comes second".
 
 ```diff
 
@@ -182,8 +174,6 @@ Reverse: [babel-plugin-minify-flip-comparisons](https://babeljs.io/docs/babel-pl
 
 Unwraps nested ternary expressions into if-else statements.\
 Conditionally returns early if possible.
-
-Reverse: [babel-plugin-minify-guarded-expressions](https://babeljs.io/docs/babel-plugin-minify-guarded-expressions)
 
 ```diff
 - a ? b() : c ? d() : e()
