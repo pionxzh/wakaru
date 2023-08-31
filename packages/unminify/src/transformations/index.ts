@@ -12,6 +12,7 @@ import unEsModuleFlag from './un-esmodule-flag'
 import unExportRename from './un-export-rename'
 import unFlipComparisons from './un-flip-operator'
 import unIfStatement from './un-if-statement'
+import unIife from './un-iife'
 import unInfinity from './un-infinity'
 import unNumericLiteral from './un-numeric-literal'
 import unSequenceExpression from './un-sequence-expression'
@@ -51,6 +52,7 @@ export const transformationMap: {
     'un-switch-statement': unSwitchStatement,
     'un-if-statement': unIfStatement,
     'un-sequence-expression3': unSequenceExpression,
+    'un-iife': unIife,
     'un-es6-class': unES6Class,
     'un-async-await': unAsyncAwait,
     'prettier-last': prettier,

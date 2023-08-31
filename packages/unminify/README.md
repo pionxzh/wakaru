@@ -24,6 +24,7 @@ It covered most of patterns that are used by the following tools:
   - [`un-switch-statement`](#un-switch-statement)
   - [`un-type-constructor` (Unsafe)](#un-type-constructor-unsafe)
   - [`un-builtin-prototype`](#un-builtin-prototype)
+  - [`un-iife`](#un-iife)
 - [Syntax Upgrade](#syntax-upgrade)
   - [`un-esm`](#un-esm)
   - [`un-template-literal`](#un-template-literal)
@@ -271,6 +272,36 @@ Convert function calls on instances of built-in objects to equivalent calls on t
 
 - "".indexOf.call(e, "bar");
 + String.prototype.indexOf.call(e, "bar");
+```
+
+### `un-iife`
+
+Improve the readability of code inside IIFE. Useful for short code snippets / userscripts.
+
+Rename the parameters and move the passed-in arguments to the top.
+
+```diff
+- (function(i, s, o, g, r, a, m) {
+-   i['GoogleAnalyticsObject'] = r;
+-   i[r].l = 1 * new Date();
+-   a = s.createElement(o);
+-   m = s.getElementsByTagName(o)[0];
+-   a.async = 1;
+-   a.src = g;
+-   m.parentNode.insertBefore(a, m);
+- })(window, document, 'script', 'https://www.google-analytics.com/analytics.js', 'ga');
++ (function(window, document, a, m) {
++   const o = 'script';
++   const g = 'https://www.google-analytics.com/analytics.js';
++   const r = 'ga';
++   window['GoogleAnalyticsObject'] = r;
++   window[r].l = 1 * new Date();
++   a = document.createElement(o);
++   m = document.getElementsByTagName(o)[0];
++   a.async = 1;
++   a.src = g;
++   m.parentNode.insertBefore(a, m);
++ })(window, document);
 ```
 
 ## Syntax Upgrade

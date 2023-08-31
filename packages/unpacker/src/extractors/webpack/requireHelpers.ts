@@ -207,7 +207,6 @@ export function convertExportGetter(
     }
     else {
         // Generate module.exports = { ... }
-        // TODO: module.exports.property = ...?
         if (exportGetterMap.size > 0) {
             const left = j.memberExpression(j.identifier('module'), j.identifier('exports'))
             const right = j.objectExpression(Array.from(exportGetterMap.entries()).map(([key, value]) => {
