@@ -255,7 +255,7 @@ function transformImport(context: Context, hoist: boolean) {
             ],
         })
         .forEach((path) => {
-            if (!isTopLevel(j, path)) return
+            if (!hoist && !isTopLevel(j, path)) return
 
             const firstDeclaration = path.node.declarations[0] as VariableDeclarator
             const id = firstDeclaration.id
@@ -359,7 +359,7 @@ function transformImport(context: Context, hoist: boolean) {
             ],
         })
         .forEach((path) => {
-            if (!isTopLevel(j, path)) return
+            if (!hoist && !isTopLevel(j, path)) return
 
             const firstDeclaration = path.node.declarations[0] as VariableDeclarator
             const id = firstDeclaration.id
@@ -395,9 +395,7 @@ function transformImport(context: Context, hoist: boolean) {
                  * we need to make sure it doesn't conflict with
                  * existing variables.
                  */
-                const rootScope = root.find(j.Program).get().scope as Scope
-                const bindings = rootScope?.getBindings()
-                const local = getUniqueName(bindings, imported)
+                const local = getUniqueName(path.scope, imported)
 
                 importCollector.addNamedImport(source, imported, local)
 
@@ -441,10 +439,7 @@ function transformImport(context: Context, hoist: boolean) {
                 const source = sourceLiteral.value as string
 
                 const moduleName = generateNamesFromModulePath(source)
-
-                const rootScope = root.find(j.Program).get().scope as Scope
-                const bindings = rootScope?.getBindings()
-                const local = getUniqueName(bindings, moduleName)
+                const local = getUniqueName(path.scope, moduleName)
                 j(path).replaceWith(j.identifier(local))
 
                 importCollector.addDefaultImport(source, local)
@@ -565,9 +560,10 @@ function transformExport(context: Context) {
 
         if (j.Identifier.check(right)) {
             if (right.name === name) {
+                const exported = j.identifier(name)
                 const exportSpecifier = j.exportSpecifier.from({
-                    exported: j.identifier(name),
-                    local: j.identifier(name),
+                    exported,
+                    local: exported,
                 })
                 const exportNamedDeclaration = j.exportNamedDeclaration(
                     null,
@@ -609,7 +605,7 @@ function transformExport(context: Context) {
                  * export { foo$0 as foo }
                  */
                 const oldName = name
-                const newName = getUniqueName(bindings, oldName)
+                const newName = getUniqueName(path.scope, oldName)
 
                 const variableDeclaration = j.variableDeclaration(
                     kind,
@@ -676,6 +672,8 @@ function transformExport(context: Context) {
             },
         })
         .forEach((path) => {
+            if (!isTopLevel(j, path)) return
+
             const expression = path.node.expression as AssignmentExpression
             const right = expression.right
 
@@ -720,6 +718,8 @@ function transformExport(context: Context) {
             },
         })
         .forEach((path) => {
+            if (!isTopLevel(j, path)) return
+
             const expression = path.node.expression as AssignmentExpression
             const left = expression.left as MemberExpression
             const right = expression.right
@@ -754,6 +754,8 @@ function transformExport(context: Context) {
             },
         })
         .forEach((path) => {
+            if (!isTopLevel(j, path)) return
+
             const expression = path.node.expression as AssignmentExpression
             const left = expression.left as MemberExpression
             const right = expression.right
@@ -794,6 +796,8 @@ function transformExport(context: Context) {
             ],
         })
         .forEach((path) => {
+            if (!isTopLevel(j, path)) return
+
             const kind = path.node.kind
             const declaration = path.node.declarations[0] as VariableDeclarator
             const id = declaration.id as Identifier
@@ -867,6 +871,8 @@ function transformExport(context: Context) {
             ],
         })
         .forEach((path) => {
+            if (!isTopLevel(j, path)) return
+
             const kind = path.node.kind
             const declaration = path.node.declarations[0] as VariableDeclarator
             const id = declaration.id as Identifier
@@ -904,11 +910,16 @@ function transformExport(context: Context) {
     exportsMap.clear()
 }
 
-function getUniqueName(bindings: any, oldName: string): string {
-    if (!bindings || !bindings[oldName]) return oldName
+function getUniqueName(scope: Scope | undefined, oldName: string): string {
+    if (!scope) return oldName
+
+    const bindings = scope.getBindings() ?? {}
+    const globalScope = scope.getGlobalScope()
+    const globalBindings = globalScope?.getBindings() ?? {}
+    if (!bindings[oldName] && !globalBindings[oldName]) return oldName
 
     let i = 0
-    while (bindings[`${oldName}$${i}`]) {
+    while (bindings[`${oldName}$${i}`] || globalBindings[`${oldName}$${i}`]) {
         i++
     }
     return `${oldName}$${i}`

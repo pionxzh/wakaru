@@ -154,7 +154,7 @@ import foo from "bar";
 
 inlineTest('requires that are not on top level should not be transformed',
   `
-function foo() {
+function fn() {
   require('foo');
   var bar = require('bar');
   var baz = require('baz').baz;
@@ -162,11 +162,66 @@ function foo() {
 }
 `,
   `
-function foo() {
+function fn() {
   require('foo');
   var bar = require('bar');
   var baz = require('baz').baz;
   return bar + baz;
+}
+`,
+)
+
+inlineTestOpt('require should be hoisted #1', { hoist: true },
+  `
+function fn() {
+  require('foo');
+  var bar = require('bar');
+  var baz = require('baz').baz;
+  return bar + baz;
+}
+`,
+  `
+import "foo";
+import bar from "bar";
+import { baz } from "baz";
+function fn() {
+  return bar + baz;
+}
+`,
+)
+
+inlineTestOpt('require should be hoisted #2', { hoist: true },
+  `
+function fn() {
+  var bar = 1;
+  var { baz } = require('foo').bar;
+  return baz;
+}
+`,
+  `
+import { bar as bar$0 } from "foo";
+function fn() {
+  var bar = 1;
+  var { baz } = bar$0;
+  return baz;
+}
+`,
+)
+
+inlineTestOpt('require should be hoisted #2', { hoist: true },
+  `
+var bar = 1;
+function fn() {
+  var { baz } = require('foo').bar;
+  return baz;
+}
+`,
+  `
+import { bar as bar$0 } from "foo";
+var bar = 1;
+function fn() {
+  var { baz } = bar$0;
+  return baz;
 }
 `,
 )
@@ -323,6 +378,7 @@ export default foo;
 `,
 )
 
+//  TODO:
 // inlineTest('Object.defineProperty with exports',
 //   `
 // Object.defineProperty(exports, "foo", { value: 1 });
@@ -397,51 +453,56 @@ module["exports"] = 1;
  * ```js
  * export { default as foo } from "bar";
  */
-// inlineTest('export with require #1',
-//   `
-// module.exports.foo = require('bar');
-// `,
-//   `
-// import foo from "foo";
-// export { foo };
-// `,
-// )
+inlineTestOpt('export with require #1', { hoist: true },
+  `
+module.exports.foo = require('bar');
+`,
+  `
+import bar from "bar";
+export const foo = bar;
+`,
+)
 
-// inlineTest('export with require #2',
-//   `
-// module.exports = require('bar');
-// `,
-//   `
-// import bar from "bar";
-// export default bar;
-// `,
-// )
+inlineTestOpt('export with require #2', { hoist: true },
+  `
+module.exports = require('bar');
+`,
+  `
+import bar from "bar";
+export default bar;
+`,
+)
 
-// inlineTest('export with require #3',
-//   `
-// var bar = 1;
-// module.exports = require('bar');
-// `,
-//   `
-// import bar$0 from "bar";
-// var bar = 1;
-// export default bar$0;
-// `,
-// )
+inlineTestOpt('export with require #3', { hoist: true },
+  `
+var bar = 1;
+module.exports = require('bar');
+`,
+  `
+import bar$0 from "bar";
+var bar = 1;
+export default bar$0;
+`,
+)
 
-// inlineTest('export with require #4',
-//   `
-// module.exports = {
-//   encode: require('encode'),
-//   decode: require('decode')
-// };
-// `,
-//   `
-// import encode from "encode";
-// import decode from "decode";
-// export default {
-//   encode,
-//   decode
-// };
-// `,
-// )
+/**
+ * TODO: Not sure where to merge the short-hand property
+ * Should be a new rule to handle this
+ */
+inlineTestOpt('export with require #4', { hoist: true },
+  `
+module.exports = {
+  encode: require('encode'),
+  decode: require('decode')
+};
+`,
+  `
+import encode from "encode";
+import decode from "decode";
+
+export default {
+  encode: encode,
+  decode: decode
+};
+`,
+)
