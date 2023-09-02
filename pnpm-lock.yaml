@@ -10,7 +10,7 @@ overrides:
 
 patchedDependencies:
   ast-types@0.16.1:
-    hash: 4gd42rgxtvnbt3gp6vymw5tusq
+    hash: f362awmdi2pizpvlhqmynk5wsi
     path: patches/ast-types@0.16.1.patch
 
 importers:
@@ -212,7 +212,7 @@ importers:
         version: 17.0.24
       ast-types:
         specifier: ^0.16.1
-        version: 0.16.1(patch_hash=4gd42rgxtvnbt3gp6vymw5tusq)
+        version: 0.16.1(patch_hash=f362awmdi2pizpvlhqmynk5wsi)
       tsup:
         specifier: ^7.2.0
         version: 7.2.0(typescript@5.1.6)
@@ -230,7 +230,7 @@ importers:
         version: link:../ast-utils
       ast-types:
         specifier: ^0.16.1
-        version: 0.16.1(patch_hash=4gd42rgxtvnbt3gp6vymw5tusq)
+        version: 0.16.1(patch_hash=f362awmdi2pizpvlhqmynk5wsi)
       jscodeshift:
         specifier: ^0.15.0
         version: 0.15.0(@babel/preset-env@7.22.14)
@@ -2491,7 +2491,7 @@ packages:
   /@types/jscodeshift@0.11.6:
     resolution: {integrity: sha512-3lJ4DajWkk4MZ1F7q+1C7jE0z0xOtbu0VU/Kg3wdPq2DUvJjySSlu3B5Q/bICrTxugLhONBO7inRUWsymOID/A==}
     dependencies:
-      ast-types: 0.16.1(patch_hash=4gd42rgxtvnbt3gp6vymw5tusq)
+      ast-types: 0.16.1(patch_hash=f362awmdi2pizpvlhqmynk5wsi)
       recast: 0.23.4
     dev: true
 
@@ -2965,7 +2965,7 @@ packages:
     resolution: {integrity: sha512-jgsaNduz+ndvGyFt3uSuWqvy4lCnIJiovtouQN5JZHOKCS2QuhEdbcQHFhVksz2N2U9hXJo8odG7ETyWlEeuDw==}
     dev: true
 
-  /ast-types@0.16.1(patch_hash=4gd42rgxtvnbt3gp6vymw5tusq):
+  /ast-types@0.16.1(patch_hash=f362awmdi2pizpvlhqmynk5wsi):
     resolution: {integrity: sha512-6t10qk83GOG8p0vKmaCr8eiilZwO171AvbROMtvvNiwrTly62t+7XkA8RdIIVbpMhCASAsxgAzdRSwh6nw/5Dg==}
     engines: {node: '>=4'}
     dependencies:
@@ -5070,7 +5070,7 @@ packages:
     engines: {node: '>= 4'}
     dependencies:
       assert: 2.0.0
-      ast-types: 0.16.1(patch_hash=4gd42rgxtvnbt3gp6vymw5tusq)
+      ast-types: 0.16.1(patch_hash=f362awmdi2pizpvlhqmynk5wsi)
       esprima: 4.0.1
       source-map: 0.6.1
       tslib: 2.6.1

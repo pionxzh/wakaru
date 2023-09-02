@@ -1,7 +1,21 @@
 import transform from '../un-esm'
-import { defineInlineTest } from './test-utils'
+import { defineInlineTest, defineInlineTestWithOptions } from './test-utils'
 
 const inlineTest = defineInlineTest(transform)
+const inlineTestOpt = defineInlineTestWithOptions(transform)
+
+inlineTest('imports will be collected, merged and dedupe',
+  `
+import foo from 'foo';
+import bar from 'foo';
+import { baz } from 'foo';
+import { baz as baz1 } from 'foo';
+`,
+  `
+import foo, { baz, baz as baz1 } from "foo";
+import bar from "foo";
+`,
+)
 
 inlineTest('require to import',
   `
@@ -11,22 +25,81 @@ var baz1 = require('baz2').baz3;
 require('side-effect');
 `,
   `
-import { baz3 } from "baz2";
-import "side-effect";
 import foo, { bar } from "foo";
-var baz1 = baz3;
+import { baz3 as baz1 } from "baz2";
+import "side-effect";
+`,
+)
+
+inlineTest('default import',
+  `
+var foo = require('bar');
+var baz = require('baz')
+`,
+  `
+import foo from "bar";
+import baz from "baz";
+`,
+)
+
+inlineTest('named import',
+  `
+var foo = require('baz').baz;
+var bar = require('baz').baz;
+var baz = require('baz').baz;
+`,
+  `
+import { baz as foo, baz as bar, baz } from "baz";
+`,
+)
+
+inlineTest('named import #2',
+  `
+var { bar, baz: foo } = require('baz');
+`,
+  `
+import { bar, baz as foo } from "baz";
+`,
+)
+
+inlineTest('bare import #1',
+  `
+import 'foo';
+require('foo');
+`,
+  `
+import "foo";
+`,
+)
+
+inlineTest('bare import #2',
+`
+require('foo');
+require('foo');
+`,
+  `
+import "foo";
+`,
+)
+
+inlineTest('bare import #3',
+  `
+require('foo');
+var foo = require('foo');
+`,
+  `
+import foo from "foo";
 `,
 )
 
 inlineTest('require with destructuring and property access',
   `
-var { bar } = require('baz2').baz2;
-var baz1 = require('baz2').baz3;
+var { bar } = require('foo').baz2;
+var baz1 = require('foo').baz3;
 `,
   `
-import { baz2, baz3 } from "baz2";
+import { baz2, baz3 as baz1 } from "foo";
 var { bar } = baz2;
-var baz1 = baz3;
 `,
 )
 
@@ -37,10 +110,88 @@ var bar = 1;
 console.log(bar);
 `,
   `
-import { bar } from "foo";
-var { baz } = bar;
-var _bar = 1;
-console.log(_bar);
+import { bar as bar$0 } from "foo";
+var { baz } = bar$0;
+var bar = 1;
+console.log(bar);
+`,
+)
+
+inlineTest('multiple default import with same source',
+  `
+var foo = require('foo');
+var bar = require('foo');
+`,
+  `
+import foo from "foo";
+import bar from "foo";
+`,
+)
+
+inlineTest('multiple named import with same source',
+  `
+var { foo } = require('foo');
+var { bar } = require('foo');
+var baz = require('foo').baz;
+`,
+  `
+import { foo, bar, baz } from "foo";
+`,
+)
+
+inlineTest('import mixed with requires',
+  `
+import bar from 'bar';
+
+var foo = require('bar');
+var bro = require('bar').baz;
+`,
+  `
+import bar, { baz as bro } from "bar";
+import foo from "bar";
+`,
+)
+
+inlineTest('requires that are not on top level should not be transformed',
+  `
+function foo() {
+  require('foo');
+  var bar = require('bar');
+  var baz = require('baz').baz;
+  return bar + baz;
+}
+`,
+  `
+function foo() {
+  require('foo');
+  var bar = require('bar');
+  var baz = require('baz').baz;
+  return bar + baz;
+}
+`,
+)
+
+inlineTestOpt('nameless require #1', { hoist: true },
+  `
+var foo = require("bar")("baz");
+var buz = require("bar").bar("baz");
+`,
+  `
+import bar from "bar";
+var foo = bar("baz");
+var buz = bar.bar("baz");
+`,
+)
+
+inlineTestOpt('nameless require #2', { hoist: true },
+  `
+var foo = require("foo")("baz");
+var buz = require("foo").bar("baz");
+`,
+  `
+import foo$0 from "foo";
+var foo = foo$0("baz");
+var buz = foo$0.bar("baz");
 `,
 )
 
@@ -74,7 +225,7 @@ inlineTest('named export function', 'module.exports.foo = function() {};', 'expo
 inlineTest('named export function with name', 'module.exports.foo = function bar() {};', 'export const foo = function bar() {};')
 inlineTest('named export class', 'module.exports.foo = class {};', 'export const foo = class {};')
 
-inlineTest('named exports strategy',
+inlineTest('named exports strategy #1',
   `
 function same() {}
 module.exports.same = same;
@@ -91,7 +242,7 @@ export const Another = StillSame;
 `,
 )
 
-inlineTest('named exports strategy 2',
+inlineTest('named exports strategy #2',
   `
 module.exports.foo = foo
 exports.bar = bar
@@ -115,7 +266,7 @@ export const foo = 2;
 `,
 )
 
-inlineTest('duplicate default exports',
+inlineTest('duplicate default exports #1',
   `
 module.exports = 1;
 module.exports = 2;
@@ -125,7 +276,7 @@ export default 2;
 `,
 )
 
-inlineTest('duplicate default exports 2',
+inlineTest('duplicate default exports #2',
   `
 module.exports = 1;
 module.exports.default = 2;
@@ -152,7 +303,7 @@ export var quz = 4;
 `,
 )
 
-inlineTest('variable declaration with default exports',
+inlineTest('variable declaration with default exports #1',
   `
 var foo = exports.default = 1;
 `,
@@ -162,7 +313,7 @@ export default foo;
 `,
 )
 
-inlineTest('variable declaration with default exports 2',
+inlineTest('variable declaration with default exports #2',
   `
 var foo = module.exports.default = 1;
 `,
@@ -172,26 +323,44 @@ export default foo;
 `,
 )
 
-inlineTest('export with name conflict',
+// inlineTest('Object.defineProperty with exports',
+//   `
+// Object.defineProperty(exports, "foo", { value: 1 });
+// Object.defineProperty(exports, "named", {
+//   enumerable: true,
+//   get: function () {
+//     return obj.named;
+//   }
+// });
+// `,
+//   `
+// export const foo = 1;
+// export const named = obj.named;
+// `,
+// )
+
+inlineTest('export with naming conflict',
   `
 var foo = 1;
 console.log(foo);
 exports.foo = 2;
 
 const bar = 2;
-const _bar = 3;
-console.log(bar, _bar);
+const bar$0 = 3;
+console.log(bar, bar$0);
 module.exports.bar = 4;
 `,
   `
-var _foo = 1;
-console.log(_foo);
-export const foo = 2;
+var foo = 1;
+console.log(foo);
+const foo$0 = 2;
+export { foo$0 as foo };
 
-const _bar_1 = 2;
-const _bar = 3;
-console.log(_bar_1, _bar);
-export const bar = 4;
+const bar = 2;
+const bar$0 = 3;
+console.log(bar, bar$0);
+const bar$1 = 4;
+export { bar$1 as bar };
 `,
 )
 
@@ -220,3 +389,59 @@ module.exports += 1;
 module["exports"] = 1;
 `,
 )
+
+/**
+ * TODO: We might need a final pass to merge import and export
+ *
+ * The best result should be
+ * ```js
+ * export { default as foo } from "bar";
+ */
+// inlineTest('export with require #1',
+//   `
+// module.exports.foo = require('bar');
+// `,
+//   `
+// import foo from "foo";
+// export { foo };
+// `,
+// )
+
+// inlineTest('export with require #2',
+//   `
+// module.exports = require('bar');
+// `,
+//   `
+// import bar from "bar";
+// export default bar;
+// `,
+// )
+
+// inlineTest('export with require #3',
+//   `
+// var bar = 1;
+// module.exports = require('bar');
+// `,
+//   `
+// import bar$0 from "bar";
+// var bar = 1;
+// export default bar$0;
+// `,
+// )
+
+// inlineTest('export with require #4',
+//   `
+// module.exports = {
+//   encode: require('encode'),
+//   decode: require('decode')
+// };
+// `,
+//   `
+// import encode from "encode";
+// import decode from "decode";
+// export default {
+//   encode,
+//   decode
+// };
+// `,
+// )

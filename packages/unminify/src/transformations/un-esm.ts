@@ -1,3 +1,5 @@
+import { isTopLevel } from '@unminify-kit/ast-utils'
+import { generateNameFromModulePath as generateNamesFromModulePath } from '../utils/generateNameFromModulePath'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
@@ -5,32 +7,125 @@ import type { NodePath } from 'ast-types/lib/node-path'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, AssignmentExpression, CallExpression, Identifier, ImportDeclaration, JSCodeshift, Literal, MemberExpression, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
-type ImportInfo = {
+type Source = string
+type Imported = string
+type Local = string
+
+class ImportCollector {
+    importSourceOrder = new Set<Source>()
+    defaultImports = new Map<Source, Set<Local>>()
+    namespaceImports = new Map<Source, Set<Local>>()
+    namedImports = new Map<Source, Map<Imported, Set<Local>>>()
+    bareImports = new Set<Source>()
+
+    get importMap() {
+        /**
+         * Bare import can be omitted if there are other imports from the same source
+         */
+        const bareImports = [...this.bareImports.values()]
+            .filter((source) => {
+                return !this.defaultImports.has(source)
+                    && !this.namespaceImports.has(source)
+                    && !this.namedImports.has(source)
+            })
+
+        const importMap = [
+            ...[...this.defaultImports.entries()].flatMap(([source, locals]) => [...locals].map(local => ({ type: 'default', name: local, source } as const))),
+            ...[...this.namespaceImports.entries()].flatMap(([source, locals]) => [...locals].map(local => ({ type: 'namespace', name: local, source } as const))),
+            ...[...this.namedImports.entries()].flatMap(([source, importedMap]) => [...importedMap.entries()].flatMap(([imported, locals]) => [...locals].map(local => ({ type: 'named', name: imported, local, source } as const)))),
+            ...bareImports.map(source => ({ type: 'bare', source } as const)),
+        ].reduce((map, info) => {
+            if (!map[info.source]) {
+                map[info.source] = []
+            }
+
+            map[info.source].push(info)
+
+            return map
+        }, {} as Record<string, ImportInfo[]>)
+
+        const importSourceOrder = [...this.importSourceOrder.values()]
+        return Object.entries(importMap).sort(([a], [b]) => {
+            const aIndex = importSourceOrder.indexOf(a)
+            const bIndex = importSourceOrder.indexOf(b)
+            return bIndex - aIndex
+        })
+    }
+
+    addImportOrder(source: string) {
+        this.importSourceOrder.add(source)
+    }
+
+    addDefaultImport(source: string, local: string) {
+        if (!this.defaultImports.has(source)) this.defaultImports.set(source, new Set())
+        this.defaultImports.get(source)!.add(local)
+    }
+
+    addNamespaceImport(source: string, local: string) {
+        if (!this.namespaceImports.has(source)) {
+            this.namespaceImports.set(source, new Set())
+        }
+        this.namespaceImports.get(source)!.add(local)
+    }
+
+    addNamedImport(source: string, imported: string, local: string) {
+        if (!this.namedImports.has(source)) {
+            this.namedImports.set(source, new Map())
+        }
+        if (!this.namedImports.get(source)!.has(imported)) {
+            this.namedImports.get(source)!.set(imported, new Set())
+        }
+        this.namedImports.get(source)!.get(imported)!.add(local)
+    }
+
+    addBareImport(source: string) {
+        this.bareImports.add(source)
+    }
+}
+
+interface DefaultImport {
+    type: 'default'
     name: string
     source: string
-    type: 'default' | 'named' | 'namespace'
-} | {
-    name: null
-    source: string
-    type: 'bare'
 }
+
+interface NamespaceImport {
+    type: 'namespace'
+    name: string
+    source: string
+}
+
+interface NamedImport {
+    type: 'named'
+    name: string
+    local: string
+    source: string
+}
+
+interface BareImport {
+    type: 'bare'
+    source: string
+}
+
+type ImportInfo = DefaultImport | NamespaceImport | NamedImport | BareImport
 
 interface Params {
     hoist?: boolean
 }
 
 /**
- * Converts cjs require/exports syntax to esm import/export syntax
+ * Converts cjs require/exports syntax to esm import/export syntax.
+ * Then combine and dedupe imports.
  *
  * @example
  * var foo = require('foo')
  * var { bar } = require('bar')
- * var baz = require('baz').baz
+ * var bob = require('baz').baz
  * require('side-effect')
  * ->
  * import foo from 'foo'
  * import { bar } from 'bar'
- * import { baz } from 'baz'
+ * import { baz as bob } from 'baz'
  * import 'side-effect'
  *
  * @example
@@ -49,19 +144,20 @@ export const transformAST: ASTTransformation<Params> = (context, params) => {
 
 /**
  * Limitations:
- * - require with variable cannot be transformed
+ * - dynamic require cannot be transformed, e.g. `require(dynamic)`
+ *
+ * TODO: support helper functions from bundlers
  */
-// TODO: hoist
 function transformImport(context: Context, hoist: boolean) {
     const { root, j } = context
 
     /**
-     * Steps:
-     * 1. Collect requires
-     * 2. Reconstruct imports with deduplication
+     * We will scan through all import and require statements
+     * and collect them into a map.
+     * Variable declarations will replaced in-place if needed.
+     * After all, we will reconstruct the imports at the top of the file.
      */
-
-    const imports: ImportInfo[] = []
+    const importCollector = new ImportCollector()
 
     /**
      * Collect imports
@@ -72,51 +168,64 @@ function transformImport(context: Context, hoist: boolean) {
             const { specifiers, source } = path.node
             if (!j.Literal.check(source) || typeof source.value !== 'string') return
 
+            const sourceValue = source.value
+            importCollector.addImportOrder(sourceValue)
+
             if (!specifiers) {
-                imports.push({
-                    name: null,
-                    source: source.value,
-                    type: 'bare',
-                })
+                importCollector.addBareImport(sourceValue)
                 j(path).remove()
                 return
             }
 
-            const sourceValue = source.value
-
             specifiers.forEach((specifier) => {
                 if (j.ImportDefaultSpecifier.check(specifier)
                  && j.Identifier.check(specifier.local)) {
-                    imports.push({
-                        name: specifier.local.name,
-                        source: sourceValue,
-                        type: 'default',
-                    })
+                    const local = specifier.local.name
+                    importCollector.addDefaultImport(sourceValue, local)
                 }
 
                 if (j.ImportSpecifier.check(specifier)
                     && j.Identifier.check(specifier.imported)
                     && j.Identifier.check(specifier.local)
                 ) {
-                    imports.push({
-                        name: specifier.local.name,
-                        source: sourceValue,
-                        type: 'named',
-                    })
+                    importCollector.addNamedImport(
+                        sourceValue,
+                        specifier.imported.name,
+                        specifier.local.name,
+                    )
                 }
 
                 if (j.ImportNamespaceSpecifier.check(specifier)
                     && j.Identifier.check(specifier.local)
                 ) {
-                    imports.push({
-                        name: specifier.local.name,
-                        source: sourceValue,
-                        type: 'namespace',
-                    })
+                    importCollector.addNamespaceImport(
+                        sourceValue,
+                        specifier.local.name,
+                    )
                 }
             })
 
             j(path).remove()
+        })
+
+    /**
+     * Scan through all `require` call for the recording the order of imports
+     */
+    root
+        .find(j.CallExpression, {
+            callee: {
+                type: 'Identifier',
+                name: 'require',
+            },
+            arguments: [{
+                type: 'Literal' as const,
+                value: (value: unknown) => typeof value === 'string',
+            }],
+        })
+        .forEach((path) => {
+            const sourceLiteral = path.node.arguments[0] as Literal
+            const source = sourceLiteral.value as string
+            importCollector.addImportOrder(source)
         })
 
     /*
@@ -137,45 +246,53 @@ function transformImport(context: Context, hoist: boolean) {
                             type: 'Identifier',
                             name: 'require',
                         },
-                        arguments: [{ type: 'Literal' as const }],
+                        arguments: [{
+                            type: 'Literal' as const,
+                            value: (value: unknown) => typeof value === 'string',
+                        }],
                     },
                 },
             ],
         })
         .forEach((path) => {
+            if (!isTopLevel(j, path)) return
+
             const firstDeclaration = path.node.declarations[0] as VariableDeclarator
             const id = firstDeclaration.id
             const init = firstDeclaration.init as CallExpression
 
             const sourceLiteral = init.arguments[0] as Literal
-            if (typeof sourceLiteral.value !== 'string') return
-
-            const source = sourceLiteral.value
+            const source = sourceLiteral.value as string
 
             if (j.Identifier.check(id)) {
-                imports.push({
-                    name: id.name,
-                    source,
-                    type: 'default',
-                })
+                const local = id.name
+                importCollector.addDefaultImport(source, local)
+
+                j(path).remove()
+                return
             }
 
+            /**
+             * var { bar } = require('bar')
+             * ->
+             * import { bar } from 'bar'
+             *
+             */
             if (j.ObjectPattern.check(id)) {
                 id.properties.forEach((property) => {
                     if (j.Property.check(property)
                         && j.Identifier.check(property.key)
                         && j.Identifier.check(property.value)
                     ) {
-                        imports.push({
-                            name: property.value.name,
-                            source,
-                            type: 'named',
-                        })
+                        const imported = property.key.name
+                        const local = property.value.name
+                        importCollector.addNamedImport(source, imported, local)
                     }
                 })
+                j(path).remove()
+                // eslint-disable-next-line no-useless-return
+                return
             }
-
-            j(path).remove()
         })
 
     /**
@@ -192,19 +309,19 @@ function transformImport(context: Context, hoist: boolean) {
                     type: 'Identifier',
                     name: 'require',
                 },
-                arguments: [{ type: 'Literal' as const }],
+                arguments: [{
+                    type: 'Literal' as const,
+                    value: (value: unknown) => typeof value === 'string',
+                }],
             },
         })
         .forEach((path) => {
+            if (!hoist && !isTopLevel(j, path)) return
+
             const expression = path.node.expression as CallExpression
             const sourceLiteral = expression.arguments[0] as Literal
-            if (typeof sourceLiteral.value !== 'string') return
-
-            imports.push({
-                name: null,
-                source: sourceLiteral.value,
-                type: 'bare',
-            })
+            const source = sourceLiteral.value as string
+            importCollector.addBareImport(source)
 
             j(path).remove()
         })
@@ -229,7 +346,10 @@ function transformImport(context: Context, hoist: boolean) {
                                 type: 'Identifier',
                                 name: 'require',
                             },
-                            arguments: [{ type: 'Literal' as const }],
+                            arguments: [{
+                                type: 'Literal' as const,
+                                value: (value: unknown) => typeof value === 'string',
+                            }],
                         },
                         property: {
                             type: 'Identifier',
@@ -239,75 +359,54 @@ function transformImport(context: Context, hoist: boolean) {
             ],
         })
         .forEach((path) => {
+            if (!isTopLevel(j, path)) return
+
             const firstDeclaration = path.node.declarations[0] as VariableDeclarator
             const id = firstDeclaration.id
             const init = firstDeclaration.init as MemberExpression
 
             const sourceLiteral = (init.object as CallExpression).arguments[0] as Literal
-            if (typeof sourceLiteral.value !== 'string') return
-
-            const source = sourceLiteral.value
+            const source = sourceLiteral.value as string
 
             const property = init.property as Identifier
-            const propertyName = property.name
+            const imported = property.name
 
             /**
              * var baz = require('foo').bar
              * ->
-             * var baz = bar
-             * and add import
+             * import { bar as baz } from 'foo'
              */
             if (j.Identifier.check(id)) {
-                imports.push({
-                    name: propertyName,
-                    source,
-                    type: 'named',
-                })
-
-                if (id.name !== propertyName) {
-                    j(path).insertAfter(j.variableDeclaration(
-                        path.node.kind,
-                        [
-                            j.variableDeclarator(
-                                id,
-                                j.identifier(propertyName),
-                            ),
-                        ],
-                    ))
-                }
+                const local = id.name
+                importCollector.addNamedImport(source, imported, local)
             }
 
             /**
              * var { baz } = require('foo').bar
              * ->
+             * import { bar } from 'foo'
              * var { baz } = bar
-             * and add import
              */
             if (j.ObjectPattern.check(id)) {
-                imports.push({
-                    name: propertyName,
-                    source,
-                    type: 'named',
-                })
-
                 /**
                  * Resolve name conflict
+                 *
+                 * Because we are introducing a new variable `bar`,
+                 * we need to make sure it doesn't conflict with
+                 * existing variables.
                  */
                 const rootScope = root.find(j.Program).get().scope as Scope
                 const bindings = rootScope?.getBindings()
-                const isDeclared = bindings?.[propertyName]?.length > 0
+                const local = getUniqueName(bindings, imported)
 
-                if (isDeclared) {
-                    const newName = getUniqueName(bindings, propertyName)
-                    rootScope.rename(propertyName, newName)
-                }
+                importCollector.addNamedImport(source, imported, local)
 
                 j(path).insertAfter(j.variableDeclaration(
                     path.node.kind,
                     [
                         j.variableDeclarator(
                             id,
-                            j.identifier(propertyName),
+                            j.identifier(local),
                         ),
                     ],
                 ))
@@ -317,41 +416,70 @@ function transformImport(context: Context, hoist: boolean) {
         })
 
     /**
+     * All **Other** Require: Fuzzy match and replace
+     *
+     * @example
+     * var foo = require("bar")("baz");
+     * ->
+     * import bar from "bar";
+     * var foo = bar("baz");
+     */
+    if (hoist) {
+        root
+            .find(j.CallExpression, {
+                callee: {
+                    type: 'Identifier',
+                    name: 'require',
+                },
+                arguments: [{
+                    type: 'Literal' as const,
+                }],
+            })
+            .forEach((path) => {
+                const expression = path.node as CallExpression
+                const sourceLiteral = expression.arguments[0] as Literal
+                const source = sourceLiteral.value as string
+
+                const moduleName = generateNamesFromModulePath(source)
+
+                const rootScope = root.find(j.Program).get().scope as Scope
+                const bindings = rootScope?.getBindings()
+                const local = getUniqueName(bindings, moduleName)
+                j(path).replaceWith(j.identifier(local))
+
+                importCollector.addDefaultImport(source, local)
+            })
+    }
+
+    /**
      * Rebuild imports
      */
-    const importMap = imports.reduce((map, info) => {
-        if (!map[info.source]) {
-            map[info.source] = []
-        }
-
-        if (map[info.source].find(i => i.name === info.name)) return map
-
-        map[info.source].push(info)
-
-        return map
-    }, {} as Record<string, ImportInfo[]>)
-
-    Object.entries(importMap).forEach(([source, infos]) => {
+    importCollector.importMap.forEach(([source, infos]) => {
         const importStatements: ImportDeclaration[] = []
         const variableDeclarations: VariableDeclaration[] = []
 
-        const namedImports = infos.filter(info => info.type === 'named')
-        const defaultImports = infos.filter(info => info.type === 'default')
-        const namespaceImports = infos.filter(info => info.type === 'namespace')
-        const bareImports = infos.filter(info => info.type === 'bare')
+        const namedImports = infos.filter(info => info.type === 'named') as NamedImport[]
+        const defaultImports = infos.filter(info => info.type === 'default') as DefaultImport[]
+        const namespaceImports = infos.filter(info => info.type === 'namespace') as NamespaceImport[]
+        const bareImports = infos.filter(info => info.type === 'bare') as BareImport[]
 
         if (namedImports.length > 0 || defaultImports.length > 0) {
+            const [firstDefaultImport, ...restDefaultImports] = defaultImports
+
             const importSpecifiers = [
-                ...namedImports.map(info => j.importSpecifier(j.identifier(info.name!), j.identifier(info.name!))),
-                ...defaultImports.map(info => j.importDefaultSpecifier(j.identifier(info.name!))),
+                ...(firstDefaultImport ? [j.importDefaultSpecifier(j.identifier(firstDefaultImport.name))] : []),
+                ...namedImports.map(info => j.importSpecifier(j.identifier(info.name), j.identifier(info.local))),
             ]
-
-            const importDeclaration = j.importDeclaration(
-                importSpecifiers,
-                j.literal(source),
-            )
-
+            const importDeclaration = j.importDeclaration(importSpecifiers, j.literal(source))
             importStatements.push(importDeclaration)
+
+            if (restDefaultImports.length > 0) {
+                const restImportDeclaration = restDefaultImports.map(info => j.importDeclaration(
+                    [j.importDefaultSpecifier(j.identifier(info.name))],
+                    j.literal(source),
+                ))
+                importStatements.push(...restImportDeclaration)
+            }
         }
 
         if (namespaceImports.length > 0) {
@@ -377,13 +505,13 @@ function transformImport(context: Context, hoist: boolean) {
         /**
          * Bare import is not needed if there are other imports
          */
-        const previousImports = namedImports.length + defaultImports.length + namespaceImports.length
-        if (bareImports.length > 0 && previousImports === 0) {
-            const importDeclaration = j.importDeclaration(
-                [],
-                j.literal(source),
-            )
+        if (bareImports.length > 0) {
+            const importDeclaration = j.importDeclaration([], j.literal(source))
             importStatements.push(importDeclaration)
+        }
+
+        if (variableDeclarations.length > 0) {
+            root.find(j.Program).get('body', 0).insertBefore(...variableDeclarations)
         }
 
         // insert to the top of the file
@@ -424,6 +552,7 @@ function transformExport(context: Context) {
             exportsMap.delete(name)
             // removeNodeOnBody(root, previous)
             console.warn(`Multiple exports of "${name}" found, only the last one will be kept`)
+            // TODO: handle multiple exports
         }
         exportsMap.set(name, path)
 
@@ -466,11 +595,38 @@ function transformExport(context: Context) {
                 return false
             })
             if (isDeclared && !isDeclaredInCurrentPath) {
-                // rename the existing declaration
+                /**
+                 * Resolve name conflict
+                 * Because we are introducing a new variable
+                 * but the name is already declared in the scope
+                 *
+                 * @example
+                 * const foo = 1
+                 * module.exports.foo = 2
+                 * ->
+                 * const foo = 1
+                 * const foo$0 = 2
+                 * export { foo$0 as foo }
+                 */
                 const oldName = name
                 const newName = getUniqueName(bindings, oldName)
-                console.warn(`"${name}" is already declared, rename it to "${newName}"`)
-                rootScope.rename(oldName, newName)
+
+                const variableDeclaration = j.variableDeclaration(
+                    kind,
+                    [j.variableDeclarator(j.identifier(newName), right)],
+                )
+                j(path).insertBefore(variableDeclaration)
+
+                const exportSpecifier = j.exportSpecifier.from({
+                    exported: j.identifier(name),
+                    local: j.identifier(newName),
+                })
+                const exportNamedDeclaration = j.exportNamedDeclaration(
+                    null,
+                    [exportSpecifier],
+                )
+                j(path).replaceWith(exportNamedDeclaration)
+                return
             }
         }
 
@@ -608,6 +764,8 @@ function transformExport(context: Context) {
 
     /**
      * Special case:
+     *
+     * @example
      * var foo = exports.foo = 1
      */
     root
@@ -672,6 +830,8 @@ function transformExport(context: Context) {
 
     /**
      * Special case:
+     *
+     * @example
      * var bar = module.exports.baz = 2
      */
     root
@@ -745,11 +905,13 @@ function transformExport(context: Context) {
 }
 
 function getUniqueName(bindings: any, oldName: string): string {
+    if (!bindings || !bindings[oldName]) return oldName
+
     let i = 0
-    while (bindings[i > 0 ? `_${oldName}_${i}` : `_${oldName}`]) {
+    while (bindings[`${oldName}$${i}`]) {
         i++
     }
-    return i > 0 ? `_${oldName}_${i}` : `_${oldName}`
+    return `${oldName}$${i}`
 }
 
 export default wrap(transformAST)
