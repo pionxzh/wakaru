@@ -3,32 +3,6 @@ import { defineInlineTest } from './test-utils'
 
 const inlineTest = defineInlineTest(transform)
 
-inlineTest('nested ternary expression',
-  `
-a ? b() : c ? d() : e()
-`,
-  `
-if (a) {
-  b();
-}
-
-if (c) {
-  d();
-}
-
-e();
-`,
-)
-
-inlineTest('nested logical expression',
-  `
-x == 'a' || x == 'b' || x == 'c' && x == 'd'
-`,
-  `
-x == 'a' || x == 'b' || x == 'c' && x == 'd'
-`,
-)
-
 // inlineTest('return simple logical expression',
 //   `
 // return x == 'a' || x == 'b' || x == 'c' && x == 'd'
@@ -69,6 +43,56 @@ if (!x) {
 if (x == null) {
   c();
 }
+`,
+)
+
+inlineTest('nested ternary expression',
+  `
+a ? b() : c ? d() : e() ? g ? h() : i() : j()
+`,
+  `
+if (a) {
+  b();
+} else if (c) {
+  d();
+} else if (e()) {
+  if (g) {
+    h();
+  } else {
+    i();
+  }
+} else {
+  j();
+}
+`,
+)
+
+inlineTest('nested ternary expression with early return',
+  `
+for (var i = 0; i < 10; i++) {
+  return a ? b() : c ? d() : e()
+}
+`,
+  `
+for (var i = 0; i < 10; i++) {
+  if (a) {
+    return b();
+  }
+
+  if (c) {
+    return d();
+  }
+
+  return e();
+`,
+)
+
+inlineTest('nested logical expression',
+  `
+x == 'a' || x == 'b' || x == 'c' && x == 'd'
+`,
+  `
+x == 'a' || x == 'b' || x == 'c' && x == 'd'
 `,
 )
 

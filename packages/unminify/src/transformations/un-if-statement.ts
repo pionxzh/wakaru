@@ -2,7 +2,78 @@ import { transformToMultiStatementContext } from '../utils/transformToMultiState
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { StatementKind } from 'ast-types/lib/gen/kinds'
-import type { ConditionalExpression } from 'jscodeshift'
+import type { ASTNode, ConditionalExpression, JSCodeshift } from 'jscodeshift'
+
+interface DecisionTree {
+    condition: ASTNode
+    trueBranch: DecisionTree | null
+    falseBranch: DecisionTree | null
+}
+
+function makeDecisionTree(j: JSCodeshift, node: ASTNode): DecisionTree {
+    console.log(j(node).toSource())
+
+    if (j.ConditionalExpression.check(node)) {
+        return {
+            condition: node.test,
+            trueBranch: makeDecisionTree(j, node.consequent),
+            falseBranch: makeDecisionTree(j, node.alternate),
+        }
+    }
+
+    return {
+        condition: node,
+        trueBranch: null,
+        falseBranch: null,
+    }
+}
+
+function renderDecisionTree(j: JSCodeshift, tree: DecisionTree): StatementKind[] {
+    const { condition, trueBranch, falseBranch } = tree
+
+    if (trueBranch && falseBranch) {
+        if (falseBranch.trueBranch === null && falseBranch.falseBranch !== null) {
+            // else if case
+            return [
+                j.ifStatement(
+                    condition,
+                    j.blockStatement(renderDecisionTree(j, trueBranch)),
+                    j.blockStatement(renderDecisionTree(j, falseBranch.falseBranch)),
+                ),
+            ]
+        }
+        else {
+            // nested if-else case
+            return [
+                j.ifStatement(
+                    condition,
+                    j.blockStatement(renderDecisionTree(j, trueBranch)),
+                    j.blockStatement(renderDecisionTree(j, falseBranch)),
+                ),
+            ]
+        }
+    }
+
+    if (trueBranch) {
+        return [
+            j.ifStatement(
+                condition,
+                j.blockStatement(renderDecisionTree(j, trueBranch)),
+            ),
+        ]
+    }
+
+    if (falseBranch) {
+        return [
+            j.ifStatement(
+                j.unaryExpression('!', condition),
+                j.blockStatement(renderDecisionTree(j, falseBranch)),
+            ),
+        ]
+    }
+
+    return [j.expressionStatement(condition)]
+}
 
 /**
  * Unwraps nested ternary expressions into if-else statements.
@@ -39,12 +110,19 @@ export const transformAST: ASTTransformation = (context) => {
      *
      * we can only confidently transform the nested ternary
      * expression under ExpressionStatement.
-     * use "Early return" to avoid deeply nested if statement
+     *
+     * @example
      * `a ? b() : c ? d() : e()`
      * ->
      * if(a) { b() }
-     * if(c) { d() }
-     * e()
+     * else if(c) { d() }
+     * else { e() }
+     *
+     * @example
+     *
+     *
+     * use "Early return" to avoid deeply nested if statements
+     * when the nested ternary expression is under BlockStatement
      */
     root
         .find(j.ExpressionStatement, {
@@ -57,25 +135,30 @@ export const transformAST: ASTTransformation = (context) => {
         .forEach((path) => {
             const conditionExpressionNode = path.node.expression as ConditionalExpression
 
-            const replacements: StatementKind[] = []
-            let tail: ConditionalExpression['alternate'] | null = null
-            const deNested = (conditionExpressionNode: ConditionalExpression) => {
-                const ifStatementNode = j.ifStatement(
-                    conditionExpressionNode.test,
-                    j.blockStatement([j.expressionStatement(conditionExpressionNode.consequent)]),
-                )
-                replacements.push(ifStatementNode)
+            // const replacements: StatementKind[] = []
+            // let tail: ConditionalExpression['alternate'] | null = null
+            // const deNested = (conditionExpressionNode: ConditionalExpression) => {
+            //     const ifStatementNode = j.ifStatement(
+            //         conditionExpressionNode.test,
+            //         j.blockStatement([j.expressionStatement(conditionExpressionNode.consequent)]),
+            //     )
+            //     replacements.push(ifStatementNode)
 
-                if (j.ConditionalExpression.check(conditionExpressionNode.alternate)) {
-                    deNested(conditionExpressionNode.alternate)
-                }
-                else {
-                    tail = conditionExpressionNode.alternate
-                }
-            }
-            deNested(conditionExpressionNode)
+            //     if (j.ConditionalExpression.check(conditionExpressionNode.alternate)) {
+            //         deNested(conditionExpressionNode.alternate)
+            //     }
+            //     else {
+            //         tail = conditionExpressionNode.alternate
+            //     }
+            // }
+            // deNested(conditionExpressionNode)
 
-            if (tail) replacements.push(j.expressionStatement(tail))
+            // if (tail) replacements.push(j.expressionStatement(tail))
+            // transformToMultiStatementContext(j, path, replacements)
+
+            const decisionTree = makeDecisionTree(j, conditionExpressionNode)
+            const replacements = renderDecisionTree(j, decisionTree)
+            // console.log(replacements)
             transformToMultiStatementContext(j, path, replacements)
         })
 
