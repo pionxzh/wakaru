@@ -172,31 +172,32 @@ Flips comparisons that are in the form of "literal comes first" to "literal come
 
 ### `un-if-statement`
 
-Unwraps nested ternary expressions into if-else statements.\
-Conditionally returns early if possible.
+Unwraps nested ternary expressions into if-else statements.
 
 ```diff
 - a ? b() : c ? d() : e()
-+ if(a) {
++ if (a) {
 +   b();
-+ } else if(c) {
++ } else if (c) {
 +   d();
 + } else {
 +   e();
 + }
 ```
 
-This rule will try to do more by adopting `Early Exit` pattern (on statement level).
+This rule will try to adopting `Early Exit` pattern if possible.
 
 ```diff
-- a ? b() : c ? d() : e()
-+ if(a) {
-+   b();
-+ }
-+ if(c) {
-+   d();
-+ }
-+ e();
+while (condition) {
+-   return a ? b() : c ? d() : e()
++   if (a) {
++     return b();
++   }
++   if (c) {
++     return d();
++   }
++   return e();
+}
 ```
 
 ### `un-switch-statement`

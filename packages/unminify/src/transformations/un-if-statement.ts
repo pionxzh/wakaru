@@ -1,23 +1,196 @@
 import { transformToMultiStatementContext } from '../utils/transformToMultiStatementContext'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { StatementKind } from 'ast-types/lib/gen/kinds'
-import type { ASTNode, ConditionalExpression, JSCodeshift } from 'jscodeshift'
+import type { ExpressionKind, StatementKind } from 'ast-types/lib/gen/kinds'
+import type { ASTNode, ConditionalExpression, JSCodeshift, LogicalExpression, SwitchCase } from 'jscodeshift'
 
 interface DecisionTree {
-    condition: ASTNode
+    condition: ExpressionKind
     trueBranch: DecisionTree | null
     falseBranch: DecisionTree | null
 }
 
-function makeDecisionTree(j: JSCodeshift, node: ASTNode): DecisionTree {
-    console.log(j(node).toSource())
+/**
+ * Unwraps nested ternary expressions and binary expression into if-else statements or switch statements.
+ * Conditionally returns early if possible.
+ *
+ * @example
+ * `a ? b() : c ? d() : e()`
+ * ->
+ * if (a) { b() }
+ * else if (c) { d() }
+ * else { e() }
+ *
+ * `return x ? a() : b()` -> `if (x) { return a() } return b()`
+ * `return x && a()` -> `if (x) { return a() }`
+ * `return x || a()` -> `if (!x) { return a() }`
+ * `return x ?? a()` -> `if (x == null) { return a() } return x`
+ *
+ * `x ? a() : b()` -> `if (x) { a() } else { b() }`
+ * `x && a()` -> `if (x) { a() }`
+ * `x || a()` -> `if (!x) { a() }`
+ * `x ?? a()` -> `if (x == null) { a() }`
+ *
+ * @example
+ * foo == 'bar' ? bar() : foo == 'baz' ? baz() : foo == 'qux' || foo == 'quux' ? qux() : quux()
+ * ->
+ * switch (foo) {
+ *  case 'bar':
+ *   bar()
+ *   break
+ *  case 'baz':
+ *   baz()
+ *   break
+ *  case 'qux':
+ *  case 'quux':
+ *   qux()
+ *   break
+ *  default:
+ *   quux()
+ * }
+ *
+ * @example
+ * foo == 'bar' ? bar() : foo == 'baz' ? baz() : foo == 'qux' || foo == 'quux' && qux()
+ * ->
+ * switch (foo) {
+ *  case 'bar':
+ *   bar()
+ *   break
+ *  case 'baz':
+ *   baz()
+ *   break
+ *  case 'qux':
+ *  case 'quux':
+ *   qux()
+ *   break
+ * }
+ *
+ * @see https://babeljs.io/docs/babel-plugin-minify-simplify#reduce-statement-into-expression
+ * @see https://babeljs.io/docs/babel-plugin-minify-guarded-expressions
+ * @see https://github.com/terser/terser/blob/master/test/compress/if_return.js
+ * @see https://github.com/terser/terser/blob/master/test/compress/conditionals.js
+ */
+export const transformAST: ASTTransformation = (context) => {
+    const { root, j } = context
 
+    /**
+     * Nested ternary expression
+     *
+     * we can only confidently transform the nested ternary
+     * expression under ExpressionStatement.
+     *
+     * @example
+     * `a ? b() : c ? d() : e()`
+     * ->
+     * if (a) { b() }
+     * else if (c) { d() }
+     * else { e() }
+     *
+     * use "Early return" to avoid deeply nested if statements
+     * when the nested ternary expression is under BlockStatement
+     *
+     * @example
+     * `if (x) { return a ? b() : c ? d() : e() }`
+     * ->
+     * if (x) {
+     *   if (a) { return b() }
+     *   if (c) { return d() }
+     *   return e()
+     * }
+     */
+    root
+        .find(j.ExpressionStatement, {
+            /**
+             * Expression with ternary operator will always be transformed
+             */
+            expression: {
+                type: 'ConditionalExpression',
+            },
+        })
+        .forEach((path) => {
+            const conditionExpression = path.node.expression as ConditionalExpression
+            const decisionTree = makeDecisionTree(j, conditionExpression)
+            const replacements = renderDecisionTree(j, decisionTree)
+            transformToMultiStatementContext(j, path, replacements)
+        })
+
+    /**
+     * Return nested ternary expression
+     *
+     * `return x ? a() : b()` -> `if (x) { return a() } else { return b() }`
+     */
+    root
+        .find(j.ReturnStatement, {
+            /**
+             * Expression with ternary operator will only be transformed
+             * if the ternary operator is nested
+             *
+             * Because `return a ? b() : c()` should be easier to read
+             */
+            argument: (node) => {
+                if (!j.ConditionalExpression.check(node)) return false
+                return j.ConditionalExpression.check(node.consequent)
+                    || j.ConditionalExpression.check(node.alternate)
+                    || j(node.consequent).find(j.ConditionalExpression).size() > 0
+                    || j(node.alternate).find(j.ConditionalExpression).size() > 0
+            },
+        })
+        .forEach((path) => {
+            const conditionExpression = path.node.argument as ConditionalExpression
+            const decisionTree = makeDecisionTree(j, conditionExpression)
+            const replacements = renderDecisionTreeWithEarlyReturn(j, decisionTree)
+            transformToMultiStatementContext(j, path, replacements)
+        })
+
+    root
+        .find(j.ExpressionStatement, {
+            /**
+             * Expression with logical expression will always be transformed
+             */
+            expression: {
+                type: 'LogicalExpression',
+            },
+        })
+        .forEach((path) => {
+            const logicalExpression = path.node.expression as LogicalExpression
+            const decisionTree = makeDecisionTree(j, logicalExpression)
+            const replacements = renderDecisionTree(j, decisionTree)
+            transformToMultiStatementContext(j, path, replacements)
+        })
+}
+
+function makeDecisionTree(j: JSCodeshift, node: ExpressionKind): DecisionTree {
     if (j.ConditionalExpression.check(node)) {
         return {
             condition: node.test,
             trueBranch: makeDecisionTree(j, node.consequent),
             falseBranch: makeDecisionTree(j, node.alternate),
+        }
+    }
+
+    if (j.LogicalExpression.check(node)) {
+        if (node.operator === '&&') {
+            return {
+                condition: node.left,
+                trueBranch: makeDecisionTree(j, node.right),
+                falseBranch: null,
+            }
+        }
+
+        if (node.operator === '||') {
+            return {
+                condition: node.left,
+                trueBranch: null,
+                falseBranch: makeDecisionTree(j, node.right),
+            }
+        }
+
+        if (node.operator === '??') {
+            return {
+                condition: j.binaryExpression('==', node.left, j.identifier('null')),
+                trueBranch: makeDecisionTree(j, node.right),
+                falseBranch: null,
+            }
         }
     }
 
@@ -28,27 +201,63 @@ function makeDecisionTree(j: JSCodeshift, node: ASTNode): DecisionTree {
     }
 }
 
+/**
+ * Renders a decision tree into if-else statements smartly.
+ * Here is the comparison between the naive and smart approach:
+ *
+ * Naive approach:
+ * ```js
+ * if (a) {
+ *   b()
+ * }
+ * else {
+ *   if (c) {
+ *     d()
+ *   }
+ *   else {
+ *     e()
+ *   }
+ * }
+ * ```
+ *
+ * Smart approach:
+ * ```js
+ * if (a) {
+ *   b()
+ * }
+ * else if (c) {
+ *   d()
+ * }
+ * else {
+ *  e()
+ * }
+ * ```
+ */
 function renderDecisionTree(j: JSCodeshift, tree: DecisionTree): StatementKind[] {
+    const switchStatement = renderDecisionTreeWithSwitch(j, tree)
+    if (switchStatement) return [switchStatement]
+
     const { condition, trueBranch, falseBranch } = tree
 
     if (trueBranch && falseBranch) {
-        if (falseBranch.trueBranch === null && falseBranch.falseBranch !== null) {
-            // else if case
+        const falseBranchStatements = renderDecisionTree(j, falseBranch)
+        if (falseBranchStatements.length === 1 && j.IfStatement.check(falseBranchStatements[0])) {
+            // generate an else-if statement
             return [
                 j.ifStatement(
                     condition,
                     j.blockStatement(renderDecisionTree(j, trueBranch)),
-                    j.blockStatement(renderDecisionTree(j, falseBranch.falseBranch)),
+                    falseBranchStatements[0],
                 ),
             ]
         }
         else {
-            // nested if-else case
+            // generate a nested if-else statement
             return [
                 j.ifStatement(
                     condition,
                     j.blockStatement(renderDecisionTree(j, trueBranch)),
-                    j.blockStatement(renderDecisionTree(j, falseBranch)),
+                    j.blockStatement(falseBranchStatements),
                 ),
             ]
         }
@@ -75,237 +284,171 @@ function renderDecisionTree(j: JSCodeshift, tree: DecisionTree): StatementKind[]
     return [j.expressionStatement(condition)]
 }
 
+function renderDecisionTreeWithEarlyReturn(j: JSCodeshift, tree: DecisionTree): StatementKind[] {
+    const { condition, trueBranch, falseBranch } = tree
+
+    if (trueBranch && falseBranch) {
+        const trueBranchStatements = renderDecisionTreeWithEarlyReturn(j, trueBranch)
+        const falseBranchStatements = renderDecisionTreeWithEarlyReturn(j, falseBranch)
+
+        return [
+            j.ifStatement(
+                condition,
+                j.blockStatement(trueBranchStatements),
+            ),
+            ...falseBranchStatements,
+        ]
+    }
+
+    if (trueBranch) {
+        return [
+            j.ifStatement(
+                condition,
+                j.blockStatement(renderDecisionTreeWithEarlyReturn(j, trueBranch)),
+            ),
+        ]
+    }
+
+    if (falseBranch) {
+        return [
+            j.ifStatement(
+                j.unaryExpression('!', condition),
+                j.blockStatement(renderDecisionTreeWithEarlyReturn(j, falseBranch)),
+            ),
+        ]
+    }
+
+    return condition ? [j.returnStatement(condition)] : []
+}
+
+const SWITCH_THRESHOLD = 3
+function renderDecisionTreeWithSwitch(j: JSCodeshift, tree: DecisionTree) {
+    const cond = tree.condition
+    const comparisonBases = extractComparisonBases(j, cond)
+    if (comparisonBases.length === 0) return
+
+    const comparisonBase = comparisonBases.find(base => countBaseVariableUsedInAllBranches(j, base, tree) >= SWITCH_THRESHOLD)
+    if (!comparisonBase) return
+
+    const switchCases = collectSwitchCase(j, tree, comparisonBase)
+    return j.switchStatement(comparisonBase, switchCases)
+}
+
+function collectSwitchCase(j: JSCodeshift, tree: DecisionTree, base: ExpressionKind): SwitchCase[] {
+    const switchCases: SwitchCase[] = []
+    const { condition, trueBranch, falseBranch } = tree
+
+    if (!trueBranch && !falseBranch) return switchCases
+
+    const comparisonValues = extractComparisonValues(j, condition, base)
+    const [lastComparisonValue, ...otherComparisonValues] = comparisonValues.reverse()
+    otherComparisonValues.reverse()
+
+    otherComparisonValues.forEach((comparisonValue) => {
+        switchCases.push(j.switchCase(comparisonValue, []))
+    })
+
+    if (lastComparisonValue) {
+        if (trueBranch) {
+            switchCases.push(j.switchCase(lastComparisonValue, [
+                j.expressionStatement(trueBranch.condition),
+                j.breakStatement(),
+            ]))
+        }
+        else {
+            switchCases.push(j.switchCase(lastComparisonValue, []))
+        }
+    }
+
+    if (falseBranch) {
+        if ((falseBranch.trueBranch || falseBranch.falseBranch)) {
+            switchCases.push(...collectSwitchCase(j, falseBranch, base))
+        }
+        else {
+            switchCases.push(j.switchCase(null, [
+                j.expressionStatement(falseBranch.condition),
+                j.breakStatement(),
+            ]))
+        }
+    }
+
+    return switchCases
+}
+
 /**
- * Unwraps nested ternary expressions into if-else statements.
- * Conditionally returns early if possible.
- *
- * @example
- * `a ? b() : c ? d() : e()`
- * ->
- * if(a) { b() }
- * if(c) { d() }
- * e()
- *
- * `return x ? a() : b()` -> `if (x) { return a() } else { return b() }`
- * `return x && a()` -> `if (x) { return a() }`
- * `return x || a()` -> `if (!x) { return a() }`
- * `return x ?? a()` -> `if (x == null) { return a() }`
- *
- * `x ? a() : b()` -> `if (x) { a() } else { b() }`
- * `x && a()` -> `if (x) { a() }`
- * `x || a()` -> `if (!x) { a() }`
- * `x ?? a()` -> `if (x == null) { a() }`
- *
- * @see https://babeljs.io/docs/babel-plugin-minify-simplify#reduce-statement-into-expression
- * @see https://babeljs.io/docs/babel-plugin-minify-guarded-expressions
- * @see https://github.com/terser/terser/blob/master/test/compress/if_return.js
- * @see https://github.com/terser/terser/blob/master/test/compress/conditionals.js
+ * Find out the base expression of a comparison expression.
+ * `a === 1` will return `a`.
+ * `a === 1 && a === 2` will return `[]` as they are not the same.
+ * `a === 1 || a === 2` will return `a`.
+ * `a === 1 || b === 1` will return `[]` as they are not the same.
+ * `a == b` will return `[a, b]` as we can't be sure which one is the base.
+ * `a == b || a == c` will return `[a]`
  */
-export const transformAST: ASTTransformation = (context) => {
-    const { root, j } = context
-    const NullIdentifier = j.identifier('null')
+function extractComparisonBases(j: JSCodeshift, condition: ExpressionKind): ExpressionKind[] {
+    if (j.BinaryExpression.check(condition) && (condition.operator === '==' || condition.operator === '===')) {
+        return [condition.left, condition.right].filter(node => isComparisonBase(j, node))
+    }
 
-    /**
-     * Nested ternary expression
-     *
-     * we can only confidently transform the nested ternary
-     * expression under ExpressionStatement.
-     *
-     * @example
-     * `a ? b() : c ? d() : e()`
-     * ->
-     * if(a) { b() }
-     * else if(c) { d() }
-     * else { e() }
-     *
-     * @example
-     *
-     *
-     * use "Early return" to avoid deeply nested if statements
-     * when the nested ternary expression is under BlockStatement
-     */
-    root
-        .find(j.ExpressionStatement, {
-            expression: (node) => {
-                if (!j.ConditionalExpression.check(node)) return false
-                return j.ConditionalExpression.check(node.consequent)
-                || j.ConditionalExpression.check(node.alternate)
-            },
-        })
-        .forEach((path) => {
-            const conditionExpressionNode = path.node.expression as ConditionalExpression
+    if (j.LogicalExpression.check(condition) && condition.operator === '||') {
+        const leftBases = extractComparisonBases(j, condition.left)
+        const rightBases = extractComparisonBases(j, condition.right)
 
-            // const replacements: StatementKind[] = []
-            // let tail: ConditionalExpression['alternate'] | null = null
-            // const deNested = (conditionExpressionNode: ConditionalExpression) => {
-            //     const ifStatementNode = j.ifStatement(
-            //         conditionExpressionNode.test,
-            //         j.blockStatement([j.expressionStatement(conditionExpressionNode.consequent)]),
-            //     )
-            //     replacements.push(ifStatementNode)
+        if (leftBases.length > 0 && rightBases.length > 0) {
+            const baseVariable = leftBases.find(node1 => rightBases.find(node2 => areNodesEqual(j, node1, node2)))
+            return baseVariable ? [baseVariable] : []
+        }
+    }
 
-            //     if (j.ConditionalExpression.check(conditionExpressionNode.alternate)) {
-            //         deNested(conditionExpressionNode.alternate)
-            //     }
-            //     else {
-            //         tail = conditionExpressionNode.alternate
-            //     }
-            // }
-            // deNested(conditionExpressionNode)
+    return []
+}
 
-            // if (tail) replacements.push(j.expressionStatement(tail))
-            // transformToMultiStatementContext(j, path, replacements)
+function extractComparisonValues(j: JSCodeshift, node: ExpressionKind, base: ExpressionKind): ExpressionKind[] {
+    if (j.BinaryExpression.check(node) && (node.operator === '==' || node.operator === '===')) {
+        if (areNodesEqual(j, node.left, base)) return [node.right]
+        if (areNodesEqual(j, node.right, base)) return [node.left]
+    }
 
-            const decisionTree = makeDecisionTree(j, conditionExpressionNode)
-            const replacements = renderDecisionTree(j, decisionTree)
-            // console.log(replacements)
-            transformToMultiStatementContext(j, path, replacements)
-        })
+    if (j.LogicalExpression.check(node) && node.operator === '||') {
+        const leftValues = extractComparisonValues(j, node.left, base)
+        const rightValues = extractComparisonValues(j, node.right, base)
+        return [...leftValues, ...rightValues]
+    }
 
-    /**
-     * Nested logical expression
-     *
-     * x == 'a' || x == 'b' || x == 'c' && x == 'd'
-     */
+    return []
+}
 
-    // /**
-    //  * Return simple ternary expression
-    //  *
-    //  * `return x ? a() : b()` -> `if (x) { return a() } else { return b() }`
-    //  */
-    // root
-    //     .find(j.ReturnStatement, {
-    //         argument: {
-    //             type: 'ConditionalExpression',
-    //         },
-    //     })
-    //     .forEach((path) => {
-    //         const { test, consequent, alternate } = path.node.argument as ConditionalExpression
-    //         const consequentReturn = j.blockStatement([j.returnStatement(consequent)])
-    //         const alternateReturn = j.blockStatement([j.returnStatement(alternate)])
-    //         const replacement = j.ifStatement(test, consequentReturn, alternateReturn)
-    //         j(path).replaceWith(replacement)
-    //     })
+function countBaseVariableUsedInAllBranches(j: JSCodeshift, base: ASTNode, tree: DecisionTree, count = 0): number {
+    const { condition, trueBranch, falseBranch } = tree
 
-    // /**
-    //  * Return simple logical expression
-    //  * `return x && a()` -> `if (x) { return a() }`
-    //  * `return x || a()` -> `if (!x) { return a() }`
-    //  * `return x ?? a()` -> `if (x == null) { return a() }`
-    //  */
-    // root
-    //     .find(j.ReturnStatement, {
-    //         argument: {
-    //             type: 'LogicalExpression',
-    //             operator: (operator: string) => ['&&', '||', '??'].includes(operator),
-    //         },
-    //     })
-    //     .forEach((path) => {
-    //         const { node } = path
-    //         if (!j.LogicalExpression.check(node.argument)) return
+    if (!trueBranch && !falseBranch) return count
 
-    //         const { operator, left, right } = node.argument
-    //         const test = operator === '&&'
-    //             ? left
-    //             : operator === '||'
-    //                 ? j.unaryExpression('!', left)
-    //                 : j.binaryExpression('==', left, NullIdentifier)
-    //         const consequent = j.blockStatement([j.returnStatement(right)])
-    //         const alternate = null
-    //         const replacement = j.ifStatement(test, consequent, alternate)
-    //         j(path).replaceWith(replacement)
-    //     })
+    const comparisonBases = extractComparisonBases(j, condition)
+    if (!comparisonBases.some(node => areNodesEqual(j, node, base))) return -1
 
-    /**
-     * Simple ternary expression
-     *
-     * `x ? a() : b()` -> `if (x) { a() } else { b() }`
-     */
-    root
-        .find(j.ExpressionStatement)
-        .filter((path) => {
-            const { node } = path
-            return j.ConditionalExpression.check(node.expression)
-        })
-        .forEach((path) => {
-            if (j.Property.check(path.parentPath.node)) return
-            if (j.MemberExpression.check(path.parentPath.node)) return
-            if (j.IfStatement.check(path.parentPath.node)) return
-            if (j.LogicalExpression.check(path.parentPath.node)) return
-            if (j.ForStatement.check(path.parentPath.node)) return
-            if (j.WhileStatement.check(path.parentPath.node)) return
-            if (j.DoWhileStatement.check(path.parentPath.node)) return
-            if (j.ReturnStatement.check(path.parentPath.node)) return
-            // TODO: need to come up with a better way to handle LogicalExpression in SequenceExpression
-            if (j.SequenceExpression.check(path.parentPath.node)) return
-            if (j.VariableDeclarator.check(path.parentPath.node)) return
-            if (j.AssignmentExpression.check(path.parentPath.node)) return
-            if (j.AssignmentPattern.check(path.parentPath.node)) return
-            if (j.CallExpression.check(path.parentPath.node)) return
-            if (j.ConditionalExpression.check(path.parentPath.node)) return
-            if (j.ArrowFunctionExpression.check(path.parentPath.node)) return
-            if (j.ExportDeclaration.check(path.parentPath.node)) return
-            if (j.ExportDefaultDeclaration.check(path.parentPath.node)) return
-            if (j.BinaryExpression.check(path.parentPath.node)) return
-            if (j.UnaryExpression.check(path.parentPath.node)) return
+    if (trueBranch && falseBranch) {
+        return Math.max(
+            countBaseVariableUsedInAllBranches(j, base, trueBranch, count + 1),
+            countBaseVariableUsedInAllBranches(j, base, falseBranch, count + 1),
+        )
+    }
 
-            const { node } = path
-            if (!j.ConditionalExpression.check(node.expression)) return
+    if (trueBranch) return countBaseVariableUsedInAllBranches(j, base, trueBranch, count + 1)
+    if (falseBranch) return countBaseVariableUsedInAllBranches(j, base, falseBranch, count + 1)
 
-            const { test, consequent, alternate } = node.expression
-            const consequentStatement = j.blockStatement([j.expressionStatement(consequent)])
-            const alternateStatement = j.blockStatement([j.expressionStatement(alternate)])
-            const replacement = j.ifStatement(test, consequentStatement, alternateStatement)
-            transformToMultiStatementContext(j, path, [replacement])
-        })
+    return count
+}
 
-    /**
-     * Simple logical expression
-     *
-     * `x && a()` -> `if (x) { a() }`
-     * `x || a()` -> `if (!x) { a() }`
-     * `x ?? a()` -> `if (x == null) { a() }`
-     */
-    root
-        .find(j.LogicalExpression, {
-            operator: (operator: string) => ['&&', '||', '??'].includes(operator),
-        })
-        .forEach((path) => {
-            if (j.Property.check(path.parentPath.node)) return
-            if (j.MemberExpression.check(path.parentPath.node)) return
-            if (j.IfStatement.check(path.parentPath.node)) return
-            if (j.LogicalExpression.check(path.parentPath.node)) return
-            if (j.ForStatement.check(path.parentPath.node)) return
-            if (j.WhileStatement.check(path.parentPath.node)) return
-            if (j.DoWhileStatement.check(path.parentPath.node)) return
-            if (j.ReturnStatement.check(path.parentPath.node)) return
-            // TODO: need to come up with a better way to handle LogicalExpression in SequenceExpression
-            if (j.SequenceExpression.check(path.parentPath.node)) return
-            if (j.VariableDeclarator.check(path.parentPath.node)) return
-            if (j.AssignmentExpression.check(path.parentPath.node)) return
-            if (j.AssignmentPattern.check(path.parentPath.node)) return
-            if (j.CallExpression.check(path.parentPath.node)) return
-            if (j.ConditionalExpression.check(path.parentPath.node)) return
-            if (j.ArrowFunctionExpression.check(path.parentPath.node)) return
-            if (j.ExportDeclaration.check(path.parentPath.node)) return
-            if (j.ExportDefaultDeclaration.check(path.parentPath.node)) return
-            if (j.BinaryExpression.check(path.parentPath.node)) return
-            if (j.UnaryExpression.check(path.parentPath.node)) return
+function isComparisonBase(j: JSCodeshift, node: ASTNode): boolean {
+    if (j.Literal.check(node)) return false
+    // move function call to switch can break the semantics
+    // as it will only be called once
+    if (j.CallExpression.check(node)) return false
 
-            const { node } = path
-            const { operator, left, right } = node
-            if (j.LogicalExpression.check(left) || j.LogicalExpression.check(right)) return
+    return true
+}
 
-            const test = operator === '&&'
-                ? left
-                : operator === '||'
-                    ? j.unaryExpression('!', left)
-                    : j.binaryExpression('==', left, NullIdentifier)
-            const consequent = j.blockStatement([j.expressionStatement(right)])
-            const alternate = null
-            const replacement = j.ifStatement(test, consequent, alternate)
-            transformToMultiStatementContext(j, path.parent, [replacement])
-        })
+function areNodesEqual(j: JSCodeshift, node1: ASTNode, node2: ASTNode): boolean {
+    return j(node1).toSource() === j(node2).toSource()
 }
 
 export default wrap(transformAST)

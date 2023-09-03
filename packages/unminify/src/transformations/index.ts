@@ -16,7 +16,6 @@ import unIife from './un-iife'
 import unInfinity from './un-infinity'
 import unNumericLiteral from './un-numeric-literal'
 import unSequenceExpression from './un-sequence-expression'
-import unSwitchStatement from './un-switch-statement'
 import unTemplateLiteral from './un-template-literal'
 import unTypeConstructor from './un-type-constructor'
 import unUndefined from './un-undefined'
@@ -49,7 +48,6 @@ export const transformationMap: {
     'un-type-constructor': unTypeConstructor,
     'un-builtin-prototype': unBuiltinPrototype,
     'un-sequence-expression2': unSequenceExpression,
-    'un-switch-statement': unSwitchStatement,
     'un-if-statement': unIfStatement,
     'un-sequence-expression3': unSequenceExpression,
     'un-iife': unIife,
