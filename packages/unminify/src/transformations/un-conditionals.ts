@@ -141,7 +141,7 @@ export const transformAST: ASTTransformation = (context) => {
         .forEach((path) => {
             const conditionExpression = path.node.argument as ConditionalExpression
             const decisionTree = makeDecisionTree(j, conditionExpression)
-            const replacements = renderDecisionTreeWithEarlyReturn(j, decisionTree)
+            const replacements = renderDecisionTreeWithReturn(j, decisionTree)
             transformToMultiStatementContext(j, path, replacements)
         })
 
@@ -204,6 +204,16 @@ function makeDecisionTree(j: JSCodeshift, node: ExpressionKind): DecisionTree {
     }
 }
 
+function renderDecisionTree(j: JSCodeshift, tree: DecisionTree): StatementKind[] {
+    return renderDecisionTreeToSwitch(j, tree)
+        || renderDecisionTreeToIfElse(j, tree)
+}
+
+function renderDecisionTreeWithReturn(j: JSCodeshift, tree: DecisionTree): StatementKind[] {
+    return renderDecisionTreeToSwitchWithReturn(j, tree)
+        || renderDecisionTreeToIfElseWithReturn(j, tree)
+}
+
 /**
  * Renders a decision tree into if-else statements smartly.
  * Here is the comparison between the naive and smart approach:
@@ -236,10 +246,7 @@ function makeDecisionTree(j: JSCodeshift, node: ExpressionKind): DecisionTree {
  * }
  * ```
  */
-function renderDecisionTree(j: JSCodeshift, tree: DecisionTree): StatementKind[] {
-    const switchStatement = renderDecisionTreeWithSwitch(j, tree)
-    if (switchStatement) return [switchStatement]
-
+function renderDecisionTreeToIfElse(j: JSCodeshift, tree: DecisionTree): StatementKind[] {
     const { condition, trueBranch, falseBranch } = tree
 
     if (trueBranch && falseBranch) {
@@ -287,12 +294,12 @@ function renderDecisionTree(j: JSCodeshift, tree: DecisionTree): StatementKind[]
     return [j.expressionStatement(condition)]
 }
 
-function renderDecisionTreeWithEarlyReturn(j: JSCodeshift, tree: DecisionTree): StatementKind[] {
+function renderDecisionTreeToIfElseWithReturn(j: JSCodeshift, tree: DecisionTree): StatementKind[] {
     const { condition, trueBranch, falseBranch } = tree
 
     if (trueBranch && falseBranch) {
-        const trueBranchStatements = renderDecisionTreeWithEarlyReturn(j, trueBranch)
-        const falseBranchStatements = renderDecisionTreeWithEarlyReturn(j, falseBranch)
+        const trueBranchStatements = renderDecisionTreeWithReturn(j, trueBranch)
+        const falseBranchStatements = renderDecisionTreeWithReturn(j, falseBranch)
 
         return [
             j.ifStatement(
@@ -307,7 +314,7 @@ function renderDecisionTreeWithEarlyReturn(j: JSCodeshift, tree: DecisionTree): 
         return [
             j.ifStatement(
                 condition,
-                j.blockStatement(renderDecisionTreeWithEarlyReturn(j, trueBranch)),
+                j.blockStatement(renderDecisionTreeWithReturn(j, trueBranch)),
             ),
         ]
     }
@@ -316,7 +323,7 @@ function renderDecisionTreeWithEarlyReturn(j: JSCodeshift, tree: DecisionTree): 
         return [
             j.ifStatement(
                 j.unaryExpression('!', condition),
-                j.blockStatement(renderDecisionTreeWithEarlyReturn(j, falseBranch)),
+                j.blockStatement(renderDecisionTreeWithReturn(j, falseBranch)),
             ),
         ]
     }
@@ -325,19 +332,31 @@ function renderDecisionTreeWithEarlyReturn(j: JSCodeshift, tree: DecisionTree): 
 }
 
 const SWITCH_THRESHOLD = 3
-function renderDecisionTreeWithSwitch(j: JSCodeshift, tree: DecisionTree) {
+function renderDecisionTreeToSwitch(j: JSCodeshift, tree: DecisionTree) {
     const cond = tree.condition
     const comparisonBases = extractComparisonBases(j, cond)
-    if (comparisonBases.length === 0) return
+    if (comparisonBases.length === 0) return null
 
     const comparisonBase = comparisonBases.find(base => countBaseVariableUsedInAllBranches(j, base, tree) >= SWITCH_THRESHOLD)
-    if (!comparisonBase) return
+    if (!comparisonBase) return null
 
-    const switchCases = collectSwitchCase(j, tree, comparisonBase)
-    return j.switchStatement(comparisonBase, switchCases)
+    const switchCases = collectSwitchCase(j, tree, comparisonBase, false)
+    return [j.switchStatement(comparisonBase, switchCases)]
 }
 
-function collectSwitchCase(j: JSCodeshift, tree: DecisionTree, base: ExpressionKind): SwitchCase[] {
+function renderDecisionTreeToSwitchWithReturn(j: JSCodeshift, tree: DecisionTree) {
+    const cond = tree.condition
+    const comparisonBases = extractComparisonBases(j, cond)
+    if (comparisonBases.length === 0) return null
+
+    const comparisonBase = comparisonBases.find(base => countBaseVariableUsedInAllBranches(j, base, tree) >= SWITCH_THRESHOLD)
+    if (!comparisonBase) return null
+
+    const switchCases = collectSwitchCase(j, tree, comparisonBase, true)
+    return [j.switchStatement(comparisonBase, switchCases)]
+}
+
+function collectSwitchCase(j: JSCodeshift, tree: DecisionTree, base: ExpressionKind, isReturn: boolean): SwitchCase[] {
     const switchCases: SwitchCase[] = []
     const { condition, trueBranch, falseBranch } = tree
 
@@ -353,10 +372,15 @@ function collectSwitchCase(j: JSCodeshift, tree: DecisionTree, base: ExpressionK
 
     if (lastComparisonValue) {
         if (trueBranch) {
-            switchCases.push(j.switchCase(lastComparisonValue, [
-                j.expressionStatement(trueBranch.condition),
-                j.breakStatement(),
-            ]))
+            switchCases.push(j.switchCase(
+                lastComparisonValue,
+                isReturn
+                    ? [j.returnStatement(trueBranch.condition)]
+                    : [
+                            j.expressionStatement(trueBranch.condition),
+                            j.breakStatement(),
+                        ],
+            ))
         }
         else {
             switchCases.push(j.switchCase(lastComparisonValue, []))
@@ -365,13 +389,17 @@ function collectSwitchCase(j: JSCodeshift, tree: DecisionTree, base: ExpressionK
 
     if (falseBranch) {
         if ((falseBranch.trueBranch || falseBranch.falseBranch)) {
-            switchCases.push(...collectSwitchCase(j, falseBranch, base))
+            switchCases.push(...collectSwitchCase(j, falseBranch, base, isReturn))
         }
         else {
-            switchCases.push(j.switchCase(null, [
-                j.expressionStatement(falseBranch.condition),
-                j.breakStatement(),
-            ]))
+            switchCases.push(j.switchCase(
+                null,
+                isReturn
+                    ? [j.returnStatement(falseBranch.condition)]
+                    : [
+                            j.expressionStatement(falseBranch.condition),
+                            j.breakStatement(),
+                        ]))
         }
     }
 

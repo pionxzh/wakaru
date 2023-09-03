@@ -176,7 +176,7 @@ if ((foo && bar)) {
 inlineTest('return nested ternary expression #1',
   `
 function fn () {
-  return 2 == e ? foo() : 3 == e ? bar() : 4 == e ? baz() : fail(e)
+  return 2 == e ? foo() : 3 == f ? bar() : 4 == g ? baz() : fail(e)
 }
 `,
   `
@@ -185,11 +185,11 @@ function fn () {
     return foo();
   }
 
-  if (3 == e) {
+  if (3 == f) {
     return bar();
   }
 
-  if (4 == e) {
+  if (4 == g) {
     return baz();
   }
 
@@ -427,6 +427,43 @@ case 5:
 default:
   fail(e);
   break;
+}
+`,
+)
+
+inlineTest('return switch statement #1',
+  `
+function fn () {
+  return foo == 'bar'
+    ? bar()
+    : foo == 'baz' || foo == 'baz2'
+      ? baz()
+      : foo == 'qux1' || foo == 'qux2' || foo == 'qux3'
+        ? qux()
+        : foo == 'quy4' || foo == 'quy5' || foo == 'quy6'
+          ? quy()
+          : quc()
+}
+`,
+  `
+function fn () {
+  switch (foo) {
+  case 'bar':
+    return bar();
+  case 'baz':
+  case 'baz2':
+    return baz();
+  case 'qux1':
+  case 'qux2':
+  case 'qux3':
+    return qux();
+  case 'quy4':
+  case 'quy5':
+  case 'quy6':
+    return quy();
+  default:
+    return quc();
+  }
 }
 `,
 )
