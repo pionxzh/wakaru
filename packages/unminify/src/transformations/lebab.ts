@@ -5,7 +5,7 @@ import type { LebabRule } from 'lebab'
 
 const allLebabRules: LebabRule[] = [
     // 'class',
-    'template',
+    'template', // un-template-literal, but lebab support a different form of template literal (+ instead of .concat)
     'arrow',
     'arrow-return',
     'let',
@@ -15,10 +15,10 @@ const allLebabRules: LebabRule[] = [
     'arg-rest',
     'obj-method',
     'obj-shorthand',
-    'no-strict',
-    // 'commonjs',
+    // 'no-strict', // un-use-strict
+    // 'commonjs',  // un-esm
     'exponent',
-    // 'multi-var',
+    // 'multi-var', // un-variable-merging
     'for-of',
     'for-each',
     'includes',
