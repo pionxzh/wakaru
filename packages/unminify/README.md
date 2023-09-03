@@ -20,8 +20,7 @@ It covered most of patterns that are used by the following tools:
   - [`un-bracket-notation`](#un-bracket-notation)
   - [`un-while-loop`](#un-while-loop)
   - [`un-flip-operator`](#un-flip-operator)
-  - [`un-if-statement`](#un-if-statement)
-  - [`un-switch-statement`](#un-switch-statement)
+  - [`un-conditionals`](#un-conditionals)
   - [`un-type-constructor` (Unsafe)](#un-type-constructor-unsafe)
   - [`un-builtin-prototype`](#un-builtin-prototype)
   - [`un-iife`](#un-iife)
@@ -170,9 +169,11 @@ Flips comparisons that are in the form of "literal comes first" to "literal come
 + while (count > 10) {}
 ```
 
-### `un-if-statement`
+### `un-conditionals`
 
-Unwraps nested ternary expressions into if-else statements.
+Unwraps nested ternary expressions and binary expression into if-else statements or switch statements.
+
+#### If-Else
 
 ```diff
 - a ? b() : c ? d() : e()
@@ -200,9 +201,7 @@ while (condition) {
 }
 ```
 
-### `un-switch-statement`
-
-Unwraps nested ternary expressions into switch statement.
+#### Switch
 
 ```diff
 - foo == 'bar' ? bar() : foo == 'baz' ? baz() : foo == 'qux' || foo == 'quux' ? qux() : quux()

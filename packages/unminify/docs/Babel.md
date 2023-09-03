@@ -17,7 +17,7 @@ This is the tracking list of support status of the reversion of [babel-preset-mi
 - [X] minify-flip-comparisons
   - `un-flip-operator`
 - [X] minify-guarded-expressions
-  - `un-if-statement`
+  - `un-conditionals`
 - [X] minify-infinity
   - `un-infinity`
 - [X] ~~minify-mangle-names~~
@@ -34,7 +34,7 @@ This is the tracking list of support status of the reversion of [babel-preset-mi
 - [X] ~~transform-remove-undefined~~
 - [X] ~~minify-replace~~
 - [ ] minify-simplify
-  - `un-if-statement`
+  - `un-conditionals`
 - [X] ~~transform-simplify-comparison-operators~~
 - [X] minify-type-constructors
   - `un-type-constructors`

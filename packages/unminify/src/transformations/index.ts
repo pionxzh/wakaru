@@ -5,13 +5,13 @@ import unAsyncAwait from './un-async-await'
 import unBoolean from './un-boolean'
 import unBracketNotation from './un-bracket-notation'
 import unBuiltinPrototype from './un-builtin-prototype'
+import unConditionals from './un-conditionals'
 import unCurlyBraces from './un-curly-braces'
 import unES6Class from './un-es6-class'
 import unEsm from './un-esm'
 import unEsModuleFlag from './un-esmodule-flag'
 import unExportRename from './un-export-rename'
 import unFlipComparisons from './un-flip-operator'
-import unIfStatement from './un-if-statement'
 import unIife from './un-iife'
 import unInfinity from './un-infinity'
 import unNumericLiteral from './un-numeric-literal'
@@ -48,7 +48,7 @@ export const transformationMap: {
     'un-type-constructor': unTypeConstructor,
     'un-builtin-prototype': unBuiltinPrototype,
     'un-sequence-expression2': unSequenceExpression,
-    'un-if-statement': unIfStatement,
+    'un-conditionals': unConditionals,
     'un-sequence-expression3': unSequenceExpression,
     'un-iife': unIife,
     'un-es6-class': unES6Class,

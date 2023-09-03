@@ -1,4 +1,4 @@
-import transform from '../un-if-statement'
+import transform from '../un-conditionals'
 import { defineInlineTest } from './test-utils'
 
 const inlineTest = defineInlineTest(transform)

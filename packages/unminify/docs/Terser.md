@@ -24,7 +24,7 @@ This is the tracking list of support status of the reversion of [compressor opti
 - [ ] computed_props
   - TODO:
 - [X] conditionals
-  - `un-if-statement`
+  - `un-conditionals`
 - [X] ~~dead_code~~
 - [X] ~~defaults~~
 - [X] ~~directives~~
@@ -39,7 +39,7 @@ This is the tracking list of support status of the reversion of [compressor opti
 - [X] ~~hoist_vars~~
 - [X] ~~ie8~~
 - [X] if_return
-  - `un-if-statement`
+  - `un-conditionals`
 - [X] ~~inline~~
 - [X] join_vars
   - `un-variable-merging`
