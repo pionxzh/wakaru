@@ -6,7 +6,7 @@ import type { Literal, MemberExpression } from 'jscodeshift'
  * Restore template literal syntax from string concatenation.
  *
  * @example
- * // TypeScript / Babel / SWC
+ * // TypeScript / Babel / SWC / esbuild
  * "the ".concat(first, " take the ").concat(second, " and ").concat(third);
  * ->
  * `the ${first} take the ${second} and ${third}`
