@@ -34,7 +34,6 @@ export const transformAST: ASTTransformation = (context) => {
 
             if (raw && raw !== value.toString()) {
                 const originalComment = path.node.comments || []
-                console.log(path.parent.node.type)
                 const operator = j.UnaryExpression.check(path.parent.node) && path.parent.node.operator === '-'
                     ? '-'
                     : ''
