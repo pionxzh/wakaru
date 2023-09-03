@@ -59,7 +59,7 @@ if (!x) {
   a();
 }
 
-if (!!x) {
+if (x) {
   b();
 }
 
@@ -173,14 +173,39 @@ if ((foo && bar)) {
 `,
 )
 
-inlineTest('nested ternary expression with early return',
+inlineTest('return nested ternary expression #1',
   `
-for (var i = 0; i < 10; i++) {
+function fn () {
+  return 2 == e ? foo() : 3 == e ? bar() : 4 == e ? baz() : fail(e)
+}
+`,
+  `
+function fn () {
+  if (2 == e) {
+    return foo();
+  }
+
+  if (3 == e) {
+    return bar();
+  }
+
+  if (4 == e) {
+    return baz();
+  }
+
+  return fail(e);
+}
+`,
+)
+
+inlineTest('return nested ternary expression #2',
+  `
+function fn () {
   return a ? b() : c ? d() : e()
 }
 `,
   `
-for (var i = 0; i < 10; i++) {
+function fn () {
   if (a) {
     return b();
   }
@@ -194,21 +219,16 @@ for (var i = 0; i < 10; i++) {
 `,
 )
 
-// inlineTest('return simple logical expression',
-//   `
-// return x == 'a' || x == 'b' || x == 'c' && x == 'd'
-// `,
-//   `
-// if (!)
-// `,
-// )
-
 inlineTest('nested logical expression',
   `
-x == 'a' || x == 'b' || x == 'c' && x == 'd'
+x == 'a' || x == 'b' || x == 'c' && finished()
 `,
   `
-x == 'a' || x == 'b' || x == 'c' && x == 'd'
+if (x != 'a' && x != 'b') {
+  if (x == 'c') {
+    finished();
+  }
+}
 `,
 )
 
@@ -291,7 +311,7 @@ if (x) {
 `,
 )
 
-inlineTest('should transform ternary to switch statement',
+inlineTest('switch statement #1',
 `
 foo == 'bar'
 ? bar()
@@ -319,7 +339,7 @@ default:
 `,
 )
 
-inlineTest('should transform ternary which contains multiple conditions to switch statement',
+inlineTest('switch statement #2',
   `
 foo == 'bar'
   ? bar()
@@ -357,7 +377,7 @@ default:
 `,
 )
 
-inlineTest('should transform ternary which contains multiple conditions to switch statement (no default)',
+inlineTest('switch statement #3',
 `
 foo == 'bar'
   ? bar()
@@ -381,7 +401,8 @@ case 'quux':
 `,
 )
 
-inlineTest('should transform to switch statement with multiple first cases', `
+inlineTest('switch statement #4',
+  `
 e === 2 || e === 9
   ? foo()
   : e === 3

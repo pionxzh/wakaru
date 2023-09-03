@@ -2,7 +2,7 @@ import { transformToMultiStatementContext } from '../utils/transformToMultiState
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind, StatementKind } from 'ast-types/lib/gen/kinds'
-import type { ASTNode, ConditionalExpression, JSCodeshift, LogicalExpression, SwitchCase } from 'jscodeshift'
+import type { ASTNode, BinaryExpression, ConditionalExpression, JSCodeshift, LogicalExpression, SwitchCase } from 'jscodeshift'
 
 interface DecisionTree {
     condition: ExpressionKind
@@ -128,11 +128,14 @@ export const transformAST: ASTTransformation = (context) => {
              * Because `return a ? b() : c()` should be easier to read
              */
             argument: (node) => {
-                if (!j.ConditionalExpression.check(node)) return false
-                return j.ConditionalExpression.check(node.consequent)
-                    || j.ConditionalExpression.check(node.alternate)
-                    || j(node.consequent).find(j.ConditionalExpression).size() > 0
-                    || j(node.alternate).find(j.ConditionalExpression).size() > 0
+                if (j.ConditionalExpression.check(node)) {
+                    return j.ConditionalExpression.check(node.consequent)
+                        || j.ConditionalExpression.check(node.alternate)
+                        || j.LogicalExpression.check(node.consequent)
+                        || j.LogicalExpression.check(node.alternate)
+                }
+
+                return false
             },
         })
         .forEach((path) => {
@@ -275,7 +278,7 @@ function renderDecisionTree(j: JSCodeshift, tree: DecisionTree): StatementKind[]
     if (falseBranch) {
         return [
             j.ifStatement(
-                j.unaryExpression('!', condition),
+                negateCondition(j, condition),
                 j.blockStatement(renderDecisionTree(j, falseBranch)),
             ),
         ]
@@ -449,6 +452,45 @@ function isComparisonBase(j: JSCodeshift, node: ASTNode): boolean {
 
 function areNodesEqual(j: JSCodeshift, node1: ASTNode, node2: ASTNode): boolean {
     return j(node1).toSource() === j(node2).toSource()
+}
+
+/**
+ * Apply de Morgan's laws to negate a condition.
+ */
+function negateCondition(j: JSCodeshift, condition: ExpressionKind): ExpressionKind {
+    if (j.UnaryExpression.check(condition) && condition.operator === '!') {
+        return condition.argument
+    }
+    if (j.LogicalExpression.check(condition) && (condition.operator === '&&' || condition.operator === '||')) {
+        return j.logicalExpression(
+            condition.operator === '&&' ? '||' : '&&',
+            negateCondition(j, condition.left),
+            negateCondition(j, condition.right),
+        )
+    }
+    if (j.BinaryExpression.check(condition)) {
+        return j.binaryExpression(
+            getNegatedOperator(condition.operator),
+            condition.left,
+            condition.right,
+        )
+    }
+
+    return j.unaryExpression('!', condition)
+}
+
+function getNegatedOperator(operator: BinaryExpression['operator']): BinaryExpression['operator'] {
+    switch (operator) {
+        case '==': return '!='
+        case '===': return '!=='
+        case '!=': return '=='
+        case '!==': return '==='
+        case '<': return '>='
+        case '<=': return '>'
+        case '>': return '<='
+        case '>=': return '<'
+        default: return operator
+    }
 }
 
 export default wrap(transformAST)

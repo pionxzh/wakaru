@@ -189,7 +189,7 @@ Unwraps nested ternary expressions and binary expression into if-else statements
 This rule will try to adopting `Early Exit` pattern if possible.
 
 ```diff
-while (condition) {
+function fn () {
 -   return a ? b() : c ? d() : e()
 +   if (a) {
 +     return b();
