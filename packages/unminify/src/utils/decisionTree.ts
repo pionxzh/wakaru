@@ -1,3 +1,4 @@
+import { negateCondition } from './negateCondition'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { JSCodeshift } from 'jscodeshift'
 
@@ -46,6 +47,16 @@ export function makeDecisionTree(j: JSCodeshift, node: ExpressionKind): Decision
         condition: node,
         trueBranch: null,
         falseBranch: null,
+    }
+}
+
+export function negateDecisionTree(j: JSCodeshift, tree: DecisionTree): DecisionTree {
+    const { condition, trueBranch, falseBranch } = tree
+
+    return {
+        condition: negateCondition(j, condition),
+        trueBranch: falseBranch ? negateDecisionTree(j, falseBranch) : null,
+        falseBranch: trueBranch ? negateDecisionTree(j, trueBranch) : null,
     }
 }
 

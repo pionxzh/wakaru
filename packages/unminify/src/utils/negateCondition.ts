@@ -23,6 +23,10 @@ export function negateCondition(j: JSCodeshift, condition: ExpressionKind): Expr
         )
     }
 
+    if (j.Literal.check(condition) && typeof condition.value === 'boolean') {
+        return j.literal(!condition.value)
+    }
+
     return j.unaryExpression('!', condition)
 }
 function getNegatedOperator(operator: BinaryExpression['operator']): BinaryExpression['operator'] {

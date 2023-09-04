@@ -17,25 +17,33 @@ export function defineInlineTestWithOptions(transform: Transform) {
     }
 }
 
+type InlineTest = (
+    testName: string,
+    input: string,
+    expectedOutput: string,
+) => void
+
 export function defineInlineTest(transforms: Transform | Transform[]) {
-    function inlineTest(
+    const reducedTransform: Transform = Array.isArray(transforms)
+        ? (fileInfo, api, options) => {
+                let code = fileInfo.source
+                for (const transform of transforms) {
+                    const newFileInfo = { ...fileInfo, source: code }
+                    const newResult = transform(newFileInfo, api, options)
+                    if (newResult) code = newResult
+                }
+                return code
+            }
+        : transforms
+
+    function _inlineTest(
+        modifier: 'skip' | 'only' | null,
         testName: string,
         input: string,
         expectedOutput: string,
     ) {
-        const reducedTransform: Transform = Array.isArray(transforms)
-            ? (fileInfo, api, options) => {
-                    let code = fileInfo.source
-                    for (const transform of transforms) {
-                        const newFileInfo = { ...fileInfo, source: code }
-                        const newResult = transform(newFileInfo, api, options)
-                        if (newResult) code = newResult
-                    }
-                    return code
-                }
-            : transforms
-
-        it(testName, () => {
+        const itFn = modifier ? it[modifier] : it
+        itFn(testName, () => {
             try {
                 runInlineTest(reducedTransform, {}, {
                     source: input,
@@ -60,13 +68,13 @@ export function defineInlineTest(transforms: Transform | Transform[]) {
         })
     }
 
-    inlineTest.skip = function skipInlineTest(
-        testName: string,
-        _input: string,
-        _expectedOutput: string,
-    ) {
-        it.skip(testName, () => {})
+    const inlineTest = _inlineTest.bind(null, null) as InlineTest & {
+        skip: InlineTest
+        only: InlineTest
     }
+
+    inlineTest.skip = _inlineTest.bind(null, 'skip')
+    inlineTest.only = _inlineTest.bind(null, 'only')
 
     return inlineTest
 }
