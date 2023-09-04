@@ -27,6 +27,7 @@ It covered most of patterns that are used by the following tools:
 - [Syntax Upgrade](#syntax-upgrade)
   - [`un-esm` (Unsafe)](#un-esm-unsafe)
   - [`un-template-literal`](#un-template-literal)
+  - [`un-optional-chaining` (Experimental)](#un-optional-chaining-experimental)
   - [`un-es6-class`](#un-es6-class)
   - [`un-async-await` (Experimental)](#un-async-await-experimental)
 - [Clean Up](#clean-up)
@@ -339,6 +340,19 @@ Restore template literal syntax from string concatenation.
 + `the ${first} take the ${second} and ${third}`
 ```
 
+### `un-optional-chaining` (Experimental)
+
+Restore optional chaining syntax.\
+Support output from **TypeScript**, **Babel** and **SWC**.
+
+```diff
+- (_foo = foo) === null || _foo === void 0 ? void 0 : _foo.bar;
++ foo?.bar;
+
+- (_foo = foo) === null || _foo === void 0 ? void 0 : (_foo_bar = _foo.bar) === null || _foo_bar === void 0 ? void 0 : _foo_bar.baz;
++ foo?.bar?.baz;
+```
+
 ### `un-es6-class`
 
 Restore `Class` definition from the constructor and the prototype.\
@@ -468,7 +482,6 @@ By utilizing lebab, we can save the repetitive work of writing the transformatio
 - [ ] Convert
 - [ ] Improve comment retention.
 - [ ] Address syntax downgrades from tools like `TypeScript`, `Babel` and `SWC`.
-- [ ] `un-optional-chaining`
 - [ ] `un-nullish-coalescing`
 - [ ] `un-string-literal` to decode printable unicode
 - [ ] [Terser loops](https://github.com/terser/terser/blob/27c0a3b47b429c605e2243df86044fc00815060f/test/compress/loops.js#L217) contains several useful patterns

@@ -1,14 +1,12 @@
+import { areNodesEqual } from '../utils/areNodesEqual'
+import { makeDecisionTree } from '../utils/decisionTree'
+import { negateCondition } from '../utils/negateCondition'
 import { transformToMultiStatementContext } from '../utils/transformToMultiStatementContext'
 import wrap from '../wrapAstTransformation'
+import type { DecisionTree } from '../utils/decisionTree'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind, StatementKind } from 'ast-types/lib/gen/kinds'
-import type { ASTNode, BinaryExpression, ConditionalExpression, JSCodeshift, LogicalExpression, SwitchCase } from 'jscodeshift'
-
-interface DecisionTree {
-    condition: ExpressionKind
-    trueBranch: DecisionTree | null
-    falseBranch: DecisionTree | null
-}
+import type { ASTNode, ConditionalExpression, JSCodeshift, LogicalExpression, SwitchCase } from 'jscodeshift'
 
 /**
  * Unwraps nested ternary expressions and binary expression into if-else statements or switch statements.
@@ -160,48 +158,6 @@ export const transformAST: ASTTransformation = (context) => {
             const replacements = renderDecisionTree(j, decisionTree)
             transformToMultiStatementContext(j, path, replacements)
         })
-}
-
-function makeDecisionTree(j: JSCodeshift, node: ExpressionKind): DecisionTree {
-    if (j.ConditionalExpression.check(node)) {
-        return {
-            condition: node.test,
-            trueBranch: makeDecisionTree(j, node.consequent),
-            falseBranch: makeDecisionTree(j, node.alternate),
-        }
-    }
-
-    if (j.LogicalExpression.check(node)) {
-        if (node.operator === '&&') {
-            return {
-                condition: node.left,
-                trueBranch: makeDecisionTree(j, node.right),
-                falseBranch: null,
-            }
-        }
-
-        if (node.operator === '||') {
-            return {
-                condition: node.left,
-                trueBranch: null,
-                falseBranch: makeDecisionTree(j, node.right),
-            }
-        }
-
-        if (node.operator === '??') {
-            return {
-                condition: j.binaryExpression('==', node.left, j.identifier('null')),
-                trueBranch: makeDecisionTree(j, node.right),
-                falseBranch: null,
-            }
-        }
-    }
-
-    return {
-        condition: node,
-        trueBranch: null,
-        falseBranch: null,
-    }
 }
 
 function renderDecisionTree(j: JSCodeshift, tree: DecisionTree): StatementKind[] {
@@ -476,49 +432,6 @@ function isComparisonBase(j: JSCodeshift, node: ASTNode): boolean {
     if (j.CallExpression.check(node)) return false
 
     return true
-}
-
-function areNodesEqual(j: JSCodeshift, node1: ASTNode, node2: ASTNode): boolean {
-    return j(node1).toSource() === j(node2).toSource()
-}
-
-/**
- * Apply de Morgan's laws to negate a condition.
- */
-function negateCondition(j: JSCodeshift, condition: ExpressionKind): ExpressionKind {
-    if (j.UnaryExpression.check(condition) && condition.operator === '!') {
-        return condition.argument
-    }
-    if (j.LogicalExpression.check(condition) && (condition.operator === '&&' || condition.operator === '||')) {
-        return j.logicalExpression(
-            condition.operator === '&&' ? '||' : '&&',
-            negateCondition(j, condition.left),
-            negateCondition(j, condition.right),
-        )
-    }
-    if (j.BinaryExpression.check(condition)) {
-        return j.binaryExpression(
-            getNegatedOperator(condition.operator),
-            condition.left,
-            condition.right,
-        )
-    }
-
-    return j.unaryExpression('!', condition)
-}
-
-function getNegatedOperator(operator: BinaryExpression['operator']): BinaryExpression['operator'] {
-    switch (operator) {
-        case '==': return '!='
-        case '===': return '!=='
-        case '!=': return '=='
-        case '!==': return '==='
-        case '<': return '>='
-        case '<=': return '>'
-        case '>': return '<='
-        case '>=': return '<'
-        default: return operator
-    }
 }
 
 export default wrap(transformAST)

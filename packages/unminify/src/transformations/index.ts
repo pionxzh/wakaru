@@ -15,6 +15,7 @@ import unFlipComparisons from './un-flip-operator'
 import unIife from './un-iife'
 import unInfinity from './un-infinity'
 import unNumericLiteral from './un-numeric-literal'
+import unOptionalChaining from './un-optional-chaining'
 import unSequenceExpression from './un-sequence-expression'
 import unTemplateLiteral from './un-template-literal'
 import unTypeConstructor from './un-type-constructor'
@@ -48,6 +49,7 @@ export const transformationMap: {
     'un-type-constructor': unTypeConstructor,
     'un-builtin-prototype': unBuiltinPrototype,
     'un-sequence-expression2': unSequenceExpression,
+    'un-optional-chaining': unOptionalChaining,
     'un-conditionals': unConditionals,
     'un-sequence-expression3': unSequenceExpression,
     'un-iife': unIife,
