@@ -28,7 +28,7 @@ export const transformAST: ASTTransformation<Params> = (context, params = { modu
             if (typeof value !== 'number' && typeof value !== 'string') return
 
             const replacement = moduleMapping[value]
-            if (typeof replacement !== 'undefined') {
+            if (replacement) {
                 p.node.arguments[0] = j.literal(`default-${replacement}.js`)
             }
         })

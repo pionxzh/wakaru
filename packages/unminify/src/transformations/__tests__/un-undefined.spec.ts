@@ -33,11 +33,13 @@ inlineTest('should not transform void function call',
   `
 void function() {
   console.log('a')
+  return void a()
 }
 `,
   `
 void function() {
   console.log('a')
+  return void a()
 }
 `,
 )
