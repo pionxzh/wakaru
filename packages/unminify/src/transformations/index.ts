@@ -14,6 +14,7 @@ import unExportRename from './un-export-rename'
 import unFlipComparisons from './un-flip-operator'
 import unIife from './un-iife'
 import unInfinity from './un-infinity'
+import unNullishCoalescing from './un-nullish-coalescing'
 import unNumericLiteral from './un-numeric-literal'
 import unOptionalChaining from './un-optional-chaining'
 import unSequenceExpression from './un-sequence-expression'
@@ -50,6 +51,7 @@ export const transformationMap: {
     'un-builtin-prototype': unBuiltinPrototype,
     'un-sequence-expression2': unSequenceExpression,
     'un-optional-chaining': unOptionalChaining,
+    'un-nullish-coalescing': unNullishCoalescing,
     'un-conditionals': unConditionals,
     'un-sequence-expression3': unSequenceExpression,
     'un-iife': unIife,
