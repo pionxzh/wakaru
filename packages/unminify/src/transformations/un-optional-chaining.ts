@@ -69,7 +69,16 @@ function convertOptionalChaining(j: JSCodeshift, expression: ConditionalExpressi
 function constructOptionalChaining(j: JSCodeshift, tree: DecisionTree, flag = 0): ExpressionKind | null {
     const { condition, trueBranch, falseBranch } = tree
 
-    if (!isFalsyBranch(j, trueBranch)) return null
+    const deepestFalseBranch = getDeepestFalseBranch(tree)
+    /**
+     * if the deepest node is `delete` operator, we should accept true as the
+     * condition.
+     * @see https://github.com/babel/babel/blob/aaf364a5675daec4dc61095c5fd6df6c9adf71cf/packages/babel-plugin-transform-optional-chaining/src/transform.ts#L251
+     */
+    if (trueBranch && j.UnaryExpression.check(deepestFalseBranch.condition) && deepestFalseBranch?.condition.operator === 'delete') {
+        if (!isFalsyBranch(j, trueBranch) && !isTrue(j, trueBranch.condition)) return null
+    }
+    else if (!isFalsyBranch(j, trueBranch)) return null
 
     /**
      * Flag 0: Default state, looking for null
@@ -274,9 +283,16 @@ function isFalsyBranch(j: JSCodeshift, tree: DecisionTree | null): boolean {
 
     const { condition, trueBranch, falseBranch } = tree
 
-    return (isNull(j, condition) || isUndefined(j, condition) || isTrue(j, condition))
+    return (isNull(j, condition) || isUndefined(j, condition))
         && (!trueBranch || isFalsyBranch(j, trueBranch))
         && (!falseBranch || isFalsyBranch(j, falseBranch))
+}
+
+function getDeepestFalseBranch(tree: DecisionTree) {
+    const { falseBranch } = tree
+    if (!falseBranch) return tree
+
+    return getDeepestFalseBranch(falseBranch)
 }
 
 export default wrap(transformAST)
