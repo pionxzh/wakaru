@@ -108,6 +108,8 @@ export const transformAST: ASTTransformation = (context) => {
         .forEach((path) => {
             const conditionExpression = path.node.expression as ConditionalExpression
             const decisionTree = makeDecisionTree(j, conditionExpression)
+            if (!shouldTransform(j, decisionTree)) return
+
             const replacements = renderDecisionTree(j, decisionTree)
             transformToMultiStatementContext(j, path, replacements)
         })
@@ -139,6 +141,8 @@ export const transformAST: ASTTransformation = (context) => {
         .forEach((path) => {
             const conditionExpression = path.node.argument as ConditionalExpression
             const decisionTree = makeDecisionTree(j, conditionExpression)
+            if (!shouldTransform(j, decisionTree)) return
+
             const replacements = renderDecisionTreeWithReturn(j, decisionTree)
             transformToMultiStatementContext(j, path, replacements)
         })
@@ -155,9 +159,23 @@ export const transformAST: ASTTransformation = (context) => {
         .forEach((path) => {
             const logicalExpression = path.node.expression as LogicalExpression
             const decisionTree = makeDecisionTree(j, logicalExpression)
+            if (!shouldTransform(j, decisionTree)) return
+
             const replacements = renderDecisionTree(j, decisionTree)
             transformToMultiStatementContext(j, path, replacements)
         })
+}
+
+function shouldTransform(j: JSCodeshift, tree: DecisionTree): boolean {
+    const { condition, trueBranch, falseBranch } = tree
+
+    if (!trueBranch && !falseBranch) {
+        return !j.Identifier.check(condition)
+        && !j.Literal.check(condition)
+    }
+
+    return (!trueBranch || shouldTransform(j, trueBranch))
+    && (!falseBranch || shouldTransform(j, falseBranch))
 }
 
 function renderDecisionTree(j: JSCodeshift, tree: DecisionTree): StatementKind[] {
@@ -206,13 +224,13 @@ function renderDecisionTreeToIfElse(j: JSCodeshift, tree: DecisionTree): Stateme
     const { condition, trueBranch, falseBranch } = tree
 
     if (trueBranch && falseBranch) {
-        const falseBranchStatements = renderDecisionTree(j, falseBranch)
+        const falseBranchStatements = renderDecisionTreeToIfElse(j, falseBranch)
         if (falseBranchStatements.length === 1 && j.IfStatement.check(falseBranchStatements[0])) {
             // generate an else-if statement
             return [
                 j.ifStatement(
                     condition,
-                    j.blockStatement(renderDecisionTree(j, trueBranch)),
+                    j.blockStatement(renderDecisionTreeToIfElse(j, trueBranch)),
                     falseBranchStatements[0],
                 ),
             ]
@@ -222,7 +240,7 @@ function renderDecisionTreeToIfElse(j: JSCodeshift, tree: DecisionTree): Stateme
             return [
                 j.ifStatement(
                     condition,
-                    j.blockStatement(renderDecisionTree(j, trueBranch)),
+                    j.blockStatement(renderDecisionTreeToIfElse(j, trueBranch)),
                     j.blockStatement(falseBranchStatements),
                 ),
             ]
@@ -233,7 +251,7 @@ function renderDecisionTreeToIfElse(j: JSCodeshift, tree: DecisionTree): Stateme
         return [
             j.ifStatement(
                 condition,
-                j.blockStatement(renderDecisionTree(j, trueBranch)),
+                j.blockStatement(renderDecisionTreeToIfElse(j, trueBranch)),
             ),
         ]
     }
@@ -242,7 +260,7 @@ function renderDecisionTreeToIfElse(j: JSCodeshift, tree: DecisionTree): Stateme
         return [
             j.ifStatement(
                 negateCondition(j, condition),
-                j.blockStatement(renderDecisionTree(j, falseBranch)),
+                j.blockStatement(renderDecisionTreeToIfElse(j, falseBranch)),
             ),
         ]
     }

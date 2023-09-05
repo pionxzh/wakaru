@@ -34,13 +34,13 @@ export function makeDecisionTree(j: JSCodeshift, node: ExpressionKind): Decision
             }
         }
 
-        if (node.operator === '??') {
-            return {
-                condition: j.binaryExpression('==', node.left, j.identifier('null')),
-                trueBranch: makeDecisionTree(j, node.right),
-                falseBranch: null,
-            }
-        }
+        // if (node.operator === '??') {
+        //     return {
+        //         condition: j.binaryExpression('==', node.left, j.identifier('null')),
+        //         trueBranch: makeDecisionTree(j, node.right),
+        //         falseBranch: null,
+        //     }
+        // }
     }
 
     return {

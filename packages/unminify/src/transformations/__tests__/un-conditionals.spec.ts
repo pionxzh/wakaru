@@ -51,9 +51,7 @@ if (!x) {
   b();
 }
 
-if (x == null) {
-  c();
-}
+x ?? c();
 
 if (!x) {
   a();
@@ -63,9 +61,7 @@ if (x) {
   b();
 }
 
-if (!x == null) {
-  c();
-}
+!x ?? c();
 `,
 )
 
@@ -465,5 +461,26 @@ function fn () {
     return quc();
   }
 }
+`,
+)
+
+inlineTest('should not transform these cases',
+  `
+x ? a : b;
+
+x ? 1 : 2;
+
+x && a || b;
+
+x && 1;
+`,
+  `
+x ? a : b;
+
+x ? 1 : 2;
+
+x && a || b;
+
+x && 1;
 `,
 )
