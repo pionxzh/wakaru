@@ -96,6 +96,10 @@ export function makeDecisionTreeWithConditionSplitting(j: JSCodeshift, tree: Dec
     }
 }
 
+export function isDecisionTreeLeaf(tree: DecisionTree): boolean {
+    return tree.trueBranch === null && tree.falseBranch === null
+}
+
 export function renderDebugDecisionTree(j: JSCodeshift, tree: DecisionTree) {
     const output = JSON.stringify(tree, (_, value) => {
         if (value === null) return null

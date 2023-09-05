@@ -1,3 +1,4 @@
+import unNullishCoalescing from '../un-nullish-coalescing'
 import transform from '../un-optional-chaining'
 import { defineInlineTest } from './test-utils'
 
@@ -100,7 +101,7 @@ val = obj?.a?.b;
 `,
 )
 
-inlineTest('Babel - Cast to boolean',
+defineInlineTest([transform, unNullishCoalescing])('Babel - Cast to boolean',
   `
 class C {
   static testIf(o) {
@@ -264,9 +265,10 @@ class C {
   static testNullishCoalescing(o) {
     var _o$a$b$c$non_existent, _o$a$b6, _o$a$b7, _o$a$b$c$non_existent3, _o$a$b10;
     if ((o?.a.b)?.c.non_existent ?? (o?.a.b)?.c.d) {
-      return o?.a.b?.c.non_existent ?? o?.a.b?.c.d;
+      var _o$a$b$c$non_existent2, _o$a$b8, _o$a$b9;
+      return (o?.a.b)?.c.non_existent ?? (o?.a.b)?.c.d;
     }
-    return o?.a.b?.c.non_existent ?? o;
+    return (o?.a.b)?.c.non_existent ?? o;
   }
 }
 `,
@@ -315,6 +317,33 @@ obj === null || obj === void 0 || delete obj.a;
 `,
   `
 function f(x = (_a => delete (a())?.b)()) {}
+
+let test = delete obj?.a?.b;
+test = delete obj?.a.b;
+test = delete obj?.b?.b;
+delete obj?.a;
+`,
+)
+
+inlineTest('SWC - Delete',
+  `
+var _obj_a, _obj, _obj1, _obj_b, _obj2, _obj3;
+function f(x = (()=>{
+  var _a;
+  return (_a = a()) === null || _a === void 0 ? true : delete _a.b();
+})()) {}
+
+let test = (_obj = obj) === null || _obj === void 0 ? true : (_obj_a = _obj.a) === null || _obj_a === void 0 ? true : delete _obj_a.b;
+test = (_obj1 = obj) === null || _obj1 === void 0 ? true : delete _obj1.a.b;
+test = (_obj2 = obj) === null || _obj2 === void 0 ? true : (_obj_b = _obj2.b) === null || _obj_b === void 0 ? true : delete _obj_b.b;
+(_obj3 = obj) === null || _obj3 === void 0 ? true : delete _obj3.a;
+`,
+  `
+var _obj_a, _obj, _obj1, _obj_b, _obj2, _obj3;
+function f(x = (()=>{
+  var _a;
+  return delete (a())?.b();
+})()) {}
 
 let test = delete obj?.a?.b;
 test = delete obj?.a.b;
