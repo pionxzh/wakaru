@@ -17,6 +17,7 @@ import unInfinity from './un-infinity'
 import unNullishCoalescing from './un-nullish-coalescing'
 import unNumericLiteral from './un-numeric-literal'
 import unOptionalChaining from './un-optional-chaining'
+import unReturn from './un-return'
 import unSequenceExpression from './un-sequence-expression'
 import unTemplateLiteral from './un-template-literal'
 import unTypeConstructor from './un-type-constructor'
@@ -44,6 +45,7 @@ export const transformationMap: {
     'un-numeric-literal': unNumericLiteral,
     'un-template-literal': unTemplateLiteral,
     'un-curly-braces': unCurlyBraces,
+    'un-return': unReturn,
     'un-while-loop': unWhileLoop,
     'un-bracket-notation': unBracketNotation,
     'un-flip-comparisons': unFlipComparisons,

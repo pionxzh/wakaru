@@ -21,14 +21,15 @@ It covered most of patterns that are used by the following tools:
   - [`un-while-loop`](#un-while-loop)
   - [`un-flip-operator`](#un-flip-operator)
   - [`un-conditionals`](#un-conditionals)
+  - [`un-return`](#un-return)
   - [`un-type-constructor` (Unsafe)](#un-type-constructor-unsafe)
   - [`un-builtin-prototype`](#un-builtin-prototype)
   - [`un-iife`](#un-iife)
 - [Syntax Upgrade](#syntax-upgrade)
   - [`un-esm` (Unsafe)](#un-esm-unsafe)
   - [`un-template-literal`](#un-template-literal)
-  - [`un-optional-chaining` (Experimental)](#un-optional-chaining-experimental)
-  - [`un-nullish-coalescing` (Experimental)](#un-nullish-coalescing-experimental)
+  - [`un-optional-chaining`](#un-optional-chaining)
+  - [`un-nullish-coalescing`](#un-nullish-coalescing)
   - [`un-es6-class`](#un-es6-class)
   - [`un-async-await` (Experimental)](#un-async-await-experimental)
 - [Clean Up](#clean-up)
@@ -223,6 +224,26 @@ function fn () {
 + }
 ```
 
+
+### `un-return`
+
+Simplify the last return statements.
+
+```diff
+function foo() {
+  const a = 1
+  if (a) {
+    return a;
+  }
+- return void 0;
+}
+
+const bar = () => {
+- return void foo();
++ foo();
+}
+```
+
 ### `un-type-constructor` (Unsafe)
 
 Restore type constructors from minified code.
@@ -341,9 +362,9 @@ Restore template literal syntax from string concatenation.
 + `the ${first} take the ${second} and ${third}`
 ```
 
-### `un-optional-chaining` (Experimental)
+### `un-optional-chaining`
 
-Restore optional chaining syntax.\
+Restore [optional chaining](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Optional_chaining) syntax.\
 Support output from **TypeScript**, **Babel** and **SWC**.
 
 ```diff
@@ -354,9 +375,9 @@ Support output from **TypeScript**, **Babel** and **SWC**.
 + foo?.bar?.baz;
 ```
 
-### `un-nullish-coalescing` (Experimental)
+### `un-nullish-coalescing`
 
-Restore nullish coalescing syntax.\
+Restore [nullish coalescing](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Nullish_coalescing) syntax.\
 Support output from **TypeScript**, **Babel** and **SWC**.
 
 ```diff
