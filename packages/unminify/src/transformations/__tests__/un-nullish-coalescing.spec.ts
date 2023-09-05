@@ -35,11 +35,9 @@ function foo4() {
   `
 foo ?? "bar";
 
-var _ref;
 foo ?? bar ?? "quz";
 
 // transform-in-default-destructuring
-var _foo$bar;
 var { qux = foo.bar ?? "qux" } = {};
 
 // transform-in-default-param
@@ -48,7 +46,6 @@ function bar(bar, qux = bar ?? "qux") {}
 
 // transform-in-function
 function foo2(opts) {
-  var _opts$foo;
   var foo = opts.foo ?? "default";
 }
 
@@ -84,18 +81,15 @@ function foo4() {
   `
 foo ?? "bar";
 
-var _ref;
 foo ?? bar ?? "quz";
 
 // transform-in-function
 function foo2(opts) {
-  var _opts_foo;
   var _$foo = opts.foo ?? "default";
 }
 
 // transform-static-refs-in-function
 function foo4() {
-  var _this;
   var _$foo = this ?? {};
 }
 `,
@@ -155,14 +149,13 @@ function foo4() {
 }
 `,
   `
-var _a, _b;
+var _b;
 foo ?? "bar";
 
 foo ?? bar ?? "quz";
 
 // transform-in-function
 function foo2(opts) {
-  var _a;
   var foo = opts.foo ?? "default";
 }
 

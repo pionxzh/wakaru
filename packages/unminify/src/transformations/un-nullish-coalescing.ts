@@ -3,6 +3,7 @@ import { isNotNullBinary, isNull, isNullBinary, isUndefined, isUndefinedBinary }
 import { isDecisionTreeLeaf, makeDecisionTree, makeDecisionTreeWithConditionSplitting, negateDecisionTree } from '../utils/decisionTree'
 import { negateCondition } from '../utils/negateCondition'
 import { smartParenthesized } from '../utils/parenthesized'
+import { removeDeclarationIfUnused } from '../utils/removeDeclarationIfUnused'
 import wrap from '../wrapAstTransformation'
 import type { DecisionTree } from '../utils/decisionTree'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -27,7 +28,7 @@ export const transformAST: ASTTransformation = (context) => {
                 if (visited.has(path)) return
                 visited.add(path)
 
-                const result = convertOptionalChaining(j, path.node)
+                const result = convertOptionalChaining(j, path)
                 if (result) {
                     path.replace(result)
                 }
@@ -39,7 +40,7 @@ export const transformAST: ASTTransformation = (context) => {
                 if (visited.has(path)) return
                 visited.add(path)
 
-                const result = convertOptionalChaining(j, path.node)
+                const result = convertOptionalChaining(j, path)
                 if (result) {
                     path.replace(result)
                 }
@@ -47,9 +48,10 @@ export const transformAST: ASTTransformation = (context) => {
     }
 }
 
-function convertOptionalChaining(j: JSCodeshift, expression: ConditionalExpression | LogicalExpression): ExpressionKind | null {
+function convertOptionalChaining(j: JSCodeshift, path: ASTPath<ConditionalExpression | LogicalExpression>): ExpressionKind | null {
     // console.log('\n\n>>>', `${picocolors.green(j(expression).toSource())}`)
 
+    const expression = path.node
     const _decisionTree = makeDecisionTreeWithConditionSplitting(j, makeDecisionTree(j, expression))
     const shouldNegate = isNotNullBinary(j, _decisionTree.condition)
     const decisionTree = shouldNegate
@@ -57,7 +59,7 @@ function convertOptionalChaining(j: JSCodeshift, expression: ConditionalExpressi
         : _decisionTree
     // renderDebugDecisionTree(j, decisionTree)
 
-    const result = constructNullishCoalescing(j, decisionTree, 0, shouldNegate)
+    const result = constructNullishCoalescing(j, path, decisionTree, 0, shouldNegate)
     if (result) {
         result.comments = expression.comments
         // console.log('<<<', `${picocolors.cyan(j(result).toSource())}`)
@@ -67,9 +69,10 @@ function convertOptionalChaining(j: JSCodeshift, expression: ConditionalExpressi
 
 function constructNullishCoalescing(
     j: JSCodeshift,
+    path: ASTPath<ConditionalExpression | LogicalExpression>,
     tree: DecisionTree,
-    flag = 0,
-    isNegated = false,
+    flag: 0 | 1,
+    isNegated: boolean,
 ): ExpressionKind | null {
     const { condition, trueBranch, falseBranch } = tree
 
@@ -83,7 +86,7 @@ function constructNullishCoalescing(
 
         if (isNullBinary(j, condition)) {
             const { left, right: _ } = condition
-            const cond = constructNullishCoalescing(j, falseBranch, 1, isNegated)
+            const cond = constructNullishCoalescing(j, path, falseBranch, 1, isNegated)
             if (!cond) return null
             if (j.AssignmentExpression.check(left) && j.Identifier.check(left.left)) {
                 const nestedAssignment = j(left).find(j.AssignmentExpression, { left: { type: 'Identifier' } }).nodes()
@@ -92,6 +95,14 @@ function constructNullishCoalescing(
                     const { left: tempVariable, right: originalVariable } = curr
                     return variableReplacing(j, acc, tempVariable as ExpressionKind, originalVariable)
                 }, cond)
+
+                allAssignment.forEach((assignment) => {
+                    const { left: tempVariable } = assignment
+                    if (j.Identifier.check(tempVariable)) {
+                        removeDeclarationIfUnused(j, path, tempVariable.name)
+                    }
+                })
+
                 return result
             }
             else {
@@ -114,7 +125,7 @@ function constructNullishCoalescing(
                 }
                 return null
             }
-            return constructNullishCoalescing(j, falseBranch, 0, isNegated)
+            return constructNullishCoalescing(j, path, falseBranch, 0, isNegated)
         }
         return null
     }

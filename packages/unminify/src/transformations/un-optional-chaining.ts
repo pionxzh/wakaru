@@ -3,6 +3,7 @@ import { isNotNullBinary, isNull, isNullBinary, isTrue, isUndefined, isUndefined
 import { makeDecisionTree, makeDecisionTreeWithConditionSplitting, negateDecisionTree } from '../utils/decisionTree'
 import { negateCondition } from '../utils/negateCondition'
 import { smartParenthesized } from '../utils/parenthesized'
+import { removeDeclarationIfUnused } from '../utils/removeDeclarationIfUnused'
 import wrap from '../wrapAstTransformation'
 import type { DecisionTree } from '../utils/decisionTree'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -27,7 +28,7 @@ export const transformAST: ASTTransformation = (context) => {
                 if (visited.has(path)) return
                 visited.add(path)
 
-                const result = convertOptionalChaining(j, path.node)
+                const result = convertOptionalChaining(j, path)
                 if (result) {
                     path.replace(result)
                 }
@@ -39,7 +40,7 @@ export const transformAST: ASTTransformation = (context) => {
                 if (visited.has(path)) return
                 visited.add(path)
 
-                const result = convertOptionalChaining(j, path.node)
+                const result = convertOptionalChaining(j, path)
                 if (result) {
                     path.replace(result)
                 }
@@ -47,9 +48,9 @@ export const transformAST: ASTTransformation = (context) => {
     }
 }
 
-function convertOptionalChaining(j: JSCodeshift, expression: ConditionalExpression | LogicalExpression): ExpressionKind | null {
+function convertOptionalChaining(j: JSCodeshift, path: ASTPath<ConditionalExpression | LogicalExpression>): ExpressionKind | null {
+    const expression = path.node
     // console.log('\n\n>>>', `${picocolors.green(j(expression).toSource())}`)
-
     const _decisionTree = makeDecisionTreeWithConditionSplitting(j, makeDecisionTree(j, expression))
     const isNotNull = isNotNullBinary(j, _decisionTree.condition)
     const decisionTree = isNotNull
@@ -57,7 +58,7 @@ function convertOptionalChaining(j: JSCodeshift, expression: ConditionalExpressi
         : _decisionTree
     // renderDebugDecisionTree(j, decisionTree)
 
-    const _result = constructOptionalChaining(j, decisionTree)
+    const _result = constructOptionalChaining(j, path, decisionTree, 0)
     const result = _result && isNotNull ? negateCondition(j, _result) : _result
     if (result) {
         // console.log('<<<', `${picocolors.cyan(j(result).toSource())}`)
@@ -66,7 +67,12 @@ function convertOptionalChaining(j: JSCodeshift, expression: ConditionalExpressi
     return result
 }
 
-function constructOptionalChaining(j: JSCodeshift, tree: DecisionTree, flag = 0): ExpressionKind | null {
+function constructOptionalChaining(
+    j: JSCodeshift,
+    path: ASTPath,
+    tree: DecisionTree,
+    flag: 0 | 1,
+): ExpressionKind | null {
     const { condition, trueBranch, falseBranch } = tree
 
     const deepestFalseBranch = getDeepestFalseBranch(tree)
@@ -88,20 +94,28 @@ function constructOptionalChaining(j: JSCodeshift, tree: DecisionTree, flag = 0)
         if (!falseBranch) {
             const nestedAssignment = j(condition).find(j.AssignmentExpression, { left: { type: 'Identifier' } }).nodes()
 
-            const allAssignment = j.AssignmentExpression.check(condition)
-                ? [condition, ...nestedAssignment]
-                : nestedAssignment
+            const allAssignment = [
+                ...nestedAssignment,
+                ...(j.AssignmentExpression.check(condition) && j.Identifier.check(condition.left) ? [condition] : []),
+            ]
             const result = allAssignment.reduce((acc, curr) => {
                 const { left: tempVariable, right: originalVariable } = curr
 
                 return applyOptionalChaining(j, acc, tempVariable as Identifier, originalVariable)
             }, condition)
+
+            allAssignment.forEach((assignment) => {
+                if (j.Identifier.check(assignment.left)) {
+                    removeDeclarationIfUnused(j, path, assignment.left.name)
+                }
+            })
+
             return result
         }
 
         if (isNullBinary(j, condition)) {
             const { left, right: _ } = condition
-            const cond = constructOptionalChaining(j, falseBranch, 1)
+            const cond = constructOptionalChaining(j, path, falseBranch, 1)
             if (!cond) return null
             if (j.AssignmentExpression.check(left) && j.Identifier.check(left.left)) {
                 const nestedAssignment = j(left).find(j.AssignmentExpression, { left: { type: 'Identifier' } }).nodes()
@@ -111,6 +125,13 @@ function constructOptionalChaining(j: JSCodeshift, tree: DecisionTree, flag = 0)
 
                     return applyOptionalChaining(j, acc, tempVariable as Identifier, originalVariable)
                 }, cond)
+
+                allAssignment.forEach((assignment) => {
+                    if (j.Identifier.check(assignment.left)) {
+                        removeDeclarationIfUnused(j, path, assignment.left.name)
+                    }
+                })
+
                 return result
             }
             else if (j.Identifier.check(left)) {
@@ -125,7 +146,7 @@ function constructOptionalChaining(j: JSCodeshift, tree: DecisionTree, flag = 0)
         if (!falseBranch) return null
 
         if (isUndefinedBinary(j, condition)) {
-            return constructOptionalChaining(j, falseBranch, 0)
+            return constructOptionalChaining(j, path, falseBranch, 0)
         }
         return null
     }
