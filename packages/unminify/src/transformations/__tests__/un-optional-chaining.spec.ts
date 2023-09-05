@@ -42,7 +42,7 @@ var _h_i, _h;
 h?.i?.();
 
 var _j_k_l_m, _j;
-(j?.k.l.m)?.n.o;
+j?.k.l.m?.n.o;
 
 // Minified
 var _am;
@@ -53,7 +53,7 @@ cm?.d?.e;
 `,
 )
 
-inlineTest('Babel - Member access',
+inlineTest('Babel / SWC - Member access',
   `
 var _foo, _a, _a$b, _a$b$c, _orders, _orders2, _client, _orders$client$key, _a2, _c, _a3;
 (_foo = foo) === null || _foo === void 0 || _foo.bar;
@@ -70,19 +70,19 @@ orders[(_client = client) === null || _client === void 0 ? void 0 : _client.key]
   `
 var _foo, _a, _a$b, _a$b$c, _orders, _orders2, _client, _orders$client$key, _a2, _c, _a3;
 foo?.bar;
-(a?.b.c)?.d.e;
-((a.b)?.c.d)?.e;
-(a.b.c)?.d?.e;
+a?.b.c?.d.e;
+a.b?.c.d?.e;
+a.b.c?.d?.e;
 orders?.[0].price;
 orders?.[0]?.price;
 orders[client?.key].price;
-(orders[client.key])?.price;
+orders[client.key]?.price;
 (0, a?.b).c;
-(0, ((0, a?.b).c)?.d).e;
+(0, (0, a?.b).c?.d).e;
 `,
 )
 
-inlineTest('Babel - Assignment',
+inlineTest('Babel / SWC - Assignment',
   `
 var _obj$a, _obj$b, _obj$a2;
 const a = obj === null || obj === void 0 ? void 0 : obj.a;
@@ -197,11 +197,11 @@ class C {
   }
   static testConditional(o) {
     var _o$a$b;
-    return (o?.a.b)?.c.d ? true : false;
+    return o?.a.b?.c.d ? true : false;
   }
   static testLoop(o) {
     while (o?.a.b.c.d) {
-      for (; (o?.a.b.c)?.d;) {
+      for (; o?.a.b.c?.d;) {
         var _o$a$b$c;
         let i = 0;
         do {
@@ -210,30 +210,30 @@ class C {
           if (i === 2) {
             return true;
           }
-        } while ((o?.a.b)?.c.d);
+        } while (o?.a.b?.c.d);
       }
     }
     return false;
   }
   static testNegate(o) {
     var _o$a$b3;
-    return !!((o?.a.b)?.c.d);
+    return !!(o?.a.b?.c.d);
   }
   static testIfDeep(o) {
     var _o$obj;
-    if (((o.obj)?.a.b)?.c.d) {
+    if (o.obj?.a.b?.c.d) {
       return true;
     }
     return false;
   }
   static testConditionalDeep(o) {
     var _o$obj2;
-    return ((o.obj)?.a.b)?.c.d ? true : false;
+    return o.obj?.a.b?.c.d ? true : false;
   }
   static testLoopDeep(o) {
-    while ((o.obj)?.a.b.c.d) {
+    while (o.obj?.a.b.c.d) {
       var _o$obj3;
-      for (; ((o.obj)?.a.b.c)?.d;) {
+      for (; o.obj?.a.b.c?.d;) {
         var _o$obj4;
         let i = 0;
         do {
@@ -242,14 +242,14 @@ class C {
           if (i === 2) {
             return true;
           }
-        } while (((o.obj)?.a.b)?.c.d);
+        } while (o.obj?.a.b?.c.d);
       }
     }
     return false;
   }
   static testNegateDeep(o) {
     var _o$obj6;
-    return !!(((o.obj)?.a.b)?.c.d);
+    return !!(o.obj?.a.b?.c.d);
   }
   static testLogicalInIf(o) {
     var _o$a$b4, _o$a;
@@ -260,21 +260,21 @@ class C {
   }
   static testLogicalInReturn(o) {
     var _o$a$b5, _o$a2;
-    return ((o?.a.b)?.c.d) && (o?.a?.b.c.d);
+    return (o?.a.b?.c.d) && (o?.a?.b.c.d);
   }
   static testNullishCoalescing(o) {
     var _o$a$b$c$non_existent, _o$a$b6, _o$a$b7, _o$a$b$c$non_existent3, _o$a$b10;
-    if ((o?.a.b)?.c.non_existent ?? (o?.a.b)?.c.d) {
+    if (o?.a.b?.c.non_existent ?? o?.a.b?.c.d) {
       var _o$a$b$c$non_existent2, _o$a$b8, _o$a$b9;
-      return (o?.a.b)?.c.non_existent ?? (o?.a.b)?.c.d;
+      return o?.a.b?.c.non_existent ?? o?.a.b?.c.d;
     }
-    return (o?.a.b)?.c.non_existent ?? o;
+    return o?.a.b?.c.non_existent ?? o;
   }
 }
 `,
 )
 
-inlineTest('Babel - Container',
+inlineTest('Babel / SWC - Container',
   `
 var _user$address, _user$address2, _a, _a2, _a3;
 var street = (_user$address = user.address) === null || _user$address === void 0 ? void 0 : _user$address.street;
@@ -287,8 +287,8 @@ test((_a2 = a) === null || _a2 === void 0 ? void 0 : _a2.b, 1);
 `,
   `
 var _user$address, _user$address2, _a, _a2, _a3;
-var street = (user.address)?.street;
-street = (user.address)?.street;
+var street = user.address?.street;
+street = user.address?.street;
 
 test(a?.b, 1);
 test(a?.b, 1);
@@ -316,7 +316,7 @@ test = obj === null || obj === void 0 || (_obj$b = obj.b) === null || _obj$b ===
 obj === null || obj === void 0 || delete obj.a;
 `,
   `
-function f(x = (_a => delete (a())?.b)()) {}
+function f(x = (_a => delete a()?.b)()) {}
 
 let test = delete obj?.a?.b;
 test = delete obj?.a.b;
@@ -342,7 +342,7 @@ test = (_obj2 = obj) === null || _obj2 === void 0 ? true : (_obj_b = _obj2.b) ==
 var _obj_a, _obj, _obj1, _obj_b, _obj2, _obj3;
 function f(x = (()=>{
   var _a;
-  return delete (a())?.b();
+  return delete a()?.b();
 })()) {}
 
 let test = delete obj?.a?.b;
@@ -352,7 +352,7 @@ delete obj?.a;
 `,
 )
 
-inlineTest('Babel - Function call',
+inlineTest('Babel / SWC - Function call',
   `
 var _foo, _foo2, _foo$bar, _foo3, _foo4, _foo4$bar, _foo5, _foo6, _foo$bar2, _foo7, _foo$bar3, _foo8, _foo9, _foo9$bar, _foo10, _foo10$bar;
 (_foo = foo) === null || _foo === void 0 || _foo(foo);
@@ -412,6 +412,23 @@ foo?.bar?.()?.baz;
 
 inlineTest('Babel - Function call spread',
   `
+var _a, _a2, _a3;
+(_a = a) !== null && _a !== void 0 && _a(...args);
+(_a2 = a) !== null && _a2 !== void 0 && _a2.b(...args);
+(_a3 = a) !== null && _a3 !== void 0 && _a3.b(...args).c;
+(_a4 = a) === null || _a4 === void 0 ? void 0 : _a4.b(...args).c(...args);
+`,
+  `
+var _a, _a2, _a3;
+a?.(...args);
+a?.b(...args);
+a?.b(...args).c;
+a?.b(...args).c(...args);
+`,
+)
+
+inlineTest('Babel - Function call spread with helper',
+  `
 var _a, _a2, _a3, _a4, _a4$b;
 (_a = a) === null || _a === void 0 || _a.apply(void 0, babelHelpers.toConsumableArray(args));
 (_a2 = a) === null || _a2 === void 0 || _a2.b.apply(_a2, babelHelpers.toConsumableArray(args));
@@ -424,6 +441,23 @@ a?.(babelHelpers.toConsumableArray(args));
 a?.b?.(babelHelpers.toConsumableArray(args));
 a?.b?.(babelHelpers.toConsumableArray(args)).c;
 (a?.b?.(babelHelpers.toConsumableArray(args))).c?.(babelHelpers.toConsumableArray(args));
+`,
+)
+
+inlineTest('SWC - Function call spread',
+  `
+var _a, _a1, _a2, _a3;
+(_a = a) === null || _a === void 0 ? void 0 : _a(...args);
+(_a1 = a) === null || _a1 === void 0 ? void 0 : _a1.b(...args);
+(_a2 = a) === null || _a2 === void 0 ? void 0 : _a2.b(...args).c;
+(_a3 = a) === null || _a3 === void 0 ? void 0 : _a3.b(...args).c(...args);
+`,
+  `
+var _a, _a1, _a2, _a3;
+a?.(...args);
+a?.b(...args);
+a?.b(...args).c;
+a?.b(...args).c(...args);
 `,
 )
 
@@ -460,10 +494,10 @@ function g({
   b = a?.c
 }) {}
 function h(a, {
-  b = (_a$b => (a.b)?.c?.d.e)()
+  b = (_a$b => a.b?.c?.d.e)()
 }) {}
 function i(a, {
-  b = (_a$b2 => (a.b)?.c?.d)().e
+  b = (_a$b2 => a.b?.c?.d)().e
 }) {}
 function j(a, {
   b = (_a$b3 => a?.b?.c().d.e)()
@@ -471,7 +505,32 @@ function j(a, {
 `,
 )
 
-inlineTest('Babel - In method key',
+inlineTest('SWC - In function params',
+  `
+var _a, _a_b_c, _a_b, _a_b_c1, _a_b1, _a_b2, _a1;
+function f(a = (()=>{
+  var _x;
+  return (_x = x) === null || _x === void 0 ? void 0 : _x.y;
+})()) {}
+function g({ a, b = (_a = a) === null || _a === void 0 ? void 0 : _a.c }) {}
+function h(a, { b = (_a_b = a.b) === null || _a_b === void 0 ? void 0 : (_a_b_c = _a_b.c) === null || _a_b_c === void 0 ? void 0 : _a_b_c.d.e }) {}
+function i(a, { b = ((_a_b1 = a.b) === null || _a_b1 === void 0 ? void 0 : (_a_b_c1 = _a_b1.c) === null || _a_b_c1 === void 0 ? void 0 : _a_b_c1.d).e }) {}
+function j(a, { b = (_a1 = a) === null || _a1 === void 0 ? void 0 : (_a_b2 = _a1.b) === null || _a_b2 === void 0 ? void 0 : _a_b2.c().d.e }) {}
+`,
+  `
+var _a, _a_b_c, _a_b, _a_b_c1, _a_b1, _a_b2, _a1;
+function f(a = (()=>{
+  var _x;
+  return x?.y;
+})()) {}
+function g({ a, b = a?.c }) {}
+function h(a, { b = a.b?.c?.d.e }) {}
+function i(a, { b = (a.b?.c?.d).e }) {}
+function j(a, { b = a?.b?.c().d.e }) {}
+`,
+)
+
+inlineTest('Babel / SWC - In method key',
   `
 var _x$y;
 let x;
@@ -483,12 +542,12 @@ const a = {
 var _x$y;
 let x;
 const a = {
-  [(x.y)?.z]() {}
+  [x.y?.z]() {}
 };
 `,
 )
 
-inlineTest('Babel - In var destructuring',
+inlineTest('Babel / SWC - In var destructuring',
   `
 var _x;
 var {
@@ -513,7 +572,7 @@ var {
  * @example
  * foo?.bar?.(foo?.bar)
  */
-inlineTest('Babel - Memoize',
+inlineTest('Babel / SWC - Memoize',
   `
 function test(foo) {
   var _foo$bar, _foo$bar2, _foo$bar3, _foo$bar4, _foo$bar5, _foo$bar6, _foo$bar6$baz, _foo$bar7, _foo$bar7$baz;
@@ -538,9 +597,9 @@ function test(foo) {
   foo?.bar();
   foo.bar?.(foo.bar, false);
   foo?.bar?.(foo?.bar, true);
-  (foo.bar)?.baz(foo.bar, false);
+  foo.bar?.baz(foo.bar, false);
   foo?.bar?.baz(foo?.bar, true);
-  (foo.bar)?.baz?.(foo.bar, false);
+  foo.bar?.baz?.(foo.bar, false);
   foo?.bar?.baz?.(foo?.bar, true);
 }
 `,
@@ -556,7 +615,7 @@ function test(foo) {
  * @example
  * foo?.bar?.(foo?.bar)
  */
-inlineTest('Babel - Memoize with assumption pureGetter',
+inlineTest('Babel / SWC - Memoize with assumption pureGetter',
   `
 function test(foo) {
   var _foo$bar, _foo$get, _foo$bar2, _foo$bar3, _foo$bar$baz, _foo$bar4, _foo$bar$baz2, _foo$bar5, _foo$bar6, _foo$bar7, _foo$bar8, _foo$bar9;
@@ -591,15 +650,15 @@ function test(foo) {
   (foo[bar]()).baz?.();
   foo.bar?.(foo.bar, false);
   foo?.bar?.(foo?.bar, true);
-  (foo.bar)?.baz(foo.bar, false);
+  foo.bar?.baz(foo.bar, false);
   foo?.bar?.baz(foo?.bar, true);
-  (foo.bar)?.baz?.(foo.bar, false);
+  foo.bar?.baz?.(foo.bar, false);
   foo?.bar?.baz?.(foo?.bar, true);
 }
 `,
 )
 
-inlineTest('Babel - Optional eval call',
+inlineTest('Babel / SWC - Optional eval call',
   `
 var _eval, _eval2, _foo$eval, _eval$foo;
 var foo;
@@ -633,7 +692,7 @@ var foo;
 /* direct eval calls */
 
 eval()?.();
-(eval())?.foo;
+eval()?.foo;
 
 /* plain function calls */
 
@@ -653,8 +712,8 @@ test(((_a2 = a) === null || _a2 === void 0 ? void 0 : _a2.b), 1);
 `,
   `
 var _user$address, _user$address2, _a, _a2, _a3;
-var street = (user.address)?.street;
-street = (user.address)?.street;
+var street = user.address?.street;
+street = user.address?.street;
 test(a?.b, 1);
 test((a?.b), 1);
 ((1, a?.b, 2));
@@ -723,10 +782,10 @@ class Foo {
     (o?.Foo.m)();
     (o?.Foo.m)().toString;
     (o?.Foo.m)().toString();
-    (((o.Foo)?.self.getSelf)()?.m)();
-    ((o.Foo.self?.getSelf)()?.m)();
-    (((fn())?.Foo?.self.getSelf)()?.m)();
-    ((fn?.().Foo.self?.getSelf)()?.m)();
+    (o.Foo?.self.getSelf()?.m)();
+    (o.Foo.self?.getSelf()?.m)();
+    (fn()?.Foo?.self.getSelf()?.m)();
+    (fn?.().Foo.self?.getSelf()?.m)();
   }
 }
 `,

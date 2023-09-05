@@ -1,6 +1,14 @@
-import type { ASTNode, BinaryExpression, JSCodeshift } from 'jscodeshift'
+import type { ASTNode, BinaryExpression, JSCodeshift, Literal } from 'jscodeshift'
 
-export function isNull(j: JSCodeshift, node: ASTNode) {
+export function isTrue(j: JSCodeshift, node: ASTNode): node is Literal {
+    return j.Literal.check(node) && node.value === true
+}
+
+export function isFalse(j: JSCodeshift, node: ASTNode): node is Literal {
+    return j.Literal.check(node) && node.value === false
+}
+
+export function isNull(j: JSCodeshift, node: ASTNode): node is Literal {
     return j.Literal.check(node) && node.value === null
 }
 

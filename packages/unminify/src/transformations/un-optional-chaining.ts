@@ -1,8 +1,8 @@
 import { areNodesEqual } from '../utils/areNodesEqual'
-import { isNotNullBinary, isNull, isNullBinary, isUndefined, isUndefinedBinary } from '../utils/checker'
+import { isNotNullBinary, isNull, isNullBinary, isTrue, isUndefined, isUndefinedBinary } from '../utils/checker'
 import { makeDecisionTree, makeDecisionTreeWithConditionSplitting, negateDecisionTree } from '../utils/decisionTree'
 import { negateCondition } from '../utils/negateCondition'
-import { markParenthesized } from '../utils/parenthesized'
+import { smartParenthesized } from '../utils/parenthesized'
 import wrap from '../wrapAstTransformation'
 import type { DecisionTree } from '../utils/decisionTree'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -29,7 +29,6 @@ export const transformAST: ASTTransformation = (context) => {
 
                 const result = convertOptionalChaining(j, path.node)
                 if (result) {
-                    // console.log('<<<', `${picocolors.cyan(j(result).toSource())}`)
                     path.replace(result)
                 }
             })
@@ -42,7 +41,6 @@ export const transformAST: ASTTransformation = (context) => {
 
                 const result = convertOptionalChaining(j, path.node)
                 if (result) {
-                    // console.log('<<<<', `${picocolors.cyan(j(result).toSource())}`)
                     path.replace(result)
                 }
             })
@@ -59,8 +57,13 @@ function convertOptionalChaining(j: JSCodeshift, expression: ConditionalExpressi
         : _decisionTree
     // renderDebugDecisionTree(j, decisionTree)
 
-    const result = constructOptionalChaining(j, decisionTree)
-    return result && isNotNull ? negateCondition(j, result) : result
+    const _result = constructOptionalChaining(j, decisionTree)
+    const result = _result && isNotNull ? negateCondition(j, _result) : _result
+    if (result) {
+        // console.log('<<<', `${picocolors.cyan(j(result).toSource())}`)
+        result.comments = expression.comments
+    }
+    return result
 }
 
 function constructOptionalChaining(j: JSCodeshift, tree: DecisionTree, flag = 0): ExpressionKind | null {
@@ -137,7 +140,7 @@ function applyOptionalChaining<T extends ExpressionKind>(
              * will eventually be cleaned up by prettier.
              */
             const object = targetExpression
-                ? markParenthesized(targetExpression, true)
+                ? smartParenthesized(j, targetExpression)
                 : node.object
             return j.optionalMemberExpression(object, node.property) as T
         }
@@ -227,7 +230,7 @@ function applyOptionalChaining<T extends ExpressionKind>(
             },
         })) {
             const target = targetExpression || (node.callee as SequenceExpression).expressions[1]
-            const callee = markParenthesized(j.sequenceExpression([j.literal(0), target]), true)
+            const callee = smartParenthesized(j, j.sequenceExpression([j.literal(0), target]))
             const optionalCallExpression = j.optionalCallExpression(callee, node.arguments)
             optionalCallExpression.arguments = optionalCallExpression.arguments.map((arg) => {
                 return j.SpreadElement.check(arg) ? arg : applyOptionalChaining(j, arg, tempVariable, targetExpression)
@@ -256,7 +259,7 @@ function applyOptionalChaining<T extends ExpressionKind>(
     }
 
     if (j.Identifier.check(node) && areNodesEqual(j, node, tempVariable) && targetExpression) {
-        return targetExpression as T
+        return smartParenthesized(j, targetExpression) as T
     }
 
     if (j.UnaryExpression.check(node)) {
@@ -271,7 +274,7 @@ function isFalsyBranch(j: JSCodeshift, tree: DecisionTree | null): boolean {
 
     const { condition, trueBranch, falseBranch } = tree
 
-    return (isNull(j, condition) || isUndefined(j, condition))
+    return (isNull(j, condition) || isUndefined(j, condition) || isTrue(j, condition))
         && (!trueBranch || isFalsyBranch(j, trueBranch))
         && (!falseBranch || isFalsyBranch(j, falseBranch))
 }

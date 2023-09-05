@@ -2,7 +2,7 @@ import { areNodesEqual } from '../utils/areNodesEqual'
 import { isNotNullBinary, isNull, isNullBinary, isUndefined, isUndefinedBinary } from '../utils/checker'
 import { isDecisionTreeLeaf, makeDecisionTree, makeDecisionTreeWithConditionSplitting, negateDecisionTree } from '../utils/decisionTree'
 import { negateCondition } from '../utils/negateCondition'
-import { markParenthesized } from '../utils/parenthesized'
+import { smartParenthesized } from '../utils/parenthesized'
 import wrap from '../wrapAstTransformation'
 import type { DecisionTree } from '../utils/decisionTree'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -29,7 +29,6 @@ export const transformAST: ASTTransformation = (context) => {
 
                 const result = convertOptionalChaining(j, path.node)
                 if (result) {
-                    // console.log('<<<', `${picocolors.cyan(j(result).toSource())}`)
                     path.replace(result)
                 }
             })
@@ -42,7 +41,6 @@ export const transformAST: ASTTransformation = (context) => {
 
                 const result = convertOptionalChaining(j, path.node)
                 if (result) {
-                    // console.log('<<<<', `${picocolors.cyan(j(result).toSource())}`)
                     path.replace(result)
                 }
             })
@@ -60,6 +58,10 @@ function convertOptionalChaining(j: JSCodeshift, expression: ConditionalExpressi
     // renderDebugDecisionTree(j, decisionTree)
 
     const result = constructNullishCoalescing(j, decisionTree, 0, shouldNegate)
+    if (result) {
+        result.comments = expression.comments
+        // console.log('<<<', `${picocolors.cyan(j(result).toSource())}`)
+    }
     return result
 }
 
@@ -141,7 +143,7 @@ function variableReplacing<T extends ExpressionKind>(
              * will eventually be cleaned up by prettier.
              */
             const object = targetExpression
-                ? markParenthesized(targetExpression, true)
+                ? smartParenthesized(j, targetExpression)
                 : node.object
             return j.memberExpression(object, node.property) as T
         }
