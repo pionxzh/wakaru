@@ -200,9 +200,12 @@ function applyOptionalChaining<T extends ExpressionKind>(
                 }
 
                 if (node.callee.property.name === 'apply') {
-                    const argumentStartsWithThis = areNodesEqual(j, node.arguments[0], tempVariable)
-                    const [_, ..._args] = node.arguments
-                    const args = argumentStartsWithThis ? _args : node.arguments
+                    const [_, arg] = node.arguments
+                    if (j.SpreadElement.check(arg)) return node
+
+                    const args = j.ArrayExpression.check(arg)
+                        ? arg.elements.filter((el): el is ExpressionKind => el !== null)
+                        : [j.spreadElement(arg)]
                     const callee = node.callee
                     const optionalCallExpression = j.optionalCallExpression(callee.object as Identifier, args)
                     optionalCallExpression.callee = applyOptionalChaining(j, optionalCallExpression.callee, tempVariable, targetExpression)
@@ -238,11 +241,17 @@ function applyOptionalChaining<T extends ExpressionKind>(
                         return optionalCallExpression as T
                     }
                     else if (node.callee.property.name === 'apply') {
-                        const optionalCallExpression = j.optionalCallExpression(targetExpression as Identifier, node.arguments)
+                        const [_, arg] = node.arguments
+                        if (j.SpreadElement.check(arg)) return node
+
+                        const args = j.ArrayExpression.check(arg)
+                            ? arg.elements.filter((el): el is ExpressionKind => el !== null)
+                            : [j.spreadElement(arg)]
+                        const optionalCallExpression = j.optionalCallExpression(targetExpression as Identifier, args)
                         optionalCallExpression.callee = applyOptionalChaining(j, optionalCallExpression.callee, tempVariable, targetExpression)
                         optionalCallExpression.arguments = optionalCallExpression.arguments.map((arg) => {
                             return j.SpreadElement.check(arg) ? arg : applyOptionalChaining(j, arg, tempVariable, targetExpression)
-                        }).splice(1)
+                        })
                         return optionalCallExpression as T
                     }
                 }

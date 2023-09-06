@@ -1,3 +1,4 @@
+import toConsumableArray from '../babel-helpers/toConsumableArray'
 import unNullishCoalescing from '../un-nullish-coalescing'
 import transform from '../un-optional-chaining'
 import { defineInlineTest } from './test-utils'
@@ -415,19 +416,32 @@ a?.b(...args).c(...args);
 `,
 )
 
-inlineTest('Babel - Function call spread with helper',
+defineInlineTest([toConsumableArray, transform])('Babel - Function call spread with helper',
   `
+var _toConsumableArray2 = require("@babel/runtime/helpers/toConsumableArray");
 var _a, _a2, _a3, _a4, _a4$b;
-(_a = a) === null || _a === void 0 || _a.apply(void 0, babelHelpers.toConsumableArray(args));
-(_a2 = a) === null || _a2 === void 0 || _a2.b.apply(_a2, babelHelpers.toConsumableArray(args));
-(_a3 = a) === null || _a3 === void 0 || _a3.b.apply(_a3, babelHelpers.toConsumableArray(args)).c;
-(_a4 = a) === null || _a4 === void 0 ? void 0 : (_a4$b = _a4.b.apply(_a4, babelHelpers.toConsumableArray(args))).c.apply(_a4$b, babelHelpers.toConsumableArray(args));
+(_a = a) === null || _a === void 0
+  ? void 0
+  : _a.apply(void 0, (0, _toConsumableArray2.default)(args));
+(_a2 = a) === null || _a2 === void 0
+  ? void 0
+  : _a2.b.apply(_a2, (0, _toConsumableArray2.default)(args));
+(_a3 = a) === null || _a3 === void 0
+  ? void 0
+  : _a3.b.apply(_a3, (0, _toConsumableArray2.default)(args)).c;
+(_a4 = a) === null || _a4 === void 0
+  ? void 0
+  : (_a4$b = _a4.b.apply(_a4, (0, _toConsumableArray2.default)(args))).c.apply(
+      _a4$b,
+      (0, _toConsumableArray2.default)(args)
+    );
 `,
+  // FIXME: have a redundant ?.() call
   `
-a?.(babelHelpers.toConsumableArray(args));
-a?.b?.(babelHelpers.toConsumableArray(args));
-a?.b?.(babelHelpers.toConsumableArray(args)).c;
-(a?.b?.(babelHelpers.toConsumableArray(args))).c?.(babelHelpers.toConsumableArray(args));
+a?.(...args);
+a?.b?.(...args);
+a?.b?.(...args).c;
+(a?.b?.(...args)).c?.(...args);
 `,
 )
 
