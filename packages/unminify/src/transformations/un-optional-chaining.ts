@@ -8,7 +8,7 @@ import wrap from '../wrapAstTransformation'
 import type { DecisionTree } from '../utils/decisionTree'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { ASTPath, ConditionalExpression, Identifier, JSCodeshift, LogicalExpression, MemberExpression, SequenceExpression } from 'jscodeshift'
+import type { ASTPath, ConditionalExpression, Identifier, JSCodeshift, LogicalExpression, MemberExpression, SequenceExpression, SpreadElement } from 'jscodeshift'
 
 /**
  * Restore optional chaining syntax.
@@ -204,7 +204,7 @@ function applyOptionalChaining<T extends ExpressionKind>(
                     if (j.SpreadElement.check(arg)) return node
 
                     const args = j.ArrayExpression.check(arg)
-                        ? arg.elements.filter((el): el is ExpressionKind => el !== null)
+                        ? arg.elements.map(element => element ?? j.identifier('undefined')) as Array<ExpressionKind | SpreadElement>
                         : [j.spreadElement(arg)]
                     const callee = node.callee
                     const optionalCallExpression = j.optionalCallExpression(callee.object as Identifier, args)
@@ -245,7 +245,7 @@ function applyOptionalChaining<T extends ExpressionKind>(
                         if (j.SpreadElement.check(arg)) return node
 
                         const args = j.ArrayExpression.check(arg)
-                            ? arg.elements.filter((el): el is ExpressionKind => el !== null)
+                            ? arg.elements.map(element => element ?? j.identifier('undefined')) as Array<ExpressionKind | SpreadElement>
                             : [j.spreadElement(arg)]
                         const optionalCallExpression = j.optionalCallExpression(targetExpression as Identifier, args)
                         optionalCallExpression.callee = applyOptionalChaining(j, optionalCallExpression.callee, tempVariable, targetExpression)

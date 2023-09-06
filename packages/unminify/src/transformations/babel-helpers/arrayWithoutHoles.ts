@@ -3,19 +3,21 @@ import { removeDeclarationIfUnused, removeDefaultImportIfUnused } from '../../ut
 import wrap from '../../wrapAstTransformation'
 import type { ASTTransformation } from '../../wrapAstTransformation'
 import type { Identifier } from '@babel/types'
-import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { CallExpression, ImportDefaultSpecifier } from 'jscodeshift'
+import type { ArrayExpression, CallExpression, ImportDefaultSpecifier } from 'jscodeshift'
 
 /**
- * Restores spread operator from `@babel/runtime/helpers/toConsumableArray` helper.
+ * `@babel/runtime/helpers/arrayWithoutHoles` helper.
  *
- * @see https://babeljs.io/docs/babel-plugin-transform-spread
+ * Replace `empty slot` with `undefined` in ArrayExpression.
+ *
+ * We can further optimize this by detecting if we are wrapped by `toConsumableArray`
+ * and skip the replacement as spread operator will handle `empty` correctly.
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 
-    const moduleName = '@babel/runtime/helpers/toConsumableArray'
-    const moduleEsmName = '@babel/runtime/helpers/esm/toConsumableArray'
+    const moduleName = '@babel/runtime/helpers/arrayWithoutHoles'
+    const moduleEsmName = '@babel/runtime/helpers/esm/arrayWithoutHoles'
     const moduleSource = findModuleSource(j, root, moduleName) || findModuleSource(j, root, moduleEsmName)
 
     if (moduleSource) {
@@ -24,8 +26,8 @@ export const transformAST: ASTTransformation = (context) => {
             ? ((moduleSource.specifiers![0] as ImportDefaultSpecifier).local as Identifier).name
             : (moduleSource.id as Identifier).name
 
-        // toConsumableArray(a)
-        // toConsumableArray.default(a)
+        // arrayWithoutHoles([...])
+        // arrayWithoutHoles.default([...])
         root
             .find(j.CallExpression, {
                 callee: (callee: CallExpression['callee']) => {
@@ -41,18 +43,21 @@ export const transformAST: ASTTransformation = (context) => {
                     && callee.property.name === 'default'
                 )
                 },
-                arguments: (args: CallExpression['arguments']) => args.length === 1 && j.Expression.check(args[0]),
+                arguments: [
+                    { type: 'ArrayExpression' } as const,
+                ],
             })
             .forEach((path) => {
-                path.replace(j.arrayExpression([j.spreadElement(path.node.arguments[0] as ExpressionKind)]))
+                const arr = path.node.arguments[0] as ArrayExpression
+                arr.elements = arr.elements.map(element => element ?? j.identifier('undefined'))
 
                 isImport
                     ? removeDefaultImportIfUnused(j, path, moduleVariableName)
                     : removeDeclarationIfUnused(j, path, moduleVariableName)
             })
 
-        // (0, toConsumableArray)(a)
-        // (0, toConsumableArray.default)(a)
+        // (0, arrayWithoutHoles)([...])
+        // (0, arrayWithoutHoles.default)([...])
         root
             .find(j.CallExpression, {
                 callee: {
@@ -74,10 +79,13 @@ export const transformAST: ASTTransformation = (context) => {
                         },
                     ],
                 },
-                arguments: (args: CallExpression['arguments']) => args.length === 1 && j.Expression.check(args[0]),
+                arguments: [
+                    { type: 'ArrayExpression' } as const,
+                ],
             })
             .forEach((path) => {
-                path.replace(j.arrayExpression([j.spreadElement(path.node.arguments[0] as ExpressionKind)]))
+                const arr = path.node.arguments[0] as ArrayExpression
+                arr.elements = arr.elements.map(element => element ?? j.identifier('undefined'))
 
                 isImport
                     ? removeDefaultImportIfUnused(j, path, moduleVariableName)
