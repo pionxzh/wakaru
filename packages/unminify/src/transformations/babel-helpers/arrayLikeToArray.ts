@@ -10,6 +10,9 @@ import type { ArrayExpression, CallExpression, ImportDefaultSpecifier } from 'js
  *
  * Replace `empty slot` with `undefined` in ArrayExpression.
  *
+ * Note: Semantically, this is not the same as what `arrayWithoutHoles`
+ * does, but currently we don't see other usage of `arrayLikeToArray`.
+ *
  * We can further optimize this by detecting if we are wrapped by `toConsumableArray`
  * and skip the replacement as spread operator will handle `empty` correctly.
  */
@@ -35,13 +38,13 @@ export const transformAST: ASTTransformation = (context) => {
                         j.Identifier.check(callee)
                      && callee.name === moduleVariableName
                     )
-                || (
-                    j.MemberExpression.check(callee)
-                    && j.Identifier.check(callee.object)
-                    && callee.object.name === moduleVariableName
-                    && j.Identifier.check(callee.property)
-                    && callee.property.name === 'default'
-                )
+                    || (
+                        j.MemberExpression.check(callee)
+                     && j.Identifier.check(callee.object)
+                     && callee.object.name === moduleVariableName
+                     && j.Identifier.check(callee.property)
+                     && callee.property.name === 'default'
+                    )
                 },
                 arguments: [
                     { type: 'ArrayExpression' } as const,
@@ -49,7 +52,8 @@ export const transformAST: ASTTransformation = (context) => {
             })
             .forEach((path) => {
                 const arr = path.node.arguments[0] as ArrayExpression
-                arr.elements = arr.elements.map(element => element ?? j.identifier('undefined'))
+                const elements = arr.elements.map(element => element ?? j.identifier('undefined'))
+                path.replace(j.arrayExpression(elements))
 
                 isImport
                     ? removeDefaultImportIfUnused(j, path, moduleVariableName)
@@ -69,13 +73,13 @@ export const transformAST: ASTTransformation = (context) => {
                                 j.Identifier.check(expression)
                              && expression.name === moduleVariableName
                             )
-                        || (
-                            j.MemberExpression.check(expression)
-                            && j.Identifier.check(expression.object)
-                            && expression.object.name === moduleVariableName
-                            && j.Identifier.check(expression.property)
-                            && expression.property.name === 'default'
-                        )
+                            || (
+                                j.MemberExpression.check(expression)
+                             && j.Identifier.check(expression.object)
+                             && expression.object.name === moduleVariableName
+                             && j.Identifier.check(expression.property)
+                             && expression.property.name === 'default'
+                            )
                         },
                     ],
                 },
@@ -85,7 +89,8 @@ export const transformAST: ASTTransformation = (context) => {
             })
             .forEach((path) => {
                 const arr = path.node.arguments[0] as ArrayExpression
-                arr.elements = arr.elements.map(element => element ?? j.identifier('undefined'))
+                const elements = arr.elements.map(element => element ?? j.identifier('undefined'))
+                path.replace(j.arrayExpression(elements))
 
                 isImport
                     ? removeDefaultImportIfUnused(j, path, moduleVariableName)
