@@ -1,9 +1,8 @@
 {
-  "name": "@unminify-kit/ast-utils",
+  "name": "@unminify-kit/test-utils",
   "type": "module",
   "version": "0.0.1",
   "packageManager": "pnpm@8.6.3",
-  "description": "🔪📦 Unminify and beautify bundled code",
   "author": "Pionxzh",
   "license": "MIT",
   "sideEffects": false,
@@ -17,24 +16,17 @@
   },
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --sourcemap --clean",
-    "test": "vitest run --globals",
-    "test:update": "vitest run --update --globals",
-    "test:watch": "vitest watch --globals",
     "test:type": "tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix"
   },
   "dependencies": {
-    "jscodeshift": "^0.15.0"
+    "jscodeshift": "^0.15.0",
+    "vitest": "^0.34.1"
   },
   "devDependencies": {
-    "@babel/types": "^7.22.10",
     "@types/jscodeshift": "^0.11.6",
-    "@unminify-kit/test-utils": "workspace:*",
-    "ast-types": "^0.16.1",
-    "tsup": "^7.2.0",
-    "typescript": "^5.1.6",
-    "vitest": "^0.34.1"
+    "typescript": "^5.1.6"
   },
   "publishConfig": {
     "exports": {

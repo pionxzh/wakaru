@@ -3,7 +3,6 @@ import { computed } from 'vue'
 import useState from '../composables/shared/useState'
 import { useFileIds } from '../composables/useFileIds'
 import { useModuleMapping } from '../composables/useModuleMapping'
-import DarkModeBtn from './DarkModeBtn.vue'
 import InputBox from './InputBox.vue'
 import Separator from './Separator.vue'
 
@@ -44,8 +43,6 @@ function rename(fileId: FileId, e: Event) {
         transition-all duration-300
       bg-gray-50 dark:bg-gray-800"
     >
-        <DarkModeBtn class="my-4 mx-auto" />
-
         <ul class="relative pb-6">
             <li class="cursor-pointer">
                 <router-link

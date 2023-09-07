@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// @ts-expect-error - no types
 import {
     Dialog,
     DialogPanel,
@@ -9,12 +8,12 @@ import {
 } from '@headlessui/vue'
 import { unpack } from '@unminify-kit/unpacker'
 import { nextTick } from 'vue'
-import CodemodWorker from '../codemod.worker?worker'
 import Card from '../components/Card.vue'
 import CodemirrorEditor from '../components/CodemirrorEditor.vue'
 import FileUpload from '../components/FileUpload.vue'
 import Separator from '../components/Separator.vue'
 import useState from '../composables/shared/useState'
+import { useCodemod } from '../composables/useCodemod'
 import { useFileIds } from '../composables/useFileIds'
 import { useModuleMapping } from '../composables/useModuleMapping'
 import { KEY_FILE_PREFIX } from '../const'
@@ -23,46 +22,38 @@ import type { TransformedModule } from '../types'
 const [source] = useState('')
 const [isLoading, setIsLoading] = useState(false)
 const [processedCount, setProcessedCount] = useState(0)
-const { fileIds } = useFileIds()
+const { fileIds, setFileIds } = useFileIds()
+const { transform } = useCodemod()
 const { moduleMapping, setModuleMapping } = useModuleMapping()
 
 function onUpload(file: File) {
     const reader = new FileReader()
     reader.onload = (event) => {
-        const value = event.target?.result
-        if (typeof value === 'string') {
-            run(value)
-        }
+        const scriptContent = event.target?.result
+        if (!scriptContent || typeof scriptContent !== 'string') return
+
+        startUnpack(scriptContent)
     }
     reader.readAsText(file)
 }
 
-const codemodWorker = new CodemodWorker()
-codemodWorker.onmessage = ({ data: module }: MessageEvent<TransformedModule>) => {
-    setProcessedCount(count => count + 1)
-    localStorage.setItem(`${KEY_FILE_PREFIX}${module.id}`, JSON.stringify(module))
-
-    if (processedCount.value === fileIds.value.length) {
-        setIsLoading(false)
-    }
-}
-
-function getDepName(dep: TransformedModule) {
-    return dep.isEntry ? 'entry.js' : `module-${dep.id}.js`
-}
-
 function onSubmit() {
+    if (!source.value) return
+
+    startUnpack(source.value)
+}
+
+async function startUnpack(code: string) {
     setProcessedCount(0)
     setIsLoading(true)
 
-    nextTick(() => run(source.value))
-}
+    await nextTick()
 
-function run(code: string) {
+    // TODO: Move to worker
     const result = unpack(code)
 
+    // If we failed to unpack, we'll just treat the input as a single module
     if (!result) {
-        // alert('No modules were found in the source code!\nIt might be a bug of unminify-kit.\nPlease report it as an issue.')
         const module = {
             id: 0,
             isEntry: true,
@@ -86,25 +77,39 @@ function run(code: string) {
         }
     })
 
-    fileIds.value = [
+    setFileIds([
         ...unpackedModules.filter(module => module.isEntry).map(module => module.id),
         ...unpackedModules.filter(module => !module.isEntry).map(module => module.id),
-    ]
+    ])
 
     const newModuleMapping = unpackedModules.reduce((acc, mod) => {
         acc[mod.id] = getDepName(mod)
         return acc
     }, moduleIdMapping)
+
     // try to preserve the old mapping
     if (Object.keys(newModuleMapping).length !== Object.keys(moduleMapping.value).length) {
         setModuleMapping(newModuleMapping)
     }
 
-    unpackedModules.forEach((module) => {
-        // const name = getDepName(module)
-        // codemodWorker.postMessage({ name, module })
-        localStorage.setItem(`${KEY_FILE_PREFIX}${module.id}`, JSON.stringify(module))
-    })
+    const mapping = moduleMapping.value
+    await Promise.all(
+        unpackedModules.map(async (module) => {
+            const moduleName = mapping[module.id]
+            // Do a pre-formatting pass to improve the readability of the code
+            const result = await transform(moduleName, module, ['prettier'], mapping)
+            module.code = result.transformed
+            module.transformed = result.transformed
+
+            localStorage.setItem(`${KEY_FILE_PREFIX}${module.id}`, JSON.stringify(module))
+        }),
+    )
+
+    setIsLoading(false)
+}
+
+function getDepName(dep: TransformedModule) {
+    return dep.isEntry ? 'entry.js' : `module-${dep.id}.js`
 }
 </script>
 
