@@ -1,5 +1,5 @@
+import { defineInlineTest } from '@unminify-kit/test-utils'
 import transform from '../un-infinity'
-import { defineInlineTest } from './test-utils'
 
 const inlineTest = defineInlineTest(transform)
 

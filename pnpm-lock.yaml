@@ -232,6 +232,9 @@ importers:
       '@types/yargs':
         specifier: ^17.0.24
         version: 17.0.24
+      '@unminify-kit/test-utils':
+        specifier: workspace:*
+        version: link:../test-utils
       ast-types:
         specifier: ^0.16.1
         version: 0.16.1(patch_hash=f362awmdi2pizpvlhqmynk5wsi)

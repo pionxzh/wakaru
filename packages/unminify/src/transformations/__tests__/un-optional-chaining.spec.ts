@@ -1,7 +1,7 @@
+import { defineInlineTest } from '@unminify-kit/test-utils'
 import toConsumableArray from '../babel-helpers/toConsumableArray'
 import unNullishCoalescing from '../un-nullish-coalescing'
 import transform from '../un-optional-chaining'
-import { defineInlineTest } from './test-utils'
 
 const inlineTest = defineInlineTest(transform)
 

@@ -56,7 +56,7 @@ export function defineInlineTest(transforms: Transform | Transform[]) {
                     const newStacks = stacks.filter((line) => {
                         const blockList = [
                             // /@vitest\/runner/,
-                            /test-utils\\src\\index.ts/,
+                            /test-utils\\src\\index\.ts/,
                             /jscodeshift\\src\\testUtils\.js/,
                         ]
                         return !blockList.some(regex => regex.test(line))

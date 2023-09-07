@@ -1,5 +1,5 @@
+import { defineInlineTest, defineInlineTestWithOptions } from '@unminify-kit/test-utils'
 import transform from '../un-esm'
-import { defineInlineTest, defineInlineTestWithOptions } from './test-utils'
 
 const inlineTest = defineInlineTest(transform)
 const inlineTestOpt = defineInlineTestWithOptions(transform)
