@@ -1,6 +1,6 @@
+import { isDeclared } from '../utils/isDeclared'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { Scope } from 'ast-types/lib/scope'
 
 /**
  * Converts `void 0` to `undefined`.
@@ -27,12 +27,6 @@ export const transformAST: ASTTransformation = (context) => {
                 p.replace(j.identifier('undefined'))
             }
         })
-}
-
-function isDeclared(scope: Scope, name: string) {
-    if (scope.declares(name)) return true
-    if (scope.parent) return isDeclared(scope.parent, name)
-    return false
 }
 
 export default wrap(transformAST)
