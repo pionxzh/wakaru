@@ -43,3 +43,24 @@ void function() {
 }
 `,
 )
+
+inlineTest('should not transform when undefined is declared in scope',
+  `
+var undefined = 42;
+
+console.log(void 0);
+
+if (undefined !== a) {
+  console.log('a', void 0);
+}
+`,
+  `
+var undefined = 42;
+
+console.log(void 0);
+
+if (undefined !== a) {
+  console.log('a', void 0);
+}
+`,
+)

@@ -23,6 +23,13 @@ type InlineTest = (
     expectedOutput: string,
 ) => void
 
+/**
+ * Wrapper around `jscodeshift`'s `runInlineTest` that allows for a more
+ * declarative syntax.
+ *
+ * - Supports multiple transforms
+ * - Supports `skip` and `only` modifiers
+ */
 export function defineInlineTest(transforms: Transform | Transform[]) {
     const reducedTransform: Transform = Array.isArray(transforms)
         ? (fileInfo, api, options) => {
@@ -50,6 +57,9 @@ export function defineInlineTest(transforms: Transform | Transform[]) {
                 }, expectedOutput)
             }
             catch (err) {
+                /**
+                 * Prevent test utils from showing up in the stack trace.
+                 */
                 if (err instanceof Error && err.stack) {
                     const stack = err.stack
                     const stacks = stack.split('\n')
