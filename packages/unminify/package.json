@@ -25,10 +25,10 @@
     "lint:fix": "eslint src --fix"
   },
   "dependencies": {
-    "@babel/core": "^7.22.11",
-    "@babel/helper-validator-identifier": "^7.22.5",
-    "@babel/preset-env": "^7.22.14",
-    "@babel/types": "^7.22.11",
+    "@babel/core": "^7.22.17",
+    "@babel/helper-validator-identifier": "^7.22.15",
+    "@babel/preset-env": "^7.22.15",
+    "@babel/types": "^7.22.17",
     "@unminify-kit/ast-utils": "workspace:*",
     "fs-extra": "^11.1.1",
     "globby": "^11.1.0",
