@@ -29,7 +29,7 @@ export const transformAST: ASTTransformation<Params> = (context, params = { modu
 
             const replacement = moduleMapping[value]
             if (replacement) {
-                p.node.arguments[0] = j.literal(`default-${replacement}.js`)
+                p.node.arguments[0] = j.literal(replacement)
             }
         })
 }
