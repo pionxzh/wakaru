@@ -1,6 +1,7 @@
 import { areNodesEqual } from '../utils/areNodesEqual'
 import { isNotNullBinary, isNull, isNullBinary, isTrue, isUndefined, isUndefinedBinary } from '../utils/checker'
 import { makeDecisionTree, makeDecisionTreeWithConditionSplitting, negateDecisionTree } from '../utils/decisionTree'
+import { mergeComments } from '../utils/mergeComments'
 import { negateCondition } from '../utils/negateCondition'
 import { smartParenthesized } from '../utils/parenthesized'
 import { removeDeclarationIfUnused } from '../utils/removeDeclarationIfUnused'
@@ -62,7 +63,7 @@ function convertOptionalChaining(j: JSCodeshift, path: ASTPath<ConditionalExpres
     const result = _result && isNotNull ? negateCondition(j, _result) : _result
     if (result) {
         // console.log('<<<', `${picocolors.cyan(j(result).toSource())}`)
-        result.comments = expression.comments
+        mergeComments(result, expression.comments)
     }
     return result
 }

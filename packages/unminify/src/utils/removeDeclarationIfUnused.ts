@@ -1,3 +1,4 @@
+import { mergeComments } from './mergeComments'
 import type { ASTPath, ImportDeclaration, JSCodeshift, VariableDeclaration } from 'jscodeshift'
 
 export function removeDeclarationIfUnused(j: JSCodeshift, path: ASTPath, id: string) {
@@ -26,10 +27,7 @@ export function removeDeclarationIfUnused(j: JSCodeshift, path: ASTPath, id: str
                         const nextSibling = idUsed.parent.parent.parent.value.body[currentNodeIndex + 1]
                         if (!nextSibling) return
 
-                        nextSibling.comments = [...new Set([
-                            ...(nextSibling.comments || []),
-                            ...(idUsed.parent.parent.value.comments || []),
-                        ]).values()]
+                        mergeComments(nextSibling, idUsed.parent.parent.value.comments)
                     }
                     idUsed.parent.parent.prune()
                 }
@@ -60,10 +58,7 @@ export function removeDefaultImportIfUnused(j: JSCodeshift, path: ASTPath, id: s
             if (index > -1) {
                 importDeclaration.specifiers.splice(index, 1)
                 if (importDeclaration.specifiers.length === 0) {
-                    importDeclaration.comments = [...new Set([
-                        ...(importDeclaration.comments || []),
-                        ...(idUsed.parent.parent.value.comments || []),
-                    ]).values()]
+                    mergeComments(importDeclaration, idUsed.parent.parent.value.comments)
                     idUsed.parent.parent.prune()
                 }
             }

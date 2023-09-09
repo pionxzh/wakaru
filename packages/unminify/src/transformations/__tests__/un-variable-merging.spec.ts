@@ -87,3 +87,37 @@ var k = 0;
 for (var i = 0, j = 0; j < 10; j++) {}
 `,
 )
+
+inlineTest('should keep the original comments #1',
+  `
+// comment 1
+var a = 1, b = 2, c = 3; // comment 2
+// comment 3
+`,
+  // FIXME: a weird blank line is added ?_? why?
+  `
+// comment 1
+var a = 1;
+
+var b = 2;
+
+var c = 3; // comment 2
+// comment 3
+`,
+)
+
+inlineTest('should keep the original comments #',
+  `
+var i = 99;
+// comment 1
+for (var i = 0, j = 0, k = 0; j < 10; j++) {} // comment 2
+// comment 3
+`,
+  `
+var i = 99;
+var k = 0;
+// comment 1
+for (var i = 0, j = 0; j < 10; j++) {} // comment 2
+// comment 3
+`,
+)

@@ -331,11 +331,9 @@ test = (_obj2 = obj) === null || _obj2 === void 0 ? true : (_obj_b = _obj2.b) ==
 (_obj3 = obj) === null || _obj3 === void 0 ? true : delete _obj3.a;
 `,
   `
-function f(
-  x = (()=>{
-    return delete a()?.b();
-  })()
-) {}
+function f(x = (()=>{
+  return delete a()?.b();
+})()) {}
 
 let test = delete obj?.a?.b;
 test = delete obj?.a.b;

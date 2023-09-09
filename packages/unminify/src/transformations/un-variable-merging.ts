@@ -1,3 +1,4 @@
+import { mergeComments } from '../utils/mergeComments'
 import { transformToMultiStatementContext } from '../utils/transformToMultiStatementContext'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -68,6 +69,9 @@ export const transformAST: ASTTransformation = (context) => {
                     const otherDeclarators = initDeclarators.filter(d => !usedDeclarators.includes(d))
                     const otherDeclarations = otherDeclarators.map(d => j.variableDeclaration(init.kind, [d]))
                     const replacements = [...otherDeclarations, p.parent.node]
+                    // seems no comments can be being to extracted statements
+                    // mergeComments(replacements, p.node.comments)
+
                     transformToMultiStatementContext(j, p.parent, replacements)
                 }
 
@@ -78,6 +82,8 @@ export const transformAST: ASTTransformation = (context) => {
             if (declarations.length <= 1) return
 
             const replacements = declarations.map(d => j.variableDeclaration(kind, [d]))
+            mergeComments(replacements, p.node.comments)
+
             transformToMultiStatementContext(j, p, replacements)
         })
 }

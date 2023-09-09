@@ -1,3 +1,4 @@
+import { mergeComments } from '../utils/mergeComments'
 import { transformToMultiStatementContext } from '../utils/transformToMultiStatementContext'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -166,6 +167,7 @@ export const transformAST: ASTTransformation = (context) => {
             })
 
             if (replacement.length > 0) {
+                mergeComments(replacement, path.node.comments)
                 j(path).replaceWith(replacement)
             }
         })
