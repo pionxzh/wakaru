@@ -395,7 +395,7 @@ export default foo;
 // `,
 // )
 
-inlineTest('export with naming conflict',
+inlineTest('export with naming conflict #1',
   `
 var foo = 1;
 console.log(foo);
@@ -417,6 +417,35 @@ const bar$0 = 3;
 console.log(bar, bar$0);
 const bar$1 = 4;
 export { bar$1 as bar };
+`,
+)
+
+inlineTest('export with naming conflict #2',
+  `
+var foo = 1;
+var bar = 2;
+console.log('foo', foo);
+console.log('bar', bar);
+exports.foo = bar;
+
+const baz = 3;
+const qux = 4;
+console.log('baz', baz);
+console.log('qux', qux);
+module.exports.baz = qux;
+`,
+  `
+var foo = 1;
+var bar = 2;
+console.log('foo', foo);
+console.log('bar', bar);
+export { bar as foo };
+
+const baz = 3;
+const qux = 4;
+console.log('baz', baz);
+console.log('qux', qux);
+export { qux as baz };
 `,
 )
 

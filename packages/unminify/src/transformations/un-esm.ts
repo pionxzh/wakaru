@@ -574,6 +574,28 @@ function transformExport(context: Context) {
 
                 return
             }
+
+            /**
+             * Introducing new variable `name` but conflict detected
+             *
+             * Go for export { right as name }
+             */
+            const rootScope = root.find(j.Program).get().scope as Scope
+            if (rootScope.declares(name)) {
+                const exported = j.identifier(name)
+                const exportSpecifier = j.exportSpecifier.from({
+                    exported,
+                    local: right,
+                })
+                const exportNamedDeclaration = j.exportNamedDeclaration(
+                    null,
+                    [exportSpecifier],
+                )
+
+                j(path).replaceWith(exportNamedDeclaration)
+
+                return
+            }
         }
         else {
             // check if the name is declared in the scope
