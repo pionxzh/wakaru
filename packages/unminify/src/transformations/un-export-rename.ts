@@ -1,6 +1,7 @@
 import { isTopLevel } from '@unminify-kit/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
+import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, Collection, ExportNamedDeclaration, ExportSpecifier, Identifier, JSCodeshift, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 /**
@@ -106,6 +107,9 @@ export const transformAST: ASTTransformation = (context) => {
 
             const newName = exported.name
             const oldName = local.name
+
+            const rootScope = root.find(j.Program).get().scope as Scope
+            if (rootScope.declares(newName)) return
 
             inlineExport(context, path, oldName)
             renameInRoot(j, root, oldName, newName)

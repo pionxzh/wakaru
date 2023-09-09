@@ -79,6 +79,19 @@ export const App = class {};
 `,
 )
 
+inlineTest('do not modify redeclare export declaration when the newName is declared',
+    `
+const a = 1;
+const b = 2;
+export { b as a };
+`,
+    `
+const a = 1;
+const b = 2;
+export { b as a };
+`,
+)
+
 inlineTest('do not modify export default',
     `
 const o = class {};
