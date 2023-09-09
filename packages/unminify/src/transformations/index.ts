@@ -17,6 +17,7 @@ import unInfinity from './un-infinity'
 import unNullishCoalescing from './un-nullish-coalescing'
 import unNumericLiteral from './un-numeric-literal'
 import unOptionalChaining from './un-optional-chaining'
+import unParameters from './un-parameters'
 import unReturn from './un-return'
 import unSequenceExpression from './un-sequence-expression'
 import unTemplateLiteral from './un-template-literal'
@@ -52,6 +53,7 @@ export const transformationMap: {
     'un-type-constructor': unTypeConstructor,
     'un-builtin-prototype': unBuiltinPrototype,
     'un-sequence-expression2': unSequenceExpression,
+    'un-parameters': unParameters,
     'un-optional-chaining': unOptionalChaining,
     'un-nullish-coalescing': unNullishCoalescing,
     'un-conditionals': unConditionals,

@@ -28,6 +28,7 @@ It covered most of patterns that are used by the following tools:
 - [Syntax Upgrade](#syntax-upgrade)
   - [`un-esm` (Unsafe)](#un-esm-unsafe)
   - [`un-template-literal`](#un-template-literal)
+  - [`un-parameter`](#un-parameter)
   - [`un-optional-chaining`](#un-optional-chaining)
   - [`un-nullish-coalescing`](#un-nullish-coalescing)
   - [`un-es6-class`](#un-es6-class)
@@ -360,6 +361,19 @@ Restore template literal syntax from string concatenation.
 ```diff
 - "the ".concat(first, " take the ").concat(second, " and ").concat(third);
 + `the ${first} take the ${second} and ${third}`
+```
+
+### `un-parameter`
+
+Restore parameters. Support normal parameters and default parameters.
+
+```diff
+- function foo() {
+-   var a = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : "foo";
+-   var b = arguments.length > 1 ? arguments[1] : undefined;
+-   if (c === void 0) c = "bar";
+- }
++ function foo(a = "foo", b, c = "bar") {}
 ```
 
 ### `un-optional-chaining`

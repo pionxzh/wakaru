@@ -4,7 +4,6 @@ import type { Node } from 'jscodeshift'
 export function mergeComments(node: Node | Node[], commentsToMerge: CommentKind[] | null | undefined) {
     if (!commentsToMerge) return
 
-    console.log(commentsToMerge)
     if (!Array.isArray(node)) {
         const comments = node.comments || []
         node.comments = sortComments([...comments, ...commentsToMerge])
