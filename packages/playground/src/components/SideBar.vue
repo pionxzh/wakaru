@@ -79,7 +79,7 @@ function rename(fileId: FileId, e: Event) {
                 </router-link>
             </li>
 
-            <Separator class="px-3 py-1.5" />
+            <Separator class="px-3" />
 
             <li
                 v-for="file in files"

@@ -92,12 +92,17 @@ async function startUnpack(code: string) {
         setModuleMapping(newModuleMapping)
     }
 
+    const transformations = [
+        'un-sequence-expression',
+        'un-variable-merging',
+        'prettier',
+    ]
     const mapping = moduleMapping.value
     await Promise.all(
         unpackedModules.map(async (module) => {
             const moduleName = mapping[module.id]
             // Do a pre-formatting pass to improve the readability of the code
-            const result = await transform(moduleName, module, ['prettier'], mapping)
+            const result = await transform(moduleName, module, transformations, mapping)
             module.code = result.transformed
             module.transformed = result.transformed
 
