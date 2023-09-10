@@ -1,7 +1,7 @@
 import { isUndefined } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { PatternKind } from 'ast-types/lib/gen/kinds'
+import type { PatternKind, StatementKind } from 'ast-types/lib/gen/kinds'
 import type { ASTPath, AssignmentExpression, AssignmentPattern, ConditionalExpression, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift } from 'jscodeshift'
 
 /**
@@ -97,7 +97,7 @@ function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | Function
     const bodyInThreshold = body.slice(0, BODY_LENGTH_THRESHOLD)
     const bodyOutOfThreshold = body.slice(BODY_LENGTH_THRESHOLD)
 
-    const filteredBodyInThreshold = bodyInThreshold.filter((statement) => {
+    const filteredBodyInThreshold = bodyInThreshold.filter((statement, index) => {
         /**
          * Loose mode
          *
@@ -112,6 +112,9 @@ function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | Function
             && j.Identifier.check(statement.test.left)
         ) {
             const identifier = statement.test.left
+
+            const existingDefaultParam = getExistingDefaultParam(j, params, identifier.name)
+            if (existingDefaultParam) return true
 
             let assignmentExp: AssignmentExpression | undefined
             if (
@@ -137,24 +140,20 @@ function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | Function
                 && j.Identifier.check(assignmentExp.left)
                 && assignmentExp.left.name === identifier.name
             ) {
-                const { left, right } = assignmentExp
+                const { right } = assignmentExp
 
-                // TODO: check if the parameter is already used before
+                const previousStatements = bodyInThreshold.slice(0, index)
+                if (previousStatements.some(statement => isIdentifierUsedIn(j, statement, identifier.name))) {
+                    return true
+                }
 
-                // Check if the parameter is already defined
-                const existingDefaultParam = getExistingDefaultParam(j, params, left.name)
-                if (existingDefaultParam) return true
-
-                const exitingParam = getExistingParam(j, params, left.name)
+                const exitingParam = getExistingParam(j, params, identifier.name)
                 if (exitingParam) {
-                    const index = params.indexOf(exitingParam)
-                    const newParams = params.slice()
-                    newParams.splice(index, 1, j.assignmentPattern(left, right))
-                    path.node.params = newParams
+                    params.splice(params.indexOf(exitingParam), 1, j.assignmentPattern(exitingParam, right))
                     return false
                 }
 
-                params.push(j.assignmentPattern(left, right))
+                params.push(j.assignmentPattern(identifier, right))
                 return false
             }
 
@@ -227,6 +226,52 @@ function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | Function
     })
 
     path.node.body.body = [...filteredBodyInThreshold, ...bodyOutOfThreshold]
+}
+
+function isIdentifierUsedIn(j: JSCodeshift, statement: StatementKind, identifierName: string) {
+    return j(statement).find(j.Identifier).some((path) => {
+        if (j.Property.check(path.parentPath.node)) return false
+        const parent = path.parent.node
+
+        // TODO: extract this part to a isVariableIdentifier or sth
+        if (
+            j.MemberExpression.check(parent)
+          && parent.property === path.node
+          && !parent.computed
+        ) {
+            // obj.oldName
+            return false
+        }
+
+        if (
+            j.Property.check(parent)
+          && parent.key === path.node
+          && !parent.computed
+        ) {
+            // { oldName: 3 }
+            return false
+        }
+
+        if (
+            j.ObjectProperty.check(parent)
+          && parent.key === path.node
+          && !parent.computed
+        ) {
+            // { oldName: 3 }
+            return false
+        }
+
+        if (
+            j.ObjectMethod.check(parent)
+          && parent.key === path.node
+          && !parent.computed
+        ) {
+            // { oldName() {} }
+            return false
+        }
+
+        return path.node.name === identifierName
+    })
 }
 
 function getExistingParam(j: JSCodeshift, params: PatternKind[], identifierName: string) {

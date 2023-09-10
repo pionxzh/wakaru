@@ -3,7 +3,7 @@ import transform from '../un-parameters'
 
 const inlineTest = defineInlineTest(transform)
 
-inlineTest('default parameters',
+inlineTest('default parameters #1',
   `
 function test() {
   if (x === void 0) x = 1;
@@ -16,6 +16,18 @@ function test() {
 function test(x = 1, y = 2, z = "hello") {
   console.log(x, y, z);
 }
+`,
+)
+
+inlineTest('default parameters #2',
+  `
+function test(a, b) {
+  if (a === void 0) a = 1;
+  if (b === void 0) b = 2;
+}
+`,
+  `
+function test(a = 1, b = 2) {}
 `,
 )
 
@@ -147,5 +159,21 @@ var obj = {
     this.num = num;
   }
 };
+`,
+)
+
+inlineTest('Should not transform if parameter is used before default value',
+  `
+function test(a, b) {
+  if (a === void 0) a = 1;
+  console.log(b);
+  if (b === void 0) b = 2;
+}
+`,
+  `
+function test(a = 1, b) {
+  console.log(b);
+  if (b === void 0) b = 2;
+}
 `,
 )
