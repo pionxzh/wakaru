@@ -46,7 +46,7 @@ export const transformAST: ASTTransformation = (context) => {
         // j.CatchClause, // CatchClause's body is always BlockStatement,
         // j.FunctionExpression, // FunctionExpression's body is always BlockStatement,
         // j.FunctionDeclaration, // FunctionDeclaration's body is always BlockStatement,
-        j.LabeledStatement, // Adding BlockStatement to LabeledStatement is problematic
+        // j.LabeledStatement, // Adding BlockStatement to LabeledStatement is problematic
         // j.WithStatement, // parser will die bcz of strict mode
     ]
 

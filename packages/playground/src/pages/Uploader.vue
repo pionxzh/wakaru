@@ -93,7 +93,7 @@ async function startUnpack(code: string) {
     }
 
     const transformations = [
-        'un-sequence-expression',
+        'un-sequence-expression1',
         'un-variable-merging',
         'prettier',
     ]

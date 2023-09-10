@@ -96,6 +96,24 @@ export function renameFunctionParameters(j: JSCodeshift, node: FunctionDeclarati
                         return false
                     }
 
+                    if (
+                        j.LabeledStatement.check(parent)
+                        && parent.label === path.node
+                    ) {
+                        // oldName: ...
+                        return false
+                    }
+
+                    if (j.ContinueStatement.check(parent)) {
+                        // continue oldName
+                        return false
+                    }
+
+                    if (j.BreakStatement.check(parent)) {
+                        // break oldName
+                        return false
+                    }
+
                     return true
                 })
                 .forEach((path) => {
