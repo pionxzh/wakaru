@@ -12,7 +12,8 @@
     "node": ">=16.0.0"
   },
   "scripts": {
-    "build": "turbo run build",
+    "build": "cd packages/playground && pnpm run build",
+    "_build": "turbo run build",
     "dev": "turbo run dev",
     "test": "turbo run test",
     "test:update": "turbo run test:update",
