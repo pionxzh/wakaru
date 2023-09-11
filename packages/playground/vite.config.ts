@@ -1,12 +1,11 @@
-import path from 'path'
-import { defineConfig } from 'vite'
+import path from 'node:path'
 import vue from '@vitejs/plugin-vue'
+import { defineConfig } from 'vite'
 
 // https://vitejs.dev/config/
 export default defineConfig({
     plugins: [vue()],
     optimizeDeps: {
-        include: ['acorn', 'astring'],
         esbuildOptions: {
             define: {
                 global: 'globalThis',
@@ -15,6 +14,7 @@ export default defineConfig({
     },
     define: {
         'process.env.NODE_DEBUG': undefined,
+        'typeof window !== "undefined" && typeof window.document !== "undefined"': true
     },
     resolve: {
         alias: {
