@@ -2,7 +2,7 @@ import { renameFunctionParameters } from '@unminify-kit/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack4, convertRequireHelpersForWebpack5 } from './requireHelpers'
 import type { ModuleMapping } from '../../ModuleMapping'
-import type { ArrayExpression, Collection, FunctionExpression, JSCodeshift, Literal, ObjectExpression, Property } from 'jscodeshift'
+import type { ArrayExpression, Collection, FunctionExpression, JSCodeshift, Literal, MemberExpression, ObjectExpression, Property } from 'jscodeshift'
 
 /**
  * Find the modules array in webpack jsonp chunk.
@@ -21,6 +21,16 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
     const modules = new Set<Module>()
     const moduleIdMapping: ModuleMapping = {}
 
+    /**
+     * jsonpFunction can be `webpackJsonp` or `webpackChunk_N_E`
+     * or anything set by `output.jsonpFunction`
+     *
+     * `webpackJsonp` is used in webpack 4
+     * `webpackChunk_N_E` is used in Next.js
+     */
+
+    const selfVariableNames = ['self', 'window']
+
     const moduleFactory = root.find(j.CallExpression, {
         callee: {
             type: 'MemberExpression',
@@ -30,11 +40,10 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
                     type: 'MemberExpression',
                     object: {
                         type: 'Identifier',
-                        name: (name: string) => name === 'self' || name === 'window',
+                        name: (name: string) => selfVariableNames.includes(name),
                     },
-                    property: {
-                        type: 'Identifier',
-                        name: (name: string) => name === 'webpackChunk_N_E' || name === 'webpackJsonp',
+                    property: (property: MemberExpression['property']) => {
+                        return j.Identifier.check(property) || j.Literal.check(property)
                     },
                 },
                 right: {
@@ -44,16 +53,17 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
                         type: 'MemberExpression',
                         object: {
                             type: 'Identifier',
-                            name: (name: string) => name === 'self' || name === 'window',
+                            name: (name: string) => selfVariableNames.includes(name),
                         },
-                        property: {
-                            type: 'Identifier',
-                            name: (name: string) => name === 'webpackChunk_N_E' || name === 'webpackJsonp',
+                        property: (property: MemberExpression['property']) => {
+                            return j.Identifier.check(property) || j.Literal.check(property)
                         },
                     },
                     right: {
                         type: 'ArrayExpression',
-                        elements: [],
+                        elements: (elements: ArrayExpression['elements']) => {
+                            return elements.length === 0
+                        },
                     },
                 },
             },
@@ -85,7 +95,7 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
 
     moduleFactory.forEach((path) => {
         const [arrayExpression] = path.node.arguments as [ArrayExpression]
-        const [chunkIds, moreModules] = arrayExpression.elements as [ArrayExpression, ObjectExpression, any]
+        const [_chunkIds, moreModules] = arrayExpression.elements as [ArrayExpression, ObjectExpression, any]
 
         moreModules.properties.forEach((property) => {
             const prop = property as Property
