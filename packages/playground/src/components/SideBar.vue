@@ -39,9 +39,10 @@ function rename(fileId: FileId, e: Event) {
 
 <template>
     <aside
-        class="fixed h-screen w-64 flex flex-shrink-0 flex-col border-r overflow-y-auto select-none
+        class="fixed w-64 flex flex-shrink-0 flex-col border-r overflow-y-auto select-none
         transition-all duration-300
       bg-gray-50 dark:bg-gray-800"
+        style="height: calc(100vh - 4rem);"
     >
         <ul class="relative pb-6">
             <li class="cursor-pointer">

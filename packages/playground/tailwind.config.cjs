@@ -15,6 +15,12 @@ module.exports = {
                 'light-secondary': '#e9ecef',
                 'dark-secondary': '#21252b',
             },
+            width: {
+                md: '28rem',
+            },
+            translate: {
+                md: '28rem',
+            },
         },
     },
     plugins: [],

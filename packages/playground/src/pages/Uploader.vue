@@ -106,6 +106,8 @@ async function startUnpack(code: string) {
             module.code = result.transformed
             module.transformed = result.transformed
 
+            setProcessedCount(count => count + 1)
+
             localStorage.setItem(`${KEY_FILE_PREFIX}${module.id}`, JSON.stringify(module))
         }),
     )
