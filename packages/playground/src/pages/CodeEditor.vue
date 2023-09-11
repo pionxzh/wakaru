@@ -40,7 +40,7 @@ watch([enabledTransformations, () => module.value.code], async () => {
 
 <template>
     <div class="flex flex-row h-full">
-        <Card title="Source">
+        <Card title="Source" class="border-x border-gray-700">
             <div class="w-full">
                 <CodemirrorEditor
                     :model-value="module.code"
@@ -51,7 +51,7 @@ watch([enabledTransformations, () => module.value.code], async () => {
                 />
             </div>
         </Card>
-        <Card title="Transformed">
+        <Card title="Transformed" class="border-x border-gray-700">
             <div class="w-full">
                 <CodemirrorEditor
                     :model-value="module?.transformed"
@@ -87,32 +87,28 @@ watch([enabledTransformations, () => module.value.code], async () => {
             transform transition ease-in-out duration-500 translate-x-0"
             :class="{
                 'translate-x-full': !openSideBar,
-                'translate-x-0': openSideBar,
             }"
         >
-            <Card title="Rules">
-                <template #prepend>
-                    <div
-                        class="absolute flex justify-center items-center top-0 left-0
-                        w-8 h-28 -translate-x-full mt-16 rounded-l-xl
-                        text-gray-300 bg-red-500 hover:bg-red-400 tracking-[-0.4em]
-                        shadow-md
-                        pointer-events-auto cursor-pointer transition-colors
-                        [writing-mode:vertical-lr] [text-orientation:upright]"
-                        @click="setOpenSideBar((v) => !v)"
-                    >
-                        <FontAwesomeIcon
-                            icon="fa-solid fa-chevron-down"
-                            class="flex-shrink-0 w-4 h-4 rotate-90 text-orange-400"
-                            :class="{
-                                '-rotate-90': openSideBar,
-                            }"
-                        />
-                        RULE
-                    </div>
-                </template>
-
-                <div class="flex flex-col space-y-1 w-full h-full">
+            <div
+                class="absolute flex justify-center items-center top-0 left-0
+            w-8 h-28 -translate-x-full mt-16 rounded-l-xl
+            text-gray-300 bg-red-500 hover:bg-red-400 tracking-[-0.4em]
+            shadow-md
+            pointer-events-auto cursor-pointer transition-colors
+            [writing-mode:vertical-lr] [text-orientation:upright]"
+                @click="setOpenSideBar((v) => !v)"
+            >
+                <FontAwesomeIcon
+                    icon="fa-solid fa-chevron-down"
+                    class="flex-shrink-0 w-4 h-4 rotate-90 text-orange-400"
+                    :class="{
+                        '-rotate-90': openSideBar,
+                    }"
+                />
+                RULE
+            </div>
+            <Card title="Rules" class="h-full overflow-y-auto">
+                <div class="flex flex-col space-y-1 w-full">
                     <div
                         v-for="transformation in transformations"
                         :key="transformation"

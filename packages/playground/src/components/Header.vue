@@ -1,0 +1,22 @@
+<script setup lang="ts">
+import logo from '../../public/icon.png'
+import DarkModeBtn from './DarkModeBtn.vue'
+</script>
+
+<template>
+    <header
+        class="flex h-16 items-center py-4 pl-6 pr-8
+        text-base text-semibold
+        bg-[#f2f2f2] dark:bg-gray-800
+        border-b border-gray-300 dark:border-gray-700"
+    >
+        <img :src="logo" alt="logo" class="w-6 h-6 mr-2">
+
+        Unminify Kit
+        <div class="flex-1" />
+        <div class="flex items-center space-x-4">
+            <DarkModeBtn />
+            <a href="https://github.com/" class="hover:underline">GitHub</a>
+        </div>
+    </header>
+</template>

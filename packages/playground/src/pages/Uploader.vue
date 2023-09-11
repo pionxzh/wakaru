@@ -7,7 +7,7 @@ import {
     TransitionRoot,
 } from '@headlessui/vue'
 import { unpack } from '@unminify-kit/unpacker'
-import { nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import Card from '../components/Card.vue'
 import CodemirrorEditor from '../components/CodemirrorEditor.vue'
 import FileUpload from '../components/FileUpload.vue'
@@ -25,6 +25,7 @@ const [processedCount, setProcessedCount] = useState(0)
 const { fileIds, setFileIds } = useFileIds()
 const { transform } = useCodemod()
 const { moduleMapping, setModuleMapping } = useModuleMapping()
+const router = useRouter()
 
 function onUpload(file: File) {
     const reader = new FileReader()
@@ -47,7 +48,9 @@ async function startUnpack(code: string) {
     setProcessedCount(0)
     setIsLoading(true)
 
-    await nextTick()
+    // Clear all old files
+    Object.keys(moduleMapping.value).forEach(key => localStorage.removeItem(`${KEY_FILE_PREFIX}${key}`))
+    setFileIds([])
 
     // TODO: Move to worker
     const result = unpack(code)
@@ -61,8 +64,13 @@ async function startUnpack(code: string) {
             transformed: code,
         }
         localStorage.setItem(`${KEY_FILE_PREFIX}${module.id}`, JSON.stringify(module))
-
+        setModuleMapping({
+            0: 'entry.js',
+        })
+        setFileIds([0])
         setIsLoading(false)
+
+        router.push({ name: 'file', params: { id: '0' } })
         return
     }
 
@@ -113,6 +121,9 @@ async function startUnpack(code: string) {
     )
 
     setIsLoading(false)
+
+    const firstFileId = fileIds.value[0]
+    router.push({ name: 'file', params: { id: firstFileId } })
 }
 
 function getDepName(dep: TransformedModule) {
@@ -135,7 +146,7 @@ function getDepName(dep: TransformedModule) {
                     v-model="source"
                     autofocus
                     :style="{
-                        height: '300px;',
+                        height: 'calc(100vh - 26rem)',
                     }"
                 />
             </div>
@@ -144,7 +155,7 @@ function getDepName(dep: TransformedModule) {
                     class="flex w-fit bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition"
                     @click="onSubmit"
                 >
-                    Submit
+                    Start
                 </button>
             </div>
         </div>

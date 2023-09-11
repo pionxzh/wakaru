@@ -7,7 +7,7 @@ defineProps<{
 
 <template>
     <div
-        class="relative px-6 py-4 w-full border shadow-md dark:border-gray-700
+        class="relative px-6 py-4 w-full
         text-gray-900 dark:text-white
         bg-light dark:bg-gray-800"
     >

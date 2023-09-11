@@ -44,11 +44,11 @@ function rename(fileId: FileId, e: Event) {
       bg-gray-50 dark:bg-gray-800"
         style="height: calc(100vh - 4rem);"
     >
-        <ul class="relative pb-6">
+        <ul class="relative pt-2 pb-8">
             <li class="cursor-pointer">
                 <router-link
                     :to="{ name: 'source' }"
-                    class="flex items-center pl-6 pr-2 py-2 w-full text-base font-normal rounded-md transition duration-75
+                    class="flex items-center pl-6 pr-2 py-2 w-full text-base font-normal transition duration-75
                     text-gray-900 dark:text-white
                     hover:bg-gray-200 dark:hover:bg-gray-700"
                     exact-active-class="active bg-gray-200 dark:bg-gray-700"
@@ -65,7 +65,7 @@ function rename(fileId: FileId, e: Event) {
             <li class="cursor-pointer">
                 <router-link
                     :to="{ name: 'module-mapping' }"
-                    class="flex items-center pl-6 pr-2 py-2 w-full text-base font-normal rounded-md transition duration-75
+                    class="flex items-center pl-6 pr-2 py-2 w-full text-base font-normal transition duration-75
                     text-gray-900 dark:text-white
                     hover:bg-gray-200 dark:hover:bg-gray-700"
                     exact-active-class="active bg-gray-200 dark:bg-gray-700"

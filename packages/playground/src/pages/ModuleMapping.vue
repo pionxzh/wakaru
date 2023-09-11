@@ -27,7 +27,7 @@ watch(code, (value) => {
                 <CodemirrorEditor
                     v-model="code"
                     :style="{
-                        height: '400px;',
+                        height: 'calc(100vh - 12rem)',
                     }"
                 />
             </div>
