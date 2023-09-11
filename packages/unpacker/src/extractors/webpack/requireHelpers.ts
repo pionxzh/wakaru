@@ -1,6 +1,6 @@
 import { isFunctionExpression } from '@unminify-kit/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { Collection, ExportDefaultDeclaration, ExportNamedDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, ObjectProperty } from 'jscodeshift'
+import type { BlockStatement, Collection, ExportDefaultDeclaration, ExportNamedDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, ObjectExpression, Property } from 'jscodeshift'
 
 /**
  * This function will detect the existence of `require.r`
@@ -131,44 +131,55 @@ export function convertExportsGetterForWebpack4(j: JSCodeshift, collection: Coll
 export function convertExportsGetterForWebpack5(j: JSCodeshift, collection: Collection): ExportsGetterMap {
     const requireD = collection.find(j.CallExpression, {
         callee: {
-            type: 'FunctionExpression',
-            body: {
-                type: 'BlockStatement',
-            },
+            type: 'MemberExpression',
+            object: { type: 'Identifier', name: 'require' },
+            property: { type: 'Identifier', name: 'd' },
         },
-        arguments: [{
-            type: 'ArrayExpression' as const,
-            elements: [{
-                type: 'FunctionExpression' as const,
+        arguments: [
+            {
+                type: 'Identifier' as const,
+            },
+            {
+                type: 'ObjectExpression' as const,
+                properties: (properties: ObjectExpression['properties']) => {
+                    if (properties.length === 0) return false
+                    return properties.every((property) => {
+                        if (!j.Property.check(property)) return false
+                        if (!j.Literal.check(property.key) && !j.Identifier.check(property.key)) return false
+                        if (!isFunctionExpression(j, property.value)) return false
+                        if (!j.BlockStatement.check(property.value.body)) return false
+                        return true
+                    })
+                },
             }],
-        }],
-    }).at(0)
+    })
 
     const definition = new Map<string, ExpressionKind>()
     requireD.forEach((path) => {
-        const defineObject = path.node.arguments[1]
-        if (defineObject.type !== 'ObjectExpression') return
-
-        const properties = defineObject.properties as ObjectProperty[]
-        properties.forEach((property) => {
-            if (property.key.type !== 'Literal' && property.key.type !== 'Identifier') {
-                console.warn('Unexpected export key type:', property.key.type)
-                return
+        const defineObject = path.node.arguments[1] as ObjectExpression
+        const properties = (defineObject.properties as Property[]).filter((property) => {
+            const exportName = ((property.key as Literal).value || (property.key as Identifier).name) as string
+            const body = (property.value as FunctionExpression).body as BlockStatement
+            if (body.body.length === 1) {
+                const returnStatement = body.body[0]
+                if (j.ReturnStatement.check(returnStatement)) {
+                    const exportValue = returnStatement.argument
+                    if (exportValue) {
+                        definition.set(exportName, exportValue)
+                        // properties.splice(defineObject.properties.indexOf(property), 1)
+                        return false
+                    }
+                }
             }
-            const exportName = ((property.key as Literal).value || (property.key as unknown as Identifier).name) as string
-            if (!isFunctionExpression(j, property.value)) {
-                console.warn('convertExportsGetterForWebpack5: Unexpected export value type:', property.value.type)
-                return
-            }
-            if (j.BlockStatement.check(property.value.body)) {
-                console.warn('convertExportsGetterForWebpack5: Unexpected export value body type:', property.value.body.type)
-                return
-            }
-
-            definition.set(exportName, property.value.body)
+            return true
         })
+
+        defineObject.properties = properties
+
+        if (defineObject.properties.length === 0) {
+            path.prune()
+        }
     })
-    requireD.remove()
 
     return definition
 }
