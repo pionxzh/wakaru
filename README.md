@@ -4,40 +4,39 @@
 
 [Try it out](https://unminify.zeabur.app/)
 
-## 🌟 Features
+## Introduction
+
+Unminify Kit is a collection of tools for reverse-engineering bundled JavaScript code. Think of it as "decompilier" for JavaScript. It can be used to restore code that was bundled with a bundler (e.g. [webpack][webpack], [browserify][browserify]) or transpiled with a transpiler (e.g. [Babel][Babel], [TypeScript][TypeScript], [SWC][SWC]) or Minifier (e.g. [Terser][Terser]).
+
+## Features
 
 ### Unpacker
 
 Converts bundled JavaScript into separate modules
 
 Supports the following bundlers:
-  - [webpack](https://webpack.js.org/)
-  - [browserify](http://browserify.org/)
+  - [webpack][webpack]
+  - [browserify][browserify]
 
 ### Unminify
 
 Converts transpiled code back to its readable form and restores downgraded syntaxes.
 
 Supports the following transpilers:
-  - [Terser](https://terser.org/)
-  - [Babel](https://babeljs.io/)
-  - [SWC](https://swc.rs/)
-  - [TypeScript](https://www.typescriptlang.org/)
+  - [Terser][Terser]
+  - [Babel][Babel]
+  - [SWC][SWC]
+  - [TypeScript][TypeScript]
 
 See [Unminify Documentation](./packages/unminify/README.md) for the full list of supported rules.
 
-## 🕹 Try it out
+## Try it out
 
 Test the tool and see it in action: [Playground](https://unminify.zeabur.app/)
 
 ## 🖥 Command Line Interface
 
-🚧 Under construction
-
-```bash
-npx @unminify-kit/core [options] <file>
-```
-
+🚧🚧🚧 Under construction.
 
 ## Motivation
 
@@ -46,3 +45,10 @@ Over the course of developing plugins for io games, the need to understand game 
 ## Legal Disclaimer
 
 Usage of unminify-kit for attacking targets without prior mutual consent is illegal. It is the end user's responsibility to obey all applicable local, state and federal laws. Developers assume no liability and are not responsible for any misuse or damage caused by this program.
+
+[TypeScript]: https://www.typescriptlang.org/
+[browserify]: http://browserify.org/
+[webpack]: https://webpack.js.org/
+[Terser]: https://terser.org/
+[Babel]: https://babeljs.io/
+[SWC]: https://swc.rs/
