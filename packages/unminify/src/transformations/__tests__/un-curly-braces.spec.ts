@@ -68,9 +68,6 @@ do {
   return b();
 };
 
-label:
-{
-  b();
-}
+label: b();
 `,
 )

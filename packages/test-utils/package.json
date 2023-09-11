@@ -2,6 +2,7 @@
   "name": "@unminify-kit/test-utils",
   "type": "module",
   "version": "0.0.1",
+  "private": true,
   "packageManager": "pnpm@8.6.3",
   "author": "Pionxzh",
   "license": "MIT",
@@ -15,7 +16,6 @@
     "node": ">=16.0.0"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --sourcemap --clean",
     "test:type": "tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix"

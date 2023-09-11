@@ -27,11 +27,8 @@
   },
   "scripts": {
     "dev": "vite --open",
-    "build": "vue-tsc && vite build",
-    "test": "vitest run --globals",
-    "test:update": "vitest run --update",
-    "test:watch": "vitest watch",
-    "test:type": "tsc --noEmit",
+    "build": "vite build",
+    "test:type": "vue-tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix"
   },
