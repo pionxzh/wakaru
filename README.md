@@ -2,6 +2,8 @@
 
 🔪📦 Reverse-engineer bundled JavaScript code and bring it back to a human-friendly format.
 
+[Try it out](https://unminify.zeabur.app/)
+
 ## 🌟 Features
 
 ### Unpacker
@@ -26,9 +28,11 @@ See [Unminify Documentation](./packages/unminify/README.md) for the full list of
 
 ## 🕹 Try it out
 
-Test the tool and see it in action: [Playground](https://unminify-kit.github.io/playground/)
+Test the tool and see it in action: [Playground](https://unminify.zeabur.app/)
 
 ## 🖥 Command Line Interface
+
+🚧 Under construction
 
 ```bash
 npx @unminify-kit/core [options] <file>

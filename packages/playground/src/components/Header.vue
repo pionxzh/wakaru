@@ -16,7 +16,7 @@ import DarkModeBtn from './DarkModeBtn.vue'
         <div class="flex-1" />
         <div class="flex items-center space-x-4">
             <DarkModeBtn />
-            <a href="https://github.com/" class="hover:underline">GitHub</a>
+            <a href="https://github.com/unminify-kit/core" class="hover:underline">GitHub</a>
         </div>
     </header>
 </template>
