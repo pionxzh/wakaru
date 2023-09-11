@@ -15,7 +15,7 @@ RUN pnpm run build
 FROM nginx:alpine as runtime
 ENV CI true
 
-COPY --from=build /src/dist /usr/share/nginx/html/static
+COPY --from=build /src/packages/playground/dist /usr/share/nginx/html/static
 RUN echo "\
     server { \
         listen 8080; \
