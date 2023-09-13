@@ -7,17 +7,17 @@ const inlineTestWithOptions = defineInlineTestWithOptions(transform)
 inlineTest('jsx',
   `
 function fn() {
-    return React.createElement("div", {
-        className: "flex flex-col",
-        num: 1,
-        foo: bar,
-        onClick: () => {},
-    });
+  return React.createElement("div", {
+    className: "flex flex-col",
+    num: 1,
+    foo: bar,
+    onClick: () => {},
+  });
 }
 `,
   `
 function fn() {
-    return <div className="flex flex-col" num={1} foo={bar} onClick={() => {}} />;
+  return <div className="flex flex-col" num={1} foo={bar} onClick={() => {}} />;
 }
 `,
 )
@@ -25,12 +25,12 @@ function fn() {
 inlineTest('jsx no props',
   `
 function fn() {
-    return React.createElement("div", null);
+  return React.createElement("div", null);
 }
 `,
   `
 function fn() {
-    return <div />;
+  return <div />;
 }
 `,
 )
@@ -38,14 +38,18 @@ function fn() {
 inlineTest('jsx with spread child',
   `
 function fn(children) {
-    return React.createElement("div", {
-        className: "flex flex-col",
-    }, ...children);
+  return React.createElement("div", {
+    className: "flex flex-col",
+  }, ...children);
 }
 `,
   `
 function fn(children) {
-    return <div className="flex flex-col">{...children}</div>;
+  return (
+    <div className="flex flex-col">
+      {...children}
+    </div>
+  );
 }
 `,
 )
@@ -53,19 +57,23 @@ function fn(children) {
 inlineTest('jsx with child element',
   `
 function fn() {
-    return React.createElement(
-        "div",
-        { className: "flex flex-col" },
-        React.createElement(
-            "svg",
-            { width: "24", height: "24" },
-        ),
-    );
+  return React.createElement(
+    "div",
+    { className: "flex flex-col" },
+    React.createElement(
+      "svg",
+      { width: "24", height: "24" },
+    ),
+  );
 }
 `,
   `
 function fn() {
-    return <div className="flex flex-col"><svg width="24" height="24" /></div>;
+  return (
+    <div className="flex flex-col">
+      <svg width="24" height="24" />
+    </div>
+  );
 }
 `,
 )
@@ -73,17 +81,22 @@ function fn() {
 inlineTest('jsx with children',
   `
 function fn() {
-    return React.createElement(
-        "div",
-        null,
-        child,
-        React.createElement('span', null, 'Hello'),
-    );
+  return React.createElement(
+    "div",
+    null,
+    child,
+    React.createElement('span', null, 'Hello'),
+  );
 }
 `,
   `
 function fn() {
-    return <div>{child}<span>Hello</span></div>;
+  return (
+    <div>
+      {child}
+      <span>Hello</span>
+    </div>
+  );
 }
 `,
 )
@@ -91,19 +104,19 @@ function fn() {
 inlineTest('jsx with empty children',
   `
 function fn() {
-    return React.createElement(
-        "div",
-        null,
-        null,
-        undefined,
-        true,
-        false,
-    );
+  return React.createElement(
+    "div",
+    null,
+    null,
+    undefined,
+    true,
+    false,
+  );
 }
 `,
   `
 function fn() {
-    return <div />;
+  return <div />;
 }
 `,
 )
@@ -111,14 +124,14 @@ function fn() {
 inlineTest('jsx with Component',
   `
 function fn() {
-    return React.createElement(Button, {
-        variant: "contained",
-    }, "Hello");
+  return React.createElement(Button, {
+    variant: "contained",
+  }, "Hello");
 }
 `,
   `
 function fn() {
-    return <Button variant="contained">Hello</Button>;
+  return <Button variant="contained">Hello</Button>;
 }
 `,
 )
@@ -126,14 +139,14 @@ function fn() {
 inlineTest('jsx with Component #2',
   `
 function fn() {
-    return React.createElement(mui.Button, {
-        variant: "contained",
-    }, "Hello");
+  return React.createElement(mui.Button, {
+    variant: "contained",
+  }, "Hello");
 }
 `,
   `
 function fn() {
-    return <mui.Button variant="contained">Hello</mui.Button>;
+  return <mui.Button variant="contained">Hello</mui.Button>;
 }
 `,
 )
@@ -141,12 +154,16 @@ function fn() {
 inlineTest('jsx with child text that should be wrapped',
   `
 function fn() {
-    return React.createElement("div", null, ".style { color: red; }");
+  return React.createElement("div", null, ".style { color: red; }");
 }
 `,
   `
 function fn() {
-    return <div>{".style { color: red; }"}</div>;
+  return (
+    <div>
+      {".style { color: red; }"}
+    </div>
+  );
 }
 `,
 )
@@ -154,15 +171,15 @@ function fn() {
 inlineTest('jsx with a wrapped prop',
   `
 function fn() {
-    return React.createElement(
-        "div",
-        wrap({ className: "flex flex-col" }),
-    );
+  return React.createElement(
+    "div",
+    wrap({ className: "flex flex-col" }),
+  );
 }
 `,
   `
 function fn() {
-    return <div {...wrap({ className: "flex flex-col" })} />;
+  return <div {...wrap({ className: "flex flex-col" })} />;
 }
 `,
 )
@@ -170,8 +187,8 @@ function fn() {
 inlineTest('jsx assignment',
 `
 var div = /*#__PURE__*/React.createElement(Component, {
-    ...props,
-    foo: "bar"
+  ...props,
+  foo: "bar"
 });
 `,
 `
@@ -182,13 +199,52 @@ var div = <Component {...props} foo="bar" />;
 inlineTestWithOptions('jsx with custom pragma', { pragma: 'jsx' },
   `
 function fn() {
-    return jsx("div", null);
+  return jsx("div", null);
 }
 `,
   `
 function fn() {
-    return <div />;
+  return <div />;
 }
+`,
+)
+
+inlineTest('jsx with React.__spread',
+  `
+React.createElement("div", React.__spread({ key: "1" }, { className: "flex flex-col" }));
+`,
+  `
+<div key="1" className="flex flex-col" />;
+`,
+)
+
+inlineTest('jsx with Object.assign',
+  `
+React.createElement("div", Object.assign({ key: "1" }, { className: "flex flex-col" }));
+`,
+  `
+<div key="1" className="flex flex-col" />;
+`,
+)
+
+inlineTest('jsx with spread props',
+  `
+React.createElement("div", ...{ key: "1", className: "flex flex-col" });
+
+`,
+  `
+<div key="1" className="flex flex-col" />;
+`,
+)
+
+inlineTest('jsx props with invalid string prop',
+  `
+React.createElement("div", { "invalid-str": "val\\nue" });
+React.createElement("div", { "invalid-str": '"val"' });
+`,
+  `
+<div invalid-str={"val\\nue"} />;
+<div invalid-str={'"val"'} />;
 `,
 )
 
@@ -197,26 +253,40 @@ inlineTest('Babel: concatenates-adjacent-string-literals',
 var x = /*#__PURE__*/React.createElement("div", null, "foo", "bar", "baz", /*#__PURE__*/React.createElement("div", null, "buz bang"), "qux", null, "quack");
 `,
 `
-var x = <div>foo bar baz<div>buz bang</div>qux quack</div>;
+var x = <div>
+  foo
+  bar
+  baz
+  <div>buz bang</div>
+  qux
+  quack
+</div>;
 `,
 )
 
 inlineTest('Babel: does-not-add-source-self',
 `
 var x = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    key: "1"
+  key: "1"
 }), /*#__PURE__*/React.createElement("div", {
-    key: "2",
-    meow: "wolf"
+  key: "2",
+  meow: "wolf"
 }), /*#__PURE__*/React.createElement("div", {
-    key: "3"
+  key: "3"
 }), /*#__PURE__*/React.createElement("div", {
-    ...props,
-    key: "4"
+  ...props,
+  key: "4"
 })));
 `,
 `
-var x = <><div><div key="1" /><div key="2" meow="wolf" /><div key="3" /><div {...props} key="4" /></div></>;
+var x = <>
+  <div>
+    <div key="1" />
+    <div key="2" meow="wolf" />
+    <div key="3" />
+    <div {...props} key="4" />
+  </div>
+</>;
 `,
 )
 
@@ -225,27 +295,31 @@ inlineTest('Babel: dont-coerce-expression-containers',
 React.createElement(Text, null, "To get started, edit index.ios.js!!!", "\\n", "Press Cmd+R to reload");
 `,
 `
-<Text>To get started, edit index.ios.js!!!{"\\n"}Press Cmd+R to reload</Text>;
+<Text>
+  To get started, edit index.ios.js!!!
+  {"\\n"}
+  Press Cmd+R to reload
+</Text>;
 `,
 )
 
 inlineTest('Babel: duplicate-props',
 `
 /*#__PURE__*/React.createElement("p", {
-    prop: true,
-    prop: true
+  prop: true,
+  prop: true
 }, "text");
 /*#__PURE__*/React.createElement("p", {
-    prop,
-    prop
+  prop,
+  prop
   }, "text");
 /*#__PURE__*/React.createElement("p", {
-    prop: true,
-    prop
+  prop: true,
+  prop
   }, "text");
 /*#__PURE__*/React.createElement("p", {
-    prop,
-    prop: true
+  prop,
+  prop: true
 }, "text");
 `,
 `
@@ -261,48 +335,52 @@ inlineTest('Babel: flattens-spread',
 /*#__PURE__*/React.createElement("p", props, "text");
 /*#__PURE__*/React.createElement("div", props, contents);
 /*#__PURE__*/React.createElement("img", {
-    alt: "",
-    src,
-    title,
-    __proto__
+  alt: "",
+  src,
+  title,
+  __proto__
 });
 /*#__PURE__*/React.createElement("blockquote", {
-    cite
+  cite
 }, items);
 /*#__PURE__*/React.createElement("pre", {
-    ["__proto__"]: null
+  ["__proto__"]: null
 });
 /*#__PURE__*/React.createElement("code", {
-    [__proto__]: null
+  [__proto__]: null
 });
 `,
 `
 <p {...props}>text</p>;
-<div {...props}>{contents}</div>;
+<div {...props}>
+  {contents}
+</div>;
 <img alt="" src={src} title={title} __proto__={__proto__} />;
-<blockquote cite={cite}>{items}</blockquote>;
+<blockquote cite={cite}>
+  {items}
+</blockquote>;
 <pre
-    {...{
-        ["__proto__"]: null
-    }} />;
+  {...{
+    ["__proto__"]: null
+  }} />;
 <code
-    {...{
-        [__proto__]: null
-    }} />;
+  {...{
+    [__proto__]: null
+  }} />;
 `,
 )
 
 inlineTest('Babel: handle-spread-with-proto',
 `
 /*#__PURE__*/React.createElement("p", {
-    ...{
-      __proto__: null
-    }
+  ...{
+    __proto__: null
+  }
 }, "text");
 /*#__PURE__*/React.createElement("div", {
-    ...{
-      "__proto__": null
-    }
+  ...{
+    "__proto__": null
+  }
 }, contents);
 `,
 `
@@ -313,19 +391,21 @@ inlineTest('Babel: handle-spread-with-proto',
 <div
   {...{
     "__proto__": null
-  }}>{contents}</div>;
+  }}>
+  {contents}
+</div>;
 `,
 )
 
 inlineTest('Babel: should-add-quote-es3',
   `
 var es3 = /*#__PURE__*/React.createElement(F, {
-    aaa: true,
-    "new": true,
-    "const": true,
-    "var": true,
-    "default": true,
-    "foo-bar": true
+  aaa: true,
+  "new": true,
+  "const": true,
+  "var": true,
+  "default": true,
+  "foo-bar": true
 });
 `,
   `
@@ -345,7 +425,7 @@ inlineTest('Babel: should-allow-deeper-js-namespacing',
 inlineTest('Babel: should-allow-elements-as-attributes',
   `
 /*#__PURE__*/React.createElement("div", {
-    attr: /*#__PURE__*/React.createElement("div", null)
+  attr: /*#__PURE__*/React.createElement("div", null)
 });
 `,
   `

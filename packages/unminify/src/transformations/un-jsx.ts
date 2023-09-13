@@ -3,7 +3,7 @@ import { removePureAnnotation } from '../utils/comments'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { ASTNode, CallExpression, JSCodeshift, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadChild, JSXText, SpreadElement } from 'jscodeshift'
+import type { CallExpression, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, SpreadElement } from 'jscodeshift'
 
 interface Params {
     pragma?: string
@@ -81,109 +81,37 @@ export const transformAST: ASTTransformation<Params> = (context, params) => {
         })
 }
 
-function toJSX(j: JSCodeshift, node: ASTNode, pragmaFrags: string[]): JSXElement | JSXExpressionContainer | JSXFragment | JSXSpreadChild | JSXText | null {
-    if (
-        j.JSXElement.check(node)
-     || j.JSXFragment.check(node)
-     || j.JSXText.check(node)
-     || j.JSXExpressionContainer.check(node)
-     || j.JSXSpreadChild.check(node)
-    ) {
-        return node
-    }
+function toJSX(j: JSCodeshift, node: CallExpression, pragmaFrags: string[]): JSXElement | JSXFragment | null {
+    const [type, props, ...childrenArgs] = node.arguments
 
-    if (j.Literal.check(node)) {
-        if (typeof node.value === 'string') {
-            const textContent = node.value
-            // if contains invalid characters like {, }, <, >, \r, \n
-            // then wrap it with jsxExpressionContainer `{textContent}`
-            const shouldEscape = /[{}<>\r\n]/.test(textContent)
-            return shouldEscape
-                ? j.jsxExpressionContainer(node)
-                : j.jsxText(textContent)
+    const tag = toJsxTag(j, type)
+    if (!tag) return null
+
+    const attributes = toJsxAttributes(j, props)
+
+    const children = postProcessChildren(j, childrenArgs.map(child => toJsxChild(j, child)).filter(nonNull))
+
+    if (attributes.length === 0) {
+        const isFrag1 = j.JSXIdentifier.check(tag) && pragmaFrags.includes(tag.name)
+        const isFrag2 = j.JSXMemberExpression.check(tag) && pragmaFrags.includes(tag.property.name)
+        if (isFrag1 || isFrag2) {
+            return j.jsxFragment(j.jsxOpeningFragment(), j.jsxClosingFragment(), children)
         }
-
-        /**
-         * empty nodes (null, undefined, true, and false)
-         */
-        if (typeof node.value === 'boolean' || node.value === null) {
-            return null
-        }
-
-        return j.jsxExpressionContainer(node)
     }
 
-    if (j.SpreadElement.check(node)) {
-        return j.jsxSpreadChild(node.argument)
-    }
+    const openingElement = j.jsxOpeningElement(tag, attributes)
+    const closingElement = j.jsxClosingElement(tag)
+    const selfClosing = children.length === 0
+    if (selfClosing) openingElement.selfClosing = true
 
-    if (
-        j.Identifier.check(node)
-    || j.MemberExpression.check(node)
-    || j.ObjectExpression.check(node)
-    || j.ArrayExpression.check(node)
-    ) {
-        if (isUndefined(j, node)) return null
-
-        return j.jsxExpressionContainer(node)
-    }
-
-    if (j.CallExpression.check(node)) {
-        const args = node.arguments
-        const type = args[0]
-        const props = args[1]
-
-        const tag = toJsxTag(j, type) as JSXIdentifier | JSXMemberExpression | null
-        if (!tag) return null
-
-        const attributes = toJsxAttributes(j, props)
-
-        const childrenArgs = args.slice(2)
-        const children = childrenArgs.map(child => toJSX(j, child, pragmaFrags)).filter(nonNull)
-
-        /**
-         * Post-processing children:
-         *
-         * The semantics of concatenating adjacent JSXText is ambiguous,
-         * it can be `foobar`, `foo bar` or `foo\nbar`.
-         * We choose the spaced version for better readability.
-         */
-        if (children.length > 1) {
-            for (let i = 1; i < children.length; i++) {
-                const child = children[i]
-                const prevChild = children[i - 1]
-                if (j.JSXText.check(child) && j.JSXText.check(prevChild)) {
-                    prevChild.value += ` ${child.value}`
-                    children.splice(i, 1)
-                    i--
-                }
-            }
-        }
-
-        if (attributes.length === 0) {
-            const isFrag1 = j.JSXIdentifier.check(tag) && pragmaFrags.includes(tag.name)
-            const isFrag2 = j.JSXMemberExpression.check(tag) && pragmaFrags.includes(tag.property.name)
-            if (isFrag1 || isFrag2) {
-                return j.jsxFragment(j.jsxOpeningFragment(), j.jsxClosingFragment(), children)
-            }
-        }
-
-        const openingElement = j.jsxOpeningElement(tag, attributes)
-        const closingElement = j.jsxClosingElement(tag)
-        const selfClosing = children.length === 0
-        if (selfClosing) openingElement.selfClosing = true
-        const jsxElement = j.jsxElement(openingElement, selfClosing ? null : closingElement, children)
-
-        return jsxElement
-    }
-
-    return null
+    return j.jsxElement(openingElement, selfClosing ? null : closingElement, children)
 }
 
-function toJsxTag(j: JSCodeshift, node: ASTNode): JSXElement | JSXExpressionContainer | JSXMemberExpression | JSXText | JSXIdentifier | null {
+function toJsxTag(j: JSCodeshift, node: SpreadElement | ExpressionKind): JSXIdentifier | JSXMemberExpression | null {
     if (j.Literal.check(node) && typeof node.value === 'string') {
         return j.jsxIdentifier(node.value)
     }
+    // TODO: namespace
     else if (j.Identifier.check(node)) {
         return j.jsxIdentifier(node.name)
     }
@@ -197,10 +125,44 @@ function toJsxTag(j: JSCodeshift, node: ASTNode): JSXElement | JSXExpressionCont
     return null
 }
 
-function toJsxAttributes(j: JSCodeshift, props: SpreadElement | ExpressionKind) {
-    const attributes = []
+const canLiteralBePropString = (node: any) => {
+    return !node.raw.includes('\\') && !node.value.includes('"')
+}
+
+function toJsxAttributes(j: JSCodeshift, props: SpreadElement | ExpressionKind): Array<JSXAttribute | JSXSpreadAttribute> {
+    // null means empty props
+    if (isNull(j, props)) return []
+
+    /**
+     * `React.__spread` is deprecated since React v15.0.1
+     * https://ru.legacy.reactjs.org/blog/2016/04/08/react-v15.0.1.html
+     *
+     * Copied from https://github.com/reactjs/react-codemod/blob/b34b92a1f0b8ad333efe5effb50d17d46d66588b/transforms/create-element-to-jsx.js#L30
+     */
+    const isReactSpread = j.CallExpression.check(props)
+        && j.MemberExpression.check(props.callee)
+        && j.Identifier.check(props.callee.object)
+        // && props.callee.object.name === 'React'
+        && j.Identifier.check(props.callee.property)
+        && props.callee.property.name === '__spread'
+
+    const isObjectAssign = j.CallExpression.check(props)
+        && j.MemberExpression.check(props.callee)
+        && j.Identifier.check(props.callee.object)
+        && props.callee.object.name === 'Object'
+        && j.Identifier.check(props.callee.property)
+        && props.callee.property.name === 'assign'
+
+    /**
+     * Other spread syntax might be transformed to `__assign` or `__spread` by Babel.
+     * They will be handled by other rules.
+     */
+    if (isReactSpread || isObjectAssign) {
+        return props.arguments.map(arg => toJsxAttributes(j, arg)).flat()
+    }
+
     if (j.ObjectExpression.check(props)) {
-        const properties = props.properties.map((prop) => {
+        return props.properties.map((prop) => {
             if (j.SpreadElement.check(prop) || j.SpreadProperty.check(prop)) {
                 return j.jsxSpreadAttribute(prop.argument)
             }
@@ -222,15 +184,15 @@ function toJsxAttributes(j: JSCodeshift, props: SpreadElement | ExpressionKind) 
 
             if (
                 j.RestElement.check(value)
-            || j.PropertyPattern.check(value)
-            || j.ObjectPattern.check(value)
-            || j.ArrayPattern.check(value)
-            || j.AssignmentPattern.check(value)
-            || j.TSParameterProperty.check(value)
-            || j.SpreadElement.check(value)
-            || j.SpreadProperty.check(value)
-            || j.SpreadElementPattern.check(value)
-            || j.SpreadPropertyPattern.check(value)
+             || j.PropertyPattern.check(value)
+             || j.ObjectPattern.check(value)
+             || j.ArrayPattern.check(value)
+             || j.AssignmentPattern.check(value)
+             || j.TSParameterProperty.check(value)
+             || j.SpreadElement.check(value)
+             || j.SpreadProperty.check(value)
+             || j.SpreadElementPattern.check(value)
+             || j.SpreadPropertyPattern.check(value)
             ) {
                 console.warn(`[un-jsx] unsupported attribute: ${j(prop).toSource()}`)
                 return null
@@ -249,7 +211,7 @@ function toJsxAttributes(j: JSCodeshift, props: SpreadElement | ExpressionKind) 
                     : j.jsxIdentifier(name.value)
                 if (isTrue(j, value)) return j.jsxAttribute(k)
 
-                const v = isStringLiteral(j, value)
+                const v = isStringLiteral(j, value) && canLiteralBePropString(value)
                     ? value
                     : j.jsxExpressionContainer(value)
                 return j.jsxAttribute(k, v)
@@ -259,16 +221,72 @@ function toJsxAttributes(j: JSCodeshift, props: SpreadElement | ExpressionKind) 
             console.warn(`[un-jsx] unsupported attribute: ${j(prop).toSource()}`)
             return null
         }).filter(nonNull)
-        attributes.push(...properties)
-    }
-    else if (isNull(j, props)) {
-        // empty props
-    }
-    else if (!j.SpreadElement.check(props) && !j.SpreadProperty.check(props)) {
-        attributes.push(j.jsxSpreadAttribute(props))
     }
 
-    return attributes
+    if (j.SpreadElement.check(props) || j.SpreadProperty.check(props)) {
+        return toJsxAttributes(j, props.argument)
+    }
+
+    return [j.jsxSpreadAttribute(props)]
+}
+
+function toJsxChild(j: JSCodeshift, node: SpreadElement | ExpressionKind) {
+    // Skip existing jsx nodes
+    if (
+        j.JSXElement.check(node)
+     || j.JSXFragment.check(node)
+     || j.JSXText.check(node)
+     || j.JSXExpressionContainer.check(node)
+     || j.JSXSpreadChild.check(node)
+    ) {
+        return node
+    }
+
+    // undefined is empty node
+    if (isUndefined(j, node)) return null
+
+    if (j.Literal.check(node)) {
+        // null and bool are empty node
+        if (typeof node.value === 'boolean' || node.value === null) {
+            return null
+        }
+
+        if (typeof node.value === 'string') {
+            const textContent = node.value
+            const notEmpty = textContent !== ''
+            // if contains invalid characters like {, }, <, >, \r, \n
+            const needEscape = /[{}<>\r\n]/.test(textContent)
+            // if contains whitespace at the beginning or end
+            const needTrim = /^\s|\s$/.test(textContent)
+
+            if (notEmpty && !needEscape && !needTrim) return j.jsxText(textContent)
+        }
+
+        return j.jsxExpressionContainer(node)
+    }
+
+    if (j.SpreadElement.check(node)) {
+        return j.jsxSpreadChild(node.argument)
+    }
+
+    return j.jsxExpressionContainer(node)
+}
+
+/**
+ * Add text newline nodes between children so recast formats
+ * one child per line instead of all children on one line.
+ *
+ * See: https://github.com/reactjs/react-codemod/blob/b34b92a1f0b8ad333efe5effb50d17d46d66588b/transforms/create-element-to-jsx.js#L227C7-L227C81
+ */
+function postProcessChildren(j: JSCodeshift, children: Array<JSXExpressionContainer | JSXElement | JSXFragment | JSXText | JSXSpreadChild>) {
+    const lineBreak = j.jsxText('\n')
+    if (children.length > 0) {
+        if (children.length === 1 && j.JSXText.check(children[0])) {
+            return children
+        }
+        return [lineBreak, ...children.flatMap(child => [child, lineBreak])]
+    }
+    return children
 }
 
 export default wrap(transformAST)
