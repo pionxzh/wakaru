@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import logo from '../../public/icon.png'
+import logo from '/icon.png?url'
 import DarkModeBtn from './DarkModeBtn.vue'
 </script>
 
