@@ -22,6 +22,7 @@ It covered most of patterns that are used by the following tools:
   - [`un-flip-operator`](#un-flip-operator)
   - [`un-conditionals`](#un-conditionals)
   - [`un-return`](#un-return)
+  - [`un-indirect-call`](#un-indirect-call)
   - [`un-type-constructor` (Unsafe)](#un-type-constructor-unsafe)
   - [`un-builtin-prototype`](#un-builtin-prototype)
   - [`un-iife`](#un-iife)
@@ -242,6 +243,19 @@ const bar = () => {
 + foo();
 }
 ```
+
+### `un-indirect-call`
+
+Converts indirect call expressions to direct call expressions.
+
+```diff
+- import s from 'react'
+- (0, s.useRef)(0);
++ import { useRef } from 'react'
++ useRef(0);
+```
+
+Pass `unsafe=true` to enable unsafe mode, which will also convert indirect call expressions that are not belongs to a import statement.
 
 ### `un-type-constructor` (Unsafe)
 

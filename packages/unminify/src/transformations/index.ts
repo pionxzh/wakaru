@@ -13,6 +13,7 @@ import unEsModuleFlag from './un-esmodule-flag'
 import unExportRename from './un-export-rename'
 import unFlipComparisons from './un-flip-operator'
 import unIife from './un-iife'
+import unIndirectCall from './un-indirect-call'
 import unInfinity from './un-infinity'
 import unNullishCoalescing from './un-nullish-coalescing'
 import unNumericLiteral from './un-numeric-literal'
@@ -51,6 +52,7 @@ export const transformationMap: {
     'un-bracket-notation': unBracketNotation,
     'un-flip-comparisons': unFlipComparisons,
     'un-type-constructor': unTypeConstructor,
+    'un-indirect-call': unIndirectCall,
     'un-builtin-prototype': unBuiltinPrototype,
     'un-sequence-expression2': unSequenceExpression,
     'un-parameters': unParameters,

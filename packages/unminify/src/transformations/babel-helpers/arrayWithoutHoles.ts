@@ -1,4 +1,4 @@
-import { findModuleSource } from '../../utils/findModuleSource'
+import { findModuleFromSource } from '../../utils/findModuleSource'
 import { removeDeclarationIfUnused, removeDefaultImportIfUnused } from '../../utils/removeDeclarationIfUnused'
 import wrap from '../../wrapAstTransformation'
 import type { ASTTransformation } from '../../wrapAstTransformation'
@@ -18,7 +18,7 @@ export const transformAST: ASTTransformation = (context) => {
 
     const moduleName = '@babel/runtime/helpers/arrayWithoutHoles'
     const moduleEsmName = '@babel/runtime/helpers/esm/arrayWithoutHoles'
-    const moduleSource = findModuleSource(j, root, moduleName) || findModuleSource(j, root, moduleEsmName)
+    const moduleSource = findModuleFromSource(j, root, moduleName) || findModuleFromSource(j, root, moduleEsmName)
 
     if (moduleSource) {
         const isImport = j.ImportDeclaration.check(moduleSource)

@@ -22,8 +22,8 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
     const moduleIdMapping: ModuleMapping = {}
 
     /**
-     * jsonpFunction can be `webpackJsonp` or `webpackChunk_N_E`
-     * or anything set by `output.jsonpFunction`
+     * jsonpFunction can set by `output.jsonpFunction` in webpack4
+     * or `output.chunkLoadingGlobal` in webpack5
      *
      * `webpackJsonp` is used in webpack 4
      * `webpackChunk_N_E` is used in Next.js

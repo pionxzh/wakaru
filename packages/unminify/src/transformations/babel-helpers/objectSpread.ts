@@ -1,4 +1,4 @@
-import { findModuleSource } from '../../utils/findModuleSource'
+import { findModuleFromSource } from '../../utils/findModuleSource'
 import { removeDeclarationIfUnused, removeDefaultImportIfUnused } from '../../utils/removeDeclarationIfUnused'
 import wrap from '../../wrapAstTransformation'
 import type { ASTTransformation } from '../../wrapAstTransformation'
@@ -18,10 +18,10 @@ export const transformAST: ASTTransformation = (context) => {
     const moduleEsmName = '@babel/runtime/helpers/esm/objectSpread2'
     const fallbackModuleName = '@babel/runtime/helpers/objectSpread'
     const fallbackModuleEsmName = '@babel/runtime/helpers/esm/objectSpread'
-    const moduleSource = findModuleSource(j, root, moduleName)
-    || findModuleSource(j, root, moduleEsmName)
-    || findModuleSource(j, root, fallbackModuleName)
-    || findModuleSource(j, root, fallbackModuleEsmName)
+    const moduleSource = findModuleFromSource(j, root, moduleName)
+    || findModuleFromSource(j, root, moduleEsmName)
+    || findModuleFromSource(j, root, fallbackModuleName)
+    || findModuleFromSource(j, root, fallbackModuleEsmName)
 
     if (moduleSource) {
         const isImport = j.ImportDeclaration.check(moduleSource)
