@@ -299,6 +299,27 @@ h("f:image", {
 `,
 )
 
+inlineTest('jsx with displayName',
+  `
+var S = /*#__PURE__*/React.createElement("div", null);
+S.displayName = "Foo-Bar";
+var Bar = (
+  <div>
+    <S />
+  </div>
+)
+`,
+  `
+var FooBar = <div />;
+FooBar.displayName = "Foo-Bar";
+var Bar = (
+  <div>
+    <FooBar />
+  </div>
+)
+`,
+)
+
 inlineTest('Babel: concatenates-adjacent-string-literals',
 `
 var x = /*#__PURE__*/React.createElement("div", null, "foo", "bar", "baz", /*#__PURE__*/React.createElement("div", null, "buz bang"), "qux", null, "quack");

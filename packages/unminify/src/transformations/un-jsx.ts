@@ -1,9 +1,12 @@
 import { isNull, isStringLiteral, isTrue, isUndefined, nonNull } from '../utils/checker'
 import { removePureAnnotation } from '../utils/comments'
+import { generateNameFromModulePath } from '../utils/generateNameFromModulePath'
+import isValidIdentifier from '../utils/isValidIdentifier'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { ASTNode, CallExpression, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, SpreadElement } from 'jscodeshift'
+import type { Scope } from 'ast-types/lib/scope'
+import type { ASTNode, CallExpression, Collection, Identifier, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, Literal, MemberExpression, SpreadElement, VariableDeclarator } from 'jscodeshift'
 
 interface Params {
     pragma?: string
@@ -79,6 +82,8 @@ export const transformAST: ASTTransformation<Params> = (context, params) => {
                 path.replace(jsxElement)
             }
         })
+
+    renameComponentBasedOnDisplayName(j, root)
 }
 
 function toJSX(j: JSCodeshift, node: CallExpression, pragmaFrags: string[]): JSXElement | JSXFragment | null {
@@ -120,7 +125,6 @@ function toJsxTag(j: JSCodeshift, node: SpreadElement | ExpressionKind): JSXIden
     if (j.Literal.check(node) && typeof node.value === 'string') {
         return j.jsxIdentifier(node.value)
     }
-    // TODO: namespace
     else if (j.Identifier.check(node)) {
         return j.jsxIdentifier(node.name)
     }
@@ -296,6 +300,73 @@ function postProcessChildren(j: JSCodeshift, children: Array<JSXExpressionContai
         return [lineBreak, ...children.flatMap(child => [child, lineBreak])]
     }
     return children
+}
+
+/**
+ * Rename component based on `displayName` property.
+ *
+ * @example
+ * const a = () => <div />
+ * a.displayName = 'Foo'
+ * ->
+ * const Foo = () => <div />
+ */
+function renameComponentBasedOnDisplayName(j: JSCodeshift, root: Collection) {
+    root
+        .find(j.AssignmentExpression, {
+            left: {
+                type: 'MemberExpression',
+                object: {
+                    type: 'Identifier',
+                },
+                property: {
+                    type: 'Identifier',
+                    name: 'displayName',
+                },
+            },
+            right: {
+                // @ts-expect-error
+                type: 'Literal',
+                // @ts-expect-error
+                value: (value: string) => typeof value === 'string',
+            },
+        })
+        .forEach((path) => {
+            const scope = path.scope as Scope | null
+            if (!scope) return
+
+            const left = path.node.left as MemberExpression
+            const originalName = (left.object as Identifier).name
+            // we don't want to rename if the name is long enough
+            if (originalName.length > 2) return
+
+            const right = path.node.right as Literal
+            const displayName = right.value as string
+            const newName = generateNameFromModulePath(displayName)
+            if (!isValidIdentifier(newName)) return
+            // skip if the name is occupied
+            if (scope.declares(newName)) return
+
+            // make sure original name is a component
+            const isComponent = root.find(j.VariableDeclarator, {
+                id: {
+                    type: 'Identifier',
+                    name: originalName,
+                },
+                init: (init: VariableDeclarator['init']) => {
+                    if (!init) return false
+
+                    const jInit = j(init)
+                    return j.JSXElement.check(init)
+                        || j.JSXFragment.check(init)
+                        || jInit.find(j.JSXElement).size() > 0
+                        || jInit.find(j.JSXFragment).size() > 0
+                },
+            }).size() > 0
+            if (!isComponent) return
+
+            scope.rename(originalName, newName)
+        })
 }
 
 export default wrap(transformAST)

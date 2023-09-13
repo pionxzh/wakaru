@@ -511,13 +511,35 @@ Converts `React.createElement` to JSX.
 + <div className="title">Hello World</div>
 ```
 
-You can pass `pragma` option to specify the JSX pragma.
-You can also pass `pragmaFrag` option to specify the JSX fragment pragma.
+Pass `pragma` option to specify the JSX pragma.\
+Pass `pragmaFrag` option to specify the JSX fragment pragma.
 
 ```diff
-// pragma: "jsx"
-- jsx("div", { className: "title" }, "Hello World");
-+ <div className="title">Hello World</div>
+// pragma: "jsx", pragmaFrag: "Fragment"
+- jsx(React.Fragment, null, jsx("span", { className: "title" }, "Hello"), jsx("span", null, "World"));
++ <>
++   <span className="title">Hello</span>
++   <span>World</span>
++ </>
+```
+
+It will also automatically guess the component name from the `displayName` property.
+
+```diff
+- var S = /*#__PURE__*/React.createElement("div", null);
+- S.displayName = "Foo-Bar";
+- var Bar = () => (
+-   <div>
+-     <S />
+-   </div>
+- )
++ var FooBar = <div />;
++ FooBar.displayName = "Foo-Bar";
++ var Bar = () => (
++   <div>
++     <FooBar />
++   </div>
++ )
 ```
 
 ## Clean Up

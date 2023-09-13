@@ -9,8 +9,7 @@ import { toIdentifier } from '@babel/types'
  * - `foo.bar` -> `fooBar`
  * - `@foo/bar` -> `fooBar`
  * - './foo' -> `foo`
- * // file name are generally meaningful enough
- * - './nested/foo' -> `foo` | `nestedFoo`
+ * - './nested/foo' -> `nestedFoo`
  */
 export function generateNameFromModulePath(source: string): string {
     const cleanName = source
