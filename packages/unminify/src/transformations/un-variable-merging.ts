@@ -1,4 +1,4 @@
-import { mergeComments } from '../utils/mergeComments'
+import { mergeComments } from '../utils/comments'
 import { transformToMultiStatementContext } from '../utils/transformToMultiStatementContext'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'

@@ -15,6 +15,7 @@ import unFlipComparisons from './un-flip-operator'
 import unIife from './un-iife'
 import unIndirectCall from './un-indirect-call'
 import unInfinity from './un-infinity'
+import unJsx from './un-jsx'
 import unNullishCoalescing from './un-nullish-coalescing'
 import unNumericLiteral from './un-numeric-literal'
 import unOptionalChaining from './un-optional-chaining'
@@ -60,6 +61,7 @@ export const transformationMap: {
     'un-nullish-coalescing': unNullishCoalescing,
     'un-conditionals': unConditionals,
     'un-sequence-expression3': unSequenceExpression,
+    'un-jsx': unJsx,
     'un-iife': unIife,
     'un-es6-class': unES6Class,
     'un-async-await': unAsyncAwait,

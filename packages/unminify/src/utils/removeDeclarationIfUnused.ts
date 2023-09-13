@@ -1,4 +1,4 @@
-import { mergeComments } from './mergeComments'
+import { mergeComments } from './comments'
 import type { ASTPath, ImportDeclaration, JSCodeshift, VariableDeclaration } from 'jscodeshift'
 
 export function removeDeclarationIfUnused(j: JSCodeshift, path: ASTPath, id: string) {

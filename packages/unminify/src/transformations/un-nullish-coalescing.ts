@@ -1,7 +1,7 @@
 import { areNodesEqual } from '../utils/areNodesEqual'
 import { isNotNullBinary, isNull, isNullBinary, isUndefined, isUndefinedBinary } from '../utils/checker'
 import { isDecisionTreeLeaf, makeDecisionTree, makeDecisionTreeWithConditionSplitting, negateDecisionTree } from '../utils/decisionTree'
-import { mergeComments } from '../utils/mergeComments'
+import { mergeComments } from '../utils/comments'
 import { negateCondition } from '../utils/negateCondition'
 import { smartParenthesized } from '../utils/parenthesized'
 import { removeDeclarationIfUnused } from '../utils/removeDeclarationIfUnused'

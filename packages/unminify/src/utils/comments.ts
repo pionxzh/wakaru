@@ -1,5 +1,5 @@
 import type { CommentKind } from 'ast-types/lib/gen/kinds'
-import type { Node } from 'jscodeshift'
+import type { JSCodeshift, Node } from 'jscodeshift'
 
 export function mergeComments(node: Node | Node[], commentsToMerge: CommentKind[] | null | undefined) {
     if (!commentsToMerge) return
@@ -34,4 +34,17 @@ function sortComments(comments: CommentKind[]) {
         const startB = b.start || 0
         return startA - startB
     })
+}
+
+export function removePureAnnotation(j: JSCodeshift, node: Node) {
+    const comments = node.comments || []
+    node.comments = comments.filter(c => !isPureAnnotation(j, c))
+
+    return node
+}
+
+// /*#__PURE__*/
+function isPureAnnotation(j: JSCodeshift, comment: CommentKind) {
+    return j.CommentBlock.check(comment)
+    && comment.value.trim() === '#__PURE__'
 }

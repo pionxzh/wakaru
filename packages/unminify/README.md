@@ -34,6 +34,7 @@ It covered most of patterns that are used by the following tools:
   - [`un-nullish-coalescing`](#un-nullish-coalescing)
   - [`un-es6-class`](#un-es6-class)
   - [`un-async-await` (Experimental)](#un-async-await-experimental)
+  - [`un-jsx`](#un-jsx)
 - [Clean Up](#clean-up)
   - [`un-esmodule-flag`](#un-esmodule-flag)
   - [`un-use-strict`](#un-use-strict)
@@ -501,6 +502,24 @@ Please aware there are tons of edge cases that are not covered by this rule.
 +}
 ```
 
+### `un-jsx`
+
+Converts `React.createElement` to JSX.
+
+```diff
+- React.createElement("div", { className: "title" }, "Hello World");
++ <div className="title">Hello World</div>
+```
+
+You can pass `pragma` option to specify the JSX pragma.
+You can also pass `pragmaFrag` option to specify the JSX fragment pragma.
+
+```diff
+// pragma: "jsx"
+- jsx("div", { className: "title" }, "Hello World");
++ <div className="title">Hello World</div>
+```
+
 ## Clean Up
 
 ### `un-esmodule-flag`
@@ -536,7 +555,6 @@ By utilizing lebab, we can save the repetitive work of writing the transformatio
 
 ## TODO
 
-- [ ] Convert `React.createElement` to JSX.
 - [ ] Address syntax downgrades from tools like `TypeScript`, `Babel` and `SWC`.
 - [ ] `un-string-literal` to decode printable unicode
 - [ ] [Terser loops](https://github.com/terser/terser/blob/27c0a3b47b429c605e2243df86044fc00815060f/test/compress/loops.js#L217) contains several useful patterns
