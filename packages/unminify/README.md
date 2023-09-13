@@ -164,8 +164,6 @@ Converts for loop without init and update to while loop.
 Flips comparisons that are in the form of "literal comes first" to "literal comes second".
 
 ```diff
-
-```diff
 - if ("dark" === theme) {}
 + if (theme === "dark") {}
 
