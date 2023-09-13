@@ -1,7 +1,6 @@
 import { isNull, isStringLiteral, isTrue, isUndefined } from '../utils/checker'
 import { removePureAnnotation } from '../utils/comments'
-import { generateName, isValidIdentifier } from '../utils/identifier'
-import { isDeclared } from '../utils/scope'
+import { generateName } from '../utils/identifier'
 import { nonNull } from '../utils/utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -343,10 +342,7 @@ function renameComponentBasedOnDisplayName(j: JSCodeshift, root: Collection) {
 
             const right = path.node.right as Literal
             const displayName = right.value as string
-            const newName = generateName(displayName)
-            if (!isValidIdentifier(newName)) return
-            // skip if the name is occupied
-            if (isDeclared(scope, newName)) return
+            const newName = generateName(displayName, scope)
 
             // make sure original name is a component
             const isComponent = root.find(j.VariableDeclarator, {

@@ -216,9 +216,8 @@ function inlineExport(
 }
 
 function renameInRoot(j: JSCodeshift, root: Collection<any>, oldName: string, newName: string) {
-    const rootScope = root.find(j.Program).get().scope
-    const binding = rootScope.getBindings()[oldName]?.[0]
-    if (!binding) return
+    const rootScope = root.find(j.Program).get().scope as Scope | undefined
+    if (!rootScope || !rootScope.declares(oldName) || rootScope.declares(newName)) return
 
     rootScope.rename(oldName, newName)
 }

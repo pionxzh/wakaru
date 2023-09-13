@@ -395,7 +395,7 @@ function transformImport(context: Context, hoist: boolean) {
                  * we need to make sure it doesn't conflict with
                  * existing variables.
                  */
-                const local = getUniqueName(path.scope, imported)
+                const local = generateName(imported, path.scope)
 
                 importCollector.addNamedImport(source, imported, local)
 
@@ -439,7 +439,7 @@ function transformImport(context: Context, hoist: boolean) {
                 const source = sourceLiteral.value as string
 
                 const moduleName = generateName(source)
-                const local = getUniqueName(path.scope, moduleName)
+                const local = generateName(moduleName, path.scope)
                 j(path).replaceWith(j.identifier(local))
 
                 importCollector.addDefaultImport(source, local)
@@ -627,7 +627,7 @@ function transformExport(context: Context) {
                  * export { foo$0 as foo }
                  */
                 const oldName = name
-                const newName = getUniqueName(path.scope, oldName)
+                const newName = generateName(oldName, path.scope)
 
                 const variableDeclaration = j.variableDeclaration(
                     kind,
@@ -930,21 +930,6 @@ function transformExport(context: Context) {
         })
 
     exportsMap.clear()
-}
-
-function getUniqueName(scope: Scope | undefined, oldName: string): string {
-    if (!scope) return oldName
-
-    const bindings = scope.getBindings() ?? {}
-    const globalScope = scope.getGlobalScope()
-    const globalBindings = globalScope?.getBindings() ?? {}
-    if (!bindings[oldName] && !globalBindings[oldName]) return oldName
-
-    let i = 0
-    while (bindings[`${oldName}$${i}`] || globalBindings[`${oldName}$${i}`]) {
-        i++
-    }
-    return `${oldName}$${i}`
 }
 
 export default wrap(transformAST)

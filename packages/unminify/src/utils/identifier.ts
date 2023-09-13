@@ -1,6 +1,8 @@
 // @ts-expect-error no types
 import { isIdentifierName, isKeyword, isStrictReservedWord } from '@babel/helper-validator-identifier'
 import { toIdentifier } from '@babel/types'
+import { isDeclared } from './scope'
+import type { Scope } from 'ast-types/lib/scope'
 
 /**
  * Copied from https://github.com/babel/babel/blob/6e04ebdb33da39d3ad5b6bbda8c42ff3daa8dab2/packages/babel-types/src/validators/isValidIdentifier.ts#L11
@@ -26,6 +28,9 @@ export function isValidIdentifier(
 /**
  * Generate a valid identifier name
  *
+ * An optional `scope` can be provided to ensure the generated name is unique.
+ * It will append a `$` and a number to the name if it's not unique.
+ *
  * For example:
  * - `foo` -> `foo`
  * - `foo-bar` -> `fooBar`
@@ -34,7 +39,7 @@ export function isValidIdentifier(
  * - './foo' -> `foo`
  * - './nested/foo' -> `nestedFoo`
  */
-export function generateName(input: string): string {
+export function generateName(input: string, scope?: Scope): string {
     const cleanName = input
         .replace(/^@/, '')
         .replace(/^_+/, '')
@@ -48,5 +53,16 @@ export function generateName(input: string): string {
     // take last 2 parts of the path
     const candidate = cleanName.split(/\//).slice(-2).join('/')
 
-    return toIdentifier(candidate)
+    const newName = toIdentifier(candidate)
+    return scope ? getUniqueName(scope, newName) : newName
+}
+
+function getUniqueName(scope: Scope, name: string): string {
+    if (!isDeclared(scope, name)) return name
+
+    let i = 0
+    while (scope.declares(`${name}$${i}`)) {
+        i++
+    }
+    return `${name}$${i}`
 }

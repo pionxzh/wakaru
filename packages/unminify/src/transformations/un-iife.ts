@@ -65,7 +65,7 @@ export const transformAST: ASTTransformation = (context) => {
 
                     // Of the argument identifier name is too short, we ignore it
                     if (j.Identifier.check(argument) && argument.name !== oldName && argument.name.length > 1) {
-                        if (scope.getBindings()[oldName]) {
+                        if (scope.declares(oldName)) {
                             renameIdentifier(j, callee, oldName, argument.name)
                         }
                     }
