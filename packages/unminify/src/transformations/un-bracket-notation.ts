@@ -1,4 +1,4 @@
-import isValidIdentifier from '../utils/isValidIdentifier'
+import { isValidIdentifier } from '../utils/identifier'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Literal } from 'jscodeshift'

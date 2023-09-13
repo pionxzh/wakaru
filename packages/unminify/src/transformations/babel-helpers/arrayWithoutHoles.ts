@@ -1,5 +1,5 @@
-import { findModuleFromSource } from '../../utils/findModuleSource'
-import { removeDeclarationIfUnused, removeDefaultImportIfUnused } from '../../utils/removeDeclarationIfUnused'
+import { findModuleFromSource } from '../../utils/import'
+import { removeDeclarationIfUnused, removeDefaultImportIfUnused } from '../../utils/scope'
 import wrap from '../../wrapAstTransformation'
 import type { ASTTransformation } from '../../wrapAstTransformation'
 import type { Identifier } from '@babel/types'

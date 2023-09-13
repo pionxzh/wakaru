@@ -1,5 +1,4 @@
-import { findImportWithDefaultSpecifier } from '../utils/findModuleSource'
-import { addImportSpecifier } from '../utils/import'
+import { addImportSpecifier, findImportWithDefaultSpecifier } from '../utils/import'
 import { insertBefore } from '../utils/insert'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'

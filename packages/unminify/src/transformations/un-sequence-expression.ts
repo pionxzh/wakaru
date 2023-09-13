@@ -1,5 +1,5 @@
 import { mergeComments } from '../utils/comments'
-import { transformToMultiStatementContext } from '../utils/transformToMultiStatementContext'
+import { replaceWithMultipleStatements } from '../utils/insert'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { SequenceExpression, VariableDeclaration } from 'jscodeshift'
@@ -38,7 +38,7 @@ export const transformAST: ASTTransformation = (context) => {
                 replacement.push(j.returnStatement(last))
             }
 
-            transformToMultiStatementContext(j, path, replacement)
+            replaceWithMultipleStatements(j, path, replacement)
         })
 
     // `if (a(), b(), c())` -> `a(); b(); if (c())`
@@ -56,7 +56,7 @@ export const transformAST: ASTTransformation = (context) => {
             const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
             replacement.push(j.ifStatement(last, path.node.consequent, path.node.alternate))
 
-            transformToMultiStatementContext(j, path, replacement)
+            replaceWithMultipleStatements(j, path, replacement)
         })
 
     // `while (a(), b(), c())` -> `a(); b(); while (c())`
@@ -74,7 +74,7 @@ export const transformAST: ASTTransformation = (context) => {
             const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
             replacement.push(j.whileStatement(last, path.node.body))
 
-            transformToMultiStatementContext(j, path, replacement)
+            replaceWithMultipleStatements(j, path, replacement)
         })
 
     // `do { a(), b(), c() } while (d(), e(), f())` -> `a(); b(); do { c() } while (d(), e(), f())`
@@ -92,7 +92,7 @@ export const transformAST: ASTTransformation = (context) => {
             const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
             replacement.push(j.doWhileStatement(path.node.body, last))
 
-            transformToMultiStatementContext(j, path, replacement)
+            replaceWithMultipleStatements(j, path, replacement)
         })
 
     // `switch (a(), b(), c())` -> `a(); b(); switch (c())`
@@ -110,7 +110,7 @@ export const transformAST: ASTTransformation = (context) => {
             const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
             replacement.push(j.switchStatement(last, path.node.cases))
 
-            transformToMultiStatementContext(j, path, replacement)
+            replaceWithMultipleStatements(j, path, replacement)
         })
 
     // `throw a(), b()` -> `a(); throw b()`
@@ -128,7 +128,7 @@ export const transformAST: ASTTransformation = (context) => {
             const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
             replacement.push(j.throwStatement(last))
 
-            transformToMultiStatementContext(j, path, replacement)
+            replaceWithMultipleStatements(j, path, replacement)
         })
 
     // `let x = (a(), b(), c())` -> `a(); b(); let x = c()`
@@ -186,7 +186,7 @@ export const transformAST: ASTTransformation = (context) => {
             const replacement: any[] = expressions.map(e => j.expressionStatement(e))
             replacement.push(j.forStatement(null, path.node.test, path.node.update, path.node.body))
 
-            transformToMultiStatementContext(j, path, replacement)
+            replaceWithMultipleStatements(j, path, replacement)
         })
 
     // `for (let x = (a(), b(), c()), y = 1; x < 10; x++) {}` -> `a(); b(); for (let x = c(), y = 1; x < 10; x++) {}`
@@ -228,7 +228,7 @@ export const transformAST: ASTTransformation = (context) => {
 
             if (replacement.length > 0) {
                 replacement.push(j.forStatement(j.variableDeclaration(init.kind, initDeclarators), path.node.test, path.node.update, path.node.body))
-                transformToMultiStatementContext(j, path, replacement)
+                replaceWithMultipleStatements(j, path, replacement)
             }
         })
 
@@ -245,7 +245,7 @@ export const transformAST: ASTTransformation = (context) => {
             const { expressions } = expression
             const replacement = expressions.map(e => j.expressionStatement(e))
 
-            transformToMultiStatementContext(j, path, replacement)
+            replaceWithMultipleStatements(j, path, replacement)
         })
 }
 

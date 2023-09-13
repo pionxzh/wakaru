@@ -27,6 +27,7 @@
     "jscodeshift",
     "lebab",
     "picocolors",
+    "preact",
     "quux",
     "retidy",
     "splitpanes",

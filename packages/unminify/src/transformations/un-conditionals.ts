@@ -1,7 +1,7 @@
-import { areNodesEqual } from '../utils/areNodesEqual'
+import { areNodesEqual } from '../utils/checker'
+import { negateCondition } from '../utils/condition'
 import { makeDecisionTree } from '../utils/decisionTree'
-import { negateCondition } from '../utils/negateCondition'
-import { transformToMultiStatementContext } from '../utils/transformToMultiStatementContext'
+import { replaceWithMultipleStatements } from '../utils/insert'
 import wrap from '../wrapAstTransformation'
 import type { DecisionTree } from '../utils/decisionTree'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -111,7 +111,7 @@ export const transformAST: ASTTransformation = (context) => {
             if (!shouldTransform(j, decisionTree)) return
 
             const replacements = renderDecisionTree(j, decisionTree)
-            transformToMultiStatementContext(j, path, replacements)
+            replaceWithMultipleStatements(j, path, replacements)
         })
 
     /**
@@ -144,7 +144,7 @@ export const transformAST: ASTTransformation = (context) => {
             if (!shouldTransform(j, decisionTree)) return
 
             const replacements = renderDecisionTreeWithReturn(j, decisionTree)
-            transformToMultiStatementContext(j, path, replacements)
+            replaceWithMultipleStatements(j, path, replacements)
         })
 
     root
@@ -162,7 +162,7 @@ export const transformAST: ASTTransformation = (context) => {
             if (!shouldTransform(j, decisionTree)) return
 
             const replacements = renderDecisionTree(j, decisionTree)
-            transformToMultiStatementContext(j, path, replacements)
+            replaceWithMultipleStatements(j, path, replacements)
         })
 }
 

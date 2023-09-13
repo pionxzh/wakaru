@@ -1,7 +1,5 @@
 import { expect, it } from 'vitest'
-import { generateNameFromModulePath } from '../generateNameFromModulePath'
-
-const fn = generateNameFromModulePath
+import { generateName as fn } from '../identifier'
 
 it('should generate a identifier name', () => {
     expect(fn('foo')).toBe('foo')

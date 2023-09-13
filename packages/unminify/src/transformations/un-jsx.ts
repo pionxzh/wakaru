@@ -1,7 +1,8 @@
-import { isNull, isStringLiteral, isTrue, isUndefined, nonNull } from '../utils/checker'
+import { isNull, isStringLiteral, isTrue, isUndefined } from '../utils/checker'
 import { removePureAnnotation } from '../utils/comments'
-import { generateNameFromModulePath } from '../utils/generateNameFromModulePath'
-import isValidIdentifier from '../utils/isValidIdentifier'
+import { generateName, isValidIdentifier } from '../utils/identifier'
+import { isDeclared } from '../utils/scope'
+import { nonNull } from '../utils/utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
@@ -342,10 +343,10 @@ function renameComponentBasedOnDisplayName(j: JSCodeshift, root: Collection) {
 
             const right = path.node.right as Literal
             const displayName = right.value as string
-            const newName = generateNameFromModulePath(displayName)
+            const newName = generateName(displayName)
             if (!isValidIdentifier(newName)) return
             // skip if the name is occupied
-            if (scope.declares(newName)) return
+            if (isDeclared(scope, newName)) return
 
             // make sure original name is a component
             const isComponent = root.find(j.VariableDeclarator, {

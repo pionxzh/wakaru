@@ -1,4 +1,4 @@
-import { negateCondition } from './negateCondition'
+import { negateCondition } from './condition'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { JSCodeshift } from 'jscodeshift'
 

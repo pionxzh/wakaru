@@ -29,6 +29,7 @@ export function negateCondition(j: JSCodeshift, condition: ExpressionKind): Expr
 
     return j.unaryExpression('!', condition)
 }
+
 function getNegatedOperator(operator: BinaryExpression['operator']): BinaryExpression['operator'] {
     switch (operator) {
         case '==': return '!='

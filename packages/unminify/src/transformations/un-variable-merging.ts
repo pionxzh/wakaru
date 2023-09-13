@@ -1,5 +1,5 @@
 import { mergeComments } from '../utils/comments'
-import { transformToMultiStatementContext } from '../utils/transformToMultiStatementContext'
+import { replaceWithMultipleStatements } from '../utils/insert'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ForStatement } from 'jscodeshift'
@@ -72,7 +72,7 @@ export const transformAST: ASTTransformation = (context) => {
                     // seems no comments can be being to extracted statements
                     // mergeComments(replacements, p.node.comments)
 
-                    transformToMultiStatementContext(j, p.parent, replacements)
+                    replaceWithMultipleStatements(j, p.parent, replacements)
                 }
 
                 return
@@ -84,7 +84,7 @@ export const transformAST: ASTTransformation = (context) => {
             const replacements = declarations.map(d => j.variableDeclaration(kind, [d]))
             mergeComments(replacements, p.node.comments)
 
-            transformToMultiStatementContext(j, p, replacements)
+            replaceWithMultipleStatements(j, p, replacements)
         })
 }
 

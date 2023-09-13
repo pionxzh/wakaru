@@ -1,5 +1,15 @@
 import { mergeComments } from './comments'
+import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, ImportDeclaration, JSCodeshift, VariableDeclaration } from 'jscodeshift'
+
+export function isDeclared(scope: Scope, name: string) {
+    while (scope) {
+        if (scope.declares(name)) return true
+        scope = scope.parent
+    }
+
+    return false
+}
 
 export function removeDeclarationIfUnused(j: JSCodeshift, path: ASTPath, id: string) {
     const closestScope = j(path).closestScope().get()

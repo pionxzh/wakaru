@@ -1,4 +1,4 @@
-import { isDeclared } from '../utils/isDeclared'
+import { isDeclared } from '../utils/scope'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 

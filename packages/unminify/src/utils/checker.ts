@@ -1,7 +1,7 @@
 import type { ASTNode, BinaryExpression, JSCodeshift, Literal } from 'jscodeshift'
 
-export function nonNull(x: any): x is NonNullable<typeof x> {
-    return x != null
+export function areNodesEqual(j: JSCodeshift, node1: ASTNode, node2: ASTNode): boolean {
+    return j(node1).toSource() === j(node2).toSource()
 }
 
 /**

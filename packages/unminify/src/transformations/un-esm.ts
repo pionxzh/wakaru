@@ -1,5 +1,5 @@
 import { isTopLevel } from '@unminify-kit/ast-utils'
-import { generateNameFromModulePath as generateNamesFromModulePath } from '../utils/generateNameFromModulePath'
+import { generateName } from '../utils/identifier'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
@@ -438,7 +438,7 @@ function transformImport(context: Context, hoist: boolean) {
                 const sourceLiteral = expression.arguments[0] as Literal
                 const source = sourceLiteral.value as string
 
-                const moduleName = generateNamesFromModulePath(source)
+                const moduleName = generateName(source)
                 const local = getUniqueName(path.scope, moduleName)
                 j(path).replaceWith(j.identifier(local))
 
