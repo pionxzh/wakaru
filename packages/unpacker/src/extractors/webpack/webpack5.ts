@@ -2,7 +2,7 @@ import { isIIFE, renameFunctionParameters } from '@unminify-kit/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack5 } from './requireHelpers'
 import type { ModuleMapping } from '../../ModuleMapping'
-import type { ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, ObjectProperty, Statement, VariableDeclaration } from 'jscodeshift'
+import type { ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, Property, Statement, VariableDeclaration } from 'jscodeshift'
 
 /**
  * Find the modules map in webpack 5 bootstrap.
@@ -56,7 +56,7 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
         if (declaration.type !== 'VariableDeclarator') return false
         if (declaration.init?.type !== 'ObjectExpression') return false
 
-        const properties = declaration.init.properties as ObjectProperty[]
+        const properties = declaration.init.properties as Property[]
         if (properties.length === 0) return false
         return properties.every((property) => {
             return property.key.type === 'Literal'
@@ -70,7 +70,7 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
 
     /** Build the module map */
     // @ts-expect-error - skip type check
-    const properties: ObjectProperty[] = webpackModules.declarations[0].init.properties
+    const properties: Property[] = webpackModules.declarations[0].init.properties
     properties.forEach((property) => {
         const moduleId = (property.key as Literal).value as string
         const functionExpression = property.value as FunctionExpression | ArrowFunctionExpression
