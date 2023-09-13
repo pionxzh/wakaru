@@ -3,7 +3,7 @@ import { removePureAnnotation } from '../utils/comments'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { CallExpression, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, SpreadElement } from 'jscodeshift'
+import type { ASTNode, CallExpression, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, SpreadElement } from 'jscodeshift'
 
 interface Params {
     pragma?: string
@@ -83,6 +83,9 @@ export const transformAST: ASTTransformation<Params> = (context, params) => {
 
 function toJSX(j: JSCodeshift, node: CallExpression, pragmaFrags: string[]): JSXElement | JSXFragment | null {
     const [type, props, ...childrenArgs] = node.arguments
+    if (!type || !props) return null
+
+    if (isCapitalizationInvalid(j, type)) return null
 
     const tag = toJsxTag(j, type)
     if (!tag) return null
@@ -105,6 +108,12 @@ function toJSX(j: JSCodeshift, node: CallExpression, pragmaFrags: string[]): JSX
     if (selfClosing) openingElement.selfClosing = true
 
     return j.jsxElement(openingElement, selfClosing ? null : closingElement, children)
+}
+
+function isCapitalizationInvalid(j: JSCodeshift, node: ASTNode) {
+    if (j.Literal.check(node) && typeof node.value === 'string') return !/^[a-z]/.test(node.value)
+    if (j.Identifier.check(node)) return /^[a-z]/.test(node.name)
+    return false
 }
 
 function toJsxTag(j: JSCodeshift, node: SpreadElement | ExpressionKind): JSXIdentifier | JSXMemberExpression | null {

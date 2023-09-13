@@ -237,14 +237,65 @@ React.createElement("div", ...{ key: "1", className: "flex flex-col" });
 `,
 )
 
-inlineTest('jsx props with invalid string prop',
+inlineTest('jsx props with escaped string',
   `
-React.createElement("div", { "invalid-str": "val\\nue" });
-React.createElement("div", { "invalid-str": '"val"' });
+React.createElement(Foo, {bar: 'abc'});
+React.createElement(Foo, {bar: 'a\\nbc'});
+React.createElement(Foo, {bar: 'ab\\tc'});
+React.createElement(Foo, {bar: 'ab"c'});
+React.createElement(Foo, {bar: "ab'c"});
 `,
   `
-<div invalid-str={"val\\nue"} />;
-<div invalid-str={'"val"'} />;
+<Foo bar='abc' />;
+<Foo bar={'a\\nbc'} />;
+<Foo bar={'ab\\tc'} />;
+<Foo bar={'ab"c'} />;
+<Foo bar="ab'c" />;
+`,
+)
+
+inlineTest('jsx props with mixed empty string',
+  `
+React.createElement("div", null, foo, ' ', bar);
+`,
+  `
+<div>
+  {foo}
+  {' '}
+  {bar}
+</div>;
+`,
+)
+
+inlineTest('jsx with bad capitalization tag',
+  `
+React.createElement(Foo, null);
+React.createElement(foo, null);
+React.createElement('Foo', null);
+React.createElement('foo', null);
+React.createElement(_foo, null);
+React.createElement('_foo', null);
+React.createElement(foo.bar, null);
+`,
+  `
+<Foo />;
+React.createElement(foo, null);
+React.createElement('Foo', null);
+<foo />;
+<_foo />;
+React.createElement('_foo', null);
+<foo.bar />;
+`,
+)
+
+inlineTest('jsx with xml namespace',
+  `
+h("f:image", {
+  "n:attr": true
+});
+`,
+  `
+<f:image n:attr />;
 `,
 )
 
