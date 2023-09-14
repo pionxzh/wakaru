@@ -39,7 +39,7 @@ export function isValidIdentifier(
  * - './foo' -> `foo`
  * - './nested/foo' -> `nestedFoo`
  */
-export function generateName(input: string, scope?: Scope): string {
+export function generateName(input: string, scope: Scope | null = null, existedNames: string[] = []): string {
     const cleanName = input
         .replace(/^@/, '')
         .replace(/^_+/, '')
@@ -54,14 +54,21 @@ export function generateName(input: string, scope?: Scope): string {
     const candidate = cleanName.split(/\//).slice(-2).join('/')
 
     const newName = toIdentifier(candidate)
-    return scope ? getUniqueName(scope, newName) : newName
+    return getUniqueName(newName, scope, existedNames)
 }
 
-function getUniqueName(scope: Scope, name: string): string {
-    if (!isDeclared(scope, name)) return name
+function getUniqueName(name: string, scope: Scope | null = null, existedNames: string[] = []): string {
+    const isConflict = (n: string) => {
+        if (scope && isDeclared(scope, n)) return true
+        if (existedNames.includes(n)) return true
+        return false
+    }
+    if (!isConflict(name)) {
+        return name
+    }
 
     let i = 0
-    while (scope.declares(`${name}$${i}`)) {
+    while (isConflict(`${name}$${i}`)) {
         i++
     }
     return `${name}$${i}`

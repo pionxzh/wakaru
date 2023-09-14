@@ -48,7 +48,7 @@ export const transformAST: ASTTransformation = (context) => {
             const expression = path.node.expression as CallExpression
             const argumentList = expression.arguments
             const callee = expression.callee as FunctionExpression | ArrowFunctionExpression
-            const scope = j(callee).closestScope().get().scope as Scope | undefined
+            const scope = j(callee).closestScope().get().scope as Scope | null
             if (!scope) return
 
             const len = callee.params.length
@@ -95,7 +95,8 @@ function renameIdentifier(j: JSCodeshift, targetScopeNode: ASTNode, oldName: str
             // Exclude MemberExpression properties
             if (path.parent.node.type === 'MemberExpression' && path.parent.node.property === path.node) return
 
-            const pathScope = path.scope.lookup(oldName) as Scope
+            if (!path.scope) return
+            const pathScope = path.scope.lookup(oldName)
             const scopeNode = pathScope.getBindings()[oldName]?.[0].scope.node
             if (scopeNode === targetScopeNode && path.name !== 'property') {
                 path.node.name = newName

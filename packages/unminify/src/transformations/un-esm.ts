@@ -580,8 +580,8 @@ function transformExport(context: Context) {
              *
              * Go for export { right as name }
              */
-            const rootScope = root.find(j.Program).get().scope as Scope
-            if (rootScope.declares(name)) {
+            const rootScope = root.find(j.Program).get().scope as Scope | null
+            if (rootScope && rootScope.declares(name)) {
                 const exported = j.identifier(name)
                 const exportSpecifier = j.exportSpecifier.from({
                     exported,
@@ -600,7 +600,7 @@ function transformExport(context: Context) {
         else {
             // check if the name is declared in the scope
             // and it's not in the current path
-            const rootScope = root.find(j.Program).get().scope
+            const rootScope = root.find(j.Program).get().scope as Scope | null
             const bindings = rootScope?.getBindings()
             const binding = bindings?.[name]
             const isDeclared = binding?.length > 0

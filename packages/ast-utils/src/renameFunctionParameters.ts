@@ -1,4 +1,3 @@
-import type { Scope } from 'ast-types/lib/scope'
 import type { ArrowFunctionExpression, FunctionDeclaration, FunctionExpression, JSCodeshift } from 'jscodeshift'
 
 export function renameFunctionParameters(j: JSCodeshift, node: FunctionDeclaration | FunctionExpression | ArrowFunctionExpression, parameters: string[]): void {
@@ -117,7 +116,8 @@ export function renameFunctionParameters(j: JSCodeshift, node: FunctionDeclarati
                     return true
                 })
                 .forEach((path) => {
-                    const pathScope = path.scope.lookup(oldName) as Scope
+                    if (!path.scope) return
+                    const pathScope = path.scope.lookup(oldName)
                     const scopeNode = pathScope.getBindings()[oldName]?.[0].scope.node
                     if (scopeNode === functionScope.value && path.name !== 'property') {
                         path.node.name = newName

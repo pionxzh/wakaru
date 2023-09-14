@@ -1,12 +1,17 @@
-import type { Collection, ImportDeclaration, JSCodeshift, VariableDeclarator } from 'jscodeshift'
+import { findDeclaration } from './scope'
+import type { Scope } from 'ast-types/lib/scope'
+import type { ASTPath, Collection, ImportDeclaration, ImportSpecifier, JSCodeshift, VariableDeclarator } from 'jscodeshift'
 
-export function addImportSpecifier(j: JSCodeshift, node: ImportDeclaration, specifierName: string) {
+export function addImportSpecifier(j: JSCodeshift, node: ImportDeclaration, imported: string, local?: string) {
     const specifiers = node.specifiers || []
 
-    const existingSpecifier = specifiers.find(s => j.ImportSpecifier.check(s) && s.imported.name === specifierName)
+    const existingSpecifier = specifiers.find(s => j.ImportSpecifier.check(s) && s.imported.name === imported)
     if (existingSpecifier) return node
 
-    specifiers.push(j.importSpecifier(j.identifier(specifierName)))
+    const importedIdentifier = j.identifier(imported)
+    const localIdentifier = local ? j.identifier(local) : j.identifier(imported)
+
+    specifiers.push(j.importSpecifier(importedIdentifier, localIdentifier))
     node.specifiers = specifiers
 
     return node
@@ -56,16 +61,40 @@ export function findRequireFromSource(j: JSCodeshift, root: Collection, moduleNa
     return null
 }
 
-export function findImportWithDefaultSpecifier(j: JSCodeshift, root: Collection, specifierName: string): ImportDeclaration | null {
-    const importDefaultSpecifier = root.find(j.ImportDefaultSpecifier, {
-        local: { type: 'Identifier' },
-    })
-    if (importDefaultSpecifier.size() > 0) {
-        const importDeclaration = importDefaultSpecifier.closest(j.ImportDeclaration)
-        if (importDeclaration.size() > 0) {
-            return importDeclaration.get().node
-        }
+// import specifierName from 'moduleName'
+export function findImportWithDefaultSpecifier(j: JSCodeshift, scope: Scope, specifierName: string): ImportDeclaration | null {
+    const declaration = findDeclaration(scope, specifierName)
+    if (!declaration) return null
+
+    const importDeclaration = j(declaration).closest(j.ImportDeclaration)
+    if (importDeclaration.size() === 0) return null
+
+    const node = importDeclaration.get().node as ImportDeclaration
+    if (!node.specifiers || node.specifiers.length === 0) return null
+
+    const specifier = node.specifiers.find(s => j.ImportDefaultSpecifier.check(s) && s.local === declaration.node)
+    return specifier ? node : null
+}
+
+// import { specifierName } from 'moduleName'
+export function findImportWithNamedSpecifier(
+    j: JSCodeshift,
+    scope: Scope,
+    specifierName: string,
+    source?: string,
+): ASTPath<ImportSpecifier> | null {
+    const declaration = findDeclaration(scope, specifierName)
+    if (!declaration) return null
+
+    const importSpecifier = j(declaration).closest(j.ImportSpecifier)
+    if (importSpecifier.size() === 0) return null
+
+    const path = importSpecifier.get() as ASTPath<ImportSpecifier>
+
+    if (source) {
+        const importDeclaration = path.parent.node as ImportDeclaration
+        if (importDeclaration.source.value !== source) return null
     }
 
-    return null
+    return path
 }

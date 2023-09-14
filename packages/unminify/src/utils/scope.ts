@@ -1,6 +1,6 @@
 import { mergeComments } from './comments'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTPath, ImportDeclaration, JSCodeshift, VariableDeclaration } from 'jscodeshift'
+import type { ASTPath, Identifier, ImportDeclaration, JSCodeshift, VariableDeclaration } from 'jscodeshift'
 
 export function isDeclared(scope: Scope, name: string) {
     while (scope) {
@@ -11,12 +11,25 @@ export function isDeclared(scope: Scope, name: string) {
     return false
 }
 
+export function findDeclaration(scope: Scope, name: string): ASTPath<Identifier> | undefined {
+    const targetScope = scope.lookup(name)
+    if (!targetScope) return
+
+    const targetDeclaration = targetScope.getBindings()[name]
+    if (!targetDeclaration) return
+
+    const targetDeclarationPath = targetDeclaration[0]
+    if (!targetDeclarationPath) return
+
+    return targetDeclarationPath
+}
+
 export function removeDeclarationIfUnused(j: JSCodeshift, path: ASTPath, id: string) {
     const closestScope = j(path).closestScope().get()
     if (!closestScope) return
 
     const idsUsedInScope = j(closestScope).find(j.Identifier, { name: id }).filter((idPath) => {
-        const pathScope = idPath.scope.lookup(id)
+        const pathScope = idPath.scope?.lookup(id)
         return pathScope === closestScope.scope
     })
     const idsUsedInPath = j(path).find(j.Identifier, { name: id })
@@ -51,7 +64,7 @@ export function removeDefaultImportIfUnused(j: JSCodeshift, path: ASTPath, id: s
     if (!closestScope) return
 
     const idsUsedInScope = j(closestScope).find(j.Identifier, { name: id }).filter((idPath) => {
-        const pathScope = idPath.scope.lookup(id)
+        const pathScope = idPath.scope?.lookup(id)
         return pathScope === closestScope.scope
     })
     const idsUsedInPath = j(path).find(j.Identifier, { name: id })

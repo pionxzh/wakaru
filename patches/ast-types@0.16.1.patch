@@ -1,17 +1,47 @@
+diff --git a/lib/node-path.d.ts b/lib/node-path.d.ts
+index 14599f0944078149b138f58618422b8fc740f558..afc9699f7672955f33d98c14253a15cffcbd1bd8 100644
+--- a/lib/node-path.d.ts
++++ b/lib/node-path.d.ts
+@@ -4,7 +4,7 @@ import { Scope } from "./scope";
+ export interface NodePath<N = any, V = any> extends Path<V> {
+     node: N;
+     parent: any;
+-    scope: any;
++    scope: Scope | null;
+     replace: Path['replace'];
+     prune(...args: any[]): any;
+     _computeNode(): any;
 diff --git a/lib/scope.d.ts b/lib/scope.d.ts
-index 21bf0f3f8abd247e6a67e0003a14f1f016801c6d..d8be5f74ead929f95bd9d6dede3f9a6d59be020b 100644
+index 21bf0f3f8abd247e6a67e0003a14f1f016801c6d..911eef13f46b9932694a5e412a07cc2c4bedd085 100644
 --- a/lib/scope.d.ts
 +++ b/lib/scope.d.ts
-@@ -19,6 +19,7 @@ export interface Scope {
-     lookup(name: any): any;
-     lookupType(name: any): any;
+@@ -9,16 +9,18 @@ export interface Scope {
+     bindings: any;
+     types: any;
+     didScan: boolean;
+-    declares(name: any): any;
+-    declaresType(name: any): any;
+-    declareTemporary(prefix?: any): any;
++    declares(name: string): boolean;
++    declaresType(name: string): any;
++    declareTemporary(prefix?: string): any;
+     injectTemporary(identifier: any, init: any): any;
+-    scan(force?: any): any;
++    markAsStale(): void;
++    scan(force?: any): void;
+     getBindings(): any;
+     getTypes(): any;
+-    lookup(name: any): any;
+-    lookupType(name: any): any;
++    lookup(name: any): Scope;
++    lookupType(name: any): Scope;
      getGlobalScope(): Scope;
 +    rename(oldName: string, newName: string): Scope;
  }
  export interface ScopeConstructor {
      new (path: NodePath, parentScope: any): Scope;
 diff --git a/lib/scope.js b/lib/scope.js
-index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..db315b35131033a316edd15e97bf58c2b0a62994 100644
+index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..e11cf6221c713bb0401d4fa31f2e50232eee740f 100644
 --- a/lib/scope.js
 +++ b/lib/scope.js
 @@ -2,6 +2,7 @@
@@ -54,7 +84,17 @@ index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..db315b35131033a316edd15e97bf58c2
      // These types introduce scopes that are restricted to type parameters in
      // Flow (this doesn't apply to ECMAScript).
      var TypeParameterScopeType = Type.or(namedTypes.Function, namedTypes.ClassDeclaration, namedTypes.ClassExpression, namedTypes.InterfaceDeclaration, namedTypes.TSInterfaceDeclaration, namedTypes.TypeAlias, namedTypes.TSTypeAliasDeclaration);
-@@ -169,7 +185,16 @@ function scopePlugin(fork) {
+@@ -96,6 +112,9 @@ function scopePlugin(fork) {
+         bodyPath.unshift(b.variableDeclaration("var", [b.variableDeclarator(identifier, init || null)]));
+         return identifier;
+     };
++    Sp.markAsStale = function () {
++        this.didScan = false;
++    }
+     Sp.scan = function (force) {
+         if (force || !this.didScan) {
+             for (var name in this.bindings) {
+@@ -169,7 +188,16 @@ function scopePlugin(fork) {
              addTypePattern(path.get("id"), scopeTypes);
          }
          else if (namedTypes.VariableDeclarator.check(node)) {
@@ -72,7 +112,7 @@ index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..db315b35131033a316edd15e97bf58c2
              recursiveScanChild(path.get("init"), bindings, scopeTypes);
          }
          else if (node.type === "ImportSpecifier" ||
-@@ -350,6 +375,28 @@ function scopePlugin(fork) {
+@@ -350,6 +378,28 @@ function scopePlugin(fork) {
              scope = scope.parent;
          return scope;
      };

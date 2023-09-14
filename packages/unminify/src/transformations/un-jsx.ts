@@ -5,7 +5,6 @@ import { nonNull } from '../utils/utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { Scope } from 'ast-types/lib/scope'
 import type { ASTNode, CallExpression, Collection, Identifier, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, Literal, MemberExpression, SpreadElement, VariableDeclarator } from 'jscodeshift'
 
 interface Params {
@@ -344,7 +343,7 @@ function renameComponentBasedOnDisplayName(j: JSCodeshift, root: Collection, pra
             },
         })
         .forEach((path) => {
-            const scope = path.scope as Scope | null
+            const scope = path.scope
             if (!scope) return
 
             const left = path.node.left as MemberExpression

@@ -89,6 +89,9 @@ export const transformAST: ASTTransformation = (context) => {
             })
         })
 
+    const rootScope = root.find(j.Program).get().scope as Scope | null
+    if (!rootScope) return
+
     // redeclare export
     // export { oldName as newName }
     root
@@ -108,7 +111,6 @@ export const transformAST: ASTTransformation = (context) => {
             const newName = exported.name
             const oldName = local.name
 
-            const rootScope = root.find(j.Program).get().scope as Scope
             if (rootScope.declares(newName)) return
 
             inlineExport(context, path, oldName)
@@ -215,8 +217,8 @@ function inlineExport(
     }
 }
 
-function renameInRoot(j: JSCodeshift, root: Collection<any>, oldName: string, newName: string) {
-    const rootScope = root.find(j.Program).get().scope as Scope | undefined
+function renameInRoot(j: JSCodeshift, root: Collection, oldName: string, newName: string) {
+    const rootScope = root.find(j.Program).get().scope as Scope | null
     if (!rootScope || !rootScope.declares(oldName) || rootScope.declares(newName)) return
 
     rootScope.rename(oldName, newName)
