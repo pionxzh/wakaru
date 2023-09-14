@@ -78,6 +78,16 @@ export const transformAST: ASTTransformation = (context) => {
                 return
             }
 
+            if (j.ExportNamedDeclaration.check(p.parent.node)) {
+                const { kind, declarations } = p.node
+                if (declarations.length <= 1) return
+
+                const replacements = declarations.map(d => j.exportNamedDeclaration(j.variableDeclaration(kind, [d])))
+                mergeComments(replacements, p.node.comments)
+
+                replaceWithMultipleStatements(j, p.parent, replacements)
+            }
+
             const { kind, declarations } = p.node
             if (declarations.length <= 1) return
 

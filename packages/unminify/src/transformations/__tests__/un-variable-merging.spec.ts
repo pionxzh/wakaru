@@ -40,6 +40,17 @@ const i = 3;
 `,
 )
 
+inlineTest('export variable declaration should be splitted',
+  `
+export var a= 1, b = true, c = "hello";
+`,
+  `
+export var a= 1;
+export var b = true;
+export var c = "hello";
+`,
+)
+
 inlineTest('variable declaration that is not used in for statement should not be splitted',
   `
 for (var i = 0, j = 0, k = 0; j < 10; k++) {
