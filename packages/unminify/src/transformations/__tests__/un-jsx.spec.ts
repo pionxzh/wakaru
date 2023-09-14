@@ -301,22 +301,24 @@ h("f:image", {
 
 inlineTest('jsx with displayName',
   `
-var S = /*#__PURE__*/React.createElement("div", null);
-S.displayName = "Foo-Bar";
-var Bar = (
-  <div>
-    <S />
-  </div>
-)
+var s = /*#__PURE__*/React.createElement("div", null);
+s.displayName = "Test";
+var t = () => /*#__PURE__*/React.createElement("div", null);
+t.displayName = "Foo-Bar";
+var Bar = /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(s, null));
+var Baz = () => /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(t, null));
 `,
   `
-var FooBar = <div />;
+var Test = <div />;
+Test.displayName = "Test";
+var FooBar = () => <div />;
 FooBar.displayName = "Foo-Bar";
-var Bar = (
-  <div>
-    <FooBar />
-  </div>
-)
+var Bar = <div>
+  <Test />
+</div>;
+var Baz = () => <div>
+  <FooBar />
+</div>;
 `,
 )
 

@@ -54,6 +54,8 @@ export const transformAST: ASTTransformation<Params> = (context, params) => {
         }
     }
 
+    renameComponentBasedOnDisplayName(j, root, pragmas)
+
     root
         .find(j.CallExpression, {
             callee: (callee: CallExpression['callee']) => {
@@ -82,8 +84,6 @@ export const transformAST: ASTTransformation<Params> = (context, params) => {
                 path.replace(jsxElement)
             }
         })
-
-    renameComponentBasedOnDisplayName(j, root)
 }
 
 function toJSX(j: JSCodeshift, node: CallExpression, pragmaFrags: string[]): JSXElement | JSXFragment | null {
@@ -305,13 +305,25 @@ function postProcessChildren(j: JSCodeshift, children: Array<JSXExpressionContai
 /**
  * Rename component based on `displayName` property.
  *
+ * We will do this before the jsx transformation because
+ * the variable name might conflict with normal html tags.
+ * For example, `var div = () => <span />, div.displayName = 'Foo'`.
+ * The `div` will be renamed to `Foo` and cause all normal `div` tags
+ * become `<Foo />`. Doing renaming before jsx transformation can
+ * help us rename variables correctly. Otherwise, we have no way to
+ * tell the difference between `createElement('div')` and `createElement(div)`
+ * after the transformation.
+ *
  * @example
- * const a = () => <div />
- * a.displayName = 'Foo'
+ * const d = () => React.createElement('span', null)
+ * d.displayName = 'Foo'
+ * const e = () => React.createElement(d, null)
  * ->
- * const Foo = () => <div />
+ * const Foo = () => <span />
+ * Foo.displayName = 'Foo'
+ * const e = () => <Foo />
  */
-function renameComponentBasedOnDisplayName(j: JSCodeshift, root: Collection) {
+function renameComponentBasedOnDisplayName(j: JSCodeshift, root: Collection, pragmas: string[]) {
     root
         .find(j.AssignmentExpression, {
             left: {
@@ -354,10 +366,28 @@ function renameComponentBasedOnDisplayName(j: JSCodeshift, root: Collection) {
                     if (!init) return false
 
                     const jInit = j(init)
-                    return j.JSXElement.check(init)
-                        || j.JSXFragment.check(init)
-                        || jInit.find(j.JSXElement).size() > 0
-                        || jInit.find(j.JSXFragment).size() > 0
+                    const calleeChecker = (callee: CallExpression['callee']) => {
+                        if (j.Identifier.check(callee)) {
+                            return pragmas.includes(callee.name)
+                        }
+
+                        if (
+                            j.MemberExpression.check(callee)
+                            && j.Identifier.check(callee.object)
+                            && j.Identifier.check(callee.property)
+                        ) {
+                            return pragmas.includes(callee.property.name)
+                        }
+                        return false
+                    }
+                    return j.match(init, {
+                        type: 'CallExpression',
+                        // @ts-expect-error
+                        callee: calleeChecker,
+                    })
+                    || jInit.find(j.CallExpression, {
+                        callee: calleeChecker,
+                    }).size() > 0
                 },
             }).size() > 0
             if (!isComponent) return
