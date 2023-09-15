@@ -1,17 +1,33 @@
+import { isTopLevel } from '@unminify-kit/ast-utils'
 import { generateName } from '../utils/identifier'
-import { addImportSpecifier, findImportFromSource, findImportWithDefaultSpecifier, findImportWithNamedSpecifier } from '../utils/import'
-import { insertBefore } from '../utils/insert'
+import { insertAfter } from '../utils/insert'
 import wrap from '../wrapAstTransformation'
+import { ImportCollector } from './un-esm'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
-import type { Identifier, MemberExpression, ObjectPattern, SequenceExpression } from 'jscodeshift'
-
-interface Params {
-    unsafe?: boolean
-}
+import type { Identifier, MemberExpression, ObjectPattern, Property, SequenceExpression } from 'jscodeshift'
 
 /**
  * Converts indirect call expressions to direct call expressions.
+ *
+ * FIXME: the current implementation is not safe when there is a
+ * local variable name conflicts with the imported/required module name.
+ * For example:
+ * ```js
+ * import s from 'react'
+ * const fn = () => {
+ *   const useRef = 1;
+ *   (0, s.useRef)(0);
+ * }
+ * ```
+ * will be transformed to:
+ * ```js
+ * import s, { useRef } from 'react'
+ * const fn = () => {
+ *   const useRef = 1;
+ *   useRef(0);
+ * }
+ * ```
  *
  * @example
  * import s from 'react'
@@ -19,12 +35,23 @@ interface Params {
  * ->
  * import { useRef } from 'react'
  * useRef(0);
+ *
+ * @example
+ * const s = require('react')
+ * (0, s.useRef)(0);
+ * ->
+ * const s = require('react')
+ * const { useRef } = s
+ * useRef(0);
  */
-export const transformAST: ASTTransformation<Params> = (context, params = { unsafe: false }) => {
+export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 
     const rootScope = root.find(j.Program).get().scope as Scope | null
     if (!rootScope) return
+
+    const importCollector = new ImportCollector()
+    importCollector.collectFromRoot(j, root)
 
     /**
      * Adding imports one by one will cause scope issues.
@@ -33,10 +60,6 @@ export const transformAST: ASTTransformation<Params> = (context, params = { unsa
 
     // `s.foo` (indirect call) -> `foo$0` (local specifiers)
     const replaceMapping = new Map<string, string>()
-    // `foo$0` (local specifier) -> `foo` (imported specifier)
-    const specifierMapping = new Map<string, string>()
-    // `foo$0` (local specifier) -> `module` (module name)
-    const moduleMapping = new Map<string, string>()
 
     root
         .find(j.CallExpression, {
@@ -84,35 +107,39 @@ export const transformAST: ASTTransformation<Params> = (context, params = { unsa
                 return
             }
 
-            const importDecl = findImportWithDefaultSpecifier(j, rootScope, defaultSpecifierName)
-            if (importDecl) {
-                const source = importDecl.source.value
-                if (typeof source !== 'string') return
-                const namedImportSpecifierPath = findImportWithNamedSpecifier(j, rootScope, namedSpecifierName, source)
-                if (namedImportSpecifierPath) {
-                    // @ts-expect-error
-                    const localName = namedImportSpecifierPath.node.local?.name.value ?? namedSpecifierName
-                    replaceMapping.set(key, localName)
-                    specifierMapping.set(localName, namedSpecifierName)
-                    moduleMapping.set(localName, source)
-
-                    const newCallExpression = j.callExpression(j.identifier(localName), node.arguments)
+            const defaultImport = importCollector.getDefaultImport(defaultSpecifierName)
+            if (defaultImport) {
+                const source = defaultImport[0]
+                const namedImportLocalName = [...importCollector.namedImports.get(source)?.get(namedSpecifierName) ?? []][0]
+                if (namedImportLocalName) {
+                    replaceMapping.set(key, namedImportLocalName)
+                    const newCallExpression = j.callExpression(j.identifier(namedImportLocalName), node.arguments)
                     path.replace(newCallExpression)
                     return
                 }
 
-                const namedSpecifierLocalName = generateName(namedSpecifierName, rootScope, [...replaceMapping.values()])
+                const namedSpecifierLocalName = generateName(namedSpecifierName, rootScope, importCollector.getAllLocals())
+                importCollector.addNamedImport(source, namedSpecifierName, namedSpecifierLocalName)
                 replaceMapping.set(key, namedSpecifierLocalName)
-                specifierMapping.set(namedSpecifierLocalName, namedSpecifierName)
-                moduleMapping.set(namedSpecifierLocalName, source)
 
                 const newCallExpression = j.callExpression(j.identifier(namedSpecifierLocalName), node.arguments)
                 path.replace(newCallExpression)
                 return
             }
 
-            if (params.unsafe) {
-                // find `const { useRef } = react`
+            // const s = require('react')
+            const requireDecl = root.find(j.VariableDeclaration, {
+                declarations: (declarations) => {
+                    return declarations.some((d) => {
+                        return j.VariableDeclarator.check(d)
+                        && j.Identifier.check(d.id) && d.id.name === defaultSpecifierName
+                        && j.CallExpression.check(d.init) && j.Identifier.check(d.init.callee) && d.init.callee.name === 'require'
+                        && d.init.arguments.length === 1 && j.Literal.check(d.init.arguments[0]) && typeof d.init.arguments[0].value === 'string'
+                    })
+                },
+            }).filter(path => isTopLevel(j, path))
+            if (requireDecl.size() > 0) {
+                // find `const { useRef } = react` or `const { useRef: useRef$0 } = react`
                 const propertyDecl = root.find(j.VariableDeclarator, {
                     id: {
                         type: 'ObjectPattern',
@@ -120,7 +147,7 @@ export const transformAST: ASTTransformation<Params> = (context, params = { unsa
                             return properties.some((p) => {
                                 return j.Property.check(p)
                                 && j.Identifier.check(p.key) && p.key.name === property.name
-                                && j.Identifier.check(p.value) && p.value.name === property.name
+                                && j.Identifier.check(p.value)
                             })
                         },
                     },
@@ -128,12 +155,17 @@ export const transformAST: ASTTransformation<Params> = (context, params = { unsa
                         type: 'Identifier',
                         name: object.name,
                     },
-                })
+                }).filter(path => isTopLevel(j, path.parent))
+
                 if (propertyDecl.size() === 0) {
-                    // const { useRef } = react
-                    const id = j.identifier(property.name)
-                    const objectProperty = j.objectProperty(id, id)
-                    objectProperty.shorthand = true
+                    // generate `const { useRef: useRef$0 } = react`
+                    const key = j.identifier(property.name)
+                    const valueName = generateName(property.name, rootScope, [...replaceMapping.values()])
+                    replaceMapping.set(`${defaultSpecifierName}.${namedSpecifierName}`, valueName)
+
+                    const value = j.identifier(valueName)
+                    const objectProperty = j.objectProperty(key, value)
+                    objectProperty.shorthand = key.name === value.name
                     const variableDeclaration = j.variableDeclaration(
                         'const',
                         [j.variableDeclarator(
@@ -142,23 +174,34 @@ export const transformAST: ASTTransformation<Params> = (context, params = { unsa
                         )],
                     )
 
-                    insertBefore(j, path, variableDeclaration)
+                    const requireDeclPath = requireDecl.get()
+                    insertAfter(j, requireDeclPath, variableDeclaration)
+
+                    const newCallExpression = j.callExpression(j.identifier(valueName), node.arguments)
+                    path.replace(newCallExpression)
+                    return
                 }
 
-                const newCallExpression = j.callExpression(j.identifier(property.name), node.arguments)
+                // extract `useRef$0` from `const { useRef: useRef$0 } = react`
+                const propertyNode = propertyDecl.get().node
+                const propertyValue = propertyNode.id as ObjectPattern
+                const targetProperty = propertyValue.properties.find((p) => {
+                    return j.Property.check(p) && j.Identifier.check(p.key) && p.key.name === property.name
+                }) as Property | undefined
+                if (!targetProperty) return
+
+                const targetPropertyValue = targetProperty.value as Identifier
+                const targetPropertyLocalName = targetPropertyValue.name
+                replaceMapping.set(`${defaultSpecifierName}.${namedSpecifierName}`, targetPropertyLocalName)
+
+                const newCallExpression = j.callExpression(j.identifier(targetPropertyLocalName), node.arguments)
                 path.replace(newCallExpression)
             }
         })
 
-    specifierMapping.forEach((importedName, localName) => {
-        const moduleName = moduleMapping.get(localName)
-        if (!moduleName) return
-
-        const importDecl = findImportFromSource(j, root, moduleName)
-        if (!importDecl) return
-
-        addImportSpecifier(j, importDecl, importedName, localName)
-    })
+    importCollector.cleanImportDeclaration(j, root)
+    importCollector.applyImportToRoot(j, root)
+    importCollector.dispose()
 }
 
 export default wrap(transformAST)

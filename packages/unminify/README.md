@@ -256,7 +256,12 @@ Converts indirect call expressions to direct call expressions.
 + useRef(0);
 ```
 
-Pass `unsafe=true` to enable unsafe mode, which will also convert indirect call expressions that are not belongs to a import statement.
+```diff
+var s = require('react')
+- (0, s.useRef)(0);
++ const { useRef } = s
++ useRef(0);
+```
 
 ### `un-type-constructor` (Unsafe)
 

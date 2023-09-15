@@ -2,29 +2,6 @@ import { findDeclaration } from './scope'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, Collection, ImportDeclaration, ImportSpecifier, JSCodeshift, VariableDeclarator } from 'jscodeshift'
 
-export function addImportSpecifier(j: JSCodeshift, node: ImportDeclaration, imported: string, local?: string) {
-    const specifiers = node.specifiers || []
-
-    const existingSpecifier = specifiers.find(s => j.ImportSpecifier.check(s) && s.imported.name === imported)
-    if (existingSpecifier) return node
-
-    const importedIdentifier = j.identifier(imported)
-    const localIdentifier = local ? j.identifier(local) : j.identifier(imported)
-
-    specifiers.push(j.importSpecifier(importedIdentifier, localIdentifier))
-    node.specifiers = specifiers
-
-    return node
-}
-
-export function tryRemoveUnusedImport(j: JSCodeshift, node: ImportDeclaration) {
-    const specifiers = node.specifiers || []
-
-    // TODO
-
-    return null
-}
-
 /**
  * Find the module source of given module name.
  */
