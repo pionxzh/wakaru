@@ -1,6 +1,6 @@
 import { mergeComments } from './comments'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTPath, Identifier, ImportDeclaration, JSCodeshift, VariableDeclaration } from 'jscodeshift'
+import type { ASTPath, Collection, Identifier, ImportDeclaration, JSCodeshift, VariableDeclaration } from 'jscodeshift'
 
 export function isDeclared(scope: Scope, name: string) {
     while (scope) {
@@ -59,31 +59,23 @@ export function removeDeclarationIfUnused(j: JSCodeshift, path: ASTPath, id: str
     }
 }
 
-export function removeDefaultImportIfUnused(j: JSCodeshift, path: ASTPath, id: string) {
-    const closestScope = j(path).closestScope().get()
-    if (!closestScope) return
+export function removeDefaultImportIfUnused(j: JSCodeshift, root: Collection, local: string) {
+    const idsUsed = root.find(j.Identifier, { name: local })
+    if (idsUsed.size() !== 1) return
 
-    const idsUsedInScope = j(closestScope).find(j.Identifier, { name: id }).filter((idPath) => {
-        const pathScope = idPath.scope?.lookup(id)
-        return pathScope === closestScope.scope
-    })
-    const idsUsedInPath = j(path).find(j.Identifier, { name: id })
-    const idsUsed = idsUsedInScope.length - idsUsedInPath.length
-    if (idsUsed === 1) {
-        const idUsed = idsUsedInScope.paths()[0]
-        if (j.ImportDefaultSpecifier.check(idUsed.parent.node) && j.ImportDeclaration.check(idUsed.parent.parent.node)) {
-            const importDeclaration = idUsed.parent.parent.node as ImportDeclaration
-            if (!importDeclaration.specifiers) return
-            const index = importDeclaration.specifiers.findIndex(declarator => j.ImportDefaultSpecifier.check(declarator)
-                && j.Identifier.check(declarator.local)
-                && declarator.local.name === id,
-            )
-            if (index > -1) {
-                importDeclaration.specifiers.splice(index, 1)
-                if (importDeclaration.specifiers.length === 0) {
-                    mergeComments(importDeclaration, idUsed.parent.parent.value.comments)
-                    idUsed.parent.parent.prune()
-                }
+    const idUsed = idsUsed.paths()[0]
+    if (j.ImportDefaultSpecifier.check(idUsed.parent.node) && j.ImportDeclaration.check(idUsed.parent.parent.node)) {
+        const importDeclaration = idUsed.parent.parent.node as ImportDeclaration
+        if (!importDeclaration.specifiers) return
+        const index = importDeclaration.specifiers.findIndex(declarator => j.ImportDefaultSpecifier.check(declarator)
+            && j.Identifier.check(declarator.local)
+            && declarator.local === idUsed.node,
+        )
+        if (index > -1) {
+            importDeclaration.specifiers.splice(index, 1)
+            if (importDeclaration.specifiers.length === 0) {
+                mergeComments(importDeclaration, idUsed.parent.parent.value.comments)
+                idUsed.parent.parent.prune()
             }
         }
     }

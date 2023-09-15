@@ -3,7 +3,7 @@ import { removeDeclarationIfUnused, removeDefaultImportIfUnused } from '../../ut
 import wrap from '../../wrapAstTransformation'
 import type { ASTTransformation } from '../../wrapAstTransformation'
 import type { Identifier } from '@babel/types'
-import type { ASTPath, CallExpression, ImportDefaultSpecifier, JSCodeshift, ObjectExpression } from 'jscodeshift'
+import type { ASTPath, CallExpression, Collection, ImportDefaultSpecifier, JSCodeshift, ObjectExpression } from 'jscodeshift'
 
 /**
  * Restore object spread syntax from `@babel/runtime/helpers/objectSpread2` helper.
@@ -50,7 +50,7 @@ export const transformAST: ASTTransformation = (context) => {
             .paths()
             .reverse()
             .forEach((path) => {
-                handleSpread(j, path, isImport, moduleVariableName)
+                handleSpread(j, root, path, isImport, moduleVariableName)
             })
 
         // (0, objectSpread)([...])
@@ -80,12 +80,12 @@ export const transformAST: ASTTransformation = (context) => {
             .paths()
             .reverse()
             .forEach((path) => {
-                handleSpread(j, path, isImport, moduleVariableName)
+                handleSpread(j, root, path, isImport, moduleVariableName)
             })
     }
 }
 
-function handleSpread(j: JSCodeshift, path: ASTPath<CallExpression>, isImport: boolean, moduleVariableName: string) {
+function handleSpread(j: JSCodeshift, root: Collection, path: ASTPath<CallExpression>, isImport: boolean, moduleVariableName: string) {
     const properties: ObjectExpression['properties'] = []
 
     for (const arg of path.node.arguments) {
@@ -104,7 +104,7 @@ function handleSpread(j: JSCodeshift, path: ASTPath<CallExpression>, isImport: b
     path.replace(spreadObject)
 
     isImport
-        ? removeDefaultImportIfUnused(j, path, moduleVariableName)
+        ? removeDefaultImportIfUnused(j, root, moduleVariableName)
         : removeDeclarationIfUnused(j, path, moduleVariableName)
 }
 

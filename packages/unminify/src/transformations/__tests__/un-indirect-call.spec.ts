@@ -11,7 +11,7 @@ import s from "react";
 var countRef = (0, s.useRef)(0);
 `,
   `
-import s, { useRef } from "react";
+import { useRef } from "react";
 
 var countRef = useRef(0);
 `,
@@ -27,8 +27,8 @@ var secondRef = (0, t.useRef)(0);
 var thirdRef = (0, t.useRef)(0);
 `,
   `
-import s, { useRef } from "react";
-import t, { useRef as useRef$0 } from "another";
+import { useRef } from "react";
+import { useRef as useRef$0 } from "another";
 
 var countRef = useRef(0);
 var secondRef = useRef$0(0);

@@ -1,6 +1,7 @@
 import { isTopLevel } from '@unminify-kit/ast-utils'
 import { generateName } from '../utils/identifier'
 import { insertAfter } from '../utils/insert'
+import { removeDefaultImportIfUnused } from '../utils/scope'
 import wrap from '../wrapAstTransformation'
 import { ImportCollector } from './un-esm'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -201,6 +202,13 @@ export const transformAST: ASTTransformation = (context) => {
 
     importCollector.cleanImportDeclaration(j, root)
     importCollector.applyImportToRoot(j, root)
+
+    importCollector.defaultImports.forEach((defaultImport) => {
+        defaultImport.forEach((specifier) => {
+            removeDefaultImportIfUnused(j, root, specifier)
+        })
+    })
+
     importCollector.dispose()
 }
 

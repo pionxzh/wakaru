@@ -53,7 +53,7 @@ export const transformAST: ASTTransformation = (context) => {
                 path.replace(j.arrayExpression(elements))
 
                 isImport
-                    ? removeDefaultImportIfUnused(j, path, moduleVariableName)
+                    ? removeDefaultImportIfUnused(j, root, moduleVariableName)
                     : removeDeclarationIfUnused(j, path, moduleVariableName)
             })
 
@@ -90,7 +90,7 @@ export const transformAST: ASTTransformation = (context) => {
                 path.replace(j.arrayExpression(elements))
 
                 isImport
-                    ? removeDefaultImportIfUnused(j, path, moduleVariableName)
+                    ? removeDefaultImportIfUnused(j, root, moduleVariableName)
                     : removeDeclarationIfUnused(j, path, moduleVariableName)
             })
     }
