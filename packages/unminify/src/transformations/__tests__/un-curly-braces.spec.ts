@@ -21,6 +21,8 @@ for (let i of a) b();
 
 while (a) b();
 
+while (a);
+
 do
   b();
 while (a);
@@ -59,6 +61,9 @@ for (let i of a) {
 while (a) {
   b();
 }
+
+while (a)
+  {}
 
 do {
   b();
