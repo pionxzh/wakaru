@@ -1,6 +1,7 @@
 import lebab from './lebab'
 import moduleMapping from './module-mapping'
 import prettier from './prettier'
+import smartInline from './smart-inline'
 import unAsyncAwait from './un-async-await'
 import unBoolean from './un-boolean'
 import unBracketNotation from './un-bracket-notation'
@@ -51,6 +52,7 @@ export const transformationMap: {
     'un-return': unReturn,
     'un-while-loop': unWhileLoop,
     'un-bracket-notation': unBracketNotation,
+    'smart-inline': smartInline,
     'un-flip-comparisons': unFlipComparisons,
     'un-type-constructor': unTypeConstructor,
     'un-indirect-call': unIndirectCall,
