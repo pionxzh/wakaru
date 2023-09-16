@@ -36,7 +36,7 @@
     "@codemirror/lang-javascript": "^6.2.1",
     "@codemirror/state": "^6.2.1",
     "@codemirror/theme-one-dark": "^6.1.2",
-    "@codemirror/view": "^6.18.0",
+    "@codemirror/view": "^6.19.0",
     "@fortawesome/fontawesome-svg-core": "^6.4.2",
     "@fortawesome/free-brands-svg-icons": "^6.4.2",
     "@fortawesome/free-regular-svg-icons": "^6.4.2",
