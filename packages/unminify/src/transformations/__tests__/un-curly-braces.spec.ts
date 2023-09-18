@@ -76,3 +76,40 @@ do {
 label: b();
 `,
 )
+
+inlineTest('should not blockify statements that has direct var declaration',
+  `
+'use strict';
+
+if (a) var b = 1;
+else if (c) var d = 1;
+else var e = 1;
+
+for (let i = 0; i < 10; i++) var b = 1;
+
+for (let i in a) var b = 1;
+
+for (let i of a) var b = 1;
+
+while (a) var b = 1;
+
+do var b = 1; while (a);
+`,
+  `
+'use strict';
+
+if (a) var b = 1;
+else if (c) var d = 1;
+else var e = 1;
+
+for (let i = 0; i < 10; i++) var b = 1;
+
+for (let i in a) var b = 1;
+
+for (let i of a) var b = 1;
+
+while (a) var b = 1;
+
+do var b = 1; while (a);
+`,
+)

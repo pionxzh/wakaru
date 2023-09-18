@@ -1,5 +1,6 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
+import type { JSCodeshift, VariableDeclaration } from 'jscodeshift'
 
 /**
  * Add `BlockStatement` to the following nodes:
@@ -24,12 +25,13 @@ export const transformAST: ASTTransformation = (context) => {
     root
         .find(j.IfStatement)
         .forEach((path) => {
-            if (!j.BlockStatement.check(path.value.consequent)) {
+            if (!j.BlockStatement.check(path.value.consequent) && !isVarDeclaration(j, path.value.consequent)) {
                 path.value.consequent = j.blockStatement([path.value.consequent])
             }
 
             if (path.value.alternate
             && !j.BlockStatement.check(path.value.alternate)
+            && !isVarDeclaration(j, path.value.alternate)
             && !j.IfStatement.check(path.value.alternate)) {
                 path.value.alternate = j.blockStatement([path.value.alternate])
             }
@@ -53,7 +55,8 @@ export const transformAST: ASTTransformation = (context) => {
     nodesWithBody.forEach((node) => {
         // @ts-expect-error
         root.find(node, {
-            body: value => value.type !== 'BlockStatement',
+            body: value => !j.BlockStatement.check(value)
+            && !isVarDeclaration(j, value),
         }).forEach((path) => {
             path.value.body = j.blockStatement([path.value.body])
         })
@@ -69,12 +72,23 @@ export const transformAST: ASTTransformation = (context) => {
     root
         .find(j.SwitchCase, {
             consequent(value) {
-                return value.length > 0 && value[0].type !== 'BlockStatement'
+                return value.length > 0 && !j.BlockStatement.check(value[0])
             },
         })
         .forEach((path) => {
             path.value.consequent = [j.blockStatement(path.value.consequent)]
         })
+}
+
+/**
+ * Check if the node is a `VariableDeclaration` with `kind` equals to `var`.
+ *
+ * We avoid wrapping var declaration with `BlockStatement` because it will
+ * change the scope of the variable.
+ * See https://github.com/lebab/lebab/pull/348 for more details.
+ */
+function isVarDeclaration(j: JSCodeshift, node: any): node is VariableDeclaration {
+    return j.VariableDeclaration.check(node) && node.kind === 'var'
 }
 
 export default wrap(transformAST)
