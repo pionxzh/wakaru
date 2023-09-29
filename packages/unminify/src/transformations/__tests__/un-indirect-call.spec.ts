@@ -71,7 +71,7 @@ var countRef = useRef(0);
 inlineTestWithOptions('indirect call from a required module with existing destructuring', { unsafe: true },
   `
 const s = require("react");
-const t = require("another");
+const t = require(9527);
 
 var countRef = (0, s.useRef)(0);
 var secondRef = (0, t.useRef)(0);
@@ -84,7 +84,7 @@ const {
   useRef
 } = s;
 
-const t = require("another");
+const t = require(9527);
 
 const {
   useRef: useRef$0

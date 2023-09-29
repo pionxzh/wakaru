@@ -134,7 +134,8 @@ export const transformAST: ASTTransformation = (context) => {
                         return j.VariableDeclarator.check(d)
                         && j.Identifier.check(d.id) && d.id.name === defaultSpecifierName
                         && j.CallExpression.check(d.init) && j.Identifier.check(d.init.callee) && d.init.callee.name === 'require'
-                        && d.init.arguments.length === 1 && j.Literal.check(d.init.arguments[0]) && typeof d.init.arguments[0].value === 'string'
+                        && d.init.arguments.length === 1 && j.Literal.check(d.init.arguments[0])
+                        && (typeof d.init.arguments[0].value === 'string' || typeof d.init.arguments[0].value === 'number')
                     })
                 },
             }).filter(path => isTopLevel(j, path))
