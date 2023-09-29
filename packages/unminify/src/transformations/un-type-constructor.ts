@@ -1,3 +1,4 @@
+import { isString } from '@unminify-kit/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
@@ -49,7 +50,7 @@ export const transformAST: ASTTransformation = (context) => {
         right: { type: 'Literal', value: '' },
     }).forEach((path) => {
         // 'str' + '' will be simplified to 'str'
-        if (j.Literal.check(path.node.left) && typeof path.node.left.value === 'string') {
+        if (j.Literal.check(path.node.left) && isString(path.node.left.value)) {
             path.replace(path.node.left)
             return
         }

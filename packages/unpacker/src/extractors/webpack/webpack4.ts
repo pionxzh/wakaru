@@ -1,4 +1,4 @@
-import { renameFunctionParameters } from '@unminify-kit/ast-utils'
+import { isNumber, renameFunctionParameters } from '@unminify-kit/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack4 } from './requireHelpers'
 import type { ModuleMapping } from '../../ModuleMapping'
@@ -62,7 +62,7 @@ export function getModulesForWebpack4(j: JSCodeshift, root: Collection):
         },
         right: {
             type: 'Literal',
-            value: (value: any) => typeof value === 'number',
+            value: (value: any) => isNumber(value),
         },
     }).forEach((path) => {
         entryIds.push((path.node.right as Literal).value as number)

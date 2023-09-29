@@ -1,4 +1,4 @@
-import { isFunctionExpression, renameFunctionParameters } from '@unminify-kit/ast-utils'
+import { isFunctionExpression, isNumber, isString, renameFunctionParameters } from '@unminify-kit/ast-utils'
 import { Module } from '../../Module'
 import type { ModuleMapping } from '../../ModuleMapping'
 import type { ArrayExpression, ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, ObjectExpression } from 'jscodeshift'
@@ -41,12 +41,12 @@ export function getModulesFromBrowserify(j: JSCodeshift, root: Collection):
             properties: (properties: any[]) => {
                 return properties.every(prop => j.Property.check(prop)
                 && j.Literal.check(prop.key)
-                && typeof prop.key.value === 'number'
+                && isNumber(prop.key.value)
                 && j.ArrayExpression.check(prop.value)
                 && prop.value.elements.length === 2
                 && isFunctionExpression(j, prop.value.elements[0])
                 && j.ObjectExpression.check(prop.value.elements[1])
-                && prop.value.elements[1].properties.every(prop => j.Property.check(prop) && j.Literal.check(prop.key) && typeof prop.key.value === 'string' && j.Literal.check(prop.value) && typeof prop.value.value === 'number'),
+                && prop.value.elements[1].properties.every(prop => j.Property.check(prop) && j.Literal.check(prop.key) && isString(prop.key.value) && j.Literal.check(prop.value) && isNumber(prop.value.value)),
                 )
             },
         }, {

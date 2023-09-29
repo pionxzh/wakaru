@@ -1,3 +1,4 @@
+import { isString } from '@unminify-kit/ast-utils'
 import type { ASTNode, BinaryExpression, JSCodeshift, Literal } from 'jscodeshift'
 
 export function areNodesEqual(j: JSCodeshift, node1: ASTNode, node2: ASTNode): boolean {
@@ -59,5 +60,5 @@ export function isUndefinedBinary(j: JSCodeshift, node: ASTNode): node is Binary
 }
 
 export function isStringLiteral(j: JSCodeshift, node: ASTNode): node is Omit<Literal, 'value'> & { value: string } {
-    return j.Literal.check(node) && typeof node.value === 'string'
+    return j.Literal.check(node) && isString(node.value)
 }

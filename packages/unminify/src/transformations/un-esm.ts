@@ -1,4 +1,4 @@
-import { ImportManager, isTopLevel } from '@unminify-kit/ast-utils'
+import { ImportManager, isString, isTopLevel } from '@unminify-kit/ast-utils'
 import { generateName } from '../utils/identifier'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
@@ -70,7 +70,7 @@ function transformImport(context: Context, hoist: boolean) {
             },
             arguments: [{
                 type: 'Literal' as const,
-                value: (value: unknown) => typeof value === 'string',
+                value: (value: unknown) => isString(value),
             }],
         })
         .forEach((path) => {
@@ -99,7 +99,7 @@ function transformImport(context: Context, hoist: boolean) {
                         },
                         arguments: [{
                             type: 'Literal' as const,
-                            value: (value: unknown) => typeof value === 'string',
+                            value: (value: unknown) => isString(value),
                         }],
                     },
                 },
@@ -162,7 +162,7 @@ function transformImport(context: Context, hoist: boolean) {
                 },
                 arguments: [{
                     type: 'Literal' as const,
-                    value: (value: unknown) => typeof value === 'string',
+                    value: (value: unknown) => isString(value),
                 }],
             },
         })
@@ -199,7 +199,7 @@ function transformImport(context: Context, hoist: boolean) {
                             },
                             arguments: [{
                                 type: 'Literal' as const,
-                                value: (value: unknown) => typeof value === 'string',
+                                value: (value: unknown) => isString(value),
                             }],
                         },
                         property: {

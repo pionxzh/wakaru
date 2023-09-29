@@ -1,3 +1,4 @@
+import { isString } from './isPrimitive'
 import type { ASTNode, Collection, JSCodeshift } from 'jscodeshift'
 
 type Exported = string
@@ -49,21 +50,21 @@ export class ExportManager {
                 }
 
                 if (path.node.specifiers) {
-                    const source = j.Literal.check(path.node.source) && typeof path.node.source.value === 'string'
+                    const source = j.Literal.check(path.node.source) && isString(path.node.source.value)
                         ? path.node.source.value
                         : null
 
                     path.node.specifiers.forEach((specifier) => {
                         const exported = j.Identifier.check(specifier.exported)
                             ? specifier.exported.name
-                            : typeof specifier.exported === 'string'
+                            : isString(specifier.exported)
                                 ? specifier.exported
                                 : null
                         if (!exported) return
 
                         const local = j.Identifier.check(specifier.local)
                             ? specifier.local.name
-                            : typeof specifier.local === 'string'
+                            : isString(specifier.local)
                                 ? specifier.local
                                 : exported
 

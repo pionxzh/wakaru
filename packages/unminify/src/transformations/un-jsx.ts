@@ -1,3 +1,4 @@
+import { isBoolean, isString } from '@unminify-kit/ast-utils'
 import { isNull, isStringLiteral, isTrue, isUndefined } from '../utils/checker'
 import { removePureAnnotation } from '../utils/comments'
 import { generateName } from '../utils/identifier'
@@ -115,13 +116,13 @@ function toJSX(j: JSCodeshift, node: CallExpression, pragmaFrags: string[]): JSX
 }
 
 function isCapitalizationInvalid(j: JSCodeshift, node: ASTNode) {
-    if (j.Literal.check(node) && typeof node.value === 'string') return !/^[a-z]/.test(node.value)
+    if (j.Literal.check(node) && isString(node.value)) return !/^[a-z]/.test(node.value)
     if (j.Identifier.check(node)) return /^[a-z]/.test(node.name)
     return false
 }
 
 function toJsxTag(j: JSCodeshift, node: SpreadElement | ExpressionKind): JSXIdentifier | JSXMemberExpression | null {
-    if (j.Literal.check(node) && typeof node.value === 'string') {
+    if (j.Literal.check(node) && isString(node.value)) {
         return j.jsxIdentifier(node.value)
     }
     else if (j.Identifier.check(node)) {
@@ -259,11 +260,11 @@ function toJsxChild(j: JSCodeshift, node: SpreadElement | ExpressionKind) {
 
     if (j.Literal.check(node)) {
         // null and bool are empty node
-        if (typeof node.value === 'boolean' || node.value === null) {
+        if (isBoolean(node.value) || node.value === null) {
             return null
         }
 
-        if (typeof node.value === 'string') {
+        if (isString(node.value)) {
             const textContent = node.value
             const notEmpty = textContent !== ''
             // if contains invalid characters like {, }, <, >, \r, \n
@@ -339,7 +340,7 @@ function renameComponentBasedOnDisplayName(j: JSCodeshift, root: Collection, pra
                 // @ts-expect-error
                 type: 'Literal',
                 // @ts-expect-error
-                value: (value: string) => typeof value === 'string',
+                value: (value: string) => isString(value),
             },
         })
         .forEach((path) => {

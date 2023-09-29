@@ -1,3 +1,4 @@
+import { isNumber } from '@unminify-kit/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
@@ -323,7 +324,7 @@ export function transform__generator(context: Context) {
                         argument: {
                             type: 'ArrayExpression',
                             // @ts-expect-error
-                            elements: elements => elements.length >= 1 && j.Literal.check(elements[0]) && typeof elements[0].value === 'number',
+                            elements: elements => elements.length >= 1 && j.Literal.check(elements[0]) && isNumber(elements[0].value),
                         },
                     })) {
                         const returnStatement = statement as ReturnStatement

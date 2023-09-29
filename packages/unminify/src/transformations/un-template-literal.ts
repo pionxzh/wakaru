@@ -1,3 +1,4 @@
+import { isString } from '@unminify-kit/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Literal, MemberExpression } from 'jscodeshift'
@@ -20,7 +21,7 @@ export const transformAST: ASTTransformation = (context) => {
                 type: 'MemberExpression',
                 object: {
                     type: 'Literal',
-                    value: (v: any) => typeof v === 'string',
+                    value: (v: any) => isString(v),
                 },
                 property: {
                     type: 'Identifier',
