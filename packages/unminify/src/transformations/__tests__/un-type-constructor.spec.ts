@@ -32,6 +32,8 @@ function foo(numStr, result) {
     return \`\${result} = \${arr}\`;
 }
 
+const emptyArr = [];
+const oneArr = [,];
 `,
     `
 var a = 6 + Number(x);
@@ -47,5 +49,8 @@ function foo(numStr, result) {
     var arr = Array(3).fill(String(num)).join(' + ');
     return \`\${result} = \${arr}\`;
 }
+
+const emptyArr = [];
+const oneArr = Array(1);
 `,
 )

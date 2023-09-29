@@ -61,9 +61,16 @@ export const transformAST: ASTTransformation = (context) => {
     /**
      * [,,,] -> Array(3)
      */
-    root.find(j.ArrayExpression, { elements: elements => elements.every(element => element === null) }).replaceWith(({ node }) => {
-        return j.callExpression(j.identifier('Array'), [j.literal(node.elements.length)])
-    })
+    root
+        .find(j.ArrayExpression, {
+            elements: (elements) => {
+                return elements.length > 0
+                && elements.every(element => element === null)
+            },
+        })
+        .replaceWith(({ node }) => {
+            return j.callExpression(j.identifier('Array'), [j.literal(node.elements.length)])
+        })
 }
 
 export default wrap(transformAST)
