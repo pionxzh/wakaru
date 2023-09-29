@@ -1,4 +1,4 @@
-import { isIIFE, renameFunctionParameters } from '@unminify-kit/ast-utils'
+import { getTopLevelStatements, isIIFE, renameFunctionParameters } from '@unminify-kit/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack5 } from './requireHelpers'
 import type { ModuleMapping } from '../../ModuleMapping'
@@ -43,8 +43,8 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
     const modules = new Set<Module>()
     const moduleIdMapping: ModuleMapping = {}
 
-    const body = root.get().node.program.body as Statement[]
-    const webpackBootstrap = body.find(node => isIIFE(node))
+    const statements = getTopLevelStatements(root)
+    const webpackBootstrap = statements.find(node => isIIFE(node))
     if (!webpackBootstrap) return null
 
     // @ts-expect-error - skip type check
@@ -81,7 +81,7 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
         const moduleContent = j({ type: 'Program', body: functionExpression.body.body })
         convertRequireHelpersForWebpack5(j, moduleContent)
 
-        const module = new Module(moduleId, moduleContent, false)
+        const module = new Module(moduleId, j, moduleContent, false)
         modules.add(module)
     })
 
@@ -91,7 +91,7 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
         // @ts-expect-error - skip type check
         const entryModule = lastStatement.expression.callee.body.body
         const moduleContent = j({ type: 'Program', body: entryModule })
-        const module = new Module('entry.js', moduleContent, true)
+        const module = new Module('entry.js', j, moduleContent, true)
         modules.add(module)
     }
     else {

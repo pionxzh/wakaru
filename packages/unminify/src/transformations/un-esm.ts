@@ -1,264 +1,11 @@
-import { isTopLevel } from '@unminify-kit/ast-utils'
+import { ImportManager, isTopLevel } from '@unminify-kit/ast-utils'
 import { generateName } from '../utils/identifier'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { NodePath } from 'ast-types/lib/node-path'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTPath, AssignmentExpression, CallExpression, Collection, Identifier, ImportDeclaration, JSCodeshift, Literal, MemberExpression, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
-
-type Source = string
-type Imported = string
-type Local = string
-
-export class ImportCollector {
-    importSourceOrder = new Set<Source>()
-    defaultImports = new Map<Source, Set<Local>>()
-    namespaceImports = new Map<Source, Set<Local>>()
-    namedImports = new Map<Source, Map<Imported, Set<Local>>>()
-    bareImports = new Set<Source>()
-
-    get importMap() {
-        /**
-         * Bare import can be omitted if there are other imports from the same source
-         */
-        const bareImports = [...this.bareImports.values()]
-            .filter((source) => {
-                return !this.defaultImports.has(source)
-                    && !this.namespaceImports.has(source)
-                    && !this.namedImports.has(source)
-            })
-
-        const importMap = [
-            ...[...this.defaultImports.entries()].flatMap(([source, locals]) => [...locals].map(local => ({ type: 'default', name: local, source } as const))),
-            ...[...this.namespaceImports.entries()].flatMap(([source, locals]) => [...locals].map(local => ({ type: 'namespace', name: local, source } as const))),
-            ...[...this.namedImports.entries()].flatMap(([source, importedMap]) => [...importedMap.entries()].flatMap(([imported, locals]) => [...locals].map(local => ({ type: 'named', name: imported, local, source } as const)))),
-            ...bareImports.map(source => ({ type: 'bare', source } as const)),
-        ].reduce((map, info) => {
-            if (!map[info.source]) {
-                map[info.source] = []
-            }
-
-            map[info.source].push(info)
-
-            return map
-        }, {} as Record<string, ImportInfo[]>)
-
-        const importSourceOrder = [...this.importSourceOrder.values()]
-        return Object.entries(importMap).sort(([a], [b]) => {
-            const aIndex = importSourceOrder.indexOf(a)
-            const bIndex = importSourceOrder.indexOf(b)
-            return bIndex - aIndex
-        })
-    }
-
-    addImportOrder(source: string) {
-        this.importSourceOrder.add(source)
-    }
-
-    addDefaultImport(source: string, local: string) {
-        if (!this.defaultImports.has(source)) this.defaultImports.set(source, new Set())
-        this.defaultImports.get(source)!.add(local)
-    }
-
-    addNamespaceImport(source: string, local: string) {
-        if (!this.namespaceImports.has(source)) {
-            this.namespaceImports.set(source, new Set())
-        }
-        this.namespaceImports.get(source)!.add(local)
-    }
-
-    addNamedImport(source: string, imported: string, local: string) {
-        if (!this.namedImports.has(source)) {
-            this.namedImports.set(source, new Map())
-        }
-        if (!this.namedImports.get(source)!.has(imported)) {
-            this.namedImports.get(source)!.set(imported, new Set())
-        }
-        this.namedImports.get(source)!.get(imported)!.add(local)
-    }
-
-    addBareImport(source: string) {
-        this.bareImports.add(source)
-    }
-
-    getImport(local: string) {
-        return this.getDefaultImport(local)
-            || this.getNamespaceImport(local)
-            || this.getNamedImport(local)
-    }
-
-    getDefaultImport(local: string) {
-        return [...this.defaultImports.entries()].find(([_source, locals]) => locals.has(local))
-    }
-
-    getNamespaceImport(local: string) {
-        return [...this.namespaceImports.entries()].find(([_source, locals]) => locals.has(local))
-    }
-
-    getNamedImport(local: string) {
-        return [...this.namedImports.entries()].find(([_source, importedMap]) => [...importedMap.entries()].find(([_imported, locals]) => locals.has(local)))
-    }
-
-    getAllLocals() {
-        return [
-            ...[...this.defaultImports.values()].flatMap(locals => [...locals]),
-            ...[...this.namespaceImports.values()].flatMap(locals => [...locals]),
-            ...[...this.namedImports.values()].flatMap(importedMap => [...importedMap.values()].flatMap(locals => [...locals])),
-        ]
-    }
-
-    collectFromRoot(j: JSCodeshift, root: Collection) {
-        root
-            .find(j.ImportDeclaration)
-            .forEach((path) => {
-                const { specifiers, source } = path.node
-                if (!j.Literal.check(source) || typeof source.value !== 'string') return
-
-                const sourceValue = source.value
-                this.addImportOrder(sourceValue)
-
-                if (!specifiers) {
-                    this.addBareImport(sourceValue)
-                    return
-                }
-
-                specifiers.forEach((specifier) => {
-                    if (j.ImportDefaultSpecifier.check(specifier)
-                 && j.Identifier.check(specifier.local)) {
-                        const local = specifier.local.name
-                        this.addDefaultImport(sourceValue, local)
-                    }
-
-                    if (j.ImportSpecifier.check(specifier)
-                    && j.Identifier.check(specifier.imported)
-                    && j.Identifier.check(specifier.local)
-                    ) {
-                        this.addNamedImport(
-                            sourceValue,
-                            specifier.imported.name,
-                            specifier.local.name,
-                        )
-                    }
-
-                    if (j.ImportNamespaceSpecifier.check(specifier)
-                    && j.Identifier.check(specifier.local)
-                    ) {
-                        this.addNamespaceImport(
-                            sourceValue,
-                            specifier.local.name,
-                        )
-                    }
-                })
-            })
-    }
-
-    cleanImportDeclaration(j: JSCodeshift, root: Collection) {
-        root
-            .find(j.ImportDeclaration)
-            .remove()
-    }
-
-    applyImportToRoot(j: JSCodeshift, root: Collection) {
-        this.importMap.forEach(([source, infos]) => {
-            const importStatements: ImportDeclaration[] = []
-            const variableDeclarations: VariableDeclaration[] = []
-
-            const namedImports = infos.filter(info => info.type === 'named') as NamedImport[]
-            const defaultImports = infos.filter(info => info.type === 'default') as DefaultImport[]
-            const namespaceImports = infos.filter(info => info.type === 'namespace') as NamespaceImport[]
-            const bareImports = infos.filter(info => info.type === 'bare') as BareImport[]
-
-            if (namedImports.length > 0 || defaultImports.length > 0) {
-                const [firstDefaultImport, ...restDefaultImports] = defaultImports
-
-                const importSpecifiers = [
-                    ...(firstDefaultImport ? [j.importDefaultSpecifier(j.identifier(firstDefaultImport.name))] : []),
-                    ...namedImports.map(info => j.importSpecifier(j.identifier(info.name), j.identifier(info.local))),
-                ]
-                const importDeclaration = j.importDeclaration(importSpecifiers, j.literal(source))
-                importStatements.push(importDeclaration)
-
-                if (restDefaultImports.length > 0) {
-                    const restImportDeclaration = restDefaultImports.map(info => j.importDeclaration(
-                        [j.importDefaultSpecifier(j.identifier(info.name))],
-                        j.literal(source),
-                    ))
-                    importStatements.push(...restImportDeclaration)
-                }
-            }
-
-            if (namespaceImports.length > 0) {
-                const first = namespaceImports[0]
-                const importDeclaration = j.importDeclaration(
-                    [j.importNamespaceSpecifier(j.identifier(first.name!))],
-                    j.literal(source),
-                )
-                importStatements.push(importDeclaration)
-
-                /**
-                 * Other namespace imports should be aliased to the first one
-                 */
-                if (namespaceImports.length > 1) {
-                    const variableDeclaration = j.variableDeclaration(
-                        'const',
-                        namespaceImports.slice(1).map(info => j.variableDeclarator(j.identifier(info.name!), j.identifier(first.name!))),
-                    )
-                    variableDeclarations.push(variableDeclaration)
-                }
-            }
-
-            /**
-             * Bare import is not needed if there are other imports
-             */
-            if (bareImports.length > 0) {
-                const importDeclaration = j.importDeclaration([], j.literal(source))
-                importStatements.push(importDeclaration)
-            }
-
-            if (variableDeclarations.length > 0) {
-                root.find(j.Program).get('body', 0).insertBefore(...variableDeclarations)
-            }
-
-            // insert to the top of the file
-            root.find(j.Program).get('body', 0).insertBefore(...importStatements)
-        })
-    }
-
-    dispose() {
-        this.importSourceOrder.clear()
-        this.defaultImports.clear()
-        this.namespaceImports.clear()
-        this.namedImports.clear()
-        this.bareImports.clear()
-    }
-}
-
-interface DefaultImport {
-    type: 'default'
-    name: string
-    source: string
-}
-
-interface NamespaceImport {
-    type: 'namespace'
-    name: string
-    source: string
-}
-
-interface NamedImport {
-    type: 'named'
-    name: string
-    local: string
-    source: string
-}
-
-interface BareImport {
-    type: 'bare'
-    source: string
-}
-
-type ImportInfo = DefaultImport | NamespaceImport | NamedImport | BareImport
+import type { ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, Literal, MemberExpression, VariableDeclarator } from 'jscodeshift'
 
 interface Params {
     hoist?: boolean
@@ -308,10 +55,9 @@ function transformImport(context: Context, hoist: boolean) {
      * Variable declarations will replaced in-place if needed.
      * After all, we will reconstruct the imports at the top of the file.
      */
-    const importCollector = new ImportCollector()
+    const importManager = new ImportManager()
 
-    importCollector.collectFromRoot(j, root)
-    importCollector.cleanImportDeclaration(j, root)
+    importManager.collectImportsFromRoot(j, root)
 
     /**
      * Scan through all `require` call for the recording the order of imports
@@ -330,7 +76,7 @@ function transformImport(context: Context, hoist: boolean) {
         .forEach((path) => {
             const sourceLiteral = path.node.arguments[0] as Literal
             const source = sourceLiteral.value as string
-            importCollector.addImportOrder(source)
+            importManager.addImportOrder(source)
         })
 
     /*
@@ -371,7 +117,7 @@ function transformImport(context: Context, hoist: boolean) {
 
             if (j.Identifier.check(id)) {
                 const local = id.name
-                importCollector.addDefaultImport(source, local)
+                importManager.addDefaultImport(source, local)
 
                 j(path).remove()
                 return
@@ -391,7 +137,7 @@ function transformImport(context: Context, hoist: boolean) {
                     ) {
                         const imported = property.key.name
                         const local = property.value.name
-                        importCollector.addNamedImport(source, imported, local)
+                        importManager.addNamedImport(source, imported, local)
                     }
                 })
                 j(path).remove()
@@ -426,7 +172,7 @@ function transformImport(context: Context, hoist: boolean) {
             const expression = path.node.expression as CallExpression
             const sourceLiteral = expression.arguments[0] as Literal
             const source = sourceLiteral.value as string
-            importCollector.addBareImport(source)
+            importManager.addBareImport(source)
 
             j(path).remove()
         })
@@ -483,7 +229,7 @@ function transformImport(context: Context, hoist: boolean) {
              */
             if (j.Identifier.check(id)) {
                 const local = id.name
-                importCollector.addNamedImport(source, imported, local)
+                importManager.addNamedImport(source, imported, local)
             }
 
             /**
@@ -502,7 +248,7 @@ function transformImport(context: Context, hoist: boolean) {
                  */
                 const local = generateName(imported, path.scope)
 
-                importCollector.addNamedImport(source, imported, local)
+                importManager.addNamedImport(source, imported, local)
 
                 j(path).insertAfter(j.variableDeclaration(
                     path.node.kind,
@@ -547,16 +293,14 @@ function transformImport(context: Context, hoist: boolean) {
                 const local = generateName(moduleName, path.scope)
                 j(path).replaceWith(j.identifier(local))
 
-                importCollector.addDefaultImport(source, local)
+                importManager.addDefaultImport(source, local)
             })
     }
 
     /**
      * Rebuild imports
      */
-    importCollector.applyImportToRoot(j, root)
-
-    importCollector.dispose()
+    importManager.applyImportToRoot(j, root)
 }
 
 /**
@@ -590,7 +334,6 @@ function transformExport(context: Context) {
             const previousPath = exportsMap.get(name)!
             previousPath.prune()
             exportsMap.delete(name)
-            // removeNodeOnBody(root, previous)
             console.warn(`Multiple exports of "${name}" found, only the last one will be kept`)
             // TODO: handle multiple exports
         }

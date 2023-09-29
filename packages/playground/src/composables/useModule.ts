@@ -8,6 +8,9 @@ export function useModule(id: number | string) {
         code: '',
         transformed: '',
         isEntry: true,
+        import: [],
+        export: {},
+        tags: {},
     }
 
     const [module, setModule] = useLocalStorage<TransformedModule>(`${KEY_FILE_PREFIX}${id}`, emptyModule)

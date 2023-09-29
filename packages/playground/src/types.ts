@@ -1,13 +1,9 @@
+import type { Module } from '@unminify-kit/unpacker'
+
 export type FileIdList = Array<number | string>
 
-export interface TransformedModule {
-    /** The module id */
-    id: string | number
-
-    /** Whether the module is the entry module */
-    isEntry: boolean
-
-    /** The module code */
+export type TransformedModule = Omit<Module, 'ast' | 'code'> & {
+    /** The module's code */
     code: string
 
     /** The transformed module code */

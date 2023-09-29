@@ -78,7 +78,7 @@ export function getModulesForWebpack4(j: JSCodeshift, root: Collection):
         const moduleContent = j({ type: 'Program', body: functionExpression.body.body })
         convertRequireHelpersForWebpack4(j, moduleContent)
 
-        const module = new Module(moduleId, moduleContent, entryIds.includes(moduleId))
+        const module = new Module(moduleId, j, moduleContent, entryIds.includes(moduleId))
         modules.add(module)
     })
 

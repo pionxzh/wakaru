@@ -72,7 +72,6 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
                 name: 'push',
             },
         },
-        // @ts-expect-error
         arguments: [{
             type: 'ArrayExpression',
             elements: [
@@ -108,7 +107,7 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
             convertRequireHelpersForWebpack4(j, moduleContent)
             convertRequireHelpersForWebpack5(j, moduleContent)
 
-            const module = new Module(moduleId, moduleContent, false)
+            const module = new Module(moduleId, j, moduleContent, false)
             modules.add(module)
         })
     })

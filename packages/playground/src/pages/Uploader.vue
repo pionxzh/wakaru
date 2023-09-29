@@ -16,6 +16,7 @@ import useState from '../composables/shared/useState'
 import { useCodemod } from '../composables/useCodemod'
 import { useFileIds } from '../composables/useFileIds'
 import { useModuleMapping } from '../composables/useModuleMapping'
+import { useModuleMeta } from '../composables/useModuleMeta'
 import { KEY_FILE_PREFIX } from '../const'
 import type { TransformedModule } from '../types'
 
@@ -24,6 +25,7 @@ const [isLoading, setIsLoading] = useState(false)
 const [processedCount, setProcessedCount] = useState(0)
 const { fileIds, setFileIds } = useFileIds()
 const { transform } = useCodemod()
+const { moduleMeta, setModuleMeta } = useModuleMeta()
 const { moduleMapping, setModuleMapping } = useModuleMapping()
 const router = useRouter()
 
@@ -44,44 +46,32 @@ function onSubmit() {
     startUnpack(source.value)
 }
 
+function reset() {
+    // Clear all old files
+    Object.keys(moduleMapping.value).forEach(key => localStorage.removeItem(`${KEY_FILE_PREFIX}${key}`))
+
+    setFileIds([])
+    setModuleMeta({})
+}
+
 async function startUnpack(code: string) {
     setProcessedCount(0)
     setIsLoading(true)
 
-    // Clear all old files
-    Object.keys(moduleMapping.value).forEach(key => localStorage.removeItem(`${KEY_FILE_PREFIX}${key}`))
-    setFileIds([])
+    reset()
 
     // TODO: Move to worker
-    const result = unpack(code)
-
-    // If we failed to unpack, we'll just treat the input as a single module
-    if (!result) {
-        const module = {
-            id: 0,
-            isEntry: true,
-            code,
-            transformed: code,
-        }
-        localStorage.setItem(`${KEY_FILE_PREFIX}${module.id}`, JSON.stringify(module))
-        setModuleMapping({
-            0: 'entry.js',
-        })
-        setFileIds([0])
-        setIsLoading(false)
-
-        router.push({ name: 'file', params: { id: '0' } })
-        return
-    }
-
-    const { modules, moduleIdMapping } = result
+    const { modules, moduleIdMapping } = unpack(code)
     const unpackedModules = modules.map<TransformedModule>((module) => {
-        const { id, isEntry, code } = module
+        const { id, isEntry, code, tags } = module
         return {
             id,
             isEntry,
             code,
             transformed: code,
+            import: module.import,
+            export: module.export,
+            tags,
         }
     })
 
@@ -90,35 +80,45 @@ async function startUnpack(code: string) {
         ...unpackedModules.filter(module => !module.isEntry).map(module => module.id),
     ])
 
+    setModuleMeta(
+        unpackedModules.reduce((acc, mod) => {
+            acc[mod.id] = {
+                import: mod.import,
+                export: mod.export,
+                tags: mod.tags,
+            }
+            return acc
+        }, moduleMeta.value),
+    )
+
     const newModuleMapping = unpackedModules.reduce((acc, mod) => {
         acc[mod.id] = getDepName(mod)
         return acc
     }, moduleIdMapping)
 
-    // try to preserve the old mapping
+    // try to preserve the old mapping if possible
     if (Object.keys(newModuleMapping).length !== Object.keys(moduleMapping.value).length) {
         setModuleMapping(newModuleMapping)
     }
 
-    const transformations = [
+    const rules = [
         'un-sequence-expression1',
         'un-variable-merging',
         'prettier',
     ]
     const mapping = moduleMapping.value
-    await Promise.all(
-        unpackedModules.map(async (module) => {
-            const moduleName = mapping[module.id]
-            // Do a pre-formatting pass to improve the readability of the code
-            const result = await transform(moduleName, module, transformations, mapping)
-            module.code = result.transformed
-            module.transformed = result.transformed
 
-            setProcessedCount(count => count + 1)
+    for (const module of unpackedModules) {
+        const moduleName = mapping[module.id]
+        // Do a pre-formatting to improve the readability of the code
+        const result = await transform(moduleName, module, rules, moduleMeta.value, mapping)
+        module.code = result.transformed
+        module.transformed = result.transformed
 
-            localStorage.setItem(`${KEY_FILE_PREFIX}${module.id}`, JSON.stringify(module))
-        }),
-    )
+        setProcessedCount(count => count + 1)
+
+        localStorage.setItem(`${KEY_FILE_PREFIX}${module.id}`, JSON.stringify(module))
+    }
 
     setIsLoading(false)
 

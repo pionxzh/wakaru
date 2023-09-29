@@ -1,39 +1,42 @@
 <script setup lang="ts">
 import { TransitionRoot } from '@headlessui/vue'
-import { transformationMap } from '@unminify-kit/unminify'
 import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import Card from '../components/Card.vue'
 import CodemirrorEditor from '../components/CodemirrorEditor.vue'
-import { useLocalStorage } from '../composables/shared/useLocalStorage'
 import useState from '../composables/shared/useState'
 import { useCodemod } from '../composables/useCodemod'
 import { useModule } from '../composables/useModule'
 import { useModuleMapping } from '../composables/useModuleMapping'
+import { useModuleMeta } from '../composables/useModuleMeta'
+import { useTransformationRules } from '../composables/useTransformationRules'
 
 const { params: { id } } = useRoute()
 const { module, setModule } = useModule(id as string)
+const { moduleMeta } = useModuleMeta()
 const { moduleMapping } = useModuleMapping()
 
 const [openSideBar, setOpenSideBar] = useState(false)
-const transformations = Object.keys(transformationMap)
-const [enabledTransformations] = useLocalStorage('app:transformations', transformations)
-function toggleTransformation(transformation: string) {
-    if (enabledTransformations.value.includes(transformation)) {
-        enabledTransformations.value = enabledTransformations.value.filter(t => t !== transformation && transformations.includes(t))
+
+const { enabledRules, setEnabledRules, allRules } = useTransformationRules()
+function toggleRules(transformation: string) {
+    if (enabledRules.value.includes(transformation)) {
+        const newRules = enabledRules.value.filter(t => t !== transformation && allRules.includes(t))
+        setEnabledRules(newRules)
     }
     else {
-        enabledTransformations.value = [...enabledTransformations.value, transformation]
-            .filter(t => transformations.includes(t))
-            .sort((a, b) => transformations.indexOf(a) - transformations.indexOf(b))
+        const newRules = [...enabledRules.value, transformation]
+            .filter(t => allRules.includes(t))
+            .sort((a, b) => allRules.indexOf(a) - allRules.indexOf(b))
+        setEnabledRules(newRules)
     }
 }
 
 const { transform } = useCodemod()
 const moduleName = computed(() => moduleMapping.value[module.value.id])
 
-watch([enabledTransformations, () => module.value.code], async () => {
-    const result = await transform(moduleName.value, module.value, enabledTransformations.value, moduleMapping.value)
+watch([enabledRules, () => module.value.code], async () => {
+    const result = await transform(moduleName.value, module.value, enabledRules.value, moduleMeta.value, moduleMapping.value)
     setModule({ ...module.value, transformed: result.transformed })
 }, { immediate: true })
 </script>
@@ -110,28 +113,28 @@ watch([enabledTransformations, () => module.value.code], async () => {
             <Card title="Rules" class="h-full overflow-y-auto">
                 <div class="flex flex-col space-y-1 w-full">
                     <div
-                        v-for="transformation in transformations"
-                        :key="transformation"
+                        v-for="rule in allRules"
+                        :key="rule"
                         class="flex cursor-pointer rounded-lg px-4 py-2 shadow-md focus:outline-none select-none
                             transition duration-75
                             bg-white bg-opacity-10 hover:bg-opacity-20"
-                        @click="toggleTransformation(transformation)"
+                        @click="toggleRules(rule)"
                     >
                         <div class="flex-1">
-                            {{ transformation }}
+                            {{ rule }}
                         </div>
                         <svg
                             class="h-6 w-6"
                             :class="{
-                                'text-green-500 dark:text-green-600': enabledTransformations.includes(transformation),
-                                'text-black dark:text-gray-900': !enabledTransformations.includes(transformation),
+                                'text-green-500 dark:text-green-600': enabledRules.includes(rule),
+                                'text-black dark:text-gray-900': !enabledRules.includes(rule),
                             }"
                             viewBox="0 0 24 24"
                             fill="none"
                         >
                             <circle cx="12" cy="12" r="12" fill="currentColor" fill-opacity="1" />
                             <path
-                                v-if="enabledTransformations.includes(transformation)"
+                                v-if="enabledRules.includes(rule)"
                                 d="M7 13l3 3 7-7" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
                             />
                         </svg>

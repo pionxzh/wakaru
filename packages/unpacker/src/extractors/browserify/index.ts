@@ -82,7 +82,7 @@ export function getModulesFromBrowserify(j: JSCodeshift, root: Collection):
 
             const moduleContent = j({ type: 'Program', body: moduleFactory.body.body })
             const isEntry = entryIds.includes(moduleId)
-            const module = new Module(moduleId, moduleContent, isEntry)
+            const module = new Module(moduleId, j, moduleContent, isEntry)
             modules.add(module)
 
             moduleMap.properties.forEach((property) => {

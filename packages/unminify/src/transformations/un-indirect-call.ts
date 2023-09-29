@@ -1,9 +1,8 @@
-import { isTopLevel } from '@unminify-kit/ast-utils'
+import { ImportManager, isTopLevel } from '@unminify-kit/ast-utils'
 import { generateName } from '../utils/identifier'
 import { insertAfter } from '../utils/insert'
 import { removeDefaultImportIfUnused } from '../utils/scope'
 import wrap from '../wrapAstTransformation'
-import { ImportCollector } from './un-esm'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
 import type { Identifier, MemberExpression, ObjectPattern, Property, SequenceExpression } from 'jscodeshift'
@@ -51,8 +50,8 @@ export const transformAST: ASTTransformation = (context) => {
     const rootScope = root.find(j.Program).get().scope as Scope | null
     if (!rootScope) return
 
-    const importCollector = new ImportCollector()
-    importCollector.collectFromRoot(j, root)
+    const importManager = new ImportManager()
+    importManager.collectImportsFromRoot(j, root)
 
     /**
      * Adding imports one by one will cause scope issues.
@@ -108,10 +107,10 @@ export const transformAST: ASTTransformation = (context) => {
                 return
             }
 
-            const defaultImport = importCollector.getDefaultImport(defaultSpecifierName)
+            const defaultImport = importManager.getDefaultImport(defaultSpecifierName)
             if (defaultImport) {
                 const source = defaultImport[0]
-                const namedImportLocalName = [...importCollector.namedImports.get(source)?.get(namedSpecifierName) ?? []][0]
+                const namedImportLocalName = [...importManager.namedImports.get(source)?.get(namedSpecifierName) ?? []][0]
                 if (namedImportLocalName) {
                     replaceMapping.set(key, namedImportLocalName)
                     const newCallExpression = j.callExpression(j.identifier(namedImportLocalName), node.arguments)
@@ -119,8 +118,8 @@ export const transformAST: ASTTransformation = (context) => {
                     return
                 }
 
-                const namedSpecifierLocalName = generateName(namedSpecifierName, rootScope, importCollector.getAllLocals())
-                importCollector.addNamedImport(source, namedSpecifierName, namedSpecifierLocalName)
+                const namedSpecifierLocalName = generateName(namedSpecifierName, rootScope, importManager.getAllLocals())
+                importManager.addNamedImport(source, namedSpecifierName, namedSpecifierLocalName)
                 replaceMapping.set(key, namedSpecifierLocalName)
 
                 const newCallExpression = j.callExpression(j.identifier(namedSpecifierLocalName), node.arguments)
@@ -200,16 +199,13 @@ export const transformAST: ASTTransformation = (context) => {
             }
         })
 
-    importCollector.cleanImportDeclaration(j, root)
-    importCollector.applyImportToRoot(j, root)
+    importManager.applyImportToRoot(j, root)
 
-    importCollector.defaultImports.forEach((defaultImport) => {
+    importManager.defaultImports.forEach((defaultImport) => {
         defaultImport.forEach((specifier) => {
             removeDefaultImportIfUnused(j, root, specifier)
         })
     })
-
-    importCollector.dispose()
 }
 
 export default wrap(transformAST)

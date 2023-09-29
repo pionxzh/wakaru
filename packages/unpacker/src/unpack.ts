@@ -4,7 +4,7 @@ import jscodeshift from 'jscodeshift'
 import getParser from 'jscodeshift/src/getParser'
 import { getModulesFromBrowserify } from './extractors/browserify'
 import { getModulesFromWebpack } from './extractors/webpack'
-import type { Module } from './Module'
+import { Module } from './Module'
 import type { ModuleMapping } from './ModuleMapping'
 
 /**
@@ -14,7 +14,7 @@ import type { ModuleMapping } from './ModuleMapping'
 export function unpack(sourceCode: string): {
     modules: Module[]
     moduleIdMapping: ModuleMapping
-} | null {
+} {
     const parser = getParser()
     const j = jscodeshift.withParser(parser)
     const root = j(sourceCode)
@@ -23,8 +23,12 @@ export function unpack(sourceCode: string): {
         || getModulesFromBrowserify(j, root)
 
     if (!result) {
-        console.error('Failed to locate modules')
-        return null
+        // Fallback to a single module
+        const module = new Module(0, j, root, true)
+        return {
+            modules: [module],
+            moduleIdMapping: {},
+        }
     }
 
     const { modules, moduleIdMapping } = result
