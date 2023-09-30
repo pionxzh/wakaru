@@ -1,3 +1,4 @@
+import { findReferences } from '@unminify-kit/ast-utils'
 import { generateName } from '../utils/identifier'
 import { nonNull } from '../utils/utils'
 import wrap from '../wrapAstTransformation'
@@ -36,7 +37,8 @@ export const transformAST: ASTTransformation = (context) => {
             const { body } = path.node
             const scope = path.scope
             if (!scope) return
-            handleSmartInline(j, body, scope)
+            handleDestructuring(j, body, scope)
+            handleTempVariableInline(j, body, scope)
         })
 
     root
@@ -45,11 +47,12 @@ export const transformAST: ASTTransformation = (context) => {
             const { body } = path.node
             const scope = path.scope
             if (!scope) return
-            handleSmartInline(j, body, scope)
+            handleDestructuring(j, body, scope)
+            handleTempVariableInline(j, body, scope)
         })
 }
 
-function handleSmartInline(j: JSCodeshift, body: StatementKind[], scope: Scope) {
+function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope) {
     const objectPropertyMap = new Map<string, Set<string>>()
     const objectDeclarationMap = new Map<string, Array<VariableDeclaration | ExpressionStatement>>()
 
@@ -269,6 +272,54 @@ function handleSmartInline(j: JSCodeshift, body: StatementKind[], scope: Scope) 
         ])
         body.splice(insertIndex, 0, destructuring)
     })
+}
+
+/**
+ * Inline temp variable if it's only used once in variable assignment.
+ *
+ * @example
+ * const _ref = target
+ * const a = _ref
+ * ->
+ * const a = target
+ */
+function handleTempVariableInline(j: JSCodeshift, body: StatementKind[], scope: Scope) {
+    if (body.length <= 2) return
+
+    const statementsToRemove = new Set<StatementKind>()
+
+    for (let i = 1; i < body.length; i++) {
+        const prevStatement = body[i - 1]
+        const statement = body[i]
+        if (isOnlyDeclarator(j, prevStatement) && isOnlyDeclarator(j, statement)) {
+            if (prevStatement.kind !== 'const' || statement.kind !== 'const') continue
+
+            const prevDeclarator = prevStatement.declarations[0] as VariableDeclarator
+            const declarator = statement.declarations[0] as VariableDeclarator
+            if (!j.Identifier.check(prevDeclarator.id) || !j.Identifier.check(declarator.init)) continue
+            // is the previous id same as current init?
+            if (prevDeclarator.id.name !== declarator.init.name) continue
+
+            // if the previous id is used more than once, don't inline
+            if (findReferences(j, scope, declarator.init.name).size() > 2) continue
+
+            const newVariableDeclarator = j.variableDeclarator(declarator.id, prevDeclarator.init)
+            const newVariableDeclaration = j.variableDeclaration('const', [newVariableDeclarator])
+            body[i] = newVariableDeclaration
+            statementsToRemove.add(prevStatement)
+        }
+    }
+
+    statementsToRemove.forEach((statement) => {
+        const index = body.indexOf(statement)
+        if (index > -1) body.splice(index, 1)
+    })
+}
+
+function isOnlyDeclarator(j: JSCodeshift, statement: StatementKind): statement is VariableDeclaration {
+    return j.VariableDeclaration.check(statement)
+        && statement.declarations.length === 1
+        && j.VariableDeclarator.check(statement.declarations[0])
 }
 
 export default wrap(transformAST)

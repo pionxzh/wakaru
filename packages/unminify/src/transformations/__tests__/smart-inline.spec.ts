@@ -3,7 +3,36 @@ import transform from '../smart-inline'
 
 const inlineTest = defineInlineTest(transform)
 
-inlineTest('property destructuring #1',
+inlineTest('inline temp variable assignment',
+  `
+
+const t = e;
+const n = t;
+
+const o = 1;
+const r = o;
+const g = r;
+`,
+  `
+const n = e;
+const g = 1;
+`,
+)
+
+inlineTest('inline temp variable assignment - should not inline if used more than once',
+  `
+const t = e;
+const n = t;
+const o = t;
+`,
+  `
+const t = e;
+const n = t;
+const o = t;
+`,
+)
+
+inlineTest('property destructuring',
   `
 const t = e.x;
 const n = e.y;
@@ -23,7 +52,28 @@ console.log(x, y, color);
 `,
 )
 
-inlineTest('property destructuring #2',
+inlineTest('property destructuring - with temp variable inlined',
+  `
+const e = source;
+const t = e.x;
+const n = e.y;
+const r = e.color;
+e.type;
+console.log(t, n, r);
+`,
+  `
+const {
+  x,
+  y,
+  color,
+  type
+} = source;
+
+console.log(x, y, color);
+`,
+)
+
+inlineTest('property destructuring - duplicate properties',
   `
 const t = e.size;
 const n = e.size;
@@ -42,7 +92,7 @@ console.log(size, size, color, color);
 `,
 )
 
-inlineTest('property destructuring #3',
+inlineTest('property destructuring - resolve naming conflicts #2',
   `
 const n = e.size;
 const r = e.color;
@@ -67,7 +117,7 @@ console.log(size, color, size$0, color$0);
 `,
 )
 
-inlineTest('array destructuring #1',
+inlineTest('array destructuring',
   `
 const t = e[0];
 const n = e[1];
@@ -80,7 +130,21 @@ console.log(t, n, r);
 `,
 )
 
-inlineTest('array destructuring #2',
+inlineTest('array destructuring - with temp variable inlined',
+  `
+const e = source;
+const t = e[0];
+const n = e[1];
+const r = e[2];
+console.log(t, n, r);
+`,
+  `
+const [t, n, r] = source;
+console.log(t, n, r);
+`,
+)
+
+inlineTest('array destructuring - with gaps',
   `
 const t = e[0];
 const n = e[2];
@@ -92,5 +156,17 @@ console.log(t, n, r, g);
 const [t,, n,, r] = e;
 const g = e[99];
 console.log(t, n, r, g);
+`,
+)
+
+inlineTest('array destructuring - not starting from 0',
+  `
+const t = e[1];
+const n = e[2];
+console.log(t, n);
+`,
+  `
+const [, t, n] = e;
+console.log(t, n);
 `,
 )
