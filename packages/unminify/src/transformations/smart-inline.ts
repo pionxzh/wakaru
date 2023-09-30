@@ -1,6 +1,5 @@
 import { findReferences } from '@unminify-kit/ast-utils'
 import { generateName } from '../utils/identifier'
-import { nonNull } from '../utils/utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { StatementKind } from 'ast-types/lib/gen/kinds'
@@ -251,8 +250,6 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
     })
 
     objectIndexMap.forEach((indexAccesses, objectName) => {
-        if (indexAccesses.filter(nonNull).length <= 1) return
-
         let insertIndex = body.length
         indexAccesses.forEach((variableName) => {
             const variableDecl = variableDeclarationMap.get(variableName)
