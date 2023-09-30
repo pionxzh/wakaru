@@ -40,82 +40,88 @@ var str = Object.prototype.toString;
  * @return {bool}
  */
 
-module.exports = isArray || function (val) {
-  return !! val && '[object Array]' == str.call(val);
-};",
+module.exports =
+  isArray ||
+  function (val) {
+    return !!val && \\"[object Array]\\" == str.call(val);
+  };
+",
     "id": 1,
     "isEntry": false,
   },
   {
-    "code": "const isArray = require('is-array')
+    "code": "const isArray = require(\\"is-array\\");
 
-const pi = 3.14
+const pi = 3.14;
 
-module.exports.pi = pi
+module.exports.pi = pi;
 
 class Calculator {
-    add(a, b) {
-        return a + b
-    }
+  add(a, b) {
+    return a + b;
+  }
 
-    sub(a, b) {
-        return a - b
-    }
+  sub(a, b) {
+    return a - b;
+  }
 
-    sum(arr) {
-        if (!isArray(arr)) throw new Error('Argument must be an array')
-        return arr.reduce((a, b) => a + b, 0)
-    }
+  sum(arr) {
+    if (!isArray(arr)) throw new Error(\\"Argument must be an array\\");
+    return arr.reduce((a, b) => a + b, 0);
+  }
 
-    pi() {
-        return pi
-    }
+  pi() {
+    return pi;
+  }
 }
 
-module.exports.Calculator = Calculator
+module.exports.Calculator = Calculator;
 
-module.exports.mul = (a, b) => a * b
+module.exports.mul = (a, b) => a * b;
 
 function div(a, b) {
-    return a / b
+  return a / b;
 }
 
-module.exports.div = div
+module.exports.div = div;
 
-const isArr = arr => isArray(arr)
+const isArr = (arr) => isArray(arr);
 
-module.exports.isArr = isArr",
+module.exports.isArr = isArr;
+",
     "id": 2,
     "isEntry": false,
   },
   {
-    "code": "const { add, pi } = require('./calculator')
+    "code": "const { add, pi } = require(\\"./calculator\\");
 
 class Greeting {
-    constructor(name) {
-        this.name = name
-    }
+  constructor(name) {
+    this.name = name;
+  }
 
-    sayHello() {
-        console.log(\`Hello \${this.name}. Your lucky number is \${add(pi, 2)}\`)
-    }
+  sayHello() {
+    console.log(\`Hello \${this.name}. Your lucky number is \${add(pi, 2)}\`);
+  }
 }
 
-module.exports = Greeting",
+module.exports = Greeting;
+",
     "id": 3,
     "isEntry": false,
   },
   {
-    "code": "const { Calculator, div, mul, pi } = require('./calculator')
-const Greeting = require('./greeting')
+    "code": "const { Calculator, div, mul, pi } = require(\\"./calculator\\");
+const Greeting = require(\\"./greeting\\");
 
-const cal = new Calculator()
-console.log(cal.add(pi, 2))
-console.log(mul(1, 2))
-console.log(div(1, 2))
+const cal = new Calculator();
+console.log(cal.add(pi, 2));
+console.log(mul(1, 2));
+console.log(div(1, 2));
 
-const greeting = new Greeting('John')
-greeting.sayHello()",
+const greeting = new Greeting(\\"John\\");
+greeting.sayHello();
+",
     "id": 4,
     "isEntry": true,
   },

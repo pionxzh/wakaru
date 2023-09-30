@@ -1,6 +1,13 @@
 import { readFile } from 'node:fs/promises'
+import babelParser from 'prettier/parser-babel'
+import prettier from 'prettier/standalone'
 import { describe, expect, it } from 'vitest'
 import { unpack } from '../src'
+
+const format = (code: string) => prettier.format(code, {
+    parser: 'babel',
+    plugins: [babelParser],
+})
 
 describe('Browserify', () => {
     it('testcases/browserify', async () => {
@@ -12,8 +19,7 @@ describe('Browserify', () => {
 
         expect(result.modules.length).toBe(4)
 
-        const modules = [...result.modules.values()]
-            .map(({ id, isEntry, code }) => ({ id, isEntry, code }))
+        const modules = result.modules.map(({ id, isEntry, code }) => ({ id, isEntry, code: format(code) }))
         expect(modules).toMatchSnapshot()
     })
 })
