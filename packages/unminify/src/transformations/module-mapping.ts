@@ -1,5 +1,6 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ModuleMapping } from '@unminify-kit/ast-utils'
 import type { Literal } from 'jscodeshift'
 
 /**
@@ -9,7 +10,7 @@ import type { Literal } from 'jscodeshift'
  * const a = require('index.js')
  */
 interface Params {
-    moduleMapping: Record<number | string, string>
+    moduleMapping: ModuleMapping
 }
 export const transformAST: ASTTransformation<Params> = (context, params = { moduleMapping: {} }) => {
     const { root, j } = context

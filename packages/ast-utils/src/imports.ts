@@ -1,5 +1,7 @@
+import { isNumber, isString } from './isPrimitive'
+import { isTopLevel } from './isTopLevel'
 import type { NodePath } from 'ast-types/lib/node-path'
-import type { Collection, ImportDeclaration, JSCodeshift, VariableDeclaration } from 'jscodeshift'
+import type { CallExpression, Collection, ImportDeclaration, JSCodeshift, Literal, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 type Source = string
 type Imported = string
@@ -159,7 +161,7 @@ export class ImportManager {
         ]
     }
 
-    collectImportsFromRoot(j: JSCodeshift, root: Collection) {
+    collectEsModuleImport(j: JSCodeshift, root: Collection) {
         root
             .find(j.ImportDeclaration)
             .forEach((path) => {
@@ -201,6 +203,69 @@ export class ImportManager {
                     }
                 })
                 this.importDecls.push(path)
+            })
+    }
+
+    collectCommonJsImport(j: JSCodeshift, root: Collection) {
+        /**
+         * Basic require and require with destructuring
+         *
+         * @example
+         * var foo = require('foo')
+         * var { bar } = require('bar')
+         */
+        root
+            .find(j.VariableDeclaration, {
+                declarations: [
+                    {
+                        type: 'VariableDeclarator',
+                        init: {
+                            type: 'CallExpression',
+                            callee: {
+                                type: 'Identifier',
+                                name: 'require',
+                            },
+                            arguments: [{
+                                type: 'Literal' as const,
+                                value: (value: unknown) => isString(value) || isNumber(value),
+                            }],
+                        },
+                    },
+                ],
+            })
+            .forEach((path) => {
+                if (!isTopLevel(j, path)) return
+
+                const firstDeclaration = path.node.declarations[0] as VariableDeclarator
+                const id = firstDeclaration.id
+                const init = firstDeclaration.init as CallExpression
+
+                const sourceLiteral = init.arguments[0] as Literal
+                const source = sourceLiteral.value as string
+
+                if (j.Identifier.check(id)) {
+                    const local = id.name
+                    this.addDefaultImport(source, local)
+                    return
+                }
+
+                /**
+                 * var { bar } = require('bar')
+                 */
+                if (j.ObjectPattern.check(id)) {
+                    id.properties.forEach((property) => {
+                        if (j.Property.check(property)
+                         && j.Identifier.check(property.key)
+                         && j.Identifier.check(property.value)
+                        ) {
+                            const imported = property.key.name
+                            const local = property.value.name
+                            this.addNamedImport(source, imported, local)
+                        }
+                    })
+                    // eslint-disable-next-line no-useless-return
+                    return
+                }
             })
     }
 

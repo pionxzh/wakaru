@@ -22,6 +22,7 @@ import unNumericLiteral from './un-numeric-literal'
 import unOptionalChaining from './un-optional-chaining'
 import unParameters from './un-parameters'
 import unReturn from './un-return'
+import unRuntimeHelper from './un-runtime-helper'
 import unSequenceExpression from './un-sequence-expression'
 import unTemplateLiteral from './un-template-literal'
 import unTypeConstructor from './un-type-constructor'
@@ -42,6 +43,7 @@ export const transformationMap: {
     lebab,
     'un-esm': unEsm,
     'un-export-rename': unExportRename,
+    'un-runtime-helper': unRuntimeHelper,
     'un-use-strict': unUseStrict,
     'un-esmodule-flag': unEsModuleFlag,
     'un-boolean': unBoolean,

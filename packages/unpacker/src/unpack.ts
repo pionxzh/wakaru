@@ -5,7 +5,8 @@ import getParser from 'jscodeshift/src/getParser'
 import { getModulesFromBrowserify } from './extractors/browserify'
 import { getModulesFromWebpack } from './extractors/webpack'
 import { Module } from './Module'
-import type { ModuleMapping } from './ModuleMapping'
+import { postScanRuntime, scanExports, scanImports, scanRuntime } from './module-scan'
+import type { ModuleMapping } from '@unminify-kit/ast-utils'
 
 /**
  * Unpacks the given source code from supported bundlers.
@@ -21,20 +22,30 @@ export function unpack(sourceCode: string): {
 
     const result = getModulesFromWebpack(j, root)
         || getModulesFromBrowserify(j, root)
-
-    if (!result) {
         // Fallback to a single module
-        const module = new Module(0, j, root, true)
-        return {
-            modules: [module],
-            moduleIdMapping: {},
+        || {
+            modules: new Set([new Module(0, root, true)]),
+            moduleIdMapping: {
+                0: 'entry.js',
+            },
         }
-    }
 
     const { modules, moduleIdMapping } = result
 
+    modules.forEach((module) => {
+        scanImports(j, module)
+        scanExports(j, module)
+    })
+
+    modules.forEach((module) => {
+        scanRuntime(j, module)
+    })
+
+    const modulesArray = [...modules]
+    postScanRuntime(j, modulesArray)
+
     return {
-        modules: [...modules],
+        modules: modulesArray,
         moduleIdMapping,
     }
 }

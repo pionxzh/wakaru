@@ -111,6 +111,9 @@ importers:
       '@heroicons/vue':
         specifier: ^2.0.18
         version: 2.0.18(vue@3.3.4)
+      '@unminify-kit/ast-utils':
+        specifier: workspace:*
+        version: link:../ast-utils
       '@unminify-kit/unminify':
         specifier: workspace:*
         version: link:../unminify

@@ -1,18 +1,24 @@
-import { getTopLevelStatements } from '@unminify-kit/ast-utils'
+import { isTopLevel } from '@unminify-kit/ast-utils'
 import type { Module } from '../Module'
-import type { ArrowFunctionExpression, FunctionDeclaration, FunctionExpression, JSCodeshift } from 'jscodeshift'
+import type { ArrowFunctionExpression, FunctionDeclaration, FunctionExpression, JSCodeshift, Statement } from 'jscodeshift'
 
 const moduleMatchers: Record<string, Array<string | RegExp | Array<string | RegExp>>> = {
+    '@babel/runtime/helpers/arrayLikeToArray': [
+        /for\s?\(var \w+\s?=\s?0,\s?\w+\s?=\s?(new\s)?Array\(\w+\);\s?\w+\s?<\s?\w+;\s?\w+\+\+\)\s?\w+\[\w+\]\s?=\s?\w+\[\w+\]/,
+    ],
+    '@babel/runtime/helpers/arrayWithHoles': [
+        /{(\r\n|\r|\n)?(\s+)?if\s?\(Array\.isArray\(\w+\)\)\s?return\s?\w+;?(\r\n|\r|\n)?(\s+)?}/,
+    ],
     '@babel/runtime/helpers/classCallCheck': [
         'throw new TypeError("Cannot call a class as a function")',
     ],
     '@babel/runtime/helpers/createForOfIteratorHelperLoose': [
-        'throw new TypeError("Invalid attempt to iterate non-iterable instance.\\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.");',
+        'throw new TypeError("Invalid attempt to iterate non-iterable instance.\\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.")',
     ],
     '@babel/runtime/helpers/createForOfIteratorHelper': [
         [
             /if\s?\(!\w+\s?&&\s?\w+\.return\s?!=\s?null\)\s?\w+\.return\(\)/,
-            'throw new TypeError("Invalid attempt to iterate non-iterable instance.\\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.");',
+            'throw new TypeError("Invalid attempt to iterate non-iterable instance.\\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.")',
         ],
     ],
     '@babel/runtime/helpers/inherits': [
@@ -22,10 +28,10 @@ const moduleMatchers: Record<string, Array<string | RegExp | Array<string | RegE
         /if\s?\(typeof\sSymbol\s?!==\s?"undefined"\s?&&\s?\w+\[Symbol\.iterator\]\s?!=\s?null\s?\|\|\s?\w+\["@@iterator"\]\s?!=\s?null\)\s?return\sArray\.from\(\w+\)/,
     ],
     '@babel/runtime/helpers/iterableToArrayLimit': [
-        /var \w=null==\w\?null:"undefined"!=typeof Symbol&&r\[Symbol\.iterator\]\|\|\w\["@@iterator"\]/,
+        /\w+\s?=\s?null\s?==\s?\w+\s?\?\s?null\s?:\s?"undefined"\s?!=\s?typeof Symbol\s?&&\s?\w+\[Symbol\.iterator\]\s?\|\|\s?\w+\["@@iterator"\]/,
     ],
     '@babel/runtime/helpers/iterableToArrayLimitLoose': [
-        /var \w=\w\s?&&\s?\("undefined"\s?!=\s?typeof Symbol\s?&&\s?e\[Symbol\.iterator]\s?\|\|\s?\w\["@@iterator"\]\)/,
+        /\w+\s?=\s?\w+\s?&&\s?\("undefined"\s?!=\s?typeof Symbol\s?&&\s?\w+\[Symbol\.iterator]\s?\|\|\s?\w+\["@@iterator"\]\)/,
     ],
     '@babel/runtime/helpers/newArrowCheck': [
         'throw new TypeError("Cannot instantiate an arrow function")',
@@ -169,9 +175,12 @@ const moduleDeps: Record<string, string[] | undefined> = {
     ],
 }
 
+/**
+ * Scan all top level functions and mark tags based on the content of the function.
+ */
 export function scanBabelRuntime(j: JSCodeshift, module: Module) {
     const root = module.ast
-    const statements = getTopLevelStatements(root)
+    const statements = root.get().node.body as Statement[]
     const functions = statements.filter((node): node is FunctionExpression | FunctionDeclaration | ArrowFunctionExpression => {
         return j.FunctionDeclaration.check(node)
             || j.ArrowFunctionExpression.check(node)
@@ -183,7 +192,7 @@ export function scanBabelRuntime(j: JSCodeshift, module: Module) {
 
         const code = j(func).toSource()
 
-        const collectedTags = new Set(Object.keys(moduleMatchers)
+        const collectedTags = [...new Set(Object.keys(moduleMatchers)
             .filter((moduleName) => {
                 const matchers = moduleMatchers[moduleName]
                 return matchers.some((matcher) => {
@@ -207,18 +216,125 @@ export function scanBabelRuntime(j: JSCodeshift, module: Module) {
                     return false
                 })
             }),
-        )
+        )]
 
         /**
          * Module's dependencies might be inlined by compiler.
          * So we need to remove scanned tag that are dependent
          * of other scanned tags.
          */
-        const _collectedTags = [...collectedTags]
-        const tagsDependencies = _collectedTags.flatMap(tag => moduleDeps[tag] ?? [])
-        const tags = _collectedTags.filter(tag => !tagsDependencies.includes(tag))
+        const tagsDependencies = collectedTags.flatMap(tag => moduleDeps[tag] ?? [])
+        const tags = collectedTags.filter(tag => !tagsDependencies.includes(tag))
 
         module.tags[functionName] ??= []
         module.tags[functionName].push(...tags)
+    })
+}
+
+/**
+ * Go through all tagged functions and check for the usage of other tagged functions.
+ * If a tagged function is used, then we need to add the tag to the function.
+ * In the end, we will have a complete list of tags for each function, so that
+ * we have a chance to change the tags to their upper level functions.
+ */
+export function postScanBabelRuntime(j: JSCodeshift, modules: Module[]) {
+    modules.forEach((module) => {
+        const { ast: root, import: imports } = module
+        const rootScope = root.get().scope
+
+        const taggedImportLocals = new Map<string, string[]>()
+        imports.forEach((imp) => {
+            if (imp.type === 'bare' || imp.type === 'namespace') return
+
+            const targetModule = modules.find(m => m.id.toString() === imp.source.toString())
+            if (!targetModule || Object.keys(targetModule.tags).length === 0) return
+
+            if (imp.type === 'named') {
+                const targetTags = targetModule.tags[imp.name]
+                if (!targetTags || targetTags.length === 0) return
+                taggedImportLocals.set(imp.local, targetTags)
+                return
+            }
+
+            if (imp.type === 'default') {
+                const targetTags = targetModule.tags.default
+                if (targetTags && targetTags.length !== 0) {
+                    taggedImportLocals.set(imp.name, targetTags)
+                }
+
+                Object.entries(targetModule.export).forEach(([exportName, exportLocalName]) => {
+                    const targetTags = targetModule.tags[exportLocalName]
+                    // TODO: Currently we didn't pull in dependent's imported tags.
+                    // We might need to build a module graph and start from the leaf.
+                    if (!targetTags || targetTags.length === 0) return
+                    taggedImportLocals.set(`${imp.name}.${exportName}`, targetTags)
+                })
+            }
+        }, {} as Record<string, string[]>)
+
+        const functionPaths = [
+            ...root.find(j.FunctionDeclaration).filter(p => isTopLevel(j, p)).paths(),
+            ...root.find(j.ArrowFunctionExpression).filter(p => isTopLevel(j, p)).paths(),
+        ]
+
+        functionPaths.forEach((func) => {
+            const functionName = func.node.id?.name
+            if (!functionName || typeof functionName !== 'string') return
+
+            taggedImportLocals.forEach((tags, localName) => {
+                const [importObj, importProp] = localName.split('.')
+                const isReferenced = localName.includes('.')
+                    ? j(func)
+                        .find(j.MemberExpression, {
+                            object: { name: importObj },
+                            property: { name: importProp },
+                        })
+                        .filter((path) => {
+                            const scope = path.scope?.lookup(importObj)
+                            return scope === rootScope
+                        })
+                        .size() > 0
+                    : j(func)
+                        .find(j.Identifier, { name: localName })
+                        .filter((path) => {
+                            const scope = path.scope?.lookup(localName)
+                            return scope === rootScope
+                        })
+                        .size() > 0
+
+                if (isReferenced) {
+                    module.tags[functionName] ??= []
+                    module.tags[functionName].push(...tags)
+                }
+            })
+
+            if (module.tags[functionName]?.length === 0) return
+
+            /**
+             * Try to combine tags based on dependencies.
+             */
+            const moduleTag = module.tags[functionName]!
+            let score = 0
+            let matchedTag: string | null = null
+            Object.entries(moduleDeps).forEach(([tag, deps]) => {
+                if (!deps) return
+                const allMatch = deps.every((dep) => {
+                    return moduleTag.includes(dep)
+                })
+                // TODO: we can further improve the scoring algorithm.
+                if (allMatch && deps.length > score) {
+                    score = deps.length
+                    matchedTag = tag
+                }
+            })
+            if (matchedTag) {
+                const deps = moduleDeps[matchedTag]!
+                deps.forEach((dep) => {
+                    const index = moduleTag.indexOf(dep)
+                    moduleTag.splice(index, 1)
+                })
+                moduleTag.unshift(matchedTag, ...deps.map(dep => `- ${dep}`))
+            }
+        })
     })
 }

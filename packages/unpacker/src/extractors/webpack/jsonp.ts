@@ -1,7 +1,7 @@
 import { renameFunctionParameters } from '@unminify-kit/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack4, convertRequireHelpersForWebpack5 } from './requireHelpers'
-import type { ModuleMapping } from '../../ModuleMapping'
+import type { ModuleMapping } from '@unminify-kit/ast-utils'
 import type { ArrayExpression, Collection, FunctionExpression, JSCodeshift, Literal, MemberExpression, ObjectExpression, Property } from 'jscodeshift'
 
 /**
@@ -107,7 +107,7 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
             convertRequireHelpersForWebpack4(j, moduleContent)
             convertRequireHelpersForWebpack5(j, moduleContent)
 
-            const module = new Module(moduleId, j, moduleContent, false)
+            const module = new Module(moduleId, moduleContent, false)
             modules.add(module)
         })
     })

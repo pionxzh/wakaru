@@ -51,7 +51,7 @@ export const transformAST: ASTTransformation = (context) => {
     if (!rootScope) return
 
     const importManager = new ImportManager()
-    importManager.collectImportsFromRoot(j, root)
+    importManager.collectEsModuleImport(j, root)
 
     /**
      * Adding imports one by one will cause scope issues.

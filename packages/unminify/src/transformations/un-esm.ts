@@ -57,7 +57,7 @@ function transformImport(context: Context, hoist: boolean) {
      */
     const importManager = new ImportManager()
 
-    importManager.collectImportsFromRoot(j, root)
+    importManager.collectEsModuleImport(j, root)
 
     /**
      * Scan through all `require` call for the recording the order of imports

@@ -1,5 +1,6 @@
 import { isString } from './isPrimitive'
-import type { ASTNode, Collection, JSCodeshift } from 'jscodeshift'
+import { isTopLevel } from './isTopLevel'
+import type { ASTNode, AssignmentExpression, Collection, Identifier, JSCodeshift, MemberExpression, VariableDeclarator } from 'jscodeshift'
 
 type Exported = string
 type Local = string
@@ -21,7 +22,7 @@ export class ExportManager {
         this.exportsFrom.set(local, source)
     }
 
-    collect(j: JSCodeshift, root: Collection) {
+    collectEsModuleExport(j: JSCodeshift, root: Collection) {
         root
             .find(j.ExportDefaultDeclaration)
             .forEach((path) => {
@@ -71,6 +72,253 @@ export class ExportManager {
                         this.addNamedExport(exported, local)
                         if (source) this.addExportFrom(local, source)
                     })
+                }
+            })
+    }
+
+    collectCommonJsExport(j: JSCodeshift, root: Collection) {
+        /**
+         * Default export
+         *
+         * Note: `exports = { ... }` is not valid
+         * So we won't handle it
+         *
+         * @example
+         * module.exports = 1
+         * ->
+         * export default 1
+         *
+         * @example
+         * module.exports = { foo: 1 }
+         * ->
+         * export default { foo: 1 }
+         */
+        root
+            .find(j.ExpressionStatement, {
+                expression: {
+                    type: 'AssignmentExpression',
+                    operator: '=',
+                    left: {
+                        type: 'MemberExpression',
+                        object: {
+                            type: 'Identifier',
+                            name: 'module',
+                        },
+                        property: {
+                            type: 'Identifier',
+                            name: 'exports',
+                        },
+                    },
+                },
+            })
+            .forEach((path) => {
+                if (!isTopLevel(j, path)) return
+
+                const expression = path.node.expression as AssignmentExpression
+                if (j.Identifier.check(expression.right)) {
+                    this.addDefaultExport(expression.right.name)
+                }
+                else if (j.ObjectExpression.check(expression.right)) {
+                    const object = expression.right
+                    const properties = object.properties
+                    properties.forEach((property) => {
+                        if (j.ObjectProperty.check(property)) {
+                            const key = property.key
+                            const value = property.value
+                            if (j.Identifier.check(key) && j.Identifier.check(value)) {
+                                this.addNamedExport(key.name, value.name)
+                            }
+                        }
+                    })
+                }
+            })
+
+        /**
+         * Individual exports
+         *
+         * @example
+         * module.exports.foo = 1
+         * ->
+         * export const foo = 1
+         *
+         * @example
+         * module.exports.foo = foo
+         * ->
+         * export { foo }
+         */
+        root
+            .find(j.ExpressionStatement, {
+                expression: {
+                    type: 'AssignmentExpression',
+                    operator: '=',
+                    left: {
+                        type: 'MemberExpression',
+                        object: {
+                            type: 'MemberExpression',
+                            object: {
+                                type: 'Identifier',
+                                name: 'module',
+                            },
+                            property: {
+                                type: 'Identifier',
+                                name: 'exports',
+                            },
+                        },
+                        property: {
+                            type: 'Identifier',
+                        },
+                    },
+                },
+            })
+            .forEach((path) => {
+                if (!isTopLevel(j, path)) return
+
+                const expression = path.node.expression as AssignmentExpression
+                const left = expression.left as MemberExpression
+                const name = (left.property as Identifier).name
+                this.addNamedExport(name, name)
+            })
+
+        /**
+         * Individual exports
+         *
+         * @example
+         * exports.foo = 2
+         * ->
+         * export const foo = 2
+         */
+        root
+            .find(j.ExpressionStatement, {
+                expression: {
+                    type: 'AssignmentExpression',
+                    operator: '=',
+                    left: {
+                        type: 'MemberExpression',
+                        object: {
+                            type: 'Identifier',
+                            name: 'exports',
+                        },
+                        property: {
+                            type: 'Identifier',
+                        },
+                    },
+                },
+            })
+            .forEach((path) => {
+                if (!isTopLevel(j, path)) return
+
+                const expression = path.node.expression as AssignmentExpression
+                const left = expression.left as MemberExpression
+                const name = (left.property as Identifier).name
+                this.addNamedExport(name, name)
+            })
+
+        /**
+         * Special case:
+         *
+         * @example
+         * var foo = exports.foo = 1
+         */
+        root
+            .find(j.VariableDeclaration, {
+                declarations: [
+                    {
+                        type: 'VariableDeclarator',
+                        id: {
+                            type: 'Identifier',
+                        },
+                        init: {
+                            type: 'AssignmentExpression',
+                            operator: '=',
+                            left: {
+                                type: 'MemberExpression',
+                                object: {
+                                    type: 'Identifier',
+                                    name: 'exports',
+                                },
+                                property: {
+                                    type: 'Identifier',
+                                },
+                            },
+                        },
+                    },
+                ],
+            })
+            .forEach((path) => {
+                if (!isTopLevel(j, path)) return
+
+                const declaration = path.node.declarations[0] as VariableDeclarator
+                const init = declaration.init as AssignmentExpression
+                const left = init.left as MemberExpression
+                const right = init.right
+
+                const name = (left.property as Identifier).name
+
+                if (j.Identifier.check(right)) {
+                    if (name === 'default') {
+                        this.addDefaultExport(right.name)
+                    }
+                    else {
+                        this.addNamedExport(name, right.name)
+                    }
+                }
+            })
+
+        /**
+         * Special case:
+         *
+         * @example
+         * var bar = module.exports.baz = 2
+         */
+        root
+            .find(j.VariableDeclaration, {
+                declarations: [
+                    {
+                        type: 'VariableDeclarator',
+                        id: {
+                            type: 'Identifier',
+                        },
+                        init: {
+                            type: 'AssignmentExpression',
+                            operator: '=',
+                            left: {
+                                type: 'MemberExpression',
+                                object: {
+                                    type: 'MemberExpression',
+                                    object: {
+                                        type: 'Identifier',
+                                        name: 'module',
+                                    },
+                                    property: {
+                                        type: 'Identifier',
+                                        name: 'exports',
+                                    },
+                                },
+                                property: {
+                                    type: 'Identifier',
+                                },
+                            },
+                        },
+                    },
+                ],
+            })
+            .forEach((path) => {
+                if (!isTopLevel(j, path)) return
+
+                const declaration = path.node.declarations[0] as VariableDeclarator
+                const init = declaration.init as AssignmentExpression
+                const left = init.left as MemberExpression
+                const right = init.right
+
+                const name = (left.property as Identifier).name
+
+                if (j.Identifier.check(right)) {
+                    if (name === 'default') {
+                        this.addDefaultExport(right.name)
+                    }
+                    else {
+                        this.addNamedExport(name, right.name)
+                    }
                 }
             })
     }

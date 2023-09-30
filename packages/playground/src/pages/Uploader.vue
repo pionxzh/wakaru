@@ -23,11 +23,13 @@ import type { TransformedModule } from '../types'
 const [source] = useState('')
 const [isLoading, setIsLoading] = useState(false)
 const [processedCount, setProcessedCount] = useState(0)
-const { fileIds, setFileIds } = useFileIds()
+
+const router = useRouter()
 const { transform } = useCodemod()
+
+const { fileIds, setFileIds } = useFileIds()
 const { moduleMeta, setModuleMeta } = useModuleMeta()
 const { moduleMapping, setModuleMapping } = useModuleMapping()
-const router = useRouter()
 
 function onUpload(file: File) {
     const reader = new FileReader()
@@ -76,8 +78,8 @@ async function startUnpack(code: string) {
     })
 
     setFileIds([
-        ...unpackedModules.filter(module => module.isEntry).map(module => module.id),
-        ...unpackedModules.filter(module => !module.isEntry).map(module => module.id),
+        ...unpackedModules.filter(module => module.isEntry).map(module => module.id).sort((a, b) => +a - +b),
+        ...unpackedModules.filter(module => !module.isEntry).map(module => module.id).sort((a, b) => +a - +b),
     ])
 
     setModuleMeta(

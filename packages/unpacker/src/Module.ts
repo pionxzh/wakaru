@@ -1,6 +1,5 @@
-import { scanModule } from './module-scan'
 import type { ImportInfo } from '@unminify-kit/ast-utils'
-import type { Collection, JSCodeshift } from 'jscodeshift'
+import type { Collection } from 'jscodeshift'
 
 export class Module {
     /** The module's id */
@@ -32,11 +31,9 @@ export class Module {
         return this.ast.toSource()
     }
 
-    constructor(id: string | number, j: JSCodeshift, root: Collection, isEntry = false) {
+    constructor(id: string | number, root: Collection, isEntry = false) {
         this.id = id
         this.ast = root
         this.isEntry = isEntry
-
-        scanModule(j, this)
     }
 }

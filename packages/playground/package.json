@@ -44,6 +44,7 @@
     "@fortawesome/vue-fontawesome": "^3.0.3",
     "@headlessui/vue": "^1.7.16",
     "@heroicons/vue": "^2.0.18",
+    "@unminify-kit/ast-utils": "workspace:*",
     "@unminify-kit/unminify": "workspace:*",
     "@unminify-kit/unpacker": "workspace:*",
     "@vueuse/core": "^10.4.1",

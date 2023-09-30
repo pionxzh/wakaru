@@ -1,10 +1,6 @@
 import { KEY_MODULE_META } from '../const'
 import { useLocalStorage } from './shared/useLocalStorage'
-import type { Module } from '@unminify-kit/unpacker'
-
-export interface ModuleMeta {
-    [moduleId: string]: Pick<Module, 'import' | 'export' | 'tags'>
-}
+import type { ModuleMeta } from '@unminify-kit/ast-utils'
 
 export const useModuleMeta = () => {
     const [moduleMeta, setModuleMeta] = useLocalStorage<ModuleMeta>(KEY_MODULE_META, {})

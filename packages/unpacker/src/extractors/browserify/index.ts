@@ -1,6 +1,6 @@
 import { isFunctionExpression, isNumber, isString, renameFunctionParameters } from '@unminify-kit/ast-utils'
 import { Module } from '../../Module'
-import type { ModuleMapping } from '../../ModuleMapping'
+import type { ModuleMapping } from '@unminify-kit/ast-utils'
 import type { ArrayExpression, ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, ObjectExpression } from 'jscodeshift'
 
 /**
@@ -82,7 +82,7 @@ export function getModulesFromBrowserify(j: JSCodeshift, root: Collection):
 
             const moduleContent = j({ type: 'Program', body: moduleFactory.body.body })
             const isEntry = entryIds.includes(moduleId)
-            const module = new Module(moduleId, j, moduleContent, isEntry)
+            const module = new Module(moduleId, moduleContent, isEntry)
             modules.add(module)
 
             moduleMap.properties.forEach((property) => {

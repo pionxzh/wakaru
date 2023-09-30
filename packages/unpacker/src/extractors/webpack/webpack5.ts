@@ -1,7 +1,7 @@
 import { getTopLevelStatements, isIIFE, renameFunctionParameters } from '@unminify-kit/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack5 } from './requireHelpers'
-import type { ModuleMapping } from '../../ModuleMapping'
+import type { ModuleMapping } from '@unminify-kit/ast-utils'
 import type { ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, Property, Statement, VariableDeclaration } from 'jscodeshift'
 
 /**
@@ -81,7 +81,7 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
         const moduleContent = j({ type: 'Program', body: functionExpression.body.body })
         convertRequireHelpersForWebpack5(j, moduleContent)
 
-        const module = new Module(moduleId, j, moduleContent, false)
+        const module = new Module(moduleId, moduleContent, false)
         modules.add(module)
     })
 
@@ -91,7 +91,7 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
         // @ts-expect-error - skip type check
         const entryModule = lastStatement.expression.callee.body.body
         const moduleContent = j({ type: 'Program', body: entryModule })
-        const module = new Module('entry.js', j, moduleContent, true)
+        const module = new Module('entry.js', moduleContent, true)
         modules.add(module)
     }
     else {
