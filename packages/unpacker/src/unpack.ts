@@ -11,7 +11,6 @@ import type { ModuleMapping } from '@unminify-kit/ast-utils'
 /**
  * Unpacks the given source code from supported bundlers.
  */
-
 export function unpack(sourceCode: string): {
     modules: Module[]
     moduleIdMapping: ModuleMapping

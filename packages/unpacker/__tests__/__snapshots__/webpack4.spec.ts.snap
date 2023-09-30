@@ -247,7 +247,7 @@ var M = function (e, t) {
       return e(Object.defineProperty(t, s, { value: !0 }));
     };
   },
-  D = function module(t) {
+  D = function e(t) {
     return function () {
       for (var n = arguments.length, r = Array(n), o = 0; o < n; o++)
         r[o] = arguments[o];
@@ -258,7 +258,7 @@ var M = function (e, t) {
           return i.push(e), a.next(e);
         },
         clone: function () {
-          var n = module(t).apply(void 0, r);
+          var n = e(t).apply(void 0, r);
           return (
             i.forEach(function (e) {
               return n.next(e);
@@ -892,7 +892,7 @@ var a = function (e, t) {
 function u(e) {
   return e.valueOf ? e.valueOf() : Object.prototype.valueOf.call(e);
 }
-var l = function module(t, n) {
+var l = function e(t, n) {
     if (t === n) return !0;
     if (null == t || null == n) return !1;
     if (Array.isArray(t))
@@ -900,16 +900,16 @@ var l = function module(t, n) {
         Array.isArray(n) &&
         t.length === n.length &&
         t.every(function (t, r) {
-          return module(t, n[r]);
+          return e(t, n[r]);
         })
       );
     if (\\"object\\" == typeof t || \\"object\\" == typeof n) {
       var r = u(t),
         o = u(n);
       return r !== t || o !== n
-        ? module(r, o)
+        ? e(r, o)
         : Object.keys(Object.assign({}, t, n)).every(function (r) {
-            return module(t[r], n[r]);
+            return e(t[r], n[r]);
           });
     }
     return !1;
@@ -5281,11 +5281,11 @@ var r = {
   l = Object.getOwnPropertyDescriptor,
   c = Object.getPrototypeOf,
   s = c && c(Object);
-module.exports = function module(t, n, f) {
+module.exports = function e(t, n, f) {
   if (\\"string\\" != typeof n) {
     if (s) {
       var d = c(n);
-      d && d !== s && module(t, d, f);
+      d && d !== s && e(t, d, f);
     }
     var p = a(n);
     u && (p = p.concat(u(n)));
@@ -5379,11 +5379,11 @@ var c = Object.defineProperty,
   d = Object.getOwnPropertyDescriptor,
   p = Object.getPrototypeOf,
   h = Object.prototype;
-module.exports = function module(t, n, r) {
+module.exports = function e(t, n, r) {
   if (\\"string\\" != typeof n) {
     if (h) {
       var o = p(n);
-      o && o !== h && module(t, o, r);
+      o && o !== h && e(t, o, r);
     }
     var a = s(n);
     f && (a = a.concat(f(n)));
@@ -13436,13 +13436,13 @@ var Yl = {
   },
   {
     "code": "\\"use strict\\";
-!(function module() {
+!(function e() {
   if (
     \\"undefined\\" != typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ &&
     \\"function\\" == typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE
   )
     try {
-      __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE(module);
+      __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE(e);
     } catch (e) {
       console.error(e);
     }

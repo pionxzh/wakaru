@@ -1,8 +1,8 @@
-import { isTopLevel } from '@unminify-kit/ast-utils'
+import { isTopLevel, renameIdentifier } from '@unminify-kit/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTNode, ArrowFunctionExpression, CallExpression, FunctionExpression, JSCodeshift } from 'jscodeshift'
+import type { ArrowFunctionExpression, CallExpression, FunctionExpression } from 'jscodeshift'
 
 /**
  * Improve the readability of code inside IIFE.
@@ -66,7 +66,7 @@ export const transformAST: ASTTransformation = (context) => {
                     // Of the argument identifier name is too short, we ignore it
                     if (j.Identifier.check(argument) && argument.name !== oldName && argument.name.length > 1) {
                         if (scope.declares(oldName)) {
-                            renameIdentifier(j, callee, oldName, argument.name)
+                            renameIdentifier(j, scope, oldName, argument.name)
                         }
                     }
                     else if (j.BlockStatement.check(callee.body) && j.Literal.check(argument)) {
@@ -85,22 +85,6 @@ export const transformAST: ASTTransformation = (context) => {
                     }
                 }
             })
-        })
-}
-
-function renameIdentifier(j: JSCodeshift, targetScopeNode: ASTNode, oldName: string, newName: string) {
-    j(targetScopeNode)
-        .find(j.Identifier, { name: oldName })
-        .forEach((path) => {
-            // Exclude MemberExpression properties
-            if (path.parent.node.type === 'MemberExpression' && path.parent.node.property === path.node) return
-
-            if (!path.scope) return
-            const pathScope = path.scope.lookup(oldName)
-            const scopeNode = pathScope.getBindings()[oldName]?.[0].scope.node
-            if (scopeNode === targetScopeNode && path.name !== 'property') {
-                path.node.name = newName
-            }
         })
 }
 

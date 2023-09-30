@@ -1,3 +1,4 @@
+import { isVariableIdentifier } from '@unminify-kit/ast-utils'
 import { isUndefined } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -85,7 +86,7 @@ export const transformAST: ASTTransformation = (context) => {
  */
 const BODY_LENGTH_THRESHOLD = 15
 
-const normalParameterRE = /arguments\.length\s?>\s?(\d+)\s?\?\s?arguments\[(\d+)\]\s:\s?undefined;?/
+const normalParameterRE = /arguments\.length\s?>\s?(\d+)\s?\?\s?arguments\[(\d+)\]\s?:\s?undefined;?/
 const defaultParameterRE = /arguments\.length\s?>\s?(\d+)\s?&&\s?arguments\[(\d+)\]\s?!==\s?undefined\s?\?\s?arguments\[(\d+)\]\s?:.+/
 
 function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | FunctionExpression>) {
@@ -229,49 +230,10 @@ function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | Function
 }
 
 function isIdentifierUsedIn(j: JSCodeshift, statement: StatementKind, identifierName: string) {
-    return j(statement).find(j.Identifier).some((path) => {
-        if (j.Property.check(path.parentPath.node)) return false
-        const parent = path.parent.node
-
-        // TODO: extract this part to a isVariableIdentifier or sth
-        if (
-            j.MemberExpression.check(parent)
-          && parent.property === path.node
-          && !parent.computed
-        ) {
-            // obj.oldName
-            return false
-        }
-
-        if (
-            j.Property.check(parent)
-          && parent.key === path.node
-          && !parent.computed
-        ) {
-            // { oldName: 3 }
-            return false
-        }
-
-        if (
-            j.ObjectProperty.check(parent)
-          && parent.key === path.node
-          && !parent.computed
-        ) {
-            // { oldName: 3 }
-            return false
-        }
-
-        if (
-            j.ObjectMethod.check(parent)
-          && parent.key === path.node
-          && !parent.computed
-        ) {
-            // { oldName() {} }
-            return false
-        }
-
-        return path.node.name === identifierName
-    })
+    return j(statement)
+        .find(j.Identifier, { name: identifierName })
+        // FIXME: should use findReferences
+        .some(path => isVariableIdentifier(j, path))
 }
 
 function getExistingParam(j: JSCodeshift, params: PatternKind[], identifierName: string) {
