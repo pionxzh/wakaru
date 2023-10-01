@@ -1,9 +1,10 @@
 import { findModuleFromSource } from '../../utils/import'
 import { removeDeclarationIfUnused, removeDefaultImportIfUnused } from '../../utils/scope'
 import wrap from '../../wrapAstTransformation'
+import { isHelperFunctionCall } from './isHelperFunctionCall'
 import type { ASTTransformation } from '../../wrapAstTransformation'
 import type { Identifier } from '@babel/types'
-import type { ASTPath, CallExpression, Collection, ImportDefaultSpecifier, JSCodeshift, ObjectExpression } from 'jscodeshift'
+import type { ImportDefaultSpecifier, ObjectExpression } from 'jscodeshift'
 
 /**
  * Restore object spread syntax from `@babel/runtime/helpers/objectSpread2` helper.
@@ -31,81 +32,36 @@ export const transformAST: ASTTransformation = (context) => {
 
         // objectSpread({}, foo)
         // objectSpread.default({ x }, y)
-        root
-            .find(j.CallExpression, {
-                callee: (callee: CallExpression['callee']) => {
-                    return (
-                        j.Identifier.check(callee)
-                     && callee.name === moduleVariableName
-                    )
-                || (
-                    j.MemberExpression.check(callee)
-                    && j.Identifier.check(callee.object)
-                    && callee.object.name === moduleVariableName
-                    && j.Identifier.check(callee.property)
-                    && callee.property.name === 'default'
-                )
-                },
-            })
-            .paths()
-            .reverse()
-            .forEach((path) => {
-                handleSpread(j, root, path, isImport, moduleVariableName)
-            })
-
         // (0, objectSpread)([...])
         // (0, objectSpread.default)([...])
         root
-            .find(j.CallExpression, {
-                callee: {
-                    type: 'SequenceExpression',
-                    expressions: [
-                        { type: 'Literal', value: 0 },
-                        (expression: any) => {
-                            return (
-                                j.Identifier.check(expression)
-                             && expression.name === moduleVariableName
-                            )
-                        || (
-                            j.MemberExpression.check(expression)
-                            && j.Identifier.check(expression.object)
-                            && expression.object.name === moduleVariableName
-                            && j.Identifier.check(expression.property)
-                            && expression.property.name === 'default'
-                        )
-                        },
-                    ],
-                },
-            })
+            .find(j.CallExpression)
+            .filter(path => isHelperFunctionCall(j, path.node, moduleVariableName))
             .paths()
             .reverse()
             .forEach((path) => {
-                handleSpread(j, root, path, isImport, moduleVariableName)
+                const properties: ObjectExpression['properties'] = []
+
+                for (const arg of path.node.arguments) {
+                    if (j.ObjectExpression.check(arg)) {
+                        properties.push(...arg.properties)
+                    }
+                    else if (j.SpreadElement.check(arg)) {
+                        properties.push(arg)
+                    }
+                    else {
+                        properties.push(j.spreadElement(arg))
+                    }
+                }
+
+                const spreadObject = j.objectExpression(properties)
+                path.replace(spreadObject)
+
+                isImport
+                    ? removeDefaultImportIfUnused(j, root, moduleVariableName)
+                    : removeDeclarationIfUnused(j, path, moduleVariableName)
             })
     }
-}
-
-function handleSpread(j: JSCodeshift, root: Collection, path: ASTPath<CallExpression>, isImport: boolean, moduleVariableName: string) {
-    const properties: ObjectExpression['properties'] = []
-
-    for (const arg of path.node.arguments) {
-        if (j.ObjectExpression.check(arg)) {
-            properties.push(...arg.properties)
-        }
-        else if (j.SpreadElement.check(arg)) {
-            properties.push(arg)
-        }
-        else {
-            properties.push(j.spreadElement(arg))
-        }
-    }
-
-    const spreadObject = j.objectExpression(properties)
-    path.replace(spreadObject)
-
-    isImport
-        ? removeDefaultImportIfUnused(j, root, moduleVariableName)
-        : removeDeclarationIfUnused(j, path, moduleVariableName)
 }
 
 export default wrap(transformAST)

@@ -1,9 +1,10 @@
 import { findModuleFromSource } from '../../utils/import'
 import { removeDeclarationIfUnused, removeDefaultImportIfUnused } from '../../utils/scope'
 import wrap from '../../wrapAstTransformation'
+import { isHelperFunctionCall } from './isHelperFunctionCall'
 import type { ASTTransformation } from '../../wrapAstTransformation'
 import type { Identifier } from '@babel/types'
-import type { ArrayExpression, CallExpression, ImportDefaultSpecifier } from 'jscodeshift'
+import type { ArrayExpression, ImportDefaultSpecifier } from 'jscodeshift'
 
 /**
  * `@babel/runtime/helpers/arrayLikeToArray` helper.
@@ -31,61 +32,14 @@ export const transformAST: ASTTransformation = (context) => {
 
         // arrayLikeToArray([...])
         // arrayLikeToArray.default([...])
-        root
-            .find(j.CallExpression, {
-                callee: (callee: CallExpression['callee']) => {
-                    return (
-                        j.Identifier.check(callee)
-                     && callee.name === moduleVariableName
-                    )
-                    || (
-                        j.MemberExpression.check(callee)
-                     && j.Identifier.check(callee.object)
-                     && callee.object.name === moduleVariableName
-                     && j.Identifier.check(callee.property)
-                     && callee.property.name === 'default'
-                    )
-                },
-                arguments: [
-                    { type: 'ArrayExpression' } as const,
-                ],
-            })
-            .forEach((path) => {
-                const arr = path.node.arguments[0] as ArrayExpression
-                const elements = arr.elements.map(element => element ?? j.identifier('undefined'))
-                path.replace(j.arrayExpression(elements))
-
-                isImport
-                    ? removeDefaultImportIfUnused(j, root, moduleVariableName)
-                    : removeDeclarationIfUnused(j, path, moduleVariableName)
-            })
-
         // (0, arrayLikeToArray)([...])
         // (0, arrayLikeToArray.default)([...])
         root
-            .find(j.CallExpression, {
-                callee: {
-                    type: 'SequenceExpression',
-                    expressions: [
-                        { type: 'Literal', value: 0 },
-                        (expression: any) => {
-                            return (
-                                j.Identifier.check(expression)
-                             && expression.name === moduleVariableName
-                            )
-                            || (
-                                j.MemberExpression.check(expression)
-                             && j.Identifier.check(expression.object)
-                             && expression.object.name === moduleVariableName
-                             && j.Identifier.check(expression.property)
-                             && expression.property.name === 'default'
-                            )
-                        },
-                    ],
-                },
-                arguments: [
-                    { type: 'ArrayExpression' } as const,
-                ],
+            .find(j.CallExpression)
+            .filter((path) => {
+                return isHelperFunctionCall(j, path.node, moduleVariableName)
+                && path.node.arguments.length === 1
+                && j.ArrayExpression.check(path.node.arguments[0])
             })
             .forEach((path) => {
                 const arr = path.node.arguments[0] as ArrayExpression

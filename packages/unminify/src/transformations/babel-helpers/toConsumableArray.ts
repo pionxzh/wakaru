@@ -1,10 +1,11 @@
 import { findModuleFromSource } from '../../utils/import'
 import { removeDeclarationIfUnused, removeDefaultImportIfUnused } from '../../utils/scope'
 import wrap from '../../wrapAstTransformation'
+import { isHelperFunctionCall } from './isHelperFunctionCall'
 import type { ASTTransformation } from '../../wrapAstTransformation'
 import type { Identifier } from '@babel/types'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { CallExpression, ImportDefaultSpecifier } from 'jscodeshift'
+import type { ImportDefaultSpecifier } from 'jscodeshift'
 
 /**
  * Restores spread operator from `@babel/runtime/helpers/toConsumableArray` helper.
@@ -26,55 +27,14 @@ export const transformAST: ASTTransformation = (context) => {
 
         // toConsumableArray(a)
         // toConsumableArray.default(a)
-        root
-            .find(j.CallExpression, {
-                callee: (callee: CallExpression['callee']) => {
-                    return (
-                        j.Identifier.check(callee)
-                     && callee.name === moduleVariableName
-                    )
-                || (
-                    j.MemberExpression.check(callee)
-                    && j.Identifier.check(callee.object)
-                    && callee.object.name === moduleVariableName
-                    && j.Identifier.check(callee.property)
-                    && callee.property.name === 'default'
-                )
-                },
-                arguments: (args: CallExpression['arguments']) => args.length === 1 && j.Expression.check(args[0]),
-            })
-            .forEach((path) => {
-                path.replace(j.arrayExpression([j.spreadElement(path.node.arguments[0] as ExpressionKind)]))
-
-                isImport
-                    ? removeDefaultImportIfUnused(j, root, moduleVariableName)
-                    : removeDeclarationIfUnused(j, path, moduleVariableName)
-            })
-
         // (0, toConsumableArray)(a)
         // (0, toConsumableArray.default)(a)
         root
-            .find(j.CallExpression, {
-                callee: {
-                    type: 'SequenceExpression',
-                    expressions: [
-                        { type: 'Literal', value: 0 },
-                        (expression: any) => {
-                            return (
-                                j.Identifier.check(expression)
-                             && expression.name === moduleVariableName
-                            )
-                        || (
-                            j.MemberExpression.check(expression)
-                            && j.Identifier.check(expression.object)
-                            && expression.object.name === moduleVariableName
-                            && j.Identifier.check(expression.property)
-                            && expression.property.name === 'default'
-                        )
-                        },
-                    ],
-                },
-                arguments: (args: CallExpression['arguments']) => args.length === 1 && j.Expression.check(args[0]),
+            .find(j.CallExpression)
+            .filter((path) => {
+                return isHelperFunctionCall(j, path.node, moduleVariableName)
+                && path.node.arguments.length === 1
+                && j.Expression.check(path.node.arguments[0])
             })
             .forEach((path) => {
                 path.replace(j.arrayExpression([j.spreadElement(path.node.arguments[0] as ExpressionKind)]))
