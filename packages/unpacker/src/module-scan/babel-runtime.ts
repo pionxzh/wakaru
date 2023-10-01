@@ -21,6 +21,11 @@ const moduleMatchers: Record<string, Array<string | RegExp | Array<string | RegE
             'throw new TypeError("Invalid attempt to iterate non-iterable instance.\\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.")',
         ],
     ],
+    '@babel/runtime/helpers/extends': [
+        /\w+\s?=\s?Object\.assign\s?\|\|\s?function\s?\(\w+\)/,
+        // v7.18.2 added a .bind() call to Object.assign
+        /\w+\s?=\s?Object\.assign\s?\?\s?Object\.assign\.bind\(\)\s?:\s?function\s?\(\w+\)/,
+    ],
     '@babel/runtime/helpers/inherits': [
         'throw new TypeError("Super expression must either be null or a function")',
     ],

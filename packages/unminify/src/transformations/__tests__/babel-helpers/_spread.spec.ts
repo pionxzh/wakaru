@@ -1,4 +1,6 @@
 import { defineInlineTest } from '@unminify-kit/test-utils'
+
+// let's take objectSpread as an example to test, but the underlying implementation is the same for all spread-like helpers
 import transform from '../../runtime-helpers/babel/objectSpread'
 
 const inlineTest = defineInlineTest(transform)
@@ -109,6 +111,20 @@ g = {
   c,
   ...d,
   e
+};
+`,
+)
+
+inlineTest('objectSpread - with objectDestructuringEmpty',
+  `
+var _objectSpread2 = require("@babel/runtime/helpers/objectSpread2");
+var _objectDestructuringEmpty = require("@babel/runtime/helpers/objectDestructuringEmpty");
+
+a = _objectSpread2({}, (_objectDestructuringEmpty(y), y));
+`,
+  `
+a = {
+  ...y
 };
 `,
 )
