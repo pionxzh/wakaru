@@ -12,27 +12,18 @@ export function isDeclared(scope: Scope, name: string) {
 }
 
 export function findDeclaration(scope: Scope, name: string): ASTPath<Identifier> | undefined {
-    const targetScope = scope.lookup(name)
-    if (!targetScope) return
-
-    const targetDeclaration = targetScope.getBindings()[name]
-    if (!targetDeclaration) return
-
-    const targetDeclarationPath = targetDeclaration[0]
-    if (!targetDeclarationPath) return
-
-    return targetDeclarationPath
+    return scope.lookup(name)?.getBindings()[name]?.[0]
 }
 
-export function removeDeclarationIfUnused(j: JSCodeshift, path: ASTPath, id: string) {
+export function removeDeclarationIfUnused(j: JSCodeshift, path: ASTPath, name: string) {
     const closestScope = j(path).closestScope().get()
     if (!closestScope) return
 
-    const idsUsedInScope = j(closestScope).find(j.Identifier, { name: id }).filter((idPath) => {
-        const pathScope = idPath.scope?.lookup(id)
+    const idsUsedInScope = j(closestScope).find(j.Identifier, { name }).filter((idPath) => {
+        const pathScope = idPath.scope?.lookup(name)
         return pathScope === closestScope.scope
     })
-    const idsUsedInPath = j(path).find(j.Identifier, { name: id })
+    const idsUsedInPath = j(path).find(j.Identifier, { name })
     const idsUsed = idsUsedInScope.length - idsUsedInPath.length
     if (idsUsed === 1) {
         const idUsed = idsUsedInScope.paths()[0]
@@ -40,7 +31,7 @@ export function removeDeclarationIfUnused(j: JSCodeshift, path: ASTPath, id: str
             const variableDeclaration = idUsed.parent.parent.node as VariableDeclaration
             const index = variableDeclaration.declarations.findIndex(declarator => j.VariableDeclarator.check(declarator)
                 && j.Identifier.check(declarator.id)
-                && declarator.id.name === id,
+                && declarator.id.name === name,
             )
             if (index > -1) {
                 variableDeclaration.declarations.splice(index, 1)

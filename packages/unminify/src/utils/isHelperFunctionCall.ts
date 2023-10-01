@@ -10,6 +10,12 @@ import type { CallExpression, JSCodeshift } from 'jscodeshift'
  * helperName.default(...)
  * (0, helperName)(...)
  * (0, helperName.default)(...)
+ *
+ * // if helperName contains a dot
+ * helperName.foo(...)
+ * helperName.default.foo(...)
+ * (0, helperName.foo)(...)
+ * (0, helperName.default.foo)(...)
  */
 export function isHelperFunctionCall(
     j: JSCodeshift,
@@ -19,6 +25,7 @@ export function isHelperFunctionCall(
     if (!j.CallExpression.check(expression)) return false
 
     let callee = expression.callee
+
     if (j.SequenceExpression.check(callee)) {
         if (
             callee.expressions.length === 2
@@ -26,6 +33,26 @@ export function isHelperFunctionCall(
             && callee.expressions[0].value === 0
         ) {
             callee = callee.expressions[1]
+        }
+    }
+
+    if (helperName.includes('.')) {
+        const [helper, helperProp] = helperName.split('.')
+        if (j.MemberExpression.check(callee)) {
+            return (
+                j.Identifier.check(callee.object)
+                && callee.object.name === helper
+                && j.Identifier.check(callee.property)
+                && callee.property.name === helperProp
+            ) || (
+                j.MemberExpression.check(callee.object)
+                && j.Identifier.check(callee.object.object)
+                && callee.object.object.name === helper
+                && j.Identifier.check(callee.object.property)
+                && callee.object.property.name === 'default'
+                && j.Identifier.check(callee.property)
+                && callee.property.name === helperProp
+            )
         }
     }
 

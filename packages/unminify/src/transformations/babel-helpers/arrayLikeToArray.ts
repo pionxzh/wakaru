@@ -1,10 +1,11 @@
-import { findModuleFromSource } from '../../utils/import'
-import { removeDeclarationIfUnused, removeDefaultImportIfUnused } from '../../utils/scope'
+import { findReferences } from '@unminify-kit/ast-utils'
+import { findHelperLocals, removeHelperImport } from '../../utils/import'
+import { isHelperFunctionCall } from '../../utils/isHelperFunctionCall'
 import wrap from '../../wrapAstTransformation'
-import { isHelperFunctionCall } from './isHelperFunctionCall'
+import type { SharedParams } from '../../utils/types'
 import type { ASTTransformation } from '../../wrapAstTransformation'
-import type { Identifier } from '@babel/types'
-import type { ArrayExpression, ImportDefaultSpecifier } from 'jscodeshift'
+import type { Scope } from 'ast-types/lib/scope'
+import type { ArrayExpression } from 'jscodeshift'
 
 /**
  * `@babel/runtime/helpers/arrayLikeToArray` helper.
@@ -17,27 +18,23 @@ import type { ArrayExpression, ImportDefaultSpecifier } from 'jscodeshift'
  * We can further optimize this by detecting if we are wrapped by `toConsumableArray`
  * and skip the replacement as spread operator will handle `empty` correctly.
  */
-export const transformAST: ASTTransformation = (context) => {
-    const { root, j } = context
-
+export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
     const moduleName = '@babel/runtime/helpers/arrayLikeToArray'
     const moduleEsmName = '@babel/runtime/helpers/esm/arrayLikeToArray'
-    const moduleSource = findModuleFromSource(j, root, moduleName) || findModuleFromSource(j, root, moduleEsmName)
 
-    if (moduleSource) {
-        const isImport = j.ImportDeclaration.check(moduleSource)
-        const moduleVariableName = isImport
-            ? ((moduleSource.specifiers![0] as ImportDefaultSpecifier).local as Identifier).name
-            : (moduleSource.id as Identifier).name
+    const { root, j } = context
+    const rootScope = root.find(j.Program).get().scope as Scope | null
+    if (!rootScope) return
 
-        // arrayLikeToArray([...])
-        // arrayLikeToArray.default([...])
-        // (0, arrayLikeToArray)([...])
-        // (0, arrayLikeToArray.default)([...])
-        root
+    const helperLocals = findHelperLocals(context, params, moduleName, moduleEsmName)
+    helperLocals.forEach((helperLocal) => {
+        const references = findReferences(j, rootScope, helperLocal).length
+
+        const found = root
+            // arrayLikeToArray([...])
             .find(j.CallExpression)
             .filter((path) => {
-                return isHelperFunctionCall(j, path.node, moduleVariableName)
+                return isHelperFunctionCall(j, path.node, helperLocal)
                 && path.node.arguments.length === 1
                 && j.ArrayExpression.check(path.node.arguments[0])
             })
@@ -45,12 +42,13 @@ export const transformAST: ASTTransformation = (context) => {
                 const arr = path.node.arguments[0] as ArrayExpression
                 const elements = arr.elements.map(element => element ?? j.identifier('undefined'))
                 path.replace(j.arrayExpression(elements))
-
-                isImport
-                    ? removeDefaultImportIfUnused(j, root, moduleVariableName)
-                    : removeDeclarationIfUnused(j, path, moduleVariableName)
             })
-    }
+            .size()
+
+        if ((references - found) === 1) {
+            removeHelperImport(j, rootScope, helperLocal)
+        }
+    })
 }
 
 export default wrap(transformAST)

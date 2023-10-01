@@ -1,17 +1,16 @@
-import { findModuleFromSource } from '../../utils/import'
-import { removeDeclarationIfUnused, removeDefaultImportIfUnused } from '../../utils/scope'
+import { findReferences } from '@unminify-kit/ast-utils'
+import { findHelperLocals, removeHelperImport } from '../../utils/import'
+import { isHelperFunctionCall } from '../../utils/isHelperFunctionCall'
 import wrap from '../../wrapAstTransformation'
-import { isHelperFunctionCall } from './isHelperFunctionCall'
+import type { SharedParams } from '../../utils/types'
 import type { ASTTransformation } from '../../wrapAstTransformation'
-import type { Identifier } from '@babel/types'
-import type { ImportDefaultSpecifier, ObjectExpression } from 'jscodeshift'
+import type { Scope } from 'ast-types/lib/scope'
+import type { ObjectExpression } from 'jscodeshift'
 
 /**
  * Restore object spread syntax from `@babel/runtime/helpers/objectSpread2` helper.
  */
-export const transformAST: ASTTransformation = (context) => {
-    const { root, j } = context
-
+export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
     /**
      * `objectSpread2` was introduced in Babel v7.5.0
      */
@@ -19,24 +18,24 @@ export const transformAST: ASTTransformation = (context) => {
     const moduleEsmName = '@babel/runtime/helpers/esm/objectSpread2'
     const fallbackModuleName = '@babel/runtime/helpers/objectSpread'
     const fallbackModuleEsmName = '@babel/runtime/helpers/esm/objectSpread'
-    const moduleSource = findModuleFromSource(j, root, moduleName)
-    || findModuleFromSource(j, root, moduleEsmName)
-    || findModuleFromSource(j, root, fallbackModuleName)
-    || findModuleFromSource(j, root, fallbackModuleEsmName)
 
-    if (moduleSource) {
-        const isImport = j.ImportDeclaration.check(moduleSource)
-        const moduleVariableName = isImport
-            ? ((moduleSource.specifiers![0] as ImportDefaultSpecifier).local as Identifier).name
-            : (moduleSource.id as Identifier).name
+    const { root, j } = context
+    const rootScope = root.find(j.Program).get().scope as Scope | null
+    if (!rootScope) return
 
-        // objectSpread({}, foo)
-        // objectSpread.default({ x }, y)
-        // (0, objectSpread)([...])
-        // (0, objectSpread.default)([...])
-        root
+    const helperLocals = [
+        ...findHelperLocals(context, params, moduleName, moduleEsmName),
+        ...findHelperLocals(context, params, fallbackModuleName, fallbackModuleEsmName),
+    ]
+    helperLocals.forEach((helperLocal) => {
+        const references = findReferences(j, rootScope, helperLocal).length
+
+        const collection = root
+            // objectSpread({}, foo)
             .find(j.CallExpression)
-            .filter(path => isHelperFunctionCall(j, path.node, moduleVariableName))
+            .filter(path => isHelperFunctionCall(j, path.node, helperLocal))
+
+        collection
             .paths()
             .reverse()
             .forEach((path) => {
@@ -56,12 +55,13 @@ export const transformAST: ASTTransformation = (context) => {
 
                 const spreadObject = j.objectExpression(properties)
                 path.replace(spreadObject)
-
-                isImport
-                    ? removeDefaultImportIfUnused(j, root, moduleVariableName)
-                    : removeDeclarationIfUnused(j, path, moduleVariableName)
             })
-    }
+
+        const found = collection.size()
+        if ((references - found) === 1) {
+            removeHelperImport(j, rootScope, helperLocal)
+        }
+    })
 }
 
 export default wrap(transformAST)

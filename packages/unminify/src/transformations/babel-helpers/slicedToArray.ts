@@ -1,43 +1,50 @@
-import { isNumber } from '@unminify-kit/ast-utils'
-import { findModuleFromSource } from '../../utils/import'
-import { removeDeclarationIfUnused, removeDefaultImportIfUnused } from '../../utils/scope'
+import { findReferences, isNumber } from '@unminify-kit/ast-utils'
+import { findHelperLocals, removeHelperImport } from '../../utils/import'
+import { isHelperFunctionCall } from '../../utils/isHelperFunctionCall'
+import { removeDeclarationIfUnused } from '../../utils/scope'
 import wrap from '../../wrapAstTransformation'
-import { isHelperFunctionCall } from './isHelperFunctionCall'
+import type { SharedParams } from '../../utils/types'
 import type { ASTTransformation } from '../../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { CallExpression, Identifier, ImportDefaultSpecifier, Literal, VariableDeclarator } from 'jscodeshift'
+import type { Scope } from 'ast-types/lib/scope'
+import type { CallExpression, Identifier, Literal, VariableDeclarator } from 'jscodeshift'
 
 /**
  * Restores array destructuring from `@babel/runtime/helpers/slicedToArray` helper.
+ *
+ * @example
+ * var _ref = slicedToArray(a, 2)
+ * var name = _ref[0]
+ * var age = _ref[1]
+ * ->
+ * var _ref = a
+ * var name = _ref[0]
+ * var age = _ref[1]
  *
  * TODO: improve `for...of` loops output.
  *
  * @see https://babeljs.io/docs/babel-plugin-transform-destructuring
  */
-export const transformAST: ASTTransformation = (context) => {
-    const { root, j } = context
-
+export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
     const moduleName = '@babel/runtime/helpers/slicedToArray'
     const moduleEsmName = '@babel/runtime/helpers/esm/slicedToArray'
-    const moduleSource = findModuleFromSource(j, root, moduleName) || findModuleFromSource(j, root, moduleEsmName)
 
-    if (moduleSource) {
-        const isImport = j.ImportDeclaration.check(moduleSource)
-        const moduleVariableName = isImport
-            ? ((moduleSource.specifiers![0] as ImportDefaultSpecifier).local as Identifier).name
-            : (moduleSource.id as Identifier).name
+    const { root, j } = context
+    const rootScope = root.find(j.Program).get().scope as Scope | null
+    if (!rootScope) return
 
-        // var _ref = slicedToArray(a, 2)
-        // var _ref = slicedToArray.default(a, 2)
-        // var _ref = (0, slicedToArray)(a, 2)
-        // var _ref = (0, slicedToArray.default)(a, 2)
-        root
+    const helperLocals = findHelperLocals(context, params, moduleName, moduleEsmName)
+    helperLocals.forEach((helperLocal) => {
+        const references = findReferences(j, rootScope, helperLocal).length
+
+        const found = root
+            // var _ref = slicedToArray(a, 2)
             .find(j.VariableDeclaration, {
                 declarations: (declarations) => {
                     return declarations.length === 1
                     && j.VariableDeclarator.check(declarations[0])
                     && j.Identifier.check(declarations[0].id)
-                    && isHelperFunctionCall(j, declarations[0].init, moduleVariableName)
+                    && isHelperFunctionCall(j, declarations[0].init, helperLocal)
 
                     && declarations[0].init.arguments.length === 2
                     && j.Literal.check(declarations[0].init.arguments[1])
@@ -67,12 +74,14 @@ export const transformAST: ASTTransformation = (context) => {
                         ),
                     ]))
                 }
-
-                isImport
-                    ? removeDefaultImportIfUnused(j, root, moduleVariableName)
-                    : removeDeclarationIfUnused(j, path, moduleVariableName)
+                removeDeclarationIfUnused(j, path, helperLocal)
             })
-    }
+            .size()
+
+        if ((references - found) === 1) {
+            removeHelperImport(j, rootScope, helperLocal)
+        }
+    })
 }
 
 export default wrap(transformAST)

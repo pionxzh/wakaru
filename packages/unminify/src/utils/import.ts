@@ -1,77 +1,122 @@
+import { ImportManager } from '@unminify-kit/ast-utils'
 import { findDeclaration } from './scope'
+import type { SharedParams } from './types'
+import type { Context } from '../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTPath, Collection, ImportDeclaration, ImportSpecifier, JSCodeshift, VariableDeclarator } from 'jscodeshift'
+import type { JSCodeshift } from 'jscodeshift'
 
 /**
- * Find the module source of given module name.
+ * Find the local variable name of given module name.
  */
-export function findModuleFromSource(j: JSCodeshift, root: Collection, moduleName: string): ImportDeclaration | VariableDeclarator | null {
-    return findImportFromSource(j, root, moduleName)
-    ?? findRequireFromSource(j, root, moduleName)
-}
+export function findHelperLocals(
+    context: Context,
+    params: SharedParams,
+    moduleName: string,
+    moduleEsmName?: string,
+): string[] {
+    const { j, root } = context
 
-export function findImportFromSource(j: JSCodeshift, root: Collection, moduleName: string): ImportDeclaration | null {
-    // import mod from 'moduleName'
-    const importDeclarations = root.find(j.ImportDeclaration, {
-        source: { type: 'Literal', value: moduleName },
-    })
-    if (importDeclarations.size() > 0) {
-        return importDeclarations.get().node
+    const importManager = new ImportManager()
+    importManager.collectEsModuleImport(j, root)
+    importManager.collectCommonJsImport(j, root)
+    const imports = importManager.getModuleImports()
+
+    const result: string[] = []
+
+    // find module based on source
+    imports
+        .filter(imported => imported.source === moduleName || imported.source === moduleEsmName)
+        .forEach((imported) => {
+            if (imported.type === 'default') {
+                result.push(imported.name)
+            }
+            if (imported.type === 'named') {
+                result.push(imported.local)
+            }
+        })
+
+    // find module based on tags
+    const { moduleMapping, moduleMeta } = params
+    if (moduleMapping && moduleMeta) {
+        const moduleMappingEntries = Object.entries(moduleMapping)
+
+        imports.forEach((imported) => {
+            const source = moduleMappingEntries.find(([_, path]) => path === imported.source.toString())?.[0] || imported.source
+            const targetModule = moduleMeta[source]
+            if (!targetModule) return
+
+            if (imported.type === 'named') {
+                const targetLocal = targetModule.export[imported.name]
+                if (!targetLocal) return
+
+                const targetTags = targetModule.tags[targetLocal]
+                if (!targetTags) return
+
+                if (targetTags.includes(moduleName)) {
+                    result.push(imported.local)
+                }
+            }
+
+            if (imported.type === 'default') {
+                Object.entries(targetModule.export).forEach(([targetExport, targetLocal]) => {
+                    const targetTags = targetModule.tags[targetLocal]
+                    if (!targetTags) return
+
+                    if (targetTags.includes(moduleName)) {
+                        result.push(`${imported.name}.${targetExport}`)
+                    }
+                })
+            }
+        })
     }
 
-    return null
+    return result
 }
 
-export function findRequireFromSource(j: JSCodeshift, root: Collection, moduleName: string): VariableDeclarator | null {
-    // const mod = require('moduleName')
-    const variableDeclarators = root.find(j.VariableDeclarator, {
-        init: {
-            type: 'CallExpression',
-            callee: { type: 'Identifier', name: 'require' },
-            arguments: [{ type: 'Literal', value: moduleName } as const],
-        },
-    })
-    if (variableDeclarators.size() > 0) {
-        return variableDeclarators.get().node
+export function removeHelperImport(j: JSCodeshift, scope: Scope | null, name: string) {
+    if (!scope) return
+
+    const declaration = findDeclaration(scope, name)
+    if (!declaration) return
+
+    const importDefaultSpecifier = j(declaration).closest(j.ImportDefaultSpecifier)
+    if (importDefaultSpecifier.size() === 1) {
+        const importDeclaration = importDefaultSpecifier.closest(j.ImportDeclaration)
+        if (importDeclaration.size() === 1) {
+            if (importDeclaration.get().node.specifiers.length === 1) {
+                importDeclaration.remove()
+            }
+            else {
+                importDefaultSpecifier.remove()
+            }
+        }
+        return
     }
-
-    return null
-}
-
-// import specifierName from 'moduleName'
-export function findImportWithDefaultSpecifier(j: JSCodeshift, scope: Scope, specifierName: string): ImportDeclaration | null {
-    const declaration = findDeclaration(scope, specifierName)
-    if (!declaration) return null
-
-    const importDeclaration = j(declaration).closest(j.ImportDeclaration)
-    if (importDeclaration.size() === 0) return null
-
-    const node = importDeclaration.get().node as ImportDeclaration
-    if (!node.specifiers || node.specifiers.length === 0) return null
-
-    const specifier = node.specifiers.find(s => j.ImportDefaultSpecifier.check(s) && s.local === declaration.node)
-    return specifier ? node : null
-}
-
-// import { specifierName } from 'moduleName'
-export function findImportWithNamedSpecifier(
-    j: JSCodeshift,
-    scope: Scope,
-    specifierName: string,
-    source?: string,
-): ASTPath<ImportSpecifier> | null {
-    const declaration = findDeclaration(scope, specifierName)
-    if (!declaration) return null
 
     const importSpecifier = j(declaration).closest(j.ImportSpecifier)
-    if (importSpecifier.size() === 0) return null
-
-    const path = importSpecifier.get() as ASTPath<ImportSpecifier>
-
-    if (source) {
-        const importDeclaration = path.parent.node as ImportDeclaration
-        if (importDeclaration.source.value !== source) return null
+    if (importSpecifier.size() === 1) {
+        const importDeclaration = importSpecifier.closest(j.ImportDeclaration)
+        if (importDeclaration.size() === 1) {
+            if (importDeclaration.get().node.specifiers.length === 1) {
+                importDeclaration.remove()
+            }
+            else {
+                importSpecifier.remove()
+            }
+        }
+        return
     }
 
-    return path
+    const variableDeclarator = j(declaration).closest(j.VariableDeclarator)
+    if (variableDeclarator.size() === 1) {
+        const variableDeclaration = variableDeclarator.closest(j.VariableDeclaration)
+        if (variableDeclaration.size() === 1) {
+            if (variableDeclaration.get().node.declarations.length === 1) {
+                variableDeclaration.remove()
+            }
+            else {
+                variableDeclarator.remove()
+            }
+        }
+    }
 }

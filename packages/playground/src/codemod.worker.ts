@@ -1,7 +1,6 @@
 import { runTransformations, transformationMap } from '@unminify-kit/unminify'
-import type { ModuleMeta } from './composables/useModuleMeta'
 import type { TransformedModule } from './types'
-import type { ModuleMapping } from '@unminify-kit/ast-utils'
+import type { ModuleMapping, ModuleMeta } from '@unminify-kit/ast-utils'
 
 onmessage = (
     msg: MessageEvent<{
