@@ -13,7 +13,7 @@ import type { ASTPath, ConditionalExpression, JSCodeshift, LogicalExpression } f
 /**
  * Restore nullish coalescing syntax.
  *
- * TODO: Support `??=` operator.
+ * TODO: Nullish_coalescing_assignment ??=
  *
  * Only support `loose=false` mode.
  */

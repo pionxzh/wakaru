@@ -586,3 +586,4 @@ By utilizing lebab, we can save the repetitive work of writing the transformatio
 - [ ] `un-string-literal` to decode printable unicode
 - [ ] [Terser loops](https://github.com/terser/terser/blob/27c0a3b47b429c605e2243df86044fc00815060f/test/compress/loops.js#L217) contains several useful patterns
 - [ ] `let a; a = 1;` to `let a = 1;`
+- [ ] Logical Assignment Operators (`a ||= b`, `a &&= b`, `a ??= b`)
