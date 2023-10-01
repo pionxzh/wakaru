@@ -17,6 +17,8 @@ import type { ArrayExpression } from 'jscodeshift'
  *
  * We can further optimize this by detecting if we are wrapped by `toConsumableArray`
  * and skip the replacement as spread operator will handle `empty` correctly.
+ *
+ * @see https://github.com/babel/babel/blob/b5d6c3c820af3c049b476df6e885fef33fa953f1/packages/babel-helpers/src/helpers.ts#L789-L795
  */
 export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
     const moduleName = '@babel/runtime/helpers/arrayLikeToArray'

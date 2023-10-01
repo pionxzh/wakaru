@@ -24,6 +24,7 @@ import type { CallExpression, Identifier, Literal, VariableDeclarator } from 'js
  * TODO: improve `for...of` loops output.
  *
  * @see https://babeljs.io/docs/babel-plugin-transform-destructuring
+ * @see https://github.com/babel/babel/blob/b5d6c3c820af3c049b476df6e885fef33fa953f1/packages/babel-helpers/src/helpers.ts#L679-L693
  */
 export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
     const moduleName = '@babel/runtime/helpers/slicedToArray'

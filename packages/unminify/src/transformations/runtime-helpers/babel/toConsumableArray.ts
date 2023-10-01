@@ -11,6 +11,7 @@ import type { Scope } from 'ast-types/lib/scope'
  * Restores spread operator from `@babel/runtime/helpers/toConsumableArray` helper.
  *
  * @see https://babeljs.io/docs/babel-plugin-transform-spread
+ * @see https://github.com/babel/babel/blob/b5d6c3c820af3c049b476df6e885fef33fa953f1/packages/babel-helpers/src/helpers.ts#L727-L741
  */
 export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
     const moduleName = '@babel/runtime/helpers/toConsumableArray'

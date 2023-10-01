@@ -9,6 +9,8 @@ import type { ObjectExpression } from 'jscodeshift'
 
 /**
  * Restore object spread syntax from `@babel/runtime/helpers/objectSpread2` helper.
+ *
+ * @see https://github.com/babel/babel/blob/main/packages/babel-helpers/src/helpers/objectSpread2.js
  */
 export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
     /**
