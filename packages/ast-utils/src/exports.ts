@@ -216,6 +216,8 @@ export class ExportManager {
         /**
          * Special case:
          *
+         * Note: This pattern has been dropped by Babel in https://github.com/babel/babel/pull/15984
+         *
          * @example
          * var foo = exports.foo = 1
          */
