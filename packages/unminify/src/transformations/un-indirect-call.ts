@@ -5,7 +5,7 @@ import { removeDefaultImportIfUnused } from '../utils/scope'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
-import type { Identifier, MemberExpression, ObjectPattern, Property, SequenceExpression } from 'jscodeshift'
+import type { ASTNode, Identifier, MemberExpression, ObjectPattern, Property, SequenceExpression, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 /**
  * Converts indirect call expressions to direct call expressions.
@@ -110,7 +110,7 @@ export const transformAST: ASTTransformation = (context) => {
             const defaultImport = importManager.getDefaultImport(defaultSpecifierName)
             if (defaultImport) {
                 const source = defaultImport[0]
-                const namedImportLocalName = [...importManager.namedImports.get(source)?.get(namedSpecifierName) ?? []][0]
+                const namedImportLocalName = [...(importManager.namedImports.get(source)?.get(namedSpecifierName) ?? [])][0]
                 if (namedImportLocalName) {
                     replaceMapping.set(key, namedImportLocalName)
                     const newCallExpression = j.callExpression(j.identifier(namedImportLocalName), node.arguments)
@@ -156,7 +156,10 @@ export const transformAST: ASTTransformation = (context) => {
                         type: 'Identifier',
                         name: object.name,
                     },
-                }).filter(path => isTopLevel(j, path.parent))
+                }).filter((p) => {
+                    return isTopLevel(j, p.parent)
+                    && isPositionBetween(p.parent.node, requireDecl.get().node, path.node)
+                })
 
                 if (propertyDecl.size() === 0) {
                     // generate `const { useRef: useRef$0 } = react`
@@ -167,16 +170,44 @@ export const transformAST: ASTTransformation = (context) => {
                     const value = j.identifier(valueName)
                     const objectProperty = j.objectProperty(key, value)
                     objectProperty.shorthand = key.name === value.name
-                    const variableDeclaration = j.variableDeclaration(
-                        'const',
-                        [j.variableDeclarator(
+
+                    // find existing `const { ... } = react`
+                    const existingDestructuring = root
+                        .find(j.VariableDeclaration, {
+                            kind: 'const',
+                            declarations: (declarations) => {
+                                return declarations.some((d) => {
+                                    return j.VariableDeclarator.check(d)
+                                    && j.ObjectPattern.check(d.id)
+                                    && j.Identifier.check(d.init)
+                                    && d.init.name === object.name
+                                })
+                            },
+                        })
+                        .filter((p) => {
+                            return isTopLevel(j, p)
+                            && isPositionBetween(p.node, requireDecl.get().node, path.node)
+                        })
+
+                    if (existingDestructuring.size() > 0) {
+                        const existingDestructuringNode = existingDestructuring.get().node as VariableDeclaration
+                        const objectPattern = existingDestructuringNode.declarations.find((d): d is VariableDeclarator => {
+                            return j.VariableDeclarator.check(d)
+                            && j.ObjectPattern.check(d.id)
+                            && j.Identifier.check(d.init)
+                            && d.init.name === object.name
+                        })!.id as ObjectPattern
+                        objectPattern.properties.push(objectProperty)
+                    }
+                    else {
+                        const variableDeclarator = j.variableDeclarator(
                             j.objectPattern([objectProperty]),
                             j.identifier(object.name),
-                        )],
-                    )
-
-                    const requireDeclPath = requireDecl.get()
-                    insertAfter(j, requireDeclPath, variableDeclaration)
+                        )
+                        const variableDeclaration = j.variableDeclaration('const', [variableDeclarator])
+                        const requireDeclPath = requireDecl.get()
+                        insertAfter(j, requireDeclPath, variableDeclaration)
+                    }
 
                     const newCallExpression = j.callExpression(j.identifier(valueName), node.arguments)
                     path.replace(newCallExpression)
@@ -207,6 +238,21 @@ export const transformAST: ASTTransformation = (context) => {
             removeDefaultImportIfUnused(j, root, specifier)
         })
     })
+}
+
+function isPositionBetween(node: ASTNode, before: ASTNode, after: ASTNode) {
+    if (
+        'start' in node && typeof node.start === 'number'
+        && 'end' in node && typeof node.end === 'number'
+        && 'end' in before && typeof before.end === 'number'
+        && 'start' in after && typeof after.start === 'number'
+    ) {
+        return node.start > before.end && node.end < after.start
+    }
+
+    // no position info, means it's our newly inserted node
+    // assume we have inserted it correctly before
+    return true
 }
 
 export default wrap(transformAST)

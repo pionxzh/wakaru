@@ -1,8 +1,7 @@
-import { defineInlineTest, defineInlineTestWithOptions } from '@unminify-kit/test-utils'
+import { defineInlineTest } from '@unminify-kit/test-utils'
 import transform from '../un-indirect-call'
 
 const inlineTest = defineInlineTest(transform)
-const inlineTestWithOptions = defineInlineTestWithOptions(transform)
 
 inlineTest('indirect call from a imported module',
   `
@@ -36,7 +35,7 @@ var thirdRef = useRef$0(0);
 `,
 )
 
-inlineTestWithOptions('indirect call from a required module', { unsafe: true },
+inlineTest('indirect call from a required module',
   `
 const s = require("react");
 
@@ -53,22 +52,51 @@ var countRef = useRef(0);
 `,
 )
 
-inlineTestWithOptions('indirect call from a required module with existing destructuring', { unsafe: true },
+inlineTest('indirect call from required module with existing destructuring',
   `
 const s = require("react");
 const { useRef } = s;
 
 var countRef = (0, s.useRef)(0);
+var secondRef = (0, s.useMemo)(() => {}, []);
 `,
   `
 const s = require("react");
-const { useRef } = s;
+const {
+  useRef,
+  useMemo
+} = s;
 
 var countRef = useRef(0);
+var secondRef = useMemo(() => {}, []);
 `,
 )
 
-inlineTestWithOptions('indirect call from a required module with existing destructuring', { unsafe: true },
+inlineTest('indirect call from required module with existing destructuring declared after',
+  `
+const s = require("react");
+
+var countRef = (0, s.useRef)(0);
+var secondRef = (0, s.useMemo)(() => {}, []);
+
+const { useRef } = s;
+`,
+  `
+const s = require("react");
+
+const {
+  useRef: useRef$0,
+  useMemo
+} = s;
+
+var countRef = useRef$0(0);
+var secondRef = useMemo(() => {}, []);
+
+const { useRef } = s;
+`,
+)
+
+inlineTest('indirect call from multiple required modules',
   `
 const s = require("react");
 const t = require(9527);
