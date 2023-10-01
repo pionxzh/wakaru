@@ -1,5 +1,5 @@
 import { defineInlineTest } from '@unminify-kit/test-utils'
-import toConsumableArray from '../babel-helpers/toConsumableArray'
+import toConsumableArray from '../runtime-helpers/babel/toConsumableArray'
 import unNullishCoalescing from '../un-nullish-coalescing'
 import transform from '../un-optional-chaining'
 

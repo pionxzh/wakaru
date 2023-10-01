@@ -1,18 +1,12 @@
 import { getTopLevelStatements } from '@unminify-kit/ast-utils'
 import { mergeComments } from '../utils/comments'
 import wrap from '../wrapAstTransformation'
-
-import { transformAST as babelHelpers } from './babel-helpers'
+import { transformAST as babelHelpers } from './runtime-helpers'
+import type { SharedParams } from '../utils/types'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
-import type { ModuleMapping, ModuleMeta } from '@unminify-kit/ast-utils'
 import type { FunctionDeclaration } from 'jscodeshift'
 
-interface Params {
-    moduleMapping?: ModuleMapping
-    moduleMeta?: ModuleMeta
-}
-
-const addAnnotationOnHelper = (context: Context, params: Params) => {
+const addAnnotationOnHelper = (context: Context, params: SharedParams) => {
     const { moduleMapping, moduleMeta } = params
     if (!moduleMapping || !moduleMeta) return
 
@@ -42,7 +36,7 @@ const addAnnotationOnHelper = (context: Context, params: Params) => {
 /**
  * Replace runtime helper with the actual original code.
  */
-export const transformAST: ASTTransformation<Params> = (context, params) => {
+export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
     addAnnotationOnHelper(context, params)
 
     babelHelpers(context, params)

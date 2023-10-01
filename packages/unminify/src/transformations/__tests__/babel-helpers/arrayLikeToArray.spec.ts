@@ -1,5 +1,5 @@
 import { defineInlineTest } from '@unminify-kit/test-utils'
-import transform from '../../babel-helpers/arrayLikeToArray'
+import transform from '../../runtime-helpers/babel/arrayLikeToArray'
 
 const inlineTest = defineInlineTest(transform)
 

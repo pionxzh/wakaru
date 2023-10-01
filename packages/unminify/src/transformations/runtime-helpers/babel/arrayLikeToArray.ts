@@ -1,23 +1,26 @@
 import { findReferences } from '@unminify-kit/ast-utils'
-import { findHelperLocals, removeHelperImport } from '../../utils/import'
-import { isHelperFunctionCall } from '../../utils/isHelperFunctionCall'
-import wrap from '../../wrapAstTransformation'
-import type { SharedParams } from '../../utils/types'
-import type { ASTTransformation } from '../../wrapAstTransformation'
+import { findHelperLocals, removeHelperImport } from '../../../utils/import'
+import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
+import wrap from '../../../wrapAstTransformation'
+import type { SharedParams } from '../../../utils/types'
+import type { ASTTransformation } from '../../../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ArrayExpression } from 'jscodeshift'
 
 /**
- * `@babel/runtime/helpers/arrayWithoutHoles` helper.
+ * `@babel/runtime/helpers/arrayLikeToArray` helper.
  *
  * Replace `empty slot` with `undefined` in ArrayExpression.
+ *
+ * Note: Semantically, this is not the same as what `arrayWithoutHoles`
+ * does, but currently we don't see other usage of `arrayLikeToArray`.
  *
  * We can further optimize this by detecting if we are wrapped by `toConsumableArray`
  * and skip the replacement as spread operator will handle `empty` correctly.
  */
 export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
-    const moduleName = '@babel/runtime/helpers/arrayWithoutHoles'
-    const moduleEsmName = '@babel/runtime/helpers/esm/arrayWithoutHoles'
+    const moduleName = '@babel/runtime/helpers/arrayLikeToArray'
+    const moduleEsmName = '@babel/runtime/helpers/esm/arrayLikeToArray'
 
     const { root, j } = context
     const rootScope = root.find(j.Program).get().scope as Scope | null
@@ -28,7 +31,7 @@ export const transformAST: ASTTransformation<SharedParams> = (context, params) =
         const references = findReferences(j, rootScope, helperLocal).length
 
         const found = root
-            // arrayWithoutHoles([...])
+            // arrayLikeToArray([...])
             .find(j.CallExpression)
             .filter((path) => {
                 return isHelperFunctionCall(j, path.node, helperLocal)

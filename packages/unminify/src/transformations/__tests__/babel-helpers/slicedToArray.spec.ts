@@ -1,6 +1,6 @@
 import { defineInlineTest } from '@unminify-kit/test-utils'
-import transform from '../../babel-helpers/slicedToArray'
 import lebab from '../../lebab'
+import transform from '../../runtime-helpers/babel/slicedToArray'
 import smartInline from '../../smart-inline'
 
 const inlineTest = defineInlineTest([transform, lebab, smartInline])

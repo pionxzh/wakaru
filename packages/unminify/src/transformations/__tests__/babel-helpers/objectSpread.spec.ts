@@ -1,5 +1,5 @@
 import { defineInlineTest } from '@unminify-kit/test-utils'
-import transform from '../../babel-helpers/objectSpread'
+import transform from '../../runtime-helpers/babel/objectSpread'
 
 const inlineTest = defineInlineTest(transform)
 
