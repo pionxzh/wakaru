@@ -13,6 +13,8 @@ import type { ASTPath, ConditionalExpression, JSCodeshift, LogicalExpression } f
 /**
  * Restore nullish coalescing syntax.
  *
+ * TODO: Support `??=` operator.
+ *
  * Only support `loose=false` mode.
  */
 export const transformAST: ASTTransformation = (context) => {

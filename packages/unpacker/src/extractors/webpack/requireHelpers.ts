@@ -2,6 +2,8 @@ import { isFunctionExpression } from '@unminify-kit/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { BlockStatement, Collection, ExportDefaultDeclaration, ExportNamedDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, ObjectExpression, Property } from 'jscodeshift'
 
+// TODO: support `require.n`
+
 /**
  * This function will detect the existence of `require.r`
  * and remove it from the source code.
