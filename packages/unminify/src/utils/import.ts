@@ -14,7 +14,7 @@ export function findHelperLocals(
     moduleName: string,
     moduleEsmName?: string,
 ): string[] {
-    const { j, root } = context
+    const { j, root, filename } = context
 
     const importManager = new ImportManager()
     importManager.collectEsModuleImport(j, root)
@@ -40,6 +40,18 @@ export function findHelperLocals(
     if (moduleMapping && moduleMeta) {
         const moduleMappingEntries = Object.entries(moduleMapping)
 
+        // helpers in current module
+        const currentModuleId = moduleMappingEntries.find(([_, path]) => path === filename)?.[0] || filename
+        const currentTags = moduleMeta[currentModuleId]?.tags
+        if (currentTags) {
+            Object.entries(currentTags).forEach(([local, tags]) => {
+                if (tags.includes(moduleName)) {
+                    result.push(local)
+                }
+            })
+        }
+
+        // helpers in other modules
         imports.forEach((imported) => {
             const source = moduleMappingEntries.find(([_, path]) => path === imported.source.toString())?.[0] || imported.source
             const targetModule = moduleMeta[source]
@@ -104,6 +116,12 @@ export function removeHelperImport(j: JSCodeshift, scope: Scope | null, name: st
                 importSpecifier.remove()
             }
         }
+        return
+    }
+
+    const functionDeclaration = j(declaration).closest(j.FunctionDeclaration)
+    if (functionDeclaration.size() === 1) {
+        functionDeclaration.remove()
         return
     }
 
