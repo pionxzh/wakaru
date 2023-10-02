@@ -36,3 +36,14 @@ _arrayLikeToArray.default([1,,3]);
 [1, undefined, 3];
 `,
 )
+
+inlineTest('arrayLikeToArray - cases',
+  `
+var _arrayLikeToArray = require("@babel/runtime/helpers/arrayLikeToArray");
+
+_arrayLikeToArray([1,,3], 4);
+`,
+  `
+[1, undefined, 3];
+`,
+)

@@ -1,4 +1,4 @@
-import { findReferences } from '@unminify-kit/ast-utils'
+import { findReferences, isNumber } from '@unminify-kit/ast-utils'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
 import wrap from '../../../wrapAstTransformation'
@@ -11,6 +11,10 @@ import type { ArrayExpression } from 'jscodeshift'
  * `@babel/runtime/helpers/arrayLikeToArray` helper.
  *
  * Replace `empty slot` with `undefined` in ArrayExpression.
+ *
+ * ```ts
+ * function arrayLikeToArray(arr, len?: number): any[]
+ * ```
  *
  * Note: Semantically, this is not the same as what `arrayWithoutHoles`
  * does, but currently we don't see other usage of `arrayLikeToArray`.
@@ -36,9 +40,19 @@ export const transformAST: ASTTransformation<SharedParams> = (context, params) =
             // arrayLikeToArray([...])
             .find(j.CallExpression)
             .filter((path) => {
-                return isHelperFunctionCall(j, path.node, helperLocal)
-                && path.node.arguments.length === 1
-                && j.ArrayExpression.check(path.node.arguments[0])
+                if (!isHelperFunctionCall(j, path.node, helperLocal)) return false
+
+                const argLength = path.node.arguments.length
+                if (argLength === 0 || argLength > 2) return false
+
+                if (!j.ArrayExpression.check(path.node.arguments[0])) return false
+
+                if (argLength === 2) {
+                    const secondArg = path.node.arguments[1]
+                    return j.Literal.check(secondArg) && isNumber(secondArg.value)
+                }
+
+                return true
             })
             .forEach((path) => {
                 const arr = path.node.arguments[0] as ArrayExpression
