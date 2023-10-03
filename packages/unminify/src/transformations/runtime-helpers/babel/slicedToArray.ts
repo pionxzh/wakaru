@@ -12,6 +12,10 @@ import type { CallExpression, Identifier, Literal, VariableDeclarator } from 'js
 /**
  * Restores array destructuring from `@babel/runtime/helpers/slicedToArray` helper.
  *
+ * ```ts
+ * function slicedToArray(arr, len?: number)
+ * ```
+ *
  * @example
  * var _ref = slicedToArray(a, 2)
  * var name = _ref[0]

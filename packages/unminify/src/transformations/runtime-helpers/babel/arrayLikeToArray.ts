@@ -13,7 +13,7 @@ import type { ArrayExpression } from 'jscodeshift'
  * Replace `empty slot` with `undefined` in ArrayExpression.
  *
  * ```ts
- * function arrayLikeToArray(arr, len?: number): any[]
+ * function arrayLikeToArray(arr, len?: number)
  * ```
  *
  * Note: Semantically, this is not the same as what `arrayWithoutHoles`

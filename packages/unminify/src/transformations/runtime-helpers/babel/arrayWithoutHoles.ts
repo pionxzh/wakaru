@@ -12,6 +12,10 @@ import type { ArrayExpression } from 'jscodeshift'
  *
  * Replace `empty slot` with `undefined` in ArrayExpression.
  *
+ * ```ts
+ * function arrayWithoutHoles(arr)
+ * ```
+ *
  * We can further optimize this by detecting if we are wrapped by `toConsumableArray`
  * and skip the replacement as spread operator will handle `empty` correctly.
  *

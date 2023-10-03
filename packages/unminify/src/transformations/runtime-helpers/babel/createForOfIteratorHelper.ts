@@ -14,6 +14,7 @@ import type { ASTPath, AssignmentExpression, CallExpression, Identifier, Variabl
  * ```ts
  * function createForOfIteratorHelper(o, allowArrayLike?)
  * ```
+ *
  * @see https://babeljs.io/docs/babel-plugin-transform-for-of
  * @see https://github.com/babel/babel/blob/main/packages/babel-helpers/src/helpers.ts#L813-L872
  */

@@ -11,6 +11,11 @@ import type { CallExpression, Identifier } from 'jscodeshift'
 /**
  * Restore object spread syntax from `@babel/runtime/helpers/objectSpread2` helper.
  *
+ *
+ * ```ts
+ * function extends(target, ...sources)
+ * ```
+ *
  * @example
  * babelHelpers.extends({}, (babelHelpers.objectDestructuringEmpty(this.props), this.props));
  * ->
