@@ -53,11 +53,20 @@ const moduleMatchers: Record<string, Array<string | RegExp | Array<string | RegE
             /if\s?\(Object\.getOwnPropertySymbols\)\s?{(\r\n|\r|\n)?(\s+)?var \w+\s?=\s?Object\.getOwnPropertySymbols\(\w+\)/,
             /if\s?\(!Object\.prototype\.propertyIsEnumerable\.call\(\w+,\s?\w+\)\)\s?continue/,
         ],
+        [
+            // let's try some keyword based matching
+            '.indexOf(',
+            'Object.getOwnPropertySymbols',
+            'Object.prototype.propertyIsEnumerable.call(',
+            /\w+\[\w+\]\s?=\s?\w+\[\w+\]/,
+        ],
     ],
+    // FIXME: this function's implementation is too generic, we need to find a better way to match it.
     '@babel/runtime/helpers/objectWithoutPropertiesLoose': [
         [
             /if\s?\(\w+\.indexOf\(\w+\)\s?>=\s?0\)\s?continue/,
             /var \w+\s?=\s?{};?(\r\n|\r|\n)?(\s+)?var \w+\s?=\s?Object\.keys\(\w+\)/,
+            /\w+\[\w+\]\s?=\s?\w+\[\w+\]/,
         ],
     ],
     '@babel/runtime/helpers/typeof': [

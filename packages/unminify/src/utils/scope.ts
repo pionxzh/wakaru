@@ -1,6 +1,6 @@
 import { mergeComments } from './comments'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTPath, Collection, Identifier, ImportDeclaration, JSCodeshift, VariableDeclaration } from 'jscodeshift'
+import type { ASTPath, Collection, Identifier, ImportDeclaration, JSCodeshift, Statement, VariableDeclaration } from 'jscodeshift'
 
 export function isDeclared(scope: Scope, name: string) {
     while (scope) {
@@ -26,26 +26,46 @@ export function removeDeclarationIfUnused(j: JSCodeshift, path: ASTPath, name: s
     const idsUsedInPath = j(path).find(j.Identifier, { name })
     const idsUsed = idsUsedInScope.length - idsUsedInPath.length
     if (idsUsed === 1) {
-        const idUsed = idsUsedInScope.paths()[0]
-        if (j.VariableDeclarator.check(idUsed.parent.node) && j.VariableDeclaration.check(idUsed.parent.parent.node)) {
-            const variableDeclaration = idUsed.parent.parent.node as VariableDeclaration
-            const index = variableDeclaration.declarations.findIndex(declarator => j.VariableDeclarator.check(declarator)
-                && j.Identifier.check(declarator.id)
-                && declarator.id.name === name,
-            )
-            if (index > -1) {
-                variableDeclaration.declarations.splice(index, 1)
-                if (variableDeclaration.declarations.length === 0) {
-                    const currentNodeIndex = idUsed.parent.parent.parent.value?.body?.findIndex((child: any) => child === idUsed.parent.parent.value) as any
-                    if (currentNodeIndex > -1) {
-                        const nextSibling = idUsed.parent.parent.parent.value.body[currentNodeIndex + 1]
-                        if (!nextSibling) return
+        removeVariableDeclarator(j, idsUsedInScope.get())
+    }
+}
 
-                        mergeComments(nextSibling, idUsed.parent.parent.value.comments)
+/**
+ * Removes a variable declarator based on the given identifier path.
+ * The variable declaration is removed if it has no other declarators.
+ */
+export function removeVariableDeclarator(j: JSCodeshift, path: ASTPath<Identifier>) {
+    if (!(j.VariableDeclarator.check(path.parent.node) && j.VariableDeclaration.check(path.parent.parent.node))) return
+
+    const vDeclarationPath = path.parent.parent
+    const vDeclaration = vDeclarationPath.node as VariableDeclaration
+    const index = vDeclaration.declarations.findIndex(declarator => j.VariableDeclarator.check(declarator)
+        && j.Identifier.check(declarator.id)
+        && declarator.id === path.node,
+    )
+    if (index > -1) {
+        vDeclaration.declarations.splice(index, 1)
+
+        if (vDeclaration.declarations.length === 0) {
+            const body = vDeclarationPath.parent.node?.body as Statement[] | undefined
+            if (Array.isArray(body)) {
+                const currentNodeIndex = body.findIndex(child => child === vDeclarationPath.node)
+                if (currentNodeIndex > -1) {
+                    const nextSibling = body[currentNodeIndex + 1]
+                    if (nextSibling) {
+                        mergeComments(nextSibling, vDeclarationPath.node.comments)
                     }
-                    idUsed.parent.parent.prune()
+
+                    if (j.BlockStatement.check(vDeclarationPath.parent.node)) {
+                        // FIXME: prune() will fail if the parent is a BlockStatement
+                        // and I have no idea why
+                        body.splice(currentNodeIndex, 1)
+                        return
+                    }
                 }
             }
+
+            vDeclarationPath.prune()
         }
     }
 }
