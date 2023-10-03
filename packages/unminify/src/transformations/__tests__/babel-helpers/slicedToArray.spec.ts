@@ -77,6 +77,7 @@ var weight = _ref3[2];
   // FIXME: lebab didn't transform this var to const, not big deal imo
   `
 var [] = a;
+
 const [name] = b;
 const [, mass, weight] = rect.meta;
 `,

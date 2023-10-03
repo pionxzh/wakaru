@@ -40,40 +40,27 @@ export const transformAST: ASTTransformation<SharedParams> = (context, params) =
 
         const found = root
             // var _ref = slicedToArray(a, 2)
-            .find(j.VariableDeclaration, {
-                declarations: (declarations) => {
-                    return declarations.length === 1
-                    && j.VariableDeclarator.check(declarations[0])
-                    && j.Identifier.check(declarations[0].id)
-                    && isHelperFunctionCall(j, declarations[0].init, helperLocal)
-
-                    && declarations[0].init.arguments.length === 2
-                    && j.Literal.check(declarations[0].init.arguments[1])
-                    && isNumber(declarations[0].init.arguments[1].value)
+            .find(j.VariableDeclarator, {
+                id: { type: 'Identifier' },
+                init: (init) => {
+                    return isHelperFunctionCall(j, init, helperLocal)
+                    && init.arguments.length === 2
+                    && j.Literal.check(init.arguments[1])
+                    && isNumber(init.arguments[1].value)
                 },
             })
             .forEach((path) => {
-                const decl = path.node.declarations[0] as VariableDeclarator
+                const decl = path.node as VariableDeclarator
                 const tempVariable = decl.id as Identifier
                 const wrappedExpression = (decl.init as CallExpression).arguments[0] as ExpressionKind
                 const length = ((decl.init as CallExpression).arguments[1] as Literal).value as number
 
                 if (length === 0) {
                     // var [] = wrappedExpression
-                    path.replace(j.variableDeclaration(path.node.kind, [
-                        j.variableDeclarator(
-                            j.arrayPattern([]),
-                            wrappedExpression,
-                        ),
-                    ]))
+                    path.replace(j.variableDeclarator(j.arrayPattern([]), wrappedExpression))
                 }
                 else {
-                    path.replace(j.variableDeclaration(path.node.kind, [
-                        j.variableDeclarator(
-                            tempVariable,
-                            wrappedExpression,
-                        ),
-                    ]))
+                    path.replace(j.variableDeclarator(tempVariable, wrappedExpression))
                 }
                 removeDeclarationIfUnused(j, path, helperLocal)
             })
