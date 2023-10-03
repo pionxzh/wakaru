@@ -1,7 +1,6 @@
 import { findReferences, isNumber } from '@unminify-kit/ast-utils'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
-import { removeDeclarationIfUnused } from '../../../utils/scope'
 import wrap from '../../../wrapAstTransformation'
 import type { SharedParams } from '../../../utils/types'
 import type { ASTTransformation } from '../../../wrapAstTransformation'
@@ -66,7 +65,6 @@ export const transformAST: ASTTransformation<SharedParams> = (context, params) =
                 else {
                     path.replace(j.variableDeclarator(tempVariable, wrappedExpression))
                 }
-                removeDeclarationIfUnused(j, path, helperLocal)
             })
             .size()
 
