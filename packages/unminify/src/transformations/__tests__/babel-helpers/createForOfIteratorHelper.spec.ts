@@ -59,3 +59,54 @@ for (var _result of arr) {
 }
 `,
 )
+
+inlineTest('createForOfIteratorHelper - loose',
+  `
+var _createForOfIteratorHelperLoose = require("@babel/runtime/helpers/createForOfIteratorHelperLoose");
+
+var _loop = function (result) {
+  result = otherValue;
+  fn(() => {
+    result;
+  });
+};
+for (var _iterator = _createForOfIteratorHelperLoose(results), _step; !(_step = _iterator()).done;) {
+  var result = _step.value;
+  _loop(result);
+}
+`,
+  `
+var _loop = function (result) {
+  result = otherValue;
+  fn(() => {
+    result;
+  });
+};
+
+for (var result of results) {
+  _loop(result);
+}
+`,
+)
+
+inlineTest('createForOfIteratorHelper - obj.prop',
+  `
+var _createForOfIteratorHelper = require("@babel/runtime/helpers/createForOfIteratorHelper");
+
+var _iterator = _createForOfIteratorHelper(arr), _step;
+try {
+  for (_iterator.s(); !(_step = _iterator.n()).done;) {
+    obj.prop = _step.value;
+  }
+} catch (err) {
+  _iterator.e(err);
+} finally {
+  _iterator.f();
+}
+`,
+  `
+for (value of arr) {
+  value = obj.prop;
+}
+`,
+)
