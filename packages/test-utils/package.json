@@ -3,7 +3,6 @@
   "type": "module",
   "version": "0.0.1",
   "private": true,
-  "packageManager": "pnpm@8.6.3",
   "author": "Pionxzh",
   "license": "MIT",
   "sideEffects": false,
@@ -25,8 +24,8 @@
     "vitest": "^1.0.0-beta.1"
   },
   "devDependencies": {
-    "@types/jscodeshift": "^0.11.6",
-    "typescript": "^5.1.6"
+    "@types/jscodeshift": "^0.11.7",
+    "typescript": "^5.2.2"
   },
   "publishConfig": {
     "exports": {
