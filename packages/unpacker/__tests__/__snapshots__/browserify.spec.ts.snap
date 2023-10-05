@@ -43,14 +43,14 @@ var str = Object.prototype.toString;
 module.exports =
   isArray ||
   function (val) {
-    return !!val && \\"[object Array]\\" == str.call(val);
+    return !!val && "[object Array]" == str.call(val);
   };
 ",
     "id": 1,
     "isEntry": false,
   },
   {
-    "code": "const isArray = require(\\"is-array\\");
+    "code": "const isArray = require("is-array");
 
 const pi = 3.14;
 
@@ -66,7 +66,7 @@ class Calculator {
   }
 
   sum(arr) {
-    if (!isArray(arr)) throw new Error(\\"Argument must be an array\\");
+    if (!isArray(arr)) throw new Error("Argument must be an array");
     return arr.reduce((a, b) => a + b, 0);
   }
 
@@ -93,7 +93,7 @@ module.exports.isArr = isArr;
     "isEntry": false,
   },
   {
-    "code": "const { add, pi } = require(\\"./calculator\\");
+    "code": "const { add, pi } = require("./calculator");
 
 class Greeting {
   constructor(name) {
@@ -111,15 +111,15 @@ module.exports = Greeting;
     "isEntry": false,
   },
   {
-    "code": "const { Calculator, div, mul, pi } = require(\\"./calculator\\");
-const Greeting = require(\\"./greeting\\");
+    "code": "const { Calculator, div, mul, pi } = require("./calculator");
+const Greeting = require("./greeting");
 
 const cal = new Calculator();
 console.log(cal.add(pi, 2));
 console.log(mul(1, 2));
 console.log(div(1, 2));
 
-const greeting = new Greeting(\\"John\\");
+const greeting = new Greeting("John");
 greeting.sayHello();
 ",
     "id": 4,
