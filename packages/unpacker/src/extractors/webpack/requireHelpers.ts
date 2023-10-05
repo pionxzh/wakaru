@@ -153,7 +153,8 @@ export function convertExportsGetterForWebpack5(j: JSCodeshift, collection: Coll
                         return true
                     })
                 },
-            }],
+            },
+        ],
     })
 
     const definition = new Map<string, ExpressionKind>()

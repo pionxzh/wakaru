@@ -1,4 +1,5 @@
 {
+  "eslint.experimental.useFlatConfig": true,
   "editor.codeActionsOnSave": {
     "source.fixAll": false,
     "source.fixAll.eslint": true, // this allows ESLint to auto fix on save
@@ -15,7 +16,7 @@
     "markdown",
     "json",
     "jsonc",
-    "json5"
+    "yaml"
   ],
   "prettier.enable": false,
   "cSpell.words": [

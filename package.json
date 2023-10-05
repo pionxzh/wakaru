@@ -24,7 +24,7 @@
     "generate:pretty-testcases": "esno scripts/pretty-testcases.ts"
   },
   "devDependencies": {
-    "@pionxzh/eslint-config-ts": "^0.7.0",
+    "@pionxzh/eslint-config": "^1.0.0",
     "@types/node": "^18.18.3",
     "eslint": "^8.50.0",
     "esno": "^0.17.0",

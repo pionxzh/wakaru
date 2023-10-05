@@ -10,8 +10,8 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "require": "./dist/index.cjs",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     }
   },
   "main": "./dist/index.cjs",
@@ -56,7 +56,6 @@
     "vue-router": "4.2.5"
   },
   "devDependencies": {
-    "@pionxzh/eslint-config-vue": "^0.7.0",
     "@vitejs/plugin-vue": "^4.4.0",
     "autoprefixer": "^10.4.16",
     "postcss": "^8.4.31",

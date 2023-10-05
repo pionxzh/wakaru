@@ -106,5 +106,6 @@ export function renderDebugDecisionTree(j: JSCodeshift, tree: DecisionTree) {
         if ('type' in value) return j(value).toSource()
         return value
     }, 2)
+    // eslint-disable-next-line no-console
     console.log(output)
 }

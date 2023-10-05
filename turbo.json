@@ -27,6 +27,9 @@
       "inputs": ["src/**/*.tsx", "src/**/*.ts", "test/**/*.ts", "test/**/*.tsx", "tsconfig.json"]
     },
     "lint": {
+      "inputs": [
+        "eslint.config.js"
+      ],
       "outputs": []
     },
     "lint:fix": {

@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import * as path from 'node:path'
 import process from 'node:process'
 import fsa from 'fs-extra'
@@ -15,7 +16,7 @@ interface UnminifyOptions {
     output?: string
 }
 
-function commonOptions(args: Argv<{}>): Argv<UnminifyOptions> {
+function commonOptions(args: Argv<unknown>): Argv<UnminifyOptions> {
     return args
         .option('input', {
             alias: 'i',
@@ -40,7 +41,7 @@ yargs(hideBin(process.argv))
         '*',
         'Unminify your bundled code',
         args => commonOptions(args).help(),
-        async (args) => {
+        async (_args) => {
             // const exitCode = await check(await resolveConfig(args))
             // process.exit(exitCode)
         },

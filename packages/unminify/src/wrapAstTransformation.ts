@@ -6,7 +6,7 @@ export interface Context {
     filename: string
 }
 
-export interface ASTTransformation<Params = {}> {
+export interface ASTTransformation<Params = unknown> {
     (context: Context, params: Params): string | void
 }
 

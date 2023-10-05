@@ -3,49 +3,49 @@ import type { ASTTransformation } from '../wrapAstTransformation'
 import type { AssignmentExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, MemberExpression, VariableDeclarator } from 'jscodeshift'
 
 /**
-  * Restore `Class` definition from the constructor and the prototype.
-  * Currently, this transformation only supports output from TypeScript.
-  *
-  * @TODO: extends
-  * @TODO: rename the remaining old constructor name
-  * @TODO: babel
-  *
-  * @example
-  * var Foo = (function() {
-  *   function t(name) {
-  *     this.name = name;
-  *     this.age = 18;
-  *   }
-  *   t.prototype.logger = function logger() {
-  *     console.log("Hello", this.name);
-  *   }
-  *   t.staticMethod = function staticMethod() {
-  *       console.log('static method')
-  *   }
-  * })();
-  *
-  * ->
-  *
-  * class Foo {
-  *   constructor() {
-  *     this.name = 'bar'
-  *     this.age = 18
-  *   }
-  *   get message() {
-  *     return 'Hello' + this.name
-  *   }
-  *   logger() {
-  *     console.log("Hello", this.name);
-  *   }
-  *   static staticMethod() {
-  *     console.log('static method')
-  *   }
-  * }
-  *
-  * TODO: useDefineForClassFields
-  * @see https://babeljs.io/docs/babel-plugin-transform-classes
-  * @see https://www.typescriptlang.org/play?target=1#code/MYGwhgzhAEBiD29oG8BQ1oDswFsCmAXNBAC4BOAlpgObrRjWFYCuOARnmXXcPJqWWbAS8MgAps+IgKrUAlCjoYSACwoQAdJLzQAvFlx4l0Veo0Md+gIwAOOgF86IeNUbiFaDBl794IPBrO1GIARAASeCDOIQA0Jmqa2nIA3A50pGAkFMDEJJnZALJ4qvAAJmIexj4QfgFBYgDkGVk5+CWlDXJpGM3Z0FQZmMCWWHgA7nCIoQBmiCFd9kA
-  */
+ * Restore `Class` definition from the constructor and the prototype.
+ * Currently, this transformation only supports output from TypeScript.
+ *
+ * @TODO: extends
+ * @TODO: rename the remaining old constructor name
+ * @TODO: babel
+ *
+ * @example
+ * var Foo = (function() {
+ *   function t(name) {
+ *     this.name = name;
+ *     this.age = 18;
+ *   }
+ *   t.prototype.logger = function logger() {
+ *     console.log("Hello", this.name);
+ *   }
+ *   t.staticMethod = function staticMethod() {
+ *       console.log('static method')
+ *   }
+ * })();
+ *
+ * ->
+ *
+ * class Foo {
+ *   constructor() {
+ *     this.name = 'bar'
+ *     this.age = 18
+ *   }
+ *   get message() {
+ *     return 'Hello' + this.name
+ *   }
+ *   logger() {
+ *     console.log("Hello", this.name);
+ *   }
+ *   static staticMethod() {
+ *     console.log('static method')
+ *   }
+ * }
+ *
+ * TODO: useDefineForClassFields
+ * @see https://babeljs.io/docs/babel-plugin-transform-classes
+ * @see https://www.typescriptlang.org/play?target=1#code/MYGwhgzhAEBiD29oG8BQ1oDswFsCmAXNBAC4BOAlpgObrRjWFYCuOARnmXXcPJqWWbAS8MgAps+IgKrUAlCjoYSACwoQAdJLzQAvFlx4l0Veo0Md+gIwAOOgF86IeNUbiFaDBl794IPBrO1GIARAASeCDOIQA0Jmqa2nIA3A50pGAkFMDEJJnZALJ4qvAAJmIexj4QfgFBYgDkGVk5+CWlDXJpGM3Z0FQZmMCWWHgA7nCIoQBmiCFd9kA
+ */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 

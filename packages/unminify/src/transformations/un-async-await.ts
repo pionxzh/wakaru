@@ -7,65 +7,65 @@ import type { ArrayExpression, CallExpression, ExpressionStatement, FunctionExpr
 // cSpell:words trys endfinally
 
 /**
-  * Restore `async` and `await` keywords
-  *
-  * Restore tslib helper __generator and __awaiter
-  *
-  * @example
-  * function asyncAwait() {
-  *   return __awaiter(this, void 0, void 0, function () {
-  *     var result, json;
-  *     return __generator(this, function (_a) {
-  *         switch (_a.label) {
-  *             case 0:
-  *                 console.log('Before sleep');
-  *                 return [4 /*yield* /, sleep(1000)];
-  *                 case 1:
-  *                     _a.sent();
-  *                     return [4 /*yield* /, fetch('')];
-  *                 case 2:
-  *                     result = _a.sent();
-  *                     return [4 /*yield* /, result.json()];
-  *                 case 3:
-  *                    json = _a.sent();
-  *                    return [2 /*return* /, json];
-  *             }
-  *         });
-  *     });
-  * }
-  * ->
-  * async function asyncAwait() {
-  *   console.log('Before sleep');
-  *   await sleep(1000);
-  *   const result = await fetch('')
-  *   const json = await result.json();
-  *   return json;
-  * }
-  *
-  * @example
-  * function generator() {
-  *   return __generator(this, function (_a) {
-  *   switch (_a.label) {
-  *     case 0: return [4 /*yield* /, 1];
-  *       case 1:
-  *         _a.sent();
-  *         return [4 /*yield* /, 2];
-  *       case 2:
-  *         _a.sent();
-  *         return [4 /*yield* /, 3];
-  *       case 3:
-  *         _a.sent();
-  *         return [2 /*return* /];
-  *     }
-  *   });
-  * }
-  * ->
-  * function* generator() {
-  *   yield 1;
-  *   yield 2;
-  *   yield 3;
-  * }
-  */
+ * Restore `async` and `await` keywords
+ *
+ * Restore tslib helper __generator and __awaiter
+ *
+ * @example
+ * function asyncAwait() {
+ *   return __awaiter(this, void 0, void 0, function () {
+ *     var result, json;
+ *     return __generator(this, function (_a) {
+ *         switch (_a.label) {
+ *             case 0:
+ *                 console.log('Before sleep');
+ *                 return [4 /*yield* /, sleep(1000)];
+ *                 case 1:
+ *                     _a.sent();
+ *                     return [4 /*yield* /, fetch('')];
+ *                 case 2:
+ *                     result = _a.sent();
+ *                     return [4 /*yield* /, result.json()];
+ *                 case 3:
+ *                    json = _a.sent();
+ *                    return [2 /*return* /, json];
+ *             }
+ *         });
+ *     });
+ * }
+ * ->
+ * async function asyncAwait() {
+ *   console.log('Before sleep');
+ *   await sleep(1000);
+ *   const result = await fetch('')
+ *   const json = await result.json();
+ *   return json;
+ * }
+ *
+ * @example
+ * function generator() {
+ *   return __generator(this, function (_a) {
+ *   switch (_a.label) {
+ *     case 0: return [4 /*yield* /, 1];
+ *       case 1:
+ *         _a.sent();
+ *         return [4 /*yield* /, 2];
+ *       case 2:
+ *         _a.sent();
+ *         return [4 /*yield* /, 3];
+ *       case 3:
+ *         _a.sent();
+ *         return [2 /*return* /];
+ *     }
+ *   });
+ * }
+ * ->
+ * function* generator() {
+ *   yield 1;
+ *   yield 2;
+ *   yield 3;
+ * }
+ */
 export const transformAST: ASTTransformation = (context) => {
     transform__generator(context)
     transform__awaiter(context)
