@@ -1,4 +1,5 @@
 import * as path from 'node:path'
+import process from 'node:process'
 import fsa from 'fs-extra'
 import * as globby from 'globby'
 import c from 'picocolors'
