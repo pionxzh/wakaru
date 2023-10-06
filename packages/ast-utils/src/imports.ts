@@ -1,7 +1,7 @@
 import { isNumber, isString } from './isPrimitive'
 import { isTopLevel } from './isTopLevel'
 import type { NodePath } from 'ast-types/lib/node-path'
-import type { CallExpression, Collection, ImportDeclaration, JSCodeshift, Literal, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
+import type { ASTNode, CallExpression, Collection, ImportDeclaration, JSCodeshift, Literal, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 type Source = string
 type Imported = string
@@ -213,22 +213,21 @@ export class ImportManager {
          * @example
          * var foo = require('foo')
          * var { bar } = require('bar')
+         * var baz = require('baz').default
          */
         root
             .find(j.VariableDeclaration, {
                 declarations: [
                     {
                         type: 'VariableDeclarator',
-                        init: {
-                            type: 'CallExpression',
-                            callee: {
-                                type: 'Identifier',
-                                name: 'require',
-                            },
-                            arguments: [{
-                                type: 'Literal' as const,
-                                value: (value: unknown) => isString(value) || isNumber(value),
-                            }],
+                        init: (init) => {
+                            if (!init) return false
+                            if (isRequireCall(j, init)) return true
+
+                            return j.MemberExpression.check(init)
+                                && isRequireCall(j, init.object)
+                                && j.Identifier.check(init.property)
+                                && init.property.name === 'default'
                         },
                     },
                 ],
@@ -238,7 +237,9 @@ export class ImportManager {
 
                 const firstDeclaration = path.node.declarations[0] as VariableDeclarator
                 const id = firstDeclaration.id
-                const init = firstDeclaration.init as CallExpression
+                const init = j.MemberExpression.check(firstDeclaration.init)
+                    ? firstDeclaration.init.object as CallExpression
+                    : firstDeclaration.init as CallExpression
 
                 const sourceLiteral = init.arguments[0] as Literal
                 const source = sourceLiteral.value as string
@@ -357,4 +358,19 @@ export class ImportManager {
         this.namedImports.clear()
         this.bareImports.clear()
     }
+}
+
+function isRequireCall(j: JSCodeshift, node: ASTNode) {
+    return j.match(node, {
+        type: 'CallExpression',
+        callee: {
+            type: 'Identifier',
+            name: 'require',
+        },
+        arguments: [{
+            type: 'Literal' as const,
+            // @ts-expect-error
+            value: (value: unknown) => isString(value) || isNumber(value),
+        }],
+    })
 }

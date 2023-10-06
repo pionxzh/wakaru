@@ -5,7 +5,7 @@ import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { NodePath } from 'ast-types/lib/node-path'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, Literal, MemberExpression, VariableDeclarator } from 'jscodeshift'
+import type { ASTNode, ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, Literal, MemberExpression, VariableDeclarator } from 'jscodeshift'
 
 interface Params {
     hoist?: boolean
@@ -91,16 +91,14 @@ function transformImport(context: Context, hoist: boolean) {
             declarations: [
                 {
                     type: 'VariableDeclarator',
-                    init: {
-                        type: 'CallExpression',
-                        callee: {
-                            type: 'Identifier',
-                            name: 'require',
-                        },
-                        arguments: [{
-                            type: 'Literal' as const,
-                            value: (value: unknown) => isString(value),
-                        }],
+                    init: (init) => {
+                        if (!init) return false
+                        if (isRequireCall(j, init)) return true
+
+                        return j.MemberExpression.check(init)
+                        && isRequireCall(j, init.object)
+                        && j.Identifier.check(init.property)
+                        && init.property.name === 'default'
                     },
                 },
             ],
@@ -110,7 +108,9 @@ function transformImport(context: Context, hoist: boolean) {
 
             const firstDeclaration = path.node.declarations[0] as VariableDeclarator
             const id = firstDeclaration.id
-            const init = firstDeclaration.init as CallExpression
+            const init = j.MemberExpression.check(firstDeclaration.init)
+                ? firstDeclaration.init.object as CallExpression
+                : firstDeclaration.init as CallExpression
 
             const sourceLiteral = init.arguments[0] as Literal
             const source = sourceLiteral.value as string
@@ -720,6 +720,21 @@ function transformExport(context: Context) {
         })
 
     exportsMap.clear()
+}
+
+function isRequireCall(j: JSCodeshift, node: ASTNode) {
+    return j.match(node, {
+        type: 'CallExpression',
+        callee: {
+            type: 'Identifier',
+            name: 'require',
+        },
+        arguments: [{
+            type: 'Literal' as const,
+            // @ts-expect-error
+            value: (value: unknown) => isString(value) || isNumber(value),
+        }],
+    })
 }
 
 export default wrap(transformAST)

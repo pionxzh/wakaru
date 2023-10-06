@@ -21,11 +21,13 @@ inlineTest('require to import',
   `
 var foo = require('foo');
 var { bar } = require('foo');
+var baz = require('baz').default;
 var baz1 = require('baz2').baz3;
 require('side-effect');
 `,
   `
 import foo, { bar } from "foo";
+import baz from "baz";
 import { baz3 as baz1 } from "baz2";
 import "side-effect";
 `,
@@ -34,7 +36,7 @@ import "side-effect";
 inlineTest('default import',
   `
 var foo = require('bar');
-var baz = require('baz')
+var baz = require('baz').default;
 `,
   `
 import foo from "bar";

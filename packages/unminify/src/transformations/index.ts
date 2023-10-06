@@ -41,9 +41,9 @@ export const transformationMap: {
     'un-variable-merging': unVariableMerging,
     'un-curly-braces': unCurlyBraces,
     lebab,
+    'un-runtime-helper': unRuntimeHelper, // `un-esm` relies on this to eliminate helpers around `require` calls
     'un-esm': unEsm,
     'un-export-rename': unExportRename,
-    'un-runtime-helper': unRuntimeHelper,
     'un-use-strict': unUseStrict,
     'un-esmodule-flag': unEsModuleFlag,
     'un-boolean': unBoolean,
