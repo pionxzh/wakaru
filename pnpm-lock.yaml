@@ -50,6 +50,9 @@ importers:
 
   packages/ast-utils:
     dependencies:
+      '@unminify-kit/ds':
+        specifier: workspace:*
+        version: link:../ds
       jscodeshift:
         specifier: ^0.15.0
         version: 0.15.0(@babel/preset-env@7.22.20)
@@ -72,6 +75,8 @@ importers:
       typescript:
         specifier: ^5.2.2
         version: 5.2.2
+
+  packages/ds: {}
 
   packages/playground:
     dependencies:
@@ -195,6 +200,9 @@ importers:
       '@unminify-kit/ast-utils':
         specifier: workspace:*
         version: link:../ast-utils
+      '@unminify-kit/ds':
+        specifier: workspace:*
+        version: link:../ds
       fs-extra:
         specifier: ^11.1.1
         version: 11.1.1

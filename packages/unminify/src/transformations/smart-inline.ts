@@ -1,4 +1,5 @@
 import { findReferences } from '@unminify-kit/ast-utils'
+import { MultiMap } from '@unminify-kit/ds'
 import { generateName } from '../utils/identifier'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -52,8 +53,8 @@ export const transformAST: ASTTransformation = (context) => {
 }
 
 function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope) {
-    const objectPropertyMap = new Map<string, Set<string>>()
-    const objectDeclarationMap = new Map<string, Array<VariableDeclaration | ExpressionStatement>>()
+    const objectPropertyMap = new MultiMap<string, string>()
+    const objectDeclarationMap = new MultiMap<string, VariableDeclaration | ExpressionStatement>()
 
     const objectIndexMap = new Map<string, string[]>()
     const variableDeclarationMap = new Map<string, VariableDeclaration>()
@@ -92,13 +93,8 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
             const object = init.object as Identifier
             const property = init.property as Identifier
 
-            const propertyAccesses = objectPropertyMap.get(object.name) || new Set()
-            propertyAccesses.add(property.name)
-            objectPropertyMap.set(object.name, propertyAccesses)
-
-            const variableDeclarations = objectDeclarationMap.get(object.name) || []
-            variableDeclarations.push(_node)
-            objectDeclarationMap.set(object.name, variableDeclarations)
+            objectPropertyMap.set(object.name, property.name)
+            objectDeclarationMap.set(object.name, _node)
         }
 
         // Collect all index accesses
@@ -175,13 +171,8 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
             const object = expression.object as Identifier
             const property = expression.property as Identifier
 
-            const propertyAccesses = objectPropertyMap.get(object.name) || new Set()
-            propertyAccesses.add(property.name)
-            objectPropertyMap.set(object.name, propertyAccesses)
-
-            const variableDeclarations = objectDeclarationMap.get(object.name) || []
-            variableDeclarations.push(_node)
-            objectDeclarationMap.set(object.name, variableDeclarations)
+            objectPropertyMap.set(object.name, property.name)
+            objectDeclarationMap.set(object.name, _node)
         }
     })
 

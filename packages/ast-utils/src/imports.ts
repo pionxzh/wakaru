@@ -1,3 +1,4 @@
+import { MultiMap } from '@unminify-kit/ds'
 import { isNumber, isString } from './isPrimitive'
 import { isTopLevel } from './isTopLevel'
 import type { NodePath } from 'ast-types/lib/node-path'
@@ -35,9 +36,9 @@ export type ImportInfo = DefaultImport | NamespaceImport | NamedImport | BareImp
 
 export class ImportManager {
     private importSourceOrder = new Set<Source>()
-    defaultImports = new Map<Source, Set<Local>>()
-    namespaceImports = new Map<Source, Set<Local>>()
-    namedImports = new Map<Source, Map<Imported, Set<Local>>>()
+    defaultImports = new MultiMap<Source, Local>()
+    namespaceImports = new MultiMap<Source, Local>()
+    namedImports = new Map<Source, MultiMap<Imported, Local>>()
     bareImports = new Set<Source>()
 
     private importDecls: Array<NodePath<ImportDeclaration>> = []
@@ -110,25 +111,18 @@ export class ImportManager {
     }
 
     addDefaultImport(source: Source, local: Local) {
-        if (!this.defaultImports.has(source)) this.defaultImports.set(source, new Set())
-        this.defaultImports.get(source)!.add(local)
+        this.defaultImports.set(source, local)
     }
 
     addNamespaceImport(source: Source, local: Local) {
-        if (!this.namespaceImports.has(source)) {
-            this.namespaceImports.set(source, new Set())
-        }
-        this.namespaceImports.get(source)!.add(local)
+        this.namespaceImports.set(source, local)
     }
 
     addNamedImport(source: Source, imported: Imported, local: Local) {
         if (!this.namedImports.has(source)) {
-            this.namedImports.set(source, new Map())
+            this.namedImports.set(source, new MultiMap())
         }
-        if (!this.namedImports.get(source)!.has(imported)) {
-            this.namedImports.get(source)!.set(imported, new Set())
-        }
-        this.namedImports.get(source)!.get(imported)!.add(local)
+        this.namedImports.get(source)!.set(imported, local)
     }
 
     addBareImport(source: Source) {
@@ -149,7 +143,7 @@ export class ImportManager {
         return [...this.namespaceImports.entries()].find(([_source, locals]) => locals.has(local))
     }
 
-    getNamedImport(local: Local): [Source, Map<Imported, Set<Local>>] | undefined {
+    getNamedImport(local: Local): [Source, MultiMap<Imported, Local>] | undefined {
         return [...this.namedImports.entries()].find(([_source, importedMap]) => [...importedMap.entries()].find(([_imported, locals]) => locals.has(local)))
     }
 
