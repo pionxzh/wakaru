@@ -17,11 +17,6 @@ export default pionxzh(
             'ts/ban-ts-comment': 'off',
             'pionxzh/top-level-function': 'off',
             'pionxzh/consistent-list-newline': 'off',
-
-            // the following rules are causing performance issues?
-            'pionxzh/generic-spacing': 'off',
-            'pionxzh/named-tuple-spacing': 'off',
-            'pionxzh/no-cjs-exports': 'off',
         },
     },
 )
