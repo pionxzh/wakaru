@@ -1,5 +1,7 @@
+/* eslint-disable ts/ban-types */
 declare module '@heroicons/vue/*' {
-    import type { DefineComponent } from "vue";
+    import type { DefineComponent } from 'vue'
+
     export const AcademicCapIcon: DefineComponent<{}, {}, any>
     export const AdjustmentsIcon: DefineComponent<{}, {}, any>
     export const AnnotationIcon: DefineComponent<{}, {}, any>

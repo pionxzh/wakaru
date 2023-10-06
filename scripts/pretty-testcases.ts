@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import fs from 'node:fs/promises'
 import * as globby from 'globby'
 import babelParser from 'prettier/parser-babel'
