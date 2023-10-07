@@ -1,6 +1,9 @@
 import { ImportManager, isString, isTopLevel } from '@unminify-kit/ast-utils'
 import { generateName } from '../utils/identifier'
 import wrap from '../wrapAstTransformation'
+import { transformAST as interopRequireDefault } from './runtime-helpers/babel/interopRequireDefault'
+import { transformAST as interopRequireWildcard } from './runtime-helpers/babel/interopRequireWildcard'
+import type { SharedParams } from '../utils/types'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { NodePath } from 'ast-types/lib/node-path'
@@ -33,8 +36,11 @@ interface Params {
  * ->
  * export { foo, bar, baz }
  */
-export const transformAST: ASTTransformation<Params> = (context, params) => {
+export const transformAST: ASTTransformation<Params & SharedParams> = (context, params) => {
     const hoist = params?.hoist ?? false
+
+    interopRequireDefault(context, params)
+    interopRequireWildcard(context, params)
 
     transformImport(context, hoist)
     transformExport(context)

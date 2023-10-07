@@ -6,6 +6,9 @@ import type { SharedParams } from '../utils/types'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { FunctionDeclaration } from 'jscodeshift'
 
+/**
+ * Add annotation on runtime helper.
+ */
 const addAnnotationOnHelper = (context: Context, params: SharedParams) => {
     const { moduleMapping, moduleMeta } = params
     if (!moduleMapping || !moduleMeta) return
@@ -27,6 +30,11 @@ const addAnnotationOnHelper = (context: Context, params: SharedParams) => {
         const tags = modMeta.tags[functionName]
         if (!tags || tags.length === 0) return
 
+        /**
+         * {helperName}
+         * {tag1}
+         * {tag2}
+         */
         const commentContent = tags.map(tag => ` * ${tag}`).join('\n')
         const comment = j.commentBlock(`*\n${commentContent}\n `, true, false)
         mergeComments(fn, [comment])
