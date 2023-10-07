@@ -32,6 +32,11 @@ const moduleMatchers: Record<string, Array<string | RegExp | Array<string | RegE
     '@babel/runtime/helpers/interopRequireDefault': [
         /return\s?\w+\s?&&\s?\w+\.__esModule\s?\?\s?\w+\s?:\s?{ default: \w+ }/,
     ],
+    '@babel/runtime/helpers/interopRequireWildcard': [
+        'typeof WeakMap',
+        // !nodeInterop && obj && obj.__esModule
+        /!\w+\s?&&\s?\w+\s?&&\s?\w+\.__esModule/,
+    ],
     '@babel/runtime/helpers/iterableToArray': [
         /if\s?\(typeof\sSymbol\s?!==\s?"undefined"\s?&&\s?\w+\[Symbol\.iterator\]\s?!=\s?null\s?\|\|\s?\w+\["@@iterator"\]\s?!=\s?null\)\s?return\sArray\.from\(\w+\)/,
     ],
@@ -124,6 +129,7 @@ const moduleDeps: Record<string, string[] | undefined> = {
     // '@babel/runtime/helpers/isNativeReflectConstruct': [],
     // '@babel/runtime/helpers/iterableToArray': [],
     // '@babel/runtime/helpers/interopRequireDefault': [],
+    // '@babel/runtime/helpers/interopRequireWildcard': [],
     // '@babel/runtime/helpers/iterableToArrayLimit': [],
     // '@babel/runtime/helpers/iterableToArrayLimitLoose': [],
     '@babel/runtime/helpers/maybeArrayLike': [

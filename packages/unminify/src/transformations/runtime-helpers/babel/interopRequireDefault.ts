@@ -8,7 +8,9 @@ import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, AssignmentExpression, CallExpression, Identifier, Literal, MemberExpression, SequenceExpression, VariableDeclarator } from 'jscodeshift'
 
 /**
- * Restores array destructuring from `@babel/runtime/helpers/interopRequireDefault` helper.
+ * Restores default import from `@babel/runtime/helpers/interopRequireDefault` helper.
+ * This operation is *not* safe, because it assumes that the default export is always present,
+ * and the transformed require will soon be transformed into an import.
  *
  * ```ts
  * function interopRequireDefault(obj)
@@ -22,6 +24,8 @@ import type { ASTPath, AssignmentExpression, CallExpression, Identifier, Literal
  * var _a = require("a");
  * var _b = require("b");
  * a();
+ *
+ * @see https://babeljs.io/docs/babel-plugin-transform-modules-commonjs
  */
 export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
     const moduleName = '@babel/runtime/helpers/interopRequireDefault'
