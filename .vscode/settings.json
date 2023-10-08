@@ -25,6 +25,7 @@
     "Declarators",
     "esmodule",
     "heroicons",
+    "Hoistable",
     "jscodeshift",
     "lebab",
     "picocolors",

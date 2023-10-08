@@ -48,7 +48,7 @@ inlineTest('named import',
   `
 var foo = require('baz').baz;
 var bar = require('baz').baz;
-var baz = require('baz').baz;
+var baz = require('baz')['baz'];
 `,
   `
 import { baz as foo, baz as bar, baz } from "baz";
@@ -58,9 +58,62 @@ import { baz as foo, baz as bar, baz } from "baz";
 inlineTest('named import #2',
   `
 var { bar, baz: foo } = require('baz');
+var { box } = require('box').default;
 `,
   `
 import { bar, baz as foo } from "baz";
+import { box } from "box";
+`,
+)
+
+inlineTest('namespace import',
+  `
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+var _baz = _interopRequireWildcard(require("baz"));
+`,
+  `
+import * as _baz from "baz";
+`,
+)
+
+inlineTest('namespace import #2',
+  `
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+
+var _foo = require("foo");
+_foo = _interopRequireWildcard(_foo);
+
+var _bar = require("bar");
+_source = _interopRequireWildcard(_bar);
+
+var _baz = require("baz");
+_another = _interopRequireWildcard(_baz);
+`,
+  `
+import * as _foo from "foo";
+import * as _source from "bar";
+import * as _another from "baz";
+`,
+)
+
+inlineTest('namespace import #3',
+  `
+import _source$es6Default from "source";
+import _another$es6Default from "another";
+
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+var _source = _interopRequireWildcard(_source$es6Default);
+_source;
+
+var _another = _interopRequireWildcard(_another$es6Default);
+_another$es6Default;
+`,
+  `
+import * as _source from "source";
+import * as _another from "another";
+_source;
+
+_another;
 `,
 )
 
@@ -91,6 +144,18 @@ var foo = require('foo');
 `,
   `
 import foo from "foo";
+`,
+)
+
+inlineTest('dynamic import #1',
+  `
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+Promise.resolve().then(() => require('foo'));
+Promise.resolve().then(() => _interopRequireWildcard(require('bar')));
+`,
+  `
+import("foo");
+import("bar");
 `,
 )
 
@@ -210,7 +275,7 @@ function fn() {
 `,
 )
 
-inlineTestOpt('require should be hoisted #2', { hoist: true },
+inlineTestOpt('require should be hoisted #3', { hoist: true },
   `
 var bar = 1;
 function fn() {

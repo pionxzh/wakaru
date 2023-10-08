@@ -7,6 +7,8 @@ import type { ASTTransformation } from '../../../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
 import type { CallExpression } from 'jscodeshift'
 
+export const NAMESPACE_IMPORT_HINT = '* @hint namespace-import '
+
 /**
  * Restores wildcard import from `@babel/runtime/helpers/interopRequireWildcard` helper.
  * A hint is added to the require call to indicate that it is a namespace import.
@@ -53,7 +55,7 @@ export const transformAST: ASTTransformation<SharedParams> = (context, params) =
                 if (j.SpreadElement.check(arg)) return
 
                 // var source = require("a")/** @hint namespace-import */;
-                const hintComment = j.commentBlock('* @hint namespace-import ', false, true)
+                const hintComment = j.commentBlock(NAMESPACE_IMPORT_HINT, false, true)
                 mergeComments(arg, [hintComment])
 
                 path.parent.replace(arg)

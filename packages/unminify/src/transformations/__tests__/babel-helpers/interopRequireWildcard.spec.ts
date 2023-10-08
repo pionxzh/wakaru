@@ -26,7 +26,6 @@ _c = _c/** @hint namespace-import */;
 var _d = require("d")/** @hint namespace-import */;
 var _source = _source$es6Default/** @hint namespace-import */;
 
-// import("foo")
 Promise.resolve().then(() => require("foo")/** @hint namespace-import */);
 `,
 )

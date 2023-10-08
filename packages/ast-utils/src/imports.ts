@@ -114,6 +114,10 @@ export class ImportManager {
         this.defaultImports.set(source, local)
     }
 
+    removeDefaultImport(source: Source, local: Local) {
+        this.defaultImports.remove(source, local)
+    }
+
     addNamespaceImport(source: Source, local: Local) {
         this.namespaceImports.set(source, local)
     }

@@ -149,6 +149,8 @@ export function renameIdentifier(
     oldName: string,
     newName: string,
 ): void {
+    if (oldName === newName) return
+
     const references = findReferences(j, targetScope, oldName)
     references.forEach((path) => {
         path.node.name = newName

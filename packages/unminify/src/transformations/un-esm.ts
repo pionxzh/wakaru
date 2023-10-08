@@ -1,14 +1,14 @@
-import { ImportManager, isString, isTopLevel } from '@unminify-kit/ast-utils'
+import { ImportManager, findReferences, isNumber, isString, isTopLevel, renameIdentifier } from '@unminify-kit/ast-utils'
 import { generateName } from '../utils/identifier'
 import wrap from '../wrapAstTransformation'
 import { transformAST as interopRequireDefault } from './runtime-helpers/babel/interopRequireDefault'
-import { transformAST as interopRequireWildcard } from './runtime-helpers/babel/interopRequireWildcard'
+import { NAMESPACE_IMPORT_HINT, transformAST as interopRequireWildcard } from './runtime-helpers/babel/interopRequireWildcard'
 import type { SharedParams } from '../utils/types'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { NodePath } from 'ast-types/lib/node-path'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTNode, ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, Literal, MemberExpression, VariableDeclarator } from 'jscodeshift'
+import type { ASTPath, AssignmentExpression, BlockStatement, CallExpression, Identifier, JSCodeshift, Literal, MemberExpression, Node, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 interface Params {
     hoist?: boolean
@@ -39,6 +39,7 @@ interface Params {
 export const transformAST: ASTTransformation<Params & SharedParams> = (context, params) => {
     const hoist = params?.hoist ?? false
 
+    // handle interop
     interopRequireDefault(context, params)
     interopRequireWildcard(context, params)
 
@@ -49,8 +50,6 @@ export const transformAST: ASTTransformation<Params & SharedParams> = (context, 
 /**
  * Limitations:
  * - dynamic require cannot be transformed, e.g. `require(dynamic)`
- *
- * TODO: support helper functions from bundlers
  */
 function transformImport(context: Context, hoist: boolean) {
     const { root, j } = context
@@ -62,12 +61,8 @@ function transformImport(context: Context, hoist: boolean) {
      * After all, we will reconstruct the imports at the top of the file.
      */
     const importManager = new ImportManager()
-
     importManager.collectEsModuleImport(j, root)
 
-    /**
-     * Scan through all `require` call for the recording the order of imports
-     */
     root
         .find(j.CallExpression, {
             callee: {
@@ -76,66 +71,142 @@ function transformImport(context: Context, hoist: boolean) {
             },
             arguments: [{
                 type: 'Literal' as const,
-                value: (value: unknown) => isString(value),
+                value: (value: unknown) => isString(value) || isNumber(value),
             }],
         })
         .forEach((path) => {
             const sourceLiteral = path.node.arguments[0] as Literal
             const source = sourceLiteral.value as string
             importManager.addImportOrder(source)
-        })
 
-    /*
-     * Basic require and require with destructuring
-     *
-     * @example
-     * var foo = require('foo')
-     * var { bar } = require('bar')
-     */
-    root
-        .find(j.VariableDeclaration, {
-            declarations: [
-                {
-                    type: 'VariableDeclarator',
-                    init: (init) => {
-                        if (!init) return false
-                        if (isRequireCall(j, init)) return true
+            const parentPath = path.parent as ASTPath
 
-                        return j.MemberExpression.check(init)
-                        && isRequireCall(j, init.object)
-                        && j.Identifier.check(init.property)
-                        && init.property.name === 'default'
-                    },
-                },
-            ],
-        })
-        .forEach((path) => {
-            if (!hoist && !isTopLevel(j, path)) return
-
-            const firstDeclaration = path.node.declarations[0] as VariableDeclarator
-            const id = firstDeclaration.id
-            const init = j.MemberExpression.check(firstDeclaration.init)
-                ? firstDeclaration.init.object as CallExpression
-                : firstDeclaration.init as CallExpression
-
-            const sourceLiteral = init.arguments[0] as Literal
-            const source = sourceLiteral.value as string
-
-            if (j.Identifier.check(id)) {
-                const local = id.name
-                importManager.addDefaultImport(source, local)
-
-                j(path).remove()
+            if (j.ExpressionStatement.check(parentPath.node)) {
+                handleBareRequire(parentPath, source)
                 return
             }
 
-            /**
-             * var { bar } = require('bar')
-             * ->
-             * import { bar } from 'bar'
-             *
-             */
-            if (j.ObjectPattern.check(id)) {
+            if (
+                j.VariableDeclarator.check(parentPath.node)
+             && parentPath.node.init === path.node
+            ) {
+                const isNamespace = isNamespaceImport(path)
+                handleBasicRequire(parentPath as ASTPath<VariableDeclarator>, source, isNamespace)
+                return
+            }
+
+            if (
+                j.MemberExpression.check(parentPath.node)
+             && parentPath.node.object === path.node
+             && j.VariableDeclarator.check(parentPath.parent.node)
+             && j.VariableDeclaration.check(parentPath.parent.parent.node)
+            ) {
+                handleRequireWithPropertyAccess(parentPath as ASTPath<MemberExpression>, source)
+                return
+            }
+
+            handleDynamicRequire(path, source)
+
+            if (hoist) {
+                handleFuzzyRequire(path, source)
+            }
+        })
+
+    handleNamespaceImport()
+
+    importManager.applyImportToRoot(j, root)
+
+    /**
+     * Bare require
+     *
+     * @example
+     * require('foo')
+     */
+    function handleBareRequire(path: ASTPath, source: string) {
+        if (!checkHoistable(j, path, hoist)) return false
+
+        importManager.addBareImport(source)
+        path.prune()
+        return true
+    }
+
+    /*
+    * Basic require and require with destructuring
+    *
+    * @example
+    * var foo = require('foo')
+    * var { bar } = require('bar')
+    */
+    function handleBasicRequire(path: ASTPath<VariableDeclarator>, source: string, isNamespace: boolean) {
+        if (!checkHoistable(j, path.parent, hoist)) return false
+
+        const id = path.node.id
+
+        if (j.Identifier.check(id)) {
+            const local = id.name
+            if (isNamespace) importManager.addNamespaceImport(source, local)
+            else importManager.addDefaultImport(source, local)
+
+            path.parent.prune()
+            return true
+        }
+
+        if (j.ObjectPattern.check(id)) {
+            id.properties.forEach((property) => {
+                if (j.Property.check(property) && j.Identifier.check(property.key) && j.Identifier.check(property.value)) {
+                    const imported = property.key.name
+                    const local = property.value.name
+                    importManager.addNamedImport(source, imported, local)
+                }
+            })
+            path.parent.prune()
+            return true
+        }
+
+        return false
+    }
+
+    /**
+     * Require with property access
+     *
+     * @example
+     * var baz = require('baz').baz
+     * var baz = require('baz').default
+     * var { baz } = require('baz').baz
+     * var { baz } = require('baz').default
+     */
+    function handleRequireWithPropertyAccess(path: ASTPath<MemberExpression>, source: string) {
+        const variableDeclarationPath = path.parent.parent as ASTPath<VariableDeclaration>
+        if (!checkHoistable(j, variableDeclarationPath, hoist)) return
+
+        const variableDeclarator = path.parent.node as VariableDeclarator
+        const id = variableDeclarator.id
+        const init = path.node
+        const property = init.property
+
+        let imported: string | null = null
+        if (init.computed && j.Literal.check(property) && isString(property.value)) imported = property.value
+        else if (!init.computed && j.Identifier.check(property)) imported = property.name
+        if (!imported) return
+
+        if (j.Identifier.check(id)) {
+            const local = id.name
+
+            if (imported === 'default') importManager.addDefaultImport(source, local)
+            else importManager.addNamedImport(source, imported, local)
+
+            variableDeclarationPath.prune()
+            return
+        }
+
+        /**
+         * var { baz } = require('foo').bar
+         * ->
+         * import { bar } from 'foo'
+         * var { baz } = bar
+         */
+        if (j.ObjectPattern.check(id)) {
+            if (imported === 'default') {
                 id.properties.forEach((property) => {
                     if (j.Property.check(property)
                         && j.Identifier.check(property.key)
@@ -146,129 +217,68 @@ function transformImport(context: Context, hoist: boolean) {
                         importManager.addNamedImport(source, imported, local)
                     }
                 })
-                j(path).remove()
-                // eslint-disable-next-line no-useless-return
+                variableDeclarationPath.prune()
                 return
             }
-        })
 
-    /**
-     * Bare require
-     *
-     * @example
-     * require('foo')
-     */
-    root
-        .find(j.ExpressionStatement, {
-            expression: {
+            /**
+             * Resolve name conflict
+             *
+             * Because we are introducing a new variable `bar`,
+             * we need to make sure it doesn't conflict with
+             * existing variables.
+             */
+            const local = generateName(imported, path.scope)
+            importManager.addNamedImport(source, imported, local)
+
+            j(variableDeclarationPath).insertAfter(j.variableDeclaration(
+                variableDeclarationPath.node.kind,
+                [j.variableDeclarator(id, j.identifier(local))],
+            ))
+
+            variableDeclarationPath.prune()
+        }
+    }
+
+    function handleDynamicRequire(path: ASTPath<CallExpression>, source: string) {
+        // Promise.resolve().then(() => require('foo'));
+        if (
+            j.match(path.parent.parent.node, {
                 type: 'CallExpression',
                 callee: {
-                    type: 'Identifier',
-                    name: 'require',
-                },
-                arguments: [{
-                    type: 'Literal' as const,
-                    value: (value: unknown) => isString(value),
-                }],
-            },
-        })
-        .forEach((path) => {
-            if (!hoist && !isTopLevel(j, path)) return
-
-            const expression = path.node.expression as CallExpression
-            const sourceLiteral = expression.arguments[0] as Literal
-            const source = sourceLiteral.value as string
-            importManager.addBareImport(source)
-
-            j(path).remove()
-        })
-
-    /**
-     * Require with property access
-     *
-     * @example
-     * var baz = require('baz').baz
-     * var { baz } = require('baz').baz
-     */
-    root
-        .find(j.VariableDeclaration, {
-            declarations: [
-                {
-                    type: 'VariableDeclarator',
-                    init: {
-                        type: 'MemberExpression',
-                        object: {
-                            type: 'CallExpression',
-                            callee: {
+                    type: 'MemberExpression',
+                    object: {
+                        type: 'CallExpression',
+                        callee: {
+                            type: 'MemberExpression',
+                            object: {
                                 type: 'Identifier',
-                                name: 'require',
+                                name: 'Promise',
                             },
-                            arguments: [{
-                                type: 'Literal' as const,
-                                value: (value: unknown) => isString(value),
-                            }],
+                            property: {
+                                type: 'Identifier',
+                                name: 'resolve',
+                            },
                         },
-                        property: {
-                            type: 'Identifier',
-                        },
+                        arguments: [],
+                    },
+                    property: {
+                        type: 'Identifier',
+                        name: 'then',
                     },
                 },
-            ],
-        })
-        .forEach((path) => {
-            if (!hoist && !isTopLevel(j, path)) return
-
-            const firstDeclaration = path.node.declarations[0] as VariableDeclarator
-            const id = firstDeclaration.id
-            const init = firstDeclaration.init as MemberExpression
-
-            const sourceLiteral = (init.object as CallExpression).arguments[0] as Literal
-            const source = sourceLiteral.value as string
-
-            const property = init.property as Identifier
-            const imported = property.name
-
-            /**
-             * var baz = require('foo').bar
-             * ->
-             * import { bar as baz } from 'foo'
-             */
-            if (j.Identifier.check(id)) {
-                const local = id.name
-                importManager.addNamedImport(source, imported, local)
-            }
-
-            /**
-             * var { baz } = require('foo').bar
-             * ->
-             * import { bar } from 'foo'
-             * var { baz } = bar
-             */
-            if (j.ObjectPattern.check(id)) {
-                /**
-                 * Resolve name conflict
-                 *
-                 * Because we are introducing a new variable `bar`,
-                 * we need to make sure it doesn't conflict with
-                 * existing variables.
-                 */
-                const local = generateName(imported, path.scope)
-
-                importManager.addNamedImport(source, imported, local)
-
-                j(path).insertAfter(j.variableDeclaration(
-                    path.node.kind,
-                    [
-                        j.variableDeclarator(
-                            id,
-                            j.identifier(local),
-                        ),
-                    ],
-                ))
-            }
-
-            j(path).remove()
-        })
+                arguments: [{
+                    type: 'ArrowFunctionExpression',
+                    params: [],
+                    // @ts-expect-error
+                    body: (body: any) => body === path.node,
+                }],
+            })
+        ) {
+            const dynamicImport = j.importExpression(j.literal(source))
+            path.parent.parent.replace(dynamicImport)
+        }
+    }
 
     /**
      * All **Other** Require: Fuzzy match and replace
@@ -279,34 +289,86 @@ function transformImport(context: Context, hoist: boolean) {
      * import bar from "bar";
      * var foo = bar("baz");
      */
-    if (hoist) {
-        root
-            .find(j.CallExpression, {
-                callee: {
-                    type: 'Identifier',
-                    name: 'require',
-                },
-                arguments: [{
-                    type: 'Literal' as const,
-                }],
-            })
-            .forEach((path) => {
-                const expression = path.node as CallExpression
-                const sourceLiteral = expression.arguments[0] as Literal
-                const source = sourceLiteral.value as string
-
-                const moduleName = generateName(source)
-                const local = generateName(moduleName, path.scope)
-                j(path).replaceWith(j.identifier(local))
-
-                importManager.addDefaultImport(source, local)
-            })
+    function handleFuzzyRequire(path: ASTPath, source: string) {
+        const local = generateName(source, path.scope)
+        path.replace(j.identifier(local))
+        importManager.addDefaultImport(source, local)
     }
 
     /**
-     * Rebuild imports
+     * Find all default imports that are actually namespace imports
+     * and convert them to namespace imports.
      */
-    importManager.applyImportToRoot(j, root)
+    function handleNamespaceImport() {
+        const rootScope = root.find(j.Program).get().scope as Scope | null
+        if (rootScope) {
+            importManager.defaultImports.forEach((locals, source) => {
+                locals.forEach((local) => {
+                    findReferences(j, rootScope, local).some((path) => {
+                        if (!isNamespaceImport(path)) return false
+
+                        const parentPath = path.parent as ASTPath
+
+                        /**
+                         * var _bar = require("bar");
+                         * var _source = _interopRequireWildcard(_bar);
+                         * ->
+                         * import * as _source from "bar";
+                         */
+                        if (
+                            j.VariableDeclarator.check(parentPath.node)
+                             && j.Identifier.check(parentPath.node.id)
+                             && parentPath.node.init === path.node
+                        ) {
+                            const variableDeclarator = parentPath.node as VariableDeclarator
+                            const id = variableDeclarator.id as Identifier
+
+                            renameIdentifier(j, rootScope, local, id.name)
+
+                            importManager.addNamespaceImport(source, id.name)
+                            importManager.removeDefaultImport(source, local)
+                            parentPath.prune()
+
+                            return true
+                        }
+
+                        /**
+                         * var _bar = require("bar");
+                         * _source = _interopRequireWildcard(_bar);
+                         * ->
+                         * import * as _source from "bar";
+                         */
+                        if (
+                            j.AssignmentExpression.check(parentPath.node)
+                             && j.Identifier.check(parentPath.node.left)
+                             && parentPath.node.right === path.node
+                        ) {
+                            const assignmentExpression = parentPath.node as AssignmentExpression
+                            const id = assignmentExpression.left as Identifier
+
+                            renameIdentifier(j, rootScope, local, id.name)
+
+                            importManager.addNamespaceImport(source, id.name)
+                            importManager.removeDefaultImport(source, local)
+                            parentPath.prune()
+
+                            return true
+                        }
+
+                        return false
+                    })
+                })
+            })
+        }
+    }
+}
+
+function checkHoistable(j: JSCodeshift, path: ASTPath, hoist: boolean) {
+    return hoist || isTopLevel(j, path)
+}
+
+function isNamespaceImport(path: ASTPath<Node>) {
+    return path.node.comments?.some(comment => comment.value === NAMESPACE_IMPORT_HINT) ?? false
 }
 
 /**
@@ -402,7 +464,7 @@ function transformExport(context: Context) {
                 let current: ASTPath | null = p
                 while (current) {
                     if (current.node === path.node) return true
-                    current = current.parentPath
+                    current = current.parent
                 }
                 return false
             })
@@ -726,21 +788,6 @@ function transformExport(context: Context) {
         })
 
     exportsMap.clear()
-}
-
-function isRequireCall(j: JSCodeshift, node: ASTNode) {
-    return j.match(node, {
-        type: 'CallExpression',
-        callee: {
-            type: 'Identifier',
-            name: 'require',
-        },
-        arguments: [{
-            type: 'Literal' as const,
-            // @ts-expect-error
-            value: (value: unknown) => isString(value) || isNumber(value),
-        }],
-    })
 }
 
 export default wrap(transformAST)
