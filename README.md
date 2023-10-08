@@ -1,22 +1,12 @@
 # Wakaru
 
-🔪📦 Reverse-engineer bundled JavaScript code and bring it back to a human-friendly format.
+[![deploy][DeployBadge]][Playground]
 
-[Try it out](https://unminify.zeabur.app/)
+Wakaru is the Javascript decompiler for modern frontend. It brings back the original code from a bundled and transpiled source.
 
-## Introduction
-
-Wakaru is a collection of tools for reverse-engineering bundled JavaScript code. Think of it as "decompiler" for JavaScript. It can be used to restore code that was bundled with a bundler (e.g. [webpack][webpack], [browserify][browserify]) or transpiled with a transpiler (e.g. [Babel][Babel], [TypeScript][TypeScript], [SWC][SWC]) or Minifier (e.g. [Terser][Terser]).
+Try it out at our [Playground][Playground].
 
 ## Features
-
-### Unpacker
-
-Converts bundled JavaScript into separate modules
-
-Supports the following bundlers:
-  - [webpack][webpack]
-  - [browserify][browserify]
 
 ### Unminify
 
@@ -30,9 +20,17 @@ Supports the following transpilers:
 
 See [Unminify Documentation](./packages/unminify/README.md) for the full list of supported rules.
 
+### Unpacker
+
+Converts bundled JavaScript into separated modules
+
+Supports the following bundlers:
+  - [webpack][webpack]
+  - [browserify][browserify]
+
 ## Try it out
 
-Test the tool and see it in action: [Playground](https://unminify.zeabur.app/)
+Test the tool and see it in action at [Playground].[Playground]
 
 ## 🖥 Command Line Interface
 
@@ -52,3 +50,5 @@ Usage of `wakaru` for attacking targets without prior mutual consent is illegal.
 [Terser]: https://terser.org/
 [Babel]: https://babeljs.io/
 [SWC]: https://swc.rs/
+[Playground]: https://wakaru.vercel.app/
+[DeployBadge]: https://therealsujitk-vercel-badge.vercel.app/?app=wakaru
