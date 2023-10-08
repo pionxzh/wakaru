@@ -52,3 +52,7 @@ Usage of `wakaru` for attacking targets without prior mutual consent is illegal.
 [SWC]: https://swc.rs/
 [Playground]: https://wakaru.vercel.app/
 [DeployBadge]: https://therealsujitk-vercel-badge.vercel.app/?app=wakaru
+
+## License
+
+[MIT](./LICENSE)
