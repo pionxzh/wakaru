@@ -1,6 +1,7 @@
 import { isNumber, isVariableIdentifier } from '@wakaru/ast-utils'
 import { isUndefined } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
+import { transformASTWithRules } from './lebab'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { PatternKind, StatementKind } from 'ast-types/lib/gen/kinds'
 import type { ASTPath, AssignmentExpression, AssignmentPattern, BinaryExpression, ConditionalExpression, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, MemberExpression } from 'jscodeshift'
@@ -79,6 +80,13 @@ export const transformAST: ASTTransformation = (context) => {
                 path.parentPath.replace(newProperty)
             }
         })
+
+    transformASTWithRules([
+        // 'default-param',
+        // 'destruct-param',
+        'arg-spread',
+        'arg-rest',
+    ])(context, {})
 }
 
 /**
