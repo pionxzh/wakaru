@@ -5,7 +5,8 @@ const inlineTest = defineInlineTest(transform)
 
 inlineTest('variable declaration should be splitted',
   `
-var a= 1, b = true, c = "hello", d = 1.2, e = [1, 2, 3], f = {a: 1, b: 2, c: 3}, g = function() { return 1; }, h = () => 1;
+var a= 1, b = true, c = "hello", d = 1.2, e = [1, 2, 3], f = {a: 1, b: 2, c: 3}, g = function() { return 1; }, h = () => 1,
+{ i: j } = k, [l, m] = n;
 `,
   `
 var a= 1;
@@ -16,6 +17,8 @@ var e = [1, 2, 3];
 var f = {a: 1, b: 2, c: 3};
 var g = function() { return 1; };
 var h = () => 1;
+var { i: j } = k;
+var [l, m] = n;
 `,
 )
 

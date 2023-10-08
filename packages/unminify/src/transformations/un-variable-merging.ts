@@ -29,14 +29,7 @@ export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 
     root
-        .find(j.VariableDeclaration, {
-            declarations: [
-                {
-                    type: 'VariableDeclarator',
-                    id: { type: 'Identifier' },
-                },
-            ],
-        })
+        .find(j.VariableDeclaration)
         .forEach((p) => {
             if (j.ForStatement.check(p.parent.node)) {
                 const { init, test, update } = p.parent.node as ForStatement
