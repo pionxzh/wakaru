@@ -1,6 +1,6 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { ModuleMapping } from '@unminify-kit/ast-utils'
+import type { ModuleMapping } from '@wakaru/ast-utils'
 import type { Literal } from 'jscodeshift'
 
 /**

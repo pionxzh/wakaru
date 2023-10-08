@@ -1,4 +1,4 @@
-# @unminify-kit/unminify
+# @wakaru/unminify
 
 This package offers a comprehensive set of transformation rules designed to unminify and enhance the readability of code.
 

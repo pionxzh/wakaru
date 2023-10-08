@@ -1,4 +1,4 @@
-import { findReferences, isNumber } from '@unminify-kit/ast-utils'
+import { findReferences, isNumber } from '@wakaru/ast-utils'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
 import wrap from '../../../wrapAstTransformation'

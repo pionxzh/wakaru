@@ -18,8 +18,8 @@ export default defineConfig({
     },
     resolve: {
         alias: {
-            '@unminify-kit/unminify': path.resolve(__dirname, '../unminify/src/index.ts'),
-            '@unminify-kit/unpacker': path.resolve(__dirname, '../unpacker/src/index.ts'),
+            '@wakaru/unminify': path.resolve(__dirname, '../unminify/src/index.ts'),
+            '@wakaru/unpacker': path.resolve(__dirname, '../unpacker/src/index.ts'),
         },
     },
 })

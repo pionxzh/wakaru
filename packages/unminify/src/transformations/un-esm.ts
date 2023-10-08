@@ -1,4 +1,4 @@
-import { ImportManager, findReferences, isNumber, isString, isTopLevel, renameIdentifier } from '@unminify-kit/ast-utils'
+import { ImportManager, findReferences, isNumber, isString, isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
 import { generateName } from '../utils/identifier'
 import wrap from '../wrapAstTransformation'
 import { transformAST as interopRequireDefault } from './runtime-helpers/babel/interopRequireDefault'
@@ -8,7 +8,7 @@ import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { NodePath } from 'ast-types/lib/node-path'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTPath, AssignmentExpression, BlockStatement, CallExpression, Identifier, JSCodeshift, Literal, MemberExpression, Node, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
+import type { ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, Literal, MemberExpression, Node, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 interface Params {
     hoist?: boolean

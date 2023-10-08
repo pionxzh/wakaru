@@ -1,4 +1,4 @@
-import { isString } from '@unminify-kit/ast-utils'
+import { isString } from '@wakaru/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Literal, MemberExpression } from 'jscodeshift'

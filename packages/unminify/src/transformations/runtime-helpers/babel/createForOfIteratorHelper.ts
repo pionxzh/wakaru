@@ -1,4 +1,4 @@
-import { findReferences } from '@unminify-kit/ast-utils'
+import { findReferences } from '@wakaru/ast-utils'
 import { fromPaths } from 'jscodeshift/src/Collection'
 import { generateName } from '../../../utils/identifier'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'

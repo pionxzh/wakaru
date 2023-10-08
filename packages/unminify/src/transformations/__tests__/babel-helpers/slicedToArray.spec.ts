@@ -1,4 +1,4 @@
-import { defineInlineTest } from '@unminify-kit/test-utils'
+import { defineInlineTest } from '@wakaru/test-utils'
 import lebab from '../../lebab'
 import transform from '../../runtime-helpers/babel/slicedToArray'
 import smartInline from '../../smart-inline'

@@ -12,11 +12,11 @@ import DarkModeBtn from './DarkModeBtn.vue'
     >
         <img :src="logo" alt="logo" class="w-6 h-6 mr-2">
 
-        Unminify Kit
+        Wakaru
         <div class="flex-1" />
         <div class="flex items-center space-x-4">
             <DarkModeBtn />
-            <a href="https://github.com/unminify-kit/core" class="hover:underline">GitHub</a>
+            <a href="https://github.com/pionxzh/wakaru" class="hover:underline">GitHub</a>
         </div>
     </header>
 </template>

@@ -1,4 +1,4 @@
-import { isNumber } from '@unminify-kit/ast-utils'
+import { isNumber } from '@wakaru/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'

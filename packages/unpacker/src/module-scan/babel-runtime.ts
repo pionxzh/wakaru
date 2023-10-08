@@ -1,4 +1,4 @@
-import { isTopLevel } from '@unminify-kit/ast-utils'
+import { isTopLevel } from '@wakaru/ast-utils'
 import type { Module } from '../Module'
 import type { ArrowFunctionExpression, FunctionDeclaration, FunctionExpression, JSCodeshift, Statement } from 'jscodeshift'
 

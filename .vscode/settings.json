@@ -23,20 +23,22 @@
     "arraify",
     "debundle",
     "Declarators",
+    "decompiler",
     "esmodule",
     "heroicons",
     "Hoistable",
     "jscodeshift",
     "lebab",
+    "Minifier",
     "picocolors",
     "preact",
     "quux",
-    "retidy",
     "splitpanes",
     "taze",
     "testcase",
     "testcases",
-    "unminify"
+    "unminify",
+    "wakaru"
   ],
   "markdown.extension.toc.omittedFromToc": {
     "packages/unminify/README.md": [

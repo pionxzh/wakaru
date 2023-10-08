@@ -1,4 +1,4 @@
-import type { ImportInfo } from '@unminify-kit/ast-utils'
+import type { ImportInfo } from '@wakaru/ast-utils'
 import type { Collection } from 'jscodeshift'
 
 export class Module {

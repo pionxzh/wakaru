@@ -1,5 +1,5 @@
 {
-  "name": "@unminify-kit/test-utils",
+  "name": "@wakaru/test-utils",
   "type": "module",
   "version": "0.0.1",
   "private": true,

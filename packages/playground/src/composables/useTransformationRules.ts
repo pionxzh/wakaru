@@ -1,4 +1,4 @@
-import { transformationMap } from '@unminify-kit/unminify'
+import { transformationMap } from '@wakaru/unminify'
 import { KEY_TRANSFORMATIONS } from '../const'
 import { useLocalStorage } from './shared/useLocalStorage'
 

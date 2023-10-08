@@ -1,4 +1,4 @@
-import { MultiMap } from '@unminify-kit/ds'
+import { MultiMap } from '@wakaru/ds'
 import { isNumber, isString } from './isPrimitive'
 import { isTopLevel } from './isTopLevel'
 import type { NodePath } from 'ast-types/lib/node-path'

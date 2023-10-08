@@ -1,4 +1,4 @@
-import { isTopLevel, renameIdentifier } from '@unminify-kit/ast-utils'
+import { isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'

@@ -1,4 +1,4 @@
-import { findReferences } from '@unminify-kit/ast-utils'
+import { findReferences } from '@wakaru/ast-utils'
 import { mergeComments } from '../../../utils/comments'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import wrap from '../../../wrapAstTransformation'

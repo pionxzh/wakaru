@@ -1,5 +1,5 @@
 {
-  "name": "@unminify-kit/ast-utils",
+  "name": "@wakaru/ast-utils",
   "type": "module",
   "version": "0.0.1",
   "description": "🔪📦 Unminify and beautify bundled code",
@@ -24,13 +24,13 @@
     "lint:fix": "eslint src --fix"
   },
   "dependencies": {
-    "@unminify-kit/ds": "workspace:*",
+    "@wakaru/ds": "workspace:*",
     "jscodeshift": "^0.15.0"
   },
   "devDependencies": {
     "@babel/types": "^7.23.0",
     "@types/jscodeshift": "^0.11.7",
-    "@unminify-kit/test-utils": "workspace:*",
+    "@wakaru/test-utils": "workspace:*",
     "ast-types": "^0.16.1",
     "tsup": "^7.2.0",
     "typescript": "^5.2.2"

@@ -1,4 +1,4 @@
-import { isBoolean, isString } from '@unminify-kit/ast-utils'
+import { isBoolean, isString } from '@wakaru/ast-utils'
 import { isNull, isStringLiteral, isTrue, isUndefined } from '../utils/checker'
 import { removePureAnnotation } from '../utils/comments'
 import { generateName } from '../utils/identifier'

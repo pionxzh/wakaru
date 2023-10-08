@@ -1,5 +1,5 @@
 {
-  "name": "@unminify-kit/unminify",
+  "name": "@wakaru/unminify",
   "type": "module",
   "version": "0.0.1",
   "description": "🔪📦 Unminify and beautify bundled code",
@@ -28,8 +28,8 @@
     "@babel/helper-validator-identifier": "^7.22.20",
     "@babel/preset-env": "^7.22.20",
     "@babel/types": "^7.23.0",
-    "@unminify-kit/ast-utils": "workspace:*",
-    "@unminify-kit/ds": "workspace:*",
+    "@wakaru/ast-utils": "workspace:*",
+    "@wakaru/ds": "workspace:*",
     "fs-extra": "^11.1.1",
     "globby": "^11.1.0",
     "jscodeshift": "^0.15.0",
@@ -43,7 +43,7 @@
     "@types/jscodeshift": "^0.11.7",
     "@types/prettier": "^2.7.3",
     "@types/yargs": "^17.0.26",
-    "@unminify-kit/test-utils": "workspace:*",
+    "@wakaru/test-utils": "workspace:*",
     "ast-types": "^0.16.1",
     "tsup": "^7.2.0",
     "typescript": "^5.2.2"

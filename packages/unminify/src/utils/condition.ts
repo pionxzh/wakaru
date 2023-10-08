@@ -1,4 +1,4 @@
-import { isBoolean } from '@unminify-kit/ast-utils'
+import { isBoolean } from '@wakaru/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { BinaryExpression, JSCodeshift } from 'jscodeshift'
 

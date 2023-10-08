@@ -1,4 +1,4 @@
-import { defineInlineTest } from '@unminify-kit/test-utils'
+import { defineInlineTest } from '@wakaru/test-utils'
 import wrap from '../../wrapAstTransformation'
 import transformAsyncAwait, { transform__awaiter, transform__generator } from '../un-async-await'
 

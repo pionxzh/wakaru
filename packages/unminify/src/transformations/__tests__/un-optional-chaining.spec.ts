@@ -1,4 +1,4 @@
-import { defineInlineTest } from '@unminify-kit/test-utils'
+import { defineInlineTest } from '@wakaru/test-utils'
 import toConsumableArray from '../runtime-helpers/babel/toConsumableArray'
 import unNullishCoalescing from '../un-nullish-coalescing'
 import transform from '../un-optional-chaining'

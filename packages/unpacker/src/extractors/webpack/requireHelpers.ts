@@ -1,4 +1,4 @@
-import { isFunctionExpression } from '@unminify-kit/ast-utils'
+import { isFunctionExpression } from '@wakaru/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { BlockStatement, Collection, ExportDefaultDeclaration, ExportNamedDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, ObjectExpression, Property } from 'jscodeshift'
 

@@ -1,4 +1,4 @@
-import { ImportManager, isNumber, isString, isTopLevel } from '@unminify-kit/ast-utils'
+import { ImportManager, isNumber, isString, isTopLevel } from '@wakaru/ast-utils'
 import { generateName } from '../utils/identifier'
 import { insertAfter } from '../utils/insert'
 import { removeDefaultImportIfUnused } from '../utils/scope'

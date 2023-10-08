@@ -50,7 +50,7 @@ importers:
 
   packages/ast-utils:
     dependencies:
-      '@unminify-kit/ds':
+      '@wakaru/ds':
         specifier: workspace:*
         version: link:../ds
       jscodeshift:
@@ -63,7 +63,7 @@ importers:
       '@types/jscodeshift':
         specifier: ^0.11.7
         version: 0.11.7
-      '@unminify-kit/test-utils':
+      '@wakaru/test-utils':
         specifier: workspace:*
         version: link:../test-utils
       ast-types:
@@ -113,18 +113,18 @@ importers:
       '@heroicons/vue':
         specifier: ^2.0.18
         version: 2.0.18(vue@3.3.4)
-      '@unminify-kit/ast-utils':
-        specifier: workspace:*
-        version: link:../ast-utils
-      '@unminify-kit/unminify':
-        specifier: workspace:*
-        version: link:../unminify
-      '@unminify-kit/unpacker':
-        specifier: workspace:*
-        version: link:../unpacker
       '@vueuse/core':
         specifier: ^10.4.1
         version: 10.4.1(vue@3.3.4)
+      '@wakaru/ast-utils':
+        specifier: workspace:*
+        version: link:../ast-utils
+      '@wakaru/unminify':
+        specifier: workspace:*
+        version: link:../unminify
+      '@wakaru/unpacker':
+        specifier: workspace:*
+        version: link:../unpacker
       assert:
         specifier: ^2.1.0
         version: 2.1.0
@@ -197,10 +197,10 @@ importers:
       '@babel/types':
         specifier: ^7.23.0
         version: 7.23.0
-      '@unminify-kit/ast-utils':
+      '@wakaru/ast-utils':
         specifier: workspace:*
         version: link:../ast-utils
-      '@unminify-kit/ds':
+      '@wakaru/ds':
         specifier: workspace:*
         version: link:../ds
       fs-extra:
@@ -237,7 +237,7 @@ importers:
       '@types/yargs':
         specifier: ^17.0.26
         version: 17.0.26
-      '@unminify-kit/test-utils':
+      '@wakaru/test-utils':
         specifier: workspace:*
         version: link:../test-utils
       ast-types:
@@ -252,7 +252,7 @@ importers:
 
   packages/unpacker:
     dependencies:
-      '@unminify-kit/ast-utils':
+      '@wakaru/ast-utils':
         specifier: workspace:*
         version: link:../ast-utils
       ast-types:

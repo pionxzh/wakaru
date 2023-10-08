@@ -1,4 +1,4 @@
-import { defineInlineTest } from '@unminify-kit/test-utils'
+import { defineInlineTest } from '@wakaru/test-utils'
 import transform from '../un-return'
 
 const inlineTest = defineInlineTest(transform)

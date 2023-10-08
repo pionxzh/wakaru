@@ -1,4 +1,4 @@
-import { findReferences } from '@unminify-kit/ast-utils'
+import { findReferences } from '@wakaru/ast-utils'
 import { removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
 import type { Context } from '../../../wrapAstTransformation'

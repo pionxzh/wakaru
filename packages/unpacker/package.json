@@ -1,5 +1,5 @@
 {
-  "name": "@unminify-kit/unpacker",
+  "name": "@wakaru/unpacker",
   "type": "module",
   "version": "0.0.1",
   "description": "🔪📦 Unminify and beautify bundled code",
@@ -26,7 +26,7 @@
     "lint:fix": "eslint src --fix"
   },
   "dependencies": {
-    "@unminify-kit/ast-utils": "workspace:*",
+    "@wakaru/ast-utils": "workspace:*",
     "ast-types": "^0.16.1",
     "jscodeshift": "^0.15.0",
     "picocolors": "^1.0.0"

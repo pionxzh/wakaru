@@ -1,4 +1,4 @@
-import { defineInlineTest } from '@unminify-kit/test-utils'
+import { defineInlineTest } from '@wakaru/test-utils'
 import { renameFunctionParameters } from '../src/renameFunctionParameters'
 import { wrapAstTransformation } from '../src/wrapAstTransformation'
 

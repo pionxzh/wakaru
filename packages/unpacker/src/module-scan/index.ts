@@ -1,4 +1,4 @@
-import { ExportManager, ImportManager } from '@unminify-kit/ast-utils'
+import { ExportManager, ImportManager } from '@wakaru/ast-utils'
 import { postScanBabelRuntime, scanBabelRuntime } from './babel-runtime'
 import type { Module } from '../Module'
 import type { JSCodeshift } from 'jscodeshift'

@@ -1,4 +1,4 @@
-# Unminify Kit
+# Wakaru
 
 🔪📦 Reverse-engineer bundled JavaScript code and bring it back to a human-friendly format.
 
@@ -6,7 +6,7 @@
 
 ## Introduction
 
-Unminify Kit is a collection of tools for reverse-engineering bundled JavaScript code. Think of it as "decompilier" for JavaScript. It can be used to restore code that was bundled with a bundler (e.g. [webpack][webpack], [browserify][browserify]) or transpiled with a transpiler (e.g. [Babel][Babel], [TypeScript][TypeScript], [SWC][SWC]) or Minifier (e.g. [Terser][Terser]).
+Wakaru is a collection of tools for reverse-engineering bundled JavaScript code. Think of it as "decompiler" for JavaScript. It can be used to restore code that was bundled with a bundler (e.g. [webpack][webpack], [browserify][browserify]) or transpiled with a transpiler (e.g. [Babel][Babel], [TypeScript][TypeScript], [SWC][SWC]) or Minifier (e.g. [Terser][Terser]).
 
 ## Features
 
@@ -40,11 +40,11 @@ Test the tool and see it in action: [Playground](https://unminify.zeabur.app/)
 
 ## Motivation
 
-Over the course of developing plugins for io games, the need to understand game logic behind minified code became a recurring challenge. Existing tools often failed to produce readable code, and were often limited to a single bundler or transpiler. Unminify Kit was created to address these issues, and provide a single tool capable of handling a wide variety of bundlers and transpilers.
+Over the course of developing plugins for io games, the need to understand game logic behind minified code became a recurring challenge. Existing tools often failed to produce readable code, and were often limited to a single bundler or transpiler. This repo was created to address these issues, and provide a single tool capable of handling a wide variety of bundlers and transpilers.
 
 ## Legal Disclaimer
 
-Usage of unminify-kit for attacking targets without prior mutual consent is illegal. It is the end user's responsibility to obey all applicable local, state and federal laws. Developers assume no liability and are not responsible for any misuse or damage caused by this program.
+Usage of `wakaru` for attacking targets without prior mutual consent is illegal. It is the end user's responsibility to obey all applicable local, state and federal laws. Developers assume no liability and are not responsible for any misuse or damage caused by this program.
 
 [TypeScript]: https://www.typescriptlang.org/
 [browserify]: http://browserify.org/

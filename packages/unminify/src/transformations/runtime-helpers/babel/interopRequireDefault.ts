@@ -1,4 +1,4 @@
-import { findReferences } from '@unminify-kit/ast-utils'
+import { findReferences } from '@wakaru/ast-utils'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { markParenthesized } from '../../../utils/parenthesized'
 import wrap from '../../../wrapAstTransformation'

@@ -1,5 +1,5 @@
-import { findReferences } from '@unminify-kit/ast-utils'
-import { MultiMap } from '@unminify-kit/ds'
+import { findReferences } from '@wakaru/ast-utils'
+import { MultiMap } from '@wakaru/ds'
 import { generateName } from '../utils/identifier'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'

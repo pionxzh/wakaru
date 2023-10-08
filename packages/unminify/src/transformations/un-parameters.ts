@@ -1,4 +1,4 @@
-import { isVariableIdentifier } from '@unminify-kit/ast-utils'
+import { isVariableIdentifier } from '@wakaru/ast-utils'
 import { isUndefined } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'

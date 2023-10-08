@@ -6,7 +6,7 @@ import {
     TransitionChild,
     TransitionRoot,
 } from '@headlessui/vue'
-import { unpack } from '@unminify-kit/unpacker'
+import { unpack } from '@wakaru/unpacker'
 import { useRouter } from 'vue-router'
 import Card from '../components/Card.vue'
 import CodemirrorEditor from '../components/CodemirrorEditor.vue'

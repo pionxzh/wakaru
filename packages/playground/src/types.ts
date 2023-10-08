@@ -1,4 +1,4 @@
-import type { Module } from '@unminify-kit/unpacker'
+import type { Module } from '@wakaru/unpacker'
 
 export type FileIdList = Array<number | string>
 

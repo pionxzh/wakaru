@@ -1,7 +1,7 @@
-import { isNumber, renameFunctionParameters } from '@unminify-kit/ast-utils'
+import { isNumber, renameFunctionParameters } from '@wakaru/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack4 } from './requireHelpers'
-import type { ModuleMapping } from '@unminify-kit/ast-utils'
+import type { ModuleMapping } from '@wakaru/ast-utils'
 import type { ArrayExpression, Collection, FunctionExpression, JSCodeshift, Literal } from 'jscodeshift'
 
 /**

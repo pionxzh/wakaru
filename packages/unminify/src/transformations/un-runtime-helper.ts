@@ -1,4 +1,4 @@
-import { getTopLevelStatements } from '@unminify-kit/ast-utils'
+import { getTopLevelStatements } from '@wakaru/ast-utils'
 import { mergeComments } from '../utils/comments'
 import wrap from '../wrapAstTransformation'
 import { transformAST as babelHelpers } from './runtime-helpers'

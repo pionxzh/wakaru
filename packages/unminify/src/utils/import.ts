@@ -1,4 +1,4 @@
-import { ImportManager } from '@unminify-kit/ast-utils'
+import { ImportManager } from '@wakaru/ast-utils'
 import { findDeclaration } from './scope'
 import type { SharedParams } from './types'
 import type { Context } from '../wrapAstTransformation'

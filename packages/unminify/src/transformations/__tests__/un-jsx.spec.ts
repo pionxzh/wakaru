@@ -1,4 +1,4 @@
-import { defineInlineTest, defineInlineTestWithOptions } from '@unminify-kit/test-utils'
+import { defineInlineTest, defineInlineTestWithOptions } from '@wakaru/test-utils'
 import transform from '../un-jsx'
 
 const inlineTest = defineInlineTest(transform)

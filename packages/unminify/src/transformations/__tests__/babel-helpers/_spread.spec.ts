@@ -1,4 +1,4 @@
-import { defineInlineTest } from '@unminify-kit/test-utils'
+import { defineInlineTest } from '@wakaru/test-utils'
 
 // let's take objectSpread as an example to test, but the underlying implementation is the same for all spread-like helpers
 import transform from '../../runtime-helpers/babel/objectSpread'

@@ -1,6 +1,6 @@
-import { isFunctionExpression, isNumber, isString, renameFunctionParameters } from '@unminify-kit/ast-utils'
+import { isFunctionExpression, isNumber, isString, renameFunctionParameters } from '@wakaru/ast-utils'
 import { Module } from '../../Module'
-import type { ModuleMapping } from '@unminify-kit/ast-utils'
+import type { ModuleMapping } from '@wakaru/ast-utils'
 import type { ArrayExpression, ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, ObjectExpression } from 'jscodeshift'
 
 /**

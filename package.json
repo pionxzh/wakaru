@@ -1,13 +1,13 @@
 {
-  "name": "@unminify-kit/core",
+  "name": "@wakaru/monorepo",
   "type": "module",
   "version": "0.0.1",
   "private": true,
   "packageManager": "pnpm@8.8.0",
-  "description": "🔪📦 Unminify and beautify bundled code",
+  "description": "🔪📦 Javascript decompiler, unpacker and unminify toolkit",
   "author": "pionxzh",
   "license": "MIT",
-  "homepage": "https://github.com/pionxzh/unminify-kit",
+  "homepage": "https://github.com/pionxzh/wakaru",
   "engines": {
     "node": ">=16.0.0"
   },

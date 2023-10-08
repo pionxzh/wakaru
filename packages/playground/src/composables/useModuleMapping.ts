@@ -1,6 +1,6 @@
 import { KEY_MODULE_MAPPING } from '../const'
 import { useLocalStorage } from './shared/useLocalStorage'
-import type { ModuleMapping } from '@unminify-kit/ast-utils'
+import type { ModuleMapping } from '@wakaru/ast-utils'
 
 export function useModuleMapping() {
     const [moduleMapping, setModuleMapping] = useLocalStorage<ModuleMapping>(KEY_MODULE_MAPPING, {})
