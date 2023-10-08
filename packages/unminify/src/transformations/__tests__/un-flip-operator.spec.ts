@@ -5,6 +5,7 @@ const inlineTest = defineInlineTest(transform)
 
 inlineTest('should flip operators',
   `
+void 0 === foo;
 undefined === foo;
 null !== foo;
 1 == foo;
@@ -22,6 +23,7 @@ Infinity == foo;
 1 >= bar;
 `,
   `
+foo === void 0;
 foo === undefined;
 foo !== null;
 foo == 1;
@@ -37,6 +39,19 @@ bar > 1;
 bar < 1;
 bar >= 1;
 bar <= 1;
+`,
+)
+
+inlineTest('should flip operators for various right-hand values',
+  `
+1 == obj.props;
+1 == obj.props[0];
+1 == method();
+`,
+  `
+obj.props == 1;
+obj.props[0] == 1;
+method() == 1;
 `,
 )
 

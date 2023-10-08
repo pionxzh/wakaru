@@ -1,3 +1,4 @@
+import { isVoid0 } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
@@ -35,6 +36,8 @@ const commonValueIdentifiers = [
 
 const validLiteralTypes = ['number', 'string', 'boolean']
 const isLeftValid = (j: JSCodeshift, node: ExpressionKind) => {
+    if (isVoid0(j, node)) return true
+
     if (j.Literal.check(node)) {
         if (node.value === null) return true
         return validLiteralTypes.includes(typeof node.value)
@@ -56,8 +59,11 @@ const isLeftValid = (j: JSCodeshift, node: ExpressionKind) => {
 }
 
 const isRightValid = (j: JSCodeshift, node: ExpressionKind) => {
-    return j.Identifier.check(node)
-     || (j.UnaryExpression.check(node) && j.Identifier.check(node.argument))
+    let right = node
+    if (j.UnaryExpression.check(node)) right = node.argument
+    return j.Identifier.check(right)
+    || j.MemberExpression.check(right)
+    || j.CallExpression.check(right)
 }
 /**
  * Flips comparisons that are in the form of "literal comes first"
