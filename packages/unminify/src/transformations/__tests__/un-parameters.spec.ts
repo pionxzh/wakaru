@@ -1,7 +1,8 @@
 import { defineInlineTest } from '@wakaru/test-utils'
 import transform from '../un-parameters'
+import unFlipOperator from '../un-flip-operator'
 
-const inlineTest = defineInlineTest(transform)
+const inlineTest = defineInlineTest([unFlipOperator, transform])
 
 inlineTest('default parameters #1',
   `
@@ -9,12 +10,15 @@ function test() {
   if (x === void 0) x = 1;
   if (y === void 0) { y = 2; }
   var z = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : "hello";
-  console.log(x, y, z);
+  var e = arguments.length > 3 && undefined !== arguments[3]
+    ? arguments[3]
+    : world();
+  console.log(x, y, z, e);
 }
 `,
   `
-function test(x = 1, y = 2, z = "hello") {
-  console.log(x, y, z);
+function test(x = 1, y = 2, z = "hello", e = world()) {
+  console.log(x, y, z, e);
 }
 `,
 )
@@ -23,7 +27,7 @@ inlineTest('default parameters #2',
   `
 function test(a, b) {
   if (a === void 0) a = 1;
-  if (b === void 0) b = 2;
+  if (void 0 === b) b = 2;
 }
 `,
   `

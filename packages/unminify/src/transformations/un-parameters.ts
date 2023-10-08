@@ -1,12 +1,14 @@
-import { isVariableIdentifier } from '@wakaru/ast-utils'
+import { isNumber, isVariableIdentifier } from '@wakaru/ast-utils'
 import { isUndefined } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { PatternKind, StatementKind } from 'ast-types/lib/gen/kinds'
-import type { ASTPath, AssignmentExpression, AssignmentPattern, ConditionalExpression, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift } from 'jscodeshift'
+import type { ASTPath, AssignmentExpression, AssignmentPattern, BinaryExpression, ConditionalExpression, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, MemberExpression } from 'jscodeshift'
 
 /**
  * Restore parameters. Support normal parameters and default parameters.
+ *
+ * Note: To avoid the complexity of matching, we are assuming rule `un-flip-operator` is applied before this rule.
  *
  * @example
  * function foo(a, b) {
@@ -86,9 +88,6 @@ export const transformAST: ASTTransformation = (context) => {
  */
 const BODY_LENGTH_THRESHOLD = 15
 
-const normalParameterRE = /arguments\.length\s?>\s?(\d+)\s?\?\s?arguments\[(\d+)\]\s?:\s?undefined;?/
-const defaultParameterRE = /arguments\.length\s?>\s?(\d+)\s?&&\s?arguments\[(\d+)\]\s?!==\s?undefined\s?\?\s?arguments\[(\d+)\]\s?:.+/
-
 function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | FunctionExpression>) {
     const body = path.node.body.body
     if (body.length === 0) return
@@ -108,9 +107,9 @@ function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | Function
         if (
             j.IfStatement.check(statement)
             && j.BinaryExpression.check(statement.test)
+            && j.Identifier.check(statement.test.left)
             && statement.test.operator === '==='
             && isUndefined(j, statement.test.right)
-            && j.Identifier.check(statement.test.left)
         ) {
             const identifier = statement.test.left
 
@@ -182,32 +181,22 @@ function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | Function
             if (getExistingDefaultParam(j, params, identifier.name)) return true
 
             const init = declarator.init as ConditionalExpression
-            const initSource = j(init).toSource()
 
-            const normalMatch = initSource.match(normalParameterRE)
+            const normalMatch = matchNormalParameter(j, init)
             if (normalMatch) {
-                const [_, length, index] = normalMatch
-                if (length !== index) return true
-
                 const exitingParam = getExistingParam(j, params, identifier.name)
                 if (exitingParam) {
                     params.splice(params.indexOf(identifier), 1, identifier)
                     return false
                 }
 
-                const targetIndex = Number.parseInt(index, 10)
-                params.splice(targetIndex, 0, identifier)
+                params.splice(normalMatch.index, 0, identifier)
                 return false
             }
 
-            const defaultMatch = initSource.match(defaultParameterRE)
+            const defaultMatch = matchDefaultParameter(j, init)
             if (defaultMatch) {
-                const [_, length, index, index2] = defaultMatch
-                // three numbers should be the the same
-                if (length !== index || index !== index2 || index2 !== length) return true
-
                 const defaultParam = init.alternate
-                if (!defaultParam) return true
 
                 const exitingParam = getExistingParam(j, params, identifier.name)
                 if (exitingParam) {
@@ -215,8 +204,7 @@ function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | Function
                     return false
                 }
 
-                const targetIndex = Number.parseInt(index, 10)
-                params.splice(targetIndex, 0, j.assignmentPattern(identifier, defaultParam))
+                params.splice(defaultMatch.index, 0, j.assignmentPattern(identifier, defaultParam))
                 return false
             }
         }
@@ -249,6 +237,138 @@ function getExistingDefaultParam(j: JSCodeshift, params: PatternKind[], identifi
             && j.Identifier.check(param.left)
             && param.left.name === identifierName
     })
+}
+
+/**
+ * arguments.length > 1 ? arguments[1] : undefined;
+ */
+function matchNormalParameter(j: JSCodeshift, node: ConditionalExpression) {
+    const isMatch = j.match(node, {
+        type: 'ConditionalExpression',
+        test: {
+            type: 'BinaryExpression',
+            left: {
+                object: {
+                    // @ts-expect-error
+                    type: 'Identifier',
+                    name: 'arguments',
+                },
+                property: {
+                    // @ts-expect-error
+                    type: 'Identifier',
+                    name: 'length',
+                },
+            },
+            operator: '>',
+            right: {
+                type: 'Literal',
+                // @ts-expect-error
+                value: (value: unknown) => isNumber(value) && value >= 0,
+            },
+        },
+        consequent: {
+            type: 'MemberExpression',
+            object: {
+                type: 'Identifier',
+                name: 'arguments',
+            },
+            property: {
+                type: 'Literal',
+                // @ts-expect-error
+                value: (value: unknown) => isNumber(value) && value >= 0,
+            },
+            computed: true,
+        },
+        // @ts-expect-error
+        alternate: alternate => isUndefined(j, alternate),
+    })
+    if (!isMatch) return false
+
+    const index1 = ((node.test as BinaryExpression).right as Literal).value as number
+    const index2 = ((node.consequent as MemberExpression).property as Literal).value as number
+    if (index1 !== index2) return false
+
+    return {
+        index: index1,
+    }
+}
+
+/**
+ * arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : ...;
+ */
+function matchDefaultParameter(j: JSCodeshift, node: ConditionalExpression) {
+    const isMatch = j.match(node, {
+        type: 'ConditionalExpression',
+        test: {
+            type: 'LogicalExpression',
+            left: {
+                type: 'BinaryExpression',
+                left: {
+                    object: {
+                        // @ts-expect-error
+                        type: 'Identifier',
+                        name: 'arguments',
+                    },
+                    property: {
+                        // @ts-expect-error
+                        type: 'Identifier',
+                        name: 'length',
+                    },
+                },
+                operator: '>',
+                right: {
+                    type: 'Literal',
+                    // @ts-expect-error
+                    value: (value: unknown) => isNumber(value) && value >= 0,
+                },
+            },
+            operator: '&&',
+            right: {
+                type: 'BinaryExpression',
+                left: {
+                    type: 'MemberExpression',
+                    object: {
+                        type: 'Identifier',
+                        name: 'arguments',
+                    },
+                    property: {
+                        type: 'Literal',
+                        // @ts-expect-error
+                        value: (value: unknown) => isNumber(value) && value >= 0,
+                    },
+                    computed: true,
+                },
+                operator: '!==',
+                // @ts-expect-error
+                right: (right: unknown) => isUndefined(j, right),
+            },
+        },
+        consequent: {
+            type: 'MemberExpression',
+            object: {
+                type: 'Identifier',
+                name: 'arguments',
+            },
+            property: {
+                type: 'Literal',
+                // @ts-expect-error
+                value: (value: unknown) => isNumber(value) && value >= 0,
+            },
+            computed: true,
+        },
+        // @ts-expect-error
+        alternate: alternate => !isUndefined(j, alternate),
+    })
+    if (!isMatch) return false
+
+    const index1 = (((node.test as BinaryExpression).left as BinaryExpression).right as Literal).value as number
+    const index2 = ((((node.test as BinaryExpression).right as BinaryExpression).left as MemberExpression).property as Literal).value as number
+    const index3 = ((node.consequent as MemberExpression).property as Literal).value as number
+    if (index1 !== index2 || index1 !== index3 || index2 !== index3) return false
+
+    return {
+        index: index1,
+    }
 }
 
 export default wrap(transformAST)
