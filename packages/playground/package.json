@@ -46,7 +46,7 @@
     "@unminify-kit/ast-utils": "workspace:*",
     "@unminify-kit/unminify": "workspace:*",
     "@unminify-kit/unpacker": "workspace:*",
-    "@vueuse/core": "^10.4.1",
+    "@vueuse/core": "^10.5.0",
     "assert": "^2.1.0",
     "codemirror": "^6.0.1",
     "os": "^0.1.2",
