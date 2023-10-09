@@ -18,17 +18,14 @@ const { moduleMapping } = useModuleMapping()
 
 const [openSideBar, setOpenSideBar] = useState(false)
 
-const { enabledRules, setEnabledRules, allRules } = useTransformationRules()
+const { disabledRules, setDisabledRules, allRules } = useTransformationRules()
+const enabledRules = computed(() => allRules.filter(t => !disabledRules.value.includes(t)))
 function toggleRules(transformation: string) {
-    if (enabledRules.value.includes(transformation)) {
-        const newRules = enabledRules.value.filter(t => t !== transformation && allRules.includes(t))
-        setEnabledRules(newRules)
+    if (disabledRules.value.includes(transformation)) {
+        setDisabledRules(disabledRules.value.filter(t => t !== transformation))
     }
     else {
-        const newRules = [...enabledRules.value, transformation]
-            .filter(t => allRules.includes(t))
-            .sort((a, b) => allRules.indexOf(a) - allRules.indexOf(b))
-        setEnabledRules(newRules)
+        setDisabledRules([...disabledRules.value, transformation])
     }
 }
 

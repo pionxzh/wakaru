@@ -1,14 +1,14 @@
 import { transformationMap } from '@wakaru/unminify'
-import { KEY_TRANSFORMATIONS } from '../const'
+import { KEY_DISABLED_RULES } from '../const'
 import { useLocalStorage } from './shared/useLocalStorage'
 
 export const useTransformationRules = () => {
     const allRules = Object.keys(transformationMap)
-    const [enabledRules, setEnabledRules] = useLocalStorage(KEY_TRANSFORMATIONS, allRules)
+    const [disabledRules, setDisabledRules] = useLocalStorage<string[]>(KEY_DISABLED_RULES, [])
 
     return {
         allRules,
-        enabledRules,
-        setEnabledRules,
+        disabledRules,
+        setDisabledRules,
     }
 }

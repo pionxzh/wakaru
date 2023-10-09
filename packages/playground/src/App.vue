@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import Header from './components/Header.vue'
 import SideBar from './components/SideBar.vue'
+import { KEY_TRANSFORMATIONS } from './const'
+
+// clear deprecated localStorage items
+window.localStorage.removeItem(KEY_TRANSFORMATIONS)
 </script>
 
 <template>
