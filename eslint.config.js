@@ -4,6 +4,7 @@ export default pionxzh(
     {
         typescript: true,
         react: false,
+        markdown: false,
         vue: true,
         yaml: false,
         ignores: [

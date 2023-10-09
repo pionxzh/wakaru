@@ -33,7 +33,7 @@ It covered most of patterns that are used by the following tools:
   - [`un-optional-chaining`](#un-optional-chaining)
   - [`un-nullish-coalescing`](#un-nullish-coalescing)
   - [`un-es6-class`](#un-es6-class)
-  - [`un-async-await` (Experimental)](#un-async-await-experimental)
+  - [`un-async-await` (Experimental) (WIP)](#un-async-await-experimental-wip)
   - [`un-jsx`](#un-jsx)
 - [Clean Up](#clean-up)
   - [`un-esmodule-flag`](#un-esmodule-flag)
@@ -429,7 +429,7 @@ Supported features:
 - static methods
 - static properties
 - getters and setters
-- async method (share the same limitations from [`un-async-await`](#un-async-await-experimental))
+- async method (share the same limitations from [`un-async-await`](#un-async-await-experimental-wip))
 
 Unsupported features:
 - inheritance
@@ -466,7 +466,7 @@ Unsupported features:
 + }
 ```
 
-### `un-async-await` (Experimental)
+### `un-async-await` (Experimental) (WIP)
 
 Restore async/await from helper `__awaiter` and `__generator`.\
 Currently, this transformation only supports output from **TypeScript**.
@@ -577,13 +577,12 @@ This transformation formats the code with [prettier](https://prettier.io/), typi
 
 > Lebab transpiles your ES5 code to ES6/ES7. It does exactly the opposite of what Babel does.
 
-We use [lebab](https://github.com/lebab/lebab) as a base to unminify the code.\
-By utilizing lebab, we can save the repetitive work of writing the transformations ourselves.
+We integrated part of rules from [lebab](https://github.com/lebab/lebab) to unminify the code.\
+By utilizing lebab, we can save the repetitive work of writing the same transformations ourselves.
 
 ## TODO
 
-- [ ] Address syntax downgrades from tools like `TypeScript`, `Babel` and `SWC`.
 - [ ] `un-string-literal` to decode printable unicode
 - [ ] [Terser loops](https://github.com/terser/terser/blob/27c0a3b47b429c605e2243df86044fc00815060f/test/compress/loops.js#L217) contains several useful patterns
 - [ ] `let a; a = 1;` to `let a = 1;`
-- [ ] Logical Assignment Operators (`a ||= b`, `a &&= b`, `a ??= b`)
+- [ ] Consider support for Logical Assignment Operators (`a ||= b`, `a &&= b`, `a ??= b`)
