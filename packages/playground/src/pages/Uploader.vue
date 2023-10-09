@@ -7,7 +7,7 @@ import {
     TransitionRoot,
 } from '@headlessui/vue'
 import { unpack } from '@wakaru/unpacker'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import Card from '../components/Card.vue'
 import CodemirrorEditor from '../components/CodemirrorEditor.vue'
 import FileUpload from '../components/FileUpload.vue'
@@ -17,6 +17,7 @@ import { useCodemod } from '../composables/useCodemod'
 import { useFileIds } from '../composables/useFileIds'
 import { useModuleMapping } from '../composables/useModuleMapping'
 import { useModuleMeta } from '../composables/useModuleMeta'
+import { useTransformationRules } from '../composables/useTransformationRules'
 import { KEY_FILE_PREFIX } from '../const'
 import type { TransformedModule } from '../types'
 
@@ -25,11 +26,36 @@ const [isLoading, setIsLoading] = useState(false)
 const [processedCount, setProcessedCount] = useState(0)
 
 const router = useRouter()
+const route = useRoute()
 const { transform } = useCodemod()
 
 const { fileIds, setFileIds } = useFileIds()
 const { moduleMeta, setModuleMeta } = useModuleMeta()
 const { moduleMapping, setModuleMapping } = useModuleMapping()
+
+onLoad()
+
+function onLoad() {
+    const { code, disabled_rules, enabled_rules } = route.query
+    if (typeof code === 'string') {
+        startUnpack(code)
+    }
+
+    const { setDisabledRules, allRules } = useTransformationRules()
+    if (disabled_rules) {
+        if (typeof disabled_rules === 'string') {
+            const rules = disabled_rules.split(',')
+            setDisabledRules(rules)
+        }
+    }
+
+    if (enabled_rules) {
+        if (typeof enabled_rules === 'string') {
+            const rules = enabled_rules.split(',')
+            setDisabledRules(allRules.filter(t => !rules.includes(t)))
+        }
+    }
+}
 
 function onUpload(file: File) {
     const reader = new FileReader()

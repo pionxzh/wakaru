@@ -23,7 +23,7 @@ export function unpack(sourceCode: string): {
         || getModulesFromBrowserify(j, root)
         // Fallback to a single module
         || {
-            modules: new Set([new Module(0, root, true)]),
+            modules: new Set([new Module(0, root.find(j.Program), true)]),
             moduleIdMapping: {
                 0: 'entry.js',
             },
