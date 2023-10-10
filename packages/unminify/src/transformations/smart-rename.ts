@@ -9,7 +9,7 @@ import type { ArrayPattern, CallExpression, Collection, Identifier, JSCodeshift,
 const MINIFIED_IDENTIFIER_THRESHOLD = 2
 
 /**
- * Converts object property accesses and array index accesses to destructuring.
+ * Rename minified identifiers with heuristic rules.
  *
  * @example
  * let { gql: t, dispatchers: o, listener: i } = n;
