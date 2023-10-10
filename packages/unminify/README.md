@@ -19,7 +19,7 @@ It covered most of patterns that are used by the following tools:
   - [`un-variable-merging`](#un-variable-merging)
   - [`un-bracket-notation`](#un-bracket-notation)
   - [`un-while-loop`](#un-while-loop)
-  - [`un-flip-operator`](#un-flip-operator)
+  - [`un-flip-comparisons`](#un-flip-comparisons)
   - [`un-conditionals`](#un-conditionals)
   - [`un-return`](#un-return)
   - [`un-indirect-call`](#un-indirect-call)
@@ -163,7 +163,7 @@ Converts for loop without init and update to while loop.
 + }
 ```
 
-### `un-flip-operator`
+### `un-flip-comparisons`
 
 Flips comparisons that are in the form of "literal comes first" to "literal comes second".
 

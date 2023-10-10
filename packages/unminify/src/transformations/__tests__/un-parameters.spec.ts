@@ -1,8 +1,8 @@
 import { defineInlineTest } from '@wakaru/test-utils'
-import unFlipOperator from '../un-flip-operator'
+import unFlipComparisons from '../un-flip-comparisons'
 import transform from '../un-parameters'
 
-const inlineTest = defineInlineTest([unFlipOperator, transform])
+const inlineTest = defineInlineTest([unFlipComparisons, transform])
 
 inlineTest('default parameters #1',
   `

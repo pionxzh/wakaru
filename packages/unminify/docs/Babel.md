@@ -15,7 +15,7 @@ This is the tracking list of support status of the reversion of [babel-preset-mi
 - [X] ~~minify-dead-code-elimination~~
 - [X] ~~minify-constant-folding~~
 - [X] minify-flip-comparisons
-  - `un-flip-operator`
+  - `un-flip-comparisons`
 - [X] minify-guarded-expressions
   - `un-conditionals`
 - [X] minify-infinity

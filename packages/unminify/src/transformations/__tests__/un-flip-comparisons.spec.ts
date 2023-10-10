@@ -1,5 +1,5 @@
 import { defineInlineTest } from '@wakaru/test-utils'
-import transform from '../un-flip-operator'
+import transform from '../un-flip-comparisons'
 
 const inlineTest = defineInlineTest(transform)
 

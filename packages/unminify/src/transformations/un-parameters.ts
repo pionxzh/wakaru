@@ -9,7 +9,7 @@ import type { ASTPath, AssignmentExpression, AssignmentPattern, BinaryExpression
 /**
  * Restore parameters. Support normal parameters and default parameters.
  *
- * Note: To avoid the complexity of matching, we are assuming rule `un-flip-operator` is applied before this rule.
+ * Note: To avoid the complexity of matching, we are assuming rule `un-flip-comparisons` is applied before this rule.
  *
  * @example
  * function foo(a, b) {
