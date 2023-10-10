@@ -6,7 +6,7 @@ settings:
 
 overrides:
   ast-types: ^0.16.1
-  recast: ^0.23.4
+  recast: npm:@putout/recast@^1.13.0
 
 patchedDependencies:
   ast-types@0.16.1:
@@ -2539,6 +2539,16 @@ packages:
     requiresBuild: true
     optional: true
 
+  /@putout/recast@1.13.0:
+    resolution: {integrity: sha512-UILta9MHeFmlxs19SC/c3ivPZ6SEhoeYDxRXN/B44SgG8RG7wlLHvEy/Np0kT8Q2vbSot7ee788IaWJUolCXZA==}
+    engines: {node: '>=12'}
+    dependencies:
+      assert: 2.1.0
+      ast-types: 0.16.1(patch_hash=oh2rwymeicaiogmqlsezzfxdbu)
+      esprima: 4.0.1
+      source-map: 0.6.1
+      tslib: 2.6.1
+
   /@sigstore/bundle@2.1.0:
     resolution: {integrity: sha512-89uOo6yh/oxaU8AeOUnVrTdVMcGk9Q1hJa7Hkvalc6G3Z3CupWk4Xe9djSgJm9fMkH69s0P0cVHUoKSOemLdng==}
     engines: {node: ^16.14.0 || >=18.0.0}
@@ -2647,7 +2657,7 @@ packages:
     resolution: {integrity: sha512-YJ+dQlL2a8dR+iNExYVxiFMa4nhoUgIhYN47rCCdwkRPYdURkee4bCskMhNNCUNo14wbjVf7C0iIKL5tQ9jecw==}
     dependencies:
       ast-types: 0.16.1(patch_hash=oh2rwymeicaiogmqlsezzfxdbu)
-      recast: 0.23.4
+      recast: /@putout/recast@1.13.0
     dev: true
 
   /@types/json-schema@7.0.12:
@@ -3697,14 +3707,6 @@ packages:
       get-intrinsic: 1.2.1
       gopd: 1.0.1
       has-property-descriptors: 1.0.0
-    dev: true
-
-  /define-properties@1.2.0:
-    resolution: {integrity: sha512-xvqAVKGfT1+UAvPwKTVw/njhdQ8ZhXK4lI0bCIuCMrp2up9nPnaDftrLtmpTazqd1o+UY4zgzU+avtMbDP+ldA==}
-    engines: {node: '>= 0.4'}
-    dependencies:
-      has-property-descriptors: 1.0.0
-      object-keys: 1.1.1
 
   /define-properties@1.2.1:
     resolution: {integrity: sha512-8QmQKqEASLd5nx0U1B1okLElbUuuttJ/AnYmRXbbbGDWh6uS208EjD4Xqq/I9wK7u0v6O08XhTWnt5XtEbR6Dg==}
@@ -3713,7 +3715,6 @@ packages:
       define-data-property: 1.1.0
       has-property-descriptors: 1.0.0
       object-keys: 1.1.1
-    dev: true
 
   /defu@6.1.2:
     resolution: {integrity: sha512-+uO4+qr7msjNNWKYPHqN/3+Dx3NFkmIzayk2L1MyZQlvgZb/J1A0fo410dpKrN2SnqFjt8n4JL8fDJE0wIgjFQ==}
@@ -5042,7 +5043,7 @@ packages:
     engines: {node: '>= 0.4'}
     dependencies:
       call-bind: 1.0.2
-      define-properties: 1.2.0
+      define-properties: 1.2.1
 
   /is-negative-zero@2.0.2:
     resolution: {integrity: sha512-dqJvarLawXsFbNDeJW7zAz8ItJ9cd28YufuuFzh0G8pNHjJMnY08Dv7sYX2uF5UpQOwieAeOExEYAWWfu7ZZUA==}
@@ -5223,7 +5224,7 @@ packages:
       micromatch: 4.0.5
       neo-async: 2.6.2
       node-dir: 0.1.17
-      recast: 0.23.4
+      recast: /@putout/recast@1.13.0
       temp: 0.8.4
       write-file-atomic: 2.4.3
     transitivePeerDependencies:
@@ -5332,7 +5333,7 @@ packages:
       f-matches: 1.1.0
       glob: 10.3.4
       lodash: 4.17.21
-      recast: 0.23.4
+      recast: /@putout/recast@1.13.0
     dev: false
 
   /levn@0.4.1:
@@ -5887,7 +5888,7 @@ packages:
     engines: {node: '>= 0.4'}
     dependencies:
       call-bind: 1.0.2
-      define-properties: 1.2.0
+      define-properties: 1.2.1
 
   /object-keys@1.1.1:
     resolution: {integrity: sha512-NuAESUOUMrlIXOfHKzD6bpPu3tYt3xvjNdRIQ+FeT0lNb4K8WR70CaDxhuNguS2XG+GjkyMwOzsN5ZktImfhLA==}
@@ -5898,7 +5899,7 @@ packages:
     engines: {node: '>= 0.4'}
     dependencies:
       call-bind: 1.0.2
-      define-properties: 1.2.0
+      define-properties: 1.2.1
       has-symbols: 1.0.3
       object-keys: 1.1.1
 
@@ -6364,16 +6365,6 @@ packages:
     dependencies:
       picomatch: 2.3.1
     dev: true
-
-  /recast@0.23.4:
-    resolution: {integrity: sha512-qtEDqIZGVcSZCHniWwZWbRy79Dc6Wp3kT/UmDA2RJKBPg7+7k51aQBZirHmUGn5uvHf2rg8DkjizrN26k61ATw==}
-    engines: {node: '>= 4'}
-    dependencies:
-      assert: 2.1.0
-      ast-types: 0.16.1(patch_hash=oh2rwymeicaiogmqlsezzfxdbu)
-      esprima: 4.0.1
-      source-map: 0.6.1
-      tslib: 2.6.1
 
   /reflect.getprototypeof@1.0.4:
     resolution: {integrity: sha512-ECkTw8TmJwW60lOTR+ZkODISW6RQ8+2CL3COqtiJKLd6MmB45hN51HprHFziKLGkAuTGQhBb91V8cy+KHlaCjw==}
