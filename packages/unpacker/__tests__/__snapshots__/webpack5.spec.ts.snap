@@ -5,25 +5,18 @@ exports[`Webpack 5 > testcases/webpack5 1`] = `{}`;
 exports[`Webpack 5 > testcases/webpack5 2`] = `
 [
   {
-    "code": "/* harmony export */ require.d(exports, {
-  /* harmony export */ default: () => /* binding */ m1,
-  /* harmony export */
-});
-function m1() {
+    "code": "function m1() {
   console.log("m1");
 }
 
 /***/
+export default /* binding */ m1;
 ",
     "id": "./src/1.js",
     "isEntry": false,
   },
   {
-    "code": "/* harmony export */ require.d(exports, {
-  /* harmony export */ A: () => /* binding */ A,
-  /* harmony export */
-});
-class A {
+    "code": "class A {
   constructor() {
     this.label = "a";
   }
@@ -34,34 +27,27 @@ class A {
 }
 
 /***/
+export const A = /* binding */ A;
 ",
     "id": "./src/a.js",
     "isEntry": false,
   },
   {
-    "code": "/* harmony export */ require.d(exports, {
-  /* harmony export */ default: () =>
-    /* export default binding */ __WEBPACK_DEFAULT_EXPORT__,
-  /* harmony export */ version: () => /* binding */ version,
-  /* harmony export */
-});
-const version = "1.0.0";
+    "code": "const version = "1.0.0";
 
 /* harmony default export */ function __WEBPACK_DEFAULT_EXPORT__() {
   console.log("b", version);
 }
 
 /***/
+export default /* export default binding */ __WEBPACK_DEFAULT_EXPORT__;
+export const version = /* binding */ version;
 ",
     "id": "./src/b.js",
     "isEntry": false,
   },
   {
-    "code": "/* harmony export */ require.d(exports, {
-  /* harmony export */ getC: () => /* binding */ getC,
-  /* harmony export */
-});
-/* harmony import */ var _b_js__WEBPACK_IMPORTED_MODULE_0__ = require(/*! ./b.js */ "./src/b.js");
+    "code": "/* harmony import */ var _b_js__WEBPACK_IMPORTED_MODULE_0__ = require(/*! ./b.js */ "./src/b.js");
 
 const getC = async () => {
   console.log("c.a", _b_js__WEBPACK_IMPORTED_MODULE_0__.version);
@@ -71,6 +57,7 @@ const getC = async () => {
 };
 
 /***/
+export const getC = /* binding */ getC;
 ",
     "id": "./src/c.js",
     "isEntry": false,

@@ -16,6 +16,7 @@ export default pionxzh(
         rules: {
             'no-console': 'warn',
             'ts/ban-ts-comment': 'off',
+            'test/prefer-lowercase-title': 'off',
             'pionxzh/top-level-function': 'off',
             'pionxzh/consistent-list-newline': 'off',
         },

@@ -18,9 +18,9 @@
   },
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --sourcemap --clean",
-    "test": "vitest run",
-    "test:update": "vitest run --update",
-    "test:watch": "vitest watch",
+    "test": "vitest run --globals",
+    "test:update": "vitest run --update --globals",
+    "test:watch": "vitest watch --globals",
     "test:type": "tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix"
@@ -34,6 +34,7 @@
   "devDependencies": {
     "@babel/types": "^7.23.0",
     "@types/jscodeshift": "^0.11.7",
+    "@wakaru/test-utils": "workspace:*",
     "tsup": "^7.2.0",
     "typescript": "^5.2.2"
   },

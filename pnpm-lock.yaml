@@ -271,6 +271,9 @@ importers:
       '@types/jscodeshift':
         specifier: ^0.11.7
         version: 0.11.7
+      '@wakaru/test-utils':
+        specifier: workspace:*
+        version: link:../test-utils
       tsup:
         specifier: ^7.2.0
         version: 7.2.0(typescript@5.2.2)

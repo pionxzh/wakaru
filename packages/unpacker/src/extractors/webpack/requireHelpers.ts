@@ -1,6 +1,6 @@
 import { isFunctionExpression } from '@wakaru/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { BlockStatement, Collection, ExportDefaultDeclaration, ExportNamedDeclaration, FunctionExpression, Identifier, JSCodeshift, ObjectExpression, ObjectProperty, StringLiteral } from 'jscodeshift'
+import type { ArrowFunctionExpression, BlockStatement, Collection, ExportDefaultDeclaration, ExportNamedDeclaration, FunctionExpression, Identifier, JSCodeshift, ObjectExpression, ObjectProperty, StringLiteral } from 'jscodeshift'
 
 // TODO: support `require.n`
 
@@ -52,52 +52,55 @@ export function convertExportsGetterForWebpack4(j: JSCodeshift, collection: Coll
             object: { type: 'Identifier', name: 'require' },
             property: { type: 'Identifier', name: 'd' },
         },
-        arguments: [{
-            type: 'Identifier' as const,
-            /**
-             * The first argument is the exports object
-             * But it's not always called `exports`
-             * The common case is this `exports` object
-             * is come from the function parameter
-             * ```js
-             * function(module, exports, require) {
-             *   require.d(exports, key, function() { return moduleContent })
-             * }
-             * ```
-             *
-             * But another case is this `exports` object
-             * is just an object created in the module
-             * ```js
-             * var exports = {}
-             * require.d(exports, key, function() { return moduleContent })
-             * ```
-             */
-            // name: 'exports' as const,
-        }, {
-            type: 'StringLiteral' as const,
-        }, {
-            type: 'FunctionExpression' as const,
-        }],
+        arguments: [
+            {
+                type: 'Identifier' as const,
+                /**
+                 * The first argument is the exports object
+                 * But it's not always called `exports`
+                 * The common case is this `exports` object
+                 * is come from the function parameter
+                 * ```js
+                 * function(module, exports, require) {
+                 *   require.d(exports, key, function() { return moduleContent })
+                 * }
+                 * ```
+                 *
+                 * But another case is this `exports` object
+                 * is just an object created in the module
+                 * ```js
+                 * var exports = {}
+                 * require.d(exports, key, function() { return moduleContent })
+                 * ```
+                 */
+                // name: 'exports' as const,
+            },
+            {
+                type: 'StringLiteral' as const,
+            },
+            fn => isFunctionExpression(j, fn),
+        ],
     })
 
     const definition = new Map<string, ExpressionKind>()
     requireD.forEach((path) => {
-        const [_, key, fn] = path.node.arguments as [Identifier, StringLiteral, FunctionExpression]
+        const [_, key, fn] = path.node.arguments as [Identifier, StringLiteral, FunctionExpression | ArrowFunctionExpression]
 
-        if (fn.body.type !== 'BlockStatement') {
-            console.warn('Unexpected module content wrapper shape:', fn.body.type)
-            console.warn(j(path).toSource())
-            return
+        let exportValue: ExpressionKind | null = null
+
+        if (j.BlockStatement.check(fn.body)) {
+            if (fn.body.body.length !== 1 || !j.ReturnStatement.check(fn.body.body[0])) {
+                console.warn('Unexpected module content')
+                console.warn(j(path).toSource())
+                return
+            }
+            exportValue = fn.body.body[0].argument
         }
 
-        const returnStatement = fn.body.body[0]
-        if (returnStatement.type !== 'ReturnStatement') {
-            console.warn('Unexpected module content wrapper type:', returnStatement.type)
-            console.warn(j(path).toSource())
-            return
+        if (j.Identifier.check(fn.body)) {
+            exportValue = fn.body
         }
 
-        const exportValue = returnStatement.argument
         if (!exportValue) {
             console.warn('Unexpected missing module content')
             console.warn(j(path).toSource())
@@ -147,9 +150,8 @@ export function convertExportsGetterForWebpack5(j: JSCodeshift, collection: Coll
                     if (properties.length === 0) return false
                     return properties.every((property) => {
                         if (!j.ObjectProperty.check(property)) return false
-                        if (!j.StringLiteral.check(property.key)) return false
+                        if (!j.StringLiteral.check(property.key) && !j.Identifier.check(property.key)) return false
                         if (!isFunctionExpression(j, property.value)) return false
-                        if (!j.BlockStatement.check(property.value.body)) return false
                         return true
                     })
                 },
@@ -162,19 +164,31 @@ export function convertExportsGetterForWebpack5(j: JSCodeshift, collection: Coll
         const defineObject = path.node.arguments[1] as ObjectExpression
         const properties = (defineObject.properties as ObjectProperty[]).filter((property) => {
             const exportName = ((property.key as StringLiteral).value || (property.key as Identifier).name) as string
-            const body = (property.value as FunctionExpression).body as BlockStatement
-            if (body.body.length === 1) {
-                const returnStatement = body.body[0]
-                if (j.ReturnStatement.check(returnStatement)) {
-                    const exportValue = returnStatement.argument
-                    if (exportValue) {
-                        definition.set(exportName, exportValue)
-                        // properties.splice(defineObject.properties.indexOf(property), 1)
-                        return false
-                    }
+
+            let exportValue: ExpressionKind | null = null
+
+            const fn = property.value as FunctionExpression | ArrowFunctionExpression
+            if (j.BlockStatement.check(fn.body)) {
+                if (fn.body.body.length !== 1 || !j.ReturnStatement.check(fn.body.body[0])) {
+                    console.warn('Unexpected module content')
+                    console.warn(j(path).toSource())
+                    return true
                 }
+                exportValue = fn.body.body[0].argument
             }
-            return true
+
+            if (j.Identifier.check(fn.body)) {
+                exportValue = fn.body
+            }
+
+            if (!exportValue) {
+                console.warn('Unexpected missing module content')
+                console.warn(j(path).toSource())
+                return true
+            }
+
+            definition.set(exportName, exportValue)
+            return false
         })
 
         defineObject.properties = properties
