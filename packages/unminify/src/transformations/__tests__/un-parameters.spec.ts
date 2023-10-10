@@ -1,6 +1,6 @@
 import { defineInlineTest } from '@wakaru/test-utils'
-import transform from '../un-parameters'
 import unFlipOperator from '../un-flip-operator'
+import transform from '../un-parameters'
 
 const inlineTest = defineInlineTest([unFlipOperator, transform])
 
