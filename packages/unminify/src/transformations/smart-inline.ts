@@ -5,7 +5,7 @@ import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { StatementKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ExpressionStatement, Identifier, JSCodeshift, Literal, MemberExpression, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
+import type { ExpressionStatement, Identifier, JSCodeshift, MemberExpression, NumericLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 /**
  * Converts object property accesses and array index accesses to destructuring.
@@ -114,7 +114,7 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
                     },
                     // @ts-expect-error
                     property: {
-                        type: 'Literal',
+                        type: 'NumericLiteral',
                     },
                 },
             }],
@@ -129,10 +129,10 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
 
             const id = variableDeclarator.id as Identifier
             const object = init.object as Identifier
-            const property = init.property as Literal
+            const property = init.property as NumericLiteral
             const index = property.value
             // if the index is too large, the generated code will be too long or weird
-            if (typeof index !== 'number' || index > 10) return
+            if (index > 10) return
 
             const indexAccesses = objectIndexMap.get(object.name) || []
             indexAccesses[index] = id.name
@@ -223,8 +223,7 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
         // Create a new variable declaration with destructuring
         const properties = [...destructuringPropertyMap.entries()]
             .map(([propertyName, newPropertyName]) => {
-                const property = j.property(
-                    'init',
+                const property = j.objectProperty(
                     j.identifier(propertyName),
                     j.identifier(newPropertyName),
                 )

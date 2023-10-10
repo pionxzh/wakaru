@@ -1,7 +1,7 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ModuleMapping } from '@wakaru/ast-utils'
-import type { Literal } from 'jscodeshift'
+import type { NumericLiteral, StringLiteral } from 'jscodeshift'
 
 /**
  * // params: { 29: 'index.js' }
@@ -22,15 +22,13 @@ export const transformAST: ASTTransformation<Params> = (context, params = { modu
                 type: 'Identifier',
                 name: 'require',
             },
-            arguments: args => args.length === 1 && j.Literal.check(args[0]),
+            arguments: args => args.length === 1 && (j.StringLiteral.check(args[0]) || j.NumericLiteral.check(args[0])),
         })
         .forEach((p) => {
-            const { value } = p.node.arguments[0] as Literal
-            if (typeof value !== 'number' && typeof value !== 'string') return
-
+            const { value } = p.node.arguments[0] as StringLiteral | NumericLiteral
             const replacement = moduleMapping[value]
             if (replacement) {
-                p.node.arguments[0] = j.literal(replacement)
+                p.node.arguments[0] = j.stringLiteral(replacement)
             }
         })
 }

@@ -1,6 +1,5 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { NumericLiteral } from 'jscodeshift'
 
 /**
  * Converts number literal to its decimal representation.
@@ -26,11 +25,10 @@ export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 
     root
-        .find(j.Literal)
+        .find(j.NumericLiteral)
         .forEach((path) => {
-            const node = path.node as any as NumericLiteral
-            const { value, raw } = node
-            if (typeof value !== 'number') return
+            const node = path.node
+            const { value, extra: { raw } = {} } = node
 
             if (raw && raw !== value.toString()) {
                 const originalComment = path.node.comments || []

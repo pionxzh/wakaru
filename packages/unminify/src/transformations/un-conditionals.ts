@@ -1,4 +1,4 @@
-import { areNodesEqual } from '../utils/checker'
+import { areNodesEqual, isValueLiteral } from '../utils/checker'
 import { negateCondition } from '../utils/condition'
 import { makeDecisionTree } from '../utils/decisionTree'
 import { replaceWithMultipleStatements } from '../utils/insert'
@@ -171,7 +171,7 @@ function shouldTransform(j: JSCodeshift, tree: DecisionTree): boolean {
 
     if (!trueBranch && !falseBranch) {
         return !j.Identifier.check(condition)
-        && !j.Literal.check(condition)
+        && !isValueLiteral(j, condition)
     }
 
     return (!trueBranch || shouldTransform(j, trueBranch))
@@ -444,7 +444,7 @@ function countBaseVariableUsedInAllBranches(j: JSCodeshift, base: ASTNode, tree:
 }
 
 function isComparisonBase(j: JSCodeshift, node: ASTNode): boolean {
-    if (j.Literal.check(node)) return false
+    if (isValueLiteral(j, node)) return false
     // move function call to switch can break the semantics
     // as it will only be called once
     if (j.CallExpression.check(node)) return false

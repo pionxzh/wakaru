@@ -18,14 +18,12 @@ export const transformAST: ASTTransformation = (context) => {
     root
         .find(j.UnaryExpression, {
             operator: 'void',
-            argument: { type: 'Literal' },
+            argument: { type: 'NumericLiteral' },
         })
         .forEach((p) => {
-            if (isDeclared(p.scope, 'undefined')) return
+            if (p.scope && isDeclared(p.scope, 'undefined')) return
 
-            if (j.Literal.check(p.node.argument)) {
-                p.replace(j.identifier('undefined'))
-            }
+            p.replace(j.identifier('undefined'))
         })
 }
 

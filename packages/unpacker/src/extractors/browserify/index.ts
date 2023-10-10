@@ -1,7 +1,7 @@
-import { isFunctionExpression, isNumber, isString, renameFunctionParameters } from '@wakaru/ast-utils'
+import { isFunctionExpression, renameFunctionParameters } from '@wakaru/ast-utils'
 import { Module } from '../../Module'
 import type { ModuleMapping } from '@wakaru/ast-utils'
-import type { ArrayExpression, ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, ObjectExpression } from 'jscodeshift'
+import type { ArrayExpression, ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, NumericLiteral, ObjectExpression } from 'jscodeshift'
 
 /**
  * Find the modules array in browserify bootstrap.
@@ -39,21 +39,20 @@ export function getModulesFromBrowserify(j: JSCodeshift, root: Collection):
         arguments: [{
             type: 'ObjectExpression' as const,
             properties: (properties: any[]) => {
-                return properties.every(prop => j.Property.check(prop)
-                && j.Literal.check(prop.key)
-                && isNumber(prop.key.value)
+                return properties.every(prop => j.ObjectProperty.check(prop)
+                && j.NumericLiteral.check(prop.key)
                 && j.ArrayExpression.check(prop.value)
                 && prop.value.elements.length === 2
                 && isFunctionExpression(j, prop.value.elements[0])
                 && j.ObjectExpression.check(prop.value.elements[1])
-                && prop.value.elements[1].properties.every(prop => j.Property.check(prop) && j.Literal.check(prop.key) && isString(prop.key.value) && j.Literal.check(prop.value) && isNumber(prop.value.value)),
+                && prop.value.elements[1].properties.every(prop => j.ObjectProperty.check(prop) && j.StringLiteral.check(prop.key) && j.NumericLiteral.check(prop.value)),
                 )
             },
         }, {
             type: 'ObjectExpression' as const,
         }, {
             type: 'ArrayExpression' as const,
-            elements: (elements: any[]) => elements.every(el => j.Literal.check(el)),
+            elements: (elements: any[]) => elements.every(el => j.NumericLiteral.check(el)),
         }],
     })
 
@@ -62,12 +61,11 @@ export function getModulesFromBrowserify(j: JSCodeshift, root: Collection):
     moduleDefinition.forEach((path) => {
         const [modulesObject, _moduleCache, entryIdArray] = path.node.arguments as [ObjectExpression, ObjectExpression, ArrayExpression]
 
-        const entryIds: number[] = (entryIdArray.elements as Literal[])
-            .map(el => el.value as number)
+        const entryIds: number[] = (entryIdArray.elements as NumericLiteral[]).map(el => el.value)
 
         modulesObject.properties.forEach((property) => {
-            if (!j.Property.check(property)) return
-            if (!j.Literal.check(property.key) || typeof property.key.value !== 'number') return
+            if (!j.ObjectProperty.check(property)) return
+            if (!j.NumericLiteral.check(property.key)) return
             if (!j.ArrayExpression.check(property.value)) return
 
             const moduleId = property.key.value
@@ -80,15 +78,19 @@ export function getModulesFromBrowserify(j: JSCodeshift, root: Collection):
 
             renameFunctionParameters(j, moduleFactory, ['require', 'module', 'exports'])
 
-            const moduleContent = j({ type: 'Program', body: moduleFactory.body.body })
+            const program = j.program(moduleFactory.body.body)
+            if (moduleFactory.body.directives) {
+                program.directives = [...(program.directives || []), ...moduleFactory.body.directives]
+            }
+            const moduleContent = j(program)
             const isEntry = entryIds.includes(moduleId)
             const module = new Module(moduleId, moduleContent, isEntry)
             modules.add(module)
 
             moduleMap.properties.forEach((property) => {
-                if (!j.Property.check(property)) return
-                if (!j.Literal.check(property.key) || typeof property.key.value !== 'string') return
-                if (!j.Literal.check(property.value) || typeof property.value.value !== 'number') return
+                if (!j.ObjectProperty.check(property)) return
+                if (!j.StringLiteral.check(property.key)) return
+                if (!j.NumericLiteral.check(property.value)) return
 
                 const shortName = property.key.value
                 const moduleId = property.value.value

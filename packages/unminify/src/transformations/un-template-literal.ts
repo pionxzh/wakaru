@@ -1,7 +1,6 @@
-import { isString } from '@wakaru/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { Literal, MemberExpression } from 'jscodeshift'
+import type { MemberExpression, StringLiteral } from 'jscodeshift'
 
 /**
  * Restore template literal syntax from string concatenation.
@@ -20,8 +19,7 @@ export const transformAST: ASTTransformation = (context) => {
             callee: {
                 type: 'MemberExpression',
                 object: {
-                    type: 'Literal',
-                    value: (v: any) => isString(v),
+                    type: 'StringLiteral',
                 },
                 property: {
                     type: 'Identifier',
@@ -30,7 +28,7 @@ export const transformAST: ASTTransformation = (context) => {
             },
         })
         .forEach((path) => {
-            const object = (path.node.callee as MemberExpression).object as Literal
+            const object = (path.node.callee as MemberExpression).object as StringLiteral
 
             // goes up the tree to find the parent CallExpression and check if it's a concat
             // this is to find the start of the concat chain
@@ -67,7 +65,7 @@ export const transformAST: ASTTransformation = (context) => {
             if (!j.CallExpression.check(parent.node)) return
 
             const templateLiteral = args.reduce((acc, arg) => {
-                if (j.Literal.check(arg)) return acc + arg.value
+                if (j.StringLiteral.check(arg)) return acc + arg.value
 
                 return `${acc}\${${j(arg).toSource()}}`
             }, '')

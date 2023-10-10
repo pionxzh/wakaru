@@ -27,7 +27,9 @@ export const transformAST: ASTTransformation = (context) => {
                 j.FunctionDeclaration.check(parent)
                 || j.FunctionExpression.check(parent)
                 || j.ArrowFunctionExpression.check(parent)
+                || j.MethodDefinition.check(parent)
                 || j.ObjectMethod.check(parent)
+                || j.ClassMethod.check(parent)
             ) {
                 // @ts-expect-error cannot guard this type
                 const body = isBlockParent ? parent.body.body : parent.body

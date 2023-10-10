@@ -172,7 +172,7 @@ function applyOptionalChaining<T extends ExpressionKind>(
             const object = targetExpression
                 ? smartParenthesized(j, targetExpression)
                 : node.object
-            return j.optionalMemberExpression(object, node.property) as T
+            return j.optionalMemberExpression(object, node.property, node.computed) as T
         }
 
         node.object = applyOptionalChaining(j, node.object, tempVariable, targetExpression)
@@ -222,8 +222,8 @@ function applyOptionalChaining<T extends ExpressionKind>(
                     const calleeObj = node.callee.object
                     const isOptional = !j.AssignmentExpression.check(calleeObj.object)
                     const memberExpression = isOptional
-                        ? j.optionalMemberExpression(calleeObj.object, calleeObj.property)
-                        : j.memberExpression(calleeObj.object, calleeObj.property)
+                        ? j.optionalMemberExpression(calleeObj.object, calleeObj.property, calleeObj.computed)
+                        : j.memberExpression(calleeObj.object, calleeObj.property, calleeObj.computed)
                     memberExpression.object = applyOptionalChaining(j, memberExpression.object, tempVariable, targetExpression)
                     memberExpression.property = applyOptionalChaining(j, memberExpression.property, tempVariable, targetExpression)
                     return memberExpression as T
@@ -263,13 +263,13 @@ function applyOptionalChaining<T extends ExpressionKind>(
             // @ts-expect-error
             expressions: (expressions: ExpressionKind[]) => {
                 return expressions.length === 2
-                && j.Literal.check(expressions[0])
+                && j.NumericLiteral.check(expressions[0])
                 && expressions[0].value === 0
                 && areNodesEqual(j, expressions[1], tempVariable)
             },
         })) {
             const target = targetExpression || (node.callee as SequenceExpression).expressions[1]
-            const callee = smartParenthesized(j, j.sequenceExpression([j.literal(0), target]))
+            const callee = smartParenthesized(j, j.sequenceExpression([j.numericLiteral(0), target]))
             const optionalCallExpression = j.optionalCallExpression(callee, node.arguments)
             optionalCallExpression.arguments = optionalCallExpression.arguments.map((arg) => {
                 return j.SpreadElement.check(arg) ? arg : applyOptionalChaining(j, arg, tempVariable, targetExpression)

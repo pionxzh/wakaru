@@ -17,7 +17,8 @@ export function markParenthesized<T extends ASTNode = any>(node: T, value: boole
 
 export function shouldParenthesized(j: JSCodeshift, node: ASTNode) {
     return !j.Identifier.check(node)
-        && !j.Literal.check(node)
+        && !j.StringLiteral.check(node)
+        && !j.NumericLiteral.check(node)
         && !j.MemberExpression.check(node)
         && !j.CallExpression.check(node)
         && !j.OptionalCallExpression.check(node)

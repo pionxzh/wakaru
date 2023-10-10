@@ -1,6 +1,6 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { Literal } from 'jscodeshift'
+import type { NumericLiteral } from 'jscodeshift'
 
 /**
  * Converts minified `boolean` to simple `true`/`false`.
@@ -18,10 +18,10 @@ export const transformAST: ASTTransformation = (context) => {
     root
         .find(j.UnaryExpression, {
             operator: '!',
-            argument: { type: 'Literal' },
+            argument: { type: 'NumericLiteral' },
         })
         .forEach((p) => {
-            const { value } = p.node.argument as Literal
+            const { value } = p.node.argument as NumericLiteral
             const is01 = value === 0 || value === 1
             if (!is01) return
             p.replace(j.booleanLiteral(!value))

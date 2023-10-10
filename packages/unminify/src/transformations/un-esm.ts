@@ -1,4 +1,4 @@
-import { ImportManager, findReferences, isNumber, isString, isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
+import { ImportManager, findReferences, isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
 import { generateName } from '../utils/identifier'
 import wrap from '../wrapAstTransformation'
 import { transformAST as interopRequireDefault } from './runtime-helpers/babel/interopRequireDefault'
@@ -8,7 +8,7 @@ import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { NodePath } from 'ast-types/lib/node-path'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, Literal, MemberExpression, Node, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
+import type { ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, MemberExpression, Node, StringLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 interface Params {
     hoist?: boolean
@@ -69,14 +69,14 @@ function transformImport(context: Context, hoist: boolean) {
                 type: 'Identifier',
                 name: 'require',
             },
-            arguments: [{
-                type: 'Literal' as const,
-                value: (value: unknown) => isString(value) || isNumber(value),
-            }],
+            arguments: (args) => {
+                if (args.length !== 1) return false
+                return j.StringLiteral.check(args[0])
+            },
         })
         .forEach((path) => {
-            const sourceLiteral = path.node.arguments[0] as Literal
-            const source = sourceLiteral.value as string
+            const sourceLiteral = path.node.arguments[0] as StringLiteral
+            const source = sourceLiteral.value
             importManager.addImportOrder(source)
 
             const parentPath = path.parent as ASTPath
@@ -153,7 +153,7 @@ function transformImport(context: Context, hoist: boolean) {
 
         if (j.ObjectPattern.check(id)) {
             id.properties.forEach((property) => {
-                if (j.Property.check(property) && j.Identifier.check(property.key) && j.Identifier.check(property.value)) {
+                if (j.ObjectProperty.check(property) && j.Identifier.check(property.key) && j.Identifier.check(property.value)) {
                     const imported = property.key.name
                     const local = property.value.name
                     importManager.addNamedImport(source, imported, local)
@@ -185,7 +185,7 @@ function transformImport(context: Context, hoist: boolean) {
         const property = init.property
 
         let imported: string | null = null
-        if (init.computed && j.Literal.check(property) && isString(property.value)) imported = property.value
+        if (init.computed && j.StringLiteral.check(property)) imported = property.value
         else if (!init.computed && j.Identifier.check(property)) imported = property.name
         if (!imported) return
 
@@ -208,7 +208,7 @@ function transformImport(context: Context, hoist: boolean) {
         if (j.ObjectPattern.check(id)) {
             if (imported === 'default') {
                 id.properties.forEach((property) => {
-                    if (j.Property.check(property)
+                    if (j.ObjectProperty.check(property)
                         && j.Identifier.check(property.key)
                         && j.Identifier.check(property.value)
                     ) {
@@ -275,7 +275,7 @@ function transformImport(context: Context, hoist: boolean) {
                 }],
             })
         ) {
-            const dynamicImport = j.importExpression(j.literal(source))
+            const dynamicImport = j.importExpression(j.stringLiteral(source))
             path.parent.parent.replace(dynamicImport)
         }
     }

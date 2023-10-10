@@ -1,6 +1,6 @@
 import { isFunctionExpression } from '@wakaru/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { BlockStatement, Collection, ExportDefaultDeclaration, ExportNamedDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, ObjectExpression, Property } from 'jscodeshift'
+import type { BlockStatement, Collection, ExportDefaultDeclaration, ExportNamedDeclaration, FunctionExpression, Identifier, JSCodeshift, ObjectExpression, ObjectProperty, StringLiteral } from 'jscodeshift'
 
 // TODO: support `require.n`
 
@@ -74,7 +74,7 @@ export function convertExportsGetterForWebpack4(j: JSCodeshift, collection: Coll
              */
             // name: 'exports' as const,
         }, {
-            type: 'Literal' as const,
+            type: 'StringLiteral' as const,
         }, {
             type: 'FunctionExpression' as const,
         }],
@@ -82,7 +82,7 @@ export function convertExportsGetterForWebpack4(j: JSCodeshift, collection: Coll
 
     const definition = new Map<string, ExpressionKind>()
     requireD.forEach((path) => {
-        const [_, key, fn] = path.node.arguments as [Identifier, Literal, FunctionExpression]
+        const [_, key, fn] = path.node.arguments as [Identifier, StringLiteral, FunctionExpression]
 
         if (fn.body.type !== 'BlockStatement') {
             console.warn('Unexpected module content wrapper shape:', fn.body.type)
@@ -146,8 +146,8 @@ export function convertExportsGetterForWebpack5(j: JSCodeshift, collection: Coll
                 properties: (properties: ObjectExpression['properties']) => {
                     if (properties.length === 0) return false
                     return properties.every((property) => {
-                        if (!j.Property.check(property)) return false
-                        if (!j.Literal.check(property.key) && !j.Identifier.check(property.key)) return false
+                        if (!j.ObjectProperty.check(property)) return false
+                        if (!j.StringLiteral.check(property.key)) return false
                         if (!isFunctionExpression(j, property.value)) return false
                         if (!j.BlockStatement.check(property.value.body)) return false
                         return true
@@ -160,8 +160,8 @@ export function convertExportsGetterForWebpack5(j: JSCodeshift, collection: Coll
     const definition = new Map<string, ExpressionKind>()
     requireD.forEach((path) => {
         const defineObject = path.node.arguments[1] as ObjectExpression
-        const properties = (defineObject.properties as Property[]).filter((property) => {
-            const exportName = ((property.key as Literal).value || (property.key as Identifier).name) as string
+        const properties = (defineObject.properties as ObjectProperty[]).filter((property) => {
+            const exportName = ((property.key as StringLiteral).value || (property.key as Identifier).name) as string
             const body = (property.value as FunctionExpression).body as BlockStatement
             if (body.body.length === 1) {
                 const returnStatement = body.body[0]
@@ -222,7 +222,7 @@ export function convertExportGetter(
     else {
         // Generate module.exports = { ... }
         if (exportGetterMap.size > 0) {
-            const left = j.memberExpression(j.identifier('module'), j.identifier('exports'))
+            const left = j.memberExpression(j.identifier('module'), j.identifier('exports'), false)
             const right = j.objectExpression(Array.from(exportGetterMap.entries()).map(([key, value]) => {
                 return j.objectProperty(j.identifier(key), value)
             }))

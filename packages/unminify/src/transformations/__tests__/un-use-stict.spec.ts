@@ -17,15 +17,15 @@ inlineTest('remove \'use strict\' with comments',
 // another comment
 'use strict'
 function foo(str) {
-    'use strict'
-    return str === 'use strict'
+  'use strict'
+  return str === 'use strict'
 }
 `,
   `
 // comment
 // another comment
 function foo(str) {
-    return str === 'use strict'
+  return str === 'use strict'
 }
 `,
 )

@@ -34,13 +34,16 @@ const commonValueIdentifiers = [
     'Infinity',
 ]
 
-const validLiteralTypes = ['number', 'string', 'boolean']
 const isLeftValid = (j: JSCodeshift, node: ExpressionKind) => {
     if (isVoid0(j, node)) return true
 
-    if (j.Literal.check(node)) {
-        if (node.value === null) return true
-        return validLiteralTypes.includes(typeof node.value)
+    if (
+        j.NullLiteral.check(node)
+     || j.BooleanLiteral.check(node)
+     || j.NumericLiteral.check(node)
+     || j.StringLiteral.check(node)
+    ) {
+        return true
     }
 
     if (j.Identifier.check(node)) {

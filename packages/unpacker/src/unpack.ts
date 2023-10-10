@@ -1,7 +1,5 @@
 import jscodeshift from 'jscodeshift'
 
-// @ts-expect-error - no types
-import getParser from 'jscodeshift/src/getParser'
 import { getModulesFromBrowserify } from './extractors/browserify'
 import { getModulesFromWebpack } from './extractors/webpack'
 import { Module } from './Module'
@@ -15,8 +13,7 @@ export function unpack(sourceCode: string): {
     modules: Module[]
     moduleIdMapping: ModuleMapping
 } {
-    const parser = getParser()
-    const j = jscodeshift.withParser(parser)
+    const j = jscodeshift.withParser('babylon')
     const root = j(sourceCode)
 
     const result = getModulesFromWebpack(j, root)

@@ -5,7 +5,7 @@ import wrap from '../../../wrapAstTransformation'
 import type { SharedParams } from '../../../utils/types'
 import type { ASTTransformation } from '../../../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTPath, AssignmentExpression, CallExpression, Identifier, Literal, MemberExpression, SequenceExpression, VariableDeclarator } from 'jscodeshift'
+import type { ASTPath, AssignmentExpression, CallExpression, Identifier, MemberExpression, NumericLiteral, SequenceExpression, VariableDeclarator } from 'jscodeshift'
 
 /**
  * Restores default import from `@babel/runtime/helpers/interopRequireDefault` helper.
@@ -92,8 +92,8 @@ export const transformAST: ASTTransformation<SharedParams> = (context, params) =
                             if (
                                 j.SequenceExpression.check(seq?.node)
                                 && seq.node.expressions.length === 2
-                                && j.Literal.check(seq.node.expressions[0])
-                                && (seq.node.expressions[0] as Literal).value === 0
+                                && j.NumericLiteral.check(seq.node.expressions[0])
+                                && (seq.node.expressions[0] as NumericLiteral).value === 0
                                 && j.MemberExpression.check(seq.node.expressions[1])
                                 && seq.node.expressions[1].object === idReference.node
                                 && j.Identifier.check(seq.node.expressions[1].property)
@@ -118,7 +118,7 @@ export const transformAST: ASTTransformation<SharedParams> = (context, params) =
                             if (
                                 j.MemberExpression.check(idReference.parent?.node)
                                 && idReference.parent.node.object === idReference.node
-                                && j.Literal.check(idReference.parent.node.property)
+                                && j.StringLiteral.check(idReference.parent.node.property)
                                 && idReference.parent.node.property.value === 'default'
                             ) {
                                 idReference.parent.replace(idReference.node)

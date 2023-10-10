@@ -1,10 +1,10 @@
-import { isNumber, isVariableIdentifier } from '@wakaru/ast-utils'
+import { isVariableIdentifier } from '@wakaru/ast-utils'
 import { isUndefined } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
 import { transformASTWithRules } from './lebab'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { PatternKind, StatementKind } from 'ast-types/lib/gen/kinds'
-import type { ASTPath, AssignmentExpression, AssignmentPattern, BinaryExpression, ConditionalExpression, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, Literal, MemberExpression } from 'jscodeshift'
+import type { ASTPath, AssignmentExpression, AssignmentPattern, BinaryExpression, ConditionalExpression, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, MemberExpression, NumericLiteral, ObjectMethod } from 'jscodeshift'
 
 /**
  * Restore parameters. Support normal parameters and default parameters.
@@ -57,28 +57,16 @@ export const transformAST: ASTTransformation = (context) => {
         })
         .forEach((path) => {
             handleBody(j, path as ASTPath<FunctionExpression>)
+        })
 
-            /**
-             * FIXME: can be super slow?
-             *
-             * Hacky fix for setter function's wrong output.
-             * See https://github.com/facebook/jscodeshift/issues/567
-             */
-            if (j.Property.check(path.parentPath.node)) {
-                const newProperty = j.property(
-                    path.parentPath.node.kind,
-                    path.parentPath.node.key,
-                    j.functionExpression(
-                        path.node.id,
-                        path.node.params,
-                        path.node.body,
-                        path.node.generator,
-                        path.node.expression,
-                    ),
-                )
-
-                path.parentPath.replace(newProperty)
-            }
+    root
+        .find(j.ObjectMethod, {
+            body: {
+                type: 'BlockStatement',
+            },
+        })
+        .forEach((path) => {
+            handleBody(j, path as ASTPath<ObjectMethod>)
         })
 
     transformASTWithRules([
@@ -96,7 +84,7 @@ export const transformAST: ASTTransformation = (context) => {
  */
 const BODY_LENGTH_THRESHOLD = 15
 
-function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | FunctionExpression>) {
+function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | FunctionExpression | ObjectMethod>) {
     const body = path.node.body.body
     if (body.length === 0) return
 
@@ -269,9 +257,9 @@ function matchNormalParameter(j: JSCodeshift, node: ConditionalExpression) {
             },
             operator: '>',
             right: {
-                type: 'Literal',
+                type: 'NumericLiteral',
                 // @ts-expect-error
-                value: (value: unknown) => isNumber(value) && value >= 0,
+                value: (value: number) => value >= 0,
             },
         },
         consequent: {
@@ -281,9 +269,9 @@ function matchNormalParameter(j: JSCodeshift, node: ConditionalExpression) {
                 name: 'arguments',
             },
             property: {
-                type: 'Literal',
+                type: 'NumericLiteral',
                 // @ts-expect-error
-                value: (value: unknown) => isNumber(value) && value >= 0,
+                value: (value: number) => value >= 0,
             },
             computed: true,
         },
@@ -292,8 +280,8 @@ function matchNormalParameter(j: JSCodeshift, node: ConditionalExpression) {
     })
     if (!isMatch) return false
 
-    const index1 = ((node.test as BinaryExpression).right as Literal).value as number
-    const index2 = ((node.consequent as MemberExpression).property as Literal).value as number
+    const index1 = ((node.test as BinaryExpression).right as NumericLiteral).value
+    const index2 = ((node.consequent as MemberExpression).property as NumericLiteral).value
     if (index1 !== index2) return false
 
     return {
@@ -325,9 +313,9 @@ function matchDefaultParameter(j: JSCodeshift, node: ConditionalExpression) {
                 },
                 operator: '>',
                 right: {
-                    type: 'Literal',
+                    type: 'NumericLiteral',
                     // @ts-expect-error
-                    value: (value: unknown) => isNumber(value) && value >= 0,
+                    value: (value: unknown) => value >= 0,
                 },
             },
             operator: '&&',
@@ -340,9 +328,9 @@ function matchDefaultParameter(j: JSCodeshift, node: ConditionalExpression) {
                         name: 'arguments',
                     },
                     property: {
-                        type: 'Literal',
+                        type: 'NumericLiteral',
                         // @ts-expect-error
-                        value: (value: unknown) => isNumber(value) && value >= 0,
+                        value: (value: number) => value >= 0,
                     },
                     computed: true,
                 },
@@ -358,9 +346,9 @@ function matchDefaultParameter(j: JSCodeshift, node: ConditionalExpression) {
                 name: 'arguments',
             },
             property: {
-                type: 'Literal',
+                type: 'NumericLiteral',
                 // @ts-expect-error
-                value: (value: unknown) => isNumber(value) && value >= 0,
+                value: (value: number) => value >= 0,
             },
             computed: true,
         },
@@ -369,9 +357,9 @@ function matchDefaultParameter(j: JSCodeshift, node: ConditionalExpression) {
     })
     if (!isMatch) return false
 
-    const index1 = (((node.test as BinaryExpression).left as BinaryExpression).right as Literal).value as number
-    const index2 = ((((node.test as BinaryExpression).right as BinaryExpression).left as MemberExpression).property as Literal).value as number
-    const index3 = ((node.consequent as MemberExpression).property as Literal).value as number
+    const index1 = (((node.test as BinaryExpression).left as BinaryExpression).right as NumericLiteral).value
+    const index2 = ((((node.test as BinaryExpression).right as BinaryExpression).left as MemberExpression).property as NumericLiteral).value
+    const index3 = ((node.consequent as MemberExpression).property as NumericLiteral).value
     if (index1 !== index2 || index1 !== index3 || index2 !== index3) return false
 
     return {

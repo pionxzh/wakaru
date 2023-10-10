@@ -2,7 +2,7 @@ import { getTopLevelStatements, isIIFE, renameFunctionParameters } from '@wakaru
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack5 } from './requireHelpers'
 import type { ModuleMapping } from '@wakaru/ast-utils'
-import type { ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, Literal, Property, Statement, VariableDeclaration } from 'jscodeshift'
+import type { ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, ObjectProperty, Statement, StringLiteral, VariableDeclaration } from 'jscodeshift'
 
 /**
  * Find the modules map in webpack 5 bootstrap.
@@ -56,13 +56,13 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
         if (declaration.type !== 'VariableDeclarator') return false
         if (declaration.init?.type !== 'ObjectExpression') return false
 
-        const properties = declaration.init.properties as Property[]
+        const properties = declaration.init.properties as ObjectProperty[]
         if (properties.length === 0) return false
         return properties.every((property) => {
-            return property.key.type === 'Literal'
+            return j.StringLiteral.check(property.key)
                 && (
-                    property.value.type === 'FunctionExpression'
-                 || property.value.type === 'ArrowFunctionExpression'
+                    j.FunctionExpression.check(property.value)
+                 || j.ArrowFunctionExpression.check(property.value)
                 )
         })
     })
@@ -70,15 +70,19 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
 
     /** Build the module map */
     // @ts-expect-error - skip type check
-    const properties: Property[] = webpackModules.declarations[0].init.properties
+    const properties: ObjectProperty[] = webpackModules.declarations[0].init.properties
     properties.forEach((property) => {
-        const moduleId = (property.key as Literal).value as string
+        const moduleId = (property.key as StringLiteral).value as string
         const functionExpression = property.value as FunctionExpression | ArrowFunctionExpression
         if (functionExpression.body.type !== 'BlockStatement') return
 
         renameFunctionParameters(j, functionExpression, ['module', 'exports', 'require'])
 
-        const moduleContent = j({ type: 'Program', body: functionExpression.body.body })
+        const program = j.program(functionExpression.body.body)
+        if (functionExpression.body.directives) {
+            program.directives = [...(program.directives || []), ...functionExpression.body.directives]
+        }
+        const moduleContent = j(program)
         convertRequireHelpersForWebpack5(j, moduleContent)
 
         const module = new Module(moduleId, moduleContent, false)
@@ -89,8 +93,12 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
     const lastStatement = statementsInBootstrap[statementsInBootstrap.length - 1]
     if (isIIFE(lastStatement)) {
         // @ts-expect-error - skip type check
-        const entryModule = lastStatement.expression.callee.body.body
-        const moduleContent = j({ type: 'Program', body: entryModule })
+        const functionExpression = lastStatement.expression.callee
+        const program = j.program(functionExpression.body.body)
+        if (functionExpression.body.directives) {
+            program.directives = [...(program.directives || []), ...functionExpression.body.directives]
+        }
+        const moduleContent = j(program)
         const module = new Module('entry.js', moduleContent, true)
         modules.add(module)
     }

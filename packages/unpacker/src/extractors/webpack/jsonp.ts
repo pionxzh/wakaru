@@ -2,7 +2,7 @@ import { renameFunctionParameters } from '@wakaru/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack4, convertRequireHelpersForWebpack5 } from './requireHelpers'
 import type { ModuleMapping } from '@wakaru/ast-utils'
-import type { ArrayExpression, Collection, FunctionExpression, JSCodeshift, Literal, MemberExpression, ObjectExpression, Property } from 'jscodeshift'
+import type { ArrayExpression, Collection, FunctionExpression, JSCodeshift, MemberExpression, NumericLiteral, ObjectExpression, ObjectProperty, StringLiteral } from 'jscodeshift'
 
 /**
  * Find the modules array in webpack jsonp chunk.
@@ -43,7 +43,7 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
                         name: (name: string) => selfVariableNames.includes(name),
                     },
                     property: (property: MemberExpression['property']) => {
-                        return j.Identifier.check(property) || j.Literal.check(property)
+                        return j.Identifier.check(property) || j.StringLiteral.check(property)
                     },
                 },
                 right: {
@@ -56,7 +56,7 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
                             name: (name: string) => selfVariableNames.includes(name),
                         },
                         property: (property: MemberExpression['property']) => {
-                            return j.Identifier.check(property) || j.Literal.check(property)
+                            return j.Identifier.check(property) || j.StringLiteral.check(property)
                         },
                     },
                     right: {
@@ -81,8 +81,8 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
                     properties: (properties: ObjectExpression['properties']) => {
                         if (properties.length === 0) return false
                         return properties.every((property) => {
-                            return j.Property.check(property)
-                                    && j.Literal.check(property.key)
+                            return j.ObjectProperty.check(property)
+                                    && (j.StringLiteral.check(property.key) || j.NumericLiteral.check(property.key))
                                     && j.FunctionExpression.check(property.value)
                         })
                     },
@@ -97,13 +97,16 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
         const [_chunkIds, moreModules] = arrayExpression.elements as [ArrayExpression, ObjectExpression, any]
 
         moreModules.properties.forEach((property) => {
-            const prop = property as Property
-            const moduleId = (prop.key as Literal).value
-            if (typeof moduleId !== 'number' && typeof moduleId !== 'string') return
+            const prop = property as ObjectProperty
+            const moduleId = (prop.key as StringLiteral | NumericLiteral).value
             const functionExpression = prop.value as FunctionExpression
             renameFunctionParameters(j, functionExpression, ['module', 'exports', 'require'])
 
-            const moduleContent = j({ type: 'Program', body: functionExpression.body.body })
+            const program = j.program(functionExpression.body.body)
+            if (functionExpression.body.directives) {
+                program.directives = [...(program.directives || []), ...functionExpression.body.directives]
+            }
+            const moduleContent = j(program)
             convertRequireHelpersForWebpack4(j, moduleContent)
             convertRequireHelpersForWebpack5(j, moduleContent)
 

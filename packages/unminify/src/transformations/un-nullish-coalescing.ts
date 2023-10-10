@@ -158,7 +158,7 @@ function variableReplacing<T extends ExpressionKind>(
             const object = targetExpression
                 ? smartParenthesized(j, targetExpression)
                 : node.object
-            return j.memberExpression(object, node.property) as T
+            return j.memberExpression(object, node.property, node.computed) as T
         }
 
         node.object = variableReplacing(j, node.object, tempVariable, targetExpression)

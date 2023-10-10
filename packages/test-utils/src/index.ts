@@ -10,9 +10,13 @@ export function defineInlineTestWithOptions(transform: Transform) {
         expectedOutput: string,
     ) {
         it(testName, () => {
-            runInlineTest(transform, options, {
-                source: input,
-            }, expectedOutput)
+            runInlineTest(
+                transform,
+                options,
+                { source: input },
+                expectedOutput,
+                { parser: 'babylon' },
+            )
         })
     }
 }
@@ -52,9 +56,13 @@ export function defineInlineTest(transforms: Transform | Transform[]) {
         const itFn = modifier ? it[modifier] : it
         itFn(testName, () => {
             try {
-                runInlineTest(reducedTransform, {}, {
-                    source: input,
-                }, expectedOutput)
+                runInlineTest(
+                    reducedTransform,
+                    {},
+                    { source: input },
+                    expectedOutput,
+                    { parser: 'babylon' },
+                )
             }
             catch (err) {
                 /**

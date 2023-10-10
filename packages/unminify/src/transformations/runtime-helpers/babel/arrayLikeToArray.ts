@@ -1,4 +1,4 @@
-import { findReferences, isNumber } from '@wakaru/ast-utils'
+import { findReferences } from '@wakaru/ast-utils'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
 import wrap from '../../../wrapAstTransformation'
@@ -49,7 +49,7 @@ export const transformAST: ASTTransformation<SharedParams> = (context, params) =
 
                 if (argLength === 2) {
                     const secondArg = path.node.arguments[1]
-                    return j.Literal.check(secondArg) && isNumber(secondArg.value)
+                    return j.NumericLiteral.check(secondArg)
                 }
 
                 return true

@@ -210,19 +210,19 @@ export const transformAST: ASTTransformation = (context) => {
 
                     const [obj, prop, descriptor] = args
                     if (!obj || !prop || !descriptor
-                        || !j.Literal.check(prop)
+                        || !j.StringLiteral.check(prop)
                         || !j.ObjectExpression.check(descriptor)) return
 
                     const { value: propName } = prop
-                    if (!propName || typeof propName !== 'string') return
+                    if (!propName) return
 
-                    const getterFn = j(descriptor).find(j.Property, {
+                    const getterFn = j(descriptor).find(j.ObjectProperty, {
                         key: {
                             type: 'Identifier',
                             name: 'get',
                         },
                     })
-                    const setterFn = j(descriptor).find(j.Property, {
+                    const setterFn = j(descriptor).find(j.ObjectProperty, {
                         key: {
                             type: 'Identifier',
                             name: 'set',

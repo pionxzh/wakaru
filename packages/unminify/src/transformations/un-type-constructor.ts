@@ -1,4 +1,3 @@
-import { isString } from '@wakaru/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
@@ -47,10 +46,10 @@ export const transformAST: ASTTransformation = (context) => {
      */
     root.find(j.BinaryExpression, {
         operator: '+',
-        right: { type: 'Literal', value: '' },
+        right: { type: 'StringLiteral', value: '' },
     }).forEach((path) => {
         // 'str' + '' will be simplified to 'str'
-        if (j.Literal.check(path.node.left) && isString(path.node.left.value)) {
+        if (j.StringLiteral.check(path.node.left)) {
             path.replace(path.node.left)
             return
         }
@@ -69,7 +68,7 @@ export const transformAST: ASTTransformation = (context) => {
             },
         })
         .replaceWith(({ node }) => {
-            return j.callExpression(j.identifier('Array'), [j.literal(node.elements.length)])
+            return j.callExpression(j.identifier('Array'), [j.numericLiteral(node.elements.length)])
         })
 }
 

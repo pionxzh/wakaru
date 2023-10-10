@@ -27,7 +27,7 @@ export const transformAST: ASTTransformation = (context) => {
                 },
                 arguments: [
                     { type: 'Identifier', name: 'exports' } as const,
-                    { type: 'Literal', value: '__esModule' } as const,
+                    { type: 'StringLiteral', value: '__esModule' } as const,
                 ],
             },
         })
@@ -45,7 +45,7 @@ export const transformAST: ASTTransformation = (context) => {
                 property: { type: 'Identifier', name: '__esModule' },
             },
             operator: '=',
-            right: { type: 'Literal', value: true },
+            right: { type: 'BooleanLiteral', value: true },
         })
         .remove()
 }
