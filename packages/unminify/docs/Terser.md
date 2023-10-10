@@ -12,7 +12,7 @@ This is the tracking list of support status of the reversion of [compressor opti
   - TODO: priority `low`.
   - We can do the same thing this rule does as some obfuscator might use arguments to obfuscate.
 - [X] arrows
-  - `lebab`'s `arrow` rule.
+  - `lebab`'s `arrow`.
 - [X] ~~booleans_as_integers~~
   - `a === true` will be converted to `a == 1`.
   - It is risky to reverse a loose equality.
@@ -67,8 +67,9 @@ This is the tracking list of support status of the reversion of [compressor opti
 - [X] ~~typeofs~~: No readability improvement.
 - [X] ~~unsafe~~
   - It did a great job on readability improvement. And we don't need to reverse it.
-- [ ] unsafe_arrows
-  - See `arrows`.
+- [X] ~~unsafe_arrows~~
+  - `lebab`'s `arrow`.
+  - We decided to not replicate the behavior of this rule as it is not safe, and `lebab`'s `arrow` is good enough.
 - [X] ~~unsafe_comps~~: Lossy compression.
 - [X] ~~unsafe_Function~~
 - [X] ~~unsafe_math~~: Lossy compression.

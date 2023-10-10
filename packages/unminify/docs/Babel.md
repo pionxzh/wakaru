@@ -4,7 +4,6 @@ This is the tracking list of support status of the reversion of [babel-preset-mi
 
 - ~~Strike through~~ means the option is invalid, or not possible to be reversed, or out of the scope of this project.
 
-
 ---
 
 - [X] transform-minify-booleans
