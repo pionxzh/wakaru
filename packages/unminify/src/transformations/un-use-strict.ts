@@ -1,4 +1,4 @@
-import { isTopLevel } from '@wakaru/ast-utils'
+import { mergeComments } from '../utils/comments'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
@@ -10,21 +10,25 @@ import type { ASTTransformation } from '../wrapAstTransformation'
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 
-    const leadingComment = root
-        .find(j.Program)
-        .get('body', 0)
-        .node.leadingComments
-
     const useStrict = root
-        .find(j.ExpressionStatement, {
-            expression: { type: 'Literal', value: 'use strict' },
+        .find(j.Directive, {
+            value: { type: 'DirectiveLiteral', value: 'use strict' },
+        })
+        .forEach((path) => {
+            const { node } = path
+            const { comments } = node
+            if (comments) {
+                const parentNode = path.parent.node
+                if (j.Program.check(parentNode) || j.BlockStatement.check(parentNode)) {
+                    // @ts-expect-error Directive is not included in the StatementKind
+                    const index = parentNode.body.indexOf(node)
+                    const nextNode = parentNode.body[index + 1] || parentNode.body[0]
+                    mergeComments(nextNode, comments)
+                }
+            }
         })
 
     useStrict.remove()
-
-    if (leadingComment && useStrict.some(path => isTopLevel(j, path))) {
-        root.get().node.comments = leadingComment
-    }
 }
 
 export default wrap(transformAST)

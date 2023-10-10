@@ -1,12 +1,11 @@
-import { isBoolean, isString } from '@wakaru/ast-utils'
-import { isNull, isStringLiteral, isTrue, isUndefined } from '../utils/checker'
+import { isNull, isTrue, isUndefined } from '../utils/checker'
 import { removePureAnnotation } from '../utils/comments'
 import { generateName } from '../utils/identifier'
 import { nonNull } from '../utils/utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { ASTNode, CallExpression, Collection, Identifier, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, Literal, MemberExpression, SpreadElement, VariableDeclarator } from 'jscodeshift'
+import type { ASTNode, CallExpression, Collection, Identifier, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, MemberExpression, SpreadElement, StringLiteral, VariableDeclarator } from 'jscodeshift'
 
 interface Params {
     pragma?: string
@@ -116,13 +115,13 @@ function toJSX(j: JSCodeshift, node: CallExpression, pragmaFrags: string[]): JSX
 }
 
 function isCapitalizationInvalid(j: JSCodeshift, node: ASTNode) {
-    if (j.Literal.check(node) && isString(node.value)) return !/^[a-z]/.test(node.value)
+    if (j.StringLiteral.check(node)) return !/^[a-z]/.test(node.value)
     if (j.Identifier.check(node)) return /^[a-z]/.test(node.name)
     return false
 }
 
 function toJsxTag(j: JSCodeshift, node: SpreadElement | ExpressionKind): JSXIdentifier | JSXMemberExpression | null {
-    if (j.Literal.check(node) && isString(node.value)) {
+    if (j.StringLiteral.check(node)) {
         return j.jsxIdentifier(node.value)
     }
     else if (j.Identifier.check(node)) {
@@ -138,8 +137,8 @@ function toJsxTag(j: JSCodeshift, node: SpreadElement | ExpressionKind): JSXIden
     return null
 }
 
-const canLiteralBePropString = (node: any) => {
-    return !node.raw.includes('\\') && !node.value.includes('"')
+const canLiteralBePropString = (node: StringLiteral) => {
+    return !node.extra?.raw.includes('\\') && !node.value.includes('"')
 }
 
 function toJsxAttributes(j: JSCodeshift, props: SpreadElement | ExpressionKind): Array<JSXAttribute | JSXSpreadAttribute> {
@@ -218,13 +217,13 @@ function toJsxAttributes(j: JSCodeshift, props: SpreadElement | ExpressionKind):
                 return j.jsxSpreadAttribute(obj)
             }
 
-            if (j.Identifier.check(name) || isStringLiteral(j, name)) {
+            if (j.Identifier.check(name) || j.StringLiteral.check(name)) {
                 const k = j.Identifier.check(name)
                     ? j.jsxIdentifier(name.name)
                     : j.jsxIdentifier(name.value)
                 if (isTrue(j, value)) return j.jsxAttribute(k)
 
-                const v = isStringLiteral(j, value) && canLiteralBePropString(value)
+                const v = j.StringLiteral.check(value) && canLiteralBePropString(value)
                     ? value
                     : j.jsxExpressionContainer(value)
                 return j.jsxAttribute(k, v)
@@ -258,24 +257,19 @@ function toJsxChild(j: JSCodeshift, node: SpreadElement | ExpressionKind) {
     // undefined is empty node
     if (isUndefined(j, node)) return null
 
-    if (j.Literal.check(node)) {
-        // null and bool are empty node
-        if (isBoolean(node.value) || node.value === null) {
-            return null
-        }
+    // null and bool are empty node
+    if (j.BooleanLiteral.check(node)) return null
+    if (j.NullLiteral.check(node)) return null
 
-        if (isString(node.value)) {
-            const textContent = node.value
-            const notEmpty = textContent !== ''
-            // if contains invalid characters like {, }, <, >, \r, \n
-            const needEscape = /[{}<>\r\n]/.test(textContent)
-            // if contains whitespace at the beginning or end
-            const needTrim = /^\s|\s$/.test(textContent)
+    if (j.StringLiteral.check(node)) {
+        const textContent = node.value
+        const notEmpty = textContent !== ''
+        // if contains invalid characters like {, }, <, >, \r, \n
+        const needEscape = /[{}<>\r\n]/.test(textContent)
+        // if contains whitespace at the beginning or end
+        const needTrim = /^\s|\s$/.test(textContent)
 
-            if (notEmpty && !needEscape && !needTrim) return j.jsxText(textContent)
-        }
-
-        return j.jsxExpressionContainer(node)
+        if (notEmpty && !needEscape && !needTrim) return j.jsxText(textContent)
     }
 
     if (j.SpreadElement.check(node)) {
@@ -337,10 +331,7 @@ function renameComponentBasedOnDisplayName(j: JSCodeshift, root: Collection, pra
                 },
             },
             right: {
-                // @ts-expect-error
-                type: 'Literal',
-                // @ts-expect-error
-                value: (value: string) => isString(value),
+                type: 'StringLiteral',
             },
         })
         .forEach((path) => {
@@ -352,7 +343,7 @@ function renameComponentBasedOnDisplayName(j: JSCodeshift, root: Collection, pra
             // we don't want to rename if the name is long enough
             if (originalName.length > 2) return
 
-            const right = path.node.right as Literal
+            const right = path.node.right as StringLiteral
             const displayName = right.value as string
             const newName = generateName(displayName, scope)
 

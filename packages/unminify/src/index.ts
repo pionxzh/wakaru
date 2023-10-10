@@ -1,7 +1,5 @@
 import jscodeshift from 'jscodeshift'
 
-// @ts-expect-error - no types
-import getParser from 'jscodeshift/src/getParser'
 import { transformationMap } from './transformations'
 import { arraify } from './utils/arraify'
 import type { MaybeArray } from './utils/types'
@@ -19,8 +17,7 @@ export function runTransformations<P extends Record<string, any>>(
 ) {
     const { path } = fileInfo
 
-    const parser = getParser()
-    const j = jscodeshift.withParser(parser)
+    const j = jscodeshift.withParser('babylon')
     const api = {
         j,
         jscodeshift: j,

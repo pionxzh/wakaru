@@ -11,9 +11,8 @@ This is the tracking list of support status of the reversion of [compressor opti
 - [ ] arguments
   - TODO: priority `low`.
   - We can do the same thing this rule does as some obfuscator might use arguments to obfuscate.
-- [ ] arrows
-  - TODO: priority `low`.
-  - We can improve `function-to-arrow` rule to follow the same strategy.
+- [X] arrows
+  - `lebab`'s `arrow` rule.
 - [X] ~~booleans_as_integers~~
   - `a === true` will be converted to `a == 1`.
   - It is risky to reverse a loose equality.

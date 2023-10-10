@@ -1,7 +1,7 @@
 import { isValidIdentifier } from '../utils/identifier'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { Literal } from 'jscodeshift'
+import type { StringLiteral } from 'jscodeshift'
 
 /**
  * Simplify bracket notation.
@@ -20,16 +20,14 @@ export const transformAST: ASTTransformation = (context) => {
     root
         .find(j.MemberExpression, {
             computed: true,
-            property: { type: 'Literal' },
+            property: { type: 'StringLiteral' },
         })
         .forEach((p) => {
-            const property = p.node.property as Literal
-            if (typeof property.value !== 'string') return
-
+            const property = p.node.property as StringLiteral
             if (property.value.match(/^\d+(\.\d+)?$/)) {
                 const newProp = Number.parseFloat(property.value)
                 if (newProp.toString() === property.value) {
-                    property.value = newProp
+                    p.node.property = j.numericLiteral(newProp)
                 }
             }
             else if (isValidIdentifier(property.value)) {

@@ -23,8 +23,8 @@ export const transformAST: ASTTransformation = (context) => {
     root
         .find(j.BinaryExpression, {
             operator: '/',
-            left: { type: 'Literal', value: 1 },
-            right: { type: 'Literal', value: 0 },
+            left: { type: 'NumericLiteral', value: 1 },
+            right: { type: 'NumericLiteral', value: 0 },
         })
         .forEach((p) => {
             p.replace(j.identifier('Infinity'))
@@ -33,8 +33,8 @@ export const transformAST: ASTTransformation = (context) => {
     root
         .find(j.BinaryExpression, {
             operator: '/',
-            left: { type: 'UnaryExpression', operator: '-', argument: { type: 'Literal', value: 1 } },
-            right: { type: 'Literal', value: 0 },
+            left: { type: 'UnaryExpression', operator: '-', argument: { type: 'NumericLiteral', value: 1 } },
+            right: { type: 'NumericLiteral', value: 0 },
         })
         .forEach((p) => {
             p.replace(j.unaryExpression('-', j.identifier('Infinity')))

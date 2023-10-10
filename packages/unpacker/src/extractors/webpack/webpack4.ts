@@ -1,8 +1,8 @@
-import { isNumber, renameFunctionParameters } from '@wakaru/ast-utils'
+import { renameFunctionParameters } from '@wakaru/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack4 } from './requireHelpers'
 import type { ModuleMapping } from '@wakaru/ast-utils'
-import type { ArrayExpression, Collection, FunctionExpression, JSCodeshift, Literal } from 'jscodeshift'
+import type { ArrayExpression, Collection, FunctionExpression, JSCodeshift, NumericLiteral } from 'jscodeshift'
 
 /**
  * Find the modules array in webpack bootstrap
@@ -61,11 +61,10 @@ export function getModulesForWebpack4(j: JSCodeshift, root: Collection):
             },
         },
         right: {
-            type: 'Literal',
-            value: (value: any) => isNumber(value),
+            type: 'NumericLiteral',
         },
     }).forEach((path) => {
-        entryIds.push((path.node.right as Literal).value as number)
+        entryIds.push((path.node.right as NumericLiteral).value as number)
     })
 
     const arrayExpression = path.node.arguments[0] as ArrayExpression
@@ -75,7 +74,11 @@ export function getModulesForWebpack4(j: JSCodeshift, root: Collection):
         const moduleId = index
         renameFunctionParameters(j, functionExpression, ['module', 'exports', 'require'])
 
-        const moduleContent = j({ type: 'Program', body: functionExpression.body.body })
+        const program = j.program(functionExpression.body.body)
+        if (functionExpression.body.directives) {
+            program.directives = [...(program.directives || []), ...functionExpression.body.directives]
+        }
+        const moduleContent = j(program)
         convertRequireHelpersForWebpack4(j, moduleContent)
 
         const module = new Module(moduleId, moduleContent, entryIds.includes(moduleId))

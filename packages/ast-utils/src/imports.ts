@@ -1,8 +1,7 @@
 import { MultiMap } from '@wakaru/ds'
-import { isNumber, isString } from './isPrimitive'
 import { isTopLevel } from './isTopLevel'
 import type { NodePath } from 'ast-types/lib/node-path'
-import type { ASTNode, CallExpression, Collection, ImportDeclaration, JSCodeshift, Literal, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
+import type { ASTNode, CallExpression, Collection, ImportDeclaration, JSCodeshift, StringLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 type Source = string
 type Imported = string
@@ -164,7 +163,7 @@ export class ImportManager {
             .find(j.ImportDeclaration)
             .forEach((path) => {
                 const { specifiers, source } = path.node
-                if (!j.Literal.check(source) || typeof source.value !== 'string') return
+                if (!j.StringLiteral.check(source)) return
 
                 const sourceValue = source.value
                 this.addImportOrder(sourceValue)
@@ -239,8 +238,8 @@ export class ImportManager {
                     ? firstDeclaration.init.object as CallExpression
                     : firstDeclaration.init as CallExpression
 
-                const sourceLiteral = init.arguments[0] as Literal
-                const source = sourceLiteral.value as string
+                const sourceLiteral = init.arguments[0] as StringLiteral
+                const source = sourceLiteral.value
 
                 if (j.Identifier.check(id)) {
                     const local = id.name
@@ -253,7 +252,7 @@ export class ImportManager {
                  */
                 if (j.ObjectPattern.check(id)) {
                     id.properties.forEach((property) => {
-                        if (j.Property.check(property)
+                        if (j.ObjectProperty.check(property)
                          && j.Identifier.check(property.key)
                          && j.Identifier.check(property.value)
                         ) {
@@ -300,13 +299,13 @@ export class ImportManager {
                     ...(firstDefaultImport ? [j.importDefaultSpecifier(j.identifier(firstDefaultImport.name))] : []),
                     ...namedImports.map(info => j.importSpecifier(j.identifier(info.name), j.identifier(info.local))),
                 ]
-                const importDeclaration = j.importDeclaration(importSpecifiers, j.literal(source))
+                const importDeclaration = j.importDeclaration(importSpecifiers, j.stringLiteral(source))
                 importStatements.push(importDeclaration)
 
                 if (restDefaultImports.length > 0) {
                     const restImportDeclaration = restDefaultImports.map(info => j.importDeclaration(
                         [j.importDefaultSpecifier(j.identifier(info.name))],
-                        j.literal(source),
+                        j.stringLiteral(source),
                     ))
                     importStatements.push(...restImportDeclaration)
                 }
@@ -316,7 +315,7 @@ export class ImportManager {
                 const first = namespaceImports[0]
                 const importDeclaration = j.importDeclaration(
                     [j.importNamespaceSpecifier(j.identifier(first.name!))],
-                    j.literal(source),
+                    j.stringLiteral(source),
                 )
                 importStatements.push(importDeclaration)
 
@@ -336,7 +335,7 @@ export class ImportManager {
              * Bare import is not needed if there are other imports
              */
             if (bareImports.length > 0) {
-                const importDeclaration = j.importDeclaration([], j.literal(source))
+                const importDeclaration = j.importDeclaration([], j.stringLiteral(source))
                 importStatements.push(importDeclaration)
             }
 
@@ -365,10 +364,11 @@ function isRequireCall(j: JSCodeshift, node: ASTNode) {
             type: 'Identifier',
             name: 'require',
         },
-        arguments: [{
-            type: 'Literal' as const,
-            // @ts-expect-error
-            value: (value: unknown) => isString(value) || isNumber(value),
-        }],
+        // @ts-expect-error
+        arguments: (args) => {
+            if (args.length !== 1) return false
+            return j.StringLiteral.check(args[0])
+                || j.NumericLiteral.check(args[0])
+        },
     })
 }

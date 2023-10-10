@@ -1,11 +1,11 @@
-import { ImportManager, isNumber, isString, isTopLevel } from '@wakaru/ast-utils'
+import { ImportManager, isTopLevel } from '@wakaru/ast-utils'
 import { generateName } from '../utils/identifier'
 import { insertAfter } from '../utils/insert'
 import { removeDefaultImportIfUnused } from '../utils/scope'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTNode, Identifier, MemberExpression, ObjectPattern, Property, SequenceExpression, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
+import type { ASTNode, Identifier, MemberExpression, ObjectPattern, ObjectProperty, SequenceExpression, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 /**
  * Converts indirect call expressions to direct call expressions.
@@ -67,7 +67,7 @@ export const transformAST: ASTTransformation = (context) => {
                 type: 'SequenceExpression',
                 expressions: [
                     {
-                        type: 'Literal',
+                        type: 'NumericLiteral',
                         value: 0,
                     },
                     {
@@ -134,8 +134,7 @@ export const transformAST: ASTTransformation = (context) => {
                         return j.VariableDeclarator.check(d)
                         && j.Identifier.check(d.id) && d.id.name === defaultSpecifierName
                         && j.CallExpression.check(d.init) && j.Identifier.check(d.init.callee) && d.init.callee.name === 'require'
-                        && d.init.arguments.length === 1 && j.Literal.check(d.init.arguments[0])
-                        && (isString(d.init.arguments[0].value) || isNumber(d.init.arguments[0].value))
+                        && d.init.arguments.length === 1 && (j.StringLiteral.check(d.init.arguments[0]) || j.NumericLiteral.check(d.init.arguments[0]))
                     })
                 },
             }).filter(path => isTopLevel(j, path))
@@ -146,7 +145,7 @@ export const transformAST: ASTTransformation = (context) => {
                         type: 'ObjectPattern',
                         properties: (properties: ObjectPattern['properties']) => {
                             return properties.some((p) => {
-                                return j.Property.check(p)
+                                return j.ObjectProperty.check(p)
                                 && j.Identifier.check(p.key) && p.key.name === property.name
                                 && j.Identifier.check(p.value)
                             })
@@ -218,8 +217,8 @@ export const transformAST: ASTTransformation = (context) => {
                 const propertyNode = propertyDecl.get().node
                 const propertyValue = propertyNode.id as ObjectPattern
                 const targetProperty = propertyValue.properties.find((p) => {
-                    return j.Property.check(p) && j.Identifier.check(p.key) && p.key.name === property.name
-                }) as Property | undefined
+                    return j.ObjectProperty.check(p) && j.Identifier.check(p.key) && p.key.name === property.name
+                }) as ObjectProperty | undefined
                 if (!targetProperty) return
 
                 const targetPropertyValue = targetProperty.value as Identifier

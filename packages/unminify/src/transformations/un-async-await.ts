@@ -1,8 +1,7 @@
-import { isNumber } from '@wakaru/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { ArrayExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, Literal, ReturnStatement, SwitchStatement, ThisExpression, YieldExpression } from 'jscodeshift'
+import type { ArrayExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, NumericLiteral, ReturnStatement, SwitchStatement, ThisExpression, YieldExpression } from 'jscodeshift'
 
 // cSpell:words trys endfinally
 
@@ -172,7 +171,7 @@ export function transform__generator(context: Context) {
              */
             const statementsList: any[][] = []
             cases?.length > 0 && cases.forEach((caseStatement) => {
-                if (!j.Literal.check(caseStatement.test) || typeof caseStatement.test.value !== 'number') return
+                if (!j.NumericLiteral.check(caseStatement.test)) return
 
                 const index = caseStatement.test.value
                 if (!statementsList[index]) statementsList[index] = []
@@ -324,12 +323,12 @@ export function transform__generator(context: Context) {
                         argument: {
                             type: 'ArrayExpression',
                             // @ts-expect-error
-                            elements: elements => elements.length >= 1 && j.Literal.check(elements[0]) && isNumber(elements[0].value),
+                            elements: elements => elements.length >= 1 && j.NumericLiteral.check(elements[0]),
                         },
                     })) {
                         const returnStatement = statement as ReturnStatement
                         const arrayExpression = returnStatement.argument as ArrayExpression
-                        const opcode = (arrayExpression.elements[0] as Literal).value
+                        const opcode = (arrayExpression.elements[0] as NumericLiteral).value
                         const argument = (arrayExpression.elements[1] || null) as ExpressionKind | null
 
                         let result: any

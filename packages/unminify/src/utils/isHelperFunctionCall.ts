@@ -29,7 +29,7 @@ export function isHelperFunctionCall(
     if (j.SequenceExpression.check(callee)) {
         if (
             callee.expressions.length === 2
-            && j.Literal.check(callee.expressions[0])
+            && j.NumericLiteral.check(callee.expressions[0])
             && callee.expressions[0].value === 0
         ) {
             callee = callee.expressions[1]

@@ -1,4 +1,5 @@
 import { isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
+import { isValueLiteral } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
@@ -63,13 +64,13 @@ export const transformAST: ASTTransformation = (context) => {
                     const oldName = param.name
                     const argumentsUsed = j(callee.body).find(j.Identifier, { name: 'arguments' }).size() > 0
 
-                    // Of the argument identifier name is too short, we ignore it
+                    // If the argument identifier name is too short, we ignore it
                     if (j.Identifier.check(argument) && argument.name !== oldName && argument.name.length > 1) {
                         if (scope.declares(oldName)) {
                             renameIdentifier(j, scope, oldName, argument.name)
                         }
                     }
-                    else if (j.BlockStatement.check(callee.body) && j.Literal.check(argument)) {
+                    else if (j.BlockStatement.check(callee.body) && isValueLiteral(j, argument)) {
                         // If `arguments` is used in the function, we can't mutate the parameter
                         if (argumentsUsed) return
 

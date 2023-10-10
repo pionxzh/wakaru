@@ -1,4 +1,3 @@
-import { isBoolean } from '@wakaru/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { BinaryExpression, JSCodeshift } from 'jscodeshift'
 
@@ -24,8 +23,8 @@ export function negateCondition(j: JSCodeshift, condition: ExpressionKind): Expr
         )
     }
 
-    if (j.Literal.check(condition) && isBoolean(condition.value)) {
-        return j.literal(!condition.value)
+    if (j.BooleanLiteral.check(condition)) {
+        return j.booleanLiteral(!condition.value)
     }
 
     return j.unaryExpression('!', condition)

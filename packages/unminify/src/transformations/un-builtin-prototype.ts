@@ -64,7 +64,7 @@ export const transformAST: ASTTransformation = (context) => {
                 object: {
                     type: 'MemberExpression',
                     object: {
-                        type: 'Literal',
+                        type: 'NumericLiteral',
                         value: 0,
                     },
                     property: {
@@ -112,7 +112,7 @@ export const transformAST: ASTTransformation = (context) => {
                 object: {
                     type: 'MemberExpression',
                     object: {
-                        type: 'Literal',
+                        type: 'RegExpLiteral',
                         regex: {
                             pattern: (pattern: string) => pattern.length > 0,
                         },
@@ -138,7 +138,7 @@ export const transformAST: ASTTransformation = (context) => {
                 object: {
                     type: 'MemberExpression',
                     object: {
-                        type: 'Literal',
+                        type: 'StringLiteral',
                         value: '',
                     },
                     property: {
@@ -195,9 +195,13 @@ function replaceWithPrototype(
                     j.memberExpression(
                         j.identifier(prototype),
                         j.identifier('prototype'),
+                        false,
                     ),
                     object.property,
-                ), callee.property,
+                    false,
+                ),
+                callee.property,
+                false,
             ),
             path.node.arguments,
         ),

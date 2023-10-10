@@ -8,6 +8,5 @@ export { wrapAstTransformation } from './wrapAstTransformation'
 
 export * from './imports'
 export * from './exports'
-export * from './isPrimitive'
 export * from './types'
 export * from './reference'

@@ -1,4 +1,4 @@
-import { findReferences, isNumber } from '@wakaru/ast-utils'
+import { findReferences } from '@wakaru/ast-utils'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
 import wrap from '../../../wrapAstTransformation'
@@ -6,7 +6,7 @@ import type { SharedParams } from '../../../utils/types'
 import type { ASTTransformation } from '../../../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
-import type { CallExpression, Identifier, Literal, VariableDeclarator } from 'jscodeshift'
+import type { CallExpression, Identifier, NumericLiteral, VariableDeclarator } from 'jscodeshift'
 
 /**
  * Restores array destructuring from `@babel/runtime/helpers/slicedToArray` helper.
@@ -48,15 +48,14 @@ export const transformAST: ASTTransformation<SharedParams> = (context, params) =
                 init: (init) => {
                     return isHelperFunctionCall(j, init, helperLocal)
                     && init.arguments.length === 2
-                    && j.Literal.check(init.arguments[1])
-                    && isNumber(init.arguments[1].value)
+                    && j.NumericLiteral.check(init.arguments[1])
                 },
             })
             .forEach((path) => {
                 const decl = path.node as VariableDeclarator
                 const tempVariable = decl.id as Identifier
                 const wrappedExpression = (decl.init as CallExpression).arguments[0] as ExpressionKind
-                const length = ((decl.init as CallExpression).arguments[1] as Literal).value as number
+                const length = ((decl.init as CallExpression).arguments[1] as NumericLiteral).value as number
 
                 if (length === 0) {
                     // var [] = wrappedExpression

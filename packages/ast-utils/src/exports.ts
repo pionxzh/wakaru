@@ -1,4 +1,3 @@
-import { isString } from './isPrimitive'
 import { isTopLevel } from './isTopLevel'
 import type { ASTNode, AssignmentExpression, Collection, Identifier, JSCodeshift, MemberExpression, VariableDeclarator } from 'jscodeshift'
 
@@ -51,23 +50,19 @@ export class ExportManager {
                 }
 
                 if (path.node.specifiers) {
-                    const source = j.Literal.check(path.node.source) && isString(path.node.source.value)
+                    const source = j.StringLiteral.check(path.node.source)
                         ? path.node.source.value
                         : null
 
                     path.node.specifiers.forEach((specifier) => {
                         const exported = j.Identifier.check(specifier.exported)
                             ? specifier.exported.name
-                            : isString(specifier.exported)
-                                ? specifier.exported
-                                : null
+                            : null
                         if (!exported) return
 
                         const local = j.Identifier.check(specifier.local)
                             ? specifier.local.name
-                            : isString(specifier.local)
-                                ? specifier.local
-                                : exported
+                            : exported
 
                         this.addNamedExport(exported, local)
                         if (source) this.addExportFrom(local, source)
