@@ -8,6 +8,7 @@ const transformWebpack4 = wrapAstTransformation((context) => {
   const exportGetterMap = convertExportsGetterForWebpack4(j, collection)
   convertExportGetter(j, collection, true, exportGetterMap)
 })
+const inlineTestWebpack4 = defineInlineTest(transformWebpack4)
 
 const transformWebpack5 = wrapAstTransformation((context) => {
     const { j, root } = context
@@ -15,9 +16,8 @@ const transformWebpack5 = wrapAstTransformation((context) => {
     const exportGetterMap = convertExportsGetterForWebpack5(j, collection)
     convertExportGetter(j, collection, true, exportGetterMap)
 })
-
-const inlineTestWebpack4 = defineInlineTest(transformWebpack4)
 const inlineTestWebpack5 = defineInlineTest(transformWebpack5)
+
 
 inlineTestWebpack4('webpack 4 - require.d',
   `
