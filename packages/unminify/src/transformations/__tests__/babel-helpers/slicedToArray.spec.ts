@@ -101,7 +101,6 @@ for (var __ref of test.expectation.registers) {
   var after = __ref2[2];
 }
 `,
-  // FIXME: hmm got a redundant temp variable `__ref2` here
   `
 for (const _ref in obj) {
   const [name, value] = _ref;
@@ -109,8 +108,7 @@ for (const _ref in obj) {
 }
 
 for (const __ref of test.expectation.registers) {
-  const __ref2 = __ref;
-  const [name, before, after] = __ref2;
+  const [name, before, after] = __ref;
 }
 `,
 )

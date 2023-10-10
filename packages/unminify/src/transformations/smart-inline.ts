@@ -281,7 +281,7 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
  * const a = target
  */
 function handleTempVariableInline(j: JSCodeshift, body: StatementKind[], scope: Scope) {
-    if (body.length <= 2) return
+    if (body.length < 2) return
 
     const statementsToRemove = new Set<StatementKind>()
 
