@@ -24,6 +24,23 @@ while (i < 10) {
 `,
 )
 
+inlineTest('transform for(;;) to while(true)',
+  `
+// leading comment
+for (; i < 10;) {
+  console.log('hello')
+}
+// trailing comment
+`,
+  `
+// leading comment
+while (i < 10) {
+  console.log('hello')
+}
+// trailing comment
+`,
+)
+
 inlineTest('should not transform for with init, test or update',
     `
 for (let i = 0;;) {}

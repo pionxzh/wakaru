@@ -1,3 +1,4 @@
+import { mergeComments } from '../utils/comments'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 
@@ -33,12 +34,10 @@ export const transformAST: ASTTransformation = (context) => {
         })
         .forEach((p) => {
             const test = p.node.test ?? j.booleanLiteral(true)
-            p.replace(
-                j.whileStatement(
-                    test,
-                    p.node.body,
-                ),
-            )
+            const whileStatement = j.whileStatement(test, p.node.body)
+            mergeComments(whileStatement, p.node.comments)
+
+            p.replace(whileStatement)
         })
 }
 
