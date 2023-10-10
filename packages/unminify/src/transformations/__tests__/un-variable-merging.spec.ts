@@ -120,7 +120,7 @@ var c = 3; // comment 2
 `,
 )
 
-inlineTest('should keep the original comments #',
+inlineTest('should keep the original comments #2',
   `
 var i = 99;
 // comment 1

@@ -38,6 +38,7 @@ export const transformAST: ASTTransformation = (context) => {
                 replacement.push(j.returnStatement(last))
             }
 
+            mergeComments(replacement, path.node.comments)
             replaceWithMultipleStatements(j, path, replacement)
         })
 
@@ -56,6 +57,7 @@ export const transformAST: ASTTransformation = (context) => {
             const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
             replacement.push(j.ifStatement(last, path.node.consequent, path.node.alternate))
 
+            mergeComments(replacement, path.node.comments)
             replaceWithMultipleStatements(j, path, replacement)
         })
 
@@ -74,6 +76,7 @@ export const transformAST: ASTTransformation = (context) => {
             const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
             replacement.push(j.whileStatement(last, path.node.body))
 
+            mergeComments(replacement, path.node.comments)
             replaceWithMultipleStatements(j, path, replacement)
         })
 
@@ -92,6 +95,7 @@ export const transformAST: ASTTransformation = (context) => {
             const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
             replacement.push(j.doWhileStatement(path.node.body, last))
 
+            mergeComments(replacement, path.node.comments)
             replaceWithMultipleStatements(j, path, replacement)
         })
 
@@ -110,6 +114,7 @@ export const transformAST: ASTTransformation = (context) => {
             const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
             replacement.push(j.switchStatement(last, path.node.cases))
 
+            mergeComments(replacement, path.node.comments)
             replaceWithMultipleStatements(j, path, replacement)
         })
 
@@ -128,6 +133,7 @@ export const transformAST: ASTTransformation = (context) => {
             const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
             replacement.push(j.throwStatement(last))
 
+            mergeComments(replacement, path.node.comments)
             replaceWithMultipleStatements(j, path, replacement)
         })
 
@@ -186,6 +192,7 @@ export const transformAST: ASTTransformation = (context) => {
             const replacement: any[] = expressions.map(e => j.expressionStatement(e))
             replacement.push(j.forStatement(null, path.node.test, path.node.update, path.node.body))
 
+            mergeComments(replacement, path.node.comments)
             replaceWithMultipleStatements(j, path, replacement)
         })
 
@@ -228,6 +235,7 @@ export const transformAST: ASTTransformation = (context) => {
 
             if (replacement.length > 0) {
                 replacement.push(j.forStatement(j.variableDeclaration(init.kind, initDeclarators), path.node.test, path.node.update, path.node.body))
+                mergeComments(replacement, path.node.comments)
                 replaceWithMultipleStatements(j, path, replacement)
             }
         })
@@ -245,6 +253,7 @@ export const transformAST: ASTTransformation = (context) => {
             const { expressions } = expression
             const replacement = expressions.map(e => j.expressionStatement(e))
 
+            mergeComments(replacement, path.node.comments)
             replaceWithMultipleStatements(j, path, replacement)
         })
 }

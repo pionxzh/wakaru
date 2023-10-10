@@ -14,6 +14,23 @@ c();
 `,
 )
 
+inlineTest('split sequence expression - comments',
+  `
+// leading comment
+a(), b(), c()
+// trailing comment
+`,
+  `
+// leading comment
+a();
+
+b();
+
+c();
+// trailing comment
+`,
+)
+
 inlineTest('split return sequence expression',
   `
 if(a) return b(), c();

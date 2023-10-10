@@ -32,7 +32,6 @@ export function replaceWithMultipleStatements(
     path: ASTPath<StatementKind>,
     replacements: StatementKind[],
 ): void {
-    const source = j(path).toSource()
     try {
         const currentPath: ASTPath<StatementKind> | null = path
         const parentNode = currentPath.parent?.node
@@ -130,6 +129,7 @@ export function replaceWithMultipleStatements(
     }
     catch (e) {
         console.error(e)
+        const source = j(path).toSource()
         console.error('Source:', source)
 
         replacements.forEach(r => console.error(j(r).toSource()))
