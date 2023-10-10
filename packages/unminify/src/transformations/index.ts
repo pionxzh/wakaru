@@ -67,7 +67,7 @@ export const transformationMap: {
     'un-flip-comparisons': unFlipComparisons,
 
     // advanced syntax upgrade
-    'smart-inline': smartInline,
+    'smart-inline': smartInline, // relies on `lebab`'s `let` to `const` and `un-sequence-expression`
     'smart-rename': smartRename, // partially relies on `un-indirect-call` to work
     'un-optional-chaining': unOptionalChaining,
     'un-nullish-coalescing': unNullishCoalescing,

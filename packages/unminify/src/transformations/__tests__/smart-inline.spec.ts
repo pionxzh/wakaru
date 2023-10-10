@@ -5,7 +5,6 @@ const inlineTest = defineInlineTest(transform)
 
 inlineTest('inline temp variable assignment',
   `
-
 const t = e;
 const n = t;
 
@@ -15,6 +14,23 @@ const g = r;
 `,
   `
 const n = e;
+const g = 1;
+`,
+)
+
+inlineTest('inline temp variable assignment - comments',
+  `
+// comment
+const o = 1;
+// comment2
+const r = o;
+// comment3
+const g = r;
+`,
+  `
+// comment
+// comment2
+// comment3
 const g = 1;
 `,
 )
@@ -41,6 +57,32 @@ e.type;
 console.log(t, n, r);
 `,
   `
+const {
+  x,
+  y,
+  color,
+  type
+} = e;
+
+console.log(x, y, color);
+`,
+)
+
+inlineTest('property destructuring - comments',
+  `
+// comment
+const t = e.x;
+// comment2
+const n = e.y;
+// comment3
+const r = e.color;
+e.type;
+console.log(t, n, r);
+`,
+  `
+// comment
+// comment2
+// comment3
 const {
   x,
   y,
@@ -126,6 +168,26 @@ console.log(t, n, r);
 `,
   `
 const [t, n, r] = e;
+console.log(t, n, r);
+`,
+)
+
+inlineTest('array destructuring - comments',
+  `
+// comment
+const t = e[0];
+// comment2
+const n = e[1];
+// comment3
+const r = e[2];
+console.log(t, n, r);
+`,
+  `
+// comment
+// comment2
+// comment3
+const [t, n, r] = e;
+
 console.log(t, n, r);
 `,
 )

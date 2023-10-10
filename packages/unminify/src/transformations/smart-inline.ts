@@ -1,9 +1,10 @@
 import { findReferences } from '@wakaru/ast-utils'
 import { MultiMap } from '@wakaru/ds'
+import { mergeComments } from '../utils/comments'
 import { generateName } from '../utils/identifier'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { StatementKind } from 'ast-types/lib/gen/kinds'
+import type { CommentKind, StatementKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ExpressionStatement, Identifier, JSCodeshift, MemberExpression, NumericLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
@@ -183,16 +184,18 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
         // Rename all variables to their property names
         let insertIndex = body.length
         const destructuringPropertyMap = new Map<string, string>()
-        const variableDeclarations = objectDeclarationMap.get(objectName) || []
-        variableDeclarations.forEach((variableDeclaration) => {
-            if (j.ExpressionStatement.check(variableDeclaration)) {
-                const expressionStatement = variableDeclaration as ExpressionStatement
+        const preservedComments: CommentKind[] = []
+        const declarations = objectDeclarationMap.get(objectName) || []
+        declarations.forEach((declaration) => {
+            if (j.ExpressionStatement.check(declaration)) {
+                const expressionStatement = declaration as ExpressionStatement
                 const expression = expressionStatement.expression as MemberExpression
                 const propertyName = (expression.property as Identifier).name
 
                 const newPropertyName = destructuringPropertyMap.get(propertyName)
                     || generateName(propertyName, scope, declaredNames)
                 destructuringPropertyMap.set(propertyName, newPropertyName)
+                preservedComments.push(...(expressionStatement.comments || []))
                 declaredNames.push(newPropertyName)
 
                 const index = body.indexOf(expressionStatement)
@@ -203,7 +206,7 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
                 return
             }
 
-            const variableDeclarator = variableDeclaration.declarations[0] as VariableDeclarator
+            const variableDeclarator = declaration.declarations[0] as VariableDeclarator
             const variableName = (variableDeclarator.id as Identifier).name
             const propertyName = ((variableDeclarator.init as MemberExpression).property as Identifier).name
 
@@ -211,9 +214,10 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
                 || generateName(propertyName, scope, declaredNames)
             scope.rename(variableName, newPropertyName)
             destructuringPropertyMap.set(propertyName, newPropertyName)
+            preservedComments.push(...(declaration.comments || []))
             declaredNames.push(newPropertyName)
 
-            const index = body.indexOf(variableDeclaration)
+            const index = body.indexOf(declaration)
             if (index > -1) {
                 insertIndex = Math.min(insertIndex, index)
                 body.splice(index, 1)
@@ -236,12 +240,17 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
                 j.identifier(objectName),
             ),
         ])
+        mergeComments(destructuring, preservedComments)
         body.splice(insertIndex, 0, destructuring)
     })
 
     objectIndexMap.forEach((indexAccesses, objectName) => {
+        const preservedComments: CommentKind[] = []
+
         let insertIndex = body.length
         indexAccesses.forEach((variableName) => {
+            preservedComments.push(...(variableDeclarationMap.get(variableName)?.comments || []))
+
             const variableDecl = variableDeclarationMap.get(variableName)
             if (!variableDecl) return
             const index = body.indexOf(variableDecl)
@@ -257,6 +266,7 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
         const destructuring = j.variableDeclaration('const', [
             j.variableDeclarator(arrayPattern, j.identifier(objectName)),
         ])
+        mergeComments(destructuring, preservedComments)
         body.splice(insertIndex, 0, destructuring)
     })
 }
@@ -292,6 +302,7 @@ function handleTempVariableInline(j: JSCodeshift, body: StatementKind[], scope: 
 
             const newVariableDeclarator = j.variableDeclarator(declarator.id, prevDeclarator.init)
             const newVariableDeclaration = j.variableDeclaration('const', [newVariableDeclarator])
+            mergeComments(newVariableDeclaration, [...(prevStatement.comments || []), ...(statement.comments || [])])
             body[i] = newVariableDeclaration
             statementsToRemove.add(prevStatement)
         }
