@@ -21,4 +21,23 @@ export default pionxzh(
             'pionxzh/consistent-list-newline': 'off',
         },
     },
+    {
+        files: ['examples/**'],
+        rules: {
+            'no-var': 'off',
+            'no-void': 'off',
+            'no-alert': 'off',
+            'no-console': 'off',
+            'no-cond-assign': 'off',
+            'eqeqeq': 'off',
+            'one-var': 'off',
+            'vars-on-top': 'off',
+            'prefer-template': 'off',
+            'prefer-rest-params': 'off',
+            'prefer-arrow-callback': 'off',
+            'style/semi': 'off',
+            'style/quotes': 'off',
+            'style/comma-dangle': 'off',
+        },
+    },
 )
