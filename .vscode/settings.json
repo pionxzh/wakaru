@@ -21,10 +21,12 @@
   "prettier.enable": false,
   "cSpell.words": [
     "arraify",
+    "atou",
     "debundle",
     "Declarators",
     "decompiler",
     "esmodule",
+    "fflate",
     "heroicons",
     "Hoistable",
     "jscodeshift",
@@ -38,6 +40,8 @@
     "testcase",
     "testcases",
     "unminify",
+    "unzlib",
+    "utoa",
     "wakaru"
   ],
   "markdown.extension.toc.omittedFromToc": {

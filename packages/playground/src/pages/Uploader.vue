@@ -13,6 +13,7 @@ import CodemirrorEditor from '../components/CodemirrorEditor.vue'
 import FileUpload from '../components/FileUpload.vue'
 import Separator from '../components/Separator.vue'
 import useState from '../composables/shared/useState'
+import { decodeHash } from '../composables/url'
 import { useCodemod } from '../composables/useCodemod'
 import { useFileIds } from '../composables/useFileIds'
 import { useModuleMapping } from '../composables/useModuleMapping'
@@ -20,6 +21,7 @@ import { useModuleMeta } from '../composables/useModuleMeta'
 import { useTransformationRules } from '../composables/useTransformationRules'
 import { KEY_FILE_PREFIX } from '../const'
 import type { TransformedModule } from '../types'
+import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils'
 
 const [source] = useState('')
 const [isLoading, setIsLoading] = useState(false)
@@ -33,27 +35,20 @@ const { fileIds, setFileIds } = useFileIds()
 const { moduleMeta, setModuleMeta } = useModuleMeta()
 const { moduleMapping, setModuleMapping } = useModuleMapping()
 
+let existingMeta: ModuleMeta
+let existingMapping: ModuleMapping | undefined
+
 onLoad()
 
 function onLoad() {
-    const { code, disabled_rules, enabled_rules } = route.query
-    if (typeof code === 'string') {
-        startUnpack(code)
-    }
-
-    const { setDisabledRules, allRules } = useTransformationRules()
-    if (disabled_rules) {
-        if (typeof disabled_rules === 'string') {
-            const rules = disabled_rules.split(',')
-            setDisabledRules(rules)
-        }
-    }
-
-    if (enabled_rules) {
-        if (typeof enabled_rules === 'string') {
-            const rules = enabled_rules.split(',')
-            setDisabledRules(allRules.filter(t => !rules.includes(t)))
-        }
+    if (typeof route.hash === 'string' && route.hash.startsWith('#')) {
+        const { setDisabledRules } = useTransformationRules()
+        const hash = route.hash.slice(1)
+        const { code, rules, mapping, meta } = decodeHash(hash)
+        if (rules) setDisabledRules(rules)
+        if (mapping) existingMapping = mapping
+        if (meta) existingMeta = meta
+        if (code) startUnpack(code)
     }
 }
 
@@ -108,24 +103,32 @@ async function startUnpack(code: string) {
         ...unpackedModules.filter(module => !module.isEntry).map(module => module.id).sort((a, b) => +a - +b),
     ])
 
-    setModuleMeta(
-        unpackedModules.reduce((acc, mod) => {
-            acc[mod.id] = {
-                import: mod.import,
-                export: mod.export,
-                tags: mod.tags,
-            }
-            return acc
-        }, moduleMeta.value),
-    )
+    if (existingMeta) {
+        setModuleMeta(existingMeta)
+    }
+    else {
+        setModuleMeta(
+            unpackedModules.reduce((acc, mod) => {
+                acc[mod.id] = {
+                    import: mod.import,
+                    export: mod.export,
+                    tags: mod.tags,
+                }
+                return acc
+            }, moduleMeta.value),
+        )
+    }
 
     const newModuleMapping = unpackedModules.reduce((acc, mod) => {
         acc[mod.id] = getDepName(mod)
         return acc
     }, moduleIdMapping)
 
+    if (existingMapping) {
+        setModuleMapping(existingMapping)
+    }
     // try to preserve the old mapping if possible
-    if (Object.keys(newModuleMapping).length !== Object.keys(moduleMapping.value).length) {
+    else if (Object.keys(newModuleMapping).length !== Object.keys(moduleMapping.value).length) {
         setModuleMapping(newModuleMapping)
     }
 

@@ -11,10 +11,15 @@ defineProps<{
         text-gray-900 dark:text-white
         bg-light dark:bg-gray-800"
     >
-        <slot name="prepend" />
-        <h5 v-if="title" class="mb-2 text-2xl text-center font-bold text-gray-900 dark:text-white">
-            {{ title }}
+        <h5
+            v-if="title || $slots.title"
+            class="mb-2 text-2xl text-center font-bold text-gray-900 dark:text-white"
+        >
+            <slot name="title">
+                {{ title }}
+            </slot>
         </h5>
+
         <p v-if="description" class="mb-5 text-base text-center text-gray-500 sm:text-lg dark:text-gray-400">
             {{ description }}
         </p>

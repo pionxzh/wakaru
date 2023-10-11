@@ -11,7 +11,7 @@ const toggleDarkMode = () => {
     <button
         class="flex items-center p-2 text-xs font-medium rounded-lg outline-none
         text-gray-700 dark:text-gray-200
-        hover:text-blue-700 dark:border-gray-600dark:hover:text-white
+        hover:text-blue-700 dark:border-gray-600 dark:hover:text-white
         bg-white dark:bg-gray-800
         hover:bg-gray-100 dark:hover:bg-gray-700
         fill-transparent hover:fill-amber-500

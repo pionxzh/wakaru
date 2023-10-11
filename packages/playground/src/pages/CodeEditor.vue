@@ -4,7 +4,9 @@ import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import Card from '../components/Card.vue'
 import CodemirrorEditor from '../components/CodemirrorEditor.vue'
+import ShareBtn from '../components/ShareBtn.vue'
 import useState from '../composables/shared/useState'
+import { encodeOption } from '../composables/url'
 import { useCodemod } from '../composables/useCodemod'
 import { useModule } from '../composables/useModule'
 import { useModuleMapping } from '../composables/useModuleMapping'
@@ -36,11 +38,28 @@ watch([enabledRules, () => module.value.code], async () => {
     const result = await transform(moduleName.value, module.value, enabledRules.value, moduleMeta.value, moduleMapping.value)
     setModule({ ...module.value, transformed: result.transformed })
 }, { immediate: true })
+
+const onClick = () => {
+    const hash = encodeOption({
+        code: module.value.code,
+        rules: disabledRules.value.length ? disabledRules.value : undefined,
+        mapping: moduleMapping.value,
+        meta: moduleMeta.value,
+    })
+    const shareUrl = `${location.origin}/#${hash}`
+    navigator.clipboard.writeText(shareUrl)
+    // eslint-disable-next-line no-alert
+    alert('Copied to clipboard!')
+}
 </script>
 
 <template>
     <div class="flex flex-row h-full">
-        <Card title="Source" class="border-x border-gray-700">
+        <Card class="border-x border-gray-700">
+            <template #title>
+                Source
+                <ShareBtn @click="onClick" />
+            </template>
             <div class="w-full">
                 <CodemirrorEditor
                     :model-value="module.code"
