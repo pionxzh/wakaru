@@ -1,3 +1,4 @@
+import { isLogicalNot } from './checker'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { BinaryExpression, ConditionalExpression, JSCodeshift, LogicalExpression } from 'jscodeshift'
 
@@ -36,11 +37,11 @@ export function logicalExpressionToConditionalExpression(j: JSCodeshift, node: L
  * Apply de Morgan's laws to negate a condition.
  */
 export function negateCondition(j: JSCodeshift, condition: ExpressionKind): ExpressionKind {
-    if (j.UnaryExpression.check(condition) && condition.operator === '!') {
+    if (isLogicalNot(j, condition)) {
         return condition.argument
     }
     if (j.ConditionalExpression.check(condition)) {
-        if (j.UnaryExpression.check(condition.consequent) || j.UnaryExpression.check(condition.alternate)) {
+        if (isLogicalNot(j, condition.consequent) || isLogicalNot(j, condition.alternate)) {
             return j.conditionalExpression(
                 negateCondition(j, condition.test),
                 negateCondition(j, condition.alternate),

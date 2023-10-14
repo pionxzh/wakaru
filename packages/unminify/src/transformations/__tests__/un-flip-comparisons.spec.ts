@@ -3,7 +3,7 @@ import transform from '../un-flip-comparisons'
 
 const inlineTest = defineInlineTest(transform)
 
-inlineTest('should flip operators',
+inlineTest('should flip comparison',
   `
 void 0 === foo;
 undefined === foo;
@@ -42,7 +42,7 @@ bar <= 1;
 `,
 )
 
-inlineTest('should flip operators for various right-hand values',
+inlineTest('should flip comparison for various right-hand values',
   `
 1 == obj.props;
 1 == obj.props[0];
@@ -55,7 +55,16 @@ method() == 1;
 `,
 )
 
-inlineTest('should not flip operators',
+inlineTest('should flip comparison on conditional expression',
+  `
+2 === foo ? bar : baz;
+`,
+  `
+foo === 2 ? bar : baz;
+`,
+)
+
+inlineTest('should not flip comparison',
   `
 foo === undefined;
 foo !== null;

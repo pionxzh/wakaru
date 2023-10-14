@@ -1,5 +1,5 @@
 import { isVariableIdentifier } from '@wakaru/ast-utils'
-import { isUndefined } from '../utils/checker'
+import { isLogicalNot, isUndefined } from '../utils/checker'
 import { logicalExpressionToConditionalExpression, negateCondition } from '../utils/condition'
 import wrap from '../wrapAstTransformation'
 import { transformASTWithRules } from './lebab'
@@ -189,7 +189,7 @@ function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | Function
 
             if (
                 j.LogicalExpression.check(init.test)
-             && j.UnaryExpression.check(init.test.left)
+             && isLogicalNot(j, init.test.left)
             ) {
                 init = negateCondition(j, init) as ConditionalExpression
             }

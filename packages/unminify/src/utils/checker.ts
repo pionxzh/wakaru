@@ -1,4 +1,4 @@
-import type { ASTNode, BigIntLiteral, BinaryExpression, BooleanLiteral, JSCodeshift, NullLiteral, NumericLiteral, RegExpLiteral, StringLiteral, TemplateLiteral } from 'jscodeshift'
+import type { ASTNode, BigIntLiteral, BinaryExpression, BooleanLiteral, JSCodeshift, NullLiteral, NumericLiteral, RegExpLiteral, StringLiteral, TemplateLiteral, UnaryExpression } from 'jscodeshift'
 
 export function areNodesEqual(j: JSCodeshift, node1: ASTNode, node2: ASTNode): boolean {
     return j(node1).toSource() === j(node2).toSource()
@@ -38,6 +38,10 @@ export function isUndefined(j: JSCodeshift, node: ASTNode) {
  */
 export function isVoid0(j: JSCodeshift, node: ASTNode) {
     return j.UnaryExpression.check(node) && node.operator === 'void' && j.NumericLiteral.check(node.argument) && node.argument.value === 0
+}
+
+export function isLogicalNot(j: JSCodeshift, node: ASTNode): node is UnaryExpression {
+    return j.UnaryExpression.check(node) && node.operator === '!'
 }
 
 export function isNotNullBinary(j: JSCodeshift, node: ASTNode): node is BinaryExpression {
