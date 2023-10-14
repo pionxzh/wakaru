@@ -10,7 +10,7 @@ overrides:
 
 patchedDependencies:
   ast-types@0.16.1:
-    hash: hvit3frj64tb3ngxe3bh2v3lgu
+    hash: lbcpk3ulhul2sxdbqn4xesbaem
     path: patches/ast-types@0.16.1.patch
 
 importers:
@@ -68,7 +68,7 @@ importers:
         version: link:../test-utils
       ast-types:
         specifier: ^0.16.1
-        version: 0.16.1(patch_hash=hvit3frj64tb3ngxe3bh2v3lgu)
+        version: 0.16.1(patch_hash=lbcpk3ulhul2sxdbqn4xesbaem)
       tsup:
         specifier: ^7.2.0
         version: 7.2.0(typescript@5.2.2)
@@ -245,7 +245,7 @@ importers:
         version: link:../test-utils
       ast-types:
         specifier: ^0.16.1
-        version: 0.16.1(patch_hash=hvit3frj64tb3ngxe3bh2v3lgu)
+        version: 0.16.1(patch_hash=lbcpk3ulhul2sxdbqn4xesbaem)
       tsup:
         specifier: ^7.2.0
         version: 7.2.0(typescript@5.2.2)
@@ -260,7 +260,7 @@ importers:
         version: link:../ast-utils
       ast-types:
         specifier: ^0.16.1
-        version: 0.16.1(patch_hash=hvit3frj64tb3ngxe3bh2v3lgu)
+        version: 0.16.1(patch_hash=lbcpk3ulhul2sxdbqn4xesbaem)
       jscodeshift:
         specifier: ^0.15.0
         version: 0.15.0(@babel/preset-env@7.22.20)
@@ -2550,7 +2550,7 @@ packages:
     engines: {node: '>=12'}
     dependencies:
       assert: 2.1.0
-      ast-types: 0.16.1(patch_hash=hvit3frj64tb3ngxe3bh2v3lgu)
+      ast-types: 0.16.1(patch_hash=lbcpk3ulhul2sxdbqn4xesbaem)
       esprima: 4.0.1
       source-map: 0.6.1
       tslib: 2.6.1
@@ -2662,7 +2662,7 @@ packages:
   /@types/jscodeshift@0.11.7:
     resolution: {integrity: sha512-YJ+dQlL2a8dR+iNExYVxiFMa4nhoUgIhYN47rCCdwkRPYdURkee4bCskMhNNCUNo14wbjVf7C0iIKL5tQ9jecw==}
     dependencies:
-      ast-types: 0.16.1(patch_hash=hvit3frj64tb3ngxe3bh2v3lgu)
+      ast-types: 0.16.1(patch_hash=lbcpk3ulhul2sxdbqn4xesbaem)
       recast: /@putout/recast@1.13.0
     dev: true
 
@@ -3247,7 +3247,7 @@ packages:
   /assertion-error@1.1.0:
     resolution: {integrity: sha512-jgsaNduz+ndvGyFt3uSuWqvy4lCnIJiovtouQN5JZHOKCS2QuhEdbcQHFhVksz2N2U9hXJo8odG7ETyWlEeuDw==}
 
-  /ast-types@0.16.1(patch_hash=hvit3frj64tb3ngxe3bh2v3lgu):
+  /ast-types@0.16.1(patch_hash=lbcpk3ulhul2sxdbqn4xesbaem):
     resolution: {integrity: sha512-6t10qk83GOG8p0vKmaCr8eiilZwO171AvbROMtvvNiwrTly62t+7XkA8RdIIVbpMhCASAsxgAzdRSwh6nw/5Dg==}
     engines: {node: '>=4'}
     dependencies:
