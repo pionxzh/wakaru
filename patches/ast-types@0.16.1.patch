@@ -41,7 +41,7 @@ index 21bf0f3f8abd247e6a67e0003a14f1f016801c6d..911eef13f46b9932694a5e412a07cc2c
  export interface ScopeConstructor {
      new (path: NodePath, parentScope: any): Scope;
 diff --git a/lib/scope.js b/lib/scope.js
-index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..e11cf6221c713bb0401d4fa31f2e50232eee740f 100644
+index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..1f84a5ce5be1331c410130972b17369c6b175b9c 100644
 --- a/lib/scope.js
 +++ b/lib/scope.js
 @@ -2,6 +2,7 @@
@@ -94,25 +94,21 @@ index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..e11cf6221c713bb0401d4fa31f2e5023
      Sp.scan = function (force) {
          if (force || !this.didScan) {
              for (var name in this.bindings) {
-@@ -169,7 +188,16 @@ function scopePlugin(fork) {
-             addTypePattern(path.get("id"), scopeTypes);
-         }
-         else if (namedTypes.VariableDeclarator.check(node)) {
--            addPattern(path.get("id"), bindings);
-+            // feat: support destructuring VariableDeclarator in scan scope
-+            // https://github.com/benjamn/ast-types/pull/588
-+            const idPath = path.get("id");
-+            if (namedTypes.ObjectPattern.check(idPath.node)) {
-+                idPath.node.properties.forEach((prop, index) => {
-+                    addPattern(path.get('id', 'properties', index, 'key'), bindings)
-+                })
-+            } else {
-+                addPattern(path.get("id"), bindings);
-+            }
-             recursiveScanChild(path.get("init"), bindings, scopeTypes);
-         }
-         else if (node.type === "ImportSpecifier" ||
-@@ -350,6 +378,28 @@ function scopePlugin(fork) {
+@@ -278,8 +297,11 @@ function scopePlugin(fork) {
+                         namedTypes.ObjectProperty.check(property))) {
+                     addPattern(propertyPath.get('value'), bindings);
+                 }
+-                else if (namedTypes.SpreadProperty &&
+-                    namedTypes.SpreadProperty.check(property)) {
++                else if ((namedTypes.SpreadProperty &&
++                    namedTypes.SpreadProperty.check(property)) ||
++                    (namedTypes.RestElement &&
++                        namedTypes.RestElement.check(property))
++                    ) {
+                     addPattern(propertyPath.get('argument'), bindings);
+                 }
+             });
+@@ -350,6 +372,28 @@ function scopePlugin(fork) {
              scope = scope.parent;
          return scope;
      };
