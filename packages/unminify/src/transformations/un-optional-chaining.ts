@@ -81,7 +81,7 @@ function constructOptionalChaining(
      * condition.
      * @see https://github.com/babel/babel/blob/aaf364a5675daec4dc61095c5fd6df6c9adf71cf/packages/babel-plugin-transform-optional-chaining/src/transform.ts#L251
      */
-    if (trueBranch && j.UnaryExpression.check(deepestFalseBranch.condition) && deepestFalseBranch?.condition.operator === 'delete') {
+    if (trueBranch && j.UnaryExpression.check(deepestFalseBranch.condition) && deepestFalseBranch.condition.operator === 'delete') {
         if (!isFalsyBranch(j, trueBranch) && !isTrue(j, trueBranch.condition)) return null
     }
     else if (!isFalsyBranch(j, trueBranch)) return null

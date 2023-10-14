@@ -62,8 +62,7 @@ const isLeftValid = (j: JSCodeshift, node: ExpressionKind) => {
 }
 
 const isRightValid = (j: JSCodeshift, node: ExpressionKind) => {
-    let right = node
-    if (j.UnaryExpression.check(node)) right = node.argument
+    const right = j.UnaryExpression.check(node) ? node.argument : node
     return j.Identifier.check(right)
     || j.MemberExpression.check(right)
     || j.CallExpression.check(right)
