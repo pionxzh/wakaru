@@ -24,6 +24,12 @@ function foo(a, b) {
     c: e.b,
   }
 
+  let f = (Y) => {
+    let {
+      ...a
+    } = Y
+  }
+
   return a + b;
 }
 `,
@@ -33,6 +39,12 @@ function foo(c, d) {
     a: c.a,
     b: d.c,
     c: e.b,
+  }
+
+  let f = (Y) => {
+    let {
+      ...a
+    } = Y
   }
 
   return c + d;
