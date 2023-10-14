@@ -9,16 +9,18 @@ inlineTest('default parameters #1',
 function test() {
   if (x === void 0) x = 1;
   if (y === void 0) { y = 2; }
-  var z = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : "hello";
-  var e = arguments.length > 3 && undefined !== arguments[3]
-    ? arguments[3]
+  var b = arguments.length > 2 ? arguments[2] : undefined;
+  var z = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : "hello";
+  var e = arguments.length > 4 && undefined !== arguments[4]
+    ? arguments[4]
     : world();
-  console.log(x, y, z, e);
+  var f = !(arguments.length > 5) || arguments[5] === undefined || arguments[5];
+  console.log(x, y, b, z, e, f);
 }
 `,
   `
-function test(x = 1, y = 2, z = "hello", e = world()) {
-  console.log(x, y, z, e);
+function test(x = 1, y = 2, b, z = "hello", e = world(), f = true) {
+  console.log(x, y, b, z, e, f);
 }
 `,
 )

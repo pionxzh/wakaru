@@ -1,5 +1,6 @@
 import { isVariableIdentifier } from '@wakaru/ast-utils'
 import { isUndefined } from '../utils/checker'
+import { logicalExpressionToConditionalExpression, negateCondition } from '../utils/condition'
 import wrap from '../wrapAstTransformation'
 import { transformASTWithRules } from './lebab'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -164,19 +165,34 @@ function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | Function
          * @example
          * // Default parameter
          * var _ref = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : 2;
+         * var _ref = arguments.length > 2 && arguments[2] !== undefined && arguments[2];
+         * var _ref = !(arguments.length > 2) || arguments[2] === undefined || arguments[2];
          */
         if (
             j.VariableDeclaration.check(statement)
-            && statement.declarations.length === 1
-            && j.VariableDeclarator.check(statement.declarations[0])
-            && j.Identifier.check((statement.declarations[0]).id)
-            && j.ConditionalExpression.check((statement.declarations[0]).init)
+         && statement.declarations.length === 1
+         && j.VariableDeclarator.check(statement.declarations[0])
+         && j.Identifier.check((statement.declarations[0]).id)
+         && (
+             j.ConditionalExpression.check((statement.declarations[0]).init)
+          || j.LogicalExpression.check((statement.declarations[0]).init)
+         )
         ) {
             const declarator = statement.declarations[0]
             const identifier = declarator.id as Identifier
             if (getExistingDefaultParam(j, params, identifier.name)) return true
 
-            const init = declarator.init as ConditionalExpression
+            const _init = (statement.declarations[0]).init
+            let init = j.LogicalExpression.check(_init)
+                ? logicalExpressionToConditionalExpression(j, _init)
+                : _init
+
+            if (
+                j.LogicalExpression.check(init.test)
+             && j.UnaryExpression.check(init.test.left)
+            ) {
+                init = negateCondition(j, init) as ConditionalExpression
+            }
 
             const normalMatch = matchNormalParameter(j, init)
             if (normalMatch) {
