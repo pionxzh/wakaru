@@ -46,10 +46,10 @@ export const transformationMap: {
     'un-runtime-helper': unRuntimeHelper, // eliminate helpers as early as possible
     'un-curly-braces': unCurlyBraces, // add curly braces so that other transformations can works easier, but not required
     'un-esm': unEsm, // relies on `un-runtime-helper` to eliminate helpers around `require` calls
-    'un-export-rename': unExportRename, // relies on `un-esm` to give us the export statements
 
     // third stage - mostly one-to-one transformation
     lebab,
+    'un-export-rename': unExportRename, // relies on `un-esm` to give us the export statements, and this can break some rules from `lebab`
     'un-use-strict': unUseStrict,
     'un-esmodule-flag': unEsModuleFlag,
     'un-boolean': unBoolean,

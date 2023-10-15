@@ -7,7 +7,7 @@ import type { LebabRule } from 'lebab'
  * @url https://github.com/lebab/lebab
  */
 const allLebabRules: LebabRule[] = [
-    // 'class',
+    'class',
     'template', // un-template-literal, but lebab support a different form of template literal (+ instead of .concat)
     'arrow',
     'arrow-return',
