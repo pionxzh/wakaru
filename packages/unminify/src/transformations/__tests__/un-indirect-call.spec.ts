@@ -96,6 +96,29 @@ const { useRef } = s;
 `,
 )
 
+inlineTest('indirect call from required module with existing import',
+  `
+import p from "r2";
+
+const s = require("react");
+
+var countRef = (0, s.useRef)(0);
+var secondRef = (0, p.useRef)(0);
+`,
+  `
+import { useRef as useRef$0 } from "r2";
+
+const s = require("react");
+
+const {
+  useRef
+} = s;
+
+var countRef = useRef(0);
+var secondRef = useRef$0(0);
+`,
+)
+
 inlineTest('indirect call from multiple required modules',
   `
 const s = require("react");

@@ -97,6 +97,7 @@ export const transformAST: ASTTransformation = (context) => {
              * 5. else, add `import { useRef as useRef$1 } from 'react'`
              * 6. replace `(0, s.useRef)(0)` with `useRef(0)`
              */
+
             const defaultSpecifierName = object.name
             const namedSpecifierName = property.name
             const key = `${defaultSpecifierName}.${namedSpecifierName}`
@@ -210,6 +211,8 @@ export const transformAST: ASTTransformation = (context) => {
 
                     const newCallExpression = j.callExpression(j.identifier(valueName), node.arguments)
                     path.replace(newCallExpression)
+                    rootScope.markAsStale()
+
                     return
                 }
 
