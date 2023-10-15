@@ -105,37 +105,37 @@ export default o;
 
 // FIXME: https://github.com/facebook/jscodeshift/issues/263
 // JSCodeShift and `ast-types` didn't create the correct scope for BlockStatement
-// inlineTest('should handle the scope correctly',
-//   `
-// const a = 1;
-// console.log(a);
-// {
-//     const a = 2;
-//     console.log(a);
-// }
-// function test() {
-//     const a = 3;
-//     console.log(a);
-// }
-// for(let a = 4; a < 5; a++) {
-//     console.log(a);
-// }
-// export const b = a, c = 2;
-// `,
-//   `
-// export const b = 1;
-// console.log(b);
-// {
-//     const a = 2;
-//     console.log(a);
-// }
-// function test() {
-//     const a = 3;
-//     console.log(a);
-// }
-// for(let a = 4; a < 5; a++) {
-//     console.log(a);
-// }
-// export const c = 2;
-// `,
-// )
+inlineTest.todo('should handle the scope correctly',
+  `
+const a = 1;
+console.log(a);
+{
+    const a = 2;
+    console.log(a);
+}
+function test() {
+    const a = 3;
+    console.log(a);
+}
+for(let a = 4; a < 5; a++) {
+    console.log(a);
+}
+export const b = a, c = 2;
+`,
+  `
+export const b = 1;
+console.log(b);
+{
+    const a = 2;
+    console.log(a);
+}
+function test() {
+    const a = 3;
+    console.log(a);
+}
+for(let a = 4; a < 5; a++) {
+    console.log(a);
+}
+export const c = 2;
+`,
+)

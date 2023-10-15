@@ -446,21 +446,21 @@ export default foo;
 )
 
 //  TODO:
-// inlineTest('Object.defineProperty with exports',
-//   `
-// Object.defineProperty(exports, "foo", { value: 1 });
-// Object.defineProperty(exports, "named", {
-//   enumerable: true,
-//   get: function () {
-//     return obj.named;
-//   }
-// });
-// `,
-//   `
-// export const foo = 1;
-// export const named = obj.named;
-// `,
-// )
+inlineTest.todo('Object.defineProperty with exports',
+  `
+Object.defineProperty(exports, "foo", { value: 1 });
+Object.defineProperty(exports, "named", {
+  enumerable: true,
+  get: function () {
+    return obj.named;
+  }
+});
+`,
+  `
+export const foo = 1;
+export const named = obj.named;
+`,
+)
 
 inlineTest('export with naming conflict #1',
   `

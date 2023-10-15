@@ -94,13 +94,6 @@ var X = /*#__PURE__*/function () {
 `,
 )
 
-// inlineTest('Babel: template',
-//   `
-// `,
-//   `
-// `,
-// )
-
 inlineTest('Babel: default multiple',
   `
 var t = function () {

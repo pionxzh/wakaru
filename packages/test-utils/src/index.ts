@@ -48,7 +48,7 @@ export function defineInlineTest(transforms: Transform | Transform[]) {
         : transforms
 
     function _inlineTest(
-        modifier: 'skip' | 'only' | null,
+        modifier: 'skip' | 'only' | 'todo' | 'fails' | null,
         testName: string,
         input: string,
         expectedOutput: string,
@@ -89,10 +89,17 @@ export function defineInlineTest(transforms: Transform | Transform[]) {
     const inlineTest = _inlineTest.bind(null, null) as InlineTest & {
         skip: InlineTest
         only: InlineTest
+        todo: InlineTest
+        fails: InlineTest
     }
 
     inlineTest.skip = _inlineTest.bind(null, 'skip')
     inlineTest.only = _inlineTest.bind(null, 'only')
+    inlineTest.todo = _inlineTest.bind(null, 'todo')
+    /**
+     *
+     */
+    inlineTest.fails = _inlineTest.bind(null, 'fails')
 
     return inlineTest
 }
