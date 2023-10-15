@@ -72,6 +72,7 @@ export const transformationMap: {
     'un-optional-chaining': unOptionalChaining,
     'un-nullish-coalescing': unNullishCoalescing,
     'un-conditionals': unConditionals, // need to run after `un-optional-chaining` and `un-nullish-coalescing`
+    'un-sequence-expression3': unSequenceExpression, // split sequence expressions introduced by `un-conditionals`
     'un-parameters': unParameters, // relies on `un-flip-comparisons` to work
     'un-jsx': unJsx,
     'un-iife': unIife,
