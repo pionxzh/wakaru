@@ -87,19 +87,30 @@ export function defineInlineTest(transforms: Transform | Transform[]) {
     }
 
     const inlineTest = _inlineTest.bind(null, null) as InlineTest & {
+        /**
+         * Use `.skip` to skip a test in a given suite. Consider using `.todo` or `.fixme` instead
+         * if those are more appropriate.
+         */
         skip: InlineTest
+        /**
+         * Use `.only` to only run certain tests in a given suite. This is useful when debugging.
+         */
         only: InlineTest
+        /**
+         * Use `.todo` when you are writing a test but the feature you are testing is not yet
+         * implemented.
+         */
         todo: InlineTest
-        fails: InlineTest
+        /**
+         * Use `.fixme` when you are writing a test and **expecting** it to fail.
+         */
+        fixme: InlineTest
     }
 
     inlineTest.skip = _inlineTest.bind(null, 'skip')
     inlineTest.only = _inlineTest.bind(null, 'only')
     inlineTest.todo = _inlineTest.bind(null, 'todo')
-    /**
-     *
-     */
-    inlineTest.fails = _inlineTest.bind(null, 'fails')
+    inlineTest.fixme = _inlineTest.bind(null, 'fails')
 
     return inlineTest
 }

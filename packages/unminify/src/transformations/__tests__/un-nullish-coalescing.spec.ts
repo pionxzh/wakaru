@@ -118,9 +118,8 @@ function foo4() {
 `,
 )
 
-// FIXME: ES5 default parameter will be transformed
-// to a form that we don't support yet.
-inlineTest.skip('SWC - ES5',
+// TODO: ES5 default parameter will be transformed to a form that we don't support yet.
+inlineTest.todo('SWC - ES5',
   `
 foo !== null && foo !== void 0 ? foo : "bar";
 
@@ -229,7 +228,7 @@ function foo4() {
 `,
 )
 
-inlineTest.skip('TypeScript - Fail cases',
+inlineTest.fixme('TypeScript - Fail cases',
   `
 // transform-in-default-destructuring
 var _c = {}.qux, qux = _c === void 0 ? (_b = foo.bar) !== null && _b !== void 0 ? _b : "qux" : _c;

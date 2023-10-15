@@ -246,7 +246,7 @@ class C {
 `,
 )
 
-inlineTest.skip('Babel - Cast to boolean - Failed cases',
+inlineTest.fixme('Babel - Cast to boolean - Failed cases',
   `
 function testLogicalInIf(o) {
   var _o$a$b4, _o$a;
