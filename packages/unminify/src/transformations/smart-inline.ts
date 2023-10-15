@@ -306,7 +306,7 @@ function handleTempVariableInline(j: JSCodeshift, body: StatementKind[], scope: 
             // is the previous id same as current init?
             if (prevDeclarator.id.name !== declarator.init.name) continue
 
-            // if the previous id is used more than once, don't inline
+            // if the previous id is referenced somewhere else, don't inline
             if (findReferences(j, scope, declarator.init.name).size() > 2) continue
 
             const newVariableDeclarator = j.variableDeclarator(declarator.id, prevDeclarator.init)
