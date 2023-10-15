@@ -10,25 +10,6 @@ import type { ASTNode, Identifier, MemberExpression, ObjectPattern, ObjectProper
 /**
  * Converts indirect call expressions to direct call expressions.
  *
- * FIXME: the current implementation is not safe when there is a
- * local variable name conflicts with the imported/required module name.
- * For example:
- * ```js
- * import s from 'react'
- * const fn = () => {
- *   const useRef = 1;
- *   (0, s.useRef)(0);
- * }
- * ```
- * will be transformed to:
- * ```js
- * import s, { useRef } from 'react'
- * const fn = () => {
- *   const useRef = 1;
- *   useRef(0);
- * }
- * ```
- *
  * @example
  * import s from 'react'
  * (0, s.useRef)(0);
@@ -58,7 +39,9 @@ export const transformAST: ASTTransformation = (context) => {
      * So we need to collect all the imports first, then add them all at once.
      */
 
-    // `s.foo` (indirect call) -> `foo$0` (local specifiers)
+    /**
+     * `s.foo` (indirect call) -> `foo$0` (local specifiers)
+     */
     const replaceMapping = new Map<string, string>()
 
     root
@@ -101,6 +84,7 @@ export const transformAST: ASTTransformation = (context) => {
             const defaultSpecifierName = object.name
             const namedSpecifierName = property.name
             const key = `${defaultSpecifierName}.${namedSpecifierName}`
+
             if (replaceMapping.has(key)) {
                 const localName = replaceMapping.get(key)!
                 const newCallExpression = j.callExpression(j.identifier(localName), node.arguments)

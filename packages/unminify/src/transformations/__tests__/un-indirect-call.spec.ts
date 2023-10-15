@@ -146,3 +146,22 @@ var secondRef = useRef$0(0);
 var thirdRef = useRef$0(0);
 `,
 )
+
+inlineTest.fixme('indirect call with naming conflicts with local variables',
+  `
+import s from "react";
+
+const fn = () => {
+  const useRef = 1;
+  (0, s.useRef)(0);
+}
+`,
+  `
+import { useRef as useRef$0 } from "react";
+
+const fn = () => {
+  const useRef = 1;
+  useRef$0(0);
+}
+`,
+)
