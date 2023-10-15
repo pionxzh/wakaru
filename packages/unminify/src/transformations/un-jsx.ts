@@ -1,7 +1,7 @@
 import { isNull, isTrue, isUndefined } from '../utils/checker'
 import { removePureAnnotation } from '../utils/comments'
 import { generateName } from '../utils/identifier'
-import { nonNull } from '../utils/utils'
+import { nonNullable } from '../utils/utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
@@ -96,7 +96,7 @@ function toJSX(j: JSCodeshift, node: CallExpression, pragmaFrags: string[]): JSX
 
     const attributes = toJsxAttributes(j, props)
 
-    const children = postProcessChildren(j, childrenArgs.map(child => toJsxChild(j, child)).filter(nonNull))
+    const children = postProcessChildren(j, childrenArgs.map(child => toJsxChild(j, child)).filter(nonNullable))
 
     if (attributes.length === 0) {
         const isFrag1 = j.JSXIdentifier.check(tag) && pragmaFrags.includes(tag.name)
@@ -232,7 +232,7 @@ function toJsxAttributes(j: JSCodeshift, props: SpreadElement | ExpressionKind):
             // unsupported
             console.warn(`[un-jsx] unsupported attribute: ${j(prop).toSource()}`)
             return null
-        }).filter(nonNull)
+        }).filter(nonNullable)
     }
 
     if (j.SpreadElement.check(props) || j.SpreadProperty.check(props)) {

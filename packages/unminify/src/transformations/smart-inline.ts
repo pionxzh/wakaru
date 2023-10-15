@@ -2,7 +2,7 @@ import { findReferences } from '@wakaru/ast-utils'
 import { MultiMap } from '@wakaru/ds'
 import { mergeComments } from '../utils/comments'
 import { generateName } from '../utils/identifier'
-import { nonNull } from '../utils/utils'
+import { nonNullable } from '../utils/utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { CommentKind, StatementKind } from 'ast-types/lib/gen/kinds'
@@ -186,7 +186,7 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
         const preservedComments: CommentKind[] = []
 
         let insertIndex = body.length
-        const nonEmptyIndexAccesses = indexAccesses.filter(nonNull)
+        const nonEmptyIndexAccesses = indexAccesses.filter(nonNullable)
         nonEmptyIndexAccesses.forEach((variableName) => {
             const variableDecl = variableDeclarationMap.get(variableName)
             if (!variableDecl) return
@@ -200,7 +200,7 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
             }
         })
 
-        const kinds = nonEmptyIndexAccesses.map(n => variableKindMap.get(n)).filter(nonNull)
+        const kinds = nonEmptyIndexAccesses.map(n => variableKindMap.get(n)).filter(nonNullable)
         const kind = getMostRestrictiveKind(kinds)
         if (!kind) return
         const arrayPattern = j.arrayPattern(Array.from(indexAccesses, (variableName) => {
@@ -257,7 +257,7 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
         })
 
         // Create a new variable declaration with destructuring
-        const kinds = [...destructuringPropertyMap.keys()].map(n => variableKindMap.get(n)).filter(nonNull)
+        const kinds = [...destructuringPropertyMap.keys()].map(n => variableKindMap.get(n)).filter(nonNullable)
         const kind = getMostRestrictiveKind(kinds)
         if (!kind) return
         const properties = [...destructuringPropertyMap.entries()]
