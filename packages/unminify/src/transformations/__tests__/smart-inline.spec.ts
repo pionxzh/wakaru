@@ -232,3 +232,53 @@ const [, t, n] = e;
 console.log(t, n);
 `,
 )
+
+inlineTest('mixed destructuring - var',
+  `
+var _expr = expr;
+var x1 = _expr[0];
+var _expr$ = _expr[1];
+var x2 = _expr$.key;
+var x3 = _expr$.value;
+
+console.log(x1, x2, x3);
+`,
+  `
+var _expr = expr;
+var [x1, _expr$] = _expr;
+
+var {
+  key,
+  value
+} = _expr$;
+
+console.log(x1, key, value);
+`,
+)
+
+inlineTest('mixed destructuring - let',
+  `
+let _expr = expr;
+let x1 = _expr[0];
+let _expr$ = _expr[1];
+let x2 = _expr$.key;
+let x3 = _expr$.value;
+
+x3 += 1;
+
+console.log(x1, x2, x3);
+`,
+  `
+let _expr = expr;
+let [x1, _expr$] = _expr;
+
+let {
+  key,
+  value
+} = _expr$;
+
+value += 1;
+
+console.log(x1, key, value);
+`,
+)

@@ -2,6 +2,7 @@ import { findReferences } from '@wakaru/ast-utils'
 import { MultiMap } from '@wakaru/ds'
 import { mergeComments } from '../utils/comments'
 import { generateName } from '../utils/identifier'
+import { nonNull } from '../utils/utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { CommentKind, StatementKind } from 'ast-types/lib/gen/kinds'
@@ -53,11 +54,14 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope) {
-    const objectPropertyMap = new MultiMap<string, string>()
-    const objectDeclarationMap = new MultiMap<string, VariableDeclaration | ExpressionStatement>()
+type Kind = 'const' | 'let' | 'var'
+type ObjectName = string
+type IdentifierName = string
 
-    const objectIndexMap = new Map<string, string[]>()
+function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope) {
+    const objectAccessDeclarationMap = new MultiMap<ObjectName, VariableDeclaration | ExpressionStatement>()
+    const objectIndexMap = new Map<ObjectName, IdentifierName[]>()
+    const variableKindMap = new Map<IdentifierName, Kind>()
     const variableDeclarationMap = new Map<string, VariableDeclaration>()
 
     body.forEach((node) => {
@@ -92,10 +96,10 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
             if (init.computed) return
 
             const object = init.object as Identifier
-            const property = init.property as Identifier
+            objectAccessDeclarationMap.set(object.name, _node)
 
-            objectPropertyMap.set(object.name, property.name)
-            objectDeclarationMap.set(object.name, _node)
+            const property = init.property as Identifier
+            variableKindMap.set(property.name, _node.kind)
         }
 
         // Collect all index accesses
@@ -139,17 +143,19 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
             indexAccesses[index] = id.name
             objectIndexMap.set(object.name, indexAccesses)
             variableDeclarationMap.set(id.name, _node)
+            variableKindMap.set(id.name, _node.kind)
         }
 
         /**
          * Property access in expression statement is considered
          * as part of the destructuring. But normally people don't
-         * write code like this, so why we do this?
+         * write code like this, why we do this?
          *
          * When a destructuring variable is not used, bundler will
-         * transform it to a comma expression, which then will be
-         * splitted by rule `un-sequence-expression`. That's why we
-         * see this pattern IRL.
+         * transform it to a simple property access without assignment
+         * to preserve the side effect of the getter.
+         *
+         * That's why we see this pattern IRL.
          */
         if (j.match(node, {
             type: 'ExpressionStatement',
@@ -170,22 +176,48 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
             if (expression.computed) return
 
             const object = expression.object as Identifier
-            const property = expression.property as Identifier
-
-            objectPropertyMap.set(object.name, property.name)
-            objectDeclarationMap.set(object.name, _node)
+            objectAccessDeclarationMap.set(object.name, _node)
         }
     })
 
     const declaredNames: string[] = []
-    objectPropertyMap.forEach((propertyAccesses, objectName) => {
-        if (propertyAccesses.size <= 1) return
 
+    objectIndexMap.forEach((indexAccesses, objectName) => {
+        const preservedComments: CommentKind[] = []
+
+        let insertIndex = body.length
+        const nonEmptyIndexAccesses = indexAccesses.filter(nonNull)
+        nonEmptyIndexAccesses.forEach((variableName) => {
+            const variableDecl = variableDeclarationMap.get(variableName)
+            if (!variableDecl) return
+
+            preservedComments.push(...(variableDecl.comments || []))
+
+            const index = body.indexOf(variableDecl)
+            if (index > -1) {
+                insertIndex = Math.min(insertIndex, index)
+                body.splice(index, 1)
+            }
+        })
+
+        const kinds = nonEmptyIndexAccesses.map(n => variableKindMap.get(n)).filter(nonNull)
+        const kind = getMostRestrictiveKind(kinds)
+        if (!kind) return
+        const arrayPattern = j.arrayPattern(Array.from(indexAccesses, (variableName) => {
+            return variableName ? j.identifier(variableName) : null
+        }))
+        const destructuring = j.variableDeclaration(kind, [
+            j.variableDeclarator(arrayPattern, j.identifier(objectName)),
+        ])
+        mergeComments(destructuring, preservedComments)
+        body.splice(insertIndex, 0, destructuring)
+    })
+
+    objectAccessDeclarationMap.forEach((declarations, objectName) => {
         // Rename all variables to their property names
         let insertIndex = body.length
         const destructuringPropertyMap = new Map<string, string>()
         const preservedComments: CommentKind[] = []
-        const declarations = objectDeclarationMap.get(objectName) || []
         declarations.forEach((declaration) => {
             if (j.ExpressionStatement.check(declaration)) {
                 const expressionStatement = declaration as ExpressionStatement
@@ -225,6 +257,9 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
         })
 
         // Create a new variable declaration with destructuring
+        const kinds = [...destructuringPropertyMap.keys()].map(n => variableKindMap.get(n)).filter(nonNull)
+        const kind = getMostRestrictiveKind(kinds)
+        if (!kind) return
         const properties = [...destructuringPropertyMap.entries()]
             .map(([propertyName, newPropertyName]) => {
                 const property = j.objectProperty(
@@ -234,37 +269,11 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
                 property.shorthand = propertyName === newPropertyName
                 return property
             })
-        const destructuring = j.variableDeclaration('const', [
+        const destructuring = j.variableDeclaration(kind, [
             j.variableDeclarator(
                 j.objectPattern(properties),
                 j.identifier(objectName),
             ),
-        ])
-        mergeComments(destructuring, preservedComments)
-        body.splice(insertIndex, 0, destructuring)
-    })
-
-    objectIndexMap.forEach((indexAccesses, objectName) => {
-        const preservedComments: CommentKind[] = []
-
-        let insertIndex = body.length
-        indexAccesses.forEach((variableName) => {
-            preservedComments.push(...(variableDeclarationMap.get(variableName)?.comments || []))
-
-            const variableDecl = variableDeclarationMap.get(variableName)
-            if (!variableDecl) return
-            const index = body.indexOf(variableDecl)
-            if (index > -1) {
-                insertIndex = Math.min(insertIndex, index)
-                body.splice(index, 1)
-            }
-        })
-
-        const arrayPattern = j.arrayPattern(Array.from(indexAccesses, (variableName) => {
-            return variableName ? j.identifier(variableName) : null
-        }))
-        const destructuring = j.variableDeclaration('const', [
-            j.variableDeclarator(arrayPattern, j.identifier(objectName)),
         ])
         mergeComments(destructuring, preservedComments)
         body.splice(insertIndex, 0, destructuring)
@@ -318,6 +327,29 @@ function isOnlyDeclarator(j: JSCodeshift, statement: StatementKind): statement i
     return j.VariableDeclaration.check(statement)
         && statement.declarations.length === 1
         && j.VariableDeclarator.check(statement.declarations[0])
+}
+
+const kindToVal: Record<Kind, number> = {
+    var: 1,
+    let: 2,
+    const: 3,
+}
+const valToKind: Record<number, Kind> = {
+    1: 'var',
+    2: 'let',
+    3: 'const',
+}
+
+/**
+ * Returns the most restrictive common `kind`
+ *
+ * - When all vars are const, return "const".
+ * - When some vars are "let" and some "const", returns "let".
+ * - When some vars are "var", return "var".
+ */
+function getMostRestrictiveKind(kinds: Kind[]): Kind | undefined {
+    const minVal = Math.min(...kinds.map(v => kindToVal[v]))
+    return valToKind[minVal]
 }
 
 export default wrap(transformAST)

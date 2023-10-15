@@ -70,7 +70,7 @@ var _ref = _slicedToArray(a, 0);
 var _ref2 = _slicedToArray(b, 1);
 var name = _ref2[0];
 
-var _ref3 = _slicedToArray(rect.meta, 2);
+var _ref3 = _slicedToArray(rect, 2);
 var mass = _ref3[1];
 var weight = _ref3[2];
 `,
@@ -79,7 +79,7 @@ var weight = _ref3[2];
 var [] = a;
 
 const [name] = b;
-const [, mass, weight] = rect.meta;
+const [, mass, weight] = rect;
 `,
 )
 
@@ -96,7 +96,7 @@ for (var _ref in obj) {
 
 for (var __ref of test.expectation.registers) {
   var __ref2 = _slicedToArray(__ref, 3);
-  var name = __ref2[0];
+  var init = __ref2[0];
   var before = __ref2[1];
   var after = __ref2[2];
 }
@@ -108,7 +108,7 @@ for (const _ref in obj) {
 }
 
 for (const __ref of test.expectation.registers) {
-  const [name, before, after] = __ref;
+  const [init, before, after] = __ref;
 }
 `,
 )
