@@ -15,6 +15,7 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "test": "turbo run test",
+    "test:coverage": "vitest run --globals --coverage",
     "test:update": "turbo run test:update",
     "test:watch": "turbo run test:watch",
     "test:type": "turbo run test:type",
@@ -26,6 +27,7 @@
   "devDependencies": {
     "@pionxzh/eslint-config": "^1.0.1",
     "@types/node": "^18.18.3",
+    "@vitest/coverage-v8": "^0.34.6",
     "eslint": "^8.50.0",
     "esno": "^0.17.0",
     "globby": "^11.1.0",
