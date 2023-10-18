@@ -27,6 +27,7 @@ import unRuntimeHelper from './un-runtime-helper'
 import unSequenceExpression from './un-sequence-expression'
 import unTemplateLiteral from './un-template-literal'
 import unTypeConstructor from './un-type-constructor'
+import unTypeof from './un-typeof'
 import unUndefined from './un-undefined'
 import unUseStrict from './un-use-strict'
 import unVariableMerging from './un-variable-merging'
@@ -55,6 +56,7 @@ export const transformationMap: {
     'un-boolean': unBoolean,
     'un-undefined': unUndefined,
     'un-infinity': unInfinity,
+    'un-typeof': unTypeof,
     'un-numeric-literal': unNumericLiteral,
     'un-template-literal': unTemplateLiteral,
     'un-bracket-notation': unBracketNotation,

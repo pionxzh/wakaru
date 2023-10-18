@@ -15,6 +15,7 @@ It covered most of patterns that are used by the following tools:
   - [`un-undefined`](#un-undefined)
   - [`un-infinity`](#un-infinity)
   - [`un-numeric-literal`](#un-numeric-literal)
+  - [`un-typeof`](#un-typeof)
   - [`un-sequence-expression`](#un-sequence-expression)
   - [`un-variable-merging`](#un-variable-merging)
   - [`un-bracket-notation`](#un-bracket-notation)
@@ -94,6 +95,17 @@ A comment will be added to indicate the original value.
 
 - 0x123
 + 291 /* 0x123 */
+```
+
+### `un-typeof`
+
+Converts minified `typeof` to its long form.
+
+```diff
+- typeof x > "u"
++ typeof x === "undefined"
+- typeof x < "u"
++ typeof x !== "undefined"
 ```
 
 ### `un-sequence-expression`
