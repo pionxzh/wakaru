@@ -1,10 +1,13 @@
 import { renameIdentifier } from '@wakaru/ast-utils'
+import { assertScopeExists } from '../utils/assert'
 import { pascalCase } from '../utils/case'
 import { generateName } from '../utils/identifier'
+import { isDeclared } from '../utils/scope'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { ArrayPattern, CallExpression, Collection, Identifier, JSCodeshift, ObjectPattern } from 'jscodeshift'
+import type { Scope } from 'ast-types/lib/scope'
+import type { ASTPath, ArrayPattern, ArrowFunctionExpression, CallExpression, ClassMethod, Collection, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, ObjectMethod, ObjectPattern } from 'jscodeshift'
 
 const MINIFIED_IDENTIFIER_THRESHOLD = 2
 
@@ -57,25 +60,59 @@ function handleDestructuringRename(j: JSCodeshift, root: Collection) {
         .find(j.VariableDeclarator, { id: { type: 'ObjectPattern' } })
         .forEach((path) => {
             const scope = path.scope
-            if (!scope) return
+            assertScopeExists(scope)
 
             const id = path.node.id as ObjectPattern
-            id.properties.forEach((property) => {
-                if (!j.ObjectProperty.check(property)) return
-                if (property.computed || property.shorthand) return
-                const key = property.key
-                const value = property.value
-                if (!j.Identifier.check(key) || !j.Identifier.check(value)) return
-
-                // If the key is longer than the value, rename the value
-                if (key.name.length > value.name.length) {
-                    renameIdentifier(j, scope, value.name, key.name)
-                    if (key.name === value.name) {
-                        property.shorthand = true
-                    }
-                }
-            })
+            handlePropertyRename(j, id, scope)
         })
+
+    root
+        .find(j.FunctionDeclaration)
+        .forEach(path => handleFunctionParamsRename(j, path))
+
+    root
+        .find(j.ArrowFunctionExpression)
+        .forEach(path => handleFunctionParamsRename(j, path))
+
+    root
+        .find(j.FunctionExpression)
+        .forEach(path => handleFunctionParamsRename(j, path))
+
+    root
+        .find(j.ObjectMethod)
+        .forEach(path => handleFunctionParamsRename(j, path))
+
+    root
+        .find(j.ClassMethod)
+        .forEach(path => handleFunctionParamsRename(j, path))
+}
+
+function handleFunctionParamsRename(j: JSCodeshift, path: ASTPath<FunctionDeclaration | FunctionExpression | ArrowFunctionExpression | ObjectMethod | ClassMethod>) {
+    const scope = path.scope
+    assertScopeExists(scope)
+
+    path.node.params.forEach(param => j.ObjectPattern.check(param) && handlePropertyRename(j, param, scope))
+}
+
+function handlePropertyRename(j: JSCodeshift, objectPattern: ObjectPattern, scope: Scope) {
+    objectPattern.properties.forEach((property) => {
+        if (!j.ObjectProperty.check(property)) return
+        if (property.computed || property.shorthand) return
+
+        const key = property.key
+        if (!j.Identifier.check(key)) return
+
+        const value = j.AssignmentPattern.check(property.value) ? property.value.left : property.value
+        if (!j.Identifier.check(value)) return
+
+        // If the key is longer than the value, rename the value
+        if (key.name.length > value.name.length) {
+            if (isDeclared(scope, key.name)) return
+
+            renameIdentifier(j, scope, value.name, key.name)
+            property.shorthand = key.name === value.name
+        }
+    })
 }
 
 function handleReactRename(j: JSCodeshift, root: Collection) {
@@ -91,7 +128,7 @@ function handleReactRename(j: JSCodeshift, root: Collection) {
         })
         .forEach((path) => {
             const scope = path.scope
-            if (!scope) return
+            assertScopeExists(scope)
 
             const id = path.node.id as Identifier
             const init = path.node.init as CallExpression
@@ -123,7 +160,7 @@ function handleReactRename(j: JSCodeshift, root: Collection) {
         })
         .forEach((path) => {
             const scope = path.scope
-            if (!scope) return
+            assertScopeExists(scope)
 
             const id = path.node.id as Identifier
             const init = path.node.init as CallExpression
@@ -155,7 +192,7 @@ function handleReactRename(j: JSCodeshift, root: Collection) {
         })
         .forEach((path) => {
             const scope = path.scope
-            if (!scope) return
+            assertScopeExists(scope)
 
             const id = path.node.id as ArrayPattern
             if (!id.elements || id.elements.length === 0 || id.elements.length > 2) return

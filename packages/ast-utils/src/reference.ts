@@ -155,4 +155,7 @@ export function renameIdentifier(
     references.forEach((path) => {
         path.node.name = newName
     })
+
+    // mark the scope as stale to trigger a re-scan in the next lookup
+    targetScope.markAsStale()
 }

@@ -8,7 +8,7 @@ inlineTest('object destructuring rename',
 const {
   gql: t,
   dispatchers: o,
-  listener: i
+  listener: i = noop
 } = n;
 o.delete(t, i);
 `,
@@ -16,9 +16,151 @@ o.delete(t, i);
 const {
   gql,
   dispatchers,
-  listener
+  listener = noop
 } = n;
 dispatchers.delete(gql, listener);
+`,
+)
+
+inlineTest('object destructuring in function parameter',
+  `
+function foo({
+  gql: t,
+  dispatchers: o,
+  listener: i
+}) {
+  o.delete(t, i);
+}
+
+const foo2 = ({
+  gql: t,
+  dispatchers: o,
+  listener: i
+}) => {
+  o.delete(t, i);
+}
+
+const foo3 = function ({
+  gql: t,
+  dispatchers: o,
+  listener: i
+}) {
+  o.delete(t, i);
+}
+
+const foo4 = {
+  foo({
+    gql: t,
+    dispatchers: o,
+    listener: i
+  }) {
+    o.delete(t, i);
+  }
+}
+
+class Foo {
+  constructor({
+    gql: t,
+    dispatchers: o,
+    listener: i
+  }) {
+    o.delete(t, i);
+  }
+
+  foo({
+    gql: t,
+    dispatchers: o,
+    listener: i
+  }) {
+    o.delete(t, i);
+  }
+}
+`,
+  `
+function foo({
+  gql,
+  dispatchers,
+  listener
+}) {
+  dispatchers.delete(gql, listener);
+}
+
+const foo2 = ({
+  gql,
+  dispatchers,
+  listener
+}) => {
+  dispatchers.delete(gql, listener);
+}
+
+const foo3 = function ({
+  gql,
+  dispatchers,
+  listener
+}) {
+  dispatchers.delete(gql, listener);
+}
+
+const foo4 = {
+  foo({
+    gql,
+    dispatchers,
+    listener
+  }) {
+    dispatchers.delete(gql, listener);
+  }
+}
+
+class Foo {
+  constructor({
+    gql,
+    dispatchers,
+    listener
+  }) {
+    dispatchers.delete(gql, listener);
+  }
+
+  foo({
+    gql,
+    dispatchers,
+    listener
+  }) {
+    dispatchers.delete(gql, listener);
+  }
+}
+`,
+)
+
+inlineTest('object destructuring in function parameter with naming conflict',
+  `
+const gql = 1;
+
+function foo({
+  gql: t,
+  dispatchers: o,
+  listener: i
+}, {
+  gql: a,
+  dispatchers: b,
+  listener: c
+}) {
+  o.delete(t, i, a, b, c);
+}
+`,
+  `
+const gql = 1;
+
+function foo({
+  gql: t,
+  dispatchers,
+  listener
+}, {
+  gql: a,
+  dispatchers: b,
+  listener: c
+}) {
+  dispatchers.delete(t, listener, a, b, c);
+}
 `,
 )
 
