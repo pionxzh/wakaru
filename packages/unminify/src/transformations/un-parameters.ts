@@ -5,7 +5,7 @@ import wrap from '../wrapAstTransformation'
 import { transformASTWithRules } from './lebab'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { PatternKind, StatementKind } from 'ast-types/lib/gen/kinds'
-import type { ASTPath, AssignmentExpression, AssignmentPattern, BinaryExpression, ConditionalExpression, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, MemberExpression, NumericLiteral, ObjectMethod } from 'jscodeshift'
+import type { ASTPath, ArrowFunctionExpression, AssignmentExpression, AssignmentPattern, BinaryExpression, BlockStatement, ClassMethod, ConditionalExpression, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, MemberExpression, NumericLiteral, ObjectMethod } from 'jscodeshift'
 
 /**
  * Restore parameters. Support normal parameters and default parameters.
@@ -40,9 +40,7 @@ export const transformAST: ASTTransformation = (context) => {
 
     root
         .find(j.FunctionDeclaration, {
-            body: {
-                type: 'BlockStatement',
-            },
+            body: { type: 'BlockStatement' },
         })
         .forEach((path) => {
             handleBody(j, path)
@@ -52,22 +50,34 @@ export const transformAST: ASTTransformation = (context) => {
     // { set fn(a, b) {} }
     root
         .find(j.FunctionExpression, {
-            body: {
-                type: 'BlockStatement',
-            },
+            body: { type: 'BlockStatement' },
         })
         .forEach((path) => {
-            handleBody(j, path as ASTPath<FunctionExpression>)
+            handleBody(j, path)
+        })
+
+    root
+        .find(j.ArrowFunctionExpression, {
+            body: { type: 'BlockStatement' },
+        })
+        .forEach((path) => {
+            handleBody(j, path)
         })
 
     root
         .find(j.ObjectMethod, {
-            body: {
-                type: 'BlockStatement',
-            },
+            body: { type: 'BlockStatement' },
         })
         .forEach((path) => {
-            handleBody(j, path as ASTPath<ObjectMethod>)
+            handleBody(j, path)
+        })
+
+    root
+        .find(j.ClassMethod, {
+            body: { type: 'BlockStatement' },
+        })
+        .forEach((path) => {
+            handleBody(j, path)
         })
 
     transformASTWithRules([
@@ -85,8 +95,8 @@ export const transformAST: ASTTransformation = (context) => {
  */
 const BODY_LENGTH_THRESHOLD = 15
 
-function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | FunctionExpression | ObjectMethod>) {
-    const body = path.node.body.body
+function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | FunctionExpression | ArrowFunctionExpression | ObjectMethod | ClassMethod>) {
+    const body = (path.node.body as BlockStatement).body
     if (body.length === 0) return
 
     const params = path.node.params
@@ -224,9 +234,9 @@ function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | Function
         // TODO: rest parameter
 
         return true
-    })
+    });
 
-    path.node.body.body = [...filteredBodyInThreshold, ...bodyOutOfThreshold]
+    (path.node.body as BlockStatement).body = [...filteredBodyInThreshold, ...bodyOutOfThreshold]
 }
 
 function isIdentifierUsedIn(j: JSCodeshift, statement: StatementKind, identifierName: string) {

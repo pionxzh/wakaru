@@ -4,11 +4,11 @@ import transform from '../un-parameters'
 
 const inlineTest = defineInlineTest([unFlipComparisons, transform])
 
-inlineTest('default parameters #1',
+inlineTest('default parameters - Basic',
   `
 function test() {
   if (x === void 0) x = 1;
-  if (y === void 0) { y = 2; }
+  if (void 0 === y) { y = 2; }
   var b = arguments.length > 2 ? arguments[2] : undefined;
   var z = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : "hello";
   var e = arguments.length > 4 && undefined !== arguments[4]
@@ -25,15 +25,47 @@ function test(x = 1, y = 2, b, z = "hello", e = world(), f = true) {
 `,
 )
 
-inlineTest('default parameters #2',
+inlineTest('default parameters - ArrowFunctionExpression',
   `
-function test(a, b) {
+const test = (a, b) => {
   if (a === void 0) a = 1;
   if (void 0 === b) b = 2;
 }
 `,
   `
-function test(a = 1, b = 2) {}
+const test = (a = 1, b = 2) => {}
+`,
+)
+
+inlineTest('default parameters - ObjectMethod',
+  `
+const test = {
+  foo(a, b) {
+    if (a === void 0) a = 1;
+    if (void 0 === b) b = 2;
+  }
+}
+`,
+  `
+const test = {
+  foo(a = 1, b = 2) {}
+}
+`,
+)
+
+inlineTest('default parameters - ClassMethod',
+  `
+class Test {
+  foo(a, b) {
+    if (a === void 0) a = 1;
+    if (void 0 === b) b = 2;
+  }
+}
+`,
+  `
+class Test {
+  foo(a = 1, b = 2) {}
+}
 `,
 )
 
