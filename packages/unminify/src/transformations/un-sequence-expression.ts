@@ -20,11 +20,7 @@ export const transformAST: ASTTransformation = (context) => {
 
     // () => (a(), b(), c()) -> () => { a(); b(); return c() }
     root
-        .find(j.ArrowFunctionExpression, {
-            body: {
-                type: 'SequenceExpression',
-            },
-        })
+        .find(j.ArrowFunctionExpression, { body: { type: 'SequenceExpression' } })
         .forEach((path) => {
             const body = path.node.body as SequenceExpression
 
@@ -45,11 +41,7 @@ export const transformAST: ASTTransformation = (context) => {
 
     // `return a(), b()` -> `a(); return b()`
     root
-        .find(j.ReturnStatement, {
-            argument: {
-                type: 'SequenceExpression',
-            },
-        })
+        .find(j.ReturnStatement, { argument: { type: 'SequenceExpression' } })
         .forEach((path) => {
             const argument = path.node.argument as SequenceExpression
 
@@ -70,11 +62,7 @@ export const transformAST: ASTTransformation = (context) => {
 
     // `if (a(), b(), c())` -> `a(); b(); if (c())`
     root
-        .find(j.IfStatement, {
-            test: {
-                type: 'SequenceExpression',
-            },
-        })
+        .find(j.IfStatement, { test: { type: 'SequenceExpression' } })
         .forEach((path) => {
             const test = path.node.test as SequenceExpression
 
@@ -89,11 +77,7 @@ export const transformAST: ASTTransformation = (context) => {
 
     // `while (a(), b(), c())` -> `a(); b(); while (c())`
     root
-        .find(j.WhileStatement, {
-            test: {
-                type: 'SequenceExpression',
-            },
-        })
+        .find(j.WhileStatement, { test: { type: 'SequenceExpression' } })
         .forEach((path) => {
             const test = path.node.test as SequenceExpression
 
@@ -108,11 +92,7 @@ export const transformAST: ASTTransformation = (context) => {
 
     // `do { a(), b(), c() } while (d(), e(), f())` -> `a(); b(); do { c() } while (d(), e(), f())`
     root
-        .find(j.DoWhileStatement, {
-            test: {
-                type: 'SequenceExpression',
-            },
-        })
+        .find(j.DoWhileStatement, { test: { type: 'SequenceExpression' } })
         .forEach((path) => {
             const test = path.node.test as SequenceExpression
 
@@ -127,11 +107,7 @@ export const transformAST: ASTTransformation = (context) => {
 
     // `switch (a(), b(), c())` -> `a(); b(); switch (c())`
     root
-        .find(j.SwitchStatement, {
-            discriminant: {
-                type: 'SequenceExpression',
-            },
-        })
+        .find(j.SwitchStatement, { discriminant: { type: 'SequenceExpression' } })
         .forEach((path) => {
             const discriminant = path.node.discriminant as SequenceExpression
 
@@ -146,11 +122,7 @@ export const transformAST: ASTTransformation = (context) => {
 
     // `throw a(), b()` -> `a(); throw b()`
     root
-        .find(j.ThrowStatement, {
-            argument: {
-                type: 'SequenceExpression',
-            },
-        })
+        .find(j.ThrowStatement, { argument: { type: 'SequenceExpression' } })
         .forEach((path) => {
             const argument = path.node.argument as SequenceExpression
 
@@ -168,11 +140,7 @@ export const transformAST: ASTTransformation = (context) => {
     root
         .find(j.VariableDeclaration, {
             declarations: [
-                {
-                    init: {
-                        type: 'SequenceExpression',
-                    },
-                },
+                { init: { type: 'SequenceExpression' } },
             ],
         })
         .forEach((path) => {
@@ -206,11 +174,7 @@ export const transformAST: ASTTransformation = (context) => {
 
     // `for (a(), b(); c(); d(), e()) {}` -> `a(); b(); for (; c(); ) { d(); e(); }`
     root
-        .find(j.ForStatement, {
-            init: {
-                type: 'SequenceExpression',
-            },
-        })
+        .find(j.ForStatement, { init: { type: 'SequenceExpression' } })
         .forEach((path) => {
             const init = path.node.init as SequenceExpression
 
@@ -228,11 +192,7 @@ export const transformAST: ASTTransformation = (context) => {
             init: {
                 type: 'VariableDeclaration',
                 declarations: [
-                    {
-                        init: {
-                            type: 'SequenceExpression',
-                        },
-                    },
+                    { init: { type: 'SequenceExpression' } },
                 ],
             },
         })
@@ -268,11 +228,7 @@ export const transformAST: ASTTransformation = (context) => {
 
     // `a(), b(), c()` -> `a(); b(); c();`
     root
-        .find(j.ExpressionStatement, {
-            expression: {
-                type: 'SequenceExpression',
-            },
-        })
+        .find(j.ExpressionStatement, { expression: { type: 'SequenceExpression' } })
         .forEach((path) => {
             const expression = path.node.expression as SequenceExpression
 
