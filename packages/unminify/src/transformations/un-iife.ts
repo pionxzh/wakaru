@@ -1,9 +1,11 @@
 import { isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
+import { queryIIFE } from '@wakaru/ast-utils/src/isIIFE'
+import { assertScopeExists } from '../utils/assert'
 import { isValueLiteral } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ArrowFunctionExpression, CallExpression, FunctionExpression } from 'jscodeshift'
+import type { ArrowFunctionExpression, FunctionExpression } from 'jscodeshift'
 
 /**
  * Improve the readability of code inside IIFE.
@@ -30,31 +32,22 @@ import type { ArrowFunctionExpression, CallExpression, FunctionExpression } from
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 
-    root
-        .find(j.ExpressionStatement, {
-            expression: {
-                type: 'CallExpression',
-                callee: {
-                    type: (type: string) => {
-                        return type === 'FunctionExpression'
-                        || type === 'ArrowFunctionExpression'
-                    },
-                    params: params => params.length > 0,
-                },
-            },
-        })
+    queryIIFE(j, root)
+        .filter(path => j.ExpressionStatement.check(path.parent.node)
+            ? isTopLevel(j, path.parent)
+            : isTopLevel(j, path.parent.parent),
+        )
         .forEach((path) => {
-            if (!isTopLevel(j, path)) return
-
-            const expression = path.node.expression as CallExpression
-            const argumentList = expression.arguments
-            const callee = expression.callee as FunctionExpression | ArrowFunctionExpression
-            const scope = j(callee).closestScope().get().scope as Scope | null
-            if (!scope) return
-
+            const callExpr = path.node
+            const callee = callExpr.callee as FunctionExpression | ArrowFunctionExpression
             const len = callee.params.length
-            const reversedParams = [...callee.params].reverse()
+            if (len === 0) return
 
+            const argumentList = callExpr.arguments
+            const scope = j(callee).closestScope().get().scope as Scope | null
+            assertScopeExists(scope)
+
+            const reversedParams = [...callee.params].reverse()
             reversedParams.forEach((param, idx) => {
                 const index = len - idx - 1
                 const argument = argumentList[index]

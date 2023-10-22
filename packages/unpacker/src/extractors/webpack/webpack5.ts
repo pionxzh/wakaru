@@ -44,7 +44,7 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
     const moduleIdMapping: ModuleMapping = {}
 
     const statements = getTopLevelStatements(root)
-    const webpackBootstrap = statements.find(node => isIIFE(node))
+    const webpackBootstrap = statements.find(node => isIIFE(j, node))
     if (!webpackBootstrap) return null
 
     // @ts-expect-error - skip type check
@@ -91,7 +91,7 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
 
     /** Build the entry module */
     const lastStatement = statementsInBootstrap[statementsInBootstrap.length - 1]
-    if (isIIFE(lastStatement)) {
+    if (isIIFE(j, lastStatement)) {
         // @ts-expect-error - skip type check
         const functionExpression = lastStatement.expression.callee
         const program = j.program(functionExpression.body.body)

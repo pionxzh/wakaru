@@ -32,7 +32,7 @@ inlineTest('iife with arguments',
 
 inlineTest('iife without arguments',
   `
-(function(i, s, o, g, r, a, m) {
+!function(i, s, o, g, r, a, m) {
   i['GoogleAnalyticsObject'] = r;
   // i[r] = i[r] || function() { (i[r].q = i[r].q||[]).push(arguments) }
   i[r].l = 1 * new Date();
@@ -41,10 +41,10 @@ inlineTest('iife without arguments',
   a.async = 1;
   a.src = g;
   m.parentNode.insertBefore(a, m);
-})(window, document, 'script', 'https://www.google-analytics.com/analytics.js', 'ga');
+}(window, document, 'script', 'https://www.google-analytics.com/analytics.js', 'ga');
 `,
   `
-(function(window, document, a, m) {
+!function(window, document, a, m) {
   const o = 'script';
   const g = 'https://www.google-analytics.com/analytics.js';
   const r = 'ga';
@@ -56,20 +56,20 @@ inlineTest('iife without arguments',
   a.async = 1;
   a.src = g;
   m.parentNode.insertBefore(a, m);
-})(window, document);
+}(window, document);
 `,
 )
 
 inlineTest('iife param with longer name should not be renamed',
   `
-(function(win, s, a) {
+((win, s, a) => {
   win['GoogleAnalyticsObject'] = 'ga';
   a = s.createElement('script');
   a.src = 'url';
 })(window, document);
 `,
   `
-(function(win, document, a) {
+((win, document, a) => {
   win['GoogleAnalyticsObject'] = 'ga';
   a = document.createElement('script');
   a.src = 'url';
