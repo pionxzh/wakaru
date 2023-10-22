@@ -18,6 +18,31 @@ import type { AssignmentExpression, Identifier, MemberExpression, SequenceExpres
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 
+    // () => (a(), b(), c()) -> () => { a(); b(); return c() }
+    root
+        .find(j.ArrowFunctionExpression, {
+            body: {
+                type: 'SequenceExpression',
+            },
+        })
+        .forEach((path) => {
+            const body = path.node.body as SequenceExpression
+
+            const { expressions } = body
+            const [last, ...rest] = [...expressions].reverse()
+            const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
+            if (j.AssignmentExpression.check(last) && (j.Identifier.check(last.left) || j.MemberExpression.check(last.left))) {
+                replacement.push(j.expressionStatement(last))
+                replacement.push(j.returnStatement(last.left))
+            }
+            else {
+                replacement.push(j.returnStatement(last))
+            }
+
+            mergeComments(replacement, path.node.comments)
+            path.node.body = j.blockStatement(replacement)
+        })
+
     // `return a(), b()` -> `a(); return b()`
     root
         .find(j.ReturnStatement, {
@@ -31,9 +56,9 @@ export const transformAST: ASTTransformation = (context) => {
             const { expressions } = argument
             const [last, ...rest] = [...expressions].reverse()
             const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
-            if (j.AssignmentExpression.check(last) && j.Identifier.check(last.left)) {
+            if (j.AssignmentExpression.check(last) && (j.Identifier.check(last.left) || j.MemberExpression.check(last.left))) {
                 replacement.push(j.expressionStatement(last))
-                replacement.push(j.returnStatement(j.identifier(last.left.name)))
+                replacement.push(j.returnStatement(last.left))
             }
             else {
                 replacement.push(j.returnStatement(last))

@@ -34,6 +34,7 @@ c();
 inlineTest('split return sequence expression',
   `
 if(a) return b(), c();
+else return d = 1, e = 2, f = 3;
 
 return a(), b(), c()
 `,
@@ -41,11 +42,36 @@ return a(), b(), c()
 if (a) {
   b();
   return c();
+} else {
+  d = 1;
+  e = 2;
+  f = 3;
+  return f;
 }
 
 a();
 b();
 return c();
+`,
+)
+
+inlineTest('split sequence expression in arrow function body',
+`
+var foo = (m => (a(), b(), c))();
+var bar = (m => (m.a = 1, m.b = 2, m.c = 3))();
+`,
+`
+var foo = (m => {
+  a();
+  b();
+  return c;
+})();
+var bar = (m => {
+  m.a = 1;
+  m.b = 2;
+  m.c = 3;
+  return m.c;
+})();
 `,
 )
 
