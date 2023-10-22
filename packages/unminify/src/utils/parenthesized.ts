@@ -22,6 +22,7 @@ export function shouldParenthesized(j: JSCodeshift, node: ASTNode) {
         && !j.MemberExpression.check(node)
         && !j.CallExpression.check(node)
         && !j.OptionalCallExpression.check(node)
+        && !j.AssignmentExpression.check(node)
 }
 
 export function smartParenthesized<T extends ASTNode = any>(j: JSCodeshift, node: T) {

@@ -1,8 +1,9 @@
 import { mergeComments } from '../utils/comments'
 import { replaceWithMultipleStatements } from '../utils/insert'
+import { smartParenthesized } from '../utils/parenthesized'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { SequenceExpression, VariableDeclaration } from 'jscodeshift'
+import type { AssignmentExpression, Identifier, MemberExpression, SequenceExpression, VariableDeclaration } from 'jscodeshift'
 
 /**
  * Separate sequence expressions into multiple statements.
@@ -252,6 +253,41 @@ export const transformAST: ASTTransformation = (context) => {
 
             const { expressions } = expression
             const replacement = expressions.map(e => j.expressionStatement(e))
+
+            mergeComments(replacement, path.node.comments)
+            replaceWithMultipleStatements(j, path, replacement)
+        })
+
+    // (a = b())['c'] = d -> a = b(); a['c'] = d
+    root
+        .find(j.ExpressionStatement, {
+            expression: {
+                type: 'AssignmentExpression',
+                left: {
+                    type: 'MemberExpression',
+                    object: {
+                        type: 'AssignmentExpression',
+                        left: {
+                            type: 'Identifier',
+                        },
+                    },
+                },
+            },
+        })
+        .forEach((path) => {
+            const { left, right } = path.node.expression as AssignmentExpression
+            const { object, property, computed } = left as MemberExpression
+            const ident = (object as AssignmentExpression).left as Identifier
+
+            const extracted = j.expressionStatement(smartParenthesized(j, object))
+            const assignment = j.expressionStatement(
+                j.assignmentExpression(
+                    '=',
+                    j.memberExpression(ident, property, computed),
+                    right,
+                ),
+            )
+            const replacement = [extracted, assignment]
 
             mergeComments(replacement, path.node.comments)
             replaceWithMultipleStatements(j, path, replacement)

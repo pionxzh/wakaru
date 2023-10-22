@@ -217,3 +217,20 @@ for (let x = c(), y = 1; x < 10; x++) {
 }
 `,
 )
+
+inlineTest('split member expression in assignment',
+`
+(a = b())['c'] = d;
+// comment
+(a = v).b = c;
+`,
+`
+a = b();
+a['c'] = d;
+
+// comment
+a = v;
+
+a.b = c;
+`,
+)
