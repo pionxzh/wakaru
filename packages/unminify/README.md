@@ -31,6 +31,7 @@ It covered most of patterns that are used by the following tools:
 - [Syntax Upgrade](#syntax-upgrade)
   - [`un-template-literal`](#un-template-literal)
   - [`un-parameter`](#un-parameter)
+  - [`un-enum`](#un-enum)
   - [`smart-inline`](#smart-inline)
   - [`un-optional-chaining`](#un-optional-chaining)
   - [`un-nullish-coalescing`](#un-nullish-coalescing)
@@ -404,6 +405,22 @@ Restore parameters. Support normal parameters and default parameters.
 + function foo(a = "foo", b, c = "bar") {}
 ```
 
+### `un-enum`
+
+Restore TypeScript enum syntax.
+
+```diff
+- var Direction;
+- (function (Direction) {
+-   Direction["Up"] = "UP";
+-   Direction[Direction["Down"] = 2] = "Down";
+- })(Direction || (Direction = {}));
++ var Direction = {
++   Up: "UP",
++   Down: 2,
++ }
+```
+
 ### `smart-inline`
 
 Converts object property accesses and array index accesses to destructuring.
@@ -426,7 +443,7 @@ Converts object property accesses and array index accesses to destructuring.
 + console.log(t, n, r);
 ```
 
-Inlines reassigned variables.
+Inline reassigned variables.
 
 ```diff
 - const a = d;

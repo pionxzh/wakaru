@@ -9,6 +9,7 @@ import unBracketNotation from './un-bracket-notation'
 import unBuiltinPrototype from './un-builtin-prototype'
 import unConditionals from './un-conditionals'
 import unCurlyBraces from './un-curly-braces'
+import unEnum from './un-enum'
 import unES6Class from './un-es6-class'
 import unEsm from './un-esm'
 import unEsModuleFlag from './un-esmodule-flag'
@@ -47,6 +48,8 @@ export const transformationMap: {
     'un-runtime-helper': unRuntimeHelper, // eliminate helpers as early as possible
     'un-curly-braces': unCurlyBraces, // add curly braces so that other transformations can works easier, but not required
     'un-esm': unEsm, // relies on `un-runtime-helper` to eliminate helpers around `require` calls
+
+    'un-enum': unEnum, // relies on `un-sequence-expression`, need to run before `un-bracket-notation`
 
     // third stage - mostly one-to-one transformation
     lebab,
