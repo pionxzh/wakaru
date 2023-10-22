@@ -41,15 +41,14 @@ export const transformationMap: {
     // first stage - basically prettify the code
     prettier,
     'module-mapping': moduleMapping,
-    'un-sequence-expression1': unSequenceExpression,
+    'un-curly-braces': unCurlyBraces, // add curly braces so that other transformations can works easier, but generally this is not required
+    'un-sequence-expression1': unSequenceExpression, // curly braces can bring out return sequence expression, so it runs before this
     'un-variable-merging': unVariableMerging,
 
     // second stage - prepare the code for unminify
     'un-runtime-helper': unRuntimeHelper, // eliminate helpers as early as possible
-    'un-curly-braces': unCurlyBraces, // add curly braces so that other transformations can works easier, but not required
     'un-esm': unEsm, // relies on `un-runtime-helper` to eliminate helpers around `require` calls
-
-    'un-enum': unEnum, // relies on `un-sequence-expression`, need to run before `un-bracket-notation`
+    'un-enum': unEnum, // relies on `un-sequence-expression`
 
     // third stage - mostly one-to-one transformation
     lebab,
