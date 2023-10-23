@@ -1,4 +1,4 @@
-import { getTopLevelStatements, isIIFE, renameFunctionParameters } from '@wakaru/ast-utils'
+import { getTopLevelStatements, isStatementIIFE, renameFunctionParameters } from '@wakaru/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack5 } from './requireHelpers'
 import type { ModuleMapping } from '@wakaru/ast-utils'
@@ -44,7 +44,7 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
     const moduleIdMapping: ModuleMapping = {}
 
     const statements = getTopLevelStatements(root)
-    const webpackBootstrap = statements.find(node => isIIFE(j, node))
+    const webpackBootstrap = statements.find(node => isStatementIIFE(j, node))
     if (!webpackBootstrap) return null
 
     // @ts-expect-error - skip type check
@@ -91,7 +91,7 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
 
     /** Build the entry module */
     const lastStatement = statementsInBootstrap[statementsInBootstrap.length - 1]
-    if (isIIFE(j, lastStatement)) {
+    if (isStatementIIFE(j, lastStatement)) {
         // @ts-expect-error - skip type check
         const functionExpression = lastStatement.expression.callee
         const program = j.program(functionExpression.body.body)

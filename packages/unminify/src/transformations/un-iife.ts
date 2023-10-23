@@ -1,5 +1,4 @@
-import { isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
-import { queryIIFE } from '@wakaru/ast-utils/src/isIIFE'
+import { findIIFEs, isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
 import { assertScopeExists } from '../utils/assert'
 import { isValueLiteral } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
@@ -32,11 +31,7 @@ import type { ArrowFunctionExpression, FunctionExpression } from 'jscodeshift'
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 
-    queryIIFE(j, root)
-        .filter(path => j.ExpressionStatement.check(path.parent.node)
-            ? isTopLevel(j, path.parent)
-            : isTopLevel(j, path.parent.parent),
-        )
+    findIIFEs(j, root, path => isTopLevel(j, path))
         .forEach((path) => {
             const callExpr = path.node
             const callee = callExpr.callee as FunctionExpression | ArrowFunctionExpression

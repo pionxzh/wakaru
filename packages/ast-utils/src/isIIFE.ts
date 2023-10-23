@@ -1,5 +1,5 @@
 import { fromPaths } from 'jscodeshift/src/Collection'
-import type { ASTPath, CallExpression, Collection, ExpressionStatement, JSCodeshift, Statement } from 'jscodeshift'
+import type { ASTNode, ASTPath, CallExpression, Collection, ExpressionStatement, JSCodeshift, Statement } from 'jscodeshift'
 
 /**
  * @example
@@ -13,23 +13,43 @@ import type { ASTPath, CallExpression, Collection, ExpressionStatement, JSCodesh
  * !function() { ... }(...)
  * ```
  */
-export function isIIFE(j: JSCodeshift, node: Statement): node is ExpressionStatement {
+export function isStatementIIFE(j: JSCodeshift, node: Statement): node is ExpressionStatement {
     if (!j.ExpressionStatement.check(node)) return false
 
     const expression = node.expression
-    if (j.CallExpression.check(expression)) {
-        return j.FunctionExpression.check(expression.callee)
-            || j.ArrowFunctionExpression.check(expression.callee)
+    return isIIFE(j, expression)
+}
+
+/**
+ * @example
+ * ```js
+ * (() => { ... })(...)
+ * (function() { ... })(...)
+ * ```
+ *
+ * @example
+ * ```js
+ * !function() { ... }(...)
+ * ```
+ */
+export function isIIFE(j: JSCodeshift, node: ASTNode): node is ExpressionStatement {
+    if (j.CallExpression.check(node)) {
+        return j.FunctionExpression.check(node.callee)
+            || j.ArrowFunctionExpression.check(node.callee)
     }
 
-    if (j.UnaryExpression.check(expression) && expression.operator === '!') {
-        return j.FunctionExpression.check(expression.argument)
+    if (j.UnaryExpression.check(node) && node.operator === '!') {
+        return j.FunctionExpression.check(node.argument)
     }
 
     return false
 }
 
-export function queryIIFE(j: JSCodeshift, collection: Collection): Collection<CallExpression> {
+export function findIIFEs(
+    j: JSCodeshift,
+    collection: Collection,
+    additionalFilter?: (path: ASTPath) => boolean,
+): Collection<CallExpression> {
     const collection1 = collection
         .find(j.ExpressionStatement, {
             expression: {
@@ -42,6 +62,7 @@ export function queryIIFE(j: JSCodeshift, collection: Collection): Collection<Ca
                 },
             },
         })
+        .filter(path => additionalFilter ? additionalFilter(path) : true)
         .map(path => (path.get('expression') as ASTPath<CallExpression>))
         .paths()
 
@@ -55,8 +76,9 @@ export function queryIIFE(j: JSCodeshift, collection: Collection): Collection<Ca
                 },
             },
         })
+        .filter(path => additionalFilter ? additionalFilter(path) : true)
         .map(path => (path.get('expression', 'argument') as ASTPath<CallExpression>))
         .paths()
 
-    return fromPaths([...collection1, ...collection2], collection)
+    return fromPaths([...collection1, ...collection2])
 }

@@ -148,7 +148,74 @@ var Direction = {
 };
 
 Direction = {
-  ...(Direction || (Direction = {})),
+  ...(Direction || {}),
+  Left: "LEFT",
+  Right: "RIGHT"
+};
+`,
+)
+
+inlineTest.todo('Compressed enum - SWC',
+  `
+var Direction;
+var Direction1;
+Direction1 = Direction || (Direction = {});
+Direction1[Direction1.Up = 1] = "Up";
+Direction1.Down = "DOWN";
+`,
+  `
+var Direction = {
+  Up: 1,
+  Down: "DOWN",
+
+  // reverse mapping
+  1: "Up"
+};
+`,
+)
+
+inlineTest('Compressed enum - terser',
+  `
+var o;
+!function(o){
+  o[o.Up=1]="Up";
+  o["Down"]="DOWN";
+}(o || (o = {}));
+`,
+  `
+var o = {
+  Up: 1,
+  Down: "DOWN",
+
+  // reverse mapping
+  1: "Up"
+};
+`,
+)
+
+inlineTest('Compressed enum - esbuild',
+  `
+var Direction = ((m) => {
+  m[(m.Up = 1)] = "Up";
+  m.Down = "DOWN";
+  return m;
+})(Direction || {});
+var Direction = ((m) => {
+  m.Left = "LEFT";
+  m.Right = "RIGHT";
+  return m;
+})(Direction || {});
+`,
+  `
+var Direction = {
+  Up: 1,
+  Down: "DOWN",
+
+  // reverse mapping
+  1: "Up"
+};
+var Direction = {
+  ...(Direction || {}),
   Left: "LEFT",
   Right: "RIGHT"
 };
