@@ -13,7 +13,8 @@ import type { ASTPath, ConditionalExpression, Identifier, JSCodeshift, LogicalEx
 /**
  * Restore optional chaining syntax.
  *
- * Only support `loose=false` mode.
+ * TODO: support `loose=false` mode.
+ * if (foo != null && foo.length > 0) -> if (foo?.length > 0)
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context

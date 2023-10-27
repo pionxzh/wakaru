@@ -15,7 +15,9 @@ import type { ASTPath, ConditionalExpression, JSCodeshift, LogicalExpression } f
  *
  * TODO: Nullish_coalescing_assignment ??=
  *
- * Only support `loose=false` mode.
+ * TODO: support `loose=false` mode. themes === undefined ? [] : themes
+ * ->
+ * themes ?? []
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
