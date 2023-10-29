@@ -21,9 +21,6 @@
     "dist",
     "package.json"
   ],
-  "engines": {
-    "node": ">=16.0.0"
-  },
   "scripts": {
     "dev": "vite --open",
     "build": "vite build",

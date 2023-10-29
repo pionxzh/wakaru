@@ -3,13 +3,14 @@ import pionxzh from '@pionxzh/eslint-config'
 export default pionxzh(
     {
         typescript: true,
-        react: false,
+        react: true,
         markdown: false,
         vue: true,
         yaml: false,
         ignores: [
             '**/node_modules/**',
             '**/dist/**',
+            '**/browserfs/**',
         ],
     },
     {

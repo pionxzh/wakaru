@@ -1,0 +1,47 @@
+{
+  "name": "@wakaru/ide",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix"
+  },
+  "dependencies": {
+    "@heroicons/react": "^2.0.18",
+    "@monaco-editor/react": "^4.6.0",
+    "@radix-ui/themes": "^2.0.0",
+    "@wakaru/ast-utils": "workspace:*",
+    "@wakaru/unminify": "workspace:*",
+    "@wakaru/unpacker": "workspace:*",
+    "browserfs": "workspace:*",
+    "clsx": "^2.0.0",
+    "dockview": "^1.8.4",
+    "jotai": "^2.5.0",
+    "jotai-effect": "^0.2.1",
+    "mitt": "^3.0.1",
+    "monaco-editor": "^0.44.0",
+    "monaco-editor-auto-typings": "^0.4.4",
+    "os": "^0.1.2",
+    "react": "^18.2.0",
+    "react-complex-tree": "^2.2.3",
+    "react-dom": "^18.2.0",
+    "rxjs": "^7.8.1",
+    "tailwind-merge": "^1.14.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.33",
+    "@types/react-dom": "^18.2.14",
+    "@vitejs/plugin-react": "^4.1.0",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.31",
+    "rollup-plugin-node-polyfills": "^0.2.1",
+    "tailwindcss": "^3.3.3",
+    "typescript": "^5.2.2",
+    "vite": "^5.0.0-beta.11",
+    "vitest": "^1.0.0-beta.1"
+  }
+}
