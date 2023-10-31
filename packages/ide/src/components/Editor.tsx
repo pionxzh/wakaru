@@ -17,7 +17,11 @@ export function Editor(props: EditorProps) {
 
     const handleMount: OnMount = async (editor, monaco) => {
         // enable auto typings
-        AutoTypings.create(editor, { monaco, sourceCache, fileRootPath: './' })
+        AutoTypings.create(editor, {
+            monaco,
+            sourceCache,
+            fileRootPath: './',
+        })
 
         // read the file
         let content = ''
@@ -31,6 +35,13 @@ export function Editor(props: EditorProps) {
         editor.updateOptions({ readOnly: false })
     }
 
+    const handleChange = (value: string | undefined) => {
+        fs.promises.writeFile(props.path, value || '', {
+            encoding: 'utf8',
+            flag: 'w',
+        })
+    }
+
     return (
         <Monaco
             path={props.path}
@@ -40,7 +51,7 @@ export function Editor(props: EditorProps) {
                 padding: { top: 10 },
             }}
             onMount={handleMount}
-            // onChange={value => fs.writeFile(props.path, value || '', 'utf-8')}
+            onChange={handleChange}
         />
     )
 }
