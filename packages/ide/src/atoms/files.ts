@@ -23,7 +23,7 @@ export type IDirent = IFile | IDir
 function createFile(parent: string, name: string): IFile {
     return {
         type: 'file',
-        path: parent === '/' ? `/${name}` : `${parent}/${name}`,
+        path: path.join(parent, name),
         name,
         ext: path.extname(name),
     }
@@ -32,7 +32,7 @@ function createFile(parent: string, name: string): IFile {
 function createDir(parent: string, name: string): IDir {
     return {
         type: 'dir',
-        path: parent === '/' ? `/${name}` : `${parent}/${name}`,
+        path: path.join(parent, name),
         name,
         children: [],
     }

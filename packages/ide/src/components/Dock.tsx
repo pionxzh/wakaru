@@ -18,14 +18,16 @@ export function Dock(props: IGridviewPanelProps) {
         const event = props.params.api.current as DockviewReadyEvent | undefined
         if (!event) return
 
-        const panel = event.api.getPanel(_path)
+        const dockview = event.api
+
+        const panel = dockview.getPanel(_path)
         if (panel) {
-            panel.focus?.()
+            panel.api.setActive()
             return
         }
 
         const fileName = path.basename(_path)
-        event.api.addPanel({
+        dockview.addPanel({
             id: _path,
             title: fileName,
             component: 'editor',
