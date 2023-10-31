@@ -170,7 +170,22 @@
     --rct-color-focustree-item-draggingover-bg: #313131;
     --rct-color-focustree-item-draggingover-color: #ffffff;
     --rct-color-arrow: #ffffff;
-    /* --rct-item-height: 22px; */
+    --rct-item-height: 28px;
+
+    --rct-arrow-size: 12px;
+    --rct-arrow-container-size: 16px;
+    --rct-arrow-padding: 8px;
+    --rct-bar-width: 0; /* disable the bar */
+    --rct-item-padding: 0px;
+    --rct-radius: 0px; /* disable the radius */
+}
+
+.rct-tree-item-button {
+    margin-left: calc(-1 * var(--rct-arrow-size) - 8px);
+}
+
+.rct-tree-item-arrow {
+    margin-right: calc(-1 * var(--rct-arrow-container-size) + var(--rct-arrow-padding) + 8px);
 }
 
 

@@ -4,6 +4,7 @@ import { fileListAtom, fileListUpdateEffect } from '../atoms/files'
 import { useDarkMode } from '../hooks/useDarkMode'
 import { useEventPublisher } from '../hooks/useEventEmitter'
 import { cn } from '../utils/utils'
+import { CssIcon, IconFile, IconFolder, IconHtml, IconJavascript, IconNpm, IconReact, IconTypescript } from './icons'
 import type { IDirent } from '../atoms/files'
 
 export function FileTree() {
@@ -39,8 +40,20 @@ export function FileTree() {
         //     return () => {}
         // },
         async onRenameItem(item, name) {
+            // eslint-disable-next-line no-console
             console.log('onRenameItem', item, name)
         },
+    }
+
+    const renderItemTitle = ({ item }: { item: TreeItem<IDirent> }) => {
+        const { isFolder = false } = item
+        const ext = item.data.type === 'file' ? item.data.ext : ''
+        return (
+            <>
+                <FileTreeItemIcon ext={ext} isFolder={isFolder} />
+                {item.data.name}
+            </>
+        )
     }
 
     const openFile = useEventPublisher('file:open')
@@ -58,6 +71,7 @@ export function FileTree() {
             dataProvider={dataProvider}
             getItemTitle={item => item.data.name}
             viewState={{}}
+            renderItemTitle={renderItemTitle}
             onPrimaryAction={handlePrimaryAction}
             onRenameItem={handleRenameItem}
         >
@@ -104,4 +118,37 @@ function flattenFileList(fileList: IDirent[]): TreeItem<IDirent>[] {
     }
 
     return files
+}
+
+function FileTreeItemIcon({
+    ext,
+    isFolder,
+}: {
+    ext: string
+    isFolder: boolean
+}) {
+    const Icon = getIconComp(ext, isFolder)
+    return <Icon />
+}
+
+function getIconComp(ext: string, isFolder: boolean) {
+    if (isFolder) return IconFolder
+
+    switch (ext) {
+        case '.js':
+            return IconJavascript
+        case '.ts':
+            return IconTypescript
+        case '.jsx':
+        case '.tsx':
+            return IconReact
+        case '.html':
+            return IconHtml
+        case '.css':
+            return CssIcon
+        case '.json':
+            return IconNpm
+        default:
+            return IconFile
+    }
 }
