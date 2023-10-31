@@ -33,6 +33,7 @@
     "tailwind-merge": "^1.14.0"
   },
   "devDependencies": {
+    "@githubocto/tailwind-vscode": "^1.0.5",
     "@types/react": "^18.2.33",
     "@types/react-dom": "^18.2.14",
     "@vitejs/plugin-react": "^4.1.0",

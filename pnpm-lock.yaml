@@ -144,6 +144,9 @@ importers:
         specifier: ^1.14.0
         version: 1.14.0
     devDependencies:
+      '@githubocto/tailwind-vscode':
+        specifier: ^1.0.5
+        version: 1.0.5(tailwindcss@3.3.3)
       '@types/react':
         specifier: ^18.2.33
         version: 18.2.33
@@ -2607,6 +2610,14 @@ packages:
       '@fortawesome/fontawesome-svg-core': 6.4.2
       vue: 3.3.4
     dev: false
+
+  /@githubocto/tailwind-vscode@1.0.5(tailwindcss@3.3.3):
+    resolution: {integrity: sha512-RP2fFkom0VwdxVz2SNHQPSpKzUYKWeu8YCFa+Cmjz2FzVEERsjO8OGHiv3JL2A7/R9CUY0W3HFBj+MvlFy9hqQ==}
+    peerDependencies:
+      tailwindcss: 2.0.0-alpha.24 || ^2.0.0 || ^3.0.0
+    dependencies:
+      tailwindcss: 3.3.3
+    dev: true
 
   /@headlessui/vue@1.7.16(vue@3.3.4):
     resolution: {integrity: sha512-nKT+nf/q6x198SsyK54mSszaQl/z+QxtASmgMEJtpxSX2Q0OPJX0upS/9daDyiECpeAsvjkoOrm2O/6PyBQ+Qg==}

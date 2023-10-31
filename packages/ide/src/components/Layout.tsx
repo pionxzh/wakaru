@@ -82,8 +82,8 @@ function createGridApi(api: GridviewApi) {
     api.addPanel({
         id: 'explore',
         component: 'left-expander',
-        minimumWidth: 192,
-        size: 192,
+        minimumWidth: 200,
+        size: 200,
         snap: true,
         position: { referencePanel: 'dock', direction: 'left' },
     })

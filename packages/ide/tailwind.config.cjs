@@ -23,5 +23,5 @@ module.exports = {
             },
         },
     },
-    plugins: [],
+    plugins: [require('@githubocto/tailwind-vscode')],
 }

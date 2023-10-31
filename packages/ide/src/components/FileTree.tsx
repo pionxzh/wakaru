@@ -63,13 +63,9 @@ export function FileTree() {
         >
             <div
                 className={cn(
-                    'h-full overflow-y-scroll',
+                    'h-full overflow-y-scroll text-vscode-sideBar-foreground bg-vscode-sideBar-background',
                     isDarkMode ? 'rct-dark' : 'rct-light',
                 )}
-                style={{
-                    backgroundColor: isDarkMode ? '#21252b' : '#fff',
-                    color: isDarkMode ? '#e3e3e3' : '#000',
-                }}
             >
                 <Tree
                     treeId="explore"
