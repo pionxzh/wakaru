@@ -20,7 +20,7 @@ export function FileTree() {
         index: 'root',
         canMove: true,
         isFolder: true,
-        children: Object.keys(items),
+        children: fileList.map(f => f.name),
         data: { type: 'dir', name: 'root', path: '/', children: [] },
         canRename: false,
     }
@@ -71,6 +71,7 @@ export function FileTree() {
             dataProvider={dataProvider}
             getItemTitle={item => item.data.name}
             viewState={{}}
+            canSearch={false}
             renderItemTitle={renderItemTitle}
             onPrimaryAction={handlePrimaryAction}
             onRenameItem={handleRenameItem}
