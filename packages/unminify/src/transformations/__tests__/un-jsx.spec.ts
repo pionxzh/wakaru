@@ -302,6 +302,17 @@ React.createElement('_foo', null);
 `,
 )
 
+inlineTest('jsx component name auto correct for un-capitalized identifier',
+  `
+function foo() {}
+React.createElement(foo, null);
+`,
+  `
+function Foo() {}
+<Foo />;
+`,
+)
+
 inlineTest('jsx with xml namespace',
   `
 h("f:image", {

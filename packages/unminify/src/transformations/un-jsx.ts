@@ -1,3 +1,4 @@
+import { pascalCase } from '../utils/case'
 import { isNull, isTrue, isUndefined } from '../utils/checker'
 import { removePureAnnotation } from '../utils/comments'
 import { generateName } from '../utils/identifier'
@@ -55,6 +56,8 @@ export const transformAST: ASTTransformation<Params> = (context, params) => {
     }
 
     renameComponentBasedOnDisplayName(j, root, pragmas)
+
+    renameComponentToMakeItValid(j, root, pragmas)
 
     root
         .find(j.CallExpression, {
@@ -412,6 +415,44 @@ function renameComponentBasedOnDisplayName(j: JSCodeshift, root: Collection, pra
             if (!isComponent) return
 
             scope.rename(originalName, newName)
+        })
+}
+
+/**
+ * Capitalize the variable of component if it is invalid in JSX.
+ */
+function renameComponentToMakeItValid(j: JSCodeshift, root: Collection, pragmas: string[]) {
+    root
+        .find(j.CallExpression, {
+            callee: (callee: CallExpression['callee']) => {
+                if (j.Identifier.check(callee)) {
+                    return pragmas.includes(callee.name)
+                }
+
+                if (
+                    j.MemberExpression.check(callee)
+                    && j.Identifier.check(callee.object)
+                    && j.Identifier.check(callee.property)
+                ) {
+                    return pragmas.includes(callee.property.name)
+                }
+                return false
+            },
+        })
+        .forEach((path) => {
+            const args = path.node.arguments
+            if (args.length === 0) return
+
+            const firstArg = args[0]
+            if (!j.Identifier.check(firstArg)) return
+
+            if (isCapitalizationInvalid(j, firstArg)) {
+                const originalName = firstArg.name
+                const scope = path.scope?.lookup(originalName)
+                if (!scope) return
+                const newName = generateName(pascalCase(originalName), scope)
+                scope.rename(originalName, newName)
+            }
         })
 }
 
