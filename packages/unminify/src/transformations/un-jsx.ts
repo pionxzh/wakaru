@@ -15,6 +15,7 @@ interface Params {
 const DEFAULT_PRAGMA_CANDIDATES = [
     'createElement', // React: runtime = "classic" (`React.createElement`)
     'jsx', // React: runtime = "automatic" (`jsxRuntime.jsx`)
+    'jsxs', // React: runtime = "automatic" (`jsxRuntime.jsxs`)
     '_jsx', // `import { jsx as _jsx } from 'react/jsx-runtime'`
     'h', // Preact
 ]
