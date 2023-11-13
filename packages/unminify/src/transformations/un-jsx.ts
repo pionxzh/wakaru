@@ -4,8 +4,8 @@ import { generateName } from '../utils/identifier'
 import { nonNullable } from '../utils/utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
-import type { ASTNode, CallExpression, Collection, Identifier, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, MemberExpression, SpreadElement, StringLiteral, VariableDeclarator } from 'jscodeshift'
+import type { ExpressionKind, LiteralKind } from 'ast-types/lib/gen/kinds'
+import type { ASTNode, CallExpression, Collection, Identifier, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, MemberExpression, RestElement, SpreadElement, StringLiteral, VariableDeclarator } from 'jscodeshift'
 
 interface Params {
     pragma?: string
@@ -97,7 +97,31 @@ function toJSX(j: JSCodeshift, node: CallExpression, pragmaFrags: string[]): JSX
 
     const attributes = toJsxAttributes(j, props)
 
-    const children = postProcessChildren(j, childrenArgs.map(child => toJsxChild(j, child)).filter(nonNullable))
+    let children: Array<JSXExpressionContainer | JSXElement | JSXFragment | JSXText | JSXSpreadChild | LiteralKind>
+    const childrenFromAttribute = attributes.find(attr => j.JSXAttribute.check(attr) && attr.name.name === 'children') as JSXAttribute | undefined
+    if (childrenFromAttribute) {
+        if (childrenArgs.length > 0) {
+            console.warn(`[un-jsx] children from attribute and arguments are both present: ${j(node).toSource()}`)
+            return null
+        }
+
+        attributes.splice(attributes.indexOf(childrenFromAttribute), 1)
+
+        if (
+            j.JSXExpressionContainer.check(childrenFromAttribute.value)
+            && j.ArrayExpression.check(childrenFromAttribute.value.expression)
+        ) {
+            children = childrenFromAttribute.value.expression.elements
+                .filter(nonNullable)
+                .map(child => toJsxChild(j, child))
+                .filter(nonNullable)
+        }
+        else if (childrenFromAttribute.value) {
+            children = [toJsxChild(j, childrenFromAttribute.value)].filter(nonNullable)
+        }
+    }
+
+    children ??= postProcessChildren(j, childrenArgs.map(child => toJsxChild(j, child)).filter(nonNullable))
 
     if (attributes.length === 0) {
         const isFrag1 = j.JSXIdentifier.check(tag) && pragmaFrags.includes(tag.name)
@@ -243,7 +267,7 @@ function toJsxAttributes(j: JSCodeshift, props: SpreadElement | ExpressionKind):
     return [j.jsxSpreadAttribute(props)]
 }
 
-function toJsxChild(j: JSCodeshift, node: SpreadElement | ExpressionKind) {
+function toJsxChild(j: JSCodeshift, node: RestElement | SpreadElement | ExpressionKind) {
     // Skip existing jsx nodes
     if (
         j.JSXElement.check(node)
@@ -261,6 +285,9 @@ function toJsxChild(j: JSCodeshift, node: SpreadElement | ExpressionKind) {
     // null and bool are empty node
     if (j.BooleanLiteral.check(node)) return null
     if (j.NullLiteral.check(node)) return null
+
+    // cannot handle rest element
+    if (j.RestElement.check(node)) return null
 
     if (j.StringLiteral.check(node)) {
         const textContent = node.value
@@ -286,7 +313,7 @@ function toJsxChild(j: JSCodeshift, node: SpreadElement | ExpressionKind) {
  *
  * See: https://github.com/reactjs/react-codemod/blob/b34b92a1f0b8ad333efe5effb50d17d46d66588b/transforms/create-element-to-jsx.js#L227C7-L227C81
  */
-function postProcessChildren(j: JSCodeshift, children: Array<JSXExpressionContainer | JSXElement | JSXFragment | JSXText | JSXSpreadChild>) {
+function postProcessChildren(j: JSCodeshift, children: Array<JSXExpressionContainer | JSXElement | JSXFragment | JSXText | JSXSpreadChild | LiteralKind>) {
     const lineBreak = j.jsxText('\n')
     if (children.length > 0) {
         if (children.length === 1 && j.JSXText.check(children[0])) {

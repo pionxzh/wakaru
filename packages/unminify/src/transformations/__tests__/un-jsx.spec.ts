@@ -230,10 +230,24 @@ React.createElement("div", Object.assign({ key: "1" }, { className: "flex flex-c
 inlineTest('jsx with spread props',
   `
 React.createElement("div", ...{ key: "1", className: "flex flex-col" });
-
 `,
   `
 <div key="1" className="flex flex-col" />;
+`,
+)
+
+inlineTest('jsx with children props',
+  `
+jsxs("div", {
+  children: [/*#__PURE__*/jsx("span", {
+    children: "Hello"
+  }), /*#__PURE__*/jsx("span", {
+    children: world
+  })]
+});
+`,
+  `
+<div><span>Hello</span><span>{world}</span></div>;
 `,
 )
 
