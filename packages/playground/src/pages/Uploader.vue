@@ -77,14 +77,14 @@ function reset() {
     setModuleMeta({})
 }
 
-async function startUnpack(code: string) {
+async function startUnpack(input: string) {
     setProcessedCount(0)
     setIsLoading(true)
 
     reset()
 
     // TODO: Move to worker
-    const { modules, moduleIdMapping } = unpack(code)
+    const { modules, moduleIdMapping } = unpack(input)
     const unpackedModules = modules.map<TransformedModule>((module) => {
         const { id, isEntry, code, tags } = module
         return {
