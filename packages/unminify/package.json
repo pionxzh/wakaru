@@ -7,6 +7,9 @@
   "license": "MIT",
   "sideEffects": false,
   "main": "src/index.ts",
+  "bundleDependencies": [
+    "ast-types"
+  ],
   "files": [
     "dist",
     "package.json"
@@ -15,7 +18,7 @@
     "node": ">=16.0.0"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --sourcemap --clean",
+    "build": "tsup",
     "test": "vitest run --globals",
     "test:update": "vitest run --update --globals",
     "test:watch": "vitest watch --globals",

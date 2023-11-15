@@ -1,0 +1,12 @@
+{
+  "pull-request-title-pattern": "chore: release${component} ${version}",
+  "bump-patch-for-minor-pre-major": true,
+  "packages": {
+    "packages/unminify": {
+      "component": "unminify"
+    },
+    "packages/unpacker": {
+      "component": "unpacker"
+    }
+  }
+}

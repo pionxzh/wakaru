@@ -43,7 +43,6 @@
     }
   },
   "resolutions": {
-    "ast-types": "^0.16.1",
-    "recast": "npm:@putout/recast@^1.13.0"
+    "ast-types": "^0.16.1"
   }
 }
