@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.3](https://github.com/pionxzh/wakaru/compare/unpacker-v0.0.2...unpacker-v0.0.3) (2023-11-19)
+
+
+### Bug Fixes
+
+* avoid removing output folder ([02f8d46](https://github.com/pionxzh/wakaru/commit/02f8d4631dcbe62f2a91b6b0b88811dd06d31039))
+* move internal packages to devDeps ([da665a0](https://github.com/pionxzh/wakaru/commit/da665a09d4e2915fcc8d80e6f687c723160bf097))
+
 ## [0.0.2](https://github.com/pionxzh/wakaru/compare/unpacker-v0.0.1...unpacker-v0.0.2) (2023-11-19)
 
 
