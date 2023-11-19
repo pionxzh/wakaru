@@ -42,9 +42,85 @@ Supports the following bundlers:
 
 Test the tool and see it in action at [Playground][Playground].
 
-## 🖥 Command Line Interface
+## 🖥 Using the CLI
 
-🚧🚧🚧 Under construction.
+```
+npx @wakaru/unpacker <files...> [options]
+# or
+pnpm dlx @wakaru/unpacker <files...> [options]
+```
+
+For example:
+
+```
+npx @wakaru/unpacker input.js  # unpack bundled code into multiple files
+cd ./out                       # go to the output directory
+npx @wakaru/unminify ./        # unminify all files in the directory
+```
+
+Files can also be specified as glob patterns. For example:
+
+```sh
+npx @wakaru/unminify ./src/**/*.js
+```
+
+### Options
+
+| Option     | Default | Description                      |
+| ---------- | ------- | -------------------------------- |
+| `--output` | `./out` | Output directory                 |
+| `--force`  | `false` | Force overwrite output directory |
+| `--log-level` | `info` | Log level (`error`, `warn`, `info`, `debug`, `silent`) |
+
+Note: Currently, the log level is not very accurate. It might still print some logs even if `silent` is specified. This will be improved in the future release.
+
+## 📦 Using the API
+
+```sh
+npm install @wakaru/unpacker @wakaru/unminify
+# or
+pnpm install @wakaru/unpacker @wakaru/unminify
+# or
+yarn add @wakaru/unpacker @wakaru/unminify
+```
+
+### `@wakaru/unpacker`
+
+```ts
+import { unpack } from '@wakaru/unpacker';
+
+const { modules, moduleIdMapping } = await unpack(sourceCode);
+for (const mod of modules) {
+  const filename = moduleIdMapping[mod.id] ?? `module-${mod.id}.js`;
+  fs.writeFileSync(outputPath, mod.code, 'utf-8');
+}
+```
+
+### `@wakaru/unminify`
+
+```ts
+import { runDefaultTransformation, runTransformations } from '@wakaru/unminify';
+
+const file = {
+  source: '...', // source code
+  path: '...',   // path to the file, used for advanced usecases. Can be empty.
+}
+// This function will apply all rules that are enabled by default.
+const { code } = await runDefaultTransformation(file);
+
+// You can also specify the rules to apply. Order matters.
+const rules = [
+  'un-esm',
+  ...
+]
+const { code } = await runTransformations(file, rules);
+```
+
+You can check all the rules at [/unminify/src/transformations/index.ts](https://github.com/pionxzh/wakaru/blob/main/packages/unminify/src/transformations/index.ts).
+
+Please aware that this project is still in early development. The API might change in the future.
+
+And the bundle size of these packages are huge. It might be reduced in the future. Use with caution on the browser (Yes, like the playground, it can run on the browser).
 
 ## Motivation
 
