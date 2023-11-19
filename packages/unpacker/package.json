@@ -7,6 +7,7 @@
   "license": "MIT",
   "sideEffects": false,
   "main": "src/index.ts",
+  "bin": "dist/cli.cjs",
   "bundleDependencies": [
     "ast-types"
   ],
@@ -29,12 +30,16 @@
   "dependencies": {
     "@wakaru/ast-utils": "workspace:*",
     "ast-types": "^0.16.1",
+    "fs-extra": "^11.1.1",
     "jscodeshift": "^0.15.0",
-    "picocolors": "^1.0.0"
+    "picocolors": "^1.0.0",
+    "yargs": "^17.7.2"
   },
   "devDependencies": {
     "@babel/types": "^7.23.0",
+    "@types/fs-extra": "^11.0.2",
     "@types/jscodeshift": "^0.11.7",
+    "@types/yargs": "^17.0.26",
     "@wakaru/test-utils": "workspace:*",
     "tsup": "^7.2.0",
     "typescript": "^5.2.2"
