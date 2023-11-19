@@ -10,24 +10,19 @@ import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import { version } from '../package.json'
 import { runDefaultTransformation } from '.'
-import type { FileInfo } from 'jscodeshift'
-import type { Argv } from 'yargs'
 
 type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'silent'
-
-function commonOptions(args: Argv<unknown>) {
-    return args
-        .option('log-level', {
-            type: 'string',
-            default: 'info',
-            choices: ['error', 'warn', 'info', 'debug', 'silent'],
-            describe: 'change the level of logging for the CLI.',
-        })
-}
 
 // eslint-disable-next-line no-unused-expressions
 yargs(hideBin(process.argv))
     .scriptName('@wakaru/unminify')
+
+    .option('log-level', {
+        type: 'string',
+        default: 'info',
+        choices: ['error', 'warn', 'info', 'debug', 'silent'],
+        describe: 'change the level of logging for the CLI.',
+    })
 
     .help()
     .showHelpOnFail(true)
@@ -40,12 +35,13 @@ yargs(hideBin(process.argv))
     .command(
         '* <files...>',
         'Unminify your bundled code',
-        args => commonOptions(args)
+        args => args
+
             .option('output', {
                 alias: 'o',
-                describe: 'specify the output directory (default: dist/)',
+                describe: 'specify the output directory (default: out/)',
                 type: 'string',
-                default: 'dist/',
+                default: 'out/',
             })
             .option('force', {
                 alias: 'f',
@@ -87,40 +83,33 @@ async function codemod(
     })
     const outputDir = path.resolve(cwd, output)
 
-    if (fsa.existsSync(outputDir)) {
+    if (await fsa.exists(outputDir)) {
         if (!force) {
             throw new Error(`Output directory already exists at ${c.green(path.relative(cwd, outputDir))}. Pass ${c.yellow('--force')} to overwrite.`)
         }
+        await fsa.remove(outputDir)
     }
-    else {
-        fsa.ensureDirSync(outputDir)
-    }
+    await fsa.ensureDir(outputDir)
 
     for (const p of resolvedPaths) {
         const start = hrtime()
 
-        const source = fsa
-            .readFileSync(p)
-            .toString()
-            .split('\r\n')
-            .join('\n')
-
-        const fileInfo: FileInfo = {
+        const source = await fsa.readFile(p, 'utf-8')
+        const result = runDefaultTransformation({
             path: p,
             source,
-        }
-        const result = runDefaultTransformation(fileInfo)
+        })
         // remove leading ../
         const safePath = path.relative(cwd, p).replace(/\.\.\\/g, '')
         const outputPath = path.join(outputDir, safePath)
-        fsa.ensureDirSync(path.dirname(outputPath))
-        fsa.writeFileSync(outputPath, result.code)
+        await fsa.ensureDir(path.dirname(outputPath))
+        await fsa.writeFile(outputPath, result.code, 'utf-8')
 
         if (logLevel !== 'silent') {
             const end = hrtime(start)
             const elapsed = end[0] * 1e9 + end[1]
             const formattedElapsed = (elapsed / 1e6).toLocaleString('en-US', { maximumFractionDigits: 1 })
-            console.log(`${c.dim('•')} Transforming ${c.green(path.relative(cwd, p))} ${c.dim(`(${formattedElapsed}ms)`)}`)
+            console.log(`${c.dim('•')} Transforming ${c.green(path.relative(cwd, outputPath))} ${c.dim(`(${formattedElapsed}ms)`)}`)
         }
     }
 }
