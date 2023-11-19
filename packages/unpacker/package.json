@@ -8,9 +8,6 @@
   "sideEffects": false,
   "main": "src/index.ts",
   "bin": "dist/cli.cjs",
-  "bundleDependencies": [
-    "ast-types"
-  ],
   "files": [
     "dist",
     "package.json"
@@ -28,9 +25,7 @@
     "lint:fix": "eslint src --fix"
   },
   "dependencies": {
-    "ast-types": "^0.16.1",
     "fs-extra": "^11.1.1",
-    "jscodeshift": "^0.15.0",
     "picocolors": "^1.0.0",
     "yargs": "^17.7.2"
   },
@@ -41,6 +36,8 @@
     "@types/yargs": "^17.0.26",
     "@wakaru/ast-utils": "workspace:*",
     "@wakaru/test-utils": "workspace:*",
+    "ast-types": "^0.16.1",
+    "jscodeshift": "^0.15.0",
     "tsup": "^7.2.0",
     "typescript": "^5.2.2"
   },

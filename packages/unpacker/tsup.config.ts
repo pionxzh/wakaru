@@ -9,8 +9,8 @@ export default defineConfig({
     clean: true,
     // minify: true,
     noExternal: [
-        // 'jscodeshift',
-        // 'ast-types',
+        'jscodeshift',
+        'ast-types',
         /@wakaru\/.+/,
     ],
 })

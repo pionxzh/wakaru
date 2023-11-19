@@ -7,9 +7,6 @@
   "license": "MIT",
   "sideEffects": false,
   "main": "src/index.ts",
-  "bundleDependencies": [
-    "ast-types"
-  ],
   "bin": "dist/cli.cjs",
   "files": [
     "dist",
@@ -34,7 +31,6 @@
     "@babel/types": "^7.23.0",
     "fs-extra": "^11.1.1",
     "globby": "^11.1.0",
-    "jscodeshift": "^0.15.0",
     "lebab": "^3.2.3",
     "picocolors": "^1.0.0",
     "prettier": "^2.8.8",
@@ -49,6 +45,7 @@
     "@wakaru/ds": "workspace:*",
     "@wakaru/test-utils": "workspace:*",
     "ast-types": "^0.16.1",
+    "jscodeshift": "^0.15.0",
     "tsup": "^7.2.0",
     "typescript": "^5.2.2"
   },

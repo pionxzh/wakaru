@@ -20,11 +20,11 @@
     "lint:fix": "eslint src --fix"
   },
   "dependencies": {
-    "jscodeshift": "^0.15.0",
     "vitest": "^1.0.0-beta.1"
   },
   "devDependencies": {
     "@types/jscodeshift": "^0.11.7",
+    "jscodeshift": "^0.15.0",
     "typescript": "^5.2.2"
   },
   "publishConfig": {
