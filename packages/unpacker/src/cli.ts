@@ -86,7 +86,6 @@ async function unpacker(
         if (!force) {
             throw new Error(`Output directory already exists at ${c.green(path.relative(cwd, outputDir))}. Pass ${c.yellow('--force')} to overwrite.`)
         }
-        await fsa.remove(outputDir)
     }
     await fsa.ensureDir(outputDir)
 
