@@ -299,12 +299,6 @@ importers:
       '@babel/types':
         specifier: ^7.23.0
         version: 7.23.0
-      '@wakaru/ast-utils':
-        specifier: workspace:*
-        version: link:../ast-utils
-      '@wakaru/ds':
-        specifier: workspace:*
-        version: link:../ds
       fs-extra:
         specifier: ^11.1.1
         version: 11.1.1
@@ -339,6 +333,12 @@ importers:
       '@types/yargs':
         specifier: ^17.0.26
         version: 17.0.26
+      '@wakaru/ast-utils':
+        specifier: workspace:*
+        version: link:../ast-utils
+      '@wakaru/ds':
+        specifier: workspace:*
+        version: link:../ds
       '@wakaru/test-utils':
         specifier: workspace:*
         version: link:../test-utils
@@ -354,9 +354,6 @@ importers:
 
   packages/unpacker:
     dependencies:
-      '@wakaru/ast-utils':
-        specifier: workspace:*
-        version: link:../ast-utils
       ast-types:
         specifier: ^0.16.1
         version: 0.16.1(patch_hash=lbcpk3ulhul2sxdbqn4xesbaem)
@@ -385,6 +382,9 @@ importers:
       '@types/yargs':
         specifier: ^17.0.26
         version: 17.0.26
+      '@wakaru/ast-utils':
+        specifier: workspace:*
+        version: link:../ast-utils
       '@wakaru/test-utils':
         specifier: workspace:*
         version: link:../test-utils
