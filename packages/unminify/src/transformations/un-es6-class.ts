@@ -64,17 +64,9 @@ export const transformAST: ASTTransformation = (context) => {
                             type: 'FunctionExpression',
                             body: {
                                 type: 'BlockStatement',
-                                body: [
-                                    {
-                                        type: 'FunctionDeclaration',
-                                        id: {
-                                            type: 'Identifier',
-                                        },
-                                    },
-                                ],
                             },
                         },
-                        arguments: args => args.length === 0,
+                        arguments: args => args.length <= 1,
                     },
                 },
             ],
@@ -86,12 +78,29 @@ export const transformAST: ASTTransformation = (context) => {
             const callee = init.callee as FunctionExpression
             const bodyBody = callee.body.body
             if (bodyBody.length < 2) return
+            if (init.arguments.length === 0 && !j.FunctionDeclaration.check(bodyBody[0])) return
+            if (init.arguments.length === 1 && bodyBody.findIndex(node => j.FunctionDeclaration.check(node)) < 1) return
 
             const lastBodyNode = bodyBody[bodyBody.length - 1]
             if (!j.ReturnStatement.check(lastBodyNode)) return
-            if (!j.Identifier.check(lastBodyNode.argument)) return
+            let internalName: string
+            if (j.Identifier.check(lastBodyNode.argument)) {
+                internalName = lastBodyNode.argument.name
+            }
+            else if (/* Babel */
+                j.CallExpression.check(lastBodyNode.argument)
+                && j.Identifier.check(lastBodyNode.argument.callee)
+                && lastBodyNode.argument.callee.name === '_createClass'
+                && j.Identifier.check(lastBodyNode.argument.arguments[0])
+            ) {
+                internalName = lastBodyNode.argument.arguments[0].name
+            }
+            else {
+                return
+            }
 
-            const internalName = lastBodyNode.argument.name
+            let superClass: ExpressionKind | null = null
+
             let prototypeNode: ExpressionKind = {
                 type: 'MemberExpression',
                 object: {
@@ -228,7 +237,31 @@ export const transformAST: ASTTransformation = (context) => {
                  *   configurable: !0
                  * })
                  */
-                if (j.ExpressionStatement.check(bodyNode) && j.CallExpression.check(bodyNode.expression)) {
+                if (
+                    j.ExpressionStatement.check(bodyNode)
+                    && j.CallExpression.check(bodyNode.expression)
+                    && (
+                        j.match(bodyNode.expression.callee, {
+                            type: 'MemberExpression',
+                            object: {
+                                type: 'Identifier',
+                                name: 'Object',
+                            },
+                            property: {
+                                type: 'Identifier',
+                                name: 'defineProperty',
+                            },
+                        })
+                        || j.match(bodyNode.expression.callee, {
+                            type: 'Identifier',
+                            name: '_defineProperty', // Babel
+                        })
+                        || j.match(bodyNode.expression.callee, {
+                            type: 'Identifier',
+                            name: '_define_property', // SWC
+                        })
+                    )
+                ) {
                     const { arguments: args } = bodyNode.expression
                     if (!args) return
 
@@ -277,12 +310,30 @@ export const transformAST: ASTTransformation = (context) => {
                         bodyList.push(classMethod)
                     }
                 }
+
+                if (
+                    j.ExpressionStatement.check(bodyNode)
+                    && j.CallExpression.check(bodyNode.expression)
+                    && j.Identifier.check(bodyNode.expression.callee)
+                    && (bodyNode.expression.callee.name === '_inherits'
+                        || bodyNode.expression.callee.name === '_inheritsLoose'
+                        || bodyNode.expression.callee.name === '__extends')
+                    && bodyNode.expression.arguments.length === 2
+                    && j.match(bodyNode.expression.arguments[0], {
+                        type: 'Identifier',
+                        name: internalName,
+                    })
+                    && !j.SpreadElement.check(init.arguments[0])
+                ) {
+                    superClass = init.arguments[0]
+                }
             })
 
             const classBody = j.classBody(bodyList)
             const classDeclaration = j.classDeclaration(
                 j.identifier(className),
                 classBody,
+                superClass,
             )
             p.replace(classDeclaration)
         })
