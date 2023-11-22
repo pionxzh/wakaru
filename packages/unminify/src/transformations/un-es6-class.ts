@@ -1,5 +1,6 @@
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { AssignmentExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, MemberExpression, VariableDeclarator } from 'jscodeshift'
 
 /**
@@ -91,12 +92,45 @@ export const transformAST: ASTTransformation = (context) => {
             if (!j.Identifier.check(lastBodyNode.argument)) return
 
             const internalName = lastBodyNode.argument.name
+            let prototypeNode: ExpressionKind = {
+                type: 'MemberExpression',
+                object: {
+                    type: 'Identifier',
+                    name: internalName,
+                },
+                property: {
+                    type: 'Identifier',
+                    name: 'prototype',
+                },
+            }
 
             const bodyList: any[] = []
 
             bodyBody.forEach((bodyNode) => {
                 // skip the last return statement
                 if (j.ReturnStatement.check(bodyNode)) return
+
+                // prototype assignment in Babel loose mode
+                if (
+                    j.VariableDeclaration.check(bodyNode)
+                    && j.VariableDeclarator.check(bodyNode.declarations[0])
+                    && j.Identifier.check(bodyNode.declarations[0].id)
+                    && bodyNode.declarations[0].init
+                    && j.match(bodyNode.declarations[0].init, {
+                        type: 'MemberExpression',
+                        object: {
+                            type: 'Identifier',
+                            name: internalName,
+                        },
+                        property: {
+                            type: 'Identifier',
+                            name: 'prototype',
+                        },
+                    })
+                ) {
+                    prototypeNode = { type: 'Identifier', name: bodyNode.declarations[0].id.name }
+                    return
+                }
 
                 // constructor
                 if (j.FunctionDeclaration.check(bodyNode) && bodyNode.id?.name === internalName) {
@@ -130,17 +164,7 @@ export const transformAST: ASTTransformation = (context) => {
                         operator: '=',
                         left: {
                             type: 'MemberExpression',
-                            object: {
-                                type: 'MemberExpression',
-                                object: {
-                                    type: 'Identifier',
-                                    name: internalName,
-                                },
-                                property: {
-                                    type: 'Identifier',
-                                    name: 'prototype',
-                                },
-                            },
+                            object: prototypeNode,
                             property: {
                                 type: 'Identifier' as any,
                             },
