@@ -82,6 +82,88 @@ class C {
 }
 `)
 
+inlineTest('extend super class',
+`
+var BabelSuperClass = /*#__PURE__*/_createClass(function BabelSuperClass() {
+    _classCallCheck(this, BabelSuperClass);
+});
+var BabelSubClass = /*#__PURE__*/function (_BabelSuperClass) {
+    _inherits(BabelSubClass, _BabelSuperClass);
+    var _super = _createSuper(BabelSubClass);
+    function BabelSubClass() {
+        var _this;
+        _classCallCheck(this, BabelSubClass);
+        return _possibleConstructorReturn(_this);
+    }
+    return _createClass(BabelSubClass);
+}(BabelSuperClass);
+
+var SwcSuperClass = function SwcSuperClass() {
+    "use strict";
+    _class_call_check(this, SwcSuperClass);
+};
+var SwcSubClass = /*#__PURE__*/ function(SwcSuperClass) {
+    "use strict";
+    _inherits(SwcSubClass, SwcSuperClass);
+    var _super = _create_super(SwcSubClass);
+    function SwcSubClass() {
+        _class_call_check(this, SwcSubClass);
+        var _this;
+        return _possible_constructor_return(_this);
+    }
+    return SwcSubClass;
+}(SwcSuperClass);
+
+var TsSuperClass = /** @class */ (function () {
+    function TsSuperClass() {
+    }
+    return TsSuperClass;
+}());
+var TsSubClass = /** @class */ (function (_super) {
+    __extends(TsSubClass, _super);
+    function TsSubClass() {
+        var _this = this;
+        return _this;
+    }
+    return TsSubClass;
+}(TsSuperClass));
+`,
+`
+var BabelSuperClass = /*#__PURE__*/_createClass(function BabelSuperClass() {
+    _classCallCheck(this, BabelSuperClass);
+});
+
+class BabelSubClass extends BabelSuperClass {
+    constructor() {
+        var _this;
+        _classCallCheck(this, BabelSubClass);
+        return _possibleConstructorReturn(_this);
+    }
+}
+
+var SwcSuperClass = function SwcSuperClass() {
+    "use strict";
+    _class_call_check(this, SwcSuperClass);
+};
+
+class SwcSubClass extends SwcSuperClass {
+    constructor() {
+        _class_call_check(this, SwcSubClass);
+        var _this;
+        return _possible_constructor_return(_this);
+    }
+}
+
+class TsSuperClass {}
+
+class TsSubClass extends TsSuperClass {
+    constructor() {
+        var _this = this;
+        return _this;
+    }
+}
+`)
+
 inlineTest.todo('ultimate class declaration',
 `
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
