@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.4](https://github.com/pionxzh/wakaru/compare/unminify-v0.0.3...unminify-v0.0.4) (2023-11-22)
+
+
+### Features
+
+* **un-es6-class:** support methods in Babel loose mode ([4f9d9fc](https://github.com/pionxzh/wakaru/commit/4f9d9fc194c8e195f42365e9a86e6b9ec4ca90b2))
+
+
+### Bug Fixes
+
+* **enum:** should check and handle invalid identifier ([67867f7](https://github.com/pionxzh/wakaru/commit/67867f736a7bc37d7e6ed7f7b925cd8a2e93d48a)), closes [#52](https://github.com/pionxzh/wakaru/issues/52)
+* **smart-rename:** stale the scope after renaming ([4bbd8a0](https://github.com/pionxzh/wakaru/commit/4bbd8a04e179ea8da2cad4abc1aa34d7f73dca24)), closes [#54](https://github.com/pionxzh/wakaru/issues/54)
+
 ## [0.0.3](https://github.com/pionxzh/wakaru/compare/unminify-v0.0.2...unminify-v0.0.3) (2023-11-19)
 
 
