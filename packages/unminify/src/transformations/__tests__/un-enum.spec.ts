@@ -69,6 +69,30 @@ var Response = {
 `,
 )
 
+inlineTest('Enum with invalid identifier keys',
+  `
+var RenderMode;
+(function (RenderMode) {
+  RenderMode[RenderMode["2D"] = 1] = "2D";
+  RenderMode[RenderMode["WebGL"] = 2] = "WebGL";
+  RenderMode[RenderMode["WebGL2"] = 3] = "WebGL2";
+})(RenderMode || (RenderMode = {}));
+`,
+  `
+var RenderMode = {
+  "2D": 1,
+  WebGL: 2,
+  WebGL2: 3,
+
+  // reverse mapping
+  1: "2D",
+
+  2: "WebGL",
+  3: "WebGL2"
+};
+`,
+)
+
 inlineTest('Enum with computed members',
   `
 var FileAccess;

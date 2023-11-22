@@ -2,6 +2,7 @@ import { findIIFEs, isIIFE } from '@wakaru/ast-utils'
 import { fromPaths } from 'jscodeshift/src/Collection'
 import { assertScopeExists } from '../utils/assert'
 import { mergeComments } from '../utils/comments'
+import { isValidIdentifier } from '../utils/identifier'
 import { findDeclarations } from '../utils/scope'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -232,7 +233,10 @@ function handleEnumIIFE(j: JSCodeshift, path: ASTPath<CallExpression>, iifePath:
     const enumObject = j.objectExpression(
         [...enumProperties.entries(), ...enumReverseProperties.entries()]
             .map(([key, value]) => {
-                const prop = j.objectProperty(key, value)
+                const normalizedKey = j.Identifier.check(key)
+                    ? isValidIdentifier(key.name) ? key : j.stringLiteral(key.name)
+                    : key
+                const prop = j.objectProperty(normalizedKey, value)
                 prop.computed = !j.Identifier.check(key) && !j.NumericLiteral.check(key)
                 const comments = enumComments.get(key)
                 if (comments) mergeComments(prop, comments)
