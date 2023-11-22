@@ -57,6 +57,31 @@ class Foo {
 `,
 )
 
+inlineTest('Babel loose class declaration',
+`
+var C = /*#__PURE__*/function () {
+  function C() {
+    this.field = 1;
+  }
+  var _proto = C.prototype;
+  _proto.doSomething = function doSomething() {
+    console.log(this.field);
+  };
+  return C;
+}();
+`,
+`
+class C {
+  constructor() {
+    this.field = 1;
+  }
+
+  doSomething() {
+    console.log(this.field);
+  }
+}
+`)
+
 inlineTest.todo('ultimate class declaration',
 `
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
