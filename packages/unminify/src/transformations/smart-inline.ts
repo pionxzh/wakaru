@@ -34,7 +34,7 @@ export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 
     root
-        .find(j.BlockStatement)
+        .find(j.Program)
         .forEach((path) => {
             const { body } = path.node
             const scope = path.scope
@@ -44,7 +44,7 @@ export const transformAST: ASTTransformation = (context) => {
         })
 
     root
-        .find(j.Program)
+        .find(j.BlockStatement)
         .forEach((path) => {
             const { body } = path.node
             const scope = path.scope

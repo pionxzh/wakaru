@@ -134,7 +134,7 @@ console.log(size, size, color, color);
 `,
 )
 
-inlineTest('property destructuring - resolve naming conflicts #2',
+inlineTest('property destructuring - resolve naming conflicts',
   `
 const n = e.size;
 const r = e.color;
@@ -156,6 +156,68 @@ const {
 } = f;
 
 console.log(size, color, size$0, color$0);
+`,
+)
+
+inlineTest('property destructuring - resolve naming conflicts #2',
+  `
+var u = r.tag;
+if (3 === u) {
+  for (u = r.return; null !== u; ) {
+    var i = u.tag;
+    if (3 === i) {
+      u = u.return;
+    }
+  }
+}
+`,
+  `
+var {
+  tag
+} = r;
+if (3 === tag) {
+  for (tag = r.return; null !== tag; ) {
+    var {
+      tag: tag$0
+    } = tag;
+    if (3 === tag$0) {
+      tag = tag.return;
+    }
+  }
+}
+`,
+)
+
+inlineTest('property destructuring - resolve naming conflicts #3',
+  `
+function foo() {
+  var u = r.tag;
+  if (3 === u) {
+    for (u = r.return; null !== u; ) {
+      var i = u.tag;
+      if (3 === i) {
+        u = u.return;
+      }
+    }
+  }
+}
+`,
+  `
+function foo() {
+  var {
+    tag
+  } = r;
+  if (3 === tag) {
+    for (tag = r.return; null !== tag; ) {
+      var {
+        tag: tag$0
+      } = tag;
+      if (3 === tag$0) {
+        tag = tag.return;
+      }
+    }
+  }
+}
 `,
 )
 
