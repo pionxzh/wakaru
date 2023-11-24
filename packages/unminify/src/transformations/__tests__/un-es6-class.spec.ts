@@ -84,6 +84,8 @@ class C {
 
 inlineTest('extend super class',
 `
+import babelInherits from "@babel/runtime/helpers/inherits";
+
 var BabelSuperClass = /*#__PURE__*/_createClass(function BabelSuperClass() {
     _classCallCheck(this, BabelSuperClass);
 });
@@ -97,6 +99,20 @@ var BabelSubClass = /*#__PURE__*/function (_BabelSuperClass) {
     }
     return _createClass(BabelSubClass);
 }(BabelSuperClass);
+
+var BabelSuperClass2 = /*#__PURE__*/_createClass(function BabelSuperClass2() {
+    _classCallCheck(this, BabelSuperClass2);
+});
+var BabelSubClass2 = /*#__PURE__*/function (_BabelSuperClass2) {
+    babelInherits(BabelSubClass2, _BabelSuperClass2);
+    var _super = _createSuper(BabelSubClass2);
+    function BabelSubClass2() {
+        var _this;
+        _classCallCheck(this, BabelSubClass2);
+        return _possibleConstructorReturn(_this);
+    }
+    return _createClass(BabelSubClass2);
+}(BabelSuperClass2);
 
 var SwcSuperClass = function SwcSuperClass() {
     "use strict";
@@ -137,6 +153,18 @@ class BabelSubClass extends BabelSuperClass {
     constructor() {
         var _this;
         _classCallCheck(this, BabelSubClass);
+        return _possibleConstructorReturn(_this);
+    }
+}
+
+var BabelSuperClass2 = /*#__PURE__*/_createClass(function BabelSuperClass2() {
+    _classCallCheck(this, BabelSuperClass2);
+});
+
+class BabelSubClass2 extends BabelSuperClass2 {
+    constructor() {
+        var _this;
+        _classCallCheck(this, BabelSubClass2);
         return _possibleConstructorReturn(_this);
     }
 }
