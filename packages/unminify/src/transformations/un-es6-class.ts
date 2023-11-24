@@ -1,10 +1,10 @@
 import { findReferences } from '@wakaru/ast-utils'
+import { findHelperLocals, removeHelperImport } from '../utils/import'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
 import type { AssignmentExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, MemberExpression, VariableDeclarator } from 'jscodeshift'
-import { findHelperLocals, removeHelperImport } from '../utils/import'
 
 const inheritsModuleName = '@babel/runtime/helpers/inherits'
 const inheritsModuleEsmName = '@babel/runtime/helpers/esm/inherits'
@@ -356,7 +356,7 @@ export const transformAST: ASTTransformation = (context, params) => {
 
     inheritsHelpers
         .filter(helperLocal => findReferences(j, rootScope, helperLocal).length === 1)
-        .forEach(helperLocal => {
+        .forEach((helperLocal) => {
             removeHelperImport(j, rootScope, helperLocal)
         })
 }
