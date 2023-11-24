@@ -1,7 +1,13 @@
+import { findReferences } from '@wakaru/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
+import type { Scope } from 'ast-types/lib/scope'
 import type { AssignmentExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, MemberExpression, VariableDeclarator } from 'jscodeshift'
+import { findHelperLocals, removeHelperImport } from '../utils/import'
+
+const inheritsModuleName = '@babel/runtime/helpers/inherits'
+const inheritsModuleEsmName = '@babel/runtime/helpers/esm/inherits'
 
 /**
  * Restore `Class` definition from the constructor and the prototype.
@@ -47,8 +53,13 @@ import type { AssignmentExpression, CallExpression, ExpressionStatement, Functio
  * @see https://babeljs.io/docs/babel-plugin-transform-classes
  * @see https://www.typescriptlang.org/play?target=1#code/MYGwhgzhAEBiD29oG8BQ1oDswFsCmAXNBAC4BOAlpgObrRjWFYCuOARnmXXcPJqWWbAS8MgAps+IgKrUAlCjoYSACwoQAdJLzQAvFlx4l0Veo0Md+gIwAOOgF86IeNUbiFaDBl794IPBrO1GIARAASeCDOIQA0Jmqa2nIA3A50pGAkFMDEJJnZALJ4qvAAJmIexj4QfgFBYgDkGVk5+CWlDXJpGM3Z0FQZmMCWWHgA7nCIoQBmiCFd9kA
  */
-export const transformAST: ASTTransformation = (context) => {
+export const transformAST: ASTTransformation = (context, params) => {
     const { root, j } = context
+
+    const rootScope = root.find(j.Program).get().scope as Scope | null
+    if (!rootScope) return
+
+    const inheritsHelpers = findHelperLocals(context, params, inheritsModuleName, inheritsModuleEsmName)
 
     root
         .find(j.VariableDeclaration, {
@@ -311,13 +322,18 @@ export const transformAST: ASTTransformation = (context) => {
                     }
                 }
 
+                // extends
+                /**
+                 * _inherits(SubClass, SuperClass);
+                 */
                 if (
                     j.ExpressionStatement.check(bodyNode)
                     && j.CallExpression.check(bodyNode.expression)
                     && j.Identifier.check(bodyNode.expression.callee)
-                    && (bodyNode.expression.callee.name === '_inherits'
+                    && (inheritsHelpers.includes(bodyNode.expression.callee.name)
+                        || bodyNode.expression.callee.name === '_inherits' /* Babel/SWC */
                         || bodyNode.expression.callee.name === '_inheritsLoose'
-                        || bodyNode.expression.callee.name === '__extends')
+                        || bodyNode.expression.callee.name === '__extends' /* TypeScript */)
                     && bodyNode.expression.arguments.length === 2
                     && j.match(bodyNode.expression.arguments[0], {
                         type: 'Identifier',
@@ -336,6 +352,12 @@ export const transformAST: ASTTransformation = (context) => {
                 superClass,
             )
             p.replace(classDeclaration)
+        })
+
+    inheritsHelpers
+        .filter(helperLocal => findReferences(j, rootScope, helperLocal).length === 1)
+        .forEach(helperLocal => {
+            removeHelperImport(j, rootScope, helperLocal)
         })
 }
 
