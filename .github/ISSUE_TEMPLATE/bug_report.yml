@@ -1,0 +1,48 @@
+name: "\U0001F41E Unminify Bug Report"
+description: Report an issue with unminify
+labels: ["pending triage", "scope: unminify"]
+body:
+  - type: textarea
+    id: bug-description
+    attributes:
+      label: Describe the bug
+      description: |
+        A clear and concise description of what the bug is. If you intend to submit a PR for this issue, please tell us in the description. Thanks!
+      placeholder: |
+        I am doing ... What I expect is ... What actually happening is ...
+    validations:
+      required: true
+  - type: textarea
+    id: code
+    attributes:
+      label: Input code
+      description: |
+        If applicable, add code samples to help explain your problem. If the code is long, please provide the code with [playground](https://wakaru.vercel.app/) or paste it to [gist](https://gist.github.com/) and provide the link in the Reproduction field.
+      render: typescript
+  - type: input
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: |
+        Please provide a link via [wakaru playground](https://wakaru.vercel.app/) that can reproduce the problem you ran into. If your input is huge and fail to run on the playground, provide a link to a repo or [gist](https://gist.github.com/) with the code. A [minimal reproduction](https://stackoverflow.com/help/minimal-reproducible-example) is required ([Why?](https://antfu.me/posts/why-reproductions-are-required)).
+      placeholder: Reproduction URL
+    validations:
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: Steps to reproduce
+      description: Please provide any reproduction steps that may need to be described. E.g. if it happens only when specific rules are enabled.
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: A clear and concise description of what you expect to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior
+      description: A clear and concise description of actual behavior.
+    validations:
+      required: false
