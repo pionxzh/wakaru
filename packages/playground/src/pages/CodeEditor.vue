@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { TransitionRoot } from '@headlessui/vue'
-import { computed, watch } from 'vue'
+import { useSortable } from '@vueuse/integrations/useSortable'
+import { computed, shallowRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import Card from '../components/Card.vue'
 import CodemirrorEditor from '../components/CodemirrorEditor.vue'
@@ -21,7 +22,7 @@ const { moduleMapping } = useModuleMapping()
 const [openSideBar, setOpenSideBar] = useState(false)
 
 const { disabledRules, setDisabledRules, allRules } = useTransformationRules()
-const enabledRules = computed(() => allRules.filter(t => !disabledRules.value.includes(t)))
+const enabledRules = computed(() => allRules.value.filter(t => !disabledRules.value.includes(t)))
 function toggleRules(transformation: string) {
     if (disabledRules.value.includes(transformation)) {
         setDisabledRules(disabledRules.value.filter(t => t !== transformation))
@@ -30,6 +31,9 @@ function toggleRules(transformation: string) {
         setDisabledRules([...disabledRules.value, transformation])
     }
 }
+
+const rulesList = shallowRef<HTMLElement | null>(null)
+useSortable(rulesList, allRules)
 
 const { transform } = useCodemod()
 const moduleName = computed(() => moduleMapping.value[module.value.id])
@@ -126,8 +130,12 @@ const onClick = () => {
                 />
                 RULE
             </div>
-            <Card title="Rules" class="h-full overflow-y-auto">
-                <div class="flex flex-col space-y-1 w-full">
+            <Card
+                title="Rules"
+                description="Drag and drop rule name to tweak rules order."
+                class="h-full overflow-y-auto"
+            >
+                <div ref="rulesList" class="flex flex-col space-y-1 w-full">
                     <div
                         v-for="rule in allRules"
                         :key="rule"
