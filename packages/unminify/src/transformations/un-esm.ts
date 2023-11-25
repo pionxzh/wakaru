@@ -1,4 +1,5 @@
 import { ImportManager, findReferences, generateName, isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
+import { isUndefined } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
 import { transformAST as interopRequireDefault } from './runtime-helpers/babel/interopRequireDefault'
 import { NAMESPACE_IMPORT_HINT, transformAST as interopRequireWildcard } from './runtime-helpers/babel/interopRequireWildcard'
@@ -399,10 +400,41 @@ function transformExport(context: Context) {
     ) {
         if (exportsMap.has(name)) {
             const previousPath = exportsMap.get(name)!
+
+            const previousNode = previousPath.node
+
+            /**
+             * Babel will always assign `undefined` to the export target
+             * before assigning the actual value.
+             *
+             * @example
+             * exports.foo = void 0
+             * exports.foo = 1
+             *
+             * So we can safely mute the warning here for this case.
+             */
+            const shouldIgnoreMultipleExports
+            // export default void 0
+            = (
+                j.ExportDefaultDeclaration.check(previousNode)
+                && isUndefined(j, previousNode.declaration)
+            )
+            // export var foo = void 0
+            || (
+                j.ExportNamedDeclaration.check(previousNode)
+                && j.VariableDeclaration.check(previousNode.declaration)
+                && j.VariableDeclarator.check(previousNode.declaration.declarations[0])
+                && previousNode.declaration.declarations[0].init
+                && isUndefined(j, previousNode.declaration.declarations[0].init)
+            )
+            if (!shouldIgnoreMultipleExports) {
+                console.warn('previous', j(previousPath.node).toSource())
+                console.warn('current ', j(path.node).toSource())
+                console.warn(`Multiple exports of "${name}" found, only the last one will be kept`)
+            }
+
             previousPath.prune()
             exportsMap.delete(name)
-            console.warn(`Multiple exports of "${name}" found, only the last one will be kept`)
-            // TODO: handle multiple exports
         }
         exportsMap.set(name, path)
 
