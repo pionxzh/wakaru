@@ -6,19 +6,24 @@ const inlineTest = defineInlineTest(transform)
 inlineTest('remove es module helper from ES5+',
   `
 Object.defineProperty(exports, "__esModule", {
-    value: true
+  value: true
 });
-
-const a = require('a');
+Object.defineProperty(module.exports, "__esModule", {
+  value: !0
+});
 `,
   `
-const a = require('a');
 `,
 )
 
 inlineTest('remove es module helper from ES3',
   `
+exports.__esModule = !0;
 exports.__esModule = true;
+exports["__esModule"] = true;
+module.exports.__esModule = !0;
+module.exports.__esModule = true;
+module.exports["__esModule"] = true;
 `,
   `
 `,

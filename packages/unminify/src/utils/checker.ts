@@ -18,6 +18,14 @@ export function isFalse(j: JSCodeshift, node: ASTNode): node is BooleanLiteral {
     return j.BooleanLiteral.check(node) && node.value === false
 }
 
+export function isLooseTrue(j: JSCodeshift, node: ASTNode): node is BooleanLiteral | UnaryExpression {
+    return isTrue(j, node) || (isLogicalNot(j, node) && j.NumericLiteral.check(node.argument) && node.argument.value === 0)
+}
+
+export function isLooseFalse(j: JSCodeshift, node: ASTNode): node is BooleanLiteral | UnaryExpression {
+    return isFalse(j, node) || (isLogicalNot(j, node) && j.NumericLiteral.check(node.argument) && node.argument.value === 1)
+}
+
 /**
  * Check if node is `null` literal
  */
