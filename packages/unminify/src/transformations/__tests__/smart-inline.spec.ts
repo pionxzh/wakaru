@@ -152,6 +152,17 @@ console.log(size, size, color, color);
 `,
 )
 
+inlineTest('property destructuring - preserve lonely property access',
+  `
+unused.prop;
+unused['prop'];
+`,
+  `
+unused.prop;
+unused['prop'];
+`,
+)
+
 inlineTest('property destructuring - resolve naming conflicts',
   `
 const n = e.size;

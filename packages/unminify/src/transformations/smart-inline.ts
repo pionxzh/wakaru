@@ -173,7 +173,12 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
             const expression = _node.expression as MemberExpression
 
             const object = expression.object as Identifier
-            objectAccessDeclarationMap.set(object.name, _node)
+            // only add to the map when their are existing declarations
+            // otherwise, lonely property access will be removed by the next step
+            // which is not what we want
+            if (objectAccessDeclarationMap.has(object.name)) {
+                objectAccessDeclarationMap.set(object.name, _node)
+            }
         }
     })
 
