@@ -1,7 +1,5 @@
-import { ImportManager, isTopLevel } from '@wakaru/ast-utils'
-import { generateName } from '../utils/identifier'
+import { ImportManager, createObjectProperty, generateName, isTopLevel, removeDefaultImportIfUnused } from '@wakaru/ast-utils'
 import { insertAfter } from '../utils/insert'
-import { removeDefaultImportIfUnused } from '../utils/scope'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
@@ -152,7 +150,7 @@ export const transformAST: ASTTransformation = (context) => {
                     replaceMapping.set(`${defaultSpecifierName}.${namedSpecifierName}`, valueName)
 
                     const value = j.identifier(valueName)
-                    const objectProperty = j.objectProperty(key, value)
+                    const objectProperty = createObjectProperty(j, key, value)
                     objectProperty.shorthand = key.name === value.name
 
                     // find existing `const { ... } = react`

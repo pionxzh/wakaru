@@ -1,4 +1,4 @@
-import { isValidIdentifier } from '../utils/identifier'
+import { isValidIdentifier } from '@wakaru/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { StringLiteral } from 'jscodeshift'

@@ -52,6 +52,9 @@ importers:
 
   packages/ast-utils:
     devDependencies:
+      '@babel/helper-validator-identifier':
+        specifier: ^7.22.20
+        version: 7.22.20
       '@babel/types':
         specifier: ^7.23.0
         version: 7.23.0

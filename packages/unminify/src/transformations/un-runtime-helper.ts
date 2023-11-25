@@ -1,5 +1,4 @@
-import { getTopLevelStatements } from '@wakaru/ast-utils'
-import { mergeComments } from '../utils/comments'
+import { getTopLevelStatements, mergeComments } from '@wakaru/ast-utils'
 import wrap from '../wrapAstTransformation'
 import { transformAST as babelHelpers } from './runtime-helpers'
 import type { SharedParams } from '../utils/types'

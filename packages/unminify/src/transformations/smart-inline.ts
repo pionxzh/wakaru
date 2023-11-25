@@ -1,7 +1,5 @@
-import { findReferences } from '@wakaru/ast-utils'
+import { createObjectProperty, findReferences, generateName, mergeComments } from '@wakaru/ast-utils'
 import { MultiMap } from '@wakaru/ds'
-import { mergeComments } from '../utils/comments'
-import { generateName, isValidIdentifier } from '../utils/identifier'
 import { nonNullable } from '../utils/utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -266,10 +264,7 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
         if (!kind) return
         const properties = [...destructuringPropertyMap.entries()]
             .map(([propertyName, newPropertyName]) => {
-                const property = j.objectProperty(
-                    isValidIdentifier(propertyName) ? j.identifier(propertyName) : j.literal(propertyName),
-                    j.identifier(newPropertyName),
-                )
+                const property = createObjectProperty(j, propertyName, j.identifier(newPropertyName))
                 property.shorthand = propertyName === newPropertyName
                 return property
             })

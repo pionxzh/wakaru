@@ -1,5 +1,4 @@
-import { ImportManager } from '@wakaru/ast-utils'
-import { findDeclaration } from './scope'
+import { ImportManager, findDeclaration } from '@wakaru/ast-utils'
 import type { SharedParams } from './types'
 import type { Context } from '../wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'

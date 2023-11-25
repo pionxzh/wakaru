@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { generateName as fn } from '../identifier'
+import { generateName as fn } from '../src/identifier'
 
 it('should generate a identifier name', () => {
     expect(fn('foo')).toBe('foo')

@@ -1,4 +1,4 @@
-import { isDeclared } from '../utils/scope'
+import { isDeclared } from '@wakaru/ast-utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 

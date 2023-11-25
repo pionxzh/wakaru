@@ -1,4 +1,4 @@
-import { mergeComments } from '../utils/comments'
+import { mergeComments } from '@wakaru/ast-utils'
 import { replaceWithMultipleStatements } from '../utils/insert'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'

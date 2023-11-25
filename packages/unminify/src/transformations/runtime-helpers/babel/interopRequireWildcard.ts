@@ -1,5 +1,4 @@
-import { findReferences } from '@wakaru/ast-utils'
-import { mergeComments } from '../../../utils/comments'
+import { findReferences, mergeComments } from '@wakaru/ast-utils'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import wrap from '../../../wrapAstTransformation'
 import type { SharedParams } from '../../../utils/types'

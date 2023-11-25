@@ -24,6 +24,7 @@
     "lint:fix": "eslint src --fix"
   },
   "devDependencies": {
+    "@babel/helper-validator-identifier": "^7.22.20",
     "@babel/types": "^7.23.0",
     "@types/jscodeshift": "^0.11.7",
     "@wakaru/ds": "workspace:*",

@@ -1,5 +1,4 @@
-import { ImportManager, findReferences, isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
-import { generateName } from '../utils/identifier'
+import { ImportManager, findReferences, generateName, isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
 import wrap from '../wrapAstTransformation'
 import { transformAST as interopRequireDefault } from './runtime-helpers/babel/interopRequireDefault'
 import { NAMESPACE_IMPORT_HINT, transformAST as interopRequireWildcard } from './runtime-helpers/babel/interopRequireWildcard'

@@ -1,4 +1,4 @@
-import { isFunctionExpression } from '@wakaru/ast-utils'
+import { createObjectProperty, isFunctionExpression } from '@wakaru/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { ArrowFunctionExpression, Collection, ExportDefaultDeclaration, ExportNamedDeclaration, FunctionExpression, Identifier, JSCodeshift, ObjectExpression, ObjectProperty, StringLiteral } from 'jscodeshift'
 
@@ -238,7 +238,7 @@ export function convertExportGetter(
         if (exportGetterMap.size > 0) {
             const left = j.memberExpression(j.identifier('module'), j.identifier('exports'), false)
             const right = j.objectExpression(Array.from(exportGetterMap.entries()).map(([key, value]) => {
-                return j.objectProperty(j.identifier(key), value)
+                return createObjectProperty(j, key, value)
             }))
             const moduleExports = j.assignmentExpression('=', left, right)
             // Add module.exports = { ... } to the end of the module

@@ -94,7 +94,7 @@ console.log(x, y, color);
 `,
 )
 
-inlineTest.only('property destructuring - with string literal and invalid identifier',
+inlineTest('property destructuring - with string literal and invalid identifier',
   `
 const t = e['color'];
 const n = e['2d'];
