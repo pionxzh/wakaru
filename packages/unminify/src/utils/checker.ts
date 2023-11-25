@@ -80,6 +80,13 @@ export function isValueLiteral(j: JSCodeshift, node: ASTNode): node is StringLit
     || j.TemplateLiteral.check(node)
 }
 
+export function isStringObjectProperty(j: JSCodeshift, node: ASTNode, name?: string): node is Identifier | StringLiteral {
+    if (!name) return j.Identifier.check(node) || j.StringLiteral.check(node)
+
+    return (j.Identifier.check(node) && node.name === name)
+        || (j.StringLiteral.check(node) && node.value === name)
+}
+
 /**
  * Check if node is `exports` or `module.exports`
  */

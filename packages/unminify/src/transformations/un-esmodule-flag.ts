@@ -1,7 +1,7 @@
-import { isExportObject, isLooseTrue } from '../utils/checker'
+import { isExportObject, isLooseTrue, isStringObjectProperty } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
-import type { ASTNode, CallExpression, Identifier, JSCodeshift, MemberExpression, StringLiteral } from 'jscodeshift'
+import type { CallExpression, MemberExpression } from 'jscodeshift'
 
 /**
  * Removes the `__esModule` flag from the module.
@@ -48,18 +48,12 @@ export const transformAST: ASTTransformation = (context) => {
             left: {
                 type: 'MemberExpression',
                 object: (node: MemberExpression['object']) => isExportObject(j, node),
-                property: (node: MemberExpression['property']) => is__esModule(j, node),
+                property: (node: MemberExpression['property']) => isStringObjectProperty(j, node, '__esModule'),
             },
             operator: '=',
             right: node => isLooseTrue(j, node),
         })
         .remove()
-}
-
-const __esModule = '__esModule'
-function is__esModule(j: JSCodeshift, node: ASTNode): node is Identifier | StringLiteral {
-    return (j.Identifier.check(node) && node.name === __esModule)
-        || (j.StringLiteral.check(node) && node.value === __esModule)
 }
 
 export default wrap(transformAST)

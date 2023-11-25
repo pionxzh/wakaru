@@ -1,5 +1,5 @@
 import { ImportManager, findReferences, generateName, isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
-import { isExportObject, isUndefined } from '../utils/checker'
+import { isExportObject, isStringObjectProperty, isUndefined } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
 import { transformAST as interopRequireDefault } from './runtime-helpers/babel/interopRequireDefault'
 import { NAMESPACE_IMPORT_HINT, transformAST as interopRequireWildcard } from './runtime-helpers/babel/interopRequireWildcard'
@@ -389,7 +389,46 @@ function isNamespaceImport(path: ASTPath<Node>) {
 function transformExport(context: Context) {
     const { j, root } = context
 
-    const exportsMap = new Map<string, ASTPath>()
+    const exportsMap = new Map<string, { path: ASTPath; callback: () => void }>()
+
+    /**
+     * We collect all exports and do the pre-deduplication.
+     * Then, all exports will be processed at the end of the file.
+     */
+    function enqueueExport(
+        j: JSCodeshift,
+        name: string,
+        path: ASTPath,
+        callback: () => void,
+    ) {
+        /**
+         * Multiple exports of the same name detected.
+         * We will keep the last one and prune the previous one.
+         */
+        if (exportsMap.has(name)) {
+            const { path: existingPath } = exportsMap.get(name)!
+
+            /**
+             * Babel and TypeScript will assign `void 0` to `exports`
+             * before assigning the actual value.
+             *
+             * @example
+             * exports.foo = void 0
+             * exports.foo = 1
+             *
+             * So we can safely mute the multi-export warning for this case.
+             */
+            const shouldIgnoreMultipleExports = isInitializationExport(j, existingPath.node)
+            if (!shouldIgnoreMultipleExports) {
+                console.warn(`Multiple exports of "${name}" found, only the last one will be kept`)
+            }
+
+            exportsMap.delete(name)
+            existingPath.prune()
+        }
+
+        exportsMap.set(name, { path, callback })
+    }
 
     function replaceWithExportDeclaration(
         j: JSCodeshift,
@@ -398,24 +437,6 @@ function transformExport(context: Context) {
         right: ExpressionKind,
         kind: 'const' | 'let' | 'var' = 'const',
     ) {
-        /**
-         * Multiple exports of the same name detected.
-         * We will keep the last one and prune the previous one.
-         */
-        if (exportsMap.has(name)) {
-            const existingPath = exportsMap.get(name)!
-            const existingNode = existingPath.node
-
-            const shouldIgnoreMultipleExports = isExportUndefine(j, existingNode)
-            if (!shouldIgnoreMultipleExports) {
-                console.warn(`Multiple exports of "${name}" found, only the last one will be kept`)
-            }
-
-            exportsMap.delete(name)
-            existingPath.prune()
-        }
-        exportsMap.set(name, path)
-
         if (name === 'default') {
             const exportDefaultDeclaration = j.exportDefaultDeclaration(right)
             j(path).replaceWith(exportDefaultDeclaration)
@@ -564,7 +585,9 @@ function transformExport(context: Context) {
             const expression = path.node.expression as AssignmentExpression
             const right = expression.right
 
-            replaceWithExportDeclaration(j, path, 'default', right)
+            enqueueExport(j, 'default', path, () => {
+                replaceWithExportDeclaration(j, path, 'default', right)
+            })
         })
 
     /**
@@ -593,9 +616,7 @@ function transformExport(context: Context) {
                 left: {
                     type: 'MemberExpression',
                     object: (node: MemberExpression['object']) => isExportObject(j, node),
-                    property: {
-                        type: 'Identifier',
-                    },
+                    property: (node: MemberExpression['property']) => isStringObjectProperty(j, node),
                 },
             },
         })
@@ -606,8 +627,11 @@ function transformExport(context: Context) {
             const left = expression.left as MemberExpression
             const right = expression.right
 
-            const name = (left.property as Identifier).name
-            replaceWithExportDeclaration(j, path, name, right)
+            const property = left.property as Identifier | StringLiteral
+            const name = j.Identifier.check(property) ? property.name : property.value
+            enqueueExport(j, name, path, () => {
+                replaceWithExportDeclaration(j, path, name, right)
+            })
         })
 
     /**
@@ -631,9 +655,7 @@ function transformExport(context: Context) {
                         left: {
                             type: 'MemberExpression',
                             object: (node: MemberExpression['object']) => isExportObject(j, node),
-                            property: {
-                                type: 'Identifier',
-                            },
+                            property: (node: MemberExpression['property']) => isStringObjectProperty(j, node),
                         },
                     },
                 },
@@ -649,53 +671,53 @@ function transformExport(context: Context) {
             const left = init.left as MemberExpression
             const right = init.right
 
-            const name = (left.property as Identifier).name
+            const property = left.property as Identifier | StringLiteral
+            const name = j.Identifier.check(property) ? property.name : property.value
 
             if (name === 'default') {
-                replaceWithExportDeclaration(j, path, name, id, kind)
+                enqueueExport(j, name, path, () => {
+                    replaceWithExportDeclaration(j, path, name, id, kind)
 
-                const variableDeclaration = j.variableDeclaration(
-                    kind,
-                    [j.variableDeclarator(id, right)],
-                )
+                    const variableDeclaration = j.variableDeclaration(
+                        kind,
+                        [j.variableDeclarator(id, right)],
+                    )
 
-                j(path).insertBefore(variableDeclaration)
+                    j(path).insertBefore(variableDeclaration)
+                })
 
                 return
             }
 
-            replaceWithExportDeclaration(j, path, name, right, kind)
+            enqueueExport(j, name, path, () => {
+                replaceWithExportDeclaration(j, path, name, right, kind)
 
-            if (id.name !== name) {
-                const variableDeclaration = j.variableDeclaration(
-                    kind,
-                    [j.variableDeclarator(id, j.identifier(name))],
-                )
+                if (id.name !== name) {
+                    const variableDeclaration = j.variableDeclaration(
+                        kind,
+                        [j.variableDeclarator(id, j.identifier(name))],
+                    )
 
-                j(path).insertBefore(variableDeclaration)
-            }
+                    j(path).insertBefore(variableDeclaration)
+                }
+            })
         })
 
-    exportsMap.clear()
+    exportsMap.forEach(({ callback }) => callback())
 }
 
 /**
- * Check if the node is an export of `undefined`
+ * Babel and TypeScript will assign `void 0` to `exports` before assigning the actual value.
+ *
+ * This is called "initialization statements".
+ *
+ * @see https://github.com/babel/babel/blob/main/packages/babel-helper-module-transforms/src/index.ts
  */
-function isExportUndefine(j: JSCodeshift, node: ASTNode) {
-    // export default void 0
-    return (
-        j.ExportDefaultDeclaration.check(node)
-     && isUndefined(j, node.declaration)
-    )
-    // export var foo = void 0
-    || (
-        j.ExportNamedDeclaration.check(node)
-        && j.VariableDeclaration.check(node.declaration)
-        && j.VariableDeclarator.check(node.declaration.declarations[0])
-        && node.declaration.declarations[0].init
-        && isUndefined(j, node.declaration.declarations[0].init)
-    )
+function isInitializationExport(j: JSCodeshift, node: ASTNode) {
+    // exports.foo = void 0
+    return j.ExpressionStatement.check(node)
+        && j.AssignmentExpression.check(node.expression)
+        && isUndefined(j, node.expression.right)
 }
 
 export default wrap(transformAST)

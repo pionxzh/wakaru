@@ -380,7 +380,7 @@ export { bar };
 // then create that object and put it back to module.exports
 inlineTest('duplicate exports',
   `
-module.exports.foo = null;
+module.exports.foo = void 0;
 module.exports.foo = 2;
 `,
   `
@@ -516,13 +516,95 @@ export { qux as baz };
 `,
 )
 
-inlineTest('mixed exports (which is actually not correct)',
+inlineTest.fixme('mixed exports (which is actually not correct)',
   `
 module.exports = obj;
 module.exports.foo = 1;
 `,
   `
 export default obj;
+obj.foo = 1;
+`,
+)
+
+inlineTest.fixme('mixed exports #2',
+  `
+function foo() {}
+module.exports = foo;
+module.exports.default = module.exports;
+`,
+  `
+function foo() {}
+export default foo;
+`,
+)
+
+inlineTest('default exports - Babel',
+  `
+exports.default = void 0;
+var foo = 1;
+var _default = foo;
+exports.default = _default;
+`,
+  `
+var foo = 1;
+var _default = foo;
+export default _default;
+`,
+)
+
+inlineTest('default exports - Babel 7.23+',
+  `
+exports.default = void 0;
+var foo = 1;
+var _default = (exports.default = foo);
+`,
+  `
+var foo = 1;
+var _default = foo;
+export default _default;
+`,
+)
+
+inlineTest('named exports - Babel',
+  `
+exports.foo = void 0;
+var foo = 1;
+exports.foo = foo;
+`,
+  `
+var foo = 1;
+export { foo };
+`,
+)
+
+inlineTest('named exports - Babel 7.23+',
+  `
+exports.foo = void 0;
+var foo = (exports.foo = 1);
+`,
+  `
+export var foo = 1;
+`,
+)
+
+inlineTest('default export - TypeScript with ES3',
+  `
+var foo = 1;
+exports["default"] = foo;
+`,
+  `
+var foo = 1;
+export default foo;
+`,
+)
+
+inlineTest('named exports - TypeScript with ES3',
+  `
+exports.foo = void 0;
+exports.foo = 1;
+`,
+  `
 export const foo = 1;
 `,
 )
