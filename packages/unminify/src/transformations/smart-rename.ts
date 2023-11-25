@@ -222,6 +222,48 @@ function handleReactRename(j: JSCodeshift, root: Collection) {
         })
 
     /**
+     * const [e, f] = o.useReducer(reducer, initialArg, init?);
+     * ->
+     * const [eState, fDispatch] = o.useReducer(reducer, initialArg, init?);
+     *
+     * @see https://react.dev/reference/react/useReducer
+     */
+    root
+        .find(j.VariableDeclarator, {
+            id: { type: 'ArrayPattern' },
+            init: { type: 'CallExpression' },
+        })
+        .forEach((path) => {
+            const id = path.node.id as ArrayPattern
+            if (!id.elements || id.elements.length === 0 || id.elements.length > 2) return
+            if (!j.Identifier.check(id.elements[0]) || !j.Identifier.check(id.elements[1])) return
+
+            const init = path.node.init as CallExpression
+            const callee = init.callee
+            const calleeName = getElementName(j, callee)
+            if (!calleeName.endsWith('.useReducer') && calleeName !== 'useReducer') return
+
+            const args = init.arguments
+            if (args.length === 1 && args.length > 3) return
+
+            const scope = path.scope
+            assertScopeExists(scope)
+
+            // rename the identifier
+            const stateName = id.elements[0].name
+            const dispatchName = id.elements[1].name
+
+            if (stateName.length < MINIFIED_IDENTIFIER_THRESHOLD) {
+                const newName = generateName(`${stateName}State`, scope)
+                renameIdentifier(j, scope, stateName, newName)
+            }
+            if (dispatchName.length < MINIFIED_IDENTIFIER_THRESHOLD) {
+                const newName = generateName(`${dispatchName}Dispatch`, scope)
+                renameIdentifier(j, scope, dispatchName, newName)
+            }
+        })
+
+    /**
      * const Z = o.forwardRef((e, t) => {
      * })
      * ->

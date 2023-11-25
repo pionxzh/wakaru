@@ -187,14 +187,27 @@ const [e, f] = useState();
 const [, g] = o.useState(0);
 
 const h = o.useState(a, b); // invalid parameters
-const size = o.useState(0); // name is not minified
 `,
   `
 const [e, setE] = useState();
 const [, setG] = o.useState(0);
 
 const h = o.useState(a, b); // invalid parameters
-const size = o.useState(0); // name is not minified
+`,
+)
+
+inlineTest('react rename - useReducer',
+  `
+const [e, f] = useReducer(r, i);
+const [g, h] = o.useReducer(r, i, init);
+
+const k = o.useReducer(a); // invalid parameters
+`,
+  `
+const [eState, fDispatch] = useReducer(r, i);
+const [gState, hDispatch] = o.useReducer(r, i, init);
+
+const k = o.useReducer(a); // invalid parameters
 `,
 )
 
