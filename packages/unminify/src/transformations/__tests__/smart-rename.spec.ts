@@ -214,3 +214,46 @@ const g = o.useRef(a, b); // invalid parameters
 const ButtonRef = o.useRef(null); // name is not minified
 `,
 )
+
+inlineTest('react rename - forwardRef',
+  `
+const Z = forwardRef((e, t) => {
+  return (
+    <label>
+      {e.label}
+      <input ref={t} />
+    </label>
+  );
+});
+const X = o.forwardRef(function (e, ref2) {
+  return (
+    <label>
+      {e.label}
+      <input ref={ref2} />
+    </label>
+  );
+});
+
+const Y = o.forwardRef(a, b); // invalid parameters
+`,
+  `
+const Z = forwardRef((props, ref) => {
+  return (
+    (<label>
+      {props.label}
+      <input ref={ref} />
+    </label>)
+  );
+});
+const X = o.forwardRef(function (props, ref2) {
+  return (
+    (<label>
+      {props.label}
+      <input ref={ref2} />
+    </label>)
+  );
+});
+
+const Y = o.forwardRef(a, b); // invalid parameters
+`,
+)

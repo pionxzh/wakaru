@@ -118,6 +118,8 @@ function handleReactRename(j: JSCodeshift, root: Collection) {
      * const d = o.createContext(u);
      * ->
      * const uContext = o.createContext(u);
+     *
+     * @see https://react.dev/docs/createContext
      */
     root
         .find(j.VariableDeclarator, {
@@ -150,6 +152,8 @@ function handleReactRename(j: JSCodeshift, root: Collection) {
      * const d = o.useRef(u);
      * ->
      * const uRef = o.useRef(u);
+     *
+     * @see https://react.dev/reference/react/useRef
      */
     root
         .find(j.VariableDeclarator, {
@@ -157,9 +161,6 @@ function handleReactRename(j: JSCodeshift, root: Collection) {
             init: { type: 'CallExpression' },
         })
         .forEach((path) => {
-            const scope = path.scope
-            assertScopeExists(scope)
-
             const id = path.node.id as Identifier
             const init = path.node.init as CallExpression
 
@@ -172,6 +173,9 @@ function handleReactRename(j: JSCodeshift, root: Collection) {
             const args = init.arguments
             if (args.length > 1) return
 
+            const scope = path.scope
+            assertScopeExists(scope)
+
             // rename the identifier
             const oldName = id.name
             const newName = generateName(`${pascalCase(oldName)}Ref`, scope)
@@ -182,6 +186,8 @@ function handleReactRename(j: JSCodeshift, root: Collection) {
      * const [e, f] = o.useState(0);
      * ->
      * const [e, SetE] = o.useState(0);
+     *
+     * @see https://react.dev/reference/react/useState
      */
     root
         .find(j.VariableDeclarator, {
@@ -189,9 +195,6 @@ function handleReactRename(j: JSCodeshift, root: Collection) {
             init: { type: 'CallExpression' },
         })
         .forEach((path) => {
-            const scope = path.scope
-            assertScopeExists(scope)
-
             const id = path.node.id as ArrayPattern
             if (!id.elements || id.elements.length === 0 || id.elements.length > 2) return
             if (!j.Identifier.check(id.elements[0]) && id.elements[0] !== null) return
@@ -210,8 +213,61 @@ function handleReactRename(j: JSCodeshift, root: Collection) {
             const setStateName = id.elements[1].name
             const baseName = stateName || setStateName
             if (baseName.length > MINIFIED_IDENTIFIER_THRESHOLD) return
+
+            const scope = path.scope
+            assertScopeExists(scope)
+
             const newName = generateName(`set${pascalCase(baseName)}`, scope)
             renameIdentifier(j, scope, setStateName, newName)
+        })
+
+    /**
+     * const Z = o.forwardRef((e, t) => {
+     * })
+     * ->
+     * const Z = o.forwardRef((props, ref) => {
+     * })
+     *
+     * @see https://react.dev/reference/react/forwardRef
+     */
+    root
+        .find(j.VariableDeclarator, {
+            id: { type: 'Identifier' },
+            init: { type: 'CallExpression' },
+        })
+        .forEach((path) => {
+            const init = path.node.init as CallExpression
+
+            // if (id.name.length > MINIFIED_IDENTIFIER_THRESHOLD) return
+
+            const callee = init.callee
+            const calleeName = getElementName(j, callee)
+            if (!calleeName.endsWith('.forwardRef') && calleeName !== 'forwardRef') return
+
+            const args = init.arguments
+            if (args.length !== 1) return
+
+            const arg = args[0]
+            if (!j.ArrowFunctionExpression.check(arg) && !j.FunctionExpression.check(arg)) return
+
+            const params = arg.params
+            if (params.length !== 2) return
+
+            const [props, ref] = params
+            if (!j.Identifier.check(props) || !j.Identifier.check(ref)) return
+
+            const scope = path.get('init', 'arguments', 0).scope
+            assertScopeExists(scope)
+
+            // rename the identifier
+            if (props.name.length < MINIFIED_IDENTIFIER_THRESHOLD) {
+                const newPropsName = generateName('props', scope)
+                renameIdentifier(j, scope, props.name, newPropsName)
+            }
+            if (ref.name.length < MINIFIED_IDENTIFIER_THRESHOLD) {
+                const newRefName = generateName('ref', scope)
+                renameIdentifier(j, scope, ref.name, newRefName)
+            }
         })
 }
 
