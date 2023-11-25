@@ -445,7 +445,6 @@ export default foo;
 `,
 )
 
-//  TODO:
 inlineTest.todo('Object.defineProperty with exports',
   `
 Object.defineProperty(exports, "foo", { value: 1 });
@@ -516,7 +515,7 @@ export { qux as baz };
 `,
 )
 
-inlineTest.fixme('mixed exports (which is actually not correct)',
+inlineTest.fixme('mixed exports',
   `
 module.exports = obj;
 module.exports.foo = 1;
@@ -527,7 +526,7 @@ obj.foo = 1;
 `,
 )
 
-inlineTest.fixme('mixed exports #2',
+inlineTest('mixed exports #2',
   `
 function foo() {}
 module.exports = foo;

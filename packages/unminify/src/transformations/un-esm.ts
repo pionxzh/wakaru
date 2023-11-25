@@ -406,6 +406,37 @@ function transformExport(context: Context) {
          * We will keep the last one and prune the previous one.
          */
         if (exportsMap.has(name)) {
+            /**
+             * If the current path is referencing the previous export,
+             * we can simply remove the current path.
+             *
+             * @example
+             * module.exports = foo;
+             * module.exports.default = module.exports;
+             */
+            if (name === 'default' && j.match(path.node, {
+                type: 'ExpressionStatement',
+                // @ts-expect-error skip check left part
+                expression: {
+                    type: 'AssignmentExpression',
+                    operator: '=',
+                    right: {
+                        type: 'MemberExpression',
+                        object: {
+                            type: 'Identifier',
+                            name: 'module',
+                        },
+                        property: {
+                            type: 'Identifier',
+                            name: 'exports',
+                        },
+                    },
+                },
+            })) {
+                path.prune()
+                return
+            }
+
             const { path: existingPath } = exportsMap.get(name)!
 
             /**
