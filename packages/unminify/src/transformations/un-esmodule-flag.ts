@@ -1,4 +1,4 @@
-import { isLooseTrue } from '../utils/checker'
+import { isExportObject, isLooseTrue } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
 import type { ASTNode, CallExpression, Identifier, JSCodeshift, MemberExpression, StringLiteral } from 'jscodeshift'
@@ -54,20 +54,6 @@ export const transformAST: ASTTransformation = (context) => {
             right: node => isLooseTrue(j, node),
         })
         .remove()
-}
-
-function isExportObject(j: JSCodeshift, node: ASTNode): node is MemberExpression | Identifier {
-    return isExports(j, node) || isModuleExports(j, node)
-}
-
-function isExports(j: JSCodeshift, node: ASTNode): node is Identifier {
-    return j.Identifier.check(node) && node.name === 'exports'
-}
-
-function isModuleExports(j: JSCodeshift, node: ASTNode): node is MemberExpression {
-    return j.MemberExpression.check(node)
-        && j.Identifier.check(node.object) && node.object.name === 'module'
-        && j.Identifier.check(node.property) && node.property.name === 'exports'
 }
 
 const __esModule = '__esModule'

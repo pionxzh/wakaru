@@ -1,5 +1,5 @@
 import { ImportManager, findReferences, generateName, isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
-import { isUndefined } from '../utils/checker'
+import { isExportObject, isUndefined } from '../utils/checker'
 import wrap from '../wrapAstTransformation'
 import { transformAST as interopRequireDefault } from './runtime-helpers/babel/interopRequireDefault'
 import { NAMESPACE_IMPORT_HINT, transformAST as interopRequireWildcard } from './runtime-helpers/babel/interopRequireWildcard'
@@ -8,7 +8,7 @@ import type { ASTTransformation, Context } from '../wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { NodePath } from 'ast-types/lib/node-path'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, MemberExpression, Node, StringLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
+import type { ASTNode, ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, MemberExpression, Node, StringLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 interface Params {
     hoist?: boolean
@@ -372,7 +372,7 @@ function isNamespaceImport(path: ASTPath<Node>) {
 }
 
 /**
- * Limitations:
+ * Known limitations:
  *
  * ```js
  * module.exports = { ... }
@@ -384,7 +384,7 @@ function isNamespaceImport(path: ASTPath<Node>) {
  * export const foo = 1
  * ```
  *
- * But it's technically not the same.
+ * But it's technically not correct.
  */
 function transformExport(context: Context) {
     const { j, root } = context
@@ -398,43 +398,21 @@ function transformExport(context: Context) {
         right: ExpressionKind,
         kind: 'const' | 'let' | 'var' = 'const',
     ) {
+        /**
+         * Multiple exports of the same name detected.
+         * We will keep the last one and prune the previous one.
+         */
         if (exportsMap.has(name)) {
-            const previousPath = exportsMap.get(name)!
+            const existingPath = exportsMap.get(name)!
+            const existingNode = existingPath.node
 
-            const previousNode = previousPath.node
-
-            /**
-             * Babel will always assign `undefined` to the export target
-             * before assigning the actual value.
-             *
-             * @example
-             * exports.foo = void 0
-             * exports.foo = 1
-             *
-             * So we can safely mute the warning here for this case.
-             */
-            const shouldIgnoreMultipleExports
-            // export default void 0
-            = (
-                j.ExportDefaultDeclaration.check(previousNode)
-                && isUndefined(j, previousNode.declaration)
-            )
-            // export var foo = void 0
-            || (
-                j.ExportNamedDeclaration.check(previousNode)
-                && j.VariableDeclaration.check(previousNode.declaration)
-                && j.VariableDeclarator.check(previousNode.declaration.declarations[0])
-                && previousNode.declaration.declarations[0].init
-                && isUndefined(j, previousNode.declaration.declarations[0].init)
-            )
+            const shouldIgnoreMultipleExports = isExportUndefine(j, existingNode)
             if (!shouldIgnoreMultipleExports) {
-                console.warn('previous', j(previousPath.node).toSource())
-                console.warn('current ', j(path.node).toSource())
                 console.warn(`Multiple exports of "${name}" found, only the last one will be kept`)
             }
 
-            previousPath.prune()
             exportsMap.delete(name)
+            existingPath.prune()
         }
         exportsMap.set(name, path)
 
@@ -601,44 +579,6 @@ function transformExport(context: Context) {
      * module.exports.foo = foo
      * ->
      * export { foo }
-     */
-    root
-        .find(j.ExpressionStatement, {
-            expression: {
-                type: 'AssignmentExpression',
-                operator: '=',
-                left: {
-                    type: 'MemberExpression',
-                    object: {
-                        type: 'MemberExpression',
-                        object: {
-                            type: 'Identifier',
-                            name: 'module',
-                        },
-                        property: {
-                            type: 'Identifier',
-                            name: 'exports',
-                        },
-                    },
-                    property: {
-                        type: 'Identifier',
-                    },
-                },
-            },
-        })
-        .forEach((path) => {
-            if (!isTopLevel(j, path)) return
-
-            const expression = path.node.expression as AssignmentExpression
-            const left = expression.left as MemberExpression
-            const right = expression.right
-
-            const name = (left.property as Identifier).name
-            replaceWithExportDeclaration(j, path, name, right)
-        })
-
-    /**
-     * Individual exports
      *
      * @example
      * exports.foo = 2
@@ -652,10 +592,7 @@ function transformExport(context: Context) {
                 operator: '=',
                 left: {
                     type: 'MemberExpression',
-                    object: {
-                        type: 'Identifier',
-                        name: 'exports',
-                    },
+                    object: (node: MemberExpression['object']) => isExportObject(j, node),
                     property: {
                         type: 'Identifier',
                     },
@@ -674,79 +611,10 @@ function transformExport(context: Context) {
         })
 
     /**
-     * Special case:
-     *
-     * Note: This pattern has been dropped by Babel in https://github.com/babel/babel/pull/15984
+     * This pattern is introduced by Babel in https://github.com/babel/babel/pull/15984
      *
      * @example
      * var foo = exports.foo = 1
-     */
-    root
-        .find(j.VariableDeclaration, {
-            declarations: [
-                {
-                    type: 'VariableDeclarator',
-                    id: {
-                        type: 'Identifier',
-                    },
-                    init: {
-                        type: 'AssignmentExpression',
-                        operator: '=',
-                        left: {
-                            type: 'MemberExpression',
-                            object: {
-                                type: 'Identifier',
-                                name: 'exports',
-                            },
-                            property: {
-                                type: 'Identifier',
-                            },
-                        },
-                    },
-                },
-            ],
-        })
-        .forEach((path) => {
-            if (!isTopLevel(j, path)) return
-
-            const kind = path.node.kind
-            const declaration = path.node.declarations[0] as VariableDeclarator
-            const id = declaration.id as Identifier
-            const init = declaration.init as AssignmentExpression
-            const left = init.left as MemberExpression
-            const right = init.right
-
-            const name = (left.property as Identifier).name
-
-            if (name === 'default') {
-                replaceWithExportDeclaration(j, path, name, id, kind)
-
-                const variableDeclaration = j.variableDeclaration(
-                    kind,
-                    [j.variableDeclarator(id, right)],
-                )
-
-                j(path).insertBefore(variableDeclaration)
-
-                return
-            }
-
-            replaceWithExportDeclaration(j, path, name, right, kind)
-
-            if (id.name !== name) {
-                const variableDeclaration = j.variableDeclaration(
-                    kind,
-                    [j.variableDeclarator(id, j.identifier(name))],
-                )
-
-                j(path).insertBefore(variableDeclaration)
-            }
-        })
-
-    /**
-     * Special case:
-     *
-     * @example
      * var bar = module.exports.baz = 2
      */
     root
@@ -762,17 +630,7 @@ function transformExport(context: Context) {
                         operator: '=',
                         left: {
                             type: 'MemberExpression',
-                            object: {
-                                type: 'MemberExpression',
-                                object: {
-                                    type: 'Identifier',
-                                    name: 'module',
-                                },
-                                property: {
-                                    type: 'Identifier',
-                                    name: 'exports',
-                                },
-                            },
+                            object: (node: MemberExpression['object']) => isExportObject(j, node),
                             property: {
                                 type: 'Identifier',
                             },
@@ -819,6 +677,25 @@ function transformExport(context: Context) {
         })
 
     exportsMap.clear()
+}
+
+/**
+ * Check if the node is an export of `undefined`
+ */
+function isExportUndefine(j: JSCodeshift, node: ASTNode) {
+    // export default void 0
+    return (
+        j.ExportDefaultDeclaration.check(node)
+     && isUndefined(j, node.declaration)
+    )
+    // export var foo = void 0
+    || (
+        j.ExportNamedDeclaration.check(node)
+        && j.VariableDeclaration.check(node.declaration)
+        && j.VariableDeclarator.check(node.declaration.declarations[0])
+        && node.declaration.declarations[0].init
+        && isUndefined(j, node.declaration.declarations[0].init)
+    )
 }
 
 export default wrap(transformAST)

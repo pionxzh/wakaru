@@ -1,4 +1,4 @@
-import type { ASTNode, BigIntLiteral, BinaryExpression, BooleanLiteral, JSCodeshift, NullLiteral, NumericLiteral, RegExpLiteral, StringLiteral, TemplateLiteral, UnaryExpression } from 'jscodeshift'
+import type { ASTNode, BigIntLiteral, BinaryExpression, BooleanLiteral, Identifier, JSCodeshift, MemberExpression, NullLiteral, NumericLiteral, RegExpLiteral, StringLiteral, TemplateLiteral, UnaryExpression } from 'jscodeshift'
 
 export function areNodesEqual(j: JSCodeshift, node1: ASTNode, node2: ASTNode): boolean {
     return j(node1).toSource() === j(node2).toSource()
@@ -78,4 +78,27 @@ export function isValueLiteral(j: JSCodeshift, node: ASTNode): node is StringLit
     || j.BigIntLiteral.check(node)
     || j.RegExpLiteral.check(node)
     || j.TemplateLiteral.check(node)
+}
+
+/**
+ * Check if node is `exports` or `module.exports`
+ */
+export function isExportObject(j: JSCodeshift, node: ASTNode): node is MemberExpression | Identifier {
+    return isExports(j, node) || isModuleExports(j, node)
+}
+
+/**
+ * Check if node is `exports` identifier
+ */
+export function isExports(j: JSCodeshift, node: ASTNode): node is Identifier {
+    return j.Identifier.check(node) && node.name === 'exports'
+}
+
+/**
+ * Check if node is `module.exports` member expression
+ */
+export function isModuleExports(j: JSCodeshift, node: ASTNode): node is MemberExpression {
+    return j.MemberExpression.check(node)
+        && j.Identifier.check(node.object) && node.object.name === 'module'
+        && j.Identifier.check(node.property) && node.property.name === 'exports'
 }
