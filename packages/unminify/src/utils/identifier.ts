@@ -49,6 +49,8 @@ export function generateName(input: string, scope: Scope | null = null, existedN
         .replace(/\\+/, '/')
         .replace(/^\/+/, '')
         .replace(/\/+/, '/')
+        // leading numbers to _{numbers}
+        .replace(/^[-0-9]+/, m => `_${m}`)
 
     // take last 2 parts of the path
     const candidate = cleanName.split(/\//).slice(-2).join('/')

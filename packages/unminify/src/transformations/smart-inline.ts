@@ -1,7 +1,7 @@
 import { findReferences } from '@wakaru/ast-utils'
 import { MultiMap } from '@wakaru/ds'
 import { mergeComments } from '../utils/comments'
-import { generateName } from '../utils/identifier'
+import { generateName, isValidIdentifier } from '../utils/identifier'
 import { nonNullable } from '../utils/utils'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -81,8 +81,8 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
                         type: 'Identifier',
                     },
                     // @ts-expect-error
-                    property: {
-                        type: 'Identifier',
+                    property: (property: MemberExpression['property']) => {
+                        return j.Identifier.check(property) || j.StringLiteral.check(property)
                     },
                 },
             }],
@@ -93,13 +93,12 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
 
             const variableDeclarator = declarations[0] as VariableDeclarator
             const init = variableDeclarator.init as MemberExpression
-            if (init.computed) return
 
             const object = init.object as Identifier
             objectAccessDeclarationMap.set(object.name, _node)
 
-            const property = init.property as Identifier
-            variableKindMap.set(property.name, _node.kind)
+            const propertyName = getMemberPropertyName(j, init)
+            if (propertyName) variableKindMap.set(propertyName, _node.kind)
         }
 
         // Collect all index accesses
@@ -117,6 +116,7 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
                     object: {
                         type: 'Identifier',
                     },
+                    computed: true,
                     // @ts-expect-error
                     property: {
                         type: 'NumericLiteral',
@@ -166,14 +166,13 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
                     type: 'Identifier',
                 },
                 // @ts-expect-error
-                property: {
-                    type: 'Identifier',
+                property: (property: MemberExpression['property']) => {
+                    return j.Identifier.check(property) || j.StringLiteral.check(property)
                 },
             },
         })) {
             const _node = node as ExpressionStatement
             const expression = _node.expression as MemberExpression
-            if (expression.computed) return
 
             const object = expression.object as Identifier
             objectAccessDeclarationMap.set(object.name, _node)
@@ -220,9 +219,10 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
         const preservedComments: CommentKind[] = []
         declarations.forEach((declaration) => {
             if (j.ExpressionStatement.check(declaration)) {
-                const expressionStatement = declaration as ExpressionStatement
+                const expressionStatement = declaration
                 const expression = expressionStatement.expression as MemberExpression
-                const propertyName = (expression.property as Identifier).name
+                const propertyName = getMemberPropertyName(j, expression)
+                if (!propertyName) return
 
                 const newPropertyName = destructuringPropertyMap.get(propertyName)
                     || generateName(propertyName, scope, declaredNames)
@@ -240,7 +240,9 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
 
             const variableDeclarator = declaration.declarations[0] as VariableDeclarator
             const variableName = (variableDeclarator.id as Identifier).name
-            const propertyName = ((variableDeclarator.init as MemberExpression).property as Identifier).name
+            const init = variableDeclarator.init as MemberExpression
+            const propertyName = getMemberPropertyName(j, init)
+            if (!propertyName) return
 
             const newPropertyName = destructuringPropertyMap.get(propertyName)
                 || generateName(propertyName, scope, declaredNames)
@@ -265,7 +267,7 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
         const properties = [...destructuringPropertyMap.entries()]
             .map(([propertyName, newPropertyName]) => {
                 const property = j.objectProperty(
-                    j.identifier(propertyName),
+                    isValidIdentifier(propertyName) ? j.identifier(propertyName) : j.literal(propertyName),
                     j.identifier(newPropertyName),
                 )
                 property.shorthand = propertyName === newPropertyName
@@ -280,6 +282,12 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
         mergeComments(destructuring, preservedComments)
         body.splice(insertIndex, 0, destructuring)
     })
+}
+
+function getMemberPropertyName(j: JSCodeshift, member: MemberExpression): string | null {
+    if (!member.computed && j.Identifier.check(member.property)) return member.property.name
+    if (member.computed && j.StringLiteral.check(member.property)) return member.property.value
+    return null
 }
 
 /**

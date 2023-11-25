@@ -94,6 +94,24 @@ console.log(x, y, color);
 `,
 )
 
+inlineTest.only('property destructuring - with string literal and invalid identifier',
+  `
+const t = e['color'];
+const n = e['2d'];
+e['type'];
+console.log(t, n);
+`,
+  `
+const {
+  color,
+  "2d": _2d,
+  type
+} = e;
+
+console.log(color, _2d);
+`,
+)
+
 inlineTest('property destructuring - with temp variable inlined',
   `
 const e = source;
