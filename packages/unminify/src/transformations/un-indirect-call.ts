@@ -1,4 +1,4 @@
-import { ImportManager, createObjectProperty, generateName, isTopLevel, removeDefaultImportIfUnused } from '@wakaru/ast-utils'
+import { ImportManager, createObjectProperty, generateName, getNodePosition, isTopLevel, removeDefaultImportIfUnused } from '@wakaru/ast-utils'
 import { insertAfter } from '../utils/insert'
 import wrap from '../wrapAstTransformation'
 import type { ASTTransformation } from '../wrapAstTransformation'
@@ -225,18 +225,15 @@ export const transformAST: ASTTransformation = (context) => {
 }
 
 function isPositionBetween(node: ASTNode, before: ASTNode, after: ASTNode) {
-    if (
-        'start' in node && typeof node.start === 'number'
-        && 'end' in node && typeof node.end === 'number'
-        && 'end' in before && typeof before.end === 'number'
-        && 'start' in after && typeof after.start === 'number'
-    ) {
-        return node.start > before.end && node.end < after.start
-    }
+    const posNode = getNodePosition(node)
+    const posBefore = getNodePosition(before)
+    const posAfter = getNodePosition(after)
 
-    // no position info, means it's our newly inserted node
+    // no position info, means it's our a inserted node
     // assume we have inserted it correctly before
-    return true
+    if (!posNode || !posBefore || !posAfter) return true
+
+    return posNode.start > posBefore.end && posNode.end < posAfter.start
 }
 
 export default wrap(transformAST)

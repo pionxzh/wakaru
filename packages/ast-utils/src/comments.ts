@@ -1,3 +1,4 @@
+import { getNodePosition } from './position'
 import type { CommentKind } from 'ast-types/lib/gen/kinds'
 import type { JSCodeshift, Node } from 'jscodeshift'
 
@@ -28,11 +29,9 @@ export function mergeComments(node: Node | Node[], commentsToMerge: CommentKind[
 
 function sortComments(comments: CommentKind[]) {
     return comments.sort((a, b) => {
-        // @ts-expect-error - start is not defined in the type
-        const startA = a.start || 0
-        // @ts-expect-error - start is not defined in the type
-        const startB = b.start || 0
-        return startA - startB
+        const posA = getNodePosition(a)
+        const posB = getNodePosition(b)
+        return (posA?.start ?? 0) - (posB?.start ?? 0)
     })
 }
 

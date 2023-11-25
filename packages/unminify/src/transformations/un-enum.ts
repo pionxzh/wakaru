@@ -1,4 +1,4 @@
-import { createObjectProperty, findDeclarations, findIIFEs, isIIFE, mergeComments } from '@wakaru/ast-utils'
+import { createObjectProperty, findDeclarations, findIIFEs, getNodePosition, isIIFE, mergeComments } from '@wakaru/ast-utils'
 import { fromPaths } from 'jscodeshift/src/Collection'
 import { assertScopeExists } from '../utils/assert'
 import wrap from '../wrapAstTransformation'
@@ -217,8 +217,7 @@ function handleEnumIIFE(j: JSCodeshift, path: ASTPath<CallExpression>, iifePath:
         // find the closest declaration before the enum IIFE
         const candidates = decls
             .filter((path) => {
-                // @ts-expect-error
-                return path.node.start! < iifePath.node.start!
+                return (getNodePosition(path.node)?.start ?? 0) < (getNodePosition(iifePath.node)?.start ?? 0)
             })
             .paths()
         if (candidates.length > 0) declarator = candidates.at(-1)!.node
