@@ -39,7 +39,7 @@ function* func() {
 )
 
 inlineTestGenerator('restore __generator to yield expression (advanced)',
-    `
+  `
 function func() {
   return __awaiter(this, void 0, void 0, function () {
     var result, json;

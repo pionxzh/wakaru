@@ -4,7 +4,7 @@ import transform from '../un-es6-class'
 const inlineTest = defineInlineTest(transform)
 
 inlineTest('simple class declaration',
-    `
+  `
 var Foo = (function () {
     function Foo(name) {
         this.name = name;
@@ -13,7 +13,7 @@ var Foo = (function () {
     return Foo;
 }());
 `,
-    `
+  `
 class Foo {
     constructor(name) {
         this.name = name;
@@ -24,7 +24,7 @@ class Foo {
 )
 
 inlineTest('advanced class declaration',
-    `
+  `
 var Foo = (function() {
     function t(name) {
         this.name = name;
@@ -39,7 +39,7 @@ var Foo = (function() {
     return t;
 })();
 `,
-    `
+  `
 class Foo {
     constructor(name) {
         this.name = name;

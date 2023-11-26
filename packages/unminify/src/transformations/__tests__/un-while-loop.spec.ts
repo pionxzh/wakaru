@@ -42,12 +42,12 @@ while (i < 10) {
 )
 
 inlineTest('should not transform for with init, test or update',
-    `
+  `
 for (let i = 0;;) {}
 
 for (;; i++) {}
 `,
-    `
+  `
 for (let i = 0;;) {}
 
 for (;; i++) {}

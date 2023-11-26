@@ -9,7 +9,7 @@ inlineTest('Restore type constructors from minified code.',
 x + "";
 [,,,];
 `,
-    `
+  `
 Number(x);
 String(x);
 Array(3);
@@ -17,7 +17,7 @@ Array(3);
 )
 
 inlineTest('complex cases',
-    `
+  `
 var a = 6 + +x;
 var b = x + "a";
 var c = 'long string' + x + '';
@@ -35,7 +35,7 @@ function foo(numStr, result) {
 const emptyArr = [];
 const oneArr = [,];
 `,
-    `
+  `
 var a = 6 + Number(x);
 var b = x + "a";
 var c = String('long string' + x);

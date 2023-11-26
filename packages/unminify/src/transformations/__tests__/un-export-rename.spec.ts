@@ -17,11 +17,11 @@ export const c = 2;
 )
 
 inlineTest('merge function declaration and export declaration',
-    `
+  `
 function a() {}
 export const b = a;
 `,
-    `
+  `
 export function b() {}
 `,
 )
@@ -50,42 +50,42 @@ export function fib(n) {
 `)
 
 inlineTest('merge arrow function expression and export declaration',
-    `
+  `
 const a = () => {}
 export const b = a
 `,
-    `
+  `
 export const b = () => {};
 `,
 )
 
 inlineTest('merge class declaration and export declaration',
-    `
+  `
 class o {}
 export const App = o
 `,
-    `
+  `
 export class App {}
 `,
 )
 
 inlineTest('merge class expression and export declaration',
-    `
+  `
 const o = class {};
 export const App = o;
 `,
-    `
+  `
 export const App = class {};
 `,
 )
 
 inlineTest('do not modify redeclare export declaration when the newName is declared',
-    `
+  `
 const a = 1;
 const b = 2;
 export { b as a };
 `,
-    `
+  `
 const a = 1;
 const b = 2;
 export { b as a };
@@ -93,11 +93,11 @@ export { b as a };
 )
 
 inlineTest('do not modify export default',
-    `
+  `
 const o = class {};
 export default o;
 `,
-    `
+  `
 const o = class {};
 export default o;
 `,

@@ -15,7 +15,7 @@ inlineTest('Convert function calls on instances of built-in objects to equivalen
 /./.test.call(/foo/, "bar");
 "".indexOf.call(e, "bar");
 `,
-    `
+  `
 Array.prototype.splice.apply(a, [1, 2, b, c]);
 Function.prototype.call.apply(console.log, console, ["foo"]),
 Function.prototype.call.apply(console.log, console, ["foo"]);
