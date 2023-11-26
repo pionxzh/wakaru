@@ -77,6 +77,18 @@ const moduleMatchers: Record<string, Array<string | RegExp | Array<string | RegE
             /\w+\[\w+\]\s?=\s?\w+\[\w+\]/,
         ],
     ],
+    '@babel/runtime/helpers/taggedTemplateLiteral': [
+        [
+            /if\s?\(!(?<raw>\w+)\)\s?\{\s+?\k<raw>\s?=\s?(?<strings>\w+)\.slice\(0\);?\s+?}/,
+            /return\sObject\.freeze\(Object\.defineProperties\(\w+,\s?\{\s?raw:\s?\{\s?value:\s?Object\.freeze\((?<raw>\w+)\)\s?}\s?}\s?\)\)/,
+        ],
+    ],
+    '@babel/runtime/helpers/taggedTemplateLiteralLoose ': [
+        [
+            /if\s?\(!(?<raw>\w+)\)\s?\{\s+?\k<raw>\s?=\s?(?<strings>\w+)\.slice\(0\);?\s+?}/,
+            /(?<strings>\w+)\.raw\s?=\s?(?<raw>\w+)/,
+        ],
+    ],
     '@babel/runtime/helpers/typeof': [
         /\w+\s?=\s?"function"\s?===?\s?typeof Symbol\s?&&\s?"symbol"\s?===?\s?typeof Symbol\.iterator\s?\?/,
         /&& \w+\.constructor\s?===?\s?Symbol\s?&&\s?\w+\s?!==?\s?Symbol\.prototype\s?\?\s?"symbol"\s?:\s?typeof\s?\w+/,
