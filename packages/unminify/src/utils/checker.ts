@@ -5,6 +5,46 @@ export function areNodesEqual(j: JSCodeshift, node1: ASTNode, node2: ASTNode): b
 }
 
 /**
+ * Check if node is a simple value.
+ * Meaning it's duplication won't cause any side effects.
+ *
+ * Includes:
+ * - string
+ * - number
+ * - bigInt
+ * - boolean
+ * - undefined
+ * - null
+ *
+ * Excludes:
+ * - template literal (might contain other expressions)
+ * - symbol ( Symbol() !== Symbol() )
+ * - MemberExpression (might have side effects)
+ * - CallExpression (might have side effects)
+ */
+export function isSimpleValue(j: JSCodeshift, node: ASTNode): node is StringLiteral | NumericLiteral | BooleanLiteral | NullLiteral | UnaryExpression | Identifier | BigIntLiteral {
+    return (
+        j.NullLiteral.check(node)
+     || j.StringLiteral.check(node)
+     || j.NumericLiteral.check(node)
+     || isUndefined(j, node)
+     || isLooseBoolean(j, node)
+     || j.BigIntLiteral.check(node)
+    )
+}
+
+/**
+ * Check if node is a loose boolean-like value.
+ * Includes:
+ * - Boolean
+ * - !0, !1 and all ![thing]
+ */
+export function isLooseBoolean(j: JSCodeshift, node: ASTNode): node is BooleanLiteral | UnaryExpression {
+    return j.BooleanLiteral.check(node)
+    || (j.UnaryExpression.check(node) && node.operator === '!')
+}
+
+/**
  * Check if node is `true` literal
  */
 export function isTrue(j: JSCodeshift, node: ASTNode): node is BooleanLiteral {

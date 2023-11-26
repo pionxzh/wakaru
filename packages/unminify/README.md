@@ -18,6 +18,7 @@ It covers most of patterns that are used by the following tools:
   - [`un-typeof`](#un-typeof)
   - [`un-sequence-expression`](#un-sequence-expression)
   - [`un-variable-merging`](#un-variable-merging)
+  - [`un-assignment-expression`](#un-assignment-expression)
   - [`un-bracket-notation`](#un-bracket-notation)
   - [`un-while-loop`](#un-while-loop)
   - [`un-flip-comparisons`](#un-flip-comparisons)
@@ -146,6 +147,17 @@ Separate variable declarators that are not used in for statements.
 - for (var i = 0, j = 0, k = 0; j < 10; k++) {}
 + var i = 0
 + for (var j = 0, k = 0; j < 10; k++) {}
+```
+
+### `un-assignment-expression`
+
+Separate chained assignment into multiple statements.
+
+```diff
+- a = b = c = 1
++ a = 1
++ b = 1
++ c = 1
 ```
 
 ### `un-bracket-notation`

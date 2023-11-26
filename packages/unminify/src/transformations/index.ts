@@ -3,6 +3,7 @@ import moduleMapping from './module-mapping'
 import prettier from './prettier'
 import smartInline from './smart-inline'
 import smartRename from './smart-rename'
+import unAssignmentMerging from './un-assignment-merging'
 import unAsyncAwait from './un-async-await'
 import unBoolean from './un-boolean'
 import unBracketNotation from './un-bracket-notation'
@@ -44,10 +45,11 @@ export const transformationMap: {
     'un-curly-braces': unCurlyBraces, // add curly braces so that other transformations can works easier, but generally this is not required
     'un-sequence-expression1': unSequenceExpression, // curly braces can bring out return sequence expression, so it runs before this
     'un-variable-merging': unVariableMerging,
+    'un-assignment-merging': unAssignmentMerging,
 
     // second stage - prepare the code for unminify
     'un-runtime-helper': unRuntimeHelper, // eliminate helpers as early as possible
-    'un-esm': unEsm, // relies on `un-runtime-helper` to eliminate helpers around `require` calls
+    'un-esm': unEsm, // relies on `un-runtime-helper` to eliminate helpers around `require` calls, relies on `un-assignment-merging` to split exports
     'un-enum': unEnum, // relies on `un-sequence-expression`
 
     // third stage - mostly one-to-one transformation
