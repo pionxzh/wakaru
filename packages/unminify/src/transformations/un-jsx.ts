@@ -12,17 +12,45 @@ interface Params {
     pragmaFrag?: string
 }
 
+enum Runtime {
+    Classic = 'classic',
+    Automatic = 'automatic',
+}
+
+/**
+ * - createElement(type, props, ...children)
+ * - jsx(type, props with children, key?)
+ * - jsxs(type, props without children, key?)
+ * - jsxDEV(type, props with children, key, isStaticChildren, __source, __self)
+ */
 const DEFAULT_PRAGMA_CANDIDATES = [
-    'createElement', // React: runtime = "classic" (`React.createElement`)
-    'jsx', // React: runtime = "automatic" (`jsxRuntime.jsx`)
-    'jsxs', // React: runtime = "automatic" (`jsxRuntime.jsxs`)
+    'createElement', // runtime = "classic" (`React.createElement`)
+    'jsx', // runtime = "automatic" (`jsxRuntime.jsx`)
+    'jsxs', // runtime = "automatic" (`jsxRuntime.jsxs`)
     '_jsx', // `import { jsx as _jsx } from 'react/jsx-runtime'`
+    '_jsxs', // `import { jsxs as _jsxs } from 'react/jsx-runtime'`
+    'jsxDEV', // runtime = "automatic" (`jsxRuntime.jsxDEV`) (dev only)
+    'jsxsDEV', // runtime = "automatic" (`jsxRuntime.jsxsDEV`) (dev only)
     'h', // Preact
 ]
 
 const DEFAULT_PRAGMA_FRAG_CANDIDATES = [
     'Fragment', // React
 ]
+
+// /**
+//  * Meta props injected by bundlers like Babel.
+//  *
+//  * These props will be removed to improve readability.
+//  */
+// const META_PROPS = [
+//     // dev only props for React to generate warnings
+//     // https://github.com/babel/babel/blob/main/packages/babel-plugin-transform-react-jsx-self/src/index.ts
+//     '__self',
+//     // dev only props for React to add {fileName, lineNumber, columnNumber} annotations
+//     // https://github.com/babel/babel/blob/main/packages/babel-plugin-transform-react-jsx-source/src/index.ts
+//     '__source',
+// ]
 
 /**
  * Converts `React.createElement` to JSX.
@@ -60,25 +88,13 @@ export const transformAST: ASTTransformation<Params> = (context, params) => {
 
     root
         .find(j.CallExpression, {
-            callee: (callee: CallExpression['callee']) => {
-                if (j.Identifier.check(callee)) {
-                    return pragmas.includes(callee.name)
-                }
-
-                if (
-                    j.MemberExpression.check(callee)
-                    && j.Identifier.check(callee.object)
-                    && j.Identifier.check(callee.property)
-                ) {
-                    return pragmas.includes(callee.property.name)
-                }
-                return false
-            },
+            callee: (callee: CallExpression['callee']) => !!getPragma(j, callee, pragmas),
         })
         .paths()
+        // bottom-up transformation
         .reverse()
         .forEach((path) => {
-            const jsxElement = toJSX(j, path.node, pragmaFrags)
+            const jsxElement = toJSX(j, path.node, pragmas, pragmaFrags)
             if (jsxElement) {
                 const parentWithComments = j.ExpressionStatement.check(path.parent.node) ? path.parent : path
                 removePureAnnotation(j, parentWithComments.node)
@@ -88,7 +104,15 @@ export const transformAST: ASTTransformation<Params> = (context, params) => {
         })
 }
 
-function toJSX(j: JSCodeshift, node: CallExpression, pragmaFrags: string[]): JSXElement | JSXFragment | null {
+function toJSX(j: JSCodeshift, node: CallExpression, pragmas: string[], pragmaFrags: string[]): JSXElement | JSXFragment | null {
+    const pragma = getPragma(j, node.callee, pragmas)
+    if (!pragma) return null
+
+    const runtime = pragma === 'jsx' || pragma === 'jsxs' || pragma === '_jsx' || pragma === '_jsxs' || pragma === 'jsxDEV' || pragma === 'jsxsDEV'
+        ? Runtime.Automatic
+        : Runtime.Classic
+    // const isDevelopment = pragma === 'jsxDEV' || pragma === 'jsxsDEV'
+
     const [type, props, ...childrenArgs] = node.arguments
     if (!type || !props) return null
 
@@ -101,25 +125,44 @@ function toJSX(j: JSCodeshift, node: CallExpression, pragmaFrags: string[]): JSX
 
     let children: Array<JSXExpressionContainer | JSXElement | JSXFragment | JSXText | JSXSpreadChild | LiteralKind>
     const childrenFromAttribute = attributes.find(attr => j.JSXAttribute.check(attr) && attr.name.name === 'children') as JSXAttribute | undefined
-    if (childrenFromAttribute) {
+    /**
+     * The third argument will be the optional `key` if runtime = "automatic"
+     * if children is from attribute, assume we are using runtime = "automatic"
+     *
+     * @example
+     * function jsx(type, props, key?) {}
+     */
+    if (childrenFromAttribute || runtime === Runtime.Automatic) {
         if (childrenArgs.length > 0) {
-            console.warn(`[un-jsx] children from attribute and arguments are both present: ${j(node).toSource()}`)
-            return null
+            const key = childrenArgs[0]
+            // key might be void 0, this is inserted by bundlers
+            if (j.SpreadElement.check(key)) return null
+
+            if (!isUndefined(j, key)) {
+                const stubKeyObject = j.objectExpression([j.objectProperty(j.identifier('key'), key)])
+                const keyAttributes = toJsxAttributes(j, stubKeyObject)
+                attributes.splice(0, 0, ...keyAttributes)
+            }
+
+            // Note: we simply skip all other arguments as they might be used for dev only
         }
 
-        attributes.splice(attributes.indexOf(childrenFromAttribute), 1)
+        // Transform `children` attribute to children
+        if (childrenFromAttribute) {
+            attributes.splice(attributes.indexOf(childrenFromAttribute), 1)
 
-        if (
-            j.JSXExpressionContainer.check(childrenFromAttribute.value)
-            && j.ArrayExpression.check(childrenFromAttribute.value.expression)
-        ) {
-            children = childrenFromAttribute.value.expression.elements
-                .filter(nonNullable)
-                .map(child => toJsxChild(j, child))
-                .filter(nonNullable)
-        }
-        else if (childrenFromAttribute.value) {
-            children = [toJsxChild(j, childrenFromAttribute.value)].filter(nonNullable)
+            if (
+                j.JSXExpressionContainer.check(childrenFromAttribute.value)
+             && j.ArrayExpression.check(childrenFromAttribute.value.expression)
+            ) {
+                children = childrenFromAttribute.value.expression.elements
+                    .filter(nonNullable)
+                    .map(child => toJsxChild(j, child))
+                    .filter(nonNullable)
+            }
+            else if (childrenFromAttribute.value) {
+                children = [toJsxChild(j, childrenFromAttribute.value)].filter(nonNullable)
+            }
         }
     }
 
@@ -455,4 +498,19 @@ function renameComponentToMakeItValid(j: JSCodeshift, root: Collection, pragmas:
         })
 }
 
+function getPragma(j: JSCodeshift, node: ExpressionKind, pragmas: string[]): string | null {
+    if (j.Identifier.check(node)) {
+        return pragmas.includes(node.name) ? node.name : null
+    }
+
+    if (
+        j.MemberExpression.check(node)
+        && j.Identifier.check(node.object)
+        && j.Identifier.check(node.property)
+    ) {
+        return pragmas.includes(node.property.name) ? node.property.name : null
+    }
+
+    return null
+}
 export default wrap(transformAST)

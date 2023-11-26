@@ -196,10 +196,10 @@ var div = <Component {...props} foo="bar" />;
 `,
 )
 
-inlineTestWithOptions('jsx with custom pragma', { pragma: 'jsx' },
+inlineTestWithOptions('jsx with custom pragma', { pragma: 'xxx' },
   `
 function fn() {
-  return jsx("div", null);
+  return xxx("div", null);
 }
 `,
   `
@@ -248,6 +248,27 @@ jsxs("div", {
 `,
   `
 <div><span>Hello</span><span>{world}</span></div>;
+`,
+)
+
+inlineTest('jsx with runtime: automatic',
+  `
+const Foo = () => {
+  return /*#__PURE__*/_jsxs("div", {
+    children: [/*#__PURE__*/_jsx("p", {
+      id: "a",
+    }, void 0), /*#__PURE__*/_jsx("p", {
+      children: "bar"
+    }, "b"), /*#__PURE__*/_jsx("p", {
+      children: "baz"
+    }, c)]
+  });
+};
+`,
+  `
+const Foo = () => {
+  return <div><p id="a" /><p key="b">bar</p><p key={c}>baz</p></div>;
+};
 `,
 )
 
