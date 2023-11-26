@@ -2,7 +2,7 @@
 
 This package offers a comprehensive set of transformation rules designed to unminify and enhance the readability of code.
 
-It covered most of patterns that are used by the following tools:
+It covers most of patterns that are used by the following tools:
 - [Terser](https://terser.org/) (Check the [Terser Progress](./docs/Terser.md))
 - [Babel](https://babeljs.io/) (Check the [Babel Progress](./docs/Babel.md))
 - [SWC](https://swc.rs/) (Check the [SWC Progress](./docs/SWC.md))
@@ -205,7 +205,7 @@ Unwraps nested ternary expressions and binary expression into if-else statements
 + }
 ```
 
-This rule will try to adopting `Early Exit` pattern if possible.
+This rule will try to adopt the `Early Exit` strategy if possible.
 
 ```diff
 function fn () {
