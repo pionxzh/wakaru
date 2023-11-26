@@ -53,7 +53,7 @@ const DEFAULT_PRAGMA_FRAG_CANDIDATES = [
 // ]
 
 /**
- * Converts `React.createElement` to JSX.
+ * Converts `React.createElement` and `jsxRuntime.jsx` back to JSX.
  */
 export const transformAST: ASTTransformation<Params> = (context, params) => {
     const { root, j } = context

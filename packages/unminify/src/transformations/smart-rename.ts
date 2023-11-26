@@ -35,9 +35,21 @@ const MINIFIED_IDENTIFIER_THRESHOLD = 2
  * ->
  * const uContext = o.createContext(u);
  *
+ * const d = o.useRef(u);
+ * ->
+ * const uRef = o.useRef(u);
+ *
  * const [e, f] = o.useState(0);
  * ->
  * const [e, SetE] = o.useState(0);
+ *
+ * const [e, f] = o.useReducer(reducer, initialArg, init?);
+ * ->
+ * const [eState, fDispatch] = o.useReducer(reducer, initialArg, init?);
+ *
+ * const Z = o.forwardRef((e, t) => { ... })
+ * ->
+ * const Z = o.forwardRef((props, ref) => { ... })
  */
 export const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
@@ -264,11 +276,9 @@ function handleReactRename(j: JSCodeshift, root: Collection) {
         })
 
     /**
-     * const Z = o.forwardRef((e, t) => {
-     * })
+     * const Z = o.forwardRef((e, t) => { ... })
      * ->
-     * const Z = o.forwardRef((props, ref) => {
-     * })
+     * const Z = o.forwardRef((props, ref) => { ... })
      *
      * @see https://react.dev/reference/react/forwardRef
      */
