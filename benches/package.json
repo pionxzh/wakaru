@@ -1,0 +1,16 @@
+{
+  "name": "@wakaru/benches",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "author": "Pionxzh",
+  "license": "MIT",
+  "main": "src/index.ts",
+  "scripts": {
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix"
+  },
+  "devDependencies": {
+    "benny": "^3.7.1"
+  }
+}
