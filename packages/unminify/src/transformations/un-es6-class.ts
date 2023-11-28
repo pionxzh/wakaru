@@ -1,7 +1,6 @@
-import { findReferences } from '@wakaru/ast-utils'
+import { findReferences, wrapAstTransformation } from '@wakaru/ast-utils'
 import { findHelperLocals, removeHelperImport } from '../utils/import'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
 import type { AssignmentExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, MemberExpression, VariableDeclarator } from 'jscodeshift'
@@ -361,4 +360,4 @@ export const transformAST: ASTTransformation = (context, params) => {
         })
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

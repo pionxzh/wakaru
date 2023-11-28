@@ -1,7 +1,6 @@
-import { ImportManager, createObjectProperty, generateName, getNodePosition, isTopLevel, removeDefaultImportIfUnused } from '@wakaru/ast-utils'
+import { ImportManager, createObjectProperty, generateName, getNodePosition, isTopLevel, removeDefaultImportIfUnused, wrapAstTransformation } from '@wakaru/ast-utils'
 import { insertAfter } from '../utils/insert'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTNode, Identifier, MemberExpression, ObjectPattern, ObjectProperty, SequenceExpression, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
@@ -236,4 +235,4 @@ function isPositionBetween(node: ASTNode, before: ASTNode, after: ASTNode) {
     return posNode.start > posBefore.end && posNode.end < posAfter.start
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

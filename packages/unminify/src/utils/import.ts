@@ -1,6 +1,6 @@
 import { ImportManager, findDeclaration } from '@wakaru/ast-utils'
 import type { SharedParams } from './types'
-import type { Context } from '../wrapAstTransformation'
+import type { Context } from '@wakaru/ast-utils'
 import type { Scope } from 'ast-types/lib/scope'
 import type { JSCodeshift } from 'jscodeshift'
 

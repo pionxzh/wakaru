@@ -1,6 +1,6 @@
+import { wrapAstTransformation } from '@wakaru/ast-utils'
 import { transform } from 'lebab'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { LebabRule } from 'lebab'
 
 /**
@@ -37,4 +37,4 @@ export const transformASTWithRules = (rules: LebabRule[]): ASTTransformation => 
     return transformLebab(code, rules).code
 }
 
-export default wrap(transformASTWithRules(allLebabRules))
+export default wrapAstTransformation(transformASTWithRules(allLebabRules))

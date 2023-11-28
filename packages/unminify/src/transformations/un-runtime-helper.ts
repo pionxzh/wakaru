@@ -1,8 +1,7 @@
-import { getTopLevelStatements, mergeComments } from '@wakaru/ast-utils'
-import wrap from '../wrapAstTransformation'
+import { getTopLevelStatements, mergeComments, wrapAstTransformation } from '@wakaru/ast-utils'
 import { transformAST as babelHelpers } from './runtime-helpers'
 import type { SharedParams } from '../utils/types'
-import type { ASTTransformation, Context } from '../wrapAstTransformation'
+import type { ASTTransformation, Context } from '@wakaru/ast-utils'
 import type { FunctionDeclaration } from 'jscodeshift'
 
 /**
@@ -49,4 +48,4 @@ export const transformAST: ASTTransformation<SharedParams> = (context, params) =
     babelHelpers(context, params)
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

@@ -1,8 +1,7 @@
-import { generateName, isDeclared, renameIdentifier } from '@wakaru/ast-utils'
+import { generateName, isDeclared, renameIdentifier, wrapAstTransformation } from '@wakaru/ast-utils'
 import { assertScopeExists } from '../utils/assert'
 import { pascalCase } from '../utils/case'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, ArrayPattern, ArrowFunctionExpression, CallExpression, ClassMethod, Collection, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, ObjectMethod, ObjectPattern } from 'jscodeshift'
@@ -340,4 +339,4 @@ function getElementName(j: JSCodeshift, node: ExpressionKind): string {
     return '[unknown]'
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

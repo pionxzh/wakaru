@@ -1,6 +1,5 @@
-import { mergeComments } from '@wakaru/ast-utils'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import { mergeComments, wrapAstTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 
 /**
  * Converts for loop without init and update to while loop.
@@ -41,4 +40,4 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

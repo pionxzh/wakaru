@@ -1,5 +1,5 @@
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import { wrapAstTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 
 /**
  * Inline extracted built-in Object static methods.
@@ -19,4 +19,4 @@ export const transformAST: ASTTransformation = (_context) => {
     // TODO: implement
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

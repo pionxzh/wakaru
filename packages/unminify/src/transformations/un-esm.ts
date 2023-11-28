@@ -1,10 +1,9 @@
-import { ImportManager, findReferences, generateName, isTopLevel, renameIdentifier } from '@wakaru/ast-utils'
+import { ImportManager, findReferences, generateName, isTopLevel, renameIdentifier, wrapAstTransformation } from '@wakaru/ast-utils'
 import { isExportObject, isStringObjectProperty, isUndefined } from '../utils/checker'
-import wrap from '../wrapAstTransformation'
 import { transformAST as interopRequireDefault } from './runtime-helpers/babel/interopRequireDefault'
 import { NAMESPACE_IMPORT_HINT, transformAST as interopRequireWildcard } from './runtime-helpers/babel/interopRequireWildcard'
 import type { SharedParams } from '../utils/types'
-import type { ASTTransformation, Context } from '../wrapAstTransformation'
+import type { ASTTransformation, Context } from '@wakaru/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { NodePath } from 'ast-types/lib/node-path'
 import type { Scope } from 'ast-types/lib/scope'
@@ -751,4 +750,4 @@ function isInitializationExport(j: JSCodeshift, node: ASTNode) {
         && isUndefined(j, node.expression.right)
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

@@ -1,11 +1,10 @@
-import { mergeComments, removeDeclarationIfUnused } from '@wakaru/ast-utils'
+import { mergeComments, removeDeclarationIfUnused, wrapAstTransformation } from '@wakaru/ast-utils'
 import { areNodesEqual, isNotNullBinary, isNull, isNullBinary, isUndefined, isUndefinedBinary } from '../utils/checker'
 import { negateCondition } from '../utils/condition'
 import { isDecisionTreeLeaf, makeDecisionTree, makeDecisionTreeWithConditionSplitting, negateDecisionTree } from '../utils/decisionTree'
 import { smartParenthesized } from '../utils/parenthesized'
-import wrap from '../wrapAstTransformation'
 import type { DecisionTree } from '../utils/decisionTree'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { ASTPath, ConditionalExpression, JSCodeshift, LogicalExpression } from 'jscodeshift'
 
@@ -195,4 +194,4 @@ function isFalsyBranch(j: JSCodeshift, tree: DecisionTree | null): boolean {
         && (!falseBranch || isFalsyBranch(j, falseBranch))
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

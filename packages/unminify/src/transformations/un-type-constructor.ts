@@ -1,5 +1,5 @@
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import { wrapAstTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 
 /**
  * Restore type constructors from minified code.
@@ -72,4 +72,4 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

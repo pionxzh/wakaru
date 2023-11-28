@@ -1,9 +1,8 @@
-import { generateName, removePureAnnotation } from '@wakaru/ast-utils'
+import { generateName, removePureAnnotation, wrapAstTransformation } from '@wakaru/ast-utils'
 import { pascalCase } from '../utils/case'
 import { isNull, isTrue, isUndefined } from '../utils/checker'
 import { nonNullable } from '../utils/utils'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { ExpressionKind, LiteralKind } from 'ast-types/lib/gen/kinds'
 import type { ASTNode, CallExpression, Collection, Identifier, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, MemberExpression, RestElement, SpreadElement, StringLiteral, VariableDeclarator } from 'jscodeshift'
 
@@ -513,4 +512,4 @@ function getPragma(j: JSCodeshift, node: ExpressionKind, pragmas: string[]): str
 
     return null
 }
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

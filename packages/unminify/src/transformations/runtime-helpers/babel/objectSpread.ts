@@ -1,10 +1,9 @@
-import { findReferences } from '@wakaru/ast-utils'
+import { findReferences, wrapAstTransformation } from '@wakaru/ast-utils'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
-import wrap from '../../../wrapAstTransformation'
 import { handleSpreadHelper } from './_spread'
 import type { SharedParams } from '../../../utils/types'
-import type { ASTTransformation, Context } from '../../../wrapAstTransformation'
+import type { ASTTransformation, Context } from '@wakaru/ast-utils'
 import type { Scope } from 'ast-types/lib/scope'
 import type { CallExpression, Identifier } from 'jscodeshift'
 
@@ -85,4 +84,4 @@ function handleObjectDestructuringEmpty(context: Context, params: SharedParams) 
     })
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

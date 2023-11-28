@@ -1,7 +1,6 @@
-import { mergeComments } from '@wakaru/ast-utils'
+import { mergeComments, wrapAstTransformation } from '@wakaru/ast-utils'
 import { replaceWithMultipleStatements } from '../utils/insert'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { ForStatement } from 'jscodeshift'
 
 /**
@@ -91,4 +90,4 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

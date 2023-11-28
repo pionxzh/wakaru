@@ -1,9 +1,8 @@
-import { isVariableIdentifier } from '@wakaru/ast-utils'
+import { isVariableIdentifier, wrapAstTransformation } from '@wakaru/ast-utils'
 import { isLogicalNot, isUndefined } from '../utils/checker'
 import { logicalExpressionToConditionalExpression, negateCondition } from '../utils/condition'
-import wrap from '../wrapAstTransformation'
 import { transformASTWithRules } from './lebab'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { PatternKind, StatementKind } from 'ast-types/lib/gen/kinds'
 import type { ASTPath, ArrowFunctionExpression, AssignmentExpression, AssignmentPattern, BinaryExpression, BlockStatement, ClassMethod, ConditionalExpression, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, MemberExpression, NumericLiteral, ObjectMethod } from 'jscodeshift'
 
@@ -393,4 +392,4 @@ function matchDefaultParameter(j: JSCodeshift, node: ConditionalExpression) {
     }
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

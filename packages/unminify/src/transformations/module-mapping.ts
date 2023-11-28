@@ -1,6 +1,5 @@
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
-import type { ModuleMapping } from '@wakaru/ast-utils'
+import { wrapAstTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation, ModuleMapping } from '@wakaru/ast-utils'
 import type { NumericLiteral, StringLiteral } from 'jscodeshift'
 
 /**
@@ -33,4 +32,4 @@ export const transformAST: ASTTransformation<Params> = (context, params = { modu
         })
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

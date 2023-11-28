@@ -1,8 +1,7 @@
-import { createObjectProperty, findReferences, generateName, mergeComments } from '@wakaru/ast-utils'
+import { createObjectProperty, findReferences, generateName, mergeComments, wrapAstTransformation } from '@wakaru/ast-utils'
 import { MultiMap } from '@wakaru/ds'
 import { nonNullable } from '../utils/utils'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { CommentKind, StatementKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ExpressionStatement, Identifier, JSCodeshift, MemberExpression, NumericLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
@@ -362,4 +361,4 @@ function getMostRestrictiveKind(kinds: Kind[]): Kind | undefined {
     return valToKind[minVal]
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

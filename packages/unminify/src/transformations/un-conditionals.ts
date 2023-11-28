@@ -1,10 +1,10 @@
+import { wrapAstTransformation } from '@wakaru/ast-utils'
 import { areNodesEqual, isValueLiteral } from '../utils/checker'
 import { negateCondition } from '../utils/condition'
 import { makeDecisionTree } from '../utils/decisionTree'
 import { replaceWithMultipleStatements } from '../utils/insert'
-import wrap from '../wrapAstTransformation'
 import type { DecisionTree } from '../utils/decisionTree'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { ExpressionKind, StatementKind } from 'ast-types/lib/gen/kinds'
 import type { ASTNode, ConditionalExpression, JSCodeshift, LogicalExpression, SwitchCase } from 'jscodeshift'
 
@@ -452,4 +452,4 @@ function isComparisonBase(j: JSCodeshift, node: ASTNode): boolean {
     return true
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

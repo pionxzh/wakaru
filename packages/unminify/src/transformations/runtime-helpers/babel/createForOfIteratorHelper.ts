@@ -1,10 +1,9 @@
-import { findDeclaration, findReferences, generateName, removeVariableDeclarator } from '@wakaru/ast-utils'
+import { findDeclaration, findReferences, generateName, removeVariableDeclarator, wrapAstTransformation } from '@wakaru/ast-utils'
 import { fromPaths } from 'jscodeshift/src/Collection'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
-import wrap from '../../../wrapAstTransformation'
 import type { SharedParams } from '../../../utils/types'
-import type { ASTTransformation } from '../../../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { StatementKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, AssignmentExpression, CallExpression, ForStatement, Identifier, JSCodeshift, MemberExpression, TryStatement, VariableDeclarator } from 'jscodeshift'
@@ -264,4 +263,4 @@ function findForOfLoose(j: JSCodeshift, path: ASTPath<VariableDeclarator>, scope
     }
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

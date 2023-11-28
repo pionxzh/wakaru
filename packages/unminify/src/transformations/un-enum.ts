@@ -1,8 +1,7 @@
-import { createObjectProperty, findDeclarations, findIIFEs, getNodePosition, isIIFE, mergeComments } from '@wakaru/ast-utils'
+import { createObjectProperty, findDeclarations, findIIFEs, getNodePosition, isIIFE, mergeComments, wrapAstTransformation } from '@wakaru/ast-utils'
 import { fromPaths } from 'jscodeshift/src/Collection'
 import { assertScopeExists } from '../utils/assert'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { CommentKind } from 'ast-types/lib/gen/kinds'
 import type { ASTNode, ASTPath, ArrowFunctionExpression, AssignmentExpression, CallExpression, FunctionExpression, Identifier, JSCodeshift, LogicalExpression, ObjectProperty, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
@@ -260,4 +259,4 @@ function handleEnumIIFE(j: JSCodeshift, path: ASTPath<CallExpression>, iifePath:
     }
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

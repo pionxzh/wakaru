@@ -1,11 +1,11 @@
+import { wrapAstTransformation } from '@wakaru/ast-utils'
 import { defineInlineTest } from '@wakaru/test-utils'
-import wrap from '../../wrapAstTransformation'
 import transformAsyncAwait, { transform__awaiter, transform__generator } from '../un-async-await'
 
-const transformAwaiter = wrap(transform__awaiter)
+const transformAwaiter = wrapAstTransformation(transform__awaiter)
 const inlineTestAwaiter = defineInlineTest(transformAwaiter)
 
-const transformGenerator = wrap(transform__generator)
+const transformGenerator = wrapAstTransformation(transform__generator)
 const inlineTestGenerator = defineInlineTest(transformGenerator)
 
 const inlineTestAsyncAwait = defineInlineTest(transformAsyncAwait)

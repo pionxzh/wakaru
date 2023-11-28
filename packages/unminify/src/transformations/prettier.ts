@@ -1,7 +1,7 @@
+import { wrapAstTransformation } from '@wakaru/ast-utils'
 import babelParser from 'prettier/parser-babel'
 import prettier from 'prettier/standalone'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 
 /**
  * @url https://prettier.io
@@ -14,4 +14,4 @@ export const transformAST: ASTTransformation = (context) => {
     })
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

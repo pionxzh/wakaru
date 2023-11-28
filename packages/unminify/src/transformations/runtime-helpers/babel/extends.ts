@@ -1,8 +1,8 @@
+import { wrapAstTransformation } from '@wakaru/ast-utils'
 import { findHelperLocals } from '../../../utils/import'
-import wrap from '../../../wrapAstTransformation'
 import { handleSpreadHelper } from './_spread'
 import type { SharedParams } from '../../../utils/types'
-import type { ASTTransformation } from '../../../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 
 /**
  * Restore object spread syntax from `@babel/runtime/helpers/extends` helper.
@@ -18,4 +18,4 @@ export const transformAST: ASTTransformation<SharedParams> = (context, params) =
     handleSpreadHelper(context, helperLocals)
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

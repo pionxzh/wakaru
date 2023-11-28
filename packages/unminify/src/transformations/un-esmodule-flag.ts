@@ -1,6 +1,6 @@
+import { wrapAstTransformation } from '@wakaru/ast-utils'
 import { isExportObject, isLooseTrue, isStringObjectProperty } from '../utils/checker'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { CallExpression, MemberExpression } from 'jscodeshift'
 
 /**
@@ -56,4 +56,4 @@ export const transformAST: ASTTransformation = (context) => {
         .remove()
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

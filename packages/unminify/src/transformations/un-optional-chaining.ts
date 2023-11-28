@@ -1,11 +1,10 @@
-import { mergeComments, removeDeclarationIfUnused } from '@wakaru/ast-utils'
+import { mergeComments, removeDeclarationIfUnused, wrapAstTransformation } from '@wakaru/ast-utils'
 import { areNodesEqual, isNotNullBinary, isNull, isNullBinary, isTrue, isUndefined, isUndefinedBinary } from '../utils/checker'
 import { negateCondition } from '../utils/condition'
 import { makeDecisionTree, makeDecisionTreeWithConditionSplitting, negateDecisionTree } from '../utils/decisionTree'
 import { smartParenthesized } from '../utils/parenthesized'
-import wrap from '../wrapAstTransformation'
 import type { DecisionTree } from '../utils/decisionTree'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { ASTPath, ConditionalExpression, Identifier, JSCodeshift, LogicalExpression, MemberExpression, SequenceExpression, SpreadElement } from 'jscodeshift'
 
@@ -325,4 +324,4 @@ function getDeepestFalseBranch(tree: DecisionTree) {
     return getDeepestFalseBranch(falseBranch)
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

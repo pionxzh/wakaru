@@ -1,6 +1,5 @@
-import { isValidIdentifier } from '@wakaru/ast-utils'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import { isValidIdentifier, wrapAstTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { StringLiteral } from 'jscodeshift'
 
 /**
@@ -37,4 +36,4 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

@@ -1,6 +1,5 @@
-import { isDeclared } from '@wakaru/ast-utils'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import { isDeclared, wrapAstTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 
 /**
  * Converts `void 0` to `undefined`.
@@ -27,4 +26,4 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

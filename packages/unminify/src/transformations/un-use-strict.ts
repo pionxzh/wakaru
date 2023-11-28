@@ -1,6 +1,5 @@
-import { mergeComments } from '@wakaru/ast-utils'
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation } from '../wrapAstTransformation'
+import { mergeComments, wrapAstTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 
 /**
  * Remove the 'use strict' directives
@@ -31,4 +30,4 @@ export const transformAST: ASTTransformation = (context) => {
     useStrict.remove()
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

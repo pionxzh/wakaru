@@ -1,5 +1,5 @@
-import wrap from '../wrapAstTransformation'
-import type { ASTTransformation, Context } from '../wrapAstTransformation'
+import { wrapAstTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation, Context } from '@wakaru/ast-utils'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { ArrayExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, NumericLiteral, ReturnStatement, SwitchStatement, ThisExpression, YieldExpression } from 'jscodeshift'
 
@@ -480,4 +480,4 @@ export function transform__awaiter(context: Context) {
         })
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)

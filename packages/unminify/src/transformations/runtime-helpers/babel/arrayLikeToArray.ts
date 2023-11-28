@@ -1,9 +1,8 @@
-import { findReferences } from '@wakaru/ast-utils'
+import { findReferences, wrapAstTransformation } from '@wakaru/ast-utils'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
-import wrap from '../../../wrapAstTransformation'
 import type { SharedParams } from '../../../utils/types'
-import type { ASTTransformation } from '../../../wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ArrayExpression } from 'jscodeshift'
 
@@ -67,4 +66,4 @@ export const transformAST: ASTTransformation<SharedParams> = (context, params) =
     })
 }
 
-export default wrap(transformAST)
+export default wrapAstTransformation(transformAST)
