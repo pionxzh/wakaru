@@ -7,8 +7,8 @@
   "license": "MIT",
   "main": "src/index.ts",
   "scripts": {
-    "lint": "eslint src",
-    "lint:fix": "eslint src --fix"
+    "lint": "eslint *.ts",
+    "lint:fix": "eslint *.ts --fix"
   },
   "devDependencies": {
     "benny": "^3.7.1"
