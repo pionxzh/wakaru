@@ -22,7 +22,7 @@
     "package.json"
   ],
   "scripts": {
-    "dev": "vite --open",
+    "dev": "vite",
     "build": "vite build",
     "test:type": "vue-tsc --noEmit",
     "lint": "eslint src",
