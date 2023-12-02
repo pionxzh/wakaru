@@ -6,7 +6,7 @@ export function useCodemod() {
     const transform = (
         name: string,
         module: TransformedModule,
-        transformations: string[],
+        transformationRuleIds: string[],
         moduleMeta: ModuleMeta,
         moduleMapping: ModuleMapping,
     ) => {
@@ -23,7 +23,7 @@ export function useCodemod() {
                 reject(error)
             }
 
-            codemodWorker.postMessage({ name, module, transformations, moduleMeta, moduleMapping })
+            codemodWorker.postMessage({ name, module, transformationRuleIds, moduleMeta, moduleMapping })
         })
     }
 

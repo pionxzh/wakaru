@@ -14,7 +14,7 @@ import type { Scope } from 'ast-types/lib/scope'
 import type { ASTNode, ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, MemberExpression, Node, StringLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 export const Schema = z.object({
-    hoist: z.boolean().default(false),
+    hoist: z.boolean().default(false).describe('Hoist non-top-level require calls to the top of the file'),
 })
 
 type Params = z.infer<typeof Schema>

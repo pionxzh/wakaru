@@ -1,12 +1,20 @@
 import jscodeshift from 'jscodeshift'
 
-import { transformationMap } from './transformations'
+import { transformationMap, transformationRules } from './transformations'
 import { arraify } from './utils/arraify'
 import type { MaybeArray } from './utils/arraify'
 import type { FileInfo, Transform } from 'jscodeshift'
 
 export function runDefaultTransformation<P extends Record<string, any>>(fileInfo: FileInfo, params: P = {} as any) {
     const transforms = Object.values(transformationMap)
+    return runTransformations(fileInfo, transforms, params)
+}
+
+export function runTransformationIds<P extends Record<string, any>>(
+    fileInfo: FileInfo,
+    ids: string[],
+    params: P = {} as any) {
+    const transforms = ids.map(id => transformationRules.find(rule => rule.id === id)?.transform).filter(Boolean) as Transform[]
     return runTransformations(fileInfo, transforms, params)
 }
 
@@ -74,4 +82,7 @@ export function runTransformations<P extends Record<string, any>>(
     }
 }
 
-export { transformationMap } from './transformations'
+export {
+    transformationMap,
+    transformationRules,
+} from './transformations'

@@ -42,10 +42,10 @@ onLoad()
 
 function onLoad() {
     if (typeof route.hash === 'string' && route.hash.startsWith('#')) {
-        const { setDisabledRules } = useTransformationRules()
+        const { setDisabledRuleIds } = useTransformationRules()
         const hash = route.hash.slice(1)
         const { code, rules, mapping, meta } = decodeHash(hash)
-        if (rules) setDisabledRules(rules)
+        if (rules) setDisabledRuleIds(rules)
         if (mapping) existingMapping = mapping
         if (meta) existingMeta = meta
         if (code) startUnpack(code)

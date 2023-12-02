@@ -10,8 +10,8 @@ import type { ExpressionKind, LiteralKind } from 'ast-types/lib/gen/kinds'
 import type { ASTNode, CallExpression, Collection, Identifier, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, MemberExpression, RestElement, SpreadElement, StringLiteral, VariableDeclarator } from 'jscodeshift'
 
 export const Schema = z.object({
-    pragma: z.string().optional(),
-    pragmaFrag: z.string().optional(),
+    pragma: z.string().optional().describe('The pragma to use for JSX transformation.'),
+    pragmaFrag: z.string().optional().describe('The pragma to use for JSX fragment transformation.'),
 })
 
 type Params = z.infer<typeof Schema>
