@@ -1,8 +1,10 @@
-import { generateName, removePureAnnotation, wrapAstTransformation } from '@wakaru/ast-utils'
+import { removePureAnnotation } from '@wakaru/ast-utils/comments'
+import { generateName } from '@wakaru/ast-utils/identifier'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { pascalCase } from '../utils/case'
 import { isNull, isTrue, isUndefined } from '../utils/checker'
 import { nonNullable } from '../utils/utils'
-import type { ASTTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { ExpressionKind, LiteralKind } from 'ast-types/lib/gen/kinds'
 import type { ASTNode, CallExpression, Collection, Identifier, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, MemberExpression, RestElement, SpreadElement, StringLiteral, VariableDeclarator } from 'jscodeshift'
 

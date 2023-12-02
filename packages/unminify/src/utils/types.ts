@@ -1,4 +1,4 @@
-import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils'
+import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
 
 export type MaybeArray<T> = T | T[]
 

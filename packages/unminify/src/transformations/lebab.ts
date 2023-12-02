@@ -1,6 +1,6 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { transform } from 'lebab'
-import type { ASTTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { LebabRule } from 'lebab'
 
 /**

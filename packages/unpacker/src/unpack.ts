@@ -4,7 +4,7 @@ import { getModulesFromBrowserify } from './extractors/browserify'
 import { getModulesFromWebpack } from './extractors/webpack'
 import { Module } from './Module'
 import { postScanRuntime, scanExports, scanImports, scanRuntime } from './module-scan'
-import type { ModuleMapping } from '@wakaru/ast-utils'
+import type { ModuleMapping } from '@wakaru/ast-utils/types'
 
 /**
  * Unpacks the given source code from supported bundlers.

@@ -1,5 +1,6 @@
-import { mergeComments, wrapAstTransformation } from '@wakaru/ast-utils'
-import type { ASTTransformation } from '@wakaru/ast-utils'
+import { mergeComments } from '@wakaru/ast-utils/comments'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 
 /**
  * Remove the 'use strict' directives

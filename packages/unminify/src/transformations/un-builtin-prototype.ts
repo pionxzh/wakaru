@@ -1,5 +1,5 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils'
-import type { ASTTransformation } from '@wakaru/ast-utils'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { ASTPath, CallExpression, JSCodeshift, MemberExpression } from 'jscodeshift'
 
 /**

@@ -1,7 +1,7 @@
-import { findReferences } from '@wakaru/ast-utils'
+import { findReferences } from '@wakaru/ast-utils/reference'
 import { removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
-import type { Context } from '@wakaru/ast-utils'
+import type { Context } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ObjectExpression } from 'jscodeshift'
 

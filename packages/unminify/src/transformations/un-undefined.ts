@@ -1,5 +1,6 @@
-import { isDeclared, wrapAstTransformation } from '@wakaru/ast-utils'
-import type { ASTTransformation } from '@wakaru/ast-utils'
+import { isDeclared } from '@wakaru/ast-utils/scope'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 
 /**
  * Converts `void 0` to `undefined`.

@@ -1,5 +1,5 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils'
-import type { ASTTransformation, Context } from '@wakaru/ast-utils'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation, Context } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { ArrayExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, NumericLiteral, ReturnStatement, SwitchStatement, ThisExpression, YieldExpression } from 'jscodeshift'
 

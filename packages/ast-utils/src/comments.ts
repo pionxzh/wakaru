@@ -1,6 +1,6 @@
 import { getNodePosition } from './position'
 import type { CommentKind } from 'ast-types/lib/gen/kinds'
-import type { JSCodeshift, Node } from 'jscodeshift'
+import type { Collection, JSCodeshift, Node } from 'jscodeshift'
 
 export function mergeComments(node: Node | Node[], commentsToMerge: CommentKind[] | null | undefined) {
     if (!commentsToMerge) return
@@ -33,6 +33,11 @@ function sortComments(comments: CommentKind[]) {
         const posB = getNodePosition(b)
         return (posA?.start ?? 0) - (posB?.start ?? 0)
     })
+}
+
+export function pruneComments(j: JSCodeshift, collection: Collection): void {
+    // @ts-expect-error - Comment type is wrong
+    collection.find(j.Comment).forEach(path => path.prune())
 }
 
 export function removePureAnnotation(j: JSCodeshift, node: Node) {

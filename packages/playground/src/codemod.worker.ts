@@ -1,6 +1,6 @@
 import { runTransformations, transformationMap } from '@wakaru/unminify'
 import type { TransformedModule } from './types'
-import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils'
+import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
 
 onmessage = (
     msg: MessageEvent<{

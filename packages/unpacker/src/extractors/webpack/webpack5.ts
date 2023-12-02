@@ -1,7 +1,8 @@
-import { getTopLevelStatements, isStatementIIFE, renameFunctionParameters } from '@wakaru/ast-utils'
+import { isStatementIIFE, renameFunctionParameters } from '@wakaru/ast-utils'
+import { getTopLevelStatements } from '@wakaru/ast-utils/program'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack5 } from './requireHelpers'
-import type { ModuleMapping } from '@wakaru/ast-utils'
+import type { ModuleMapping } from '@wakaru/ast-utils/types'
 import type { ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, ObjectProperty, Statement, StringLiteral, VariableDeclaration } from 'jscodeshift'
 
 /**

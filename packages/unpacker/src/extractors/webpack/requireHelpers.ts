@@ -1,4 +1,5 @@
-import { createObjectProperty, isFunctionExpression } from '@wakaru/ast-utils'
+import { isFunctionExpression } from '@wakaru/ast-utils'
+import { createObjectProperty } from '@wakaru/ast-utils/object'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { ArrowFunctionExpression, Collection, ExportDefaultDeclaration, ExportNamedDeclaration, FunctionExpression, Identifier, JSCodeshift, ObjectExpression, ObjectProperty, StringLiteral } from 'jscodeshift'
 

@@ -1,7 +1,9 @@
-import { findIIFEs, isTopLevel, renameIdentifier, wrapAstTransformation } from '@wakaru/ast-utils'
+import { findIIFEs, isTopLevel } from '@wakaru/ast-utils'
+import { renameIdentifier } from '@wakaru/ast-utils/reference'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { assertScopeExists } from '../utils/assert'
 import { isValueLiteral } from '../utils/checker'
-import type { ASTTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ArrowFunctionExpression, FunctionExpression } from 'jscodeshift'
 

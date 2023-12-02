@@ -1,5 +1,6 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils'
-import type { ASTTransformation, ModuleMapping } from '@wakaru/ast-utils'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ModuleMapping } from '@wakaru/ast-utils/types'
+import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { NumericLiteral, StringLiteral } from 'jscodeshift'
 
 /**

@@ -1,8 +1,9 @@
-import { findReferences, wrapAstTransformation } from '@wakaru/ast-utils'
+import { findReferences } from '@wakaru/ast-utils/reference'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
 import type { SharedParams } from '../../../utils/types'
-import type { ASTTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
 

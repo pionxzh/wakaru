@@ -1,5 +1,5 @@
 import { strFromU8, strToU8, unzlibSync, zlibSync } from 'fflate'
-import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils'
+import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
 
 // ref: https://github.com/sxzz/ast-explorer/blob/c107e71da6fb1582349cc64607a46aaa3c2280c9/composables/url.ts
 function utoa(data: string): string {

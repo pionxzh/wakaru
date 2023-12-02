@@ -1,4 +1,5 @@
-import { ExportManager, ImportManager } from '@wakaru/ast-utils'
+import { ExportManager } from '@wakaru/ast-utils/exports'
+import { ImportManager } from '@wakaru/ast-utils/imports'
 import { postScanBabelRuntime, scanBabelRuntime } from './babel-runtime'
 import type { Module } from '../Module'
 import type { JSCodeshift } from 'jscodeshift'

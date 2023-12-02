@@ -1,5 +1,6 @@
-import { isTopLevel, wrapAstTransformation } from '@wakaru/ast-utils'
-import type { ASTTransformation, Context } from '@wakaru/ast-utils'
+import { isTopLevel } from '@wakaru/ast-utils'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation, Context } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, Collection, ExportNamedDeclaration, ExportSpecifier, Identifier, JSCodeshift, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 

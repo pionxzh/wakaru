@@ -1,6 +1,6 @@
 import { isFunctionExpression, renameFunctionParameters } from '@wakaru/ast-utils'
 import { Module } from '../../Module'
-import type { ModuleMapping } from '@wakaru/ast-utils'
+import type { ModuleMapping } from '@wakaru/ast-utils/types'
 import type { ArrayExpression, ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, NumericLiteral, ObjectExpression } from 'jscodeshift'
 
 /**

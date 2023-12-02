@@ -1,7 +1,7 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import babelParser from 'prettier/parser-babel'
 import prettier from 'prettier/standalone'
-import type { ASTTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 
 /**
  * @url https://prettier.io

@@ -1,6 +1,6 @@
 import CodemodWorker from '../codemod.worker?worker'
 import type { TransformedModule } from '../types'
-import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils'
+import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
 
 export function useCodemod() {
     const transform = (

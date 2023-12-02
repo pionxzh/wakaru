@@ -1,4 +1,4 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { defineInlineTest } from '@wakaru/test-utils'
 import { convertExportGetter, convertExportsGetterForWebpack4, convertExportsGetterForWebpack5 } from '../src/extractors/webpack/requireHelpers'
 

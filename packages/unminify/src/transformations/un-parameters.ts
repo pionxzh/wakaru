@@ -1,8 +1,8 @@
-import { isVariableIdentifier, wrapAstTransformation } from '@wakaru/ast-utils'
+import { isVariableIdentifier } from '@wakaru/ast-utils/reference'
+import { type ASTTransformation, wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { isLogicalNot, isUndefined } from '../utils/checker'
 import { logicalExpressionToConditionalExpression, negateCondition } from '../utils/condition'
 import { transformASTWithRules } from './lebab'
-import type { ASTTransformation } from '@wakaru/ast-utils'
 import type { PatternKind, StatementKind } from 'ast-types/lib/gen/kinds'
 import type { ASTPath, ArrowFunctionExpression, AssignmentExpression, AssignmentPattern, BinaryExpression, BlockStatement, ClassMethod, ConditionalExpression, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, MemberExpression, NumericLiteral, ObjectMethod } from 'jscodeshift'
 

@@ -1,7 +1,7 @@
 import { renameFunctionParameters } from '@wakaru/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack4, convertRequireHelpersForWebpack5 } from './requireHelpers'
-import type { ModuleMapping } from '@wakaru/ast-utils'
+import type { ModuleMapping } from '@wakaru/ast-utils/types'
 import type { ArrayExpression, Collection, FunctionExpression, JSCodeshift, MemberExpression, NumericLiteral, ObjectExpression, ObjectProperty, StringLiteral } from 'jscodeshift'
 
 /**

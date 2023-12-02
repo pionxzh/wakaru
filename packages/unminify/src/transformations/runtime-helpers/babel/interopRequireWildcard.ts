@@ -1,7 +1,9 @@
-import { findReferences, mergeComments, wrapAstTransformation } from '@wakaru/ast-utils'
+import { mergeComments } from '@wakaru/ast-utils/comments'
+import { findReferences } from '@wakaru/ast-utils/reference'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import type { SharedParams } from '../../../utils/types'
-import type { ASTTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
 import type { CallExpression } from 'jscodeshift'
 

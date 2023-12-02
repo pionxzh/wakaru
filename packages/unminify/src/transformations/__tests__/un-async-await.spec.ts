@@ -1,4 +1,4 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { defineInlineTest } from '@wakaru/test-utils'
 import transformAsyncAwait, { transform__awaiter, transform__generator } from '../un-async-await'
 

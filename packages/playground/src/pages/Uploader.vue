@@ -21,7 +21,7 @@ import { useModuleMeta } from '../composables/useModuleMeta'
 import { useTransformationRules } from '../composables/useTransformationRules'
 import { KEY_FILE_PREFIX } from '../const'
 import type { TransformedModule } from '../types'
-import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils'
+import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
 
 const [source] = useState('')
 const [isLoading, setIsLoading] = useState(false)

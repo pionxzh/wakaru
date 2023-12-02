@@ -6,7 +6,20 @@
   "author": "Pionxzh",
   "license": "MIT",
   "sideEffects": false,
-  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./comments": "./src/comments.ts",
+    "./exports": "./src/exports.ts",
+    "./identifier": "./src/identifier.ts",
+    "./imports": "./src/imports.ts",
+    "./object": "./src/object.ts",
+    "./position": "./src/position.ts",
+    "./program": "./src/program.ts",
+    "./reference": "./src/reference.ts",
+    "./scope": "./src/scope.ts",
+    "./types": "./src/types.ts",
+    "./wrapAstTransformation": "./src/wrapAstTransformation.ts"
+  },
   "files": [
     "dist",
     "package.json"

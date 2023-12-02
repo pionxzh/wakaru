@@ -1,5 +1,6 @@
-import { isValidIdentifier, wrapAstTransformation } from '@wakaru/ast-utils'
-import type { ASTTransformation } from '@wakaru/ast-utils'
+import { isValidIdentifier } from '@wakaru/ast-utils/identifier'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { StringLiteral } from 'jscodeshift'
 
 /**

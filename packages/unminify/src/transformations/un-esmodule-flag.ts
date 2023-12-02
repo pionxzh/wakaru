@@ -1,6 +1,6 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils'
+import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { isExportObject, isLooseTrue, isStringObjectProperty } from '../utils/checker'
-import type { ASTTransformation } from '@wakaru/ast-utils'
+import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { CallExpression, MemberExpression } from 'jscodeshift'
 
 /**
