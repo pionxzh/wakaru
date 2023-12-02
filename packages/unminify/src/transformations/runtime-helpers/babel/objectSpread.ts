@@ -3,8 +3,7 @@ import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
 import { handleSpreadHelper } from './_spread'
-import type { SharedParams } from '../../../utils/types'
-import type { ASTTransformation, Context } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation, Context, SharedParams } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
 import type { CallExpression, Identifier } from 'jscodeshift'
 
@@ -24,7 +23,7 @@ import type { CallExpression, Identifier } from 'jscodeshift'
  * @see https://babeljs.io/docs/babel-plugin-transform-object-rest-spread
  * @see https://github.com/babel/babel/blob/main/packages/babel-helpers/src/helpers/objectSpread2.js
  */
-export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
+export const transformAST: ASTTransformation = (context, params) => {
     handleObjectDestructuringEmpty(context, params)
 
     /**

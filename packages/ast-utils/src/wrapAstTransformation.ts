@@ -1,4 +1,10 @@
+import type { ModuleMapping, ModuleMeta } from './types'
 import type { Core, JSCodeshift, Options, Transform } from 'jscodeshift'
+
+export interface SharedParams {
+    moduleMapping?: ModuleMapping
+    moduleMeta?: ModuleMeta
+}
 
 export interface Context {
     root: ReturnType<Core>
@@ -7,14 +13,14 @@ export interface Context {
 }
 
 export interface ASTTransformation<Params = object> {
-    (context: Context, params: Params): string | void
+    (context: Context, params: Params & SharedParams): string | void
 }
 
 function astTransformationToJSCodeshiftModule<Params extends Options>(
-    transformAST: ASTTransformation<Params>,
+    transformAST: ASTTransformation<Params & SharedParams>,
 ): Transform {
     // @ts-expect-error - jscodeshift is not happy
-    const transform: Transform = (file, api, options: Params) => {
+    const transform: Transform = (file, api, options: Params & SharedParams) => {
         const j = api.jscodeshift
         const root = j(file.source)
         const result = transformAST({ root, j, filename: file.path }, options)

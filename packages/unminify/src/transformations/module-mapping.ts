@@ -10,7 +10,7 @@ import type { NumericLiteral, StringLiteral } from 'jscodeshift'
  * const a = require('index.js')
  */
 interface Params {
-    moduleMapping: ModuleMapping
+    moduleMapping?: ModuleMapping
 }
 export const transformAST: ASTTransformation<Params> = (context, params = { moduleMapping: {} }) => {
     const { root, j } = context

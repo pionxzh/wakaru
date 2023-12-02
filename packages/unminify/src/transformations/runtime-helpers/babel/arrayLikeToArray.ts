@@ -2,7 +2,6 @@ import { findReferences } from '@wakaru/ast-utils/reference'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
-import type { SharedParams } from '../../../utils/types'
 import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ArrayExpression } from 'jscodeshift'
@@ -24,7 +23,7 @@ import type { ArrayExpression } from 'jscodeshift'
  *
  * @see https://github.com/babel/babel/blob/b5d6c3c820af3c049b476df6e885fef33fa953f1/packages/babel-helpers/src/helpers.ts#L789-L795
  */
-export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
+export const transformAST: ASTTransformation = (context, params) => {
     const moduleName = '@babel/runtime/helpers/arrayLikeToArray'
     const moduleEsmName = '@babel/runtime/helpers/esm/arrayLikeToArray'
 

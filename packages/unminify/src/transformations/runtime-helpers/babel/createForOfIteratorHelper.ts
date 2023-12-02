@@ -5,7 +5,6 @@ import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { fromPaths } from 'jscodeshift/src/Collection'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
-import type { SharedParams } from '../../../utils/types'
 import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { StatementKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
@@ -21,7 +20,7 @@ import type { ASTPath, AssignmentExpression, CallExpression, ForStatement, Ident
  * @see https://babeljs.io/docs/babel-plugin-transform-for-of
  * @see https://github.com/babel/babel/blob/main/packages/babel-helpers/src/helpers.ts#L813-L872
  */
-export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
+export const transformAST: ASTTransformation = (context, params) => {
     const moduleName = '@babel/runtime/helpers/createForOfIteratorHelper'
     const moduleEsmName = '@babel/runtime/helpers/esm/createForOfIteratorHelper'
     const looseModuleName = '@babel/runtime/helpers/createForOfIteratorHelperLoose'

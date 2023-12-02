@@ -4,18 +4,20 @@ import { ImportManager } from '@wakaru/ast-utils/imports'
 import { isExportObject, isStringObjectProperty, isUndefined } from '@wakaru/ast-utils/matchers'
 import { findReferences, renameIdentifier } from '@wakaru/ast-utils/reference'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { z } from 'zod'
 import { transformAST as interopRequireDefault } from './runtime-helpers/babel/interopRequireDefault'
 import { NAMESPACE_IMPORT_HINT, transformAST as interopRequireWildcard } from './runtime-helpers/babel/interopRequireWildcard'
-import type { SharedParams } from '../utils/types'
 import type { ASTTransformation, Context } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { NodePath } from 'ast-types/lib/node-path'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTNode, ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, MemberExpression, Node, StringLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
-interface Params {
-    hoist?: boolean
-}
+export const Schema = z.object({
+    hoist: z.boolean().default(false),
+})
+
+type Params = z.infer<typeof Schema>
 
 /**
  * Converts cjs require/exports syntax to esm import/export syntax.
@@ -39,7 +41,9 @@ interface Params {
  * ->
  * export { foo, bar, baz }
  */
-export const transformAST: ASTTransformation<Params & SharedParams> = (context, params) => {
+export const transformAST: ASTTransformation<Params> = (context, params) => {
+    Schema.parse(params)
+
     const hoist = params?.hoist ?? false
 
     // handle interop

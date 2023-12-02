@@ -2,8 +2,7 @@ import { mergeComments } from '@wakaru/ast-utils/comments'
 import { getTopLevelStatements } from '@wakaru/ast-utils/program'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { transformAST as babelHelpers } from './runtime-helpers'
-import type { SharedParams } from '../utils/types'
-import type { ASTTransformation, Context } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation, Context, SharedParams } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { FunctionDeclaration } from 'jscodeshift'
 
 /**

@@ -34,7 +34,8 @@
     "lebab": "^3.2.3",
     "picocolors": "^1.0.0",
     "prettier": "^2.8.8",
-    "yargs": "^17.7.2"
+    "yargs": "^17.7.2",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",

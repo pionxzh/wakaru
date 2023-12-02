@@ -2,7 +2,6 @@ import { markParenthesized } from '@wakaru/ast-utils/parenthesized'
 import { findReferences } from '@wakaru/ast-utils/reference'
 import { type ASTTransformation, wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
-import type { SharedParams } from '../../../utils/types'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, AssignmentExpression, CallExpression, Identifier, MemberExpression, NumericLiteral, SequenceExpression, VariableDeclarator } from 'jscodeshift'
 
@@ -26,7 +25,7 @@ import type { ASTPath, AssignmentExpression, CallExpression, Identifier, MemberE
  *
  * @see https://babeljs.io/docs/babel-plugin-transform-modules-commonjs
  */
-export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
+export const transformAST: ASTTransformation = (context, params) => {
     const moduleName = '@babel/runtime/helpers/interopRequireDefault'
     const moduleEsmName = '@babel/runtime/helpers/esm/interopRequireDefault'
 

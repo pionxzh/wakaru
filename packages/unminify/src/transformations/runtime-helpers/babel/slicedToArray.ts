@@ -2,7 +2,6 @@ import { findReferences } from '@wakaru/ast-utils/reference'
 import { type ASTTransformation, wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
-import type { SharedParams } from '../../../utils/types'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
 import type { CallExpression, Identifier, NumericLiteral, VariableDeclarator } from 'jscodeshift'
@@ -28,7 +27,7 @@ import type { CallExpression, Identifier, NumericLiteral, VariableDeclarator } f
  * @see https://babeljs.io/docs/babel-plugin-transform-destructuring
  * @see https://github.com/babel/babel/blob/b5d6c3c820af3c049b476df6e885fef33fa953f1/packages/babel-helpers/src/helpers.ts#L679-L693
  */
-export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
+export const transformAST: ASTTransformation = (context, params) => {
     const moduleName = '@babel/runtime/helpers/slicedToArray'
     const moduleEsmName = '@babel/runtime/helpers/esm/slicedToArray'
 

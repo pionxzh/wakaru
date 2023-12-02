@@ -2,7 +2,6 @@ import { mergeComments } from '@wakaru/ast-utils/comments'
 import { findReferences } from '@wakaru/ast-utils/reference'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
-import type { SharedParams } from '../../../utils/types'
 import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { Scope } from 'ast-types/lib/scope'
 import type { CallExpression } from 'jscodeshift'
@@ -25,7 +24,7 @@ export const NAMESPACE_IMPORT_HINT = '* @hint namespace-import '
  *
  * @see https://babeljs.io/docs/babel-plugin-transform-modules-commonjs
  */
-export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
+export const transformAST: ASTTransformation = (context, params) => {
     const moduleName = '@babel/runtime/helpers/interopRequireWildcard'
     const moduleEsmName = '@babel/runtime/helpers/esm/interopRequireWildcard'
 

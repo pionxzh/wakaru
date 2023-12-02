@@ -3,15 +3,18 @@ import { removePureAnnotation } from '@wakaru/ast-utils/comments'
 import { generateName } from '@wakaru/ast-utils/identifier'
 import { isNull, isTrue, isUndefined } from '@wakaru/ast-utils/matchers'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { z } from 'zod'
 import { nonNullable } from '../utils/utils'
 import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { ExpressionKind, LiteralKind } from 'ast-types/lib/gen/kinds'
 import type { ASTNode, CallExpression, Collection, Identifier, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, MemberExpression, RestElement, SpreadElement, StringLiteral, VariableDeclarator } from 'jscodeshift'
 
-interface Params {
-    pragma?: string
-    pragmaFrag?: string
-}
+export const Schema = z.object({
+    pragma: z.string().optional(),
+    pragmaFrag: z.string().optional(),
+})
+
+type Params = z.infer<typeof Schema>
 
 enum Runtime {
     Classic = 'classic',
@@ -57,6 +60,8 @@ const DEFAULT_PRAGMA_FRAG_CANDIDATES = [
  * Converts `React.createElement` and `jsxRuntime.jsx` back to JSX.
  */
 export const transformAST: ASTTransformation<Params> = (context, params) => {
+    Schema.parse(params)
+
     const { root, j } = context
 
     let pragmas = DEFAULT_PRAGMA_CANDIDATES
