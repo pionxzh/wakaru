@@ -1,6 +1,6 @@
-import { findIIFEs, isTopLevel } from '@wakaru/ast-utils'
+import { isTopLevel } from '@wakaru/ast-utils'
 import { assertScopeExists } from '@wakaru/ast-utils/assert'
-import { isValueLiteral } from '@wakaru/ast-utils/matchers'
+import { findIIFEs, isValueLiteral } from '@wakaru/ast-utils/matchers'
 import { renameIdentifier } from '@wakaru/ast-utils/reference'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'

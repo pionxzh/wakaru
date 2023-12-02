@@ -1,5 +1,8 @@
 import type { ASTNode, BigIntLiteral, BinaryExpression, BooleanLiteral, Identifier, JSCodeshift, MemberExpression, NullLiteral, NumericLiteral, RegExpLiteral, StringLiteral, TemplateLiteral, UnaryExpression } from 'jscodeshift'
 
+export * from './isIIFE'
+export * from './isFunctionExpression'
+
 export function areNodesEqual(j: JSCodeshift, node1: ASTNode, node2: ASTNode): boolean {
     return j(node1).toSource() === j(node2).toSource()
 }

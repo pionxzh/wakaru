@@ -1,6 +1,6 @@
-import { findIIFEs, isIIFE } from '@wakaru/ast-utils'
 import { assertScopeExists } from '@wakaru/ast-utils/assert'
 import { mergeComments } from '@wakaru/ast-utils/comments'
+import { findIIFEs, isIIFE } from '@wakaru/ast-utils/matchers'
 import { createObjectProperty } from '@wakaru/ast-utils/object'
 import { getNodePosition } from '@wakaru/ast-utils/position'
 import { findDeclarations } from '@wakaru/ast-utils/scope'

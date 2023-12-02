@@ -1,4 +1,5 @@
-import { isStatementIIFE, renameFunctionParameters } from '@wakaru/ast-utils'
+import { renameFunctionParameters } from '@wakaru/ast-utils'
+import { isStatementIIFE } from '@wakaru/ast-utils/matchers'
 import { getTopLevelStatements } from '@wakaru/ast-utils/program'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack5 } from './requireHelpers'
