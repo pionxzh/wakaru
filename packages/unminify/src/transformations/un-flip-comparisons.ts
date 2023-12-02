@@ -1,5 +1,5 @@
+import { isVoid0 } from '@wakaru/ast-utils/matchers'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import { isVoid0 } from '../utils/checker'
 import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { BinaryExpression, JSCodeshift } from 'jscodeshift'

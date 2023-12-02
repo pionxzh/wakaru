@@ -1,5 +1,5 @@
+import { isUndefined } from '@wakaru/ast-utils/matchers'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import { isUndefined } from '../utils/checker'
 import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 
 /**

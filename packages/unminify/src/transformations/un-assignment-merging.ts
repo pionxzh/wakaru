@@ -1,6 +1,6 @@
 import { mergeComments } from '@wakaru/ast-utils/comments'
+import { isSimpleValue } from '@wakaru/ast-utils/matchers'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import { isSimpleValue } from '../utils/checker'
 import { replaceWithMultipleStatements } from '../utils/insert'
 import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { AssignmentExpression } from 'jscodeshift'

@@ -1,5 +1,5 @@
+import { areNodesEqual, isValueLiteral } from '@wakaru/ast-utils/matchers'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import { areNodesEqual, isValueLiteral } from '../utils/checker'
 import { negateCondition } from '../utils/condition'
 import { makeDecisionTree } from '../utils/decisionTree'
 import { replaceWithMultipleStatements } from '../utils/insert'

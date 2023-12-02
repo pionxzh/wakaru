@@ -1,5 +1,5 @@
+import { isExportObject, isLooseTrue, isStringObjectProperty } from '@wakaru/ast-utils/matchers'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import { isExportObject, isLooseTrue, isStringObjectProperty } from '../utils/checker'
 import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { CallExpression, MemberExpression } from 'jscodeshift'
 

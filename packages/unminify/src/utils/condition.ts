@@ -1,4 +1,4 @@
-import { isLogicalNot } from './checker'
+import { isLogicalNot } from '@wakaru/ast-utils/matchers'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { BinaryExpression, ConditionalExpression, JSCodeshift, LogicalExpression } from 'jscodeshift'
 
