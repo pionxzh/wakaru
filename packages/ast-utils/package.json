@@ -8,6 +8,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./assert": "./src/assert.ts",
     "./comments": "./src/comments.ts",
     "./exports": "./src/exports.ts",
     "./identifier": "./src/identifier.ts",
