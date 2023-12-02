@@ -1,7 +1,7 @@
+import { pascalCase } from '@wakaru/ast-utils/case'
 import { removePureAnnotation } from '@wakaru/ast-utils/comments'
 import { generateName } from '@wakaru/ast-utils/identifier'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import { pascalCase } from '../utils/case'
 import { isNull, isTrue, isUndefined } from '../utils/checker'
 import { nonNullable } from '../utils/utils'
 import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'

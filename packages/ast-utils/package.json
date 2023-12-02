@@ -9,6 +9,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./assert": "./src/assert.ts",
+    "./case": "./src/case.ts",
     "./comments": "./src/comments.ts",
     "./exports": "./src/exports.ts",
     "./identifier": "./src/identifier.ts",
