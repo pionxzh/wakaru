@@ -12,5 +12,9 @@
   },
   "devDependencies": {
     "benny": "^3.7.1"
+  },
+  "dependencies": {
+    "magic-string": "^0.30.5",
+    "web-tree-sitter": "^0.20.8"
   }
 }
