@@ -2,7 +2,7 @@ import jscodeshift from 'jscodeshift'
 
 import { transformationMap } from './transformations'
 import { arraify } from './utils/arraify'
-import type { MaybeArray } from './utils/types'
+import type { MaybeArray } from './utils/arraify'
 import type { FileInfo, Transform } from 'jscodeshift'
 
 export function runDefaultTransformation<P extends Record<string, any>>(fileInfo: FileInfo, params: P = {} as any) {
