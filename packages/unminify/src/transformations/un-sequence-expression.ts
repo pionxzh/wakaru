@@ -1,7 +1,7 @@
 import { mergeComments } from '@wakaru/ast-utils/comments'
+import { replaceWithMultipleStatements } from '@wakaru/ast-utils/insert'
 import { smartParenthesized } from '@wakaru/ast-utils/parenthesized'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import { replaceWithMultipleStatements } from '../utils/insert'
 import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { AssignmentExpression, Identifier, MemberExpression, SequenceExpression, VariableDeclaration } from 'jscodeshift'
 
