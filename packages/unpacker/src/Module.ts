@@ -5,9 +5,6 @@ export class Module {
     /** The module's id */
     id: string | number
 
-    /** The module's ast from jscodeshift */
-    ast: Collection
-
     /** Whether the module is the entry module */
     isEntry: boolean
 
@@ -27,13 +24,11 @@ export class Module {
     tags: Record<string, string[]> = {}
 
     /** The module's code */
-    get code() {
-        return this.ast.toSource()
-    }
+    code: string = ''
 
     constructor(id: string | number, root: Collection, isEntry = false) {
         this.id = id
-        this.ast = root
+        this.code = root.toSource()
         this.isEntry = isEntry
     }
 }

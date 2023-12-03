@@ -1,6 +1,7 @@
 import { isTopLevel } from '@wakaru/ast-utils'
+import { getTopLevelStatements } from '@wakaru/ast-utils/program'
 import type { Module } from '../Module'
-import type { ArrowFunctionExpression, FunctionDeclaration, FunctionExpression, JSCodeshift, Statement } from 'jscodeshift'
+import type { ArrowFunctionExpression, Collection, FunctionDeclaration, FunctionExpression, JSCodeshift } from 'jscodeshift'
 
 const moduleMatchers: Record<string, Array<string | RegExp | Array<string | RegExp>>> = {
     '@babel/runtime/helpers/arrayLikeToArray': [
@@ -214,9 +215,9 @@ const moduleDeps: Record<string, string[] | undefined> = {
 /**
  * Scan all top level functions and mark tags based on the content of the function.
  */
-export function scanBabelRuntime(j: JSCodeshift, module: Module) {
-    const root = module.ast
-    const statements = root.get().node.body as Statement[]
+export function scanBabelRuntime(j: JSCodeshift, module: Module & { root: Collection }) {
+    const { root } = module
+    const statements = getTopLevelStatements(root)
     const functions = statements.filter((node): node is FunctionExpression | FunctionDeclaration | ArrowFunctionExpression => {
         return j.FunctionDeclaration.check(node)
             || j.ArrowFunctionExpression.check(node)
@@ -273,9 +274,9 @@ export function scanBabelRuntime(j: JSCodeshift, module: Module) {
  * In the end, we will have a complete list of tags for each function, so that
  * we have a chance to change the tags to their upper level functions.
  */
-export function postScanBabelRuntime(j: JSCodeshift, modules: Module[]) {
+export function postScanBabelRuntime(j: JSCodeshift, modules: (Module & { root: Collection })[]) {
     modules.forEach((module) => {
-        const { ast: root, import: imports } = module
+        const { root, import: imports } = module
         const rootScope = root.get().scope
 
         const taggedImportLocals = new Map<string, string[]>()

@@ -1,9 +1,6 @@
 import type { Module } from '@wakaru/unpacker'
 
-export type TransformedModule = Omit<Module, 'ast' | 'code'> & {
-    /** The module's code */
-    code: string
-
+export type TransformedModule = Module & {
     /** The transformed module code */
     transformed: string
 

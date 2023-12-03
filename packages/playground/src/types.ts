@@ -3,10 +3,7 @@ import type { Module } from '@wakaru/unpacker'
 
 export type FileIdList = Array<number | string>
 
-export type TransformedModule = Omit<Module, 'ast' | 'code'> & {
-    /** The module's code */
-    code: string
-
+export type TransformedModule = Module & {
     /** The transformed module code */
     transformed: string
 
@@ -20,4 +17,9 @@ export interface CodeModParams {
     transformationRuleIds: string[]
     moduleMeta: ModuleMeta
     moduleMapping: ModuleMapping
+}
+
+export interface UnpackerResult {
+    modules: Module[]
+    moduleIdMapping: ModuleMapping
 }

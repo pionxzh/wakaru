@@ -6,7 +6,6 @@ import {
     TransitionChild,
     TransitionRoot,
 } from '@headlessui/vue'
-import { unpack } from '@wakaru/unpacker'
 import { useSetAtom } from 'jotai-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { disabledRuleIdsAtom } from '../atoms/rule'
@@ -20,6 +19,7 @@ import { useFileIds } from '../composables/useFileIds'
 import { useModuleMapping } from '../composables/useModuleMapping'
 import { useModuleMeta } from '../composables/useModuleMeta'
 import { useUnminify } from '../composables/useUnminify'
+import { useUnpacker } from '../composables/useUnpacker'
 import { KEY_FILE_PREFIX } from '../const'
 import type { TransformedModule } from '../types'
 import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
@@ -31,7 +31,8 @@ const [source] = useState('')
 const [isLoading, setIsLoading] = useState(false)
 const [processedCount, setProcessedCount] = useState(0)
 
-const { transform } = useUnminify()
+const unpacker = useUnpacker()
+const unminify = useUnminify()
 
 const setDisabledRuleIds = useSetAtom(disabledRuleIdsAtom)
 const { fileIds, setFileIds } = useFileIds()
@@ -85,84 +86,92 @@ async function startUnpack(input: string) {
 
     reset()
 
-    // TODO: Move to worker
-    const { modules, moduleIdMapping } = unpack(input)
-    const unpackedModules = modules.map<TransformedModule>((module) => {
-        const { id, isEntry, code, tags } = module
-        return {
-            id,
-            isEntry,
-            code,
-            transformed: code,
-            import: module.import,
-            export: module.export,
-            tags,
-        }
-    })
-
-    setFileIds([
-        ...unpackedModules.filter(module => module.isEntry).map(module => module.id).sort((a, b) => +a - +b),
-        ...unpackedModules.filter(module => !module.isEntry).map(module => module.id).sort((a, b) => +a - +b),
-    ])
-
-    if (existingMeta) {
-        setModuleMeta(existingMeta)
-    }
-    else {
-        setModuleMeta(
-            unpackedModules.reduce((acc, mod) => {
-                acc[mod.id] = {
-                    import: mod.import,
-                    export: mod.export,
-                    tags: mod.tags,
-                }
-                return acc
-            }, moduleMeta.value),
-        )
-    }
-
-    const newModuleMapping = unpackedModules.reduce((acc, mod) => {
-        acc[mod.id] = getDepName(mod)
-        return acc
-    }, moduleIdMapping)
-
-    if (existingMapping) {
-        setModuleMapping(existingMapping)
-    }
-    // try to preserve the old mapping if possible
-    else if (Object.keys(newModuleMapping).length !== Object.keys(moduleMapping.value).length) {
-        setModuleMapping(newModuleMapping)
-    }
-
-    const rules = [
-        'un-sequence-expression1',
-        'un-variable-merging',
-        'prettier',
-    ]
-    const mapping = moduleMapping.value
-
-    for (const module of unpackedModules) {
-        const moduleName = mapping[module.id]
-        // Do a pre-formatting to improve the readability of the code
-        const result = await transform({
-            name: moduleName,
-            module,
-            transformationRuleIds: rules,
-            moduleMeta: moduleMeta.value,
-            moduleMapping: mapping,
+    try {
+        const { modules, moduleIdMapping } = await unpacker(input)
+        const unpackedModules = modules.map<TransformedModule>((module) => {
+            const { id, isEntry, code, tags } = module
+            return {
+                id,
+                isEntry,
+                code,
+                transformed: code,
+                import: module.import,
+                export: module.export,
+                tags,
+            }
         })
-        module.code = result.transformed
-        module.transformed = result.transformed
 
-        setProcessedCount(count => count + 1)
+        setFileIds([
+            ...unpackedModules.filter(module => module.isEntry).map(module => module.id).sort((a, b) => +a - +b),
+            ...unpackedModules.filter(module => !module.isEntry).map(module => module.id).sort((a, b) => +a - +b),
+        ])
 
-        localStorage.setItem(`${KEY_FILE_PREFIX}${module.id}`, JSON.stringify(module))
+        if (existingMeta) {
+            setModuleMeta(existingMeta)
+        }
+        else {
+            setModuleMeta(
+                unpackedModules.reduce((acc, mod) => {
+                    acc[mod.id] = {
+                        import: mod.import,
+                        export: mod.export,
+                        tags: mod.tags,
+                    }
+                    return acc
+                }, moduleMeta.value),
+            )
+        }
+
+        const newModuleMapping = unpackedModules.reduce((acc, mod) => {
+            acc[mod.id] = getDepName(mod)
+            return acc
+        }, moduleIdMapping)
+
+        if (existingMapping) {
+            setModuleMapping(existingMapping)
+        }
+        // try to preserve the old mapping if possible
+        else if (Object.keys(newModuleMapping).length !== Object.keys(moduleMapping.value).length) {
+            setModuleMapping(newModuleMapping)
+        }
+
+        const rules = [
+            'un-sequence-expression1',
+            'un-variable-merging',
+            'prettier',
+        ]
+        const mapping = moduleMapping.value
+
+        for (const module of unpackedModules) {
+            const moduleName = mapping[module.id]
+            // Do a pre-formatting to improve the readability of the code
+            const result = await unminify({
+                name: moduleName,
+                module,
+                transformationRuleIds: rules,
+                moduleMeta: moduleMeta.value,
+                moduleMapping: mapping,
+            })
+            module.code = result.transformed
+            module.transformed = result.transformed
+
+            setProcessedCount(count => count + 1)
+
+            localStorage.setItem(`${KEY_FILE_PREFIX}${module.id}`, JSON.stringify(module))
+        }
+    }
+    catch (error) {
+        console.error(error)
+        // eslint-disable-next-line no-alert
+        alert('Failed to unpack the code. Please check the console and report the issue.')
     }
 
     setIsLoading(false)
 
     const firstFileId = fileIds.value[0]
-    router.push({ name: 'file', params: { id: firstFileId } })
+    if (firstFileId !== undefined) {
+        router.push({ name: 'file', params: { id: firstFileId } })
+    }
 }
 
 function getDepName(dep: TransformedModule) {

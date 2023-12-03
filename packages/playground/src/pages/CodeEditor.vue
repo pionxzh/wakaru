@@ -25,11 +25,11 @@ const [openSideBar, setOpenSideBar] = useState(false)
 const enabledRuleIds = useAtomValue(enabledRuleIdsAtom)
 const disabledRuleIds = useAtomValue(disabledRuleIdsAtom)
 
-const { transform } = useUnminify()
+const unminify = useUnminify()
 const moduleName = computed(() => moduleMapping.value[module.value.id])
 
 watch([enabledRuleIds, () => module.value.code], async () => {
-    const result = await transform({
+    const result = await unminify({
         name: moduleName.value,
         module: module.value,
         transformationRuleIds: toRaw(enabledRuleIds.value),

@@ -5,6 +5,7 @@ import { getModulesFromWebpack } from './extractors/webpack'
 import { Module } from './Module'
 import { postScanRuntime, scanExports, scanImports, scanRuntime } from './module-scan'
 import type { ModuleMapping } from '@wakaru/ast-utils/types'
+import type { Collection } from 'jscodeshift'
 
 /**
  * Unpacks the given source code from supported bundlers.
@@ -28,17 +29,20 @@ export function unpack(sourceCode: string): {
 
     const { modules, moduleIdMapping } = result
 
-    modules.forEach((module) => {
+    // module as key, root as value
+    const modulesArray = [...modules]
+    const modulesWithRoot = modulesArray.map<Module & { root: Collection }>(module => ({ ...module, root: j(module.code) }))
+
+    modulesWithRoot.forEach((module) => {
         scanImports(j, module)
         scanExports(j, module)
     })
 
-    modules.forEach((module) => {
+    modulesWithRoot.forEach((module) => {
         scanRuntime(j, module)
     })
 
-    const modulesArray = [...modules]
-    postScanRuntime(j, modulesArray)
+    postScanRuntime(j, modulesWithRoot)
 
     return {
         modules: modulesArray,

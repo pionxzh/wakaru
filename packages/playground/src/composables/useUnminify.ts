@@ -1,26 +1,22 @@
-import CodemodWorker from '../unminify.worker?worker'
+import UnminifyWorker from '../unminify.worker?worker'
 import type { CodeModParams, TransformedModule } from '../types'
 
 export function useUnminify() {
-    const transform = (param: CodeModParams) => {
+    return (param: CodeModParams) => {
         return new Promise<TransformedModule>((resolve, reject) => {
-            const codemodWorker = new CodemodWorker()
+            const worker = new UnminifyWorker()
 
-            codemodWorker.onmessage = ({ data }: MessageEvent<TransformedModule>) => {
-                codemodWorker.terminate()
+            worker.onmessage = ({ data }: MessageEvent<TransformedModule>) => {
+                worker.terminate()
                 resolve(data)
             }
 
-            codemodWorker.onerror = (error) => {
-                codemodWorker.terminate()
+            worker.onerror = (error) => {
+                worker.terminate()
                 reject(error)
             }
 
-            codemodWorker.postMessage(param)
+            worker.postMessage(param)
         })
-    }
-
-    return {
-        transform,
     }
 }
