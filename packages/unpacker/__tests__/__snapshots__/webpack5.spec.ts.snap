@@ -27,7 +27,7 @@ export default /* binding */ m1;
 }
 
 /***/
-export const A = /* binding */ A;
+export { /* binding */ A };
 ",
     "id": "./src/a.js",
     "isEntry": false,
@@ -41,7 +41,7 @@ export const A = /* binding */ A;
 
 /***/
 export default /* export default binding */ __WEBPACK_DEFAULT_EXPORT__;
-export const version = /* binding */ version;
+export { /* binding */ version };
 ",
     "id": "./src/b.js",
     "isEntry": false,
@@ -57,7 +57,7 @@ const getC = async () => {
 };
 
 /***/
-export const getC = /* binding */ getC;
+export { /* binding */ getC };
 ",
     "id": "./src/c.js",
     "isEntry": false,

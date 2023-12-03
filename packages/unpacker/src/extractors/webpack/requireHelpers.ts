@@ -203,12 +203,20 @@ export function convertExportsGetterForWebpack5(j: JSCodeshift, collection: Coll
 }
 
 function buildNamedExport(j: JSCodeshift, name: string, value: ExpressionKind): ExportNamedDeclaration {
+    // export { name }
+    if (j.Identifier.check(value) && name === value.name) {
+        const exportSpecifier = j.exportSpecifier.from({
+            exported: value,
+            local: value,
+        })
+        return j.exportNamedDeclaration(
+            null,
+            [exportSpecifier],
+        )
+    }
     return j.exportNamedDeclaration(
         j.variableDeclaration('const', [
-            j.variableDeclarator(
-                j.identifier(name),
-                value,
-            ),
+            j.variableDeclarator(j.identifier(name), value),
         ]),
         [],
     )
