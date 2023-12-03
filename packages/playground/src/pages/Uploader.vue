@@ -7,30 +7,33 @@ import {
     TransitionRoot,
 } from '@headlessui/vue'
 import { unpack } from '@wakaru/unpacker'
+import { useSetAtom } from 'jotai-vue'
 import { useRoute, useRouter } from 'vue-router'
+import { disabledRuleIdsAtom } from '../atoms/rule'
 import Card from '../components/Card.vue'
 import CodemirrorEditor from '../components/CodemirrorEditor.vue'
 import FileUpload from '../components/FileUpload.vue'
 import Separator from '../components/Separator.vue'
 import useState from '../composables/shared/useState'
 import { decodeHash } from '../composables/url'
-import { useCodemod } from '../composables/useCodemod'
 import { useFileIds } from '../composables/useFileIds'
 import { useModuleMapping } from '../composables/useModuleMapping'
 import { useModuleMeta } from '../composables/useModuleMeta'
-import { useTransformationRules } from '../composables/useTransformationRules'
+import { useUnminify } from '../composables/useUnminify'
 import { KEY_FILE_PREFIX } from '../const'
 import type { TransformedModule } from '../types'
 import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
+
+const router = useRouter()
+const route = useRoute()
 
 const [source] = useState('')
 const [isLoading, setIsLoading] = useState(false)
 const [processedCount, setProcessedCount] = useState(0)
 
-const router = useRouter()
-const route = useRoute()
-const { transform } = useCodemod()
+const { transform } = useUnminify()
 
+const setDisabledRuleIds = useSetAtom(disabledRuleIdsAtom)
 const { fileIds, setFileIds } = useFileIds()
 const { moduleMeta, setModuleMeta } = useModuleMeta()
 const { moduleMapping, setModuleMapping } = useModuleMapping()
@@ -42,7 +45,6 @@ onLoad()
 
 function onLoad() {
     if (typeof route.hash === 'string' && route.hash.startsWith('#')) {
-        const { setDisabledRuleIds } = useTransformationRules()
         const hash = route.hash.slice(1)
         const { code, rules, mapping, meta } = decodeHash(hash)
         if (rules) setDisabledRuleIds(rules)
@@ -142,7 +144,13 @@ async function startUnpack(input: string) {
     for (const module of unpackedModules) {
         const moduleName = mapping[module.id]
         // Do a pre-formatting to improve the readability of the code
-        const result = await transform(moduleName, module, rules, moduleMeta.value, mapping)
+        const result = await transform({
+            name: moduleName,
+            module,
+            transformationRuleIds: rules,
+            moduleMeta: moduleMeta.value,
+            moduleMapping: mapping,
+        })
         module.code = result.transformed
         module.transformed = result.transformed
 

@@ -13,7 +13,7 @@ defineProps<{
     >
         <h5
             v-if="title || $slots.title"
-            class="mb-2 text-2xl text-center font-bold text-gray-900 dark:text-white"
+            class="relative mb-2 text-2xl text-center font-bold text-gray-900 dark:text-white"
         >
             <slot name="title">
                 {{ title }}

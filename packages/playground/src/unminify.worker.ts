@@ -1,15 +1,8 @@
 import { runTransformationIds } from '@wakaru/unminify'
-import type { TransformedModule } from './types'
-import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
+import type { CodeModParams, TransformedModule } from './types'
 
 onmessage = (
-    msg: MessageEvent<{
-        name: string
-        module: TransformedModule
-        transformationRuleIds: string[]
-        moduleMeta: ModuleMeta
-        moduleMapping: ModuleMapping
-    }>,
+    msg: MessageEvent<CodeModParams>,
 ) => {
     const { name, module, transformationRuleIds, moduleMeta, moduleMapping } = msg.data
     const fileInfo = { path: name, source: module.code }

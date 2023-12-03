@@ -244,6 +244,12 @@ importers:
       fflate:
         specifier: ^0.8.1
         version: 0.8.1
+      jotai:
+        specifier: ^2.6.0
+        version: 2.6.0(@types/react@18.2.38)(react@18.2.0)
+      jotai-vue:
+        specifier: ^0.1.0
+        version: 0.1.0(jotai@2.6.0)(vue@3.3.9)
       os: {specifier: ^0.1.2, version: 0.1.2}
       sortablejs:
         specifier: ^1.15.0
@@ -4243,7 +4249,7 @@ packages:
   /@types/babel__template@7.4.3:
     resolution: {integrity: sha512-ciwyCLeuRfxboZ4isgdNZi/tkt06m8Tw6uGbBSBgWrnnZGNXiEyM27xc/PjXGQLqlZ6ylbgHMnm7ccF9tCkOeQ==}
     dependencies:
-      '@babel/parser': 7.23.0
+      '@babel/parser': 7.23.4
       '@babel/types': 7.23.4
     dev: true
 
@@ -4575,15 +4581,6 @@ packages:
       path-browserify: 1.0.1
     dev: true
 
-  /@vue/compiler-core@3.3.4:
-    resolution: {integrity: sha512-cquyDNvZ6jTbf/+x+AgM2Arrp6G4Dzbb0R64jiG804HRMfRiFXWI6kqUVqZ6ZR0bQhIoQjB4+2bhNtVwndW15g==}
-    dependencies:
-      '@babel/parser': 7.23.0
-      '@vue/shared': 3.3.4
-      estree-walker: 2.0.2
-      source-map-js: 1.0.2
-    dev: true
-
   /@vue/compiler-core@3.3.9:
     resolution: {integrity: sha512-+/Lf68Vr/nFBA6ol4xOtJrW+BQWv3QWKfRwGSm70jtXwfhZNF4R/eRgyVJYoxFRhdCTk/F6g99BP0ffPgZihfQ==}
     dependencies:
@@ -4591,13 +4588,6 @@ packages:
       '@vue/shared': 3.3.9
       estree-walker: 2.0.2
       source-map-js: 1.0.2
-
-  /@vue/compiler-dom@3.3.4:
-    resolution: {integrity: sha512-wyM+OjOVpuUukIq6p5+nwHYtj9cFroz9cwkfmP9O1nzH68BenTTv0u7/ndggT8cIQlnBeOo6sUT/gvHcIkLA5w==}
-    dependencies:
-      '@vue/compiler-core': 3.3.4
-      '@vue/shared': 3.3.4
-    dev: true
 
   /@vue/compiler-dom@3.3.9:
     resolution: {integrity: sha512-nfWubTtLXuT4iBeDSZ5J3m218MjOy42Vp2pmKVuBKo2/BLcrFUX8nCSr/bKRFiJ32R8qbdnnnBgRn9AdU5v0Sg==}
@@ -4639,8 +4629,8 @@ packages:
     dependencies:
       '@volar/language-core': 1.10.10
       '@volar/source-map': 1.10.10
-      '@vue/compiler-dom': 3.3.4
-      '@vue/shared': 3.3.4
+      '@vue/compiler-dom': 3.3.9
+      '@vue/shared': 3.3.9
       computeds: 0.0.1
       minimatch: 9.0.3
       muggle-string: 0.3.1
@@ -4683,10 +4673,6 @@ packages:
       '@vue/compiler-ssr': 3.3.9
       '@vue/shared': 3.3.9
       vue: 3.3.9(typescript@5.3.2)
-
-  /@vue/shared@3.3.4:
-    resolution: {integrity: sha512-7OjdcV8vQ74eiz1TZLzZP4JwqM5fA94K6yntPS5Z25r9HDuGNzaGdgvwKYq6S+MxwF0TFRwe50fIR/MYnakdkQ==}
-    dev: true
 
   /@vue/shared@3.3.9:
     resolution: {integrity: sha512-ZE0VTIR0LmYgeyhurPTpy4KzKsuDyQbMSdM49eKkMnT5X4VfFBLysMzjIZhLEFQYjjOVVfbvUDHckwjDFiO2eA==}
@@ -7074,6 +7060,16 @@ packages:
       jotai: '>=2.4.3'
     dependencies:
       jotai: 2.6.0(@types/react@18.2.38)(react@18.2.0)
+    dev: false
+
+  /jotai-vue@0.1.0(jotai@2.6.0)(vue@3.3.9):
+    resolution: {integrity: sha512-+6X0Yr185eTjAYoepIba+md7Z28kk6rumyaHbQtqTzsKm/0nmvAP5J50CNy52Q9Zpv9Mq9bJfSBBW0zC8kTq1w==}
+    peerDependencies:
+      jotai: '>=1.11.1'
+      vue: '>=3.2.0'
+    dependencies:
+      jotai: 2.6.0(@types/react@18.2.38)(react@18.2.0)
+      vue: 3.3.9(typescript@5.3.2)
     dev: false
 
   /jotai@2.6.0(@types/react@18.2.38)(react@18.2.0):

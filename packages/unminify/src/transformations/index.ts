@@ -161,6 +161,6 @@ const occurrenceMap = new Map<string, number>()
 export const transformationRules: TransformationRule[] = _transformationRules.map((rule) => {
     const occurrence = occurrenceMap.get(rule.name) ?? 0
     occurrenceMap.set(rule.name, occurrence + 1)
-    const id = `${rule.name}-${occurrence}`
+    const id = occurrence === 0 ? rule.name : `${rule.name}-${occurrence}`
     return { ...rule, id }
 })

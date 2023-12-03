@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import { TransitionRoot } from '@headlessui/vue'
-import { computed, watch } from 'vue'
+import { useAtomValue } from 'jotai-vue'
+import { computed, toRaw, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { disabledRuleIdsAtom, enabledRuleIdsAtom } from '../atoms/rule'
 import Card from '../components/Card.vue'
 import CodemirrorEditor from '../components/CodemirrorEditor.vue'
 import RuleList from '../components/RuleList.vue'
 import ShareBtn from '../components/ShareBtn.vue'
 import useState from '../composables/shared/useState'
 import { encodeOption } from '../composables/url'
-import { useCodemod } from '../composables/useCodemod'
 import { useModule } from '../composables/useModule'
 import { useModuleMapping } from '../composables/useModuleMapping'
 import { useModuleMeta } from '../composables/useModuleMeta'
-import { useTransformationRules } from '../composables/useTransformationRules'
+import { useUnminify } from '../composables/useUnminify'
 
 const { params: { id } } = useRoute()
 const { module, setModule } = useModule(id as string)
@@ -21,14 +22,20 @@ const { moduleMapping } = useModuleMapping()
 
 const [openSideBar, setOpenSideBar] = useState(false)
 
-const { enabledRules, disabledRuleIds } = useTransformationRules()
-const enabledRuleIds = computed(() => enabledRules.value.map(rule => rule.id))
+const enabledRuleIds = useAtomValue(enabledRuleIdsAtom)
+const disabledRuleIds = useAtomValue(disabledRuleIdsAtom)
 
-const { transform } = useCodemod()
+const { transform } = useUnminify()
 const moduleName = computed(() => moduleMapping.value[module.value.id])
 
-watch([enabledRules, () => module.value.code], async () => {
-    const result = await transform(moduleName.value, module.value, enabledRuleIds.value, moduleMeta.value, moduleMapping.value)
+watch([enabledRuleIds, () => module.value.code], async () => {
+    const result = await transform({
+        name: moduleName.value,
+        module: module.value,
+        transformationRuleIds: toRaw(enabledRuleIds.value),
+        moduleMeta: moduleMeta.value,
+        moduleMapping: moduleMapping.value,
+    })
     setModule({ ...module.value, transformed: result.transformed })
 }, { immediate: true })
 
