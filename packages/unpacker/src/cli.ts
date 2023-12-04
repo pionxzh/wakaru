@@ -80,6 +80,14 @@ async function unpacker(
         absolute: true,
         ignore: [path.join(cwd, '**/node_modules/**')],
     })
+
+    // Check if any paths are outside of the current working directory
+    for (const p of resolvedPaths) {
+        if (!isPathInside(cwd, p)) {
+            throw new Error(`File path ${c.green(path.relative(cwd, p))} is outside of the current working directory. This is not allowed.`)
+        }
+    }
+
     const outputDir = path.resolve(cwd, output)
 
     if (await fsa.exists(outputDir)) {
@@ -111,4 +119,12 @@ async function unpacker(
             console.log(`Generated ${c.green(modules.length)} modules from ${c.green(path.relative(cwd, p))} to ${c.green(path.relative(cwd, outputFolder))} ${c.dim(`(${formattedElapsed}ms)`)}`)
         }
     }
+}
+
+/**
+ * Check if base path contains target path
+ */
+function isPathInside(base: string, target: string): boolean {
+    const relative = path.relative(base, target)
+    return !relative.startsWith('..') && !path.isAbsolute(relative)
 }

@@ -81,6 +81,14 @@ async function codemod(
         absolute: true,
         ignore: [path.join(cwd, '**/node_modules/**')],
     })
+
+    // Check if any paths are outside of the current working directory
+    for (const p of resolvedPaths) {
+        if (!isPathInside(cwd, p)) {
+            throw new Error(`File path ${c.green(path.relative(cwd, p))} is outside of the current working directory. This is not allowed.`)
+        }
+    }
+
     const outputDir = path.resolve(cwd, output)
 
     if (await fsa.exists(outputDir)) {
@@ -98,9 +106,7 @@ async function codemod(
             path: p,
             source,
         })
-        // remove leading ../
-        const safePath = path.relative(cwd, p).replace(/\.\.\\/g, '')
-        const outputPath = path.join(outputDir, safePath)
+        const outputPath = path.join(outputDir, path.relative(cwd, p))
         await fsa.ensureDir(path.dirname(outputPath))
         await fsa.writeFile(outputPath, result.code, 'utf-8')
 
@@ -111,4 +117,12 @@ async function codemod(
             console.log(`${c.dim('•')} Transforming ${c.green(path.relative(cwd, outputPath))} ${c.dim(`(${formattedElapsed}ms)`)}`)
         }
     }
+}
+
+/**
+ * Check if base path contains target path
+ */
+function isPathInside(base: string, target: string): boolean {
+    const relative = path.relative(base, target)
+    return !relative.startsWith('..') && !path.isAbsolute(relative)
 }
