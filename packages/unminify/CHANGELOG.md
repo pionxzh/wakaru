@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.0.6](https://github.com/pionxzh/wakaru/compare/unminify-v0.0.5...unminify-v0.0.6) (2023-12-04)
+
+
+### Features
+
+* **un-assignment-merging:** add new rule `un-assignment-merging` for spliting chained assignment ([59e2929](https://github.com/pionxzh/wakaru/commit/59e29290918840e6c7d373644715017384aabfb2))
+* use `zod` to validate transformation param ([57407d1](https://github.com/pionxzh/wakaru/commit/57407d1e2b749b4475cca1760c40a861a52c8440))
+* use array based rules `transformationRules` ([b67da89](https://github.com/pionxzh/wakaru/commit/b67da89ef922667dc05ea18f7a866917e49ab8e4))
+
+
+### Bug Fixes
+
+* **cli:** paths out of cwd is not allowed ([7cee0c8](https://github.com/pionxzh/wakaru/commit/7cee0c8d461a12fb710a44722be043065cf072ed))
+* **cli:** use common base dir as the base of output folder ([7a939b7](https://github.com/pionxzh/wakaru/commit/7a939b78f975b229d0efbc3088e149970d0d6626)), closes [#47](https://github.com/pionxzh/wakaru/issues/47)
+* **playground:** refactor and improve rule list ([08295e5](https://github.com/pionxzh/wakaru/commit/08295e599f73ac8cd906df73a5d7c123149db778))
+
 ## [0.0.5](https://github.com/pionxzh/wakaru/compare/unminify-v0.0.4...unminify-v0.0.5) (2023-11-26)
 
 

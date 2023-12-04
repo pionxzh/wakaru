@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.0.4](https://github.com/pionxzh/wakaru/compare/unpacker-v0.0.3...unpacker-v0.0.4) (2023-12-04)
+
+
+### Features
+
+* **babel-runtime:** add matcher for `taggedTemplateLiteral` and `taggedTemplateLiteralLoose` ([c0e2bee](https://github.com/pionxzh/wakaru/commit/c0e2beeb743f9188050b3a9ab18bf28fd70ddb4b))
+* **playground:** let unpack run in worker ([05bf698](https://github.com/pionxzh/wakaru/commit/05bf698b5b1f5f4464422d07e78fcf8fe5956b29))
+
+
+### Bug Fixes
+
+* **cli:** paths out of cwd is not allowed ([7cee0c8](https://github.com/pionxzh/wakaru/commit/7cee0c8d461a12fb710a44722be043065cf072ed))
+* **unpacker:** fix require.d to export should not introduce duplicate identifier ([50231b6](https://github.com/pionxzh/wakaru/commit/50231b626e61c1e078a52cd2fc8ed813bcbe6cd9))
+
 ## [0.0.3](https://github.com/pionxzh/wakaru/compare/unpacker-v0.0.2...unpacker-v0.0.3) (2023-11-19)
 
 
