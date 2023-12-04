@@ -28,7 +28,8 @@ Supports the following transpilers:
   - [SWC][SWC]
   - [TypeScript][TypeScript]
 
-See [Unminify Documentation](./packages/unminify/README.md) for the full list of supported rules.
+See [Unminify Documentation](./packages/unminify/README.md) for the full list of supported rules.\
+☝☝☝ I would highly recommend you to check this out. It's really cool. ☝☝☝
 
 ### Unpacker
 
@@ -121,10 +122,6 @@ You can check all the rules at [/unminify/src/transformations/index.ts](https://
 Please aware that this project is still in early development. The API might change in the future.
 
 And the bundle size of these packages are huge. It might be reduced in the future. Use with caution on the browser (Yes, like the playground, it can run on the browser).
-
-## Motivation
-
-Over the course of developing plugins for io games, the need to understand game logic behind minified code became a recurring challenge. Existing tools often failed to produce readable code, and were often limited to a single bundler or transpiler. This repo was created to address these issues, and provide a single tool capable of handling a wide variety of bundlers and transpilers.
 
 ## Legal Disclaimer
 
