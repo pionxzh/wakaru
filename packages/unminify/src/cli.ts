@@ -90,13 +90,15 @@ async function codemod(
     }
 
     const outputDir = path.resolve(cwd, output)
-
     if (await fsa.exists(outputDir)) {
         if (!force) {
             throw new Error(`Output directory already exists at ${c.green(path.relative(cwd, outputDir))}. Pass ${c.yellow('--force')} to overwrite.`)
         }
     }
     await fsa.ensureDir(outputDir)
+
+    const commonBaseDir = findCommonBaseDir(resolvedPaths)
+    if (!commonBaseDir) throw new Error('Could not find common base directory')
 
     for (const p of resolvedPaths) {
         const start = hrtime()
@@ -106,7 +108,7 @@ async function codemod(
             path: p,
             source,
         })
-        const outputPath = path.join(outputDir, path.relative(cwd, p))
+        const outputPath = path.join(outputDir, path.relative(commonBaseDir, p))
         await fsa.ensureDir(path.dirname(outputPath))
         await fsa.writeFile(outputPath, result.code, 'utf-8')
 
@@ -125,4 +127,27 @@ async function codemod(
 function isPathInside(base: string, target: string): boolean {
     const relative = path.relative(base, target)
     return !relative.startsWith('..') && !path.isAbsolute(relative)
+}
+
+function findCommonBaseDir(paths: string[]): string | null {
+    if (!paths.length) return null
+
+    const absPaths = paths.map(p => path.resolve(p))
+    let commonParts = absPaths[0].split(path.sep)
+
+    for (let i = 1; i < absPaths.length; i++) {
+        const parts = absPaths[i].split(path.sep)
+        for (let j = 0; j < commonParts.length; j++) {
+            if (commonParts[j] !== parts[j]) {
+                commonParts = commonParts.slice(0, j)
+                break
+            }
+        }
+    }
+
+    const commonPath = commonParts.join(path.sep)
+    // if path is not a directory, use its parent directory
+    return fsa.statSync(commonPath).isDirectory()
+        ? commonPath
+        : path.dirname(commonPath)
 }
