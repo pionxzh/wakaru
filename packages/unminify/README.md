@@ -2,7 +2,7 @@
 
 This package offers a comprehensive set of transformation rules designed to unminify and enhance the readability of code.
 
-It covers most of patterns that are used by the following tools:
+It covers most of the patterns that are used by the following tools:
 - [Terser](https://terser.org/) (Check the [Terser Progress](./docs/Terser.md))
 - [Babel](https://babeljs.io/) (Check the [Babel Progress](./docs/Babel.md))
 - [SWC](https://swc.rs/) (Check the [SWC Progress](./docs/SWC.md))
@@ -174,7 +174,7 @@ Simplify bracket notation.
 
 ### `un-while-loop`
 
-Converts for loop without init and update to while loop.
+Converts for loop without init and update to while loops.
 
 ```diff
 - for (;;) {}
@@ -586,7 +586,7 @@ Unsupported features:
 Restore async/await from helper `__awaiter` and `__generator`.\
 Currently, this transformation only supports output from **TypeScript**.
 
-And it does not handled control flow properly, as it needs graph analysis.
+And it does not handle control flow properly, as it needs graph analysis.
 
 Please aware there are **tons of edge cases** that are not covered by this rule.
 
@@ -692,8 +692,8 @@ This transformation formats the code with [prettier](https://prettier.io/), typi
 
 > Lebab transpiles your ES5 code to ES6/ES7. It does exactly the opposite of what Babel does.
 
-We integrated part of rules from [lebab](https://github.com/lebab/lebab) to unminify the code.\
-By utilizing lebab, we can save the repetitive work of writing the same transformations ourselves.
+We integrated part of rules from [Lebab](https://github.com/lebab/lebab) to unminify the code.\
+By utilizing Lebab, we can save the repetitive work of writing the same transformations ourselves.
 
 ## TODO
 
