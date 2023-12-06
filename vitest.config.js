@@ -16,6 +16,11 @@ export default defineConfig({
                 'packages/browserfs/**',
                 'packages/ide/**',
                 'packages/playground/**',
+
+                /**
+                 * Specific files to exclude
+                 */
+                'packages/unminify/src/transformations/prettier.ts',
             ],
         },
     },
