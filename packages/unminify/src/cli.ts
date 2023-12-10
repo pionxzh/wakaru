@@ -9,9 +9,77 @@ import c from 'picocolors'
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import { version } from '../package.json'
-import { runDefaultTransformation } from '.'
+import { TransformationRule } from './transformations'
+import { runTransformations, transformationRules } from '.'
+import type { Transform } from 'jscodeshift'
 
 type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'silent'
+
+interface TimingStat {
+    filename: string
+    /**
+     * Timing measurement key
+     */
+    key: string
+    /**
+     * Time in milliseconds
+     */
+    time: number
+}
+
+class Timing {
+    private collected: TimingStat[] = []
+
+    constructor(private enabled: boolean) { }
+
+    /**
+     * Collect a timing measurement
+     */
+    collect<T>(filename: string, key: string, fn: () => T): T {
+        if (!this.enabled) return fn()
+
+        const { result, time } = this.measureTime(fn)
+        this.collected.push({ filename, key, time })
+
+        return result
+    }
+
+    /**
+     * Collect a timing measurement
+     */
+    async collectAsync<T>(filename: string, key: string, fn: () => T): Promise<T> {
+        if (!this.enabled) return fn()
+
+        const { result, time } = await this.measureTimeAsync(fn)
+        this.collected.push({ filename, key, time })
+
+        return result
+    }
+
+    /**
+     * Measure the time it takes to execute a function
+     */
+    measureTime<T>(fn: () => T) {
+        const start = hrtime()
+        const result = fn()
+        const end = hrtime(start)
+        const time = end[0] * 1e3 + end[1] / 1e6
+
+        return { result, time }
+    }
+
+    /**
+     * Measure the time it takes to execute a async function
+     */
+    async measureTimeAsync<T>(fn: () => T) {
+        const start = hrtime()
+        const result = await fn()
+        const end = hrtime(start)
+        const time = end[0] * 1e3 + end[1] / 1e6
+
+        return { result, time }
+    }
+}
 
 // eslint-disable-next-line no-unused-expressions
 yargs(hideBin(process.argv))
@@ -49,6 +117,11 @@ yargs(hideBin(process.argv))
                 type: 'boolean',
                 default: false,
             })
+            .option('perf', {
+                describe: 'enable performance statistics',
+                type: 'boolean',
+                default: false,
+            })
             .positional('files', {
                 describe: 'File paths to process (supports glob patterns)',
                 type: 'string',
@@ -61,6 +134,7 @@ yargs(hideBin(process.argv))
                 args.output,
                 args.force,
                 args.logLevel as LogLevel,
+                args.perf,
             )
         },
     )
@@ -71,6 +145,7 @@ async function codemod(
     output: string,
     force: boolean,
     logLevel: LogLevel,
+    perf: boolean,
 ) {
     const cwd = process.cwd()
     const globbyPaths = paths
@@ -100,21 +175,29 @@ async function codemod(
     const commonBaseDir = findCommonBaseDir(resolvedPaths)
     if (!commonBaseDir) throw new Error('Could not find common base directory')
 
-    for (const p of resolvedPaths) {
-        const start = hrtime()
+    const timing = new Timing(perf)
 
-        const source = await fsa.readFile(p, 'utf-8')
-        const result = runDefaultTransformation({
-            path: p,
-            source,
-        })
+    for (const p of resolvedPaths) {
         const outputPath = path.join(outputDir, path.relative(commonBaseDir, p))
         await fsa.ensureDir(path.dirname(outputPath))
-        await fsa.writeFile(outputPath, result.code, 'utf-8')
+
+        const filename = path.relative(cwd, outputPath)
+        const measure = <T>(key: string, fn: () => T) => timing.collect(filename, key, fn)
+        const measureAsync = <T>(key: string, fn: () => Promise<T>) => timing.collectAsync(filename, key, fn)
+
+        const { time: elapsed } = await timing.measureTimeAsync(async () => {
+            const source = await measureAsync('read file', () => fsa.readFile(p, 'utf-8'))
+
+            const transformations = transformationRules.map<Transform>((rule) => {
+                const { id, transform } = rule
+                return (...args: Parameters<Transform>) => measure(id, () => transform(...args))
+            })
+            const result = measure('runDefaultTransformation', () => runTransformations({ path: p, source }, transformations))
+
+            await measureAsync('write file', () => fsa.writeFile(outputPath, result.code, 'utf-8'))
+        })
 
         if (logLevel !== 'silent') {
-            const end = hrtime(start)
-            const elapsed = end[0] * 1e9 + end[1]
             const formattedElapsed = (elapsed / 1e6).toLocaleString('en-US', { maximumFractionDigits: 1 })
             console.log(`${c.dim('•')} Transforming ${c.green(path.relative(cwd, outputPath))} ${c.dim(`(${formattedElapsed}ms)`)}`)
         }

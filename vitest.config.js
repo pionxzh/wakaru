@@ -14,6 +14,7 @@ export default defineConfig({
                 'examples/**',
                 'testcases/**',
                 'packages/browserfs/**',
+                'packages/cli/**',
                 'packages/ide/**',
                 'packages/playground/**',
 
