@@ -1,0 +1,58 @@
+{
+  "name": "@wakaru/cli",
+  "type": "module",
+  "version": "0.0.1",
+  "description": "🔪📦 Unminify and beautify bundled code",
+  "author": "Pionxzh",
+  "license": "MIT",
+  "bin": "dist/cli.cjs",
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev-cli": "tsx src/cli.ts",
+    "test": "vitest run --globals",
+    "test:update": "vitest run --update --globals",
+    "test:watch": "vitest watch --globals",
+    "test:type": "tsc --noEmit",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix"
+  },
+  "dependencies": {
+    "@clack/core": "^0.3.3",
+    "@clack/prompts": "^0.7.0",
+    "fs-extra": "^11.1.1",
+    "globby": "^11.1.0",
+    "picocolors": "^1.0.0",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/jscodeshift": "^0.11.11",
+    "@types/yargs": "^17.0.32",
+    "@wakaru/ast-utils": "workspace:*",
+    "@wakaru/test-utils": "workspace:*",
+    "@wakaru/unminify": "workspace:*",
+    "@wakaru/unpacker": "workspace:*",
+    "tsup": "^7.3.0",
+    "tsx": "^4.6.2",
+    "typescript": "^5.3.2"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "require": "./dist/index.cjs",
+        "import": "./dist/index.js"
+      }
+    },
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  }
+}
