@@ -29,16 +29,12 @@
     "@babel/helper-validator-identifier": "^7.22.20",
     "@babel/preset-env": "^7.23.3",
     "@babel/types": "^7.23.4",
-    "fs-extra": "^11.1.1",
-    "globby": "^11.1.0",
     "lebab": "^3.2.3",
     "picocolors": "^1.0.0",
     "prettier": "^2.8.8",
-    "yargs": "^17.7.2",
     "zod": "^3.22.4"
   },
   "devDependencies": {
-    "@types/fs-extra": "^11.0.4",
     "@types/jscodeshift": "^0.11.11",
     "@types/prettier": "^2.7.3",
     "@types/yargs": "^17.0.32",
