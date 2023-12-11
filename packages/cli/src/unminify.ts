@@ -12,7 +12,7 @@ export interface UnminifyItem {
 }
 
 export async function unminify(
-    paths: string[],
+    filePath: string,
     moduleMapping: ModuleMapping,
     moduleMeta: ModuleMeta,
     baseDir: string,
@@ -24,32 +24,26 @@ export async function unminify(
     const cwd = process.cwd()
     const timing = new Timing(perf)
 
-    const result: UnminifyItem[] = []
+    const outputPath = path.join(outputDir, path.relative(baseDir, filePath))
+    const filename = path.relative(cwd, outputPath)
+    const measure = <T>(key: string, fn: () => T) => timing.collect(filename, key, fn)
+    const measureAsync = <T>(key: string, fn: () => Promise<T>) => timing.collectAsync(filename, key, fn)
 
-    for (const p of paths) {
-        const outputPath = path.join(outputDir, path.relative(baseDir, p))
-        const filename = path.relative(cwd, outputPath)
-        const measure = <T>(key: string, fn: () => T) => timing.collect(filename, key, fn)
-        const measureAsync = <T>(key: string, fn: () => Promise<T>) => timing.collectAsync(filename, key, fn)
+    const params = { moduleMapping, moduleMeta }
 
-        const params = { moduleMapping, moduleMeta }
+    const { time: elapsed } = await timing.measureTimeAsync(async () => {
+        const source = await measureAsync('read file', () => fsa.readFile(filePath, 'utf-8'))
 
-        const { time: elapsed } = await timing.measureTimeAsync(async () => {
-            const source = await measureAsync('read file', () => fsa.readFile(p, 'utf-8'))
-
-            const transformations = transformationRules.map<Transform>((rule) => {
-                const { id, transform } = rule
-                return (...args: Parameters<Transform>) => measure(id, () => transform(...args))
-            })
-            const result = measure('runDefaultTransformation', () => runTransformations({ path: p, source }, transformations, params))
-
-            await measureAsync('write file', () => fsa.writeFile(outputPath, result.code, 'utf-8'))
+        const transformations = transformationRules.map<Transform>((rule) => {
+            const { id, transform } = rule
+            return (...args: Parameters<Transform>) => measure(id, () => transform(...args))
         })
+        const result = measure('runDefaultTransformation', () => runTransformations({ path: filePath, source }, transformations, params))
 
-        result.push({
-            elapsed,
-        })
+        await measureAsync('write file', () => fsa.writeFile(outputPath, result.code, 'utf-8'))
+    })
+
+    return {
+        elapsed,
     }
-
-    return result
 }
