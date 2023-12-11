@@ -277,7 +277,7 @@ async function interactive({
 
         const totalModules = items.reduce((acc, item) => acc + item.modules.length, 0)
         const totalElapsed = items.reduce((acc, item) => acc + item.elapsed, 0)
-        const formattedElapsed = (totalElapsed / 1e6).toLocaleString('en-US', { maximumFractionDigits: 1 })
+        const formattedElapsed = totalElapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
         log.success(`Successfully generated ${c.green(totalModules)} modules ${c.dim(`(${formattedElapsed}ms)`)}`)
 
         outro(`Output directory: ${c.green(getRelativePath(cwd, outputPath))}`)
@@ -392,15 +392,19 @@ async function interactive({
         const s = spinner()
         s.start('...')
         const concurrencyManager = new Concurrency({ concurrency })
-        await Promise.all(
+        const items = await Promise.all(
             unminifyInputPaths.map(p => concurrencyManager.add(async () => {
-                await unminify([p], moduleMapping, moduleMeta, commonBaseDir, outputPath, true)
+                const result = await unminify([p], moduleMapping, moduleMeta, commonBaseDir, outputPath, true)
                 s.message(`${c.green(path.relative(cwd, p))}`)
+                return result
             })),
         )
         s.stop('Finished')
 
-        log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files`)
+        const totalElapsed = items.flat().reduce((acc, item) => acc + item.elapsed, 0)
+        const formattedElapsed = totalElapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
+
+        log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files ${c.dim(`(${formattedElapsed}ms)`)}`)
 
         outro(`Output directory: ${c.green(getRelativePath(cwd, outputPath))}`)
     }
@@ -508,7 +512,7 @@ async function nonInteractive(features: Feature[], {
 
         const totalModules = items.reduce((acc, item) => acc + item.modules.length, 0)
         const totalElapsed = items.reduce((acc, item) => acc + item.elapsed, 0)
-        const formattedElapsed = (totalElapsed / 1e6).toLocaleString('en-US', { maximumFractionDigits: 1 })
+        const formattedElapsed = totalElapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
         log.success(`Successfully generated ${c.green(totalModules)} modules ${c.dim(`(${formattedElapsed}ms)`)}`)
         outro(`Output directory: ${c.green(relativeOutputPath)}`)
 
@@ -555,15 +559,19 @@ async function nonInteractive(features: Feature[], {
         const s = spinner()
         s.start('...')
         const concurrencyManager = new Concurrency({ concurrency })
-        await Promise.all(
+        const items = await Promise.all(
             unminifyInputPaths.map(p => concurrencyManager.add(async () => {
-                await unminify([p], moduleMapping, moduleMeta, commonBaseDir, outputPath, true)
+                const result = await unminify([p], moduleMapping, moduleMeta, commonBaseDir, outputPath, true)
                 s.message(`${c.green(path.relative(cwd, p))}`)
+                return result
             })),
         )
         s.stop('Finished')
 
-        log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files`)
+        const totalElapsed = items.flat().reduce((acc, item) => acc + item.elapsed, 0)
+        const formattedElapsed = totalElapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
+
+        log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files ${c.dim(`(${formattedElapsed}ms)`)}`)
 
         outro(`Output directory: ${c.green(relativeOutputPath)}`)
     }

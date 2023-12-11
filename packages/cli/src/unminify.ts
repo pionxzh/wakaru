@@ -7,6 +7,10 @@ import { Timing } from './perf'
 import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
 import type { Transform } from 'jscodeshift'
 
+export interface UnminifyItem {
+    elapsed: number
+}
+
 export async function unminify(
     paths: string[],
     moduleMapping: ModuleMapping,
@@ -20,6 +24,8 @@ export async function unminify(
     const cwd = process.cwd()
     const timing = new Timing(perf)
 
+    const result: UnminifyItem[] = []
+
     for (const p of paths) {
         const outputPath = path.join(outputDir, path.relative(baseDir, p))
         const filename = path.relative(cwd, outputPath)
@@ -28,7 +34,7 @@ export async function unminify(
 
         const params = { moduleMapping, moduleMeta }
 
-        await timing.measureTimeAsync(async () => {
+        const { time: elapsed } = await timing.measureTimeAsync(async () => {
             const source = await measureAsync('read file', () => fsa.readFile(p, 'utf-8'))
 
             const transformations = transformationRules.map<Transform>((rule) => {
@@ -39,5 +45,11 @@ export async function unminify(
 
             await measureAsync('write file', () => fsa.writeFile(outputPath, result.code, 'utf-8'))
         })
+
+        result.push({
+            elapsed,
+        })
     }
+
+    return result
 }
