@@ -45,35 +45,89 @@ Test the tool and see it in action at [Playground][Playground].
 
 ## 🖥 Using the CLI
 
-```
-npx @wakaru/unpacker <files...> [options]
-# or
-pnpm dlx @wakaru/unpacker <files...> [options]
-```
+### Interactive mode
 
-For example:
-
-```
-npx @wakaru/unpacker input.js  # unpack bundled code into multiple files
-cd ./out                       # go to the output directory
-npx @wakaru/unminify ./        # unminify all files in the directory
-```
-
-Files can also be specified as glob patterns. For example:
+By default, the CLI will run in interactive mode and guide you through the process.\
+You can also pass options to skip some steps in the interactive mode.
 
 ```sh
-npx @wakaru/unminify ./src/**/*.js
+npx @wakaru/cli
+# or
+pnpm dlx @wakaru/cli
 ```
+
+<details>
+  <summary>Expand to see the example output</summary>
+
+```sh
+┌  Wakaru CLI
+│
+◇  Select features to use (Use <space> to select, <enter> to submit)
+│  Unpacker, Unminify
+│
+└  Selected features: Unpacker, Unminify
+
+┌  Unpacker
+│
+◇  Input file path (Supports glob patterns)
+│  ./input.js
+│
+◇  Output directory path (<enter> to accept default)
+│  ./out
+│
+◇  Unpacking...
+│
+◇  Finished
+│
+◆  Successfully generated 33 modules (0ms)
+│
+└  Output directory: .\out\unpack
+
+┌  Unminify
+│
+◇  Unminifying...
+│
+◇  Finished
+│
+◆  Successfully unminified 33 files
+│
+└  Output directory: .\out\unminify
+```
+
+</details>
 
 ### Options
 
-| Option     | Default | Description                      |
-| ---------- | ------- | -------------------------------- |
-| `--output` | `./out` | Output directory                 |
-| `--force`  | `false` | Force overwrite output directory |
-| `--log-level` | `info` | Log level (`error`, `warn`, `info`, `debug`, `silent`) |
+Run `npx @wakaru/cli --help` to see the full list of options.
 
-Note: Currently, the log level is not very accurate. It might still print some logs even if `silent` is specified. This will be improved in the future release.
+| Option          | Default | Description                        |
+| --------------- | ------- | ---------------------------------- |
+| `--output`      | `"out"`   | Output directory                   |
+| `--force`       | `false` | Force overwrite output directory   |
+| `--concurrency` | `1`    | Maximum number of concurrent tasks |
+| `--perf`        | `false` | Show performance metrics           |
+
+### Non-interactive mode
+
+If you want to run the CLI in non-interactive mode, you can specify the feature by passing the feature name as the first argument.
+
+`unpacker` and `unminify` will run only the corresponding feature.\
+`all` will run both `unpacker` and `unminify` sequentially.
+
+```
+npx @wakaru/cli all      <files...> [options]
+npx @wakaru/cli unpacker <files...> [options]
+npx @wakaru/cli unminify <files...> [options]
+```
+
+These options are **only** available in `all` mode.
+
+| Option              | Default        | Description                        |
+| ------------------- | -------------- | ---------------------------------- |
+| `--unpacker-output` | `"out/unpack"`   | Override unpacker output directory |
+| `--unminify-output` | `"out/unminify"` | Override unminify output directory |
+
+When running a single feature (either `unpacker` or `unminify`), the CLI will only uses the path specified in the `--output` option. This means that, unlike in the `all` mode where subdirectories (`out/unpack` and `out/unminify`) are automatically created within the output directory, in single feature mode, the output files are placed directly in the specified `--output` directory without any additional subdirectories.
 
 ## 📦 Using the API
 
@@ -121,7 +175,7 @@ You can check all the rules at [/unminify/src/transformations/index.ts](https://
 
 Please aware that this project is still in early development. The API might change in the future.
 
-And the bundle size of these packages are huge. It might be reduced in the future. Use with caution on the browser (Yes, like the playground, it can run on the browser).
+And the bundle size of these packages are huge. It might be reduced in the future. Use with caution on the browser (Yes, like the playground, it can run on the browser ✨).
 
 ## Legal Disclaimer
 
