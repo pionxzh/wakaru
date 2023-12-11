@@ -23,6 +23,8 @@ import { Concurrency } from './concurrency'
 import { findCommonBaseDir, getRelativePath, isPathInside, resolveGlob } from './path'
 import { unminify } from './unminify'
 import { unpacker } from './unpacker'
+import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
+import type { Module } from '@wakaru/unpacker'
 
 enum Feature {
     Unpacker = 'Unpacker',
@@ -136,6 +138,8 @@ async function interactive({
     let _inputPaths: string[] = []
     let outputBase: string | null = null
     let unminifyInputPaths: string[] = []
+    let moduleMeta: ModuleMeta = {}
+    let moduleMapping: ModuleMapping = {}
     let _overwrite = _force
 
     if (_inputs) {
@@ -279,6 +283,19 @@ async function interactive({
         outro(`Output directory: ${c.green(getRelativePath(cwd, outputPath))}`)
 
         unminifyInputPaths = items.flatMap(item => item.files)
+        const modules = items.flatMap(item => item.modules)
+        moduleMeta = modules.reduce<ModuleMeta>((acc, mod) => {
+            acc[mod.id] = {
+                import: mod.import,
+                export: mod.export,
+                tags: mod.tags,
+            }
+            return acc
+        }, {})
+        moduleMapping = modules.reduce<ModuleMapping>((acc, mod) => {
+            acc[mod.id] = getDepName(mod)
+            return acc
+        }, {})
     }
 
     if (features.includes(Feature.Unminify)) {
@@ -377,7 +394,7 @@ async function interactive({
         const concurrencyManager = new Concurrency({ concurrency })
         await Promise.all(
             unminifyInputPaths.map(p => concurrencyManager.add(async () => {
-                await unminify([p], commonBaseDir, outputPath, true)
+                await unminify([p], moduleMapping, moduleMeta, commonBaseDir, outputPath, true)
                 s.message(`${c.green(path.relative(cwd, p))}`)
             })),
         )
@@ -473,6 +490,8 @@ async function nonInteractive(features: Feature[], {
     outro(`Selected features: ${c.green(features.join(', '))}`)
 
     let unminifyInputPaths: string[] = []
+    let moduleMeta: ModuleMeta = {}
+    let moduleMapping: ModuleMapping = {}
 
     if (features.includes(Feature.Unpacker)) {
         intro(`${c.green(c.inverse(' Unpacker '))}`)
@@ -494,6 +513,19 @@ async function nonInteractive(features: Feature[], {
         outro(`Output directory: ${c.green(relativeOutputPath)}`)
 
         unminifyInputPaths = items.flatMap(item => item.files)
+        const modules = items.flatMap(item => item.modules)
+        moduleMeta = modules.reduce<ModuleMeta>((acc, mod) => {
+            acc[mod.id] = {
+                import: mod.import,
+                export: mod.export,
+                tags: mod.tags,
+            }
+            return acc
+        }, {})
+        moduleMapping = modules.reduce<ModuleMapping>((acc, mod) => {
+            acc[mod.id] = getDepName(mod)
+            return acc
+        }, {})
     }
 
     if (features.includes(Feature.Unminify)) {
@@ -525,7 +557,7 @@ async function nonInteractive(features: Feature[], {
         const concurrencyManager = new Concurrency({ concurrency })
         await Promise.all(
             unminifyInputPaths.map(p => concurrencyManager.add(async () => {
-                await unminify([p], commonBaseDir, outputPath, true)
+                await unminify([p], moduleMapping, moduleMeta, commonBaseDir, outputPath, true)
                 s.message(`${c.green(path.relative(cwd, p))}`)
             })),
         )
@@ -535,4 +567,8 @@ async function nonInteractive(features: Feature[], {
 
         outro(`Output directory: ${c.green(relativeOutputPath)}`)
     }
+}
+
+function getDepName(dep: Module) {
+    return dep.isEntry ? `entry-${dep.id}.js` : `module-${dep.id}.js`
 }
