@@ -394,14 +394,14 @@ async function interactive({
         const concurrencyManager = new Concurrency({ concurrency })
         const items = await Promise.all(
             unminifyInputPaths.map(p => concurrencyManager.add(async () => {
-                const result = await unminify([p], moduleMapping, moduleMeta, commonBaseDir, outputPath, true)
+                const result = await unminify(p, moduleMapping, moduleMeta, commonBaseDir, outputPath, true)
                 s.message(`${c.green(path.relative(cwd, p))}`)
                 return result
             })),
         )
         s.stop('Finished')
 
-        const totalElapsed = items.flat().reduce((acc, item) => acc + item.elapsed, 0)
+        const totalElapsed = items.reduce((acc, item) => acc + item.elapsed, 0)
         const formattedElapsed = totalElapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
 
         log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files ${c.dim(`(${formattedElapsed}ms)`)}`)
@@ -561,14 +561,14 @@ async function nonInteractive(features: Feature[], {
         const concurrencyManager = new Concurrency({ concurrency })
         const items = await Promise.all(
             unminifyInputPaths.map(p => concurrencyManager.add(async () => {
-                const result = await unminify([p], moduleMapping, moduleMeta, commonBaseDir, outputPath, true)
+                const result = await unminify(p, moduleMapping, moduleMeta, commonBaseDir, outputPath, true)
                 s.message(`${c.green(path.relative(cwd, p))}`)
                 return result
             })),
         )
         s.stop('Finished')
 
-        const totalElapsed = items.flat().reduce((acc, item) => acc + item.elapsed, 0)
+        const totalElapsed = items.reduce((acc, item) => acc + item.elapsed, 0)
         const formattedElapsed = totalElapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
 
         log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files ${c.dim(`(${formattedElapsed}ms)`)}`)
