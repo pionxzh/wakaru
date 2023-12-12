@@ -22,6 +22,7 @@ import { hideBin } from 'yargs/helpers'
 import { version } from '../package.json'
 import { Concurrency } from './concurrency'
 import { findCommonBaseDir, getRelativePath, isPathInside, resolveGlob } from './path'
+import { Timing } from './perf'
 import { unminify } from './unminify'
 import { unpacker } from './unpacker'
 import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
@@ -273,12 +274,14 @@ async function interactive({
 
         const s = spinner()
         s.start('...')
-        const items = await unpacker(inputPaths, outputPath)
+
+        const timing = new Timing()
+        const { result: items, time: elapsed } = await timing.measureTimeAsync(() => unpacker(inputPaths, outputPath))
+
         s.stop('Finished')
 
         const totalModules = items.reduce((acc, item) => acc + item.modules.length, 0)
-        const totalElapsed = items.reduce((acc, item) => acc + item.elapsed, 0)
-        const formattedElapsed = totalElapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
+        const formattedElapsed = elapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
         log.success(`Successfully generated ${c.green(totalModules)} modules ${c.dim(`(${formattedElapsed}ms)`)}`)
 
         outro(`Output directory: ${c.green(getRelativePath(cwd, outputPath))}`)
@@ -392,18 +395,20 @@ async function interactive({
 
         const s = spinner()
         s.start('...')
+
+        const timing = new Timing()
         const concurrencyManager = new Concurrency({ concurrency })
-        const items = await Promise.all(
+        const { time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
             unminifyInputPaths.map(p => concurrencyManager.add(async () => {
                 const result = await unminify(p, moduleMapping, moduleMeta, commonBaseDir, outputPath)
                 s.message(`${c.green(path.relative(cwd, p))}`)
                 return result
             })),
-        )
+        ))
+
         s.stop('Finished')
 
-        const totalElapsed = items.reduce((acc, item) => acc + item.elapsed, 0)
-        const formattedElapsed = totalElapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
+        const formattedElapsed = elapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
 
         log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files ${c.dim(`(${formattedElapsed}ms)`)}`)
 
@@ -508,12 +513,14 @@ async function nonInteractive(features: Feature[], {
 
         const s = spinner()
         s.start('...')
-        const items = await unpacker(inputPaths, outputPath)
+
+        const timing = new Timing()
+        const { result: items, time: elapsed } = await timing.measureTimeAsync(() => unpacker(inputPaths, outputPath))
+
         s.stop('Finished')
 
         const totalModules = items.reduce((acc, item) => acc + item.modules.length, 0)
-        const totalElapsed = items.reduce((acc, item) => acc + item.elapsed, 0)
-        const formattedElapsed = totalElapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
+        const formattedElapsed = elapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
         log.success(`Successfully generated ${c.green(totalModules)} modules ${c.dim(`(${formattedElapsed}ms)`)}`)
         outro(`Output directory: ${c.green(relativeOutputPath)}`)
 
@@ -559,18 +566,20 @@ async function nonInteractive(features: Feature[], {
 
         const s = spinner()
         s.start('...')
+
+        const timing = new Timing()
         const concurrencyManager = new Concurrency({ concurrency })
-        const items = await Promise.all(
+        const { time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
             unminifyInputPaths.map(p => concurrencyManager.add(async () => {
                 const result = await unminify(p, moduleMapping, moduleMeta, commonBaseDir, outputPath)
                 s.message(`${c.green(path.relative(cwd, p))}`)
                 return result
             })),
-        )
+        ))
+
         s.stop('Finished')
 
-        const totalElapsed = items.reduce((acc, item) => acc + item.elapsed, 0)
-        const formattedElapsed = totalElapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
+        const formattedElapsed = elapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
 
         log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files ${c.dim(`(${formattedElapsed}ms)`)}`)
 

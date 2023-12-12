@@ -27,6 +27,8 @@ try {
     fsa.writeFileSync(outputPath, code, 'utf-8')
 
     parentPort?.postMessage(code)
+
+    process.exit(0)
 }
 catch (e) {
     // We print the error here because it will lose the stack trace after being sent to the main thread
