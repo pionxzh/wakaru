@@ -1,3 +1,3 @@
 @echo off
 
-pnpm exec tsx "%~dp0\run" %*
+pnpm exec tsup --silent --onSuccess "node %~dp0\..\dist\cli.cjs %*"

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /* eslint-disable no-console */
 import os from 'node:os'
 import path from 'node:path'
@@ -394,7 +395,7 @@ async function interactive({
         const concurrencyManager = new Concurrency({ concurrency })
         const items = await Promise.all(
             unminifyInputPaths.map(p => concurrencyManager.add(async () => {
-                const result = await unminify(p, moduleMapping, moduleMeta, commonBaseDir, outputPath, true)
+                const result = await unminify(p, moduleMapping, moduleMeta, commonBaseDir, outputPath)
                 s.message(`${c.green(path.relative(cwd, p))}`)
                 return result
             })),
@@ -561,7 +562,7 @@ async function nonInteractive(features: Feature[], {
         const concurrencyManager = new Concurrency({ concurrency })
         const items = await Promise.all(
             unminifyInputPaths.map(p => concurrencyManager.add(async () => {
-                const result = await unminify(p, moduleMapping, moduleMeta, commonBaseDir, outputPath, true)
+                const result = await unminify(p, moduleMapping, moduleMeta, commonBaseDir, outputPath)
                 s.message(`${c.green(path.relative(cwd, p))}`)
                 return result
             })),
