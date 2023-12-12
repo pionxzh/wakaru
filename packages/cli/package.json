@@ -11,11 +11,11 @@
     "package.json"
   ],
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   },
   "scripts": {
     "build": "tsup",
-    "dev-cli": "tsx src/cli.ts",
+    "dev-cli": "pnpm exec tsup --silent --onSuccess \"node ./dist/cli.cjs $npm_package_main\"",
     "test": "vitest run --globals",
     "test:update": "vitest run --update --globals",
     "test:watch": "vitest watch --globals",
@@ -40,7 +40,6 @@
     "@wakaru/unminify": "workspace:*",
     "@wakaru/unpacker": "workspace:*",
     "tsup": "^7.3.0",
-    "tsx": "^4.6.2",
     "typescript": "^5.3.2"
   },
   "publishConfig": {

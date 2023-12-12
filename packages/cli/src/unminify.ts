@@ -1,11 +1,10 @@
 /* eslint-disable no-console */
-import * as path from 'node:path'
-import process from 'node:process'
-import { runTransformations, transformationRules } from '@wakaru/unminify'
+import path from 'node:path'
+import { Worker } from 'node:worker_threads'
 import fsa from 'fs-extra'
 import { Timing } from './perf'
+import type { UnminifyWorkerParams } from './types'
 import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
-import type { Transform } from 'jscodeshift'
 
 export interface UnminifyItem {
     elapsed: number
@@ -17,33 +16,38 @@ export async function unminify(
     moduleMeta: ModuleMeta,
     baseDir: string,
     outputDir: string,
-    perf: boolean,
 ) {
     await fsa.ensureDir(outputDir)
 
-    const cwd = process.cwd()
-    const timing = new Timing(perf)
-
-    const outputPath = path.join(outputDir, path.relative(baseDir, filePath))
-    const filename = path.relative(cwd, outputPath)
-    const measure = <T>(key: string, fn: () => T) => timing.collect(filename, key, fn)
-    const measureAsync = <T>(key: string, fn: () => Promise<T>) => timing.collectAsync(filename, key, fn)
-
-    const params = { moduleMapping, moduleMeta }
+    const timing = new Timing()
 
     const { time: elapsed } = await timing.measureTimeAsync(async () => {
-        const source = await measureAsync('read file', () => fsa.readFile(filePath, 'utf-8'))
-
-        const transformations = transformationRules.map<Transform>((rule) => {
-            const { id, transform } = rule
-            return (...args: Parameters<Transform>) => measure(id, () => transform(...args))
+        return runUnminifyInWorker({
+            inputPath: filePath,
+            outputPath: path.join(outputDir, path.relative(baseDir, filePath)),
+            moduleMeta,
+            moduleMapping,
         })
-        const result = measure('runDefaultTransformation', () => runTransformations({ path: filePath, source }, transformations, params))
-
-        await measureAsync('write file', () => fsa.writeFile(outputPath, result.code, 'utf-8'))
     })
 
     return {
         elapsed,
     }
+}
+
+function runUnminifyInWorker(params: UnminifyWorkerParams) {
+    return new Promise<string>((resolve, reject) => {
+        const worker = new Worker(
+            new URL('./unminify.worker.cjs', import.meta.url),
+            { workerData: params },
+        )
+
+        worker.on('message', resolve)
+        worker.on('error', reject)
+        worker.on('exit', (code) => {
+            if (code !== 0) {
+                reject(new Error(`Worker stopped with exit code ${code}`))
+            }
+        })
+    })
 }
