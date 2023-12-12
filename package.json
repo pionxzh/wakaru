@@ -9,7 +9,7 @@
   "license": "MIT",
   "homepage": "https://github.com/pionxzh/wakaru",
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   },
   "scripts": {
     "build": "turbo run build",
