@@ -30,7 +30,7 @@ export async function unpacker(
         for (const mod of modules) {
             const filename = moduleIdMapping[mod.id] ?? `module-${mod.id}.js`
             const outputPath = path.join(outputDir, filename)
-            await fsa.ensureDir(path.dirname(outputPath))
+            await fsa.ensureFile(outputPath)
             await fsa.writeFile(outputPath, mod.code, 'utf-8')
             files.push(outputPath)
         }
