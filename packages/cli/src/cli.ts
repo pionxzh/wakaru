@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 /* eslint-disable no-console */
-import os from 'node:os'
+import { availableParallelism } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 import {
     cancel,
     confirm,
@@ -17,14 +18,14 @@ import {
 } from '@clack/prompts'
 import fsa from 'fs-extra'
 import c from 'picocolors'
+import { FixedThreadPool } from 'poolifier'
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import { version } from '../package.json'
-import { Concurrency } from './concurrency'
 import { findCommonBaseDir, getRelativePath, isPathInside, resolveGlob } from './path'
 import { Timing } from './perf'
-import { unminify } from './unminify'
 import { unpacker } from './unpacker'
+import type { UnminifyWorkerParams } from './types'
 import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
 import type { Module } from '@wakaru/unpacker'
 
@@ -36,6 +37,11 @@ enum Feature {
 const defaultOutputBase = './out/'
 const defaultUnpackerOutputFolder = 'unpack'
 const defaultUnminifyOutputFolder = 'unminify'
+
+const unminifyWorkerFile = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    `unminify.worker${path.extname(fileURLToPath(import.meta.url))}`,
+)
 
 // eslint-disable-next-line no-unused-expressions
 yargs(hideBin(process.argv))
@@ -67,7 +73,7 @@ yargs(hideBin(process.argv))
         type: 'boolean',
     })
     .option('concurrency', {
-        describe: 'Maximum number of concurrent tasks (default: CPU cores)',
+        describe: 'Maximum number of concurrent tasks (default: 1)',
         type: 'number',
     })
     .option('perf', {
@@ -166,14 +172,9 @@ async function interactive({
         outputBase = _output
     }
 
-    if (concurrency !== undefined) {
-        if (concurrency < 1) concurrency = 1
-
-        const cpus = os.cpus().length
-        if (concurrency > cpus) {
-            log.warning(`Concurrency is more than CPU cores (${concurrency} > ${cpus})`)
-        }
-    }
+    const minConcurrency = 1
+    const maxConcurrency = availableParallelism()
+    concurrency = Math.min(maxConcurrency, Math.max(minConcurrency, concurrency))
 
     log.message(`${c.dim('Run "wakaru --help" for usage options')}`)
 
@@ -345,7 +346,7 @@ async function interactive({
             return process.exit(1)
         }
 
-        let outputPath = outputBase
+        let outputDir = outputBase
             ? singleFeature ? outputBase : path.join(outputBase, defaultUnminifyOutputFolder)
             : ''
         if (!outputBase) {
@@ -369,7 +370,7 @@ async function interactive({
             }
 
             outputBase = path.resolve(rawOutputBase ?? defaultOutputBase)
-            outputPath = singleFeature
+            outputDir = singleFeature
                 ? outputBase
                 : path.join(outputBase, defaultUnminifyOutputFolder)
         }
@@ -391,19 +392,28 @@ async function interactive({
             }
         }
 
-        log.step('Unminifying...')
+        log.step(`Unminifying... ${c.dim(`(concurrency: ${concurrency})`)}`)
 
         const s = spinner()
         s.start('...')
 
         const timing = new Timing()
-        const concurrencyManager = new Concurrency({ concurrency })
+        const pool = new FixedThreadPool<UnminifyWorkerParams, string>(concurrency, unminifyWorkerFile, {
+            errorHandler: e => console.error(e),
+        })
+        const execute = async (inputPath: string) => {
+            const outputPath = path.join(outputDir, path.relative(commonBaseDir, inputPath))
+            const result = await pool.execute({
+                inputPath,
+                outputPath,
+                moduleMeta,
+                moduleMapping,
+            })
+            s.message(`${c.green(path.relative(cwd, inputPath))}`)
+            return result
+        }
         const { time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
-            unminifyInputPaths.map(p => concurrencyManager.add(async () => {
-                const result = await unminify(p, moduleMapping, moduleMeta, commonBaseDir, outputPath)
-                s.message(`${c.green(path.relative(cwd, p))}`)
-                return result
-            })),
+            unminifyInputPaths.map(p => execute(p)),
         ))
 
         s.stop('Finished')
@@ -412,7 +422,7 @@ async function interactive({
 
         log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files ${c.dim(`(${formattedElapsed}ms)`)}`)
 
-        outro(`Output directory: ${c.green(getRelativePath(cwd, outputPath))}`)
+        outro(`Output directory: ${c.green(getRelativePath(cwd, outputDir))}`)
     }
 
     console.log()
@@ -488,14 +498,9 @@ async function nonInteractive(features: Feature[], {
         }
     }
 
-    if (concurrency !== undefined) {
-        if (concurrency < 1) concurrency = 1
-
-        const cpus = os.cpus().length
-        if (concurrency > cpus) {
-            log.warning(`Concurrency is more than CPU cores (${concurrency} > ${cpus})`)
-        }
-    }
+    const minConcurrency = 1
+    const maxConcurrency = availableParallelism()
+    concurrency = Math.min(maxConcurrency, Math.max(minConcurrency, concurrency))
 
     outro(`Selected features: ${c.green(features.join(', '))}`)
 
@@ -508,8 +513,6 @@ async function nonInteractive(features: Feature[], {
 
         const outputPath = path.resolve(unpackerOutput)
         const relativeOutputPath = getRelativePath(cwd, outputPath)
-
-        log.step('Unpacking...')
 
         const s = spinner()
         s.start('...')
@@ -559,23 +562,35 @@ async function nonInteractive(features: Feature[], {
             return process.exit(1)
         }
 
-        const outputPath = path.resolve(unminifyOutput)
-        const relativeOutputPath = getRelativePath(cwd, outputPath)
+        const outputDir = path.resolve(unminifyOutput)
+        const relativeOutputPath = getRelativePath(cwd, outputDir)
 
-        log.step('Unminifying...')
+        log.step(`Unminifying... ${c.dim(`(concurrency: ${concurrency})`)}`)
 
         const s = spinner()
         s.start('...')
 
         const timing = new Timing()
-        const concurrencyManager = new Concurrency({ concurrency })
+
+        const pool = new FixedThreadPool<UnminifyWorkerParams, string>(concurrency, unminifyWorkerFile, {
+            errorHandler: e => console.error(e),
+        })
+        const execute = async (inputPath: string) => {
+            const outputPath = path.join(outputDir, path.relative(commonBaseDir, inputPath))
+            const result = await pool.execute({
+                inputPath,
+                outputPath,
+                moduleMeta,
+                moduleMapping,
+            })
+            s.message(`${c.green(path.relative(cwd, inputPath))}`)
+            return result
+        }
         const { time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
-            unminifyInputPaths.map(p => concurrencyManager.add(async () => {
-                const result = await unminify(p, moduleMapping, moduleMeta, commonBaseDir, outputPath)
-                s.message(`${c.green(path.relative(cwd, p))}`)
-                return result
-            })),
+            unminifyInputPaths.map(p => execute(p)),
         ))
+
+        pool.destroy()
 
         s.stop('Finished')
 
