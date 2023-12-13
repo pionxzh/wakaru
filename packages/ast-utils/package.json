@@ -23,7 +23,8 @@
     "./reference": "./src/reference.ts",
     "./scope": "./src/scope.ts",
     "./types": "./src/types.ts",
-    "./wrapAstTransformation": "./src/wrapAstTransformation.ts"
+    "./wrapAstTransformation": "./src/wrapAstTransformation.ts",
+    "./wrapStringTransformation": "./src/wrapStringTransformation.ts"
   },
   "files": [
     "dist",
