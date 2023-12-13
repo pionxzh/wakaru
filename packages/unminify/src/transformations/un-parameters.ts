@@ -79,12 +79,12 @@ export const transformAST: ASTTransformation = (context) => {
             handleBody(j, path)
         })
 
-    transformASTWithRules([
+    return transformASTWithRules([
         // 'default-param',
         // 'destruct-param',
         'arg-spread',
         'arg-rest',
-    ])(context, {})
+    ])(root.toSource({ lineTerminator: '\n' }), {})
 }
 
 /**

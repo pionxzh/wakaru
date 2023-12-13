@@ -1,6 +1,6 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { wrapStringTransformation } from '@wakaru/ast-utils/wrapStringTransformation'
 import { transform } from 'lebab'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { StringTransformation } from '@wakaru/ast-utils/wrapStringTransformation'
 import type { LebabRule } from 'lebab'
 
 /**
@@ -32,9 +32,8 @@ function transformLebab(input: string, rules: LebabRule[]) {
     return { code, warnings }
 }
 
-export const transformASTWithRules = (rules: LebabRule[]): ASTTransformation => (context) => {
-    const code = context.root.toSource()
+export const transformASTWithRules = (rules: LebabRule[]): StringTransformation => (code) => {
     return transformLebab(code, rules).code
 }
 
-export default wrapAstTransformation(transformASTWithRules(allLebabRules))
+export default wrapStringTransformation(transformASTWithRules(allLebabRules))
