@@ -273,13 +273,10 @@ async function interactive({
 
         log.step('Unpacking...')
 
-        const s = spinner()
-        s.start('...')
-
         const timing = new Timing()
         const { result: items, time: elapsed } = await timing.measureTimeAsync(() => unpacker(inputPaths, outputPath))
 
-        s.stop('Finished')
+        log.step('Finished')
 
         const totalModules = items.reduce((acc, item) => acc + item.modules.length, 0)
         const formattedElapsed = elapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
@@ -514,13 +511,12 @@ async function nonInteractive(features: Feature[], {
         const outputPath = path.resolve(unpackerOutput)
         const relativeOutputPath = getRelativePath(cwd, outputPath)
 
-        const s = spinner()
-        s.start('...')
+        log.step('Unpacking...')
 
         const timing = new Timing()
         const { result: items, time: elapsed } = await timing.measureTimeAsync(() => unpacker(inputPaths, outputPath))
 
-        s.stop('Finished')
+        log.step('Finished')
 
         const totalModules = items.reduce((acc, item) => acc + item.modules.length, 0)
         const formattedElapsed = elapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
