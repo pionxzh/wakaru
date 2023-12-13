@@ -12,6 +12,8 @@ interface TimingStat {
     time: number
 }
 
+export type Measurement = TimingStat[]
+
 export class Timing {
     private collected: TimingStat[] = []
 
@@ -63,5 +65,9 @@ export class Timing {
         const time = end[0] * 1e3 + end[1] / 1e6
 
         return { result, time }
+    }
+
+    getMeasurements(): Measurement {
+        return this.collected
     }
 }

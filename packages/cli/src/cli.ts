@@ -23,8 +23,9 @@ import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import { version } from '../package.json'
 import { findCommonBaseDir, getRelativePath, isPathInside, resolveGlob } from './path'
-import { Timing } from './perf'
+import { Timing } from './timing'
 import { unpacker } from './unpacker'
+import type { Measurement } from './timing'
 import type { UnminifyWorkerParams } from './types'
 import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
 import type { Module } from '@wakaru/unpacker'
@@ -127,7 +128,7 @@ async function interactive({
     output: _output,
     force: _force = false,
     concurrency = 1,
-    // perf,
+    perf,
 }: {
     inputs: string[] | undefined
     output: string | undefined
@@ -395,10 +396,10 @@ async function interactive({
         s.start('...')
 
         const timing = new Timing()
-        const pool = new FixedThreadPool<UnminifyWorkerParams, void>(concurrency, unminifyWorkerFile, {
+        const pool = new FixedThreadPool<UnminifyWorkerParams, Measurement>(concurrency, unminifyWorkerFile, {
             errorHandler: e => console.error(e),
         })
-        const execute = async (inputPath: string) => {
+        const unminify = async (inputPath: string) => {
             const outputPath = path.join(outputDir, path.relative(commonBaseDir, inputPath))
             const result = await pool.execute({
                 inputPath,
@@ -409,10 +410,22 @@ async function interactive({
             s.message(`${c.green(path.relative(cwd, inputPath))}`)
             return result
         }
-        const { time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
-            unminifyInputPaths.map(p => execute(p)),
+        const { result: measurements, time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
+            unminifyInputPaths.map(p => unminify(p)),
         ))
 
+        if (perf) {
+            const groupedByRules = measurements
+                .flat()
+                .reduce<Record<string, number>>((acc, { key, time }) => {
+                    acc[key] = (acc[key] ?? 0) + time
+                    return acc
+                }, {})
+            const table = Object.entries(groupedByRules)
+                .map(([key, time]) => ({ key, time: ~~time }))
+                .sort((a, b) => a.time - b.time)
+            console.table(table, ['key', 'time'])
+        }
         s.stop('Finished')
 
         const formattedElapsed = elapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
@@ -434,7 +447,7 @@ async function nonInteractive(features: Feature[], {
     'unminify-output': _unminifyOutput,
     force = false,
     concurrency = 1,
-    // perf,
+    perf,
 }: {
     inputs: string[] | undefined
     output: string | undefined
@@ -568,10 +581,10 @@ async function nonInteractive(features: Feature[], {
 
         const timing = new Timing()
 
-        const pool = new FixedThreadPool<UnminifyWorkerParams, void>(concurrency, unminifyWorkerFile, {
+        const pool = new FixedThreadPool<UnminifyWorkerParams, Measurement>(concurrency, unminifyWorkerFile, {
             errorHandler: e => console.error(e),
         })
-        const execute = async (inputPath: string) => {
+        const unminify = async (inputPath: string) => {
             const outputPath = path.join(outputDir, path.relative(commonBaseDir, inputPath))
             const result = await pool.execute({
                 inputPath,
@@ -582,9 +595,22 @@ async function nonInteractive(features: Feature[], {
             s.message(`${c.green(path.relative(cwd, inputPath))}`)
             return result
         }
-        const { time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
-            unminifyInputPaths.map(p => execute(p)),
+        const { result: measurements, time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
+            unminifyInputPaths.map(p => unminify(p)),
         ))
+
+        if (perf) {
+            const groupedByRules = measurements
+                .flat()
+                .reduce<Record<string, number>>((acc, { key, time }) => {
+                    acc[key] = (acc[key] ?? 0) + time
+                    return acc
+                }, {})
+            const table = Object.entries(groupedByRules)
+                .map(([key, time]) => ({ key, time: ~~time }))
+                .sort((a, b) => a.time - b.time)
+            console.table(table, ['key', 'time'])
+        }
 
         pool.destroy()
 
