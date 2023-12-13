@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { unpack } from '@wakaru/unpacker'
 import fsa from 'fs-extra'
-import { Timing } from './perf'
+import { Timing } from './timing'
 import type { ModuleMapping } from '@wakaru/ast-utils/types'
 import type { Module } from '@wakaru/unpacker'
 

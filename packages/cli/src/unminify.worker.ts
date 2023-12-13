@@ -3,7 +3,8 @@ import process from 'node:process'
 import { runTransformations, transformationRules } from '@wakaru/unminify'
 import fsa from 'fs-extra'
 import { ThreadWorker } from 'poolifier'
-import { Timing } from './perf'
+import { Timing } from './timing'
+import type { Measurement } from './timing'
 import type { UnminifyWorkerParams } from './types'
 import type { Transform } from 'jscodeshift'
 
@@ -27,6 +28,8 @@ export async function unminify(data?: UnminifyWorkerParams) {
         const { code } = runTransformations(fileInfo, transformations, { moduleMeta, moduleMapping })
         await fsa.ensureFile(outputPath)
         await fsa.writeFile(outputPath, code, 'utf-8')
+
+        return timing.getMeasurements()
     }
     catch (e) {
         // We print the error here because it will lose the stack trace after being sent to the main thread
@@ -35,4 +38,4 @@ export async function unminify(data?: UnminifyWorkerParams) {
     }
 }
 
-export default new ThreadWorker<UnminifyWorkerParams, void>(unminify)
+export default new ThreadWorker<UnminifyWorkerParams, Measurement>(unminify)
