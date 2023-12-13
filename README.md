@@ -48,7 +48,7 @@ Test the tool and see it in action at [Playground][Playground].
 ### Interactive mode
 
 By default, the CLI will run in interactive mode and guide you through the process.\
-You can also pass options to skip some steps in the interactive mode.
+You can also pass [options](#options) to skip some steps in the interactive mode.
 
 ```sh
 npx @wakaru/cli
@@ -56,56 +56,18 @@ npx @wakaru/cli
 pnpm dlx @wakaru/cli
 ```
 
-<details>
-  <summary>Expand to see the example output</summary>
-
-```sh
-┌  Wakaru CLI
-│
-◇  Select features to use (Use <space> to select, <enter> to submit)
-│  Unpacker, Unminify
-│
-└  Selected features: Unpacker, Unminify
-
-┌  Unpacker
-│
-◇  Input file path (Supports glob patterns)
-│  ./input.js
-│
-◇  Output directory path (<enter> to accept default)
-│  ./out
-│
-◇  Unpacking...
-│
-◇  Finished
-│
-◆  Successfully generated 33 modules (0ms)
-│
-└  Output directory: .\out\unpack
-
-┌  Unminify
-│
-◇  Unminifying...
-│
-◇  Finished
-│
-◆  Successfully unminified 33 files
-│
-└  Output directory: .\out\unminify
-```
-
-</details>
-
 ### Options
 
 Run `npx @wakaru/cli --help` to see the full list of options.
 
-| Option          | Default | Description                        |
-| --------------- | ------- | ---------------------------------- |
-| `--output`      | `"out"`   | Output directory                   |
-| `--force`       | `false` | Force overwrite output directory   |
-| `--concurrency` | `1`    | Maximum number of concurrent tasks |
-| `--perf`        | `false` | Show performance metrics           |
+| Option          | Default | Description                             |
+| --------------- | ------- | --------------------------------------- |
+| `--output`      | `"out"` | Output directory                        |
+| `--force`       | `false` | Force overwrite output directory        |
+| `--concurrency` | `1`     | Specific the number of concurrent tasks |
+| `--perf`        | `false` | Show performance metrics                |
+
+`--concurrency` can be used to speed up the process. But please aware that the process might OOM if the input file is too large.
 
 ### Non-interactive mode
 
@@ -122,8 +84,8 @@ npx @wakaru/cli unminify <files...> [options]
 
 These options are **only** available in `all` mode.
 
-| Option              | Default        | Description                        |
-| ------------------- | -------------- | ---------------------------------- |
+| Option              | Default          | Description                        |
+| ------------------- | ---------------- | ---------------------------------- |
 | `--unpacker-output` | `"out/unpack"`   | Override unpacker output directory |
 | `--unminify-output` | `"out/unminify"` | Override unminify output directory |
 
