@@ -398,7 +398,7 @@ async function interactive({
         s.start('...')
 
         const timing = new Timing()
-        const pool = new FixedThreadPool<UnminifyWorkerParams, string>(concurrency, unminifyWorkerFile, {
+        const pool = new FixedThreadPool<UnminifyWorkerParams, void>(concurrency, unminifyWorkerFile, {
             errorHandler: e => console.error(e),
         })
         const execute = async (inputPath: string) => {
@@ -572,7 +572,7 @@ async function nonInteractive(features: Feature[], {
 
         const timing = new Timing()
 
-        const pool = new FixedThreadPool<UnminifyWorkerParams, string>(concurrency, unminifyWorkerFile, {
+        const pool = new FixedThreadPool<UnminifyWorkerParams, void>(concurrency, unminifyWorkerFile, {
             errorHandler: e => console.error(e),
         })
         const execute = async (inputPath: string) => {
