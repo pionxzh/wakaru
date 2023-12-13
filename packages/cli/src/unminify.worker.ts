@@ -7,30 +7,26 @@ import { Timing } from './perf'
 import type { UnminifyWorkerParams } from './types'
 import type { Transform } from 'jscodeshift'
 
-export function unminify(data?: UnminifyWorkerParams) {
+export async function unminify(data?: UnminifyWorkerParams) {
     if (!data) throw new Error('No data received')
 
     try {
         const { inputPath, outputPath, moduleMeta, moduleMapping } = data
 
-        const timing = new Timing()
         const cwd = process.cwd()
         const filename = path.relative(cwd, inputPath)
-        const measure = <T>(key: string, fn: () => T) => timing.collect(filename, key, fn)
-
-        const source = fsa.readFileSync(inputPath, 'utf-8')
+        const source = await fsa.readFile(inputPath, 'utf-8')
         const fileInfo = { path: inputPath, source }
 
+        const timing = new Timing()
         const transformations = transformationRules.map<Transform>((rule) => {
             const { id, transform } = rule
-            return (...args: Parameters<Transform>) => measure(id, () => transform(...args))
+            return (...args: Parameters<Transform>) => timing.collect(filename, id, () => transform(...args))
         })
 
         const { code } = runTransformations(fileInfo, transformations, { moduleMeta, moduleMapping })
-        fsa.ensureFileSync(outputPath)
-        fsa.writeFileSync(outputPath, code, 'utf-8')
-
-        return code
+        await fsa.ensureFile(outputPath)
+        await fsa.writeFile(outputPath, code, 'utf-8')
     }
     catch (e) {
         // We print the error here because it will lose the stack trace after being sent to the main thread
@@ -39,4 +35,4 @@ export function unminify(data?: UnminifyWorkerParams) {
     }
 }
 
-export default new ThreadWorker<UnminifyWorkerParams, string>(unminify)
+export default new ThreadWorker<UnminifyWorkerParams, void>(unminify)
