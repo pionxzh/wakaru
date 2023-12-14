@@ -46,7 +46,7 @@ jobs:
         if: ${{ steps.release.outputs.release_created }}
 
       - name: Publish
-        run: pnpm --filter "unminify" --filter "unpacker" publish -r --access public
+        run: pnpm --filter "unminify" --filter "unpacker" --filter "cli" publish -r --access public
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
         if: ${{ steps.release.outputs.release_created }}

@@ -42,17 +42,5 @@
     "@wakaru/unpacker": "workspace:*",
     "tsup": "^7.3.0",
     "typescript": "^5.3.2"
-  },
-  "publishConfig": {
-    "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "require": "./dist/index.cjs",
-        "import": "./dist/index.js"
-      }
-    },
-    "main": "./dist/index.cjs",
-    "module": "./dist/index.js",
-    "types": "./dist/index.d.ts"
   }
 }

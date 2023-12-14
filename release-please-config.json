@@ -3,6 +3,9 @@
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
   "packages": {
+    "packages/cli": {
+      "component": "cli"
+    },
     "packages/unminify": {
       "component": "unminify"
     },
