@@ -1,5 +1,6 @@
 {
   "pull-request-title-pattern": "chore: release${component} ${version}",
+  "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
   "packages": {
     "packages/unminify": {
