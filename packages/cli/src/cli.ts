@@ -406,7 +406,9 @@ async function interactive({
         outro(`Output directory: ${c.green(getRelativePath(cwd, outputDir))}`)
 
         if (perf) {
-            handlePerfMeasurements(measurements)
+            printPerfStats(measurements)
+
+            writePerfStats(measurements, path.join(outputBase, 'perf.json'))
         }
     }
 
@@ -456,19 +458,19 @@ async function nonInteractive(features: Feature[], {
         return process.exit(1)
     }
 
-    const output = _output ?? defaultOutputBase
+    const outputBase = _output ?? defaultOutputBase
     const singleFeature = features.length === 1
-    const unpackerOutput = _unpackerOutput ?? (singleFeature ? output : path.join(output, defaultUnpackerOutputFolder))
-    const unminifyOutput = _unminifyOutput ?? (singleFeature ? output : path.join(output, defaultUnminifyOutputFolder))
+    const unpackerOutput = _unpackerOutput ?? (singleFeature ? outputBase : path.join(outputBase, defaultUnpackerOutputFolder))
+    const unminifyOutput = _unminifyOutput ?? (singleFeature ? outputBase : path.join(outputBase, defaultUnminifyOutputFolder))
 
-    if (!isPathInside(cwd, output)) {
+    if (!isPathInside(cwd, outputBase)) {
         log.error('Output directory must be inside the current working directory')
         return process.exit(1)
     }
 
     if (!force) {
-        if (fsa.existsSync(output)) {
-            log.error(`Output directory already exists at ${c.green(output)}. Pass ${c.green('--force')} to overwrite`)
+        if (fsa.existsSync(outputBase)) {
+            log.error(`Output directory already exists at ${c.green(outputBase)}. Pass ${c.green('--force')} to overwrite`)
             return process.exit(1)
         }
 
@@ -566,7 +568,9 @@ async function nonInteractive(features: Feature[], {
         outro(`Output directory: ${c.green(relativeOutputPath)}`)
 
         if (perf) {
-            handlePerfMeasurements(measurements)
+            printPerfStats(measurements)
+
+            writePerfStats(measurements, path.join(outputBase, 'perf.json'))
         }
     }
 }
@@ -578,7 +582,7 @@ function formatElapsed(elapsed: number) {
     return `${~~(elapsed / 1000 / 60 / 60)}h${~~((elapsed / 1000 / 60) % 60)}m${~~((elapsed / 1000) % 60)}s`
 }
 
-function handlePerfMeasurements(measurements: Measurement[]) {
+function printPerfStats(measurements: Measurement[]) {
     const groupedByRules = measurements
         .flat()
         .reduce<Record<string, number>>((acc, { key, time }) => {
@@ -590,6 +594,17 @@ function handlePerfMeasurements(measurements: Measurement[]) {
         .sort((a, b) => a.time - b.time)
     console.log()
     console.table(table, ['key', 'time'])
+}
+
+function writePerfStats(measurements: Measurement[], outputPath: string) {
+    fsa.writeJSONSync(outputPath, measurements.flat(), {
+        encoding: 'utf-8',
+        spaces: 2,
+    })
+
+    console.log()
+    console.log(`Performance statistics generated at ${c.green(getRelativePath(process.cwd(), outputPath))}`)
+    console.log()
 }
 
 function generateModuleMeta(modules: Module[]) {
