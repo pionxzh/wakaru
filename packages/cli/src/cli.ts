@@ -280,25 +280,14 @@ async function interactive({
         log.step('Finished')
 
         const totalModules = items.reduce((acc, item) => acc + item.modules.length, 0)
-        const formattedElapsed = elapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
-        log.success(`Successfully generated ${c.green(totalModules)} modules ${c.dim(`(${formattedElapsed}ms)`)}`)
+        log.success(`Successfully generated ${c.green(totalModules)} modules ${c.dim(`(${formatElapsed(elapsed)})`)}`)
 
         outro(`Output directory: ${c.green(getRelativePath(cwd, outputPath))}`)
 
         unminifyInputPaths = items.flatMap(item => item.files)
         const modules = items.flatMap(item => item.modules)
-        moduleMeta = modules.reduce<ModuleMeta>((acc, mod) => {
-            acc[mod.id] = {
-                import: mod.import,
-                export: mod.export,
-                tags: mod.tags,
-            }
-            return acc
-        }, {})
-        moduleMapping = modules.reduce<ModuleMapping>((acc, mod) => {
-            acc[mod.id] = getDepName(mod)
-            return acc
-        }, {})
+        moduleMeta = generateModuleMeta(modules)
+        moduleMapping = generateModuleMapping(modules)
     }
 
     if (features.includes(Feature.Unminify)) {
@@ -401,38 +390,24 @@ async function interactive({
         })
         const unminify = async (inputPath: string) => {
             const outputPath = path.join(outputDir, path.relative(commonBaseDir, inputPath))
-            const result = await pool.execute({
-                inputPath,
-                outputPath,
-                moduleMeta,
-                moduleMapping,
-            })
+            const result = await pool.execute({ inputPath, outputPath, moduleMeta, moduleMapping })
             s.message(`${c.green(path.relative(cwd, inputPath))}`)
             return result
         }
         const { result: measurements, time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
             unminifyInputPaths.map(p => unminify(p)),
         ))
+        pool.destroy()
 
-        if (perf) {
-            const groupedByRules = measurements
-                .flat()
-                .reduce<Record<string, number>>((acc, { key, time }) => {
-                    acc[key] = (acc[key] ?? 0) + time
-                    return acc
-                }, {})
-            const table = Object.entries(groupedByRules)
-                .map(([key, time]) => ({ key, time: ~~time }))
-                .sort((a, b) => a.time - b.time)
-            console.table(table, ['key', 'time'])
-        }
         s.stop('Finished')
 
-        const formattedElapsed = elapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
-
-        log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files ${c.dim(`(${formattedElapsed}ms)`)}`)
+        log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files ${c.dim(`(${formatElapsed(elapsed)})`)}`)
 
         outro(`Output directory: ${c.green(getRelativePath(cwd, outputDir))}`)
+
+        if (perf) {
+            handlePerfMeasurements(measurements)
+        }
     }
 
     console.log()
@@ -532,24 +507,13 @@ async function nonInteractive(features: Feature[], {
         log.step('Finished')
 
         const totalModules = items.reduce((acc, item) => acc + item.modules.length, 0)
-        const formattedElapsed = elapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
-        log.success(`Successfully generated ${c.green(totalModules)} modules ${c.dim(`(${formattedElapsed}ms)`)}`)
+        log.success(`Successfully generated ${c.green(totalModules)} modules ${c.dim(`(${formatElapsed(elapsed)})`)}`)
         outro(`Output directory: ${c.green(relativeOutputPath)}`)
 
         unminifyInputPaths = items.flatMap(item => item.files)
         const modules = items.flatMap(item => item.modules)
-        moduleMeta = modules.reduce<ModuleMeta>((acc, mod) => {
-            acc[mod.id] = {
-                import: mod.import,
-                export: mod.export,
-                tags: mod.tags,
-            }
-            return acc
-        }, {})
-        moduleMapping = modules.reduce<ModuleMapping>((acc, mod) => {
-            acc[mod.id] = getDepName(mod)
-            return acc
-        }, {})
+        moduleMeta = generateModuleMeta(modules)
+        moduleMapping = generateModuleMapping(modules)
     }
 
     if (features.includes(Feature.Unminify)) {
@@ -586,44 +550,70 @@ async function nonInteractive(features: Feature[], {
         })
         const unminify = async (inputPath: string) => {
             const outputPath = path.join(outputDir, path.relative(commonBaseDir, inputPath))
-            const result = await pool.execute({
-                inputPath,
-                outputPath,
-                moduleMeta,
-                moduleMapping,
-            })
+            const result = await pool.execute({ inputPath, outputPath, moduleMeta, moduleMapping })
             s.message(`${c.green(path.relative(cwd, inputPath))}`)
             return result
         }
         const { result: measurements, time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
             unminifyInputPaths.map(p => unminify(p)),
         ))
-
-        if (perf) {
-            const groupedByRules = measurements
-                .flat()
-                .reduce<Record<string, number>>((acc, { key, time }) => {
-                    acc[key] = (acc[key] ?? 0) + time
-                    return acc
-                }, {})
-            const table = Object.entries(groupedByRules)
-                .map(([key, time]) => ({ key, time: ~~time }))
-                .sort((a, b) => a.time - b.time)
-            console.table(table, ['key', 'time'])
-        }
-
         pool.destroy()
 
         s.stop('Finished')
 
-        const formattedElapsed = elapsed.toLocaleString('en-US', { maximumFractionDigits: 1 })
-
-        log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files ${c.dim(`(${formattedElapsed}ms)`)}`)
+        log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files ${c.dim(`(${formatElapsed(elapsed)})`)}`)
 
         outro(`Output directory: ${c.green(relativeOutputPath)}`)
+
+        if (perf) {
+            handlePerfMeasurements(measurements)
+        }
     }
 }
 
-function getDepName(dep: Module) {
-    return dep.isEntry ? `entry-${dep.id}.js` : `module-${dep.id}.js`
+function formatElapsed(elapsed: number) {
+    if (elapsed < 1000) return `${~~elapsed}ms`
+    if (elapsed < 1000 * 60) return `${(elapsed / 1000).toFixed(2)}s`
+    if (elapsed < 1000 * 60 * 60) return `${~~(elapsed / 1000 / 60)}m${~~((elapsed / 1000) % 60)}s`
+    return `${~~(elapsed / 1000 / 60 / 60)}h${~~((elapsed / 1000 / 60) % 60)}m${~~((elapsed / 1000) % 60)}s`
+}
+
+function handlePerfMeasurements(measurements: Measurement[]) {
+    const groupedByRules = measurements
+        .flat()
+        .reduce<Record<string, number>>((acc, { key, time }) => {
+            acc[key] = (acc[key] ?? 0) + time
+            return acc
+        }, {})
+    const table = Object.entries(groupedByRules)
+        .map(([key, time]) => ({ key, time: ~~time }))
+        .sort((a, b) => a.time - b.time)
+    console.log()
+    console.table(table, ['key', 'time'])
+}
+
+function generateModuleMeta(modules: Module[]) {
+    return modules.reduce<ModuleMeta>((acc, mod) => {
+        acc[mod.id] = {
+            import: mod.import,
+            export: mod.export,
+            tags: mod.tags,
+        }
+        return acc
+    }, {})
+}
+
+function generateModuleMapping(modules: Module[]) {
+    return modules.reduce<ModuleMapping>((acc, mod) => {
+        acc[mod.id] = getModuleFileName(mod)
+        return acc
+    }, {})
+}
+
+function getModuleFileName(dep: Module) {
+    if (dep.isEntry) {
+        if (dep.id === 0) return 'entry.js'
+        return `entry-${dep.id}.js`
+    }
+    return `module-${dep.id}.js`
 }
