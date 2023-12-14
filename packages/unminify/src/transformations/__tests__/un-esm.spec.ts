@@ -317,6 +317,15 @@ var buz = foo$0.bar("baz");
 `,
 )
 
+inlineTest('should not transform these invalid require',
+  `
+var ei=require("core-js")["__core-js_shared__"]; // invalid identifier
+`,
+  `
+var ei=require("core-js")["__core-js_shared__"]; // invalid identifier
+`,
+)
+
 inlineTest('default export primitive', 'module.exports = 1;', 'export default 1;')
 inlineTest('default export object', 'module.exports = { foo: 1 };', 'export default { foo: 1 };')
 inlineTest('default export function', 'module.exports = function() {};', 'export default function() {};')

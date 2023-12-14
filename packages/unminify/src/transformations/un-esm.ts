@@ -1,5 +1,5 @@
 import { isTopLevel } from '@wakaru/ast-utils'
-import { generateName } from '@wakaru/ast-utils/identifier'
+import { generateName, isValidIdentifier } from '@wakaru/ast-utils/identifier'
 import { ImportManager } from '@wakaru/ast-utils/imports'
 import { isExportObject, isStringObjectProperty, isUndefined } from '@wakaru/ast-utils/matchers'
 import { findReferences, renameIdentifier } from '@wakaru/ast-utils/reference'
@@ -195,6 +195,7 @@ function transformImport(context: Context, hoist: boolean) {
         if (init.computed && j.StringLiteral.check(property)) imported = property.value
         else if (!init.computed && j.Identifier.check(property)) imported = property.name
         if (!imported) return
+        if (imported !== 'default' && !isValidIdentifier(imported)) return
 
         if (j.Identifier.check(id)) {
             const local = id.name
