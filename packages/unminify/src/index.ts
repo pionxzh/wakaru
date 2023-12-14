@@ -41,9 +41,9 @@ export function runTransformations<P extends Record<string, any>>(
             if (newResult) code = newResult
         }
         catch (err: any) {
-            if ('loc' in err) {
-                console.error(err)
+            console.error(`\nError running transformation ${transform.name} on ${path}`, err)
 
+            if ('loc' in err) {
                 const padLeft = (str: string, len: number, char: string) => {
                     const count = len > str.length ? len - str.length : 0
                     return `${char.repeat(count)}${str}`
@@ -67,9 +67,6 @@ export function runTransformations<P extends Record<string, any>>(
                 printLine(loc.line, loc.column)
                 printLine(loc.line + 1)
                 printLine(loc.line + 2)
-            }
-            else {
-                console.error(err)
             }
 
             break

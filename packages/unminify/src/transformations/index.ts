@@ -162,5 +162,7 @@ export const transformationRules: TransformationRule[] = _transformationRules.ma
     const occurrence = occurrenceMap.get(rule.name) ?? 0
     occurrenceMap.set(rule.name, occurrence + 1)
     const id = occurrence === 0 ? rule.name : `${rule.name}-${occurrence}`
+    // Set the name of the function for better debugging
+    Object.defineProperty(rule.transform, 'name', { value: id })
     return { ...rule, id }
 })
