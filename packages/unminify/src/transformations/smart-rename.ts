@@ -1,6 +1,6 @@
 import { assertScopeExists } from '@wakaru/ast-utils/assert'
 import { pascalCase } from '@wakaru/ast-utils/case'
-import { generateName } from '@wakaru/ast-utils/identifier'
+import { generateName, isValidIdentifier } from '@wakaru/ast-utils/identifier'
 import { renameIdentifier } from '@wakaru/ast-utils/reference'
 import { isDeclared } from '@wakaru/ast-utils/scope'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
@@ -119,10 +119,17 @@ function handlePropertyRename(j: JSCodeshift, objectPattern: ObjectPattern, scop
 
         // If the key is longer than the value, rename the value
         if (key.name.length > value.name.length) {
-            if (isDeclared(scope, key.name)) return
+            let newName = key.name
 
-            renameIdentifier(j, scope, value.name, key.name)
-            property.shorthand = key.name === value.name
+            // if the newName is not a valid identifier, _{newName} is used instead
+            if (!isValidIdentifier(newName)) {
+                newName = generateName(`_${newName}`)
+            }
+
+            if (isDeclared(scope, newName)) return
+
+            renameIdentifier(j, scope, value.name, newName)
+            property.shorthand = newName === value.name
         }
     })
 }

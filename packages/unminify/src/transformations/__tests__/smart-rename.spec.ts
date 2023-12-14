@@ -164,6 +164,23 @@ function foo({
 `,
 )
 
+inlineTest('object destructuring with reserved identifier',
+  `
+const {
+  static: t,
+  default: o,
+} = n;
+o.delete(t);
+`,
+  `
+const {
+  static: _static,
+  default: _default,
+} = n;
+_default.delete(_static);
+`,
+)
+
 inlineTest('react rename - createContext',
   `
 const d = createContext(null);
