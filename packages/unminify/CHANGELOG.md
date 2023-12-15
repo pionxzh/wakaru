@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.0](https://github.com/pionxzh/wakaru/compare/unminify-v0.0.6...unminify-v0.1.0) (2023-12-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* bump Node.js to >= 18
+* deprecate `@wakaru/unminify` and `@wakaru/unpacker` CLI in favor of `@wakaru/cli`
+
+### Features
+
+* bump Node.js to &gt;= 18 ([c36d0a0](https://github.com/pionxzh/wakaru/commit/c36d0a0176db56e98841051db264ab4c4f13739d))
+* **cli:** implement new standalone CLI with better UX ([deda1df](https://github.com/pionxzh/wakaru/commit/deda1df1c2894c7e9b2b443c01033d366eec549c))
+* deprecate `@wakaru/unminify` and `@wakaru/unpacker` CLI in favor of `@wakaru/cli` ([be2012e](https://github.com/pionxzh/wakaru/commit/be2012e112145e0025cef7aa74a9686c0f952a6d))
+
+
+### Bug Fixes
+
+* improve error log ([df455eb](https://github.com/pionxzh/wakaru/commit/df455eb5fc4186d0d57d7ae5d676a8b45407ad64))
+* **smart-rename:** handle invalid/reserved identifier ([2821b6d](https://github.com/pionxzh/wakaru/commit/2821b6d416b9393094554cae0f78eb155351c8b7))
+* **un-esm:** skip invalid import name ([8182f99](https://github.com/pionxzh/wakaru/commit/8182f99e0f6c7d0013a6062755bd4880fc74a445))
+
 ## [0.0.6](https://github.com/pionxzh/wakaru/compare/unminify-v0.0.5...unminify-v0.0.6) (2023-12-04)
 
 
