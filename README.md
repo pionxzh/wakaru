@@ -101,6 +101,10 @@ pnpm install @wakaru/unpacker @wakaru/unminify
 yarn add @wakaru/unpacker @wakaru/unminify
 ```
 
+<details>
+
+<summary>Click to expand</summary>
+
 ### `@wakaru/unpacker`
 
 ```ts
@@ -138,6 +142,8 @@ You can check all the rules at [/unminify/src/transformations/index.ts](https://
 Please aware that this project is still in early development. The API might change in the future.
 
 And the bundle size of these packages are huge. It might be reduced in the future. Use with caution on the browser (Yes, like the playground, it can run on the browser ✨).
+
+</details>
 
 ## Legal Disclaimer
 
