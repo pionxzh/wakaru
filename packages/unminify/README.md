@@ -631,6 +631,8 @@ Converts `React.createElement` and `jsxRuntime.jsx` back to JSX.
 + <div className="title">Hello World</div>
 ```
 
+Built-in pragma: `jsx`, `jsxs`, `_jsx`, `_jsxs`, `jsxDEV`, `jsxsDEV` and `h`
+
 Pass `pragma` option to specify the JSX pragma.\
 Pass `pragmaFrag` option to specify the JSX fragment pragma.
 
@@ -643,7 +645,7 @@ Pass `pragmaFrag` option to specify the JSX fragment pragma.
 + </>
 ```
 
-It will automatically guess the component name from the `displayName` property.
+Component name will be guessed from the `displayName` property automatically.
 
 ```diff
 - var S = /*#__PURE__*/React.createElement("div", null);
@@ -684,7 +686,7 @@ Removes the `"use strict"` directive.
 
 ### `prettier`
 
-This transformation formats the code with [prettier](https://prettier.io/), typically applied after all other transformations.
+Formats the code with [prettier](https://prettier.io/).
 
 ## Extra
 
@@ -700,4 +702,4 @@ By utilizing Lebab, we can save the repetitive work of writing the same transfor
 - [ ] `un-string-literal` to decode printable unicode
 - [ ] [Terser loops](https://github.com/terser/terser/blob/27c0a3b47b429c605e2243df86044fc00815060f/test/compress/loops.js#L217) contains several useful patterns
 - [ ] `let a; a = 1;` to `let a = 1;`
-- [ ] Consider support for Logical Assignment Operators (`a ||= b`, `a &&= b`, `a ??= b`)
+- [ ] Support for Logical Assignment Operators (`a ||= b`, `a &&= b`, `a ??= b`) [ES2021]
