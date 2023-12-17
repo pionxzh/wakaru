@@ -236,6 +236,7 @@ async function interactive({
                     if (!value) return undefined // default value
 
                     const outputPath = path.resolve(value)
+                    if (!fsa.existsSync(outputPath)) return undefined
                     if (!fsa.statSync(outputPath).isDirectory()) return 'Output is not a directory'
                     if (!isPathInside(cwd, outputPath)) return 'Output is outside of the current working directory'
 
