@@ -17,6 +17,7 @@ export default defineConfig({
     noExternal: [
         'jscodeshift',
         'ast-types',
+        '@clack/core', // patched
         /@wakaru\/.+/,
     ],
 })

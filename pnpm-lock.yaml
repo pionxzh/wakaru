@@ -96,9 +96,6 @@ importers:
 
   packages/cli:
     dependencies:
-      '@clack/core':
-        specifier: ^0.3.3
-        version: 0.3.3(patch_hash=sdevlgg5lm2tflzpgv2wxwifja)
       '@clack/prompts':
         specifier: ^0.7.0
         version: 0.7.0
@@ -118,6 +115,9 @@ importers:
         specifier: ^17.7.2
         version: 17.7.2
     devDependencies:
+      '@clack/core':
+        specifier: ^0.3.3
+        version: 0.3.3(patch_hash=sdevlgg5lm2tflzpgv2wxwifja)
       '@types/fs-extra':
         specifier: ^11.0.4
         version: 11.0.4
@@ -1686,7 +1686,6 @@ packages:
     dependencies:
       picocolors: 1.0.0
       sisteransi: 1.0.5
-    dev: false
     patched: true
 
   /@clack/prompts@0.7.0:
