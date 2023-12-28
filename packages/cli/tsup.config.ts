@@ -18,6 +18,7 @@ export default defineConfig({
         'jscodeshift',
         'ast-types',
         '@clack/core', // patched
+        '@clack/prompts', // patched
         /@wakaru\/.+/,
     ],
 })

@@ -22,7 +22,7 @@ import { FixedThreadPool } from 'poolifier'
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import { version } from '../package.json'
-import { findCommonBaseDir, getRelativePath, isPathInside, resolveFileGlob } from './path'
+import { findCommonBaseDir, getRelativePath, isPathInside, pathCompletion, resolveFileGlob } from './path'
 import { Timing } from './timing'
 import { unpacker } from './unpacker'
 import type { Measurement } from './timing'
@@ -205,8 +205,13 @@ async function interactive({
         let inputPaths = _inputPaths
         if (_inputPaths.length === 0) {
             const rawInputPath = await text({
-                message: `Input file path ${c.dim('(Supports glob patterns)')}`,
+                message: `Input file path ${c.dim('(Supports glob patterns, <TAB> to autocomplete)')}`,
                 placeholder: './input.js',
+                autocomplete(value) {
+                    if (typeof value !== 'string') return
+
+                    return pathCompletion({ input: value, baseDir: cwd })
+                },
                 validate: inputFileGlobValidation,
             })
 
@@ -225,6 +230,11 @@ async function interactive({
             const rawOutputBase = await text({
                 message: `Output directory path ${c.dim('(<enter> to accept default)')}`,
                 placeholder: defaultOutputBase,
+                autocomplete(value) {
+                    if (typeof value !== 'string') return
+
+                    return pathCompletion({ input: value, baseDir: cwd, directoryOnly: true })
+                },
                 validate: outputFolderValidation,
             })
 
@@ -291,8 +301,13 @@ async function interactive({
 
         if (unminifyInputPaths.length === 0) {
             const rawInputPath = await text({
-                message: `Input file path ${c.dim('(Supports glob patterns)')}`,
+                message: `Input file path ${c.dim('(Supports glob patterns, <TAB> to autocomplete)')}`,
                 placeholder: './*.js',
+                autocomplete(value) {
+                    if (typeof value !== 'string') return
+
+                    return pathCompletion({ input: value, baseDir: cwd })
+                },
                 validate: inputFileGlobValidation,
             })
             if (isCancel(rawInputPath)) {
@@ -316,6 +331,11 @@ async function interactive({
             const rawOutputBase = await text({
                 message: `Output directory path ${c.dim('(<enter> to accept default)')}`,
                 placeholder: defaultOutputBase,
+                autocomplete(value) {
+                    if (typeof value !== 'string') return
+
+                    return pathCompletion({ input: value, baseDir: cwd, directoryOnly: true })
+                },
                 validate: outputFolderValidation,
             })
 

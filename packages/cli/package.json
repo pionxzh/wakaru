@@ -24,7 +24,6 @@
     "lint:fix": "eslint src --fix"
   },
   "dependencies": {
-    "@clack/prompts": "^0.7.0",
     "fs-extra": "^11.1.1",
     "globby": "^11.1.0",
     "picocolors": "^1.0.0",
@@ -33,6 +32,7 @@
   },
   "devDependencies": {
     "@clack/core": "^0.3.3",
+    "@clack/prompts": "^0.7.0",
     "@types/fs-extra": "^11.0.4",
     "@types/jscodeshift": "^0.11.11",
     "@types/yargs": "^17.0.32",
