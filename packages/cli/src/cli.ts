@@ -462,26 +462,29 @@ async function nonInteractive(features: Feature[], {
     const unpackerOutput = _unpackerOutput ?? (singleFeature ? outputBase : path.join(outputBase, defaultUnpackerOutputFolder))
     const unminifyOutput = _unminifyOutput ?? (singleFeature ? outputBase : path.join(outputBase, defaultUnminifyOutputFolder))
 
-    if (!isPathInside(cwd, outputBase)) {
-        log.error('Output directory must be inside the current working directory')
-        return process.exit(1)
-    }
+    const perfOutputBase = singleFeature
+        ? features.includes(Feature.Unpacker) ? unpackerOutput : unminifyOutput
+        : outputBase
+    const perfOutputPath = path.join(perfOutputBase, 'perf.json')
+
+    const outputPathsToCheck = []
+    if (features.includes(Feature.Unpacker)) outputPathsToCheck.push(unpackerOutput)
+    if (features.includes(Feature.Unminify)) outputPathsToCheck.push(unminifyOutput)
+
+    outputPathsToCheck.forEach((p) => {
+        if (!isPathInside(cwd, p)) {
+            log.error('Output directory must be inside the current working directory')
+            return process.exit(1)
+        }
+    })
 
     if (!force) {
-        if (fsa.existsSync(outputBase)) {
-            log.error(`Output directory already exists at ${c.green(outputBase)}. Pass ${c.green('--force')} to overwrite`)
-            return process.exit(1)
-        }
-
-        if (features.includes(Feature.Unpacker) && fsa.existsSync(unpackerOutput)) {
-            log.error(`Output directory already exists at ${c.green(unpackerOutput)}. Pass ${c.green('--force')} to overwrite`)
-            return process.exit(1)
-        }
-
-        if (features.includes(Feature.Unminify) && fsa.existsSync(unminifyOutput)) {
-            log.error(`Output directory already exists at ${c.green(unminifyOutput)}. Pass ${c.green('--force')} to overwrite`)
-            return process.exit(1)
-        }
+        outputPathsToCheck.forEach((p) => {
+            if (fsa.existsSync(p)) {
+                log.error(`Output directory already exists at ${c.green(getRelativePath(cwd, p))}. Pass ${c.green('--force')} to overwrite`)
+                return process.exit(1)
+            }
+        })
     }
 
     const minConcurrency = 1
@@ -567,7 +570,7 @@ async function nonInteractive(features: Feature[], {
         if (perf) {
             printPerfStats(measurements)
 
-            writePerfStats(measurements, path.join(outputBase, 'perf.json'))
+            writePerfStats(measurements, perfOutputPath)
         }
     }
 }
