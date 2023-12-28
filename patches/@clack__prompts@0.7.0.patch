@@ -1,0 +1,384 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 84256fcf4d4e0f84f398779edfdca2be11d10918..d244ab12d410244d84abc87c2d32314c76620fc8 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -1,77 +1,78 @@
+-"use strict";const core=require("@clack/core"),process$1=require("node:process"),color=require("picocolors"),sisteransi=require("sisteransi");function isUnicodeSupported(){return process$1.platform!=="win32"?process$1.env.TERM!=="linux":Boolean(process$1.env.CI)||Boolean(process$1.env.WT_SESSION)||Boolean(process$1.env.TERMINUS_SUBLIME)||process$1.env.ConEmuTask==="{cmd::Cmder}"||process$1.env.TERM_PROGRAM==="Terminus-Sublime"||process$1.env.TERM_PROGRAM==="vscode"||process$1.env.TERM==="xterm-256color"||process$1.env.TERM==="alacritty"||process$1.env.TERMINAL_EMULATOR==="JetBrains-JediTerm"}const unicode=isUnicodeSupported(),s=(t,n)=>unicode?t:n,S_STEP_ACTIVE=s("\u25C6","*"),S_STEP_CANCEL=s("\u25A0","x"),S_STEP_ERROR=s("\u25B2","x"),S_STEP_SUBMIT=s("\u25C7","o"),S_BAR_START=s("\u250C","T"),S_BAR=s("\u2502","|"),S_BAR_END=s("\u2514","\u2014"),S_RADIO_ACTIVE=s("\u25CF",">"),S_RADIO_INACTIVE=s("\u25CB"," "),S_CHECKBOX_ACTIVE=s("\u25FB","[\u2022]"),S_CHECKBOX_SELECTED=s("\u25FC","[+]"),S_CHECKBOX_INACTIVE=s("\u25FB","[ ]"),S_PASSWORD_MASK=s("\u25AA","\u2022"),S_BAR_H=s("\u2500","-"),S_CORNER_TOP_RIGHT=s("\u256E","+"),S_CONNECT_LEFT=s("\u251C","+"),S_CORNER_BOTTOM_RIGHT=s("\u256F","+"),S_INFO=s("\u25CF","\u2022"),S_SUCCESS=s("\u25C6","*"),S_WARN=s("\u25B2","!"),S_ERROR=s("\u25A0","x"),symbol=t=>{switch(t){case"initial":case"active":return color.cyan(S_STEP_ACTIVE);case"cancel":return color.red(S_STEP_CANCEL);case"error":return color.yellow(S_STEP_ERROR);case"submit":return color.green(S_STEP_SUBMIT)}},text=t=>new core.TextPrompt({validate:t.validate,placeholder:t.placeholder,defaultValue:t.defaultValue,initialValue:t.initialValue,render(){const n=`${color.gray(S_BAR)}
+-${symbol(this.state)}  ${t.message}
+-`,i=t.placeholder?color.inverse(t.placeholder[0])+color.dim(t.placeholder.slice(1)):color.inverse(color.hidden("_")),e=this.value?this.valueWithCursor:i;switch(this.state){case"error":return`${n.trim()}
+-${color.yellow(S_BAR)}  ${e}
+-${color.yellow(S_BAR_END)}  ${color.yellow(this.error)}
+-`;case"submit":return`${n}${color.gray(S_BAR)}  ${color.dim(this.value||t.placeholder)}`;case"cancel":return`${n}${color.gray(S_BAR)}  ${color.strikethrough(color.dim(this.value??""))}${this.value?.trim()?`
+-`+color.gray(S_BAR):""}`;default:return`${n}${color.cyan(S_BAR)}  ${e}
+-${color.cyan(S_BAR_END)}
+-`}}}).prompt(),password=t=>new core.PasswordPrompt({validate:t.validate,mask:t.mask??S_PASSWORD_MASK,render(){const n=`${color.gray(S_BAR)}
+-${symbol(this.state)}  ${t.message}
+-`,i=this.valueWithCursor,e=this.masked;switch(this.state){case"error":return`${n.trim()}
+-${color.yellow(S_BAR)}  ${e}
+-${color.yellow(S_BAR_END)}  ${color.yellow(this.error)}
+-`;case"submit":return`${n}${color.gray(S_BAR)}  ${color.dim(e)}`;case"cancel":return`${n}${color.gray(S_BAR)}  ${color.strikethrough(color.dim(e??""))}${e?`
+-`+color.gray(S_BAR):""}`;default:return`${n}${color.cyan(S_BAR)}  ${i}
+-${color.cyan(S_BAR_END)}
+-`}}}).prompt(),confirm=t=>{const n=t.active??"Yes",i=t.inactive??"No";return new core.ConfirmPrompt({active:n,inactive:i,initialValue:t.initialValue??!0,render(){const e=`${color.gray(S_BAR)}
+-${symbol(this.state)}  ${t.message}
+-`,r=this.value?n:i;switch(this.state){case"submit":return`${e}${color.gray(S_BAR)}  ${color.dim(r)}`;case"cancel":return`${e}${color.gray(S_BAR)}  ${color.strikethrough(color.dim(r))}
+-${color.gray(S_BAR)}`;default:return`${e}${color.cyan(S_BAR)}  ${this.value?`${color.green(S_RADIO_ACTIVE)} ${n}`:`${color.dim(S_RADIO_INACTIVE)} ${color.dim(n)}`} ${color.dim("/")} ${this.value?`${color.dim(S_RADIO_INACTIVE)} ${color.dim(i)}`:`${color.green(S_RADIO_ACTIVE)} ${i}`}
+-${color.cyan(S_BAR_END)}
+-`}}}).prompt()},select=t=>{const n=(e,r)=>{const c=e.label??String(e.value);return r==="active"?`${color.green(S_RADIO_ACTIVE)} ${c} ${e.hint?color.dim(`(${e.hint})`):""}`:r==="selected"?`${color.dim(c)}`:r==="cancelled"?`${color.strikethrough(color.dim(c))}`:`${color.dim(S_RADIO_INACTIVE)} ${color.dim(c)}`};let i=0;return new core.SelectPrompt({options:t.options,initialValue:t.initialValue,render(){const e=`${color.gray(S_BAR)}
+-${symbol(this.state)}  ${t.message}
+-`;switch(this.state){case"submit":return`${e}${color.gray(S_BAR)}  ${n(this.options[this.cursor],"selected")}`;case"cancel":return`${e}${color.gray(S_BAR)}  ${n(this.options[this.cursor],"cancelled")}
+-${color.gray(S_BAR)}`;default:{const r=t.maxItems===void 0?1/0:Math.max(t.maxItems,5);this.cursor>=i+r-3?i=Math.max(Math.min(this.cursor-r+3,this.options.length-r),0):this.cursor<i+2&&(i=Math.max(this.cursor-2,0));const c=r<this.options.length&&i>0,a=r<this.options.length&&i+r<this.options.length;return`${e}${color.cyan(S_BAR)}  ${this.options.slice(i,i+r).map((l,o,u)=>o===0&&c||o===u.length-1&&a?color.dim("..."):n(l,o+i===this.cursor?"active":"inactive")).join(`
+-${color.cyan(S_BAR)}  `)}
+-${color.cyan(S_BAR_END)}
+-`}}}}).prompt()},selectKey=t=>{const n=(i,e="inactive")=>{const r=i.label??String(i.value);return e==="selected"?`${color.dim(r)}`:e==="cancelled"?`${color.strikethrough(color.dim(r))}`:e==="active"?`${color.bgCyan(color.gray(` ${i.value} `))} ${r} ${i.hint?color.dim(`(${i.hint})`):""}`:`${color.gray(color.bgWhite(color.inverse(` ${i.value} `)))} ${r} ${i.hint?color.dim(`(${i.hint})`):""}`};return new core.SelectKeyPrompt({options:t.options,initialValue:t.initialValue,render(){const i=`${color.gray(S_BAR)}
+-${symbol(this.state)}  ${t.message}
+-`;switch(this.state){case"submit":return`${i}${color.gray(S_BAR)}  ${n(this.options.find(e=>e.value===this.value),"selected")}`;case"cancel":return`${i}${color.gray(S_BAR)}  ${n(this.options[0],"cancelled")}
+-${color.gray(S_BAR)}`;default:return`${i}${color.cyan(S_BAR)}  ${this.options.map((e,r)=>n(e,r===this.cursor?"active":"inactive")).join(`
+-${color.cyan(S_BAR)}  `)}
+-${color.cyan(S_BAR_END)}
+-`}}}).prompt()},multiselect=t=>{const n=(i,e)=>{const r=i.label??String(i.value);return e==="active"?`${color.cyan(S_CHECKBOX_ACTIVE)} ${r} ${i.hint?color.dim(`(${i.hint})`):""}`:e==="selected"?`${color.green(S_CHECKBOX_SELECTED)} ${color.dim(r)}`:e==="cancelled"?`${color.strikethrough(color.dim(r))}`:e==="active-selected"?`${color.green(S_CHECKBOX_SELECTED)} ${r} ${i.hint?color.dim(`(${i.hint})`):""}`:e==="submitted"?`${color.dim(r)}`:`${color.dim(S_CHECKBOX_INACTIVE)} ${color.dim(r)}`};return new core.MultiSelectPrompt({options:t.options,initialValues:t.initialValues,required:t.required??!0,cursorAt:t.cursorAt,validate(i){if(this.required&&i.length===0)return`Please select at least one option.
+-${color.reset(color.dim(`Press ${color.gray(color.bgWhite(color.inverse(" space ")))} to select, ${color.gray(color.bgWhite(color.inverse(" enter ")))} to submit`))}`},render(){let i=`${color.gray(S_BAR)}
+-${symbol(this.state)}  ${t.message}
+-`;switch(this.state){case"submit":return`${i}${color.gray(S_BAR)}  ${this.options.filter(({value:e})=>this.value.includes(e)).map(e=>n(e,"submitted")).join(color.dim(", "))||color.dim("none")}`;case"cancel":{const e=this.options.filter(({value:r})=>this.value.includes(r)).map(r=>n(r,"cancelled")).join(color.dim(", "));return`${i}${color.gray(S_BAR)}  ${e.trim()?`${e}
+-${color.gray(S_BAR)}`:""}`}case"error":{const e=this.error.split(`
+-`).map((r,c)=>c===0?`${color.yellow(S_BAR_END)}  ${color.yellow(r)}`:`   ${r}`).join(`
+-`);return i+color.yellow(S_BAR)+"  "+this.options.map((r,c)=>{const a=this.value.includes(r.value),l=c===this.cursor;return l&&a?n(r,"active-selected"):a?n(r,"selected"):n(r,l?"active":"inactive")}).join(`
+-${color.yellow(S_BAR)}  `)+`
+-`+e+`
+-`}default:return`${i}${color.cyan(S_BAR)}  ${this.options.map((e,r)=>{const c=this.value.includes(e.value),a=r===this.cursor;return a&&c?n(e,"active-selected"):c?n(e,"selected"):n(e,a?"active":"inactive")}).join(`
+-${color.cyan(S_BAR)}  `)}
+-${color.cyan(S_BAR_END)}
+-`}}}).prompt()},groupMultiselect=t=>{const n=(i,e,r=[])=>{const c=i.label??String(i.value),a=typeof i.group=="string",l=a&&(r[r.indexOf(i)+1]??{group:!0}),o=a&&l.group===!0,u=a?`${o?S_BAR_END:S_BAR} `:"";return e==="active"?`${color.dim(u)}${color.cyan(S_CHECKBOX_ACTIVE)} ${c} ${i.hint?color.dim(`(${i.hint})`):""}`:e==="group-active"?`${u}${color.cyan(S_CHECKBOX_ACTIVE)} ${color.dim(c)}`:e==="group-active-selected"?`${u}${color.green(S_CHECKBOX_SELECTED)} ${color.dim(c)}`:e==="selected"?`${color.dim(u)}${color.green(S_CHECKBOX_SELECTED)} ${color.dim(c)}`:e==="cancelled"?`${color.strikethrough(color.dim(c))}`:e==="active-selected"?`${color.dim(u)}${color.green(S_CHECKBOX_SELECTED)} ${c} ${i.hint?color.dim(`(${i.hint})`):""}`:e==="submitted"?`${color.dim(c)}`:`${color.dim(u)}${color.dim(S_CHECKBOX_INACTIVE)} ${color.dim(c)}`};return new core.GroupMultiSelectPrompt({options:t.options,initialValues:t.initialValues,required:t.required??!0,cursorAt:t.cursorAt,validate(i){if(this.required&&i.length===0)return`Please select at least one option.
+-${color.reset(color.dim(`Press ${color.gray(color.bgWhite(color.inverse(" space ")))} to select, ${color.gray(color.bgWhite(color.inverse(" enter ")))} to submit`))}`},render(){let i=`${color.gray(S_BAR)}
+-${symbol(this.state)}  ${t.message}
+-`;switch(this.state){case"submit":return`${i}${color.gray(S_BAR)}  ${this.options.filter(({value:e})=>this.value.includes(e)).map(e=>n(e,"submitted")).join(color.dim(", "))}`;case"cancel":{const e=this.options.filter(({value:r})=>this.value.includes(r)).map(r=>n(r,"cancelled")).join(color.dim(", "));return`${i}${color.gray(S_BAR)}  ${e.trim()?`${e}
+-${color.gray(S_BAR)}`:""}`}case"error":{const e=this.error.split(`
+-`).map((r,c)=>c===0?`${color.yellow(S_BAR_END)}  ${color.yellow(r)}`:`   ${r}`).join(`
+-`);return`${i}${color.yellow(S_BAR)}  ${this.options.map((r,c,a)=>{const l=this.value.includes(r.value)||r.group===!0&&this.isGroupSelected(`${r.value}`),o=c===this.cursor;return!o&&typeof r.group=="string"&&this.options[this.cursor].value===r.group?n(r,l?"group-active-selected":"group-active",a):o&&l?n(r,"active-selected",a):l?n(r,"selected",a):n(r,o?"active":"inactive",a)}).join(`
+-${color.yellow(S_BAR)}  `)}
+-${e}
+-`}default:return`${i}${color.cyan(S_BAR)}  ${this.options.map((e,r,c)=>{const a=this.value.includes(e.value)||e.group===!0&&this.isGroupSelected(`${e.value}`),l=r===this.cursor;return!l&&typeof e.group=="string"&&this.options[this.cursor].value===e.group?n(e,a?"group-active-selected":"group-active",c):l&&a?n(e,"active-selected",c):a?n(e,"selected",c):n(e,l?"active":"inactive",c)}).join(`
+-${color.cyan(S_BAR)}  `)}
+-${color.cyan(S_BAR_END)}
+-`}}}).prompt()},strip=t=>t.replace(ansiRegex(),""),note=(t="",n="")=>{const i=`
++"use strict";const core=require("@clack/core"),process$1=require("node:process"),e=require("picocolors"),sisteransi=require("sisteransi");function _interopDefaultCompat(t){return t&&typeof t=="object"&&"default"in t?t.default:t}const process__default=_interopDefaultCompat(process$1),e__default=_interopDefaultCompat(e);function isUnicodeSupported(){return process__default.platform!=="win32"?process__default.env.TERM!=="linux":!!process__default.env.CI||!!process__default.env.WT_SESSION||!!process__default.env.TERMINUS_SUBLIME||process__default.env.ConEmuTask==="{cmd::Cmder}"||process__default.env.TERM_PROGRAM==="Terminus-Sublime"||process__default.env.TERM_PROGRAM==="vscode"||process__default.env.TERM==="xterm-256color"||process__default.env.TERM==="alacritty"||process__default.env.TERMINAL_EMULATOR==="JetBrains-JediTerm"}const S=isUnicodeSupported(),u=(t,n)=>S?t:n,z=u("\u25C6","*"),R=u("\u25A0","x"),E=u("\u25B2","x"),b=u("\u25C7","o"),U=u("\u250C","T"),a=u("\u2502","|"),m=u("\u2514","\u2014"),V=u("\u25CF",">"),P=u("\u25CB"," "),T=u("\u25FB","[\u2022]"),v=u("\u25FC","[+]"),C=u("\u25FB","[ ]"),X=u("\u25AA","\u2022"),k=u("\u2500","-"),F=u("\u256E","+"),J=u("\u251C","+"),Y=u("\u256F","+"),Q=u("\u25CF","\u2022"),ee=u("\u25C6","*"),te=u("\u25B2","!"),re=u("\u25A0","x"),h=t=>{switch(t){case"initial":case"active":return e__default.cyan(z);case"cancel":return e__default.red(R);case"error":return e__default.yellow(E);case"submit":return e__default.green(b)}},O=t=>{const{cursor:n,options:s,style:i}=t,r=t.maxItems===void 0?1/0:Math.max(t.maxItems,5);let o=0;n>=o+r-3?o=Math.max(Math.min(n-r+3,s.length-r),0):n<o+2&&(o=Math.max(n-2,0));const c=r<s.length&&o>0,l=r<s.length&&o+r<s.length;return s.slice(o,o+r).map(($,d,f)=>{const x=d===0&&c,w=d===f.length-1&&l;return x||w?e__default.dim("..."):i($,d+o===n)})},text=t=>new core.TextPrompt({validate:t.validate,autocomplete:t.autocomplete,placeholder:t.placeholder,defaultValue:t.defaultValue,initialValue:t.initialValue,render(){const n=`${e__default.gray(a)}
++${h(this.state)}  ${t.message}
++`,s=t.placeholder?e__default.inverse(t.placeholder[0])+e__default.dim(t.placeholder.slice(1)):e__default.inverse(e__default.hidden("_")),i=this.value?this.valueWithCursor:s;switch(this.state){case"error":return`${n.trim()}
++${e__default.yellow(a)}  ${i}
++${e__default.yellow(m)}  ${e__default.yellow(this.error)}
++`;case"submit":return`${n}${e__default.gray(a)}  ${e__default.dim(this.value||t.placeholder)}`;case"cancel":return`${n}${e__default.gray(a)}  ${e__default.strikethrough(e__default.dim(this.value??""))}${this.value?.trim()?`
++`+e__default.gray(a):""}`;default:return`${n}${e__default.cyan(a)}  ${i}
++${e__default.cyan(m)}
++`}}}).prompt(),password=t=>new core.PasswordPrompt({validate:t.validate,mask:t.mask??X,render(){const n=`${e__default.gray(a)}
++${h(this.state)}  ${t.message}
++`,s=this.valueWithCursor,i=this.masked;switch(this.state){case"error":return`${n.trim()}
++${e__default.yellow(a)}  ${i}
++${e__default.yellow(m)}  ${e__default.yellow(this.error)}
++`;case"submit":return`${n}${e__default.gray(a)}  ${e__default.dim(i)}`;case"cancel":return`${n}${e__default.gray(a)}  ${e__default.strikethrough(e__default.dim(i??""))}${i?`
++`+e__default.gray(a):""}`;default:return`${n}${e__default.cyan(a)}  ${s}
++${e__default.cyan(m)}
++`}}}).prompt(),confirm=t=>{const n=t.active??"Yes",s=t.inactive??"No";return new core.ConfirmPrompt({active:n,inactive:s,initialValue:t.initialValue??!0,render(){const i=`${e__default.gray(a)}
++${h(this.state)}  ${t.message}
++`,r=this.value?n:s;switch(this.state){case"submit":return`${i}${e__default.gray(a)}  ${e__default.dim(r)}`;case"cancel":return`${i}${e__default.gray(a)}  ${e__default.strikethrough(e__default.dim(r))}
++${e__default.gray(a)}`;default:return`${i}${e__default.cyan(a)}  ${this.value?`${e__default.green(V)} ${n}`:`${e__default.dim(P)} ${e__default.dim(n)}`} ${e__default.dim("/")} ${this.value?`${e__default.dim(P)} ${e__default.dim(s)}`:`${e__default.green(V)} ${s}`}
++${e__default.cyan(m)}
++`}}}).prompt()},select=t=>{const n=(s,i)=>{const r=s.label??String(s.value);switch(i){case"selected":return`${e__default.dim(r)}`;case"active":return`${e__default.green(V)} ${r} ${s.hint?e__default.dim(`(${s.hint})`):""}`;case"cancelled":return`${e__default.strikethrough(e__default.dim(r))}`;default:return`${e__default.dim(P)} ${e__default.dim(r)}`}};return new core.SelectPrompt({options:t.options,initialValue:t.initialValue,render(){const s=`${e__default.gray(a)}
++${h(this.state)}  ${t.message}
++`;switch(this.state){case"submit":return`${s}${e__default.gray(a)}  ${n(this.options[this.cursor],"selected")}`;case"cancel":return`${s}${e__default.gray(a)}  ${n(this.options[this.cursor],"cancelled")}
++${e__default.gray(a)}`;default:return`${s}${e__default.cyan(a)}  ${O({cursor:this.cursor,options:this.options,maxItems:t.maxItems,style:(i,r)=>n(i,r?"active":"inactive")}).join(`
++${e__default.cyan(a)}  `)}
++${e__default.cyan(m)}
++`}}}).prompt()},selectKey=t=>{const n=(s,i="inactive")=>{const r=s.label??String(s.value);return i==="selected"?`${e__default.dim(r)}`:i==="cancelled"?`${e__default.strikethrough(e__default.dim(r))}`:i==="active"?`${e__default.bgCyan(e__default.gray(` ${s.value} `))} ${r} ${s.hint?e__default.dim(`(${s.hint})`):""}`:`${e__default.gray(e__default.bgWhite(e__default.inverse(` ${s.value} `)))} ${r} ${s.hint?e__default.dim(`(${s.hint})`):""}`};return new core.SelectKeyPrompt({options:t.options,initialValue:t.initialValue,render(){const s=`${e__default.gray(a)}
++${h(this.state)}  ${t.message}
++`;switch(this.state){case"submit":return`${s}${e__default.gray(a)}  ${n(this.options.find(i=>i.value===this.value),"selected")}`;case"cancel":return`${s}${e__default.gray(a)}  ${n(this.options[0],"cancelled")}
++${e__default.gray(a)}`;default:return`${s}${e__default.cyan(a)}  ${this.options.map((i,r)=>n(i,r===this.cursor?"active":"inactive")).join(`
++${e__default.cyan(a)}  `)}
++${e__default.cyan(m)}
++`}}}).prompt()},multiselect=t=>{const n=(s,i)=>{const r=s.label??String(s.value);return i==="active"?`${e__default.cyan(T)} ${r} ${s.hint?e__default.dim(`(${s.hint})`):""}`:i==="selected"?`${e__default.green(v)} ${e__default.dim(r)}`:i==="cancelled"?`${e__default.strikethrough(e__default.dim(r))}`:i==="active-selected"?`${e__default.green(v)} ${r} ${s.hint?e__default.dim(`(${s.hint})`):""}`:i==="submitted"?`${e__default.dim(r)}`:`${e__default.dim(C)} ${e__default.dim(r)}`};return new core.MultiSelectPrompt({options:t.options,initialValues:t.initialValues,required:t.required??!0,cursorAt:t.cursorAt,validate(s){if(this.required&&s.length===0)return`Please select at least one option.
++${e__default.reset(e__default.dim(`Press ${e__default.gray(e__default.bgWhite(e__default.inverse(" space ")))} to select, ${e__default.gray(e__default.bgWhite(e__default.inverse(" enter ")))} to submit`))}`},render(){let s=`${e__default.gray(a)}
++${h(this.state)}  ${t.message}
++`;const i=(r,o)=>{const c=this.value.includes(r.value);return o&&c?n(r,"active-selected"):c?n(r,"selected"):n(r,o?"active":"inactive")};switch(this.state){case"submit":return`${s}${e__default.gray(a)}  ${this.options.filter(({value:r})=>this.value.includes(r)).map(r=>n(r,"submitted")).join(e__default.dim(", "))||e__default.dim("none")}`;case"cancel":{const r=this.options.filter(({value:o})=>this.value.includes(o)).map(o=>n(o,"cancelled")).join(e__default.dim(", "));return`${s}${e__default.gray(a)}  ${r.trim()?`${r}
++${e__default.gray(a)}`:""}`}case"error":{const r=this.error.split(`
++`).map((o,c)=>c===0?`${e__default.yellow(m)}  ${e__default.yellow(o)}`:`   ${o}`).join(`
++`);return s+e__default.yellow(a)+"  "+O({options:this.options,cursor:this.cursor,maxItems:t.maxItems,style:i}).join(`
++${e__default.yellow(a)}  `)+`
++`+r+`
++`}default:return`${s}${e__default.cyan(a)}  ${O({options:this.options,cursor:this.cursor,maxItems:t.maxItems,style:i}).join(`
++${e__default.cyan(a)}  `)}
++${e__default.cyan(m)}
++`}}}).prompt()},groupMultiselect=t=>{const n=(s,i,r=[])=>{const o=s.label??String(s.value),c=typeof s.group=="string",l=c&&(r[r.indexOf(s)+1]??{group:!0}),$=c&&l.group===!0,d=c?`${$?m:a} `:"";return i==="active"?`${e__default.dim(d)}${e__default.cyan(T)} ${o} ${s.hint?e__default.dim(`(${s.hint})`):""}`:i==="group-active"?`${d}${e__default.cyan(T)} ${e__default.dim(o)}`:i==="group-active-selected"?`${d}${e__default.green(v)} ${e__default.dim(o)}`:i==="selected"?`${e__default.dim(d)}${e__default.green(v)} ${e__default.dim(o)}`:i==="cancelled"?`${e__default.strikethrough(e__default.dim(o))}`:i==="active-selected"?`${e__default.dim(d)}${e__default.green(v)} ${o} ${s.hint?e__default.dim(`(${s.hint})`):""}`:i==="submitted"?`${e__default.dim(o)}`:`${e__default.dim(d)}${e__default.dim(C)} ${e__default.dim(o)}`};return new core.GroupMultiSelectPrompt({options:t.options,initialValues:t.initialValues,required:t.required??!0,cursorAt:t.cursorAt,validate(s){if(this.required&&s.length===0)return`Please select at least one option.
++${e__default.reset(e__default.dim(`Press ${e__default.gray(e__default.bgWhite(e__default.inverse(" space ")))} to select, ${e__default.gray(e__default.bgWhite(e__default.inverse(" enter ")))} to submit`))}`},render(){let s=`${e__default.gray(a)}
++${h(this.state)}  ${t.message}
++`;switch(this.state){case"submit":return`${s}${e__default.gray(a)}  ${this.options.filter(({value:i})=>this.value.includes(i)).map(i=>n(i,"submitted")).join(e__default.dim(", "))}`;case"cancel":{const i=this.options.filter(({value:r})=>this.value.includes(r)).map(r=>n(r,"cancelled")).join(e__default.dim(", "));return`${s}${e__default.gray(a)}  ${i.trim()?`${i}
++${e__default.gray(a)}`:""}`}case"error":{const i=this.error.split(`
++`).map((r,o)=>o===0?`${e__default.yellow(m)}  ${e__default.yellow(r)}`:`   ${r}`).join(`
++`);return`${s}${e__default.yellow(a)}  ${this.options.map((r,o,c)=>{const l=this.value.includes(r.value)||r.group===!0&&this.isGroupSelected(`${r.value}`),$=o===this.cursor;return!$&&typeof r.group=="string"&&this.options[this.cursor].value===r.group?n(r,l?"group-active-selected":"group-active",c):$&&l?n(r,"active-selected",c):l?n(r,"selected",c):n(r,$?"active":"inactive",c)}).join(`
++${e__default.yellow(a)}  `)}
++${i}
++`}default:return`${s}${e__default.cyan(a)}  ${this.options.map((i,r,o)=>{const c=this.value.includes(i.value)||i.group===!0&&this.isGroupSelected(`${i.value}`),l=r===this.cursor;return!l&&typeof i.group=="string"&&this.options[this.cursor].value===i.group?n(i,c?"group-active-selected":"group-active",o):l&&c?n(i,"active-selected",o):c?n(i,"selected",o):n(i,l?"active":"inactive",o)}).join(`
++${e__default.cyan(a)}  `)}
++${e__default.cyan(m)}
++`}}}).prompt()},_=t=>t.replace(se(),""),note=(t="",n="")=>{const s=`
+ ${t}
+ `.split(`
+-`),e=strip(n).length,r=Math.max(i.reduce((a,l)=>(l=strip(l),l.length>a?l.length:a),0),e)+2,c=i.map(a=>`${color.gray(S_BAR)}  ${color.dim(a)}${" ".repeat(r-strip(a).length)}${color.gray(S_BAR)}`).join(`
+-`);process.stdout.write(`${color.gray(S_BAR)}
+-${color.green(S_STEP_SUBMIT)}  ${color.reset(n)} ${color.gray(S_BAR_H.repeat(Math.max(r-e-1,1))+S_CORNER_TOP_RIGHT)}
+-${c}
+-${color.gray(S_CONNECT_LEFT+S_BAR_H.repeat(r+2)+S_CORNER_BOTTOM_RIGHT)}
+-`)},cancel=(t="")=>{process.stdout.write(`${color.gray(S_BAR_END)}  ${color.red(t)}
++`),i=_(n).length,r=Math.max(s.reduce((c,l)=>(l=_(l),l.length>c?l.length:c),0),i)+2,o=s.map(c=>`${e__default.gray(a)}  ${e__default.dim(c)}${" ".repeat(r-_(c).length)}${e__default.gray(a)}`).join(`
++`);process.stdout.write(`${e__default.gray(a)}
++${e__default.green(b)}  ${e__default.reset(n)} ${e__default.gray(k.repeat(Math.max(r-i-1,1))+F)}
++${o}
++${e__default.gray(J+k.repeat(r+2)+Y)}
++`)},cancel=(t="")=>{process.stdout.write(`${e__default.gray(m)}  ${e__default.red(t)}
+ 
+-`)},intro=(t="")=>{process.stdout.write(`${color.gray(S_BAR_START)}  ${t}
+-`)},outro=(t="")=>{process.stdout.write(`${color.gray(S_BAR)}
+-${color.gray(S_BAR_END)}  ${t}
++`)},intro=(t="")=>{process.stdout.write(`${e__default.gray(U)}  ${t}
++`)},outro=(t="")=>{process.stdout.write(`${e__default.gray(a)}
++${e__default.gray(m)}  ${t}
+ 
+-`)},log={message:(t="",{symbol:n=color.gray(S_BAR)}={})=>{const i=[`${color.gray(S_BAR)}`];if(t){const[e,...r]=t.split(`
+-`);i.push(`${n}  ${e}`,...r.map(c=>`${color.gray(S_BAR)}  ${c}`))}process.stdout.write(`${i.join(`
++`)},log={message:(t="",{symbol:n=e__default.gray(a)}={})=>{const s=[`${e__default.gray(a)}`];if(t){const[i,...r]=t.split(`
++`);s.push(`${n}  ${i}`,...r.map(o=>`${e__default.gray(a)}  ${o}`))}process.stdout.write(`${s.join(`
+ `)}
+-`)},info:t=>{log.message(t,{symbol:color.blue(S_INFO)})},success:t=>{log.message(t,{symbol:color.green(S_SUCCESS)})},step:t=>{log.message(t,{symbol:color.green(S_STEP_SUBMIT)})},warn:t=>{log.message(t,{symbol:color.yellow(S_WARN)})},warning:t=>{log.warn(t)},error:t=>{log.message(t,{symbol:color.red(S_ERROR)})}},spinner=()=>{const t=unicode?["\u25D2","\u25D0","\u25D3","\u25D1"]:["\u2022","o","O","0"],n=unicode?80:120;let i,e,r=!1,c="";const a=(d="")=>{r=!0,i=core.block(),c=d.replace(/\.+$/,""),process.stdout.write(`${color.gray(S_BAR)}
+-`);let $=0,m=0;e=setInterval(()=>{const h=color.magenta(t[$]),g=".".repeat(Math.floor(m)).slice(0,3);process.stdout.write(sisteransi.cursor.move(-999,0)),process.stdout.write(sisteransi.erase.down(1)),process.stdout.write(`${h}  ${c}${g}`),$=$+1<t.length?$+1:0,m=m<t.length?m+.125:0},n)},l=(d="",$=0)=>{c=d??c,r=!1,clearInterval(e);const m=$===0?color.green(S_STEP_SUBMIT):$===1?color.red(S_STEP_CANCEL):color.red(S_STEP_ERROR);process.stdout.write(sisteransi.cursor.move(-999,0)),process.stdout.write(sisteransi.erase.down(1)),process.stdout.write(`${m}  ${c}
+-`),i()},o=(d="")=>{c=d??c},u=d=>{const $=d>1?"Something went wrong":"Canceled";r&&l($,d)};return process.on("uncaughtExceptionMonitor",()=>u(2)),process.on("unhandledRejection",()=>u(2)),process.on("SIGINT",()=>u(1)),process.on("SIGTERM",()=>u(1)),process.on("exit",u),{start:a,stop:l,message:o}};function ansiRegex(){const t=["[\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)","(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]))"].join("|");return new RegExp(t,"g")}const group=async(t,n)=>{const i={},e=Object.keys(t);for(const r of e){const c=t[r],a=await c({results:i})?.catch(l=>{throw l});if(typeof n?.onCancel=="function"&&core.isCancel(a)){i[r]="canceled",n.onCancel({results:i});continue}i[r]=a}return i};exports.isCancel=core.isCancel,exports.cancel=cancel,exports.confirm=confirm,exports.group=group,exports.groupMultiselect=groupMultiselect,exports.intro=intro,exports.log=log,exports.multiselect=multiselect,exports.note=note,exports.outro=outro,exports.password=password,exports.select=select,exports.selectKey=selectKey,exports.spinner=spinner,exports.text=text;
++`)},info:t=>{log.message(t,{symbol:e__default.blue(Q)})},success:t=>{log.message(t,{symbol:e__default.green(ee)})},step:t=>{log.message(t,{symbol:e__default.green(b)})},warn:t=>{log.message(t,{symbol:e__default.yellow(te)})},warning:t=>{log.warn(t)},error:t=>{log.message(t,{symbol:e__default.red(re)})}},spinner=()=>{const t=S?["\u25D2","\u25D0","\u25D3","\u25D1"]:["\u2022","o","O","0"],n=S?80:120;let s,i,r=!1,o="";const c=g=>{const p=g>1?"Something went wrong":"Canceled";r&&w(p,g)},l=()=>c(2),$=()=>c(1),d=()=>{process.on("uncaughtExceptionMonitor",l),process.on("unhandledRejection",l),process.on("SIGINT",$),process.on("SIGTERM",$),process.on("exit",c)},f=()=>{process.removeListener("uncaughtExceptionMonitor",l),process.removeListener("unhandledRejection",l),process.removeListener("SIGINT",$),process.removeListener("SIGTERM",$),process.removeListener("exit",c)},x=(g="")=>{r=!0,s=core.block(),o=g.replace(/\.+$/,""),process.stdout.write(`${e__default.gray(a)}
++`);let p=0,y=0;d(),i=setInterval(()=>{const M=e__default.magenta(t[p]),I=".".repeat(Math.floor(y)).slice(0,3);process.stdout.write(sisteransi.cursor.move(-999,0)),process.stdout.write(sisteransi.erase.down(1)),process.stdout.write(`${M}  ${o}${I}`),p=p+1<t.length?p+1:0,y=y<t.length?y+.125:0},n)},w=(g="",p=0)=>{o=g??o,r=!1,clearInterval(i);const y=p===0?e__default.green(b):p===1?e__default.red(R):e__default.red(E);process.stdout.write(sisteransi.cursor.move(-999,0)),process.stdout.write(sisteransi.erase.down(1)),process.stdout.write(`${y}  ${o}
++`),f(),s()};return{start:x,stop:w,message:(g="")=>{o=g??o}}};function se(){const t=["[\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)","(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]))"].join("|");return new RegExp(t,"g")}const group=async(t,n)=>{const s={},i=Object.keys(t);for(const r of i){const o=t[r],c=await o({results:s})?.catch(l=>{throw l});if(typeof n?.onCancel=="function"&&core.isCancel(c)){s[r]="canceled",n.onCancel({results:s});continue}s[r]=c}return s},tasks=async t=>{for(const n of t){if(n.enabled===!1)continue;const s=spinner();s.start(n.title);const i=await n.task(s.message);s.stop(i||n.title)}};exports.isCancel=core.isCancel,exports.cancel=cancel,exports.confirm=confirm,exports.group=group,exports.groupMultiselect=groupMultiselect,exports.intro=intro,exports.log=log,exports.multiselect=multiselect,exports.note=note,exports.outro=outro,exports.password=password,exports.select=select,exports.selectKey=selectKey,exports.spinner=spinner,exports.tasks=tasks,exports.text=text;
++//# sourceMappingURL=index.cjs.map
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index e03f8d08dfa029db261d15e71d18dd33df0783fa..7cdf87a0184a1e403f43d6df4fd7a6706fdd3e33 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -6,6 +6,7 @@ interface TextOptions {
+     defaultValue?: string;
+     initialValue?: string;
+     validate?: (value: string) => string | void;
++    autocomplete?: ((value: any) => string | void) | undefined;
+ }
+ declare const text: (opts: TextOptions) => Promise<string | symbol>;
+ interface PasswordOptions {
+@@ -31,30 +32,31 @@ type Option<Value> = Value extends Primitive ? {
+     label: string;
+     hint?: string;
+ };
+-interface SelectOptions<Options extends Option<Value>[], Value> {
++interface SelectOptions<Value> {
+     message: string;
+-    options: Options;
++    options: Option<Value>[];
+     initialValue?: Value;
+     maxItems?: number;
+ }
+-declare const select: <Options extends Option<Value>[], Value>(opts: SelectOptions<Options, Value>) => Promise<symbol | Value>;
+-declare const selectKey: <Options extends Option<Value>[], Value extends string>(opts: SelectOptions<Options, Value>) => Promise<symbol | Value>;
+-interface MultiSelectOptions<Options extends Option<Value>[], Value> {
++declare const select: <Value>(opts: SelectOptions<Value>) => Promise<symbol | Value>;
++declare const selectKey: <Value extends string>(opts: SelectOptions<Value>) => Promise<symbol | Value>;
++interface MultiSelectOptions<Value> {
+     message: string;
+-    options: Options;
++    options: Option<Value>[];
+     initialValues?: Value[];
++    maxItems?: number;
+     required?: boolean;
+     cursorAt?: Value;
+ }
+-declare const multiselect: <Options extends Option<Value>[], Value>(opts: MultiSelectOptions<Options, Value>) => Promise<symbol | Value[]>;
+-interface GroupMultiSelectOptions<Options extends Option<Value>[], Value> {
++declare const multiselect: <Value>(opts: MultiSelectOptions<Value>) => Promise<symbol | Value[]>;
++interface GroupMultiSelectOptions<Value> {
+     message: string;
+-    options: Record<string, Options>;
++    options: Record<string, Option<Value>[]>;
+     initialValues?: Value[];
+     required?: boolean;
+     cursorAt?: Value;
+ }
+-declare const groupMultiselect: <Options extends Option<Value>[], Value>(opts: GroupMultiSelectOptions<Options, Value>) => Promise<symbol | Value[]>;
++declare const groupMultiselect: <Value>(opts: GroupMultiSelectOptions<Value>) => Promise<symbol | Value[]>;
+ declare const note: (message?: string, title?: string) => void;
+ declare const cancel: (message?: string) => void;
+ declare const intro: (title?: string) => void;
+@@ -101,6 +103,24 @@ type PromptGroup<T> = {
+  * Define a group of prompts to be displayed
+  * and return a results of objects within the group
+  */
+-declare const group: <T>(prompts: PromptGroup<T>, opts?: PromptGroupOptions<T> | undefined) => Promise<PromptGroupAwaitedReturn<T> extends infer T_1 ? { [P in keyof T_1]: PromptGroupAwaitedReturn<T>[P]; } : never>;
++declare const group: <T>(prompts: PromptGroup<T>, opts?: PromptGroupOptions<T> | undefined) => Promise<{ [P in keyof PromptGroupAwaitedReturn<T>]: PromptGroupAwaitedReturn<T>[P]; }>;
++type Task = {
++    /**
++     * Task title
++     */
++    title: string;
++    /**
++     * Task function
++     */
++    task: (message: (string: string) => void) => string | Promise<string> | void | Promise<void>;
++    /**
++     * If enabled === false the task will be skipped
++     */
++    enabled?: boolean;
++};
++/**
++ * Define a group of tasks to be executed
++ */
++declare const tasks: (tasks: Task[]) => Promise<void>;
+ 
+-export { ConfirmOptions, GroupMultiSelectOptions, LogMessageOptions, MultiSelectOptions, PasswordOptions, PromptGroup, PromptGroupAwaitedReturn, PromptGroupOptions, SelectOptions, TextOptions, cancel, confirm, group, groupMultiselect, intro, log, multiselect, note, outro, password, select, selectKey, spinner, text };
++export { type ConfirmOptions, type GroupMultiSelectOptions, type LogMessageOptions, type MultiSelectOptions, type PasswordOptions, type PromptGroup, type PromptGroupAwaitedReturn, type PromptGroupOptions, type SelectOptions, type Task, type TextOptions, cancel, confirm, group, groupMultiselect, intro, log, multiselect, note, outro, password, select, selectKey, spinner, tasks, text };
+diff --git a/dist/index.mjs b/dist/index.mjs
+index f9c08c661777a51a0f186d0009022a3f0c94c22a..f1a23cc25223c8f428e591fc20750bf107e980bc 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -1,77 +1,78 @@
+-import{TextPrompt as V,PasswordPrompt as j,ConfirmPrompt as N,SelectPrompt as k,SelectKeyPrompt as W,MultiSelectPrompt as D,GroupMultiSelectPrompt as L,isCancel as G,block as F}from"@clack/core";export{isCancel}from"@clack/core";import h from"node:process";import e from"picocolors";import{cursor as T,erase as A}from"sisteransi";function q(){return h.platform!=="win32"?h.env.TERM!=="linux":Boolean(h.env.CI)||Boolean(h.env.WT_SESSION)||Boolean(h.env.TERMINUS_SUBLIME)||h.env.ConEmuTask==="{cmd::Cmder}"||h.env.TERM_PROGRAM==="Terminus-Sublime"||h.env.TERM_PROGRAM==="vscode"||h.env.TERM==="xterm-256color"||h.env.TERM==="alacritty"||h.env.TERMINAL_EMULATOR==="JetBrains-JediTerm"}const _=q(),o=(r,n)=>_?r:n,H=o("\u25C6","*"),I=o("\u25A0","x"),x=o("\u25B2","x"),S=o("\u25C7","o"),K=o("\u250C","T"),a=o("\u2502","|"),d=o("\u2514","\u2014"),b=o("\u25CF",">"),E=o("\u25CB"," "),C=o("\u25FB","[\u2022]"),w=o("\u25FC","[+]"),M=o("\u25FB","[ ]"),U=o("\u25AA","\u2022"),B=o("\u2500","-"),Z=o("\u256E","+"),z=o("\u251C","+"),X=o("\u256F","+"),J=o("\u25CF","\u2022"),Y=o("\u25C6","*"),Q=o("\u25B2","!"),ee=o("\u25A0","x"),y=r=>{switch(r){case"initial":case"active":return e.cyan(H);case"cancel":return e.red(I);case"error":return e.yellow(x);case"submit":return e.green(S)}},te=r=>new V({validate:r.validate,placeholder:r.placeholder,defaultValue:r.defaultValue,initialValue:r.initialValue,render(){const n=`${e.gray(a)}
+-${y(this.state)}  ${r.message}
+-`,i=r.placeholder?e.inverse(r.placeholder[0])+e.dim(r.placeholder.slice(1)):e.inverse(e.hidden("_")),t=this.value?this.valueWithCursor:i;switch(this.state){case"error":return`${n.trim()}
+-${e.yellow(a)}  ${t}
+-${e.yellow(d)}  ${e.yellow(this.error)}
+-`;case"submit":return`${n}${e.gray(a)}  ${e.dim(this.value||r.placeholder)}`;case"cancel":return`${n}${e.gray(a)}  ${e.strikethrough(e.dim(this.value??""))}${this.value?.trim()?`
+-`+e.gray(a):""}`;default:return`${n}${e.cyan(a)}  ${t}
+-${e.cyan(d)}
+-`}}}).prompt(),re=r=>new j({validate:r.validate,mask:r.mask??U,render(){const n=`${e.gray(a)}
+-${y(this.state)}  ${r.message}
+-`,i=this.valueWithCursor,t=this.masked;switch(this.state){case"error":return`${n.trim()}
+-${e.yellow(a)}  ${t}
+-${e.yellow(d)}  ${e.yellow(this.error)}
+-`;case"submit":return`${n}${e.gray(a)}  ${e.dim(t)}`;case"cancel":return`${n}${e.gray(a)}  ${e.strikethrough(e.dim(t??""))}${t?`
++import{TextPrompt as W,PasswordPrompt as q,ConfirmPrompt as F,SelectPrompt as N,SelectKeyPrompt as U,MultiSelectPrompt as z,GroupMultiSelectPrompt as D,isCancel as Z,block as J}from"@clack/core";export{isCancel}from"@clack/core";import p from"node:process";import e from"picocolors";import{cursor as k,erase as A}from"sisteransi";function K(){return p.platform!=="win32"?p.env.TERM!=="linux":!!p.env.CI||!!p.env.WT_SESSION||!!p.env.TERMINUS_SUBLIME||p.env.ConEmuTask==="{cmd::Cmder}"||p.env.TERM_PROGRAM==="Terminus-Sublime"||p.env.TERM_PROGRAM==="vscode"||p.env.TERM==="xterm-256color"||p.env.TERM==="alacritty"||p.env.TERMINAL_EMULATOR==="JetBrains-JediTerm"}const C=K(),u=(t,n)=>C?t:n,Y=u("\u25C6","*"),P=u("\u25A0","x"),V=u("\u25B2","x"),x=u("\u25C7","o"),Q=u("\u250C","T"),a=u("\u2502","|"),$=u("\u2514","\u2014"),I=u("\u25CF",">"),T=u("\u25CB"," "),R=u("\u25FB","[\u2022]"),f=u("\u25FC","[+]"),B=u("\u25FB","[ ]"),X=u("\u25AA","\u2022"),G=u("\u2500","-"),H=u("\u256E","+"),ee=u("\u251C","+"),te=u("\u256F","+"),se=u("\u25CF","\u2022"),re=u("\u25C6","*"),ie=u("\u25B2","!"),ne=u("\u25A0","x"),y=t=>{switch(t){case"initial":case"active":return e.cyan(Y);case"cancel":return e.red(P);case"error":return e.yellow(V);case"submit":return e.green(x)}},j=t=>{const{cursor:n,options:s,style:i}=t,r=t.maxItems===void 0?1/0:Math.max(t.maxItems,5);let o=0;n>=o+r-3?o=Math.max(Math.min(n-r+3,s.length-r),0):n<o+2&&(o=Math.max(n-2,0));const c=r<s.length&&o>0,l=r<s.length&&o+r<s.length;return s.slice(o,o+r).map((d,m,M)=>{const S=m===0&&c,b=m===M.length-1&&l;return S||b?e.dim("..."):i(d,m+o===n)})},ae=t=>new W({validate:t.validate,autocomplete:t.autocomplete,placeholder:t.placeholder,defaultValue:t.defaultValue,initialValue:t.initialValue,render(){const n=`${e.gray(a)}
++${y(this.state)}  ${t.message}
++`,s=t.placeholder?e.inverse(t.placeholder[0])+e.dim(t.placeholder.slice(1)):e.inverse(e.hidden("_")),i=this.value?this.valueWithCursor:s;switch(this.state){case"error":return`${n.trim()}
++${e.yellow(a)}  ${i}
++${e.yellow($)}  ${e.yellow(this.error)}
++`;case"submit":return`${n}${e.gray(a)}  ${e.dim(this.value||t.placeholder)}`;case"cancel":return`${n}${e.gray(a)}  ${e.strikethrough(e.dim(this.value??""))}${this.value?.trim()?`
+ `+e.gray(a):""}`;default:return`${n}${e.cyan(a)}  ${i}
+-${e.cyan(d)}
+-`}}}).prompt(),se=r=>{const n=r.active??"Yes",i=r.inactive??"No";return new N({active:n,inactive:i,initialValue:r.initialValue??!0,render(){const t=`${e.gray(a)}
+-${y(this.state)}  ${r.message}
+-`,s=this.value?n:i;switch(this.state){case"submit":return`${t}${e.gray(a)}  ${e.dim(s)}`;case"cancel":return`${t}${e.gray(a)}  ${e.strikethrough(e.dim(s))}
+-${e.gray(a)}`;default:return`${t}${e.cyan(a)}  ${this.value?`${e.green(b)} ${n}`:`${e.dim(E)} ${e.dim(n)}`} ${e.dim("/")} ${this.value?`${e.dim(E)} ${e.dim(i)}`:`${e.green(b)} ${i}`}
+-${e.cyan(d)}
+-`}}}).prompt()},ie=r=>{const n=(t,s)=>{const c=t.label??String(t.value);return s==="active"?`${e.green(b)} ${c} ${t.hint?e.dim(`(${t.hint})`):""}`:s==="selected"?`${e.dim(c)}`:s==="cancelled"?`${e.strikethrough(e.dim(c))}`:`${e.dim(E)} ${e.dim(c)}`};let i=0;return new k({options:r.options,initialValue:r.initialValue,render(){const t=`${e.gray(a)}
+-${y(this.state)}  ${r.message}
+-`;switch(this.state){case"submit":return`${t}${e.gray(a)}  ${n(this.options[this.cursor],"selected")}`;case"cancel":return`${t}${e.gray(a)}  ${n(this.options[this.cursor],"cancelled")}
+-${e.gray(a)}`;default:{const s=r.maxItems===void 0?1/0:Math.max(r.maxItems,5);this.cursor>=i+s-3?i=Math.max(Math.min(this.cursor-s+3,this.options.length-s),0):this.cursor<i+2&&(i=Math.max(this.cursor-2,0));const c=s<this.options.length&&i>0,l=s<this.options.length&&i+s<this.options.length;return`${t}${e.cyan(a)}  ${this.options.slice(i,i+s).map((u,m,$)=>m===0&&c?e.dim("..."):m===$.length-1&&l?e.dim("..."):n(u,m+i===this.cursor?"active":"inactive")).join(`
++${e.cyan($)}
++`}}}).prompt(),oe=t=>new q({validate:t.validate,mask:t.mask??X,render(){const n=`${e.gray(a)}
++${y(this.state)}  ${t.message}
++`,s=this.valueWithCursor,i=this.masked;switch(this.state){case"error":return`${n.trim()}
++${e.yellow(a)}  ${i}
++${e.yellow($)}  ${e.yellow(this.error)}
++`;case"submit":return`${n}${e.gray(a)}  ${e.dim(i)}`;case"cancel":return`${n}${e.gray(a)}  ${e.strikethrough(e.dim(i??""))}${i?`
++`+e.gray(a):""}`;default:return`${n}${e.cyan(a)}  ${s}
++${e.cyan($)}
++`}}}).prompt(),ce=t=>{const n=t.active??"Yes",s=t.inactive??"No";return new F({active:n,inactive:s,initialValue:t.initialValue??!0,render(){const i=`${e.gray(a)}
++${y(this.state)}  ${t.message}
++`,r=this.value?n:s;switch(this.state){case"submit":return`${i}${e.gray(a)}  ${e.dim(r)}`;case"cancel":return`${i}${e.gray(a)}  ${e.strikethrough(e.dim(r))}
++${e.gray(a)}`;default:return`${i}${e.cyan(a)}  ${this.value?`${e.green(I)} ${n}`:`${e.dim(T)} ${e.dim(n)}`} ${e.dim("/")} ${this.value?`${e.dim(T)} ${e.dim(s)}`:`${e.green(I)} ${s}`}
++${e.cyan($)}
++`}}}).prompt()},le=t=>{const n=(s,i)=>{const r=s.label??String(s.value);switch(i){case"selected":return`${e.dim(r)}`;case"active":return`${e.green(I)} ${r} ${s.hint?e.dim(`(${s.hint})`):""}`;case"cancelled":return`${e.strikethrough(e.dim(r))}`;default:return`${e.dim(T)} ${e.dim(r)}`}};return new N({options:t.options,initialValue:t.initialValue,render(){const s=`${e.gray(a)}
++${y(this.state)}  ${t.message}
++`;switch(this.state){case"submit":return`${s}${e.gray(a)}  ${n(this.options[this.cursor],"selected")}`;case"cancel":return`${s}${e.gray(a)}  ${n(this.options[this.cursor],"cancelled")}
++${e.gray(a)}`;default:return`${s}${e.cyan(a)}  ${j({cursor:this.cursor,options:this.options,maxItems:t.maxItems,style:(i,r)=>n(i,r?"active":"inactive")}).join(`
+ ${e.cyan(a)}  `)}
+-${e.cyan(d)}
+-`}}}}).prompt()},ne=r=>{const n=(i,t="inactive")=>{const s=i.label??String(i.value);return t==="selected"?`${e.dim(s)}`:t==="cancelled"?`${e.strikethrough(e.dim(s))}`:t==="active"?`${e.bgCyan(e.gray(` ${i.value} `))} ${s} ${i.hint?e.dim(`(${i.hint})`):""}`:`${e.gray(e.bgWhite(e.inverse(` ${i.value} `)))} ${s} ${i.hint?e.dim(`(${i.hint})`):""}`};return new W({options:r.options,initialValue:r.initialValue,render(){const i=`${e.gray(a)}
+-${y(this.state)}  ${r.message}
+-`;switch(this.state){case"submit":return`${i}${e.gray(a)}  ${n(this.options.find(t=>t.value===this.value),"selected")}`;case"cancel":return`${i}${e.gray(a)}  ${n(this.options[0],"cancelled")}
+-${e.gray(a)}`;default:return`${i}${e.cyan(a)}  ${this.options.map((t,s)=>n(t,s===this.cursor?"active":"inactive")).join(`
++${e.cyan($)}
++`}}}).prompt()},ue=t=>{const n=(s,i="inactive")=>{const r=s.label??String(s.value);return i==="selected"?`${e.dim(r)}`:i==="cancelled"?`${e.strikethrough(e.dim(r))}`:i==="active"?`${e.bgCyan(e.gray(` ${s.value} `))} ${r} ${s.hint?e.dim(`(${s.hint})`):""}`:`${e.gray(e.bgWhite(e.inverse(` ${s.value} `)))} ${r} ${s.hint?e.dim(`(${s.hint})`):""}`};return new U({options:t.options,initialValue:t.initialValue,render(){const s=`${e.gray(a)}
++${y(this.state)}  ${t.message}
++`;switch(this.state){case"submit":return`${s}${e.gray(a)}  ${n(this.options.find(i=>i.value===this.value),"selected")}`;case"cancel":return`${s}${e.gray(a)}  ${n(this.options[0],"cancelled")}
++${e.gray(a)}`;default:return`${s}${e.cyan(a)}  ${this.options.map((i,r)=>n(i,r===this.cursor?"active":"inactive")).join(`
+ ${e.cyan(a)}  `)}
+-${e.cyan(d)}
+-`}}}).prompt()},ae=r=>{const n=(i,t)=>{const s=i.label??String(i.value);return t==="active"?`${e.cyan(C)} ${s} ${i.hint?e.dim(`(${i.hint})`):""}`:t==="selected"?`${e.green(w)} ${e.dim(s)}`:t==="cancelled"?`${e.strikethrough(e.dim(s))}`:t==="active-selected"?`${e.green(w)} ${s} ${i.hint?e.dim(`(${i.hint})`):""}`:t==="submitted"?`${e.dim(s)}`:`${e.dim(M)} ${e.dim(s)}`};return new D({options:r.options,initialValues:r.initialValues,required:r.required??!0,cursorAt:r.cursorAt,validate(i){if(this.required&&i.length===0)return`Please select at least one option.
+-${e.reset(e.dim(`Press ${e.gray(e.bgWhite(e.inverse(" space ")))} to select, ${e.gray(e.bgWhite(e.inverse(" enter ")))} to submit`))}`},render(){let i=`${e.gray(a)}
+-${y(this.state)}  ${r.message}
+-`;switch(this.state){case"submit":return`${i}${e.gray(a)}  ${this.options.filter(({value:t})=>this.value.includes(t)).map(t=>n(t,"submitted")).join(e.dim(", "))||e.dim("none")}`;case"cancel":{const t=this.options.filter(({value:s})=>this.value.includes(s)).map(s=>n(s,"cancelled")).join(e.dim(", "));return`${i}${e.gray(a)}  ${t.trim()?`${t}
+-${e.gray(a)}`:""}`}case"error":{const t=this.error.split(`
+-`).map((s,c)=>c===0?`${e.yellow(d)}  ${e.yellow(s)}`:`   ${s}`).join(`
+-`);return i+e.yellow(a)+"  "+this.options.map((s,c)=>{const l=this.value.includes(s.value),u=c===this.cursor;return u&&l?n(s,"active-selected"):l?n(s,"selected"):n(s,u?"active":"inactive")}).join(`
++${e.cyan($)}
++`}}}).prompt()},$e=t=>{const n=(s,i)=>{const r=s.label??String(s.value);return i==="active"?`${e.cyan(R)} ${r} ${s.hint?e.dim(`(${s.hint})`):""}`:i==="selected"?`${e.green(f)} ${e.dim(r)}`:i==="cancelled"?`${e.strikethrough(e.dim(r))}`:i==="active-selected"?`${e.green(f)} ${r} ${s.hint?e.dim(`(${s.hint})`):""}`:i==="submitted"?`${e.dim(r)}`:`${e.dim(B)} ${e.dim(r)}`};return new z({options:t.options,initialValues:t.initialValues,required:t.required??!0,cursorAt:t.cursorAt,validate(s){if(this.required&&s.length===0)return`Please select at least one option.
++${e.reset(e.dim(`Press ${e.gray(e.bgWhite(e.inverse(" space ")))} to select, ${e.gray(e.bgWhite(e.inverse(" enter ")))} to submit`))}`},render(){let s=`${e.gray(a)}
++${y(this.state)}  ${t.message}
++`;const i=(r,o)=>{const c=this.value.includes(r.value);return o&&c?n(r,"active-selected"):c?n(r,"selected"):n(r,o?"active":"inactive")};switch(this.state){case"submit":return`${s}${e.gray(a)}  ${this.options.filter(({value:r})=>this.value.includes(r)).map(r=>n(r,"submitted")).join(e.dim(", "))||e.dim("none")}`;case"cancel":{const r=this.options.filter(({value:o})=>this.value.includes(o)).map(o=>n(o,"cancelled")).join(e.dim(", "));return`${s}${e.gray(a)}  ${r.trim()?`${r}
++${e.gray(a)}`:""}`}case"error":{const r=this.error.split(`
++`).map((o,c)=>c===0?`${e.yellow($)}  ${e.yellow(o)}`:`   ${o}`).join(`
++`);return s+e.yellow(a)+"  "+j({options:this.options,cursor:this.cursor,maxItems:t.maxItems,style:i}).join(`
+ ${e.yellow(a)}  `)+`
+-`+t+`
+-`}default:return`${i}${e.cyan(a)}  ${this.options.map((t,s)=>{const c=this.value.includes(t.value),l=s===this.cursor;return l&&c?n(t,"active-selected"):c?n(t,"selected"):n(t,l?"active":"inactive")}).join(`
++`+r+`
++`}default:return`${s}${e.cyan(a)}  ${j({options:this.options,cursor:this.cursor,maxItems:t.maxItems,style:i}).join(`
+ ${e.cyan(a)}  `)}
+-${e.cyan(d)}
+-`}}}).prompt()},ce=r=>{const n=(i,t,s=[])=>{const c=i.label??String(i.value),l=typeof i.group=="string",u=l&&(s[s.indexOf(i)+1]??{group:!0}),m=l&&u.group===!0,$=l?`${m?d:a} `:"";return t==="active"?`${e.dim($)}${e.cyan(C)} ${c} ${i.hint?e.dim(`(${i.hint})`):""}`:t==="group-active"?`${$}${e.cyan(C)} ${e.dim(c)}`:t==="group-active-selected"?`${$}${e.green(w)} ${e.dim(c)}`:t==="selected"?`${e.dim($)}${e.green(w)} ${e.dim(c)}`:t==="cancelled"?`${e.strikethrough(e.dim(c))}`:t==="active-selected"?`${e.dim($)}${e.green(w)} ${c} ${i.hint?e.dim(`(${i.hint})`):""}`:t==="submitted"?`${e.dim(c)}`:`${e.dim($)}${e.dim(M)} ${e.dim(c)}`};return new L({options:r.options,initialValues:r.initialValues,required:r.required??!0,cursorAt:r.cursorAt,validate(i){if(this.required&&i.length===0)return`Please select at least one option.
+-${e.reset(e.dim(`Press ${e.gray(e.bgWhite(e.inverse(" space ")))} to select, ${e.gray(e.bgWhite(e.inverse(" enter ")))} to submit`))}`},render(){let i=`${e.gray(a)}
+-${y(this.state)}  ${r.message}
+-`;switch(this.state){case"submit":return`${i}${e.gray(a)}  ${this.options.filter(({value:t})=>this.value.includes(t)).map(t=>n(t,"submitted")).join(e.dim(", "))}`;case"cancel":{const t=this.options.filter(({value:s})=>this.value.includes(s)).map(s=>n(s,"cancelled")).join(e.dim(", "));return`${i}${e.gray(a)}  ${t.trim()?`${t}
+-${e.gray(a)}`:""}`}case"error":{const t=this.error.split(`
+-`).map((s,c)=>c===0?`${e.yellow(d)}  ${e.yellow(s)}`:`   ${s}`).join(`
+-`);return`${i}${e.yellow(a)}  ${this.options.map((s,c,l)=>{const u=this.value.includes(s.value)||s.group===!0&&this.isGroupSelected(`${s.value}`),m=c===this.cursor;return!m&&typeof s.group=="string"&&this.options[this.cursor].value===s.group?n(s,u?"group-active-selected":"group-active",l):m&&u?n(s,"active-selected",l):u?n(s,"selected",l):n(s,m?"active":"inactive",l)}).join(`
++${e.cyan($)}
++`}}}).prompt()},de=t=>{const n=(s,i,r=[])=>{const o=s.label??String(s.value),c=typeof s.group=="string",l=c&&(r[r.indexOf(s)+1]??{group:!0}),d=c&&l.group===!0,m=c?`${d?$:a} `:"";return i==="active"?`${e.dim(m)}${e.cyan(R)} ${o} ${s.hint?e.dim(`(${s.hint})`):""}`:i==="group-active"?`${m}${e.cyan(R)} ${e.dim(o)}`:i==="group-active-selected"?`${m}${e.green(f)} ${e.dim(o)}`:i==="selected"?`${e.dim(m)}${e.green(f)} ${e.dim(o)}`:i==="cancelled"?`${e.strikethrough(e.dim(o))}`:i==="active-selected"?`${e.dim(m)}${e.green(f)} ${o} ${s.hint?e.dim(`(${s.hint})`):""}`:i==="submitted"?`${e.dim(o)}`:`${e.dim(m)}${e.dim(B)} ${e.dim(o)}`};return new D({options:t.options,initialValues:t.initialValues,required:t.required??!0,cursorAt:t.cursorAt,validate(s){if(this.required&&s.length===0)return`Please select at least one option.
++${e.reset(e.dim(`Press ${e.gray(e.bgWhite(e.inverse(" space ")))} to select, ${e.gray(e.bgWhite(e.inverse(" enter ")))} to submit`))}`},render(){let s=`${e.gray(a)}
++${y(this.state)}  ${t.message}
++`;switch(this.state){case"submit":return`${s}${e.gray(a)}  ${this.options.filter(({value:i})=>this.value.includes(i)).map(i=>n(i,"submitted")).join(e.dim(", "))}`;case"cancel":{const i=this.options.filter(({value:r})=>this.value.includes(r)).map(r=>n(r,"cancelled")).join(e.dim(", "));return`${s}${e.gray(a)}  ${i.trim()?`${i}
++${e.gray(a)}`:""}`}case"error":{const i=this.error.split(`
++`).map((r,o)=>o===0?`${e.yellow($)}  ${e.yellow(r)}`:`   ${r}`).join(`
++`);return`${s}${e.yellow(a)}  ${this.options.map((r,o,c)=>{const l=this.value.includes(r.value)||r.group===!0&&this.isGroupSelected(`${r.value}`),d=o===this.cursor;return!d&&typeof r.group=="string"&&this.options[this.cursor].value===r.group?n(r,l?"group-active-selected":"group-active",c):d&&l?n(r,"active-selected",c):l?n(r,"selected",c):n(r,d?"active":"inactive",c)}).join(`
+ ${e.yellow(a)}  `)}
+-${t}
+-`}default:return`${i}${e.cyan(a)}  ${this.options.map((t,s,c)=>{const l=this.value.includes(t.value)||t.group===!0&&this.isGroupSelected(`${t.value}`),u=s===this.cursor;return!u&&typeof t.group=="string"&&this.options[this.cursor].value===t.group?n(t,l?"group-active-selected":"group-active",c):u&&l?n(t,"active-selected",c):l?n(t,"selected",c):n(t,u?"active":"inactive",c)}).join(`
++${i}
++`}default:return`${s}${e.cyan(a)}  ${this.options.map((i,r,o)=>{const c=this.value.includes(i.value)||i.group===!0&&this.isGroupSelected(`${i.value}`),l=r===this.cursor;return!l&&typeof i.group=="string"&&this.options[this.cursor].value===i.group?n(i,c?"group-active-selected":"group-active",o):l&&c?n(i,"active-selected",o):c?n(i,"selected",o):n(i,l?"active":"inactive",o)}).join(`
+ ${e.cyan(a)}  `)}
+-${e.cyan(d)}
+-`}}}).prompt()},R=r=>r.replace(me(),""),le=(r="",n="")=>{const i=`
+-${r}
++${e.cyan($)}
++`}}}).prompt()},E=t=>t.replace(ye(),""),me=(t="",n="")=>{const s=`
++${t}
+ `.split(`
+-`),t=R(n).length,s=Math.max(i.reduce((l,u)=>(u=R(u),u.length>l?u.length:l),0),t)+2,c=i.map(l=>`${e.gray(a)}  ${e.dim(l)}${" ".repeat(s-R(l).length)}${e.gray(a)}`).join(`
++`),i=E(n).length,r=Math.max(s.reduce((c,l)=>(l=E(l),l.length>c?l.length:c),0),i)+2,o=s.map(c=>`${e.gray(a)}  ${e.dim(c)}${" ".repeat(r-E(c).length)}${e.gray(a)}`).join(`
+ `);process.stdout.write(`${e.gray(a)}
+-${e.green(S)}  ${e.reset(n)} ${e.gray(B.repeat(Math.max(s-t-1,1))+Z)}
+-${c}
+-${e.gray(z+B.repeat(s+2)+X)}
+-`)},ue=(r="")=>{process.stdout.write(`${e.gray(d)}  ${e.red(r)}
++${e.green(x)}  ${e.reset(n)} ${e.gray(G.repeat(Math.max(r-i-1,1))+H)}
++${o}
++${e.gray(ee+G.repeat(r+2)+te)}
++`)},pe=(t="")=>{process.stdout.write(`${e.gray($)}  ${e.red(t)}
+ 
+-`)},oe=(r="")=>{process.stdout.write(`${e.gray(K)}  ${r}
+-`)},$e=(r="")=>{process.stdout.write(`${e.gray(a)}
+-${e.gray(d)}  ${r}
++`)},he=(t="")=>{process.stdout.write(`${e.gray(Q)}  ${t}
++`)},ge=(t="")=>{process.stdout.write(`${e.gray(a)}
++${e.gray($)}  ${t}
+ 
+-`)},f={message:(r="",{symbol:n=e.gray(a)}={})=>{const i=[`${e.gray(a)}`];if(r){const[t,...s]=r.split(`
+-`);i.push(`${n}  ${t}`,...s.map(c=>`${e.gray(a)}  ${c}`))}process.stdout.write(`${i.join(`
++`)},v={message:(t="",{symbol:n=e.gray(a)}={})=>{const s=[`${e.gray(a)}`];if(t){const[i,...r]=t.split(`
++`);s.push(`${n}  ${i}`,...r.map(o=>`${e.gray(a)}  ${o}`))}process.stdout.write(`${s.join(`
+ `)}
+-`)},info:r=>{f.message(r,{symbol:e.blue(J)})},success:r=>{f.message(r,{symbol:e.green(Y)})},step:r=>{f.message(r,{symbol:e.green(S)})},warn:r=>{f.message(r,{symbol:e.yellow(Q)})},warning:r=>{f.warn(r)},error:r=>{f.message(r,{symbol:e.red(ee)})}},de=()=>{const r=_?["\u25D2","\u25D0","\u25D3","\u25D1"]:["\u2022","o","O","0"],n=_?80:120;let i,t,s=!1,c="";const l=(v="")=>{s=!0,i=F(),c=v.replace(/\.+$/,""),process.stdout.write(`${e.gray(a)}
+-`);let g=0,p=0;t=setInterval(()=>{const O=e.magenta(r[g]),P=".".repeat(Math.floor(p)).slice(0,3);process.stdout.write(T.move(-999,0)),process.stdout.write(A.down(1)),process.stdout.write(`${O}  ${c}${P}`),g=g+1<r.length?g+1:0,p=p<r.length?p+.125:0},n)},u=(v="",g=0)=>{c=v??c,s=!1,clearInterval(t);const p=g===0?e.green(S):g===1?e.red(I):e.red(x);process.stdout.write(T.move(-999,0)),process.stdout.write(A.down(1)),process.stdout.write(`${p}  ${c}
+-`),i()},m=(v="")=>{c=v??c},$=v=>{const g=v>1?"Something went wrong":"Canceled";s&&u(g,v)};return process.on("uncaughtExceptionMonitor",()=>$(2)),process.on("unhandledRejection",()=>$(2)),process.on("SIGINT",()=>$(1)),process.on("SIGTERM",()=>$(1)),process.on("exit",$),{start:l,stop:u,message:m}};function me(){const r=["[\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)","(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]))"].join("|");return new RegExp(r,"g")}const he=async(r,n)=>{const i={},t=Object.keys(r);for(const s of t){const c=r[s],l=await c({results:i})?.catch(u=>{throw u});if(typeof n?.onCancel=="function"&&G(l)){i[s]="canceled",n.onCancel({results:i});continue}i[s]=l}return i};export{ue as cancel,se as confirm,he as group,ce as groupMultiselect,oe as intro,f as log,ae as multiselect,le as note,$e as outro,re as password,ie as select,ne as selectKey,de as spinner,te as text};
++`)},info:t=>{v.message(t,{symbol:e.blue(se)})},success:t=>{v.message(t,{symbol:e.green(re)})},step:t=>{v.message(t,{symbol:e.green(x)})},warn:t=>{v.message(t,{symbol:e.yellow(ie)})},warning:t=>{v.warn(t)},error:t=>{v.message(t,{symbol:e.red(ne)})}},_=()=>{const t=C?["\u25D2","\u25D0","\u25D3","\u25D1"]:["\u2022","o","O","0"],n=C?80:120;let s,i,r=!1,o="";const c=g=>{const h=g>1?"Something went wrong":"Canceled";r&&b(h,g)},l=()=>c(2),d=()=>c(1),m=()=>{process.on("uncaughtExceptionMonitor",l),process.on("unhandledRejection",l),process.on("SIGINT",d),process.on("SIGTERM",d),process.on("exit",c)},M=()=>{process.removeListener("uncaughtExceptionMonitor",l),process.removeListener("unhandledRejection",l),process.removeListener("SIGINT",d),process.removeListener("SIGTERM",d),process.removeListener("exit",c)},S=(g="")=>{r=!0,s=J(),o=g.replace(/\.+$/,""),process.stdout.write(`${e.gray(a)}
++`);let h=0,w=0;m(),i=setInterval(()=>{const L=e.magenta(t[h]),O=".".repeat(Math.floor(w)).slice(0,3);process.stdout.write(k.move(-999,0)),process.stdout.write(A.down(1)),process.stdout.write(`${L}  ${o}${O}`),h=h+1<t.length?h+1:0,w=w<t.length?w+.125:0},n)},b=(g="",h=0)=>{o=g??o,r=!1,clearInterval(i);const w=h===0?e.green(x):h===1?e.red(P):e.red(V);process.stdout.write(k.move(-999,0)),process.stdout.write(A.down(1)),process.stdout.write(`${w}  ${o}
++`),M(),s()};return{start:S,stop:b,message:(g="")=>{o=g??o}}};function ye(){const t=["[\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)","(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]))"].join("|");return new RegExp(t,"g")}const ve=async(t,n)=>{const s={},i=Object.keys(t);for(const r of i){const o=t[r],c=await o({results:s})?.catch(l=>{throw l});if(typeof n?.onCancel=="function"&&Z(c)){s[r]="canceled",n.onCancel({results:s});continue}s[r]=c}return s},we=async t=>{for(const n of t){if(n.enabled===!1)continue;const s=_();s.start(n.title);const i=await n.task(s.message);s.stop(i||n.title)}};export{pe as cancel,ce as confirm,ve as group,de as groupMultiselect,he as intro,v as log,$e as multiselect,me as note,ge as outro,oe as password,le as select,ue as selectKey,_ as spinner,we as tasks,ae as text};
++//# sourceMappingURL=index.mjs.map

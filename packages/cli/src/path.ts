@@ -68,3 +68,50 @@ export function resolveGlob(glob: string) {
 export function resolveFileGlob(glob: string) {
     return resolveGlob(glob).filter(p => fsa.existsSync(p) && fsa.statSync(p).isFile())
 }
+
+export function pathCompletion({
+    // can be a path or a file path or incomplete string
+    input,
+    baseDir = process.cwd(),
+    directoryOnly = false,
+}: {
+    input: string
+    baseDir?: string
+    directoryOnly?: boolean
+}): string {
+    // Determine if the input is an absolute path
+    const fullPath = path.isAbsolute(input) ? input : path.resolve(baseDir, input)
+
+    // Get the directory part and the part of the path to be completed
+    const dir = path.dirname(fullPath)
+    const toComplete = path.basename(fullPath)
+
+    // Check if the directory exists
+    if (!fsa.existsSync(dir)) {
+        return input
+    }
+
+    // Read the directory content
+    const files = fsa.readdirSync(dir)
+
+    // Find the first matching file or directory
+    const match = files
+        .filter((file) => {
+            if (directoryOnly && !fsa.statSync(path.join(dir, file)).isDirectory()) {
+                return false
+            }
+            return true
+        })
+        .find((file) => {
+            return file.startsWith(toComplete)
+        })
+
+    if (match) {
+        const matchedPath = path.join(dir, match)
+        const isDir = fsa.statSync(matchedPath).isDirectory()
+        // Check if the matched path is a directory and append a slash if it is
+        return getRelativePath(baseDir, matchedPath) + (isDir ? path.sep : '')
+    }
+
+    return input
+}
