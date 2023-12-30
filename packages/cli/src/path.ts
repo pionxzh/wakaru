@@ -81,10 +81,11 @@ export function pathCompletion({
 }): string {
     // Determine if the input is an absolute path
     const fullPath = path.isAbsolute(input) ? input : path.resolve(baseDir, input)
+    const isAtBase = path.resolve(baseDir) === path.resolve(fullPath)
 
     // Get the directory part and the part of the path to be completed
-    const dir = path.dirname(fullPath)
-    const toComplete = path.basename(fullPath)
+    const dir = isAtBase ? fullPath : path.dirname(fullPath)
+    const toComplete = isAtBase ? '' : path.basename(fullPath)
 
     // Check if the directory exists
     if (!fsa.existsSync(dir)) {
