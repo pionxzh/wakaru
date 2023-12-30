@@ -1,4 +1,5 @@
 import { isTopLevel } from '@wakaru/ast-utils'
+import { mergeComments } from '@wakaru/ast-utils/comments'
 import { generateName, isValidIdentifier } from '@wakaru/ast-utils/identifier'
 import { ImportManager } from '@wakaru/ast-utils/imports'
 import { isExportObject, isStringObjectProperty, isUndefined } from '@wakaru/ast-utils/matchers'
@@ -11,7 +12,7 @@ import type { ASTTransformation, Context } from '@wakaru/ast-utils/wrapAstTransf
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { NodePath } from 'ast-types/lib/node-path'
 import type { Scope } from 'ast-types/lib/scope'
-import type { ASTNode, ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, MemberExpression, Node, StringLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
+import type { ASTNode, ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, MemberExpression, Node, NumericLiteral, StringLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 export const Schema = z.object({
     hoist: z.boolean().default(false).describe('Hoist non-top-level require calls to the top of the file'),
@@ -120,6 +121,8 @@ function transformImport(context: Context, hoist: boolean) {
         })
 
     handleNamespaceImport()
+
+    handleMissingModuleRequire()
 
     importManager.applyImportToRoot(j, root)
 
@@ -368,6 +371,28 @@ function transformImport(context: Context, hoist: boolean) {
                 })
             })
         }
+    }
+
+    /**
+     * Add /* wakaru:missing / annotation to require calls that cannot be transformed.
+     */
+    function handleMissingModuleRequire() {
+        root
+            .find(j.CallExpression, {
+                callee: {
+                    type: 'Identifier',
+                    name: 'require',
+                },
+                arguments: (args) => {
+                    if (args.length !== 1) return false
+                    return j.NumericLiteral.check(args[0])
+                },
+            })
+            .forEach((path) => {
+                const sourcePath = path.get('arguments', 0) as ASTPath<NumericLiteral>
+                const comment = j.commentBlock(' wakaru:missing ', false, true)
+                mergeComments(sourcePath.node, [comment])
+            })
     }
 }
 

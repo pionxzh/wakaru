@@ -317,6 +317,15 @@ var buz = foo$0.bar("baz");
 `,
 )
 
+inlineTest.only('add annotations for require with missing module',
+  `
+const foo = require(9527);
+`,
+  `
+const foo = require(9527/* wakaru:missing */);
+`,
+)
+
 inlineTest('should not transform these invalid require',
   `
 var ei=require("core-js")["__core-js_shared__"]; // invalid identifier
