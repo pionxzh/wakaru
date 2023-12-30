@@ -199,6 +199,8 @@ async function interactive({
 
     const singleFeature = features.length === 1
 
+    const timing = new Timing()
+
     if (features.includes(Feature.Unpacker)) {
         intro(`${c.green(c.inverse(' Unpacker '))}`)
 
@@ -269,8 +271,8 @@ async function interactive({
 
         log.step('Unpacking...')
 
-        const timing = new Timing()
-        const { result: items, time: elapsed } = await timing.measureTimeAsync(() => unpacker(inputPaths, outputPath))
+        const { result: { items, timing: unpackerTiming }, time: elapsed } = await timing.measureTimeAsync(() => unpacker(inputPaths, outputPath))
+        timing.merge(unpackerTiming)
 
         log.step('Finished')
 
@@ -372,17 +374,17 @@ async function interactive({
         const s = spinner()
         s.start('...')
 
-        const timing = new Timing()
-        const pool = new FixedThreadPool<UnminifyWorkerParams, Measurement>(concurrency, unminifyWorkerFile)
+        const pool = new FixedThreadPool<UnminifyWorkerParams, Timing>(concurrency, unminifyWorkerFile)
         const unminify = async (inputPath: string) => {
             const outputPath = path.join(outputDir, path.relative(commonBaseDir, inputPath))
             const result = await pool.execute({ inputPath, outputPath, moduleMeta, moduleMapping })
             s.message(`${c.green(path.relative(cwd, inputPath))}`)
             return result
         }
-        const { result: measurements, time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
+        const { result: timings, time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
             unminifyInputPaths.map(p => unminify(p)),
         ))
+        timing.merge(...timings)
         pool.destroy()
 
         s.stop('Finished')
@@ -392,9 +394,9 @@ async function interactive({
         outro(`Output directory: ${c.green(getRelativePath(cwd, outputDir))}`)
 
         if (perf) {
-            printPerfStats(measurements)
-
-            writePerfStats(measurements, path.join(outputBase, 'perf.json'))
+            const measurement = timing.getMeasurement()
+            printPerfStats(measurement)
+            writePerfStats(measurement, path.join(outputBase, 'perf.json'))
         }
     }
 
@@ -484,6 +486,8 @@ async function nonInteractive(features: Feature[], {
     let moduleMeta: ModuleMeta = {}
     let moduleMapping: ModuleMapping = {}
 
+    const timing = new Timing()
+
     if (features.includes(Feature.Unpacker)) {
         intro(`${c.green(c.inverse(' Unpacker '))}`)
 
@@ -492,8 +496,8 @@ async function nonInteractive(features: Feature[], {
 
         log.step('Unpacking...')
 
-        const timing = new Timing()
-        const { result: items, time: elapsed } = await timing.measureTimeAsync(() => unpacker(inputPaths, outputPath))
+        const { result: { items, timing: unpackerTiming }, time: elapsed } = await timing.measureTimeAsync(() => unpacker(inputPaths, outputPath))
+        timing.merge(unpackerTiming)
 
         log.step('Finished')
 
@@ -534,18 +538,17 @@ async function nonInteractive(features: Feature[], {
         const s = spinner()
         s.start('...')
 
-        const timing = new Timing()
-
-        const pool = new FixedThreadPool<UnminifyWorkerParams, Measurement>(concurrency, unminifyWorkerFile)
+        const pool = new FixedThreadPool<UnminifyWorkerParams, Timing>(concurrency, unminifyWorkerFile)
         const unminify = async (inputPath: string) => {
             const outputPath = path.join(outputDir, path.relative(commonBaseDir, inputPath))
             const result = await pool.execute({ inputPath, outputPath, moduleMeta, moduleMapping })
             s.message(`${c.green(path.relative(cwd, inputPath))}`)
             return result
         }
-        const { result: measurements, time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
+        const { result: timings, time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
             unminifyInputPaths.map(p => unminify(p)),
         ))
+        timing.merge(...timings)
         pool.destroy()
 
         s.stop('Finished')
@@ -555,8 +558,8 @@ async function nonInteractive(features: Feature[], {
         outro(`Output directory: ${c.green(relativeOutputPath)}`)
 
         if (perf) {
+            const measurements = timing.getMeasurement()
             printPerfStats(measurements)
-
             writePerfStats(measurements, perfOutputPath)
         }
     }
@@ -596,9 +599,8 @@ function formatElapsed(elapsed: number) {
     return `${~~(elapsed / 1000 / 60 / 60)}h${~~((elapsed / 1000 / 60) % 60)}m${~~((elapsed / 1000) % 60)}s`
 }
 
-function printPerfStats(measurements: Measurement[]) {
+function printPerfStats(measurements: Measurement) {
     const groupedByRules = measurements
-        .flat()
         .reduce<Record<string, number>>((acc, { key, time }) => {
             acc[key] = (acc[key] ?? 0) + time
             return acc
@@ -610,8 +612,8 @@ function printPerfStats(measurements: Measurement[]) {
     console.table(table, ['key', 'time'])
 }
 
-function writePerfStats(measurements: Measurement[], outputPath: string) {
-    fsa.writeJSONSync(outputPath, measurements.flat(), {
+function writePerfStats(measurements: Measurement, outputPath: string) {
+    fsa.writeJSONSync(outputPath, measurements, {
         encoding: 'utf-8',
         spaces: 2,
     })

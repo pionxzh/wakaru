@@ -1,4 +1,5 @@
 import path from 'node:path'
+import process from 'node:process'
 import { unpack } from '@wakaru/unpacker'
 import fsa from 'fs-extra'
 import { Timing } from './timing'
@@ -9,23 +10,23 @@ export interface UnpackerItem {
     files: string[]
     modules: Module[]
     moduleIdMapping: ModuleMapping
-    elapsed: number
 }
 
 export async function unpacker(
     paths: string[],
     outputDir: string,
-): Promise<UnpackerItem[]> {
+): Promise<{ items: UnpackerItem[]; timing: Timing }> {
     fsa.ensureDirSync(outputDir)
 
-    const result: UnpackerItem[] = []
+    const items: UnpackerItem[] = []
     const files: string[] = []
+
+    const cwd = process.cwd()
+    const timing = new Timing()
 
     for (const p of paths) {
         const source = await fsa.readFile(p, 'utf-8')
-
-        const timing = new Timing()
-        const { result: { modules, moduleIdMapping }, time: elapsed } = timing.measureTime(() => unpack(source))
+        const { modules, moduleIdMapping } = timing.collect(path.relative(cwd, p), 'unpacker', () => unpack(source))
 
         for (const mod of modules) {
             const filename = moduleIdMapping[mod.id] ?? `module-${mod.id}.js`
@@ -35,12 +36,11 @@ export async function unpacker(
             files.push(outputPath)
         }
 
-        result.push({
+        items.push({
             files,
             modules,
             moduleIdMapping,
-            elapsed,
         })
     }
-    return result
+    return { items, timing }
 }

@@ -67,7 +67,11 @@ export class Timing {
         return { result, time }
     }
 
-    getMeasurements(): Measurement {
+    getMeasurement(): Measurement {
         return this.collected
+    }
+
+    merge(...timing: Timing[]) {
+        this.collected.push(...timing.flatMap(t => t.collected))
     }
 }
