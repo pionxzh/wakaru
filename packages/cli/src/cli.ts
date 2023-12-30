@@ -208,10 +208,13 @@ async function interactive({
                 validate(value) {
                     if (!value) return 'Please enter a file path'
 
-                    const inputPath = path.resolve(value)
-                    if (!fsa.existsSync(inputPath)) return 'Input does not exist'
-                    if (!fsa.statSync(inputPath).isFile()) return 'Input is not a file'
-                    if (!isPathInside(cwd, inputPath)) return 'Input is outside of the current working directory'
+                    if (fsa.existsSync(value) && fsa.statSync(value).isDirectory()) {
+                        return 'Input is a directory. If you want to include all files in the directory, use a glob pattern (e.g. ./folder/**/*.js)'
+                    }
+
+                    const resolvedPaths = resolveGlob(value).filter(p => fsa.existsSync(p) && fsa.statSync(p).isFile())
+                    if (resolvedPaths.length === 0) return 'No files matched'
+                    if (resolvedPaths.some(p => !isPathInside(cwd, p))) return 'Input is outside of the current working directory'
 
                     return undefined
                 },
@@ -222,7 +225,7 @@ async function interactive({
                 return process.exit(0)
             }
 
-            inputPaths = resolveGlob(rawInputPath)
+            inputPaths = resolveGlob(rawInputPath).filter(p => fsa.existsSync(p) && fsa.statSync(p).isFile())
         }
 
         let outputPath = outputBase
@@ -312,9 +315,13 @@ async function interactive({
                 validate(value) {
                     if (!value) return 'Please enter a file path'
 
-                    const resolvedPaths = resolveGlob(value)
+                    if (fsa.existsSync(value) && fsa.statSync(value).isDirectory()) {
+                        return 'Input is a directory. If you want to include all files in the directory, use a glob pattern (e.g. ./folder/**/*.js)'
+                    }
+
+                    const resolvedPaths = resolveGlob(value).filter(p => fsa.existsSync(p) && fsa.statSync(p).isFile())
                     if (resolvedPaths.length === 0) return 'No files matched'
-                    if (!isPathInside(cwd, value)) return 'Input is outside of the current working directory'
+                    if (resolvedPaths.some(p => !isPathInside(cwd, p))) return 'Input is outside of the current working directory'
 
                     return undefined
                 },
