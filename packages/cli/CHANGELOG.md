@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.0.3](https://github.com/pionxzh/wakaru/compare/cli-v0.0.2...cli-v0.0.3) (2023-12-30)
+
+
+### Features
+
+* **cli:** support path auto-completion ([d5b731c](https://github.com/pionxzh/wakaru/commit/d5b731cb9fba2941ac4e74035c5d3e00dbfe2c4e))
+
+
+### Bug Fixes
+
+* **cli:** fix output path validation throw "no such file or directory" ([f4475d8](https://github.com/pionxzh/wakaru/commit/f4475d865aab57d13b0d6d9683fe60c229393849))
+* **cli:** handle `perf.json` path when output is overriden ([332c84b](https://github.com/pionxzh/wakaru/commit/332c84ba641cac2c2a08540a6098accb9be28f92)), closes [#85](https://github.com/pionxzh/wakaru/issues/85)
+* **cli:** handle path completion at base ([1a5fa1e](https://github.com/pionxzh/wakaru/commit/1a5fa1efa727660cbad57dcf09f7dbe8654447d0))
+* **cli:** input should all use `resolveFileGlob` ([3ef39a6](https://github.com/pionxzh/wakaru/commit/3ef39a6aa8dfe1d5e2c03b0965824528ac17c869))
+* **cli:** interative mode's path validation should accept glob pattern ([7af0bab](https://github.com/pionxzh/wakaru/commit/7af0bab5f66e4004b3951f24c92478da54a40ca8)), closes [#81](https://github.com/pionxzh/wakaru/issues/81)
+
 ## [0.0.2](https://github.com/pionxzh/wakaru/compare/cli-v0.0.1...cli-v0.0.2) (2023-12-15)
 
 
