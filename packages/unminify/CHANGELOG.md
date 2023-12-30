@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/pionxzh/wakaru/compare/unminify-v0.1.0...unminify-v0.1.1) (2023-12-30)
+
+
+### Features
+
+* support dynamic jsx tag ([0b51e23](https://github.com/pionxzh/wakaru/commit/0b51e232f32f4cf5b4a739dcc9391457d998b32a))
+* **un-esm:** add annotation for requires with missing module ([2999909](https://github.com/pionxzh/wakaru/commit/29999096f701de6531eacae68d8f44f0cf05d2b0)), closes [#77](https://github.com/pionxzh/wakaru/issues/77)
+
 ## [0.1.0](https://github.com/pionxzh/wakaru/compare/unminify-v0.0.6...unminify-v0.1.0) (2023-12-15)
 
 
