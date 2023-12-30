@@ -392,12 +392,12 @@ async function interactive({
         log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files ${c.dim(`(${formatElapsed(elapsed)})`)}`)
 
         outro(`Output directory: ${c.green(getRelativePath(cwd, outputDir))}`)
+    }
 
-        if (perf) {
-            const measurement = timing.getMeasurement()
-            printPerfStats(measurement)
-            writePerfStats(measurement, path.join(outputBase, 'perf.json'))
-        }
+    if (perf && outputBase) {
+        const measurement = timing.getMeasurement()
+        printPerfStats(measurement)
+        writePerfStats(measurement, path.join(outputBase, 'perf.json'))
     }
 
     console.log()
@@ -556,12 +556,12 @@ async function nonInteractive(features: Feature[], {
         log.success(`Successfully unminified ${c.green(unminifyInputPaths.length)} files ${c.dim(`(${formatElapsed(elapsed)})`)}`)
 
         outro(`Output directory: ${c.green(relativeOutputPath)}`)
+    }
 
-        if (perf) {
-            const measurements = timing.getMeasurement()
-            printPerfStats(measurements)
-            writePerfStats(measurements, perfOutputPath)
-        }
+    if (perf) {
+        const measurements = timing.getMeasurement()
+        printPerfStats(measurements)
+        writePerfStats(measurements, perfOutputPath)
     }
 }
 
