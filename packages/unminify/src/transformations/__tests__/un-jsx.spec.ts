@@ -151,6 +151,62 @@ function fn() {
 `,
 )
 
+inlineTest('jsx with dynamic Component tag',
+  `
+function fn() {
+  return React.createElement(
+    r ? "a" : "div",
+    null,
+    "Hello",
+  );
+}
+`,
+  `
+function fn() {
+  const Component = r ? "a" : "div";
+  return <Component>Hello</Component>;
+}
+`,
+)
+
+inlineTest('jsx with dynamic Component tag #2',
+  `
+function fn() {
+  return React.createElement(
+    components[0],
+    null,
+    "Hello",
+  );
+}
+`,
+  `
+function fn() {
+  const Component = components[0];
+  return <Component>Hello</Component>;
+}
+`,
+)
+
+inlineTest('jsx with dynamic Component tag #3',
+  `
+const Foo = () => {
+  return jsxs("div", {
+    children: [
+      jsx(r ? "a" : "div", { children: "bar" }, "b"),
+      jsx(g ? "p" : "div", { children: "baz" }, c),
+    ]
+  });
+};
+`,
+  `
+const Foo = () => {
+  const Component = g ? "p" : "div";
+  const Component$0 = r ? "a" : "div";
+  return <div><Component$0 key="b">bar</Component$0><Component key={c}>baz</Component></div>;
+};
+`,
+)
+
 inlineTest('jsx with child text that should be wrapped',
   `
 function fn() {
