@@ -28,7 +28,7 @@ expect.extend({
 })
 
 it('pathCompletion', () => {
-    // expect(pathCompletion({ input: '', baseDir })).toBe('./folder/')
+    expect(pathCompletion({ input: '', baseDir })).toBeSamePath('./folder/')
     expect(pathCompletion({ input: 'f', baseDir })).toBeSamePath('./folder/')
     expect(pathCompletion({ input: 'fold', baseDir })).toBeSamePath('./folder/')
     expect(pathCompletion({ input: 'folder', baseDir })).toBeSamePath('./folder/')
