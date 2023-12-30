@@ -22,7 +22,7 @@ import { FixedThreadPool } from 'poolifier'
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import { version } from '../package.json'
-import { findCommonBaseDir, getRelativePath, isPathInside, resolveGlob } from './path'
+import { findCommonBaseDir, getRelativePath, isPathInside, resolveFileGlob, resolveGlob } from './path'
 import { Timing } from './timing'
 import { unpacker } from './unpacker'
 import type { Measurement } from './timing'
@@ -152,12 +152,13 @@ async function interactive({
     let _overwrite = _force
 
     if (_inputs) {
-        if (_inputs.some(p => !isPathInside(cwd, p))) {
-            log.error('Input files must be inside the current working directory')
+        const validationError = _inputs.find(p => inputFileGlobValidation(p) !== undefined)
+        if (validationError) {
+            log.error(validationError)
             return process.exit(1)
         }
 
-        _inputPaths = _inputs.map(p => resolveGlob(p)).flat()
+        _inputPaths = _inputs.map(p => resolveFileGlob(p)).flat()
         if (_inputPaths.length === 0) {
             log.error('No input files matched')
             return process.exit(1)
@@ -165,8 +166,9 @@ async function interactive({
     }
 
     if (_output) {
-        if (!isPathInside(cwd, _output)) {
-            log.error('Output directory must be inside the current working directory')
+        const validationError = outputFolderValidation(_output)
+        if (validationError) {
+            log.error(validationError)
             return process.exit(1)
         }
 
@@ -205,19 +207,7 @@ async function interactive({
             const rawInputPath = await text({
                 message: `Input file path ${c.dim('(Supports glob patterns)')}`,
                 placeholder: './input.js',
-                validate(value) {
-                    if (!value) return 'Please enter a file path'
-
-                    if (fsa.existsSync(value) && fsa.statSync(value).isDirectory()) {
-                        return 'Input is a directory. If you want to include all files in the directory, use a glob pattern (e.g. ./folder/**/*.js)'
-                    }
-
-                    const resolvedPaths = resolveGlob(value).filter(p => fsa.existsSync(p) && fsa.statSync(p).isFile())
-                    if (resolvedPaths.length === 0) return 'No files matched'
-                    if (resolvedPaths.some(p => !isPathInside(cwd, p))) return 'Input is outside of the current working directory'
-
-                    return undefined
-                },
+                validate: inputFileGlobValidation,
             })
 
             if (isCancel(rawInputPath)) {
@@ -225,7 +215,7 @@ async function interactive({
                 return process.exit(0)
             }
 
-            inputPaths = resolveGlob(rawInputPath).filter(p => fsa.existsSync(p) && fsa.statSync(p).isFile())
+            inputPaths = resolveFileGlob(rawInputPath)
         }
 
         let outputPath = outputBase
@@ -235,16 +225,7 @@ async function interactive({
             const rawOutputBase = await text({
                 message: `Output directory path ${c.dim('(<enter> to accept default)')}`,
                 placeholder: defaultOutputBase,
-                validate(value) {
-                    if (!value) return undefined // default value
-
-                    const outputPath = path.resolve(value)
-                    if (!fsa.existsSync(outputPath)) return undefined
-                    if (!fsa.statSync(outputPath).isDirectory()) return 'Output is not a directory'
-                    if (!isPathInside(cwd, outputPath)) return 'Output is outside of the current working directory'
-
-                    return undefined
-                },
+                validate: outputFolderValidation,
             })
 
             if (isCancel(rawOutputBase)) {
@@ -312,21 +293,8 @@ async function interactive({
             const rawInputPath = await text({
                 message: `Input file path ${c.dim('(Supports glob patterns)')}`,
                 placeholder: './*.js',
-                validate(value) {
-                    if (!value) return 'Please enter a file path'
-
-                    if (fsa.existsSync(value) && fsa.statSync(value).isDirectory()) {
-                        return 'Input is a directory. If you want to include all files in the directory, use a glob pattern (e.g. ./folder/**/*.js)'
-                    }
-
-                    const resolvedPaths = resolveGlob(value).filter(p => fsa.existsSync(p) && fsa.statSync(p).isFile())
-                    if (resolvedPaths.length === 0) return 'No files matched'
-                    if (resolvedPaths.some(p => !isPathInside(cwd, p))) return 'Input is outside of the current working directory'
-
-                    return undefined
-                },
+                validate: inputFileGlobValidation,
             })
-
             if (isCancel(rawInputPath)) {
                 cancel('Cancelled')
                 return process.exit(0)
@@ -348,15 +316,7 @@ async function interactive({
             const rawOutputBase = await text({
                 message: `Output directory path ${c.dim('(<enter> to accept default)')}`,
                 placeholder: defaultOutputBase,
-                validate(value) {
-                    if (!value) return undefined // default value
-
-                    const outputPath = path.resolve(value)
-                    if (fsa.existsSync(outputPath) && !fsa.statSync(outputPath).isDirectory()) return 'Output path is not a directory'
-                    if (!isPathInside(cwd, outputPath)) return 'Output path is outside of the current working directory'
-
-                    return undefined
-                },
+                validate: outputFolderValidation,
             })
 
             if (isCancel(rawOutputBase)) {
@@ -453,12 +413,13 @@ async function nonInteractive(features: Feature[], {
         return process.exit(1)
     }
 
-    if (_inputs.some(p => !isPathInside(cwd, p))) {
-        log.error('Input files must be inside the current working directory')
+    const inputValidationError = _inputs.find(p => inputFileGlobValidation(p))
+    if (inputValidationError) {
+        log.error(inputValidationError)
         return process.exit(1)
     }
 
-    const inputPaths = _inputs.map(p => resolveGlob(p)).flat()
+    const inputPaths = _inputs.map(p => resolveFileGlob(p)).flat()
     if (inputPaths.length === 0) {
         log.error('No input files matched')
         return process.exit(1)
@@ -478,12 +439,11 @@ async function nonInteractive(features: Feature[], {
     if (features.includes(Feature.Unpacker)) outputPathsToCheck.push(unpackerOutput)
     if (features.includes(Feature.Unminify)) outputPathsToCheck.push(unminifyOutput)
 
-    outputPathsToCheck.forEach((p) => {
-        if (!isPathInside(cwd, p)) {
-            log.error('Output directory must be inside the current working directory')
-            return process.exit(1)
-        }
-    })
+    const outputValidationError = outputPathsToCheck.find(p => outputFolderValidation(p))
+    if (outputValidationError) {
+        log.error(outputValidationError)
+        return process.exit(1)
+    }
 
     if (!force) {
         outputPathsToCheck.forEach((p) => {
@@ -580,6 +540,33 @@ async function nonInteractive(features: Feature[], {
             writePerfStats(measurements, perfOutputPath)
         }
     }
+}
+
+function inputFileGlobValidation(input: string) {
+    if (!input) return 'Please enter a file path'
+
+    const cwd = process.cwd()
+    if (fsa.existsSync(input) && fsa.statSync(input).isDirectory()) {
+        return 'Input is a directory. If you want to include all files in the directory, use a glob pattern (e.g. ./folder/**/*.js)'
+    }
+
+    const resolvedPaths = resolveFileGlob(input)
+    if (resolvedPaths.length === 0) return 'No files matched'
+    if (resolvedPaths.some(p => !isPathInside(cwd, p))) return 'Input files must be inside the current working directory'
+
+    return undefined
+}
+
+function outputFolderValidation(input: string) {
+    if (!input) return undefined // default value
+
+    const cwd = process.cwd()
+    const outputPath = path.resolve(input)
+    if (!isPathInside(cwd, outputPath)) return 'Output must be inside the current working directory'
+    if (!fsa.existsSync(outputPath)) return undefined // not exist is fine
+    if (!fsa.statSync(outputPath).isDirectory()) return 'Output is not a directory'
+
+    return undefined
 }
 
 function formatElapsed(elapsed: number) {

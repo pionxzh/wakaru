@@ -64,3 +64,7 @@ export function resolveGlob(glob: string) {
         ignore: [path.join(cwd, '**/node_modules/**')],
     })
 }
+
+export function resolveFileGlob(glob: string) {
+    return resolveGlob(glob).filter(p => fsa.existsSync(p) && fsa.statSync(p).isFile())
+}
