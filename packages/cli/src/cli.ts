@@ -22,7 +22,7 @@ import { FixedThreadPool } from 'poolifier'
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import { version } from '../package.json'
-import { findCommonBaseDir, getRelativePath, isPathInside, resolveFileGlob, resolveGlob } from './path'
+import { findCommonBaseDir, getRelativePath, isPathInside, resolveFileGlob } from './path'
 import { Timing } from './timing'
 import { unpacker } from './unpacker'
 import type { Measurement } from './timing'
@@ -300,7 +300,7 @@ async function interactive({
                 return process.exit(0)
             }
 
-            unminifyInputPaths = resolveGlob(rawInputPath)
+            unminifyInputPaths = resolveFileGlob(rawInputPath)
         }
 
         const commonBaseDir = findCommonBaseDir(unminifyInputPaths)
