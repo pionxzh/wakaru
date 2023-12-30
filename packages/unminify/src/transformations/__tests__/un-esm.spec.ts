@@ -317,7 +317,7 @@ var buz = foo$0.bar("baz");
 `,
 )
 
-inlineTest.only('add annotations for require with missing module',
+inlineTest('add annotations for require with missing module',
   `
 const foo = require(9527);
 `,
