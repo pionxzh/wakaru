@@ -1,13 +1,15 @@
+import { assertScopeExists } from '@wakaru/ast-utils/assert'
 import { pascalCase } from '@wakaru/ast-utils/case'
 import { removePureAnnotation } from '@wakaru/ast-utils/comments'
 import { generateName } from '@wakaru/ast-utils/identifier'
+import { insertBefore } from '@wakaru/ast-utils/insert'
 import { isNull, isTrue, isUndefined } from '@wakaru/ast-utils/matchers'
 import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { z } from 'zod'
 import { nonNullable } from '../utils/utils'
 import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import type { ExpressionKind, LiteralKind } from 'ast-types/lib/gen/kinds'
-import type { ASTNode, CallExpression, Collection, Identifier, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, MemberExpression, RestElement, SpreadElement, StringLiteral, VariableDeclarator } from 'jscodeshift'
+import type { ASTNode, ASTPath, CallExpression, Collection, Identifier, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, MemberExpression, RestElement, SpreadElement, StringLiteral, VariableDeclarator } from 'jscodeshift'
 
 export const Schema = z.object({
     pragma: z.string().optional().describe('The pragma to use for JSX transformation.'),
@@ -100,7 +102,7 @@ export const transformAST: ASTTransformation<Params> = (context, params) => {
         // bottom-up transformation
         .reverse()
         .forEach((path) => {
-            const jsxElement = toJSX(j, path.node, pragmas, pragmaFrags)
+            const jsxElement = toJSX(j, path, pragmas, pragmaFrags)
             if (jsxElement) {
                 const parentWithComments = j.ExpressionStatement.check(path.parent.node) ? path.parent : path
                 removePureAnnotation(j, parentWithComments.node)
@@ -110,7 +112,11 @@ export const transformAST: ASTTransformation<Params> = (context, params) => {
         })
 }
 
-function toJSX(j: JSCodeshift, node: CallExpression, pragmas: string[], pragmaFrags: string[]): JSXElement | JSXFragment | null {
+function toJSX(j: JSCodeshift, path: ASTPath<CallExpression>, pragmas: string[], pragmaFrags: string[]): JSXElement | JSXFragment | null {
+    const scope = path.scope
+    assertScopeExists(scope)
+
+    const node = path.node
     const pragma = getPragma(j, node.callee, pragmas)
     if (!pragma) return null
 
@@ -124,7 +130,16 @@ function toJSX(j: JSCodeshift, node: CallExpression, pragmas: string[], pragmaFr
 
     if (isCapitalizationInvalid(j, type)) return null
 
-    const tag = toJsxTag(j, type)
+    let tag = toJsxTag(j, type)
+    // If a tag cannot be converted to JSX tag, convert it to a variable
+    if (!tag && !j.SpreadElement.check(type)) {
+        const name = generateName('Component', scope)
+        tag = j.jsxIdentifier(name)
+
+        const variableDeclaration = j.variableDeclaration('const', [j.variableDeclarator(j.identifier(name), type)])
+        insertBefore(j, path, variableDeclaration)
+        scope.markAsStale()
+    }
     if (!tag) return null
 
     const attributes = toJsxAttributes(j, props)
@@ -204,9 +219,13 @@ function toJsxTag(j: JSCodeshift, node: SpreadElement | ExpressionKind): JSXIden
         return j.jsxIdentifier(node.name)
     }
     else if (j.MemberExpression.check(node)) {
+        const object = toJsxTag(j, node.object)
+        const property = toJsxTag(j, node.property)
+        if (!object || !property) return null
+
         return j.jsxMemberExpression(
-            toJsxTag(j, node.object) as JSXIdentifier | JSXMemberExpression,
-            toJsxTag(j, node.property) as JSXIdentifier,
+            object as JSXIdentifier | JSXMemberExpression,
+            property as JSXIdentifier,
         )
     }
 
