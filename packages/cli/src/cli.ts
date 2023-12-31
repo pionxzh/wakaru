@@ -152,7 +152,7 @@ async function interactive({
     let _overwrite = _force
 
     if (_inputs) {
-        const validationError = _inputs.find(p => inputFileGlobValidation(p) !== undefined)
+        const validationError = getValidateFromPaths(_inputs, inputFileGlobValidation)
         if (validationError) {
             log.error(validationError)
             return process.exit(1)
@@ -435,7 +435,7 @@ async function nonInteractive(features: Feature[], {
         return process.exit(1)
     }
 
-    const inputValidationError = _inputs.find(p => inputFileGlobValidation(p))
+    const inputValidationError = getValidateFromPaths(_inputs, inputFileGlobValidation)
     if (inputValidationError) {
         log.error(inputValidationError)
         return process.exit(1)
@@ -461,7 +461,7 @@ async function nonInteractive(features: Feature[], {
     if (features.includes(Feature.Unpacker)) outputPathsToCheck.push(unpackerOutput)
     if (features.includes(Feature.Unminify)) outputPathsToCheck.push(unminifyOutput)
 
-    const outputValidationError = outputPathsToCheck.find(p => outputFolderValidation(p))
+    const outputValidationError = getValidateFromPaths(outputPathsToCheck, outputFolderValidation)
     if (outputValidationError) {
         log.error(outputValidationError)
         return process.exit(1)
@@ -647,4 +647,12 @@ function getModuleFileName(dep: Module) {
         return `entry-${dep.id}.js`
     }
     return `module-${dep.id}.js`
+}
+
+function getValidateFromPaths(paths: string[], validate: (path: string) => string | undefined) {
+    for (const path of paths) {
+        const error = validate(path)
+        if (error) return error
+    }
+    return undefined
 }
