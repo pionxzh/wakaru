@@ -3,12 +3,12 @@
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { add, complete, cycle, save, suite } from 'benny'
-import { runTransformations, transformationMap } from '../packages/unminify/src/index'
+import { runTransformations, transformationRules } from '../packages/unminify/src/index'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const title = 'un-undefined'
-const rule = transformationMap[title]
+const rule = transformationRules.find(rule => rule.name === title)!.transform
 const snippet = `
 void 0;
 void 99;

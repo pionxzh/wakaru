@@ -120,7 +120,7 @@ for (const mod of modules) {
 ### `@wakaru/unminify`
 
 ```ts
-import { runDefaultTransformation, runTransformations } from '@wakaru/unminify';
+import { runDefaultTransformation, runTransformationIds } from '@wakaru/unminify';
 
 const file = {
   source: '...', // source code
@@ -134,7 +134,7 @@ const rules = [
   'un-esm',
   ...
 ]
-const { code } = await runTransformations(file, rules);
+const { code } = await runTransformationIds(file, rules);
 ```
 
 You can check all the rules at [/unminify/src/transformations/index.ts](https://github.com/pionxzh/wakaru/blob/main/packages/unminify/src/transformations/index.ts).
