@@ -26,7 +26,10 @@ export async function unpacker(
 
     for (const p of paths) {
         const source = await fsa.readFile(p, 'utf-8')
-        const { modules, moduleIdMapping } = timing.collect(path.relative(cwd, p), 'unpacker', () => unpack(source))
+
+        const stopMeasure = timing.startMeasure(path.relative(cwd, p), 'unpacker')
+        const { modules, moduleIdMapping } = unpack(source)
+        stopMeasure()
 
         for (const mod of modules) {
             const filename = moduleIdMapping[mod.id] ?? `module-${mod.id}.js`

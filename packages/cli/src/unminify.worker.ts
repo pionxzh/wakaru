@@ -21,7 +21,11 @@ export async function unminify(data?: UnminifyWorkerParams) {
 
         const transformations = transformationRules.map<Transform>((rule) => {
             const { id, transform } = rule
-            const fn = (...args: Parameters<Transform>) => timing.collect(filename, id, () => transform(...args))
+            const fn = (...args: Parameters<Transform>) => {
+                const stopMeasure = timing.startMeasure(filename, id)
+                transform(...args)
+                stopMeasure()
+            }
             // Set the name of the function for better debugging
             Object.defineProperty(fn, 'name', { value: id })
             return fn

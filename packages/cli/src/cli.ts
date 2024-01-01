@@ -26,7 +26,7 @@ import { version } from '../package.json'
 import { findCommonBaseDir, getRelativePath, isPathInside, pathCompletion, resolveFileGlob } from './path'
 import { unpacker } from './unpacker'
 import type { UnminifyWorkerParams } from './types'
-import type { Measurement } from '@wakaru/ast-utils/timing'
+import type { TimingStat } from '@wakaru/ast-utils/timing'
 import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
 import type { Module } from '@wakaru/unpacker'
 
@@ -271,7 +271,9 @@ async function interactive({
 
         log.step('Unpacking...')
 
-        const { result: { items, timing: unpackerTiming }, time: elapsed } = await timing.measureTimeAsync(() => unpacker(inputPaths, outputPath))
+        const stopTiming = timing.start()
+        const { items, timing: unpackerTiming } = await unpacker(inputPaths, outputPath)
+        const elapsed = stopTiming()
         timing.merge(unpackerTiming)
 
         log.step('Finished')
@@ -381,9 +383,10 @@ async function interactive({
             s.message(`${c.green(path.relative(cwd, inputPath))}`)
             return result
         }
-        const { result: timings, time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
-            unminifyInputPaths.map(p => unminify(p)),
-        ))
+
+        const stopTiming = timing.start()
+        const timings = await Promise.all(unminifyInputPaths.map(p => unminify(p)))
+        const elapsed = stopTiming()
         timing.merge(...timings)
         pool.destroy()
 
@@ -496,7 +499,9 @@ async function nonInteractive(features: Feature[], {
 
         log.step('Unpacking...')
 
-        const { result: { items, timing: unpackerTiming }, time: elapsed } = await timing.measureTimeAsync(() => unpacker(inputPaths, outputPath))
+        const stopTiming = timing.start()
+        const { items, timing: unpackerTiming } = await unpacker(inputPaths, outputPath)
+        const elapsed = stopTiming()
         timing.merge(unpackerTiming)
 
         log.step('Finished')
@@ -545,9 +550,10 @@ async function nonInteractive(features: Feature[], {
             s.message(`${c.green(path.relative(cwd, inputPath))}`)
             return result
         }
-        const { result: timings, time: elapsed } = await timing.measureTimeAsync(() => Promise.all(
-            unminifyInputPaths.map(p => unminify(p)),
-        ))
+
+        const stopTiming = timing.start()
+        const timings = await Promise.all(unminifyInputPaths.map(p => unminify(p)))
+        const elapsed = stopTiming()
         timing.merge(...timings)
         pool.destroy()
 
@@ -599,7 +605,7 @@ function formatElapsed(elapsed: number) {
     return `${~~(elapsed / 1000 / 60 / 60)}h${~~((elapsed / 1000 / 60) % 60)}m${~~((elapsed / 1000) % 60)}s`
 }
 
-function printPerfStats(measurements: Measurement) {
+function printPerfStats(measurements: TimingStat[]) {
     const groupedByRules = measurements
         .reduce<Record<string, number>>((acc, { key, time }) => {
             acc[key] = (acc[key] ?? 0) + time
@@ -612,7 +618,7 @@ function printPerfStats(measurements: Measurement) {
     console.table(table, ['key', 'time'])
 }
 
-function writePerfStats(measurements: Measurement, outputPath: string) {
+function writePerfStats(measurements: TimingStat[], outputPath: string) {
     fsa.writeJSONSync(outputPath, measurements, {
         encoding: 'utf-8',
         spaces: 2,

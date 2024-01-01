@@ -16,7 +16,7 @@ export interface ASTTransformation<Params = object> {
     (context: Context, params: Params & SharedParams): string | void
 }
 
-function astTransformationToJSCodeshiftModule<Params extends Options>(
+export function wrapAstTransformation<Params extends Options>(
     transformAST: ASTTransformation<Params & SharedParams>,
 ): Transform {
     // @ts-expect-error - jscodeshift is not happy
@@ -29,5 +29,3 @@ function astTransformationToJSCodeshiftModule<Params extends Options>(
 
     return transform
 }
-
-export const wrapAstTransformation = astTransformationToJSCodeshiftModule
