@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.4](https://github.com/pionxzh/wakaru/compare/cli-v0.0.3...cli-v0.0.4) (2024-01-01)
+
+
+### Features
+
+* **cli:** add perf stats for unpacker ([395cb7f](https://github.com/pionxzh/wakaru/commit/395cb7f9d0b47ecf67a9c23d715028eedbd16348)), closes [#84](https://github.com/pionxzh/wakaru/issues/84)
+
+
+### Bug Fixes
+
+* **cli:** fix missing validation message ([52cb975](https://github.com/pionxzh/wakaru/commit/52cb975784b03438ed5831f2bf5a52ea67939aac))
+* **cli:** perf should be generated no matter what feature was chosen ([14e8928](https://github.com/pionxzh/wakaru/commit/14e8928795b0cbd73f79352e244d34f5c6a9336a))
+
 ## [0.0.3](https://github.com/pionxzh/wakaru/compare/cli-v0.0.2...cli-v0.0.3) (2023-12-30)
 
 
