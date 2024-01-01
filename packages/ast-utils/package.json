@@ -22,6 +22,7 @@
     "./program": "./src/program.ts",
     "./reference": "./src/reference.ts",
     "./scope": "./src/scope.ts",
+    "./timing": "./src/timing.ts",
     "./types": "./src/types.ts",
     "./wrapAstTransformation": "./src/wrapAstTransformation.ts",
     "./wrapStringTransformation": "./src/wrapStringTransformation.ts"

@@ -1,5 +1,3 @@
-import { hrtime } from 'node:process'
-
 interface TimingStat {
     filename: string
     /**
@@ -75,3 +73,25 @@ export class Timing {
         this.collected.push(...timing.flatMap(t => t.collected))
     }
 }
+
+/* eslint-disable node/prefer-global/process */
+function hrtime(start?: [number, number]): [number, number] {
+    if (typeof process !== 'undefined' && typeof process.hrtime === 'function') return process.hrtime(start)
+
+    // browser polyfill
+    const clockTime = performance.now() * 1e-3
+    let seconds = Math.floor(clockTime)
+    let nanoseconds = Math.floor((clockTime % 1) * 1e9)
+
+    if (start) {
+        seconds -= start[0]
+        nanoseconds -= start[1]
+        if (nanoseconds < 0) {
+            seconds -= 1
+            nanoseconds += 1e9
+        }
+    }
+
+    return [seconds, nanoseconds]
+}
+/* eslint-enable node/prefer-global/process */

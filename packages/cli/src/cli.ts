@@ -16,6 +16,7 @@ import {
     spinner,
     text,
 } from '@clack/prompts'
+import { Timing } from '@wakaru/ast-utils/timing'
 import fsa from 'fs-extra'
 import c from 'picocolors'
 import { FixedThreadPool } from 'poolifier'
@@ -23,10 +24,9 @@ import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import { version } from '../package.json'
 import { findCommonBaseDir, getRelativePath, isPathInside, pathCompletion, resolveFileGlob } from './path'
-import { Timing } from './timing'
 import { unpacker } from './unpacker'
-import type { Measurement } from './timing'
 import type { UnminifyWorkerParams } from './types'
+import type { Measurement } from '@wakaru/ast-utils/timing'
 import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
 import type { Module } from '@wakaru/unpacker'
 

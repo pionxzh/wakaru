@@ -1,10 +1,10 @@
 /* eslint-disable no-console */
 import path from 'node:path'
 import process from 'node:process'
+import { Timing } from '@wakaru/ast-utils/timing'
 import { runTransformations, transformationRules } from '@wakaru/unminify'
 import fsa from 'fs-extra'
 import { ThreadWorker } from 'poolifier'
-import { Timing } from './timing'
 import type { UnminifyWorkerParams } from './types'
 import type { Transform } from 'jscodeshift'
 
