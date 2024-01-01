@@ -1,4 +1,4 @@
-interface TimingStat {
+export interface TimingStat {
     filename: string
     /**
      * Timing measurement key
@@ -10,67 +10,37 @@ interface TimingStat {
     time: number
 }
 
-export type Measurement = TimingStat[]
-
 export class Timing {
-    private collected: TimingStat[] = []
+    private stats: TimingStat[] = []
 
-    constructor(private enabled: boolean = true) { }
+    startMeasure(filename: string, key: string) {
+        const _stop = this.start()
+        const stop = () => {
+            const time = _stop()
+            this.stats.push({ filename, key, time })
+        }
 
-    /**
-     * Collect a timing measurement
-     */
-    collect<T>(filename: string, key: string, fn: () => T): T {
-        if (!this.enabled) return fn()
-
-        const { result, time } = this.measureTime(fn)
-        this.collected.push({ filename, key, time })
-
-        return result
+        return stop
     }
 
-    /**
-     * Collect a timing measurement
-     */
-    async collectAsync<T>(filename: string, key: string, fn: () => T): Promise<T> {
-        if (!this.enabled) return fn()
-
-        const { result, time } = await this.measureTimeAsync(fn)
-        this.collected.push({ filename, key, time })
-
-        return result
-    }
-
-    /**
-     * Measure the time it takes to execute a function
-     */
-    measureTime<T>(fn: () => T) {
+    start() {
         const start = hrtime()
-        const result = fn()
-        const end = hrtime(start)
-        const time = end[0] * 1e3 + end[1] / 1e6
 
-        return { result, time }
+        const stop = () => {
+            const end = hrtime(start)
+            const time = end[0] * 1e3 + end[1] / 1e6
+            return time
+        }
+
+        return stop
     }
 
-    /**
-     * Measure the time it takes to execute a async function
-     */
-    async measureTimeAsync<T>(fn: () => T) {
-        const start = hrtime()
-        const result = await fn()
-        const end = hrtime(start)
-        const time = end[0] * 1e3 + end[1] / 1e6
-
-        return { result, time }
-    }
-
-    getMeasurement(): Measurement {
-        return this.collected
+    getMeasurement(): TimingStat[] {
+        return this.stats
     }
 
     merge(...timing: Timing[]) {
-        this.collected.push(...timing.flatMap(t => t.collected))
+        this.stats.push(...timing.flatMap(t => t.stats))
     }
 }
 
