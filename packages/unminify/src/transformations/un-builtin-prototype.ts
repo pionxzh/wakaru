@@ -1,5 +1,5 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { ASTPath, CallExpression, JSCodeshift, MemberExpression } from 'jscodeshift'
 
 /**
@@ -208,4 +208,7 @@ function replaceWithPrototype(
     )
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-builtin-prototype',
+    transform: transformAST,
+})

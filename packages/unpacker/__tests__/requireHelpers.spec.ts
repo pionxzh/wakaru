@@ -1,20 +1,26 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { defineInlineTest } from '@wakaru/test-utils'
 import { convertExportGetter, convertExportsGetterForWebpack4, convertExportsGetterForWebpack5 } from '../src/extractors/webpack/requireHelpers'
 
-const transformWebpack4 = wrapAstTransformation((context) => {
-    const { j, root } = context
-    const collection = root.find(j.Program)
-    const exportGetterMap = convertExportsGetterForWebpack4(j, collection)
-    convertExportGetter(j, collection, true, exportGetterMap)
+const transformWebpack4 = createJSCodeshiftTransformationRule({
+    name: 'test-webpack4-require-helpers',
+    transform: (context) => {
+        const { j, root } = context
+        const collection = root.find(j.Program)
+        const exportGetterMap = convertExportsGetterForWebpack4(j, collection)
+        convertExportGetter(j, collection, true, exportGetterMap)
+    },
 })
 const inlineTestWebpack4 = defineInlineTest(transformWebpack4)
 
-const transformWebpack5 = wrapAstTransformation((context) => {
-    const { j, root } = context
-    const collection = root.find(j.Program)
-    const exportGetterMap = convertExportsGetterForWebpack5(j, collection)
-    convertExportGetter(j, collection, true, exportGetterMap)
+const transformWebpack5 = createJSCodeshiftTransformationRule({
+    name: 'test-webpack5-require-helpers',
+    transform: (context) => {
+        const { j, root } = context
+        const collection = root.find(j.Program)
+        const exportGetterMap = convertExportsGetterForWebpack5(j, collection)
+        convertExportGetter(j, collection, true, exportGetterMap)
+    },
 })
 const inlineTestWebpack5 = defineInlineTest(transformWebpack5)
 

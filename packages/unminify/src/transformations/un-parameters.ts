@@ -1,6 +1,6 @@
 import { isLogicalNot, isUndefined } from '@wakaru/ast-utils/matchers'
 import { isVariableIdentifier } from '@wakaru/ast-utils/reference'
-import { type ASTTransformation, wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule, createStringTransformationRule, mergeTransformationRule } from '@wakaru/shared/rule'
 import { logicalExpressionToConditionalExpression, negateCondition } from '../utils/condition'
 import { transformASTWithRules } from './lebab'
 import type { PatternKind, StatementKind } from 'ast-types/lib/gen/kinds'
@@ -34,58 +34,66 @@ import type { ASTPath, ArrowFunctionExpression, AssignmentExpression, Assignment
  *
  * @see https://babeljs.io/docs/babel-plugin-transform-parameters
  */
-export const transformAST: ASTTransformation = (context) => {
-    const { root, j } = context
+const unParameter = createJSCodeshiftTransformationRule({
+    name: 'un-parameters',
+    transform: (context) => {
+        const { root, j } = context
 
-    root
-        .find(j.FunctionDeclaration, {
-            body: { type: 'BlockStatement' },
-        })
-        .forEach((path) => {
-            handleBody(j, path)
-        })
+        root
+            .find(j.FunctionDeclaration, {
+                body: { type: 'BlockStatement' },
+            })
+            .forEach((path) => {
+                handleBody(j, path)
+            })
 
-    // var fn = function (a, b) {}
-    // { set fn(a, b) {} }
-    root
-        .find(j.FunctionExpression, {
-            body: { type: 'BlockStatement' },
-        })
-        .forEach((path) => {
-            handleBody(j, path)
-        })
+        // var fn = function (a, b) {}
+        // { set fn(a, b) {} }
+        root
+            .find(j.FunctionExpression, {
+                body: { type: 'BlockStatement' },
+            })
+            .forEach((path) => {
+                handleBody(j, path)
+            })
 
-    root
-        .find(j.ArrowFunctionExpression, {
-            body: { type: 'BlockStatement' },
-        })
-        .forEach((path) => {
-            handleBody(j, path)
-        })
+        root
+            .find(j.ArrowFunctionExpression, {
+                body: { type: 'BlockStatement' },
+            })
+            .forEach((path) => {
+                handleBody(j, path)
+            })
 
-    root
-        .find(j.ObjectMethod, {
-            body: { type: 'BlockStatement' },
-        })
-        .forEach((path) => {
-            handleBody(j, path)
-        })
+        root
+            .find(j.ObjectMethod, {
+                body: { type: 'BlockStatement' },
+            })
+            .forEach((path) => {
+                handleBody(j, path)
+            })
 
-    root
-        .find(j.ClassMethod, {
-            body: { type: 'BlockStatement' },
-        })
-        .forEach((path) => {
-            handleBody(j, path)
-        })
+        root
+            .find(j.ClassMethod, {
+                body: { type: 'BlockStatement' },
+            })
+            .forEach((path) => {
+                handleBody(j, path)
+            })
+    },
+})
 
-    return transformASTWithRules([
+const unParameterLebab = createStringTransformationRule({
+    name: 'un-parameters-lebab',
+    transform: transformASTWithRules([
         // 'default-param',
         // 'destruct-param',
         'arg-spread',
         'arg-rest',
-    ])(root.toSource({ lineTerminator: '\n' }), {})
-}
+    ]),
+})
+
+export default mergeTransformationRule('un-parameter', [unParameter, unParameterLebab])
 
 /**
  * The threshold of the body length.
@@ -391,5 +399,3 @@ function matchDefaultParameter(j: JSCodeshift, node: ConditionalExpression) {
         index: index1,
     }
 }
-
-export default wrapAstTransformation(transformAST)

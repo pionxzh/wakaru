@@ -5,8 +5,8 @@ import { insertAfter } from '@wakaru/ast-utils/insert'
 import { createObjectProperty } from '@wakaru/ast-utils/object'
 import { getNodePosition } from '@wakaru/ast-utils/position'
 import { removeDefaultImportIfUnused } from '@wakaru/ast-utils/scope'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTNode, Identifier, MemberExpression, ObjectPattern, ObjectProperty, SequenceExpression, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
@@ -241,4 +241,7 @@ function isPositionBetween(node: ASTNode, before: ASTNode, after: ASTNode) {
     return posNode.start > posBefore.end && posNode.end < posAfter.start
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-indirect-call',
+    transform: transformAST,
+})

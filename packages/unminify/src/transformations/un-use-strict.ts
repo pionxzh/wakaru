@@ -1,6 +1,6 @@
 import { mergeComments } from '@wakaru/ast-utils/comments'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 
 /**
  * Remove the 'use strict' directives
@@ -31,4 +31,7 @@ export const transformAST: ASTTransformation = (context) => {
     useStrict.remove()
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-use-strict',
+    transform: transformAST,
+})

@@ -1,6 +1,6 @@
 import { isTopLevel } from '@wakaru/ast-utils'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation, Context } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation, Context } from '@wakaru/shared/rule'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, Collection, ExportNamedDeclaration, ExportSpecifier, Identifier, JSCodeshift, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
@@ -118,7 +118,10 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-export-rename',
+    transform: transformAST,
+})
 
 function inlineExport(
     context: Context,

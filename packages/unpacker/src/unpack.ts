@@ -1,5 +1,4 @@
-import jscodeshift from 'jscodeshift'
-
+import { jscodeshiftWithParser as j } from '@wakaru/shared/jscodeshift'
 import { getModulesFromBrowserify } from './extractors/browserify'
 import { getModulesFromWebpack } from './extractors/webpack'
 import { Module } from './Module'
@@ -14,7 +13,6 @@ export function unpack(sourceCode: string): {
     modules: Module[]
     moduleIdMapping: ModuleMapping
 } {
-    const j = jscodeshift.withParser('babylon')
     const root = j(sourceCode)
 
     const result = getModulesFromWebpack(j, root)

@@ -1,6 +1,6 @@
 import { isValidIdentifier } from '@wakaru/ast-utils/identifier'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { StringLiteral } from 'jscodeshift'
 
 /**
@@ -37,4 +37,7 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-bracket-notation',
+    transform: transformAST,
+})

@@ -1,11 +1,17 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { defineInlineTest } from '@wakaru/test-utils'
 import transformAsyncAwait, { transform__awaiter, transform__generator } from '../un-async-await'
 
-const transformAwaiter = wrapAstTransformation(transform__awaiter)
+const transformAwaiter = createJSCodeshiftTransformationRule({
+    name: 'awaiter',
+    transform: transform__awaiter,
+})
 const inlineTestAwaiter = defineInlineTest(transformAwaiter)
 
-const transformGenerator = wrapAstTransformation(transform__generator)
+const transformGenerator = createJSCodeshiftTransformationRule({
+    name: 'generator',
+    transform: transform__generator,
+})
 const inlineTestGenerator = defineInlineTest(transformGenerator)
 
 const inlineTestAsyncAwait = defineInlineTest(transformAsyncAwait)

@@ -1,8 +1,8 @@
 import { mergeComments } from '@wakaru/ast-utils/comments'
 import { getTopLevelStatements } from '@wakaru/ast-utils/program'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { transformAST as babelHelpers } from './runtime-helpers'
-import type { ASTTransformation, Context, SharedParams } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation, Context, SharedParams } from '@wakaru/shared/rule'
 import type { FunctionDeclaration } from 'jscodeshift'
 
 /**
@@ -43,10 +43,13 @@ const addAnnotationOnHelper = (context: Context, params: SharedParams) => {
 /**
  * Replace runtime helper with the actual original code.
  */
-export const transformAST: ASTTransformation<SharedParams> = (context, params) => {
+export const transformAST: ASTTransformation = (context, params) => {
     addAnnotationOnHelper(context, params)
 
     babelHelpers(context, params)
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-runtime-helper',
+    transform: transformAST,
+})

@@ -1,5 +1,5 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 
 /**
  * Restore type constructors from minified code.
@@ -72,4 +72,7 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-type-constructor',
+    transform: transformAST,
+})

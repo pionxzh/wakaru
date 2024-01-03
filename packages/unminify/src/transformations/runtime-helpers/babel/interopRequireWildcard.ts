@@ -1,8 +1,8 @@
 import { mergeComments } from '@wakaru/ast-utils/comments'
 import { findReferences } from '@wakaru/ast-utils/reference'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { Scope } from 'ast-types/lib/scope'
 import type { CallExpression } from 'jscodeshift'
 
@@ -67,4 +67,7 @@ export const transformAST: ASTTransformation = (context, params) => {
     })
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'babel-interopRequireWildcard',
+    transform: transformAST,
+})

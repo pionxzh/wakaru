@@ -2,10 +2,10 @@ import { mergeComments } from '@wakaru/ast-utils/comments'
 import { generateName } from '@wakaru/ast-utils/identifier'
 import { createObjectProperty } from '@wakaru/ast-utils/object'
 import { findReferences } from '@wakaru/ast-utils/reference'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
 import { MultiMap } from '@wakaru/ds'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { nonNullable } from '../utils/utils'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { CommentKind, StatementKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ExpressionStatement, Identifier, JSCodeshift, MemberExpression, NumericLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
@@ -31,7 +31,7 @@ import type { ExpressionStatement, Identifier, JSCodeshift, MemberExpression, Nu
  * const [t, n, r] = e;
  * console.log(t, n, r);
  */
-export const transformAST: ASTTransformation = (context) => {
+const transformAST: ASTTransformation = (context) => {
     const { root, j } = context
 
     root
@@ -365,4 +365,7 @@ function getMostRestrictiveKind(kinds: Kind[]): Kind | undefined {
     return valToKind[minVal]
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'smart-inline',
+    transform: transformAST,
+})

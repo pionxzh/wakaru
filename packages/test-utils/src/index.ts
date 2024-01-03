@@ -1,8 +1,9 @@
+import { mergeTransformationRule } from '@wakaru/shared/rule'
 import { runInlineTest } from 'jscodeshift/src/testUtils'
 import { it } from 'vitest'
-import type { Transform } from 'jscodeshift'
+import type { BaseTransformationRule } from '@wakaru/shared/rule'
 
-export function defineInlineTestWithOptions(transform: Transform) {
+export function defineInlineTestWithOptions(rule: BaseTransformationRule) {
     return function inlineTest(
         testName: string,
         options: any,
@@ -11,7 +12,7 @@ export function defineInlineTestWithOptions(transform: Transform) {
     ) {
         it(testName, () => {
             runInlineTest(
-                transform,
+                rule.toJSCodeshiftTransform(),
                 options,
                 { source: input },
                 expectedOutput,
@@ -34,18 +35,10 @@ type InlineTest = (
  * - Supports multiple transforms
  * - Supports `skip` and `only` modifiers
  */
-export function defineInlineTest(transforms: Transform | Transform[]) {
-    const reducedTransform: Transform = Array.isArray(transforms)
-        ? (fileInfo, api, options) => {
-                let code = fileInfo.source
-                for (const transform of transforms) {
-                    const newFileInfo = { ...fileInfo, source: code }
-                    const newResult = transform(newFileInfo, api, options)
-                    if (newResult) code = newResult
-                }
-                return code
-            }
-        : transforms
+export function defineInlineTest(rules: BaseTransformationRule | BaseTransformationRule[]) {
+    const mergedTransform = Array.isArray(rules)
+        ? mergeTransformationRule(rules.map(rule => rule.name).join(' + '), rules).toJSCodeshiftTransform()
+        : rules.toJSCodeshiftTransform()
 
     function _inlineTest(
         modifier: 'skip' | 'only' | 'todo' | 'fails' | null,
@@ -57,7 +50,7 @@ export function defineInlineTest(transforms: Transform | Transform[]) {
         itFn(testName, () => {
             try {
                 runInlineTest(
-                    reducedTransform,
+                    mergedTransform,
                     {},
                     { source: input },
                     expectedOutput,

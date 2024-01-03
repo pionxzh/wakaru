@@ -40,6 +40,7 @@
     "@types/yargs": "^17.0.32",
     "@wakaru/ast-utils": "workspace:*",
     "@wakaru/ds": "workspace:*",
+    "@wakaru/shared": "workspace:*",
     "@wakaru/test-utils": "workspace:*",
     "ast-types": "^0.16.1",
     "jscodeshift": "^0.15.1",

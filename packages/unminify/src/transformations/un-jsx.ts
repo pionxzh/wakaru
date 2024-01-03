@@ -4,10 +4,10 @@ import { removePureAnnotation } from '@wakaru/ast-utils/comments'
 import { generateName } from '@wakaru/ast-utils/identifier'
 import { insertBefore } from '@wakaru/ast-utils/insert'
 import { isNull, isTrue, isUndefined } from '@wakaru/ast-utils/matchers'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { z } from 'zod'
 import { nonNullable } from '../utils/utils'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { ExpressionKind, LiteralKind } from 'ast-types/lib/gen/kinds'
 import type { ASTNode, ASTPath, CallExpression, Collection, Identifier, JSCodeshift, JSXAttribute, JSXElement, JSXExpressionContainer, JSXFragment, JSXIdentifier, JSXMemberExpression, JSXSpreadAttribute, JSXSpreadChild, JSXText, MemberExpression, RestElement, SpreadElement, StringLiteral, VariableDeclarator } from 'jscodeshift'
 
@@ -15,8 +15,6 @@ export const Schema = z.object({
     pragma: z.string().optional().describe('The pragma to use for JSX transformation.'),
     pragmaFrag: z.string().optional().describe('The pragma to use for JSX fragment transformation.'),
 })
-
-type Params = z.infer<typeof Schema>
 
 enum Runtime {
     Classic = 'classic',
@@ -61,7 +59,7 @@ const DEFAULT_PRAGMA_FRAG_CANDIDATES = [
 /**
  * Converts `React.createElement` and `jsxRuntime.jsx` back to JSX.
  */
-export const transformAST: ASTTransformation<Params> = (context, params) => {
+export const transformAST: ASTTransformation<typeof Schema> = (context, params) => {
     Schema.parse(params)
 
     const { root, j } = context
@@ -538,4 +536,9 @@ function getPragma(j: JSCodeshift, node: ExpressionKind, pragmas: string[]): str
 
     return null
 }
-export default wrapAstTransformation(transformAST)
+
+export default createJSCodeshiftTransformationRule({
+    name: 'un-jsx',
+    transform: transformAST,
+    schema: Schema,
+})

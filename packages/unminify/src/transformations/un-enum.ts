@@ -4,9 +4,9 @@ import { findIIFEs, isIIFE } from '@wakaru/ast-utils/matchers'
 import { createObjectProperty } from '@wakaru/ast-utils/object'
 import { getNodePosition } from '@wakaru/ast-utils/position'
 import { findDeclarations } from '@wakaru/ast-utils/scope'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { fromPaths } from 'jscodeshift/src/Collection'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { CommentKind } from 'ast-types/lib/gen/kinds'
 import type { ASTNode, ASTPath, ArrowFunctionExpression, AssignmentExpression, CallExpression, FunctionExpression, Identifier, JSCodeshift, LogicalExpression, ObjectProperty, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
@@ -264,4 +264,7 @@ function handleEnumIIFE(j: JSCodeshift, path: ASTPath<CallExpression>, iifePath:
     }
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-enum',
+    transform: transformAST,
+})

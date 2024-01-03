@@ -1,6 +1,6 @@
 import { isVoid0 } from '@wakaru/ast-utils/matchers'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { BinaryExpression, JSCodeshift } from 'jscodeshift'
 
@@ -101,4 +101,7 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-flip-comparisons',
+    transform: transformAST,
+})

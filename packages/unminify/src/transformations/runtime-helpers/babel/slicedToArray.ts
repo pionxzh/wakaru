@@ -1,7 +1,8 @@
 import { findReferences } from '@wakaru/ast-utils/reference'
-import { type ASTTransformation, wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
 import type { CallExpression, Identifier, NumericLiteral, VariableDeclarator } from 'jscodeshift'
@@ -71,4 +72,7 @@ export const transformAST: ASTTransformation = (context, params) => {
     })
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'babel-slicedToArray',
+    transform: transformAST,
+})
