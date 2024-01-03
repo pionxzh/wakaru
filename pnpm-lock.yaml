@@ -350,6 +350,27 @@ importers:
         specifier: ^1.8.22
         version: 1.8.22(typescript@5.3.2)
 
+  packages/shared:
+    devDependencies:
+      '@types/jscodeshift':
+        specifier: ^0.11.11
+        version: 0.11.11
+      ast-types:
+        specifier: ^0.16.1
+        version: 0.16.1(patch_hash=lbcpk3ulhul2sxdbqn4xesbaem)
+      jscodeshift:
+        specifier: ^0.15.1
+        version: 0.15.1(@babel/preset-env@7.23.3)
+      tsup:
+        specifier: ^7.3.0
+        version: 7.3.0(typescript@5.3.2)
+      typescript:
+        specifier: ^5.3.2
+        version: 5.3.2
+      zod:
+        specifier: ^3.22.4
+        version: 3.22.4
+
   packages/test-utils:
     dependencies:
       vitest:
@@ -359,6 +380,9 @@ importers:
       '@types/jscodeshift':
         specifier: ^0.11.11
         version: 0.11.11
+      '@wakaru/shared':
+        specifier: workspace:*
+        version: link:../shared
       jscodeshift:
         specifier: ^0.15.1
         version: 0.15.1(@babel/preset-env@7.23.3)
@@ -408,6 +432,9 @@ importers:
       '@wakaru/ds':
         specifier: workspace:*
         version: link:../ds
+      '@wakaru/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@wakaru/test-utils':
         specifier: workspace:*
         version: link:../test-utils
@@ -435,6 +462,9 @@ importers:
       '@wakaru/ast-utils':
         specifier: workspace:*
         version: link:../ast-utils
+      '@wakaru/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@wakaru/test-utils':
         specifier: workspace:*
         version: link:../test-utils
@@ -9779,4 +9809,3 @@ packages:
 
   /zod@3.22.4:
     resolution: {integrity: sha512-iC+8Io04lddc+mVqQ9AZ7OQ2MrUKGN+oIQyq1vemgt46jwCwLfhq7/pwnBnNXXXZb8VTVLKwp9EDkx+ryxIWmg==}
-    dev: false

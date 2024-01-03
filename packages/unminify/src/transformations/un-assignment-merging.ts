@@ -1,8 +1,8 @@
 import { mergeComments } from '@wakaru/ast-utils/comments'
 import { replaceWithMultipleStatements } from '@wakaru/ast-utils/insert'
 import { isSimpleValue } from '@wakaru/ast-utils/matchers'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { AssignmentExpression } from 'jscodeshift'
 
 /**
@@ -79,4 +79,7 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-assignment-merging',
+    transform: transformAST,
+})

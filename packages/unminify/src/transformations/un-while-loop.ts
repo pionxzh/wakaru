@@ -1,6 +1,6 @@
 import { mergeComments } from '@wakaru/ast-utils/comments'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 
 /**
  * Converts for loop without init and update to while loop.
@@ -41,4 +41,7 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-while-loop',
+    transform: transformAST,
+})

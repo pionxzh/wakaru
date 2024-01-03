@@ -1,5 +1,5 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { JSCodeshift } from 'jscodeshift'
 
@@ -46,4 +46,7 @@ function toTypeofUndefined(j: JSCodeshift, node: ExpressionKind, operator: '==='
     )
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-typeof',
+    transform: transformAST,
+})

@@ -1,11 +1,11 @@
 import { generateName } from '@wakaru/ast-utils/identifier'
 import { findReferences } from '@wakaru/ast-utils/reference'
 import { findDeclaration, removeVariableDeclarator } from '@wakaru/ast-utils/scope'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { fromPaths } from 'jscodeshift/src/Collection'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { StatementKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, AssignmentExpression, CallExpression, ForStatement, Identifier, JSCodeshift, MemberExpression, TryStatement, VariableDeclarator } from 'jscodeshift'
@@ -265,4 +265,7 @@ function findForOfLoose(j: JSCodeshift, path: ASTPath<VariableDeclarator>, scope
     }
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'babel-createForOfIteratorHelper',
+    transform: transformAST,
+})

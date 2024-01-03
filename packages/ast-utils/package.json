@@ -23,9 +23,7 @@
     "./reference": "./src/reference.ts",
     "./scope": "./src/scope.ts",
     "./timing": "./src/timing.ts",
-    "./types": "./src/types.ts",
-    "./wrapAstTransformation": "./src/wrapAstTransformation.ts",
-    "./wrapStringTransformation": "./src/wrapStringTransformation.ts"
+    "./types": "./src/types.ts"
   },
   "files": [
     "dist",
@@ -53,17 +51,5 @@
     "jscodeshift": "^0.15.1",
     "tsup": "^7.3.0",
     "typescript": "^5.3.2"
-  },
-  "publishConfig": {
-    "exports": {
-      ".": {
-        "types": "./dist/index.d.ts",
-        "require": "./dist/index.cjs",
-        "import": "./dist/index.js"
-      }
-    },
-    "main": "./dist/index.cjs",
-    "module": "./dist/index.js",
-    "types": "./dist/index.d.ts"
   }
 }

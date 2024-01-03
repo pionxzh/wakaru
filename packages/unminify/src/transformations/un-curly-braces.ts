@@ -1,5 +1,5 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { JSCodeshift, VariableDeclaration } from 'jscodeshift'
 
 /**
@@ -91,4 +91,7 @@ function isVarDeclaration(j: JSCodeshift, node: any): node is VariableDeclaratio
     return j.VariableDeclaration.check(node) && node.kind === 'var'
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-curly-braces',
+    transform: transformAST,
+})

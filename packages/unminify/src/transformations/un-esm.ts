@@ -4,21 +4,19 @@ import { generateName, isValidIdentifier } from '@wakaru/ast-utils/identifier'
 import { ImportManager } from '@wakaru/ast-utils/imports'
 import { isExportObject, isStringObjectProperty, isUndefined } from '@wakaru/ast-utils/matchers'
 import { findReferences, renameIdentifier } from '@wakaru/ast-utils/reference'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { z } from 'zod'
 import { transformAST as interopRequireDefault } from './runtime-helpers/babel/interopRequireDefault'
 import { NAMESPACE_IMPORT_HINT, transformAST as interopRequireWildcard } from './runtime-helpers/babel/interopRequireWildcard'
-import type { ASTTransformation, Context } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation, Context } from '@wakaru/shared/rule'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { NodePath } from 'ast-types/lib/node-path'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTNode, ASTPath, AssignmentExpression, CallExpression, Identifier, JSCodeshift, MemberExpression, Node, NumericLiteral, StringLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
-export const Schema = z.object({
+const Schema = z.object({
     hoist: z.boolean().default(false).describe('Hoist non-top-level require calls to the top of the file'),
 })
-
-type Params = z.infer<typeof Schema>
 
 /**
  * Converts cjs require/exports syntax to esm import/export syntax.
@@ -42,16 +40,14 @@ type Params = z.infer<typeof Schema>
  * ->
  * export { foo, bar, baz }
  */
-export const transformAST: ASTTransformation<Params> = (context, params) => {
+export const transformAST: ASTTransformation<typeof Schema> = (context, params) => {
     Schema.parse(params)
-
-    const hoist = params?.hoist ?? false
 
     // handle interop
     interopRequireDefault(context, params)
     interopRequireWildcard(context, params)
 
-    transformImport(context, hoist)
+    transformImport(context, params.hoist)
     transformExport(context)
 }
 
@@ -784,4 +780,8 @@ function isInitializationExport(j: JSCodeshift, node: ASTNode) {
         && isUndefined(j, node.expression.right)
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-esm',
+    transform: transformAST,
+    schema: Schema,
+})

@@ -1,5 +1,4 @@
-import jscodeshift from 'jscodeshift'
-
+import { api } from '@wakaru/shared/jscodeshift'
 import { transformationRules } from './transformations'
 import { arraify } from './utils/arraify'
 import type { MaybeArray } from './utils/arraify'
@@ -11,7 +10,7 @@ export function runDefaultTransformation<P extends Record<string, any>>(
     fileInfo: FileInfo,
     params: P = {} as any,
 ) {
-    const transforms = transformationRules.map(rule => rule.transform)
+    const transforms = transformationRules.map(rule => rule.toJSCodeshiftTransform())
     return runTransformations(fileInfo, transforms, params)
 }
 
@@ -20,7 +19,7 @@ export function runTransformationIds<P extends Record<string, any>>(
     ids: string[],
     params: P = {} as any,
 ) {
-    const transforms = ids.map(id => transformationRules.find(rule => rule.id === id)?.transform).filter(Boolean) as Transform[]
+    const transforms = ids.map(id => transformationRules.find(rule => rule.id === id)?.toJSCodeshiftTransform()).filter(Boolean) as Transform[]
     return runTransformations(fileInfo, transforms, params)
 }
 
@@ -30,14 +29,6 @@ export function runTransformations<P extends Record<string, any>>(
     params: P = {} as any,
 ) {
     const { path } = fileInfo
-
-    const j = jscodeshift.withParser('babylon')
-    const api = {
-        j,
-        jscodeshift: j,
-        stats: () => {},
-        report: () => {},
-    }
 
     const transformFns = arraify(transforms)
     let code = fileInfo.source

@@ -1,16 +1,19 @@
 import { defineInlineTest } from '@wakaru/test-utils'
+import { createJSCodeshiftTransformationRule } from '../src/jscodeshiftRule'
 import { renameFunctionParameters } from '../src/renameFunctionParameters'
-import { wrapAstTransformation } from '../src/wrapAstTransformation'
 
-const transform = wrapAstTransformation((context) => {
-    const { root, j } = context
+const transform = createJSCodeshiftTransformationRule({
+    name: 'test-rename-function-parameters',
+    transform: (context) => {
+        const { root, j } = context
 
-    root
-        .find(j.FunctionDeclaration)
-        .forEach((path) => {
-            const node = path.node
-            renameFunctionParameters(j, node, ['c', 'd', 'xx', 'zz'])
-        })
+        root
+            .find(j.FunctionDeclaration)
+            .forEach((path) => {
+                const node = path.node
+                renameFunctionParameters(j, node, ['c', 'd', 'xx', 'zz'])
+            })
+    },
 })
 
 const inlineTest = defineInlineTest(transform)

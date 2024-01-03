@@ -3,8 +3,8 @@ import { pascalCase } from '@wakaru/ast-utils/case'
 import { generateName, isValidIdentifier } from '@wakaru/ast-utils/identifier'
 import { renameIdentifier } from '@wakaru/ast-utils/reference'
 import { isDeclared } from '@wakaru/ast-utils/scope'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, ArrayPattern, ArrowFunctionExpression, CallExpression, ClassMethod, Collection, FunctionDeclaration, FunctionExpression, Identifier, JSCodeshift, ObjectMethod, ObjectPattern } from 'jscodeshift'
@@ -349,4 +349,7 @@ function getElementName(j: JSCodeshift, node: ExpressionKind): string {
     return '[unknown]'
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'smart-rename',
+    transform: transformAST,
+})

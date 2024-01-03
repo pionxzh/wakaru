@@ -1,6 +1,6 @@
 import { isExportObject, isLooseTrue, isStringObjectProperty } from '@wakaru/ast-utils/matchers'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { CallExpression, MemberExpression } from 'jscodeshift'
 
 /**
@@ -56,4 +56,7 @@ export const transformAST: ASTTransformation = (context) => {
         .remove()
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-esmodule-flag',
+    transform: transformAST,
+})

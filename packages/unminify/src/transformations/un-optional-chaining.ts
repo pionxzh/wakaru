@@ -2,11 +2,11 @@ import { mergeComments } from '@wakaru/ast-utils/comments'
 import { areNodesEqual, isNotNullBinary, isNull, isNullBinary, isTrue, isUndefined, isUndefinedBinary } from '@wakaru/ast-utils/matchers'
 import { smartParenthesized } from '@wakaru/ast-utils/parenthesized'
 import { removeDeclarationIfUnused } from '@wakaru/ast-utils/scope'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { negateCondition } from '../utils/condition'
 import { makeDecisionTree, makeDecisionTreeWithConditionSplitting, negateDecisionTree } from '../utils/decisionTree'
 import type { DecisionTree } from '../utils/decisionTree'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { ASTPath, ConditionalExpression, Identifier, JSCodeshift, LogicalExpression, MemberExpression, SequenceExpression, SpreadElement } from 'jscodeshift'
 
@@ -326,4 +326,7 @@ function getDeepestFalseBranch(tree: DecisionTree) {
     return getDeepestFalseBranch(falseBranch)
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-optional-chaining',
+    transform: transformAST,
+})

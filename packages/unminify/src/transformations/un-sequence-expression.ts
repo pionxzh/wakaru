@@ -1,8 +1,8 @@
 import { mergeComments } from '@wakaru/ast-utils/comments'
 import { replaceWithMultipleStatements } from '@wakaru/ast-utils/insert'
 import { smartParenthesized } from '@wakaru/ast-utils/parenthesized'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { AssignmentExpression, Identifier, MemberExpression, SequenceExpression, VariableDeclaration } from 'jscodeshift'
 
 /**
@@ -275,4 +275,7 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-sequence-expression',
+    transform: transformAST,
+})

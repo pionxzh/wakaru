@@ -1,5 +1,5 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation, Context } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation, Context } from '@wakaru/shared/rule'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
 import type { ArrayExpression, CallExpression, ExpressionStatement, FunctionExpression, Identifier, NumericLiteral, ReturnStatement, SwitchStatement, ThisExpression, YieldExpression } from 'jscodeshift'
 
@@ -480,4 +480,7 @@ export function transform__awaiter(context: Context) {
         })
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-async-await',
+    transform: transformAST,
+})

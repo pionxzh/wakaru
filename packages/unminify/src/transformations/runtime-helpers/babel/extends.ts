@@ -1,7 +1,7 @@
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { findHelperLocals } from '../../../utils/import'
 import { handleSpreadHelper } from './_spread'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 
 /**
  * Restore object spread syntax from `@babel/runtime/helpers/extends` helper.
@@ -17,4 +17,7 @@ export const transformAST: ASTTransformation = (context, params) => {
     handleSpreadHelper(context, helperLocals)
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'babel-extends',
+    transform: transformAST,
+})

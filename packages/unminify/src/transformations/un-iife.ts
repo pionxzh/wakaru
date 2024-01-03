@@ -2,8 +2,8 @@ import { isTopLevel } from '@wakaru/ast-utils'
 import { assertScopeExists } from '@wakaru/ast-utils/assert'
 import { findIIFEs, isValueLiteral } from '@wakaru/ast-utils/matchers'
 import { renameIdentifier } from '@wakaru/ast-utils/reference'
-import { wrapAstTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
-import type { ASTTransformation } from '@wakaru/ast-utils/wrapAstTransformation'
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
+import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ArrowFunctionExpression, FunctionExpression } from 'jscodeshift'
 
@@ -78,4 +78,7 @@ export const transformAST: ASTTransformation = (context) => {
         })
 }
 
-export default wrapAstTransformation(transformAST)
+export default createJSCodeshiftTransformationRule({
+    name: 'un-iife',
+    transform: transformAST,
+})
