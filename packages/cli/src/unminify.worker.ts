@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import { Timing } from '@wakaru/ast-utils/timing'
+import { Timing } from '@wakaru/shared/timing'
 import { runDefaultTransformation } from '@wakaru/unminify'
 import fsa from 'fs-extra'
 import { ThreadWorker } from 'poolifier'

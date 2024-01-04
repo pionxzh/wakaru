@@ -1,6 +1,6 @@
 import path from 'node:path'
 import process from 'node:process'
-import { Timing } from '@wakaru/ast-utils/timing'
+import { Timing } from '@wakaru/shared/timing'
 import { unpack } from '@wakaru/unpacker'
 import fsa from 'fs-extra'
 import type { ModuleMapping } from '@wakaru/ast-utils/types'
