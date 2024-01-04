@@ -1,5 +1,4 @@
-import { jscodeshiftWithParser as j, toSource } from './jscodeshift'
-import type { JSCodeShiftError } from './jscodeshift'
+import { jscodeshiftWithParser as j, printSourceWithErrorLoc, toSource } from './jscodeshift'
 import type { BaseTransformationRule, SharedParams } from './rule'
 import type { Collection, JSCodeshift, Transform } from 'jscodeshift'
 import type { ZodSchema, z } from 'zod'
@@ -54,7 +53,8 @@ export class JSCodeshiftTransformationRule<Schema extends ZodSchema = ZodSchema>
         }
         catch (err: any) {
             console.error(`\nError running transformation ${this.name} on ${filename}`, err)
-            handleJSCodeshiftError(err, toSource(root))
+
+            printSourceWithErrorLoc(err, toSource(root))
         }
     }
 
@@ -116,33 +116,4 @@ export const createJSCodeshiftTransformationRule = <Schema extends ZodSchema = Z
         transform,
         schema,
     })
-}
-
-function handleJSCodeshiftError(error: JSCodeShiftError, source: string) {
-    if (error.loc) {
-        const loc = error.loc
-        printLine(source, loc.line - 2)
-        printLine(source, loc.line - 1)
-        printLine(source, loc.line, loc.column)
-        printLine(source, loc.line + 1)
-        printLine(source, loc.line + 2)
-    }
-}
-
-function printLine(source: string, line: number, column?: number) {
-    const lines = source.split('\n')
-    const lineNumber = padLeft(line.toString(), 5, ' ')
-    const lineContent = lines[line - 1]
-    const linePrefix = `${lineNumber} | `
-    console.error(linePrefix + lineContent)
-
-    if (column !== undefined) {
-        const linePointer = `${' '.repeat(linePrefix.length + column - 1)}^`
-        console.error(linePointer)
-    }
-}
-
-function padLeft(str: string, len: number, char: string) {
-    const count = len > str.length ? len - str.length : 0
-    return `${char.repeat(count)}${str}`
 }
