@@ -16,7 +16,7 @@ import {
     spinner,
     text,
 } from '@clack/prompts'
-import { Timing } from '@wakaru/ast-utils/timing'
+import { Timing } from '@wakaru/shared/timing'
 import fsa from 'fs-extra'
 import c from 'picocolors'
 import { FixedThreadPool } from 'poolifier'
@@ -26,8 +26,8 @@ import { version } from '../package.json'
 import { findCommonBaseDir, getRelativePath, isPathInside, pathCompletion, resolveFileGlob } from './path'
 import { unpacker } from './unpacker'
 import type { UnminifyWorkerParams } from './types'
-import type { TimingStat } from '@wakaru/ast-utils/timing'
 import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
+import type { TimingStat } from '@wakaru/shared/timing'
 import type { Module } from '@wakaru/unpacker'
 
 enum Feature {

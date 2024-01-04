@@ -8,6 +8,7 @@
   "exports": {
     "./jscodeshift": "./src/jscodeshift.ts",
     "./rule": "./src/rule.ts",
+    "./timing": "./src/timing.ts",
     "./types": "./src/types.ts"
   },
   "files": [

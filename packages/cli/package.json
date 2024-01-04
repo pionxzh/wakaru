@@ -37,6 +37,7 @@
     "@types/jscodeshift": "^0.11.11",
     "@types/yargs": "^17.0.32",
     "@wakaru/ast-utils": "workspace:*",
+    "@wakaru/shared": "workspace:*",
     "@wakaru/test-utils": "workspace:*",
     "@wakaru/unminify": "workspace:*",
     "@wakaru/unpacker": "workspace:*",
