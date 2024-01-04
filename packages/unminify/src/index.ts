@@ -40,31 +40,7 @@ export function runTransformations<P extends Record<string, any>>(
         catch (err: any) {
             console.error(`\nError running transformation ${transform.name} on ${path}`, err)
 
-            if ('loc' in err) {
-                const padLeft = (str: string, len: number, char: string) => {
-                    const count = len > str.length ? len - str.length : 0
-                    return `${char.repeat(count)}${str}`
-                }
-                function printLine(line: number, column?: number) {
-                    const lines = code.split('\n')
-                    const lineNumber = padLeft(line.toString(), 5, ' ')
-                    const lineContent = lines[line - 1]
-                    const linePrefix = `${lineNumber} | `
-                    console.error(linePrefix + lineContent)
-
-                    if (column !== undefined) {
-                        const linePointer = `${' '.repeat(linePrefix.length + column - 1)}^`
-                        console.error(linePointer)
-                    }
-                }
-
-                const loc: any = err.loc
-                printLine(loc.line - 2)
-                printLine(loc.line - 1)
-                printLine(loc.line, loc.column)
-                printLine(loc.line + 1)
-                printLine(loc.line + 2)
-            }
+            printSourceWithErrorLoc(err, code)
 
             break
         }
