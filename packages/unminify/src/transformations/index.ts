@@ -34,9 +34,9 @@ import unUndefined from './un-undefined'
 import unUseStrict from './un-use-strict'
 import unVariableMerging from './un-variable-merging'
 import unWhileLoop from './un-while-loop'
-import type { BaseTransformationRule } from '@wakaru/shared/rule'
+import type { TransformationRule } from '@wakaru/shared/rule'
 
-export const transformationRules: BaseTransformationRule[] = [
+export const transformationRules: TransformationRule[] = [
     // first stage - basically prettify the code
     prettier.withId('prettier'),
     moduleMapping,

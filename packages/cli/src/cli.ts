@@ -16,6 +16,7 @@ import {
     spinner,
     text,
 } from '@clack/prompts'
+import { nonNullable } from '@wakaru/shared/array'
 import { Timing } from '@wakaru/shared/timing'
 import fsa from 'fs-extra'
 import c from 'picocolors'
@@ -376,7 +377,7 @@ async function interactive({
         const s = spinner()
         s.start('...')
 
-        const pool = new FixedThreadPool<UnminifyWorkerParams, Timing>(concurrency, unminifyWorkerFile)
+        const pool = new FixedThreadPool<UnminifyWorkerParams, Timing | null>(concurrency, unminifyWorkerFile)
         const unminify = async (inputPath: string) => {
             const outputPath = path.join(outputDir, path.relative(commonBaseDir, inputPath))
             const result = await pool.execute({ inputPath, outputPath, moduleMeta, moduleMapping })
@@ -387,7 +388,7 @@ async function interactive({
         const stopTiming = timing.start()
         const timings = await Promise.all(unminifyInputPaths.map(p => unminify(p)))
         const elapsed = stopTiming()
-        timing.merge(...timings)
+        timing.merge(...timings.filter(nonNullable))
         pool.destroy()
 
         s.stop('Finished')
@@ -543,7 +544,7 @@ async function nonInteractive(features: Feature[], {
         const s = spinner()
         s.start('...')
 
-        const pool = new FixedThreadPool<UnminifyWorkerParams, Timing>(concurrency, unminifyWorkerFile)
+        const pool = new FixedThreadPool<UnminifyWorkerParams, Timing | null>(concurrency, unminifyWorkerFile)
         const unminify = async (inputPath: string) => {
             const outputPath = path.join(outputDir, path.relative(commonBaseDir, inputPath))
             const result = await pool.execute({ inputPath, outputPath, moduleMeta, moduleMapping })
@@ -554,7 +555,7 @@ async function nonInteractive(features: Feature[], {
         const stopTiming = timing.start()
         const timings = await Promise.all(unminifyInputPaths.map(p => unminify(p)))
         const elapsed = stopTiming()
-        timing.merge(...timings)
+        timing.merge(...timings.filter(nonNullable))
         pool.destroy()
 
         s.stop('Finished')

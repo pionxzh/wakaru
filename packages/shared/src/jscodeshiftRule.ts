@@ -52,7 +52,7 @@ export class JSCodeshiftTransformationRule<Schema extends ZodSchema = ZodSchema>
             this.transform(context, params)
         }
         catch (err: any) {
-            console.error(`\nError running transformation ${this.name} on ${filename}`, err)
+            console.error(`\nError running rule ${this.name} on ${filename}`, err)
 
             printSourceWithErrorLoc(err, toSource(root))
         }
