@@ -1,53 +1,111 @@
-import { api } from '@wakaru/shared/jscodeshift'
+import { jscodeshiftWithParser as j, printSourceWithErrorLoc } from '@wakaru/shared/jscodeshift'
+import { Timing } from '@wakaru/shared/timing'
+import { basename } from 'pathe'
 import { transformationRules } from './transformations'
 import { arraify } from './utils/arraify'
+import { nonNullable } from './utils/utils'
 import type { MaybeArray } from './utils/arraify'
-import type { FileInfo, Transform } from 'jscodeshift'
+import type { TransformationRule } from '@wakaru/shared/rule'
+import type { Collection, FileInfo } from 'jscodeshift'
 
 export * from './transformations'
 
-export function runDefaultTransformation<P extends Record<string, any>>(
+export function runDefaultTransformationRules<P extends Record<string, any>>(
     fileInfo: FileInfo,
     params: P = {} as any,
 ) {
-    const transforms = transformationRules.map(rule => rule.toJSCodeshiftTransform())
-    return runTransformations(fileInfo, transforms, params)
+    return executeTransformationRules(fileInfo.source, fileInfo.path, transformationRules, params)
 }
 
-export function runTransformationIds<P extends Record<string, any>>(
+export function runTransformationRules<P extends Record<string, any>>(
     fileInfo: FileInfo,
-    ids: string[],
+    ruleIds: string[],
     params: P = {} as any,
 ) {
-    const transforms = ids.map(id => transformationRules.find(rule => rule.id === id)?.toJSCodeshiftTransform()).filter(Boolean) as Transform[]
-    return runTransformations(fileInfo, transforms, params)
+    const rules = ruleIds.map(id => transformationRules.find(rule => rule.id === id)).filter(nonNullable)
+    return executeTransformationRules(fileInfo.source, fileInfo.path, rules, params)
 }
 
-export function runTransformations<P extends Record<string, any>>(
-    fileInfo: FileInfo,
-    transforms: MaybeArray<Transform>,
+function executeTransformationRules<P extends Record<string, any>>(
+    /** The source code */
+    source: string,
+    /** The file path */
+    filePath: string,
+    rules: MaybeArray<TransformationRule>,
     params: P = {} as any,
 ) {
-    const { path } = fileInfo
+    const timing = new Timing()
+    /**
+     * To minimizes the overhead of parsing and serializing code, we will try to
+     * keep the code in jscodeshift AST format as long as possible.
+     */
 
-    const transformFns = arraify(transforms)
-    let code = fileInfo.source
-    for (const transform of transformFns) {
-        try {
-            const newResult = transform({ path, source: code }, api, params)
-            if (newResult) code = newResult
-        }
-        catch (err: any) {
-            console.error(`\nError running transformation ${transform.name} on ${path}`, err)
+    let currentSource: string | null = null
+    let currentRoot: Collection | null = null
 
-            printSourceWithErrorLoc(err, code)
+    const flattenRules = arraify(rules).flatMap((rule) => {
+        if (rule.type === 'rule-set') return rule.rules
+        return rule
+    })
 
-            break
+    for (const rule of flattenRules) {
+        switch (rule.type) {
+            case 'jscodeshift': {
+                try {
+                    const stopMeasure = timing.startMeasure(filePath, 'jscodeshift-parse')
+                    currentRoot ??= j(currentSource ?? source)
+                    stopMeasure()
+                }
+                catch (err: any) {
+                    console.error(`\nFailed to parse rule ${filePath} with jscodeshift in rule ${rule.id}`, err)
+                    printSourceWithErrorLoc(err, currentSource ?? source)
+
+                    break
+                }
+
+                const stopMeasure = timing.startMeasure(filePath, rule.id)
+                // rule execute already handled error
+                rule.execute({
+                    root: currentRoot,
+                    filename: basename(filePath),
+                    params,
+                })
+                stopMeasure()
+
+                currentSource = null
+                break
+            }
+            case 'string': {
+                const stopMeasure1 = timing.startMeasure(filePath, 'jscodeshift-print')
+                currentSource ??= currentRoot?.toSource() ?? source
+                stopMeasure1()
+
+                try {
+                    const stopMeasure2 = timing.startMeasure(filePath, rule.id)
+                    currentSource = rule.execute({
+                        source: currentSource,
+                        filename: filePath,
+                        params,
+                    }) ?? currentSource
+                    stopMeasure2()
+                }
+                catch (err: any) {
+                    console.error(`\nError running rule ${rule.id} on ${filePath}`, err)
+                }
+                currentRoot = null
+                break
+            }
+            default: {
+                throw new Error(`Unsupported rule type ${rule.type} from ${rule.id}`)
+            }
         }
     }
 
+    const code = currentSource ?? currentRoot?.toSource() ?? source
+
     return {
-        path,
+        path: filePath,
         code,
+        timing,
     }
 }

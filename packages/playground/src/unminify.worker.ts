@@ -1,4 +1,4 @@
-import { runTransformationIds } from '@wakaru/unminify'
+import { runTransformationRules } from '@wakaru/unminify'
 import type { CodeModParams, TransformedModule } from './types'
 
 onmessage = (
@@ -7,7 +7,8 @@ onmessage = (
     try {
         const { name, module, transformationRuleIds, moduleMeta, moduleMapping } = msg.data
         const fileInfo = { path: name, source: module.code }
-        const { code } = runTransformationIds(fileInfo, transformationRuleIds, { moduleMeta, moduleMapping })
+        const params = { moduleMeta, moduleMapping }
+        const { code } = runTransformationRules(fileInfo, transformationRuleIds, params)
         const transformedDep: TransformedModule = { ...module, transformed: code }
         postMessage(transformedDep)
     }

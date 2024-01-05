@@ -33,6 +33,21 @@ export class StringTransformationRule<Schema extends ZodSchema = ZodSchema> impl
         this.schema = schema
     }
 
+    execute({
+        source, filename, params,
+    }: {
+        source: string
+        filename: string
+        params: z.infer<Schema>
+    }) {
+        try {
+            return this.transform(source, params)
+        }
+        catch (err: any) {
+            console.error(`\nError running rule ${this.name} on ${filename}`, err)
+        }
+    }
+
     toJSCodeshiftTransform(): Transform {
         const transform: Transform = (file, _api, options) => {
             const { source } = file
@@ -42,8 +57,8 @@ export class StringTransformationRule<Schema extends ZodSchema = ZodSchema> impl
                 return newSource ?? source
             }
             catch (err) {
-                console.error(`\nError running transformation ${this.name} on ${file.path}`, err)
-                return source
+                console.error(`\nError running rule ${this.name} on ${file.path}`, err)
+                return null // return null to indicate skip
             }
         }
         return transform

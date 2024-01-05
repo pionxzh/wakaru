@@ -1,9 +1,9 @@
 import { mergeTransformationRule } from '@wakaru/shared/rule'
 import { runInlineTest } from 'jscodeshift/src/testUtils'
 import { it } from 'vitest'
-import type { BaseTransformationRule } from '@wakaru/shared/rule'
+import type { TransformationRule } from '@wakaru/shared/rule'
 
-export function defineInlineTestWithOptions(rule: BaseTransformationRule) {
+export function defineInlineTestWithOptions(rule: TransformationRule) {
     return function inlineTest(
         testName: string,
         options: any,
@@ -35,7 +35,7 @@ type InlineTest = (
  * - Supports multiple transforms
  * - Supports `skip` and `only` modifiers
  */
-export function defineInlineTest(rules: BaseTransformationRule | BaseTransformationRule[]) {
+export function defineInlineTest(rules: TransformationRule | TransformationRule[]) {
     const mergedTransform = Array.isArray(rules)
         ? mergeTransformationRule(rules.map(rule => rule.name).join(' + '), rules).toJSCodeshiftTransform()
         : rules.toJSCodeshiftTransform()

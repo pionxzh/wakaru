@@ -1,3 +1,5 @@
+import type { JSCodeshiftTransformationRule } from './jscodeshiftRule'
+import type { StringTransformationRule } from './stringRule'
 import type { ModuleMapping, ModuleMeta } from './types'
 import type { Transform } from 'jscodeshift'
 import type { ZodSchema } from 'zod'
@@ -11,6 +13,7 @@ export interface SharedParams {
 }
 
 export interface BaseTransformationRule {
+    type: 'jscodeshift' | 'string' | 'rule-set'
     /**
      * The unique id of the rule
      */
@@ -32,33 +35,56 @@ export interface BaseTransformationRule {
      * convert to jscodeshift compatible transform
      */
     toJSCodeshiftTransform(): Transform
-
-    withId(id: string): BaseTransformationRule
 }
 
-export interface BaseTransformationRuleSet {
-    rules: BaseTransformationRule[]
-    getRuleByName(name: string): BaseTransformationRule | undefined
-}
+export type TransformationRule<Schema extends ZodSchema = ZodSchema> =
+    | JSCodeshiftTransformationRule<Schema>
+    | StringTransformationRule<Schema>
+    | MergedTransformationRule
 
-export function mergeTransformationRule(name: string, rules: BaseTransformationRule[]): BaseTransformationRule {
-    return {
-        id: name,
+export class MergedTransformationRule implements BaseTransformationRule {
+    type = 'rule-set' as const
+
+    id: string
+
+    name: string
+
+    tags: string[]
+
+    schema?: ZodSchema
+
+    rules: TransformationRule[]
+
+    constructor({
         name,
-        tags: rules.flatMap(r => r.tags),
-        toJSCodeshiftTransform() {
-            return function mergedTransform(file, api, options) {
-                let source = file.source
-                for (const rule of rules) {
-                    const transform = rule.toJSCodeshiftTransform()
-                    const newResult = transform({ ...file, source }, api, options)
-                    if (newResult) source = newResult
-                }
-                return source
-            }
-        },
-        withId(_id: string) {
-            throw new Error('Not implemented')
-        },
+        tags = [],
+        rules,
+    }: {
+        name: string
+        tags?: string[]
+        rules: TransformationRule[]
+    },
+    ) {
+        this.id = name
+        this.name = name
+        this.tags = tags
+        this.rules = rules
     }
+
+    toJSCodeshiftTransform(): Transform {
+        const rules = this.rules
+        return function mergedTransform(file, api, options) {
+            let source = file.source
+            for (const rule of rules) {
+                const transform = rule.toJSCodeshiftTransform()
+                const newResult = transform({ ...file, source }, api, options)
+                if (newResult) source = newResult
+            }
+            return source
+        }
+    }
+}
+
+export function mergeTransformationRule(name: string, rules: TransformationRule[]): MergedTransformationRule {
+    return new MergedTransformationRule({ name, rules })
 }

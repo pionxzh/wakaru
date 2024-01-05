@@ -3,12 +3,11 @@
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { add, complete, cycle, save, suite } from 'benny'
-import { runTransformations, transformationRules } from '../packages/unminify/src/index'
+import { runTransformationRules } from '../packages/unminify/src/index'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const title = 'un-undefined'
-const rule = transformationRules.find(rule => rule.name === title)!.transform
 const snippet = `
 void 0;
 void 99;
@@ -20,7 +19,7 @@ const main = async () => {
         ...([10, 100, 1000, 5000].map((count) => {
             const source = snippet.repeat(count)
             return add(`items=${count}`, () => {
-                runTransformations({ path: '', source }, [rule])
+                runTransformationRules({ path: '', source }, [title])
             })
         })),
         cycle(),
