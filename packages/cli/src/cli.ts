@@ -27,6 +27,7 @@ import { version } from '../package.json'
 import { findCommonBaseDir, getRelativePath, isPathInside, pathCompletion, resolveFileGlob } from './path'
 import { unpacker } from './unpacker'
 import type { UnminifyWorkerParams } from './types'
+import type { UnpackerItem } from './unpacker'
 import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
 import type { TimingStat } from '@wakaru/shared/timing'
 import type { Module } from '@wakaru/unpacker'
@@ -270,12 +271,17 @@ async function interactive({
         }
         _overwrite = true
 
-        log.step('Unpacking...')
-
+        const items: UnpackerItem[] = []
         const stopTiming = timing.start()
-        const { items, timing: unpackerTiming } = await unpacker(inputPaths, outputPath)
+        for (const inputPath of inputPaths) {
+            log.step(`Unpacking ${c.green(path.relative(cwd, inputPath))}`)
+
+            const filename = path.basename(inputPath)
+            const stopMeasure = timing.startMeasure(filename, 'unpacker')
+            items.push(await unpacker(inputPath, outputPath))
+            stopMeasure()
+        }
         const elapsed = stopTiming()
-        timing.merge(unpackerTiming)
 
         log.step('Finished')
 
@@ -498,12 +504,17 @@ async function nonInteractive(features: Feature[], {
         const outputPath = path.resolve(unpackerOutput)
         const relativeOutputPath = getRelativePath(cwd, outputPath)
 
-        log.step('Unpacking...')
-
+        const items: UnpackerItem[] = []
         const stopTiming = timing.start()
-        const { items, timing: unpackerTiming } = await unpacker(inputPaths, outputPath)
+        for (const inputPath of inputPaths) {
+            log.step(`Unpacking ${c.green(path.relative(cwd, inputPath))}`)
+
+            const filename = path.basename(inputPath)
+            const stopMeasure = timing.startMeasure(filename, 'unpacker')
+            items.push(await unpacker(inputPath, outputPath))
+            stopMeasure()
+        }
         const elapsed = stopTiming()
-        timing.merge(unpackerTiming)
 
         log.step('Finished')
 
