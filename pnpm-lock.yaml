@@ -88,9 +88,6 @@ importers:
       jscodeshift:
         specifier: ^0.15.1
         version: 0.15.1(@babel/preset-env@7.23.3)
-      tsup:
-        specifier: ^7.3.0
-        version: 7.3.0(typescript@5.3.2)
       typescript:
         specifier: ^5.3.2
         version: 5.3.2
@@ -368,9 +365,6 @@ importers:
       jscodeshift:
         specifier: ^0.15.1
         version: 0.15.1(@babel/preset-env@7.23.3)
-      tsup:
-        specifier: ^7.3.0
-        version: 7.3.0(typescript@5.3.2)
       typescript:
         specifier: ^5.3.2
         version: 5.3.2
