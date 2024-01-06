@@ -6,6 +6,7 @@
   "license": "MIT",
   "sideEffects": false,
   "exports": {
+    "./array": "./src/array.ts",
     "./jscodeshift": "./src/jscodeshift.ts",
     "./rule": "./src/rule.ts",
     "./timing": "./src/timing.ts",
