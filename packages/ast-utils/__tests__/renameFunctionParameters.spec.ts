@@ -52,7 +52,7 @@ function foo(c, d) {
 `,
 )
 
-inlineTest.only('Class',
+inlineTest('Class',
   `
 function foo(a, b, x, z) {
   class Bar {
