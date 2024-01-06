@@ -9,6 +9,7 @@ import type { ASTNode, ASTPath, Collection, Identifier, JSCodeshift } from 'jsco
  */
 export function isVariableIdentifier(j: JSCodeshift, path: ASTPath<Identifier>): boolean {
     const parent = path.parent.node
+    const grandParent = path.parent.parent?.node
 
     if (
         j.FunctionExpression.check(parent)
@@ -24,6 +25,17 @@ export function isVariableIdentifier(j: JSCodeshift, path: ASTPath<Identifier>):
         && !parent.computed
     ) {
         // obj.oldName
+        return false
+    }
+
+    if (
+        grandParent
+        && j.MemberExpression.check(grandParent)
+        && j.PrivateName.check(grandParent.property)
+        && grandParent.property.id === path.node
+        && !grandParent.computed
+    ) {
+        // obj.#oldName
         return false
     }
 
@@ -73,11 +85,50 @@ export function isVariableIdentifier(j: JSCodeshift, path: ASTPath<Identifier>):
     }
 
     if (
+        grandParent
+        && j.ClassPrivateMethod.check(grandParent)
+        && j.PrivateName.check(grandParent.key)
+        && grandParent.key.id === path.node
+    ) {
+        // class A { #oldName() {} }
+        return false
+    }
+
+    if (
         j.ClassProperty.check(parent)
         && parent.key === path.node
         && !parent.computed
     ) {
         // class A { oldName = 3 }
+        return false
+    }
+
+    if (
+        grandParent
+        && j.ClassPrivateProperty.check(grandParent)
+        && j.PrivateName.check(grandParent.key)
+        && grandParent.key.id === path.node
+    ) {
+        // class A { #oldName = 3 }
+        return false
+    }
+
+    if (
+        j.ClassAccessorProperty.check(parent)
+        && parent.key === path.node
+        && !parent.computed
+    ) {
+        // class A { get oldName() {} }
+        return false
+    }
+
+    if (
+        grandParent
+        && j.ClassAccessorProperty.check(grandParent)
+        && j.PrivateName.check(grandParent.key)
+        && grandParent.key.id === path.node
+    ) {
+        // class A { get #oldName() {} }
         return false
     }
 
@@ -129,6 +180,7 @@ export function findReferences(
             if (path.name === 'property') return false
 
             if (!path.scope) return false
+
             let scope = path.scope
             // we don't use `scope.lookup` here to avoid
             // traversing the whole scope chain

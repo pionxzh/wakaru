@@ -9,7 +9,7 @@ const transform = wrapAstTransformation((context) => {
         .find(j.FunctionDeclaration)
         .forEach((path) => {
             const node = path.node
-            renameFunctionParameters(j, node, ['c', 'd'])
+            renameFunctionParameters(j, node, ['c', 'd', 'xx', 'zz'])
         })
 })
 
@@ -48,6 +48,51 @@ function foo(c, d) {
   }
 
   return c + d;
+}
+`,
+)
+
+inlineTest.only('Class',
+  `
+function foo(a, b, x, z) {
+  class Bar {
+    constructor(a, b) {
+      this.a = a;
+      this.b = b;
+    }
+
+    #x = x;
+    #z = this.#x;
+
+    #a(a, b) {
+      return this.#x + b;
+    }
+
+    #b(f, g) {
+      return this.#a(this.z, this.b);
+    }
+  }
+}
+`,
+  `
+function foo(c, d, xx, zz) {
+  class Bar {
+    constructor(a, b) {
+      this.a = a;
+      this.b = b;
+    }
+
+    #x = xx;
+    #z = this.#x;
+
+    #a(a, b) {
+      return this.#x + b;
+    }
+
+    #b(f, g) {
+      return this.#a(this.z, this.b);
+    }
+  }
 }
 `,
 )
