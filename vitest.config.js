@@ -21,6 +21,10 @@ export default defineConfig({
                 /**
                  * Specific files to exclude
                  */
+                'packages/shared/src/imports.ts',
+                'packages/shared/src/timing.ts',
+                'packages/shared/src/types.ts',
+                'packages/unminify/src/transformations/prettier.ts',
                 'packages/unminify/src/transformations/prettier.ts',
             ],
         },
