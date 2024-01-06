@@ -52,7 +52,7 @@ export function defineInlineTest(rules: TransformationRule | TransformationRule[
                 runInlineTest(
                     mergedTransform,
                     {},
-                    { source: input },
+                    { source: input, path: `"testName"` },
                     expectedOutput,
                     { parser: 'babylon' },
                 )

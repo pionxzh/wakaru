@@ -1,8 +1,8 @@
+import { closest } from '@wakaru/ast-utils/closest'
 import { generateName } from '@wakaru/ast-utils/identifier'
 import { findReferences } from '@wakaru/ast-utils/reference'
 import { findDeclaration, removeVariableDeclarator } from '@wakaru/ast-utils/scope'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
-import { fromPaths } from 'jscodeshift/src/Collection'
 import { findHelperLocals, removeHelperImport } from '../../../utils/import'
 import { isHelperFunctionCall } from '../../../utils/isHelperFunctionCall'
 import type { ASTTransformation } from '@wakaru/shared/rule'
@@ -72,7 +72,7 @@ export const transformAST: ASTTransformation = (context, params) => {
                     removeVariableDeclarator(j, _resultPath as ASTPath<Identifier>)
                 }
                 else {
-                    fromPaths([_resultPath]).closest(j.AssignmentExpression).remove()
+                    closest(_resultPath, j.AssignmentExpression)?.prune()
                 }
 
                 // Remove _iterator's declaration

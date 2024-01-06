@@ -1,11 +1,11 @@
 import { assertScopeExists } from '@wakaru/ast-utils/assert'
+import { closest } from '@wakaru/ast-utils/closest'
 import { mergeComments } from '@wakaru/ast-utils/comments'
 import { findIIFEs, isIIFE } from '@wakaru/ast-utils/matchers'
 import { createObjectProperty } from '@wakaru/ast-utils/object'
 import { getNodePosition } from '@wakaru/ast-utils/position'
 import { findDeclarations } from '@wakaru/ast-utils/scope'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
-import { fromPaths } from 'jscodeshift/src/Collection'
 import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { CommentKind } from 'ast-types/lib/gen/kinds'
 import type { ASTNode, ASTPath, ArrowFunctionExpression, AssignmentExpression, CallExpression, FunctionExpression, Identifier, JSCodeshift, LogicalExpression, ObjectProperty, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
@@ -61,7 +61,8 @@ export const transformAST: ASTTransformation = (context) => {
             return left.name === right.name
         })
         .forEach((path) => {
-            const iifePath = fromPaths([path]).closest(j.ExpressionStatement).get()
+            const iifePath = closest(path, j.ExpressionStatement)
+            if (!iifePath) return
             handleEnumIIFE(j, path, iifePath)
         })
 

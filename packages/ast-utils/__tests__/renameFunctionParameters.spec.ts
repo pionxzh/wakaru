@@ -1,5 +1,5 @@
+import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { defineInlineTest } from '@wakaru/test-utils'
-import { createJSCodeshiftTransformationRule } from '../src/jscodeshiftRule'
 import { renameFunctionParameters } from '../src/renameFunctionParameters'
 
 const transform = createJSCodeshiftTransformationRule({

@@ -20,7 +20,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "test": "vitest run --globals",
+    "test": "vitest run --globals --passWithNoTests",
     "test:update": "vitest run --update --globals",
     "test:watch": "vitest watch --globals",
     "test:type": "tsc --noEmit",
