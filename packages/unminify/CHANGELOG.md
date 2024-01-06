@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/pionxzh/wakaru/compare/unminify-v0.1.1...unminify-v0.1.2) (2024-01-06)
+
+
+### Bug Fixes
+
+* fix errors from `fromPaths` ([8573cd8](https://github.com/pionxzh/wakaru/commit/8573cd83ceea9440d802d0670650737e990b2862))
+
 ## [0.1.1](https://github.com/pionxzh/wakaru/compare/unminify-v0.1.0...unminify-v0.1.1) (2023-12-30)
 
 

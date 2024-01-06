@@ -1,5 +1,5 @@
 {
-  "packages/cli": "0.0.4",
-  "packages/unminify": "0.1.1",
-  "packages/unpacker": "0.1.0"
+  "packages/cli": "0.0.5",
+  "packages/unminify": "0.1.2",
+  "packages/unpacker": "0.1.1"
 }
