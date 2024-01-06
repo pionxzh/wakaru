@@ -32,7 +32,6 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --sourcemap --clean",
     "test": "vitest run --globals",
     "test:update": "vitest run --update --globals",
     "test:watch": "vitest watch --globals",
@@ -48,7 +47,6 @@
     "@wakaru/test-utils": "workspace:*",
     "ast-types": "^0.16.1",
     "jscodeshift": "^0.15.1",
-    "tsup": "^7.3.0",
     "typescript": "^5.3.2"
   }
 }
