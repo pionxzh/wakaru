@@ -1,7 +1,7 @@
 {
   "name": "@wakaru/cli",
   "type": "module",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "🔪📦 Unminify and beautify bundled code",
   "author": "Pionxzh",
   "license": "MIT",

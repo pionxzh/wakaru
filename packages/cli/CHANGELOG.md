@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.5](https://github.com/pionxzh/wakaru/compare/cli-v0.0.4...cli-v0.0.5) (2024-01-06)
+
+
+### Bug Fixes
+
+* **cli:** improve unpacker log for multiple files ([96e0ef3](https://github.com/pionxzh/wakaru/commit/96e0ef3663e28fa46c32da34ec7056fa9b8ea51f))
+
 ## [0.0.4](https://github.com/pionxzh/wakaru/compare/cli-v0.0.3...cli-v0.0.4) (2024-01-01)
 
 

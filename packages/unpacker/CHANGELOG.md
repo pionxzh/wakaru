@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/pionxzh/wakaru/compare/unpacker-v0.1.0...unpacker-v0.1.1) (2024-01-06)
+
+
+### Bug Fixes
+
+* handle parsing error in unpacker ([1a86293](https://github.com/pionxzh/wakaru/commit/1a8629343e5fc8284c82af591a64ce8164dd222c))
+
 ## [0.1.0](https://github.com/pionxzh/wakaru/compare/unpacker-v0.0.4...unpacker-v0.1.0) (2023-12-15)
 
 
