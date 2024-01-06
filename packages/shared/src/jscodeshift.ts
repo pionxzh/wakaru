@@ -1,7 +1,8 @@
 import jscodeshift from 'jscodeshift'
+import babylon from './babylon'
 import type { API, Collection } from 'jscodeshift'
 
-export const jscodeshiftWithParser = jscodeshift.withParser('babylon')
+export const jscodeshiftWithParser = jscodeshift.withParser(babylon())
 
 export const toSource = (root: Collection) => {
     return root.toSource({ lineTerminator: '\n' })
