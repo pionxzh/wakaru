@@ -79,6 +79,9 @@ importers:
       '@wakaru/ds':
         specifier: workspace:*
         version: link:../ds
+      '@wakaru/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@wakaru/test-utils':
         specifier: workspace:*
         version: link:../test-utils
@@ -87,7 +90,7 @@ importers:
         version: 0.16.1(patch_hash=lbcpk3ulhul2sxdbqn4xesbaem)
       jscodeshift:
         specifier: ^0.15.1
-        version: 0.15.1(@babel/preset-env@7.23.3)
+        version: 0.15.1
       typescript:
         specifier: ^5.3.2
         version: 5.3.2
@@ -353,8 +356,8 @@ importers:
   packages/shared:
     dependencies:
       '@babel/parser':
-        specifier: ^7.15.4
-        version: 7.23.4
+        specifier: ^7.23.6
+        version: 7.23.6
     devDependencies:
       '@types/jscodeshift':
         specifier: ^0.11.11
@@ -364,7 +367,7 @@ importers:
         version: 0.16.1(patch_hash=lbcpk3ulhul2sxdbqn4xesbaem)
       jscodeshift:
         specifier: ^0.15.1
-        version: 0.15.1(@babel/preset-env@7.23.3)
+        version: 0.15.1
       typescript:
         specifier: ^5.3.2
         version: 5.3.2
@@ -386,7 +389,7 @@ importers:
         version: link:../shared
       jscodeshift:
         specifier: ^0.15.1
-        version: 0.15.1(@babel/preset-env@7.23.3)
+        version: 0.15.1
       typescript:
         specifier: ^5.3.2
         version: 5.3.2
@@ -477,7 +480,7 @@ importers:
         version: 0.16.1(patch_hash=lbcpk3ulhul2sxdbqn4xesbaem)
       jscodeshift:
         specifier: ^0.15.1
-        version: 0.15.1(@babel/preset-env@7.23.3)
+        version: 0.15.1
       tsup:
         specifier: ^7.3.0
         version: 7.3.0(typescript@5.3.2)
@@ -563,7 +566,7 @@ packages:
       '@babel/helper-compilation-targets': 7.22.15
       '@babel/helper-module-transforms': 7.23.3(@babel/core@7.23.3)
       '@babel/helpers': 7.23.4
-      '@babel/parser': 7.23.4
+      '@babel/parser': 7.23.6
       '@babel/template': 7.22.15
       '@babel/traverse': 7.23.4
       '@babel/types': 7.23.4
@@ -780,6 +783,14 @@ packages:
 
   /@babel/parser@7.23.4:
     resolution: {integrity: sha512-vf3Xna6UEprW+7t6EtOmFpHNAuxw3xqPZghy+brsnusscJRW5BMUzzHZc5ICjULee81WeUV2jjakG09MDglJXQ==}
+    engines: {node: '>=6.0.0'}
+    hasBin: true
+    dependencies:
+      '@babel/types': 7.23.4
+    dev: true
+
+  /@babel/parser@7.23.6:
+    resolution: {integrity: sha512-Z2uID7YJ7oNvAI20O9X0bblw7Qqs8Q2hFy0R9tAfnfLkp5MW0UH9eUvnDSnFwKZ0AvgS1ucqR4KzvVHgnke1VQ==}
     engines: {node: '>=6.0.0'}
     hasBin: true
     dependencies:
@@ -1686,7 +1697,7 @@ packages:
     engines: {node: '>=6.9.0'}
     dependencies:
       '@babel/code-frame': 7.23.4
-      '@babel/parser': 7.23.4
+      '@babel/parser': 7.23.6
       '@babel/types': 7.23.4
 
   /@babel/traverse@7.23.4:
@@ -1699,7 +1710,7 @@ packages:
       '@babel/helper-function-name': 7.23.0
       '@babel/helper-hoist-variables': 7.22.5
       '@babel/helper-split-export-declaration': 7.22.6
-      '@babel/parser': 7.23.4
+      '@babel/parser': 7.23.6
       '@babel/types': 7.23.4
       debug: 4.3.4
       globals: 11.12.0
@@ -4120,7 +4131,7 @@ packages:
   /@types/babel__core@7.20.5:
     resolution: {integrity: sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==}
     dependencies:
-      '@babel/parser': 7.23.4
+      '@babel/parser': 7.23.6
       '@babel/types': 7.23.4
       '@types/babel__generator': 7.6.6
       '@types/babel__template': 7.4.3
@@ -4136,7 +4147,7 @@ packages:
   /@types/babel__template@7.4.3:
     resolution: {integrity: sha512-ciwyCLeuRfxboZ4isgdNZi/tkt06m8Tw6uGbBSBgWrnnZGNXiEyM27xc/PjXGQLqlZ6ylbgHMnm7ccF9tCkOeQ==}
     dependencies:
-      '@babel/parser': 7.23.4
+      '@babel/parser': 7.23.6
       '@babel/types': 7.23.4
     dev: true
 
@@ -4492,7 +4503,7 @@ packages:
   /@vue/compiler-core@3.3.9:
     resolution: {integrity: sha512-+/Lf68Vr/nFBA6ol4xOtJrW+BQWv3QWKfRwGSm70jtXwfhZNF4R/eRgyVJYoxFRhdCTk/F6g99BP0ffPgZihfQ==}
     dependencies:
-      '@babel/parser': 7.23.4
+      '@babel/parser': 7.23.6
       '@vue/shared': 3.3.9
       estree-walker: 2.0.2
       source-map-js: 1.0.2
@@ -4506,7 +4517,7 @@ packages:
   /@vue/compiler-sfc@3.3.9:
     resolution: {integrity: sha512-wy0CNc8z4ihoDzjASCOCsQuzW0A/HP27+0MDSSICMjVIFzk/rFViezkR3dzH+miS2NDEz8ywMdbjO5ylhOLI2A==}
     dependencies:
-      '@babel/parser': 7.23.4
+      '@babel/parser': 7.23.6
       '@vue/compiler-core': 3.3.9
       '@vue/compiler-dom': 3.3.9
       '@vue/compiler-ssr': 3.3.9
@@ -4549,7 +4560,7 @@ packages:
   /@vue/reactivity-transform@3.3.9:
     resolution: {integrity: sha512-HnUFm7Ry6dFa4Lp63DAxTixUp8opMtQr6RxQCpDI1vlh12rkGIeYqMvJtK+IKyEfEOa2I9oCkD1mmsPdaGpdVg==}
     dependencies:
-      '@babel/parser': 7.23.4
+      '@babel/parser': 7.23.6
       '@vue/compiler-core': 3.3.9
       '@vue/shared': 3.3.9
       estree-walker: 2.0.2
@@ -6998,7 +7009,7 @@ packages:
       argparse: 2.0.1
     dev: true
 
-  /jscodeshift@0.15.1(@babel/preset-env@7.23.3):
+  /jscodeshift@0.15.1:
     resolution: {integrity: sha512-hIJfxUy8Rt4HkJn/zZPU9ChKfKZM1342waJ1QC2e2YsPcWhM+3BJ4dcfQCzArTrk1jJeNLB341H+qOcEHRxJZg==}
     hasBin: true
     peerDependencies:
@@ -7009,6 +7020,39 @@ packages:
     dependencies:
       '@babel/core': 7.23.3
       '@babel/parser': 7.23.4
+      '@babel/plugin-transform-class-properties': 7.23.3(@babel/core@7.23.3)
+      '@babel/plugin-transform-modules-commonjs': 7.23.3(@babel/core@7.23.3)
+      '@babel/plugin-transform-nullish-coalescing-operator': 7.23.4(@babel/core@7.23.3)
+      '@babel/plugin-transform-optional-chaining': 7.23.4(@babel/core@7.23.3)
+      '@babel/plugin-transform-private-methods': 7.23.3(@babel/core@7.23.3)
+      '@babel/preset-flow': 7.23.3(@babel/core@7.23.3)
+      '@babel/preset-typescript': 7.23.3(@babel/core@7.23.3)
+      '@babel/register': 7.22.15(@babel/core@7.23.3)
+      babel-core: 7.0.0-bridge.0(@babel/core@7.23.3)
+      chalk: 4.1.2
+      flow-parser: 0.212.0
+      graceful-fs: 4.2.11
+      micromatch: 4.0.5
+      neo-async: 2.6.2
+      node-dir: 0.1.17
+      recast: 0.23.4
+      temp: 0.8.4
+      write-file-atomic: 2.4.3
+    transitivePeerDependencies:
+      - supports-color
+    dev: true
+
+  /jscodeshift@0.15.1(@babel/preset-env@7.23.3):
+    resolution: {integrity: sha512-hIJfxUy8Rt4HkJn/zZPU9ChKfKZM1342waJ1QC2e2YsPcWhM+3BJ4dcfQCzArTrk1jJeNLB341H+qOcEHRxJZg==}
+    hasBin: true
+    peerDependencies:
+      '@babel/preset-env': ^7.1.6
+    peerDependenciesMeta:
+      '@babel/preset-env':
+        optional: true
+    dependencies:
+      '@babel/core': 7.23.3
+      '@babel/parser': 7.23.6
       '@babel/plugin-transform-class-properties': 7.23.3(@babel/core@7.23.3)
       '@babel/plugin-transform-modules-commonjs': 7.23.3(@babel/core@7.23.3)
       '@babel/plugin-transform-nullish-coalescing-operator': 7.23.4(@babel/core@7.23.3)
