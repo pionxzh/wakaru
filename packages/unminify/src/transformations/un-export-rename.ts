@@ -225,4 +225,5 @@ function renameInRoot(j: JSCodeshift, root: Collection, oldName: string, newName
     if (!rootScope || !rootScope.declares(oldName) || rootScope.declares(newName)) return
 
     rootScope.rename(oldName, newName)
+    rootScope.markAsStale()
 }

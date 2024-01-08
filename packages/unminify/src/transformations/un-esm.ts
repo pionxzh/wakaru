@@ -540,6 +540,8 @@ function transformExport(context: Context) {
 
                 j(path).replaceWith(exportNamedDeclaration)
 
+                rootScope.markAsStale()
+
                 return
             }
         }
@@ -590,6 +592,10 @@ function transformExport(context: Context) {
                     [exportSpecifier],
                 )
                 j(path).replaceWith(exportNamedDeclaration)
+
+                rootScope?.markAsStale()
+                path.scope?.markAsStale()
+
                 return
             }
         }
