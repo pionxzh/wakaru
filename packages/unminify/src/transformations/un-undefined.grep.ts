@@ -16,21 +16,10 @@ export default createAstGrepTransformationRule({
         root
             .findAll({
                 rule: {
-                    pattern: 'void $NUMBER',
-                },
-                constraints: {
-                    NUMBER: { kind: 'number' },
-                },
-            })
-            .forEach((match) => {
-                const range = match.range()
-                s.update(range.start.index, range.end.index, 'undefined')
-            })
-
-        root
-            .findAll({
-                rule: {
-                    pattern: 'void ($NUMBER)',
+                    any: [
+                        { pattern: 'void ($NUMBER)' },
+                        { pattern: 'void $NUMBER' },
+                    ],
                 },
                 constraints: {
                     NUMBER: { kind: 'number' },

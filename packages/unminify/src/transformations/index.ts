@@ -17,6 +17,7 @@ import unEnum from './un-enum'
 import unES6Class from './un-es6-class'
 import unEsm from './un-esm'
 import unEsModuleFlag from './un-esmodule-flag'
+import unEsmoduleFlagGrep from './un-esmodule-flag.grep'
 import unExportRename from './un-export-rename'
 import unFlipComparisons from './un-flip-comparisons'
 import unIife from './un-iife'
@@ -46,7 +47,7 @@ import type { TransformationRule } from '@wakaru/shared/rule'
 export const transformationRules: TransformationRule[] = [
     // first stage - basically prettify the code
     prettier.withId('prettier'),
-    moduleMapping,
+    moduleMapping, // grep
     unCurlyBraces, // add curly braces so that other transformations can works easier, but generally this is not required
     unSequenceExpression, // curly braces can bring out return sequence expression, so it runs before this
     unVariableMerging,
@@ -59,12 +60,12 @@ export const transformationRules: TransformationRule[] = [
 
     // third stage - mostly one-to-one transformation
     lebab,
+    unUseStrict, // grep
+    unBoolean, // grep
+    unUndefined, // grep
+    unInfinity, // grep
+    unEsModuleFlag, // grep
     unExportRename, // relies on `un-esm` to give us the export statements, and this can break some rules from `lebab`
-    unUseStrict,
-    unEsModuleFlag,
-    unBoolean,
-    unUndefined,
-    unInfinity,
     unTypeof,
     unNumericLiteral,
     unTemplateLiteral,
@@ -97,11 +98,12 @@ export const transformationRules: TransformationRule[] = [
 ]
 
 const astGrepRules: TransformationRule[] = [
-    unUseStrictGrep,
-    unUndefinedGrep,
     moduleMappingGrep,
-    unInfinityGrep,
+    unUseStrictGrep,
+    unEsmoduleFlagGrep,
     unBooleanGrep,
+    unUndefinedGrep,
+    unInfinityGrep,
 ]
 
 // replace the transform function in transformationRules with the one from astGrepRules

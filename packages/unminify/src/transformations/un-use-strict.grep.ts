@@ -20,6 +20,7 @@ export default createAstGrepTransformationRule({
             })
             .forEach((match) => {
                 const range = match.range()
+                // FIXME: use column to remove the leading whitespace is not safe
                 s.remove(range.start.index - range.start.column, range.end.index)
             })
 
