@@ -556,6 +556,23 @@ export default foo;
 `,
 )
 
+inlineTest('mixed exports #3',
+  `
+function foo() {}
+exports.default = foo;
+module.exports = {
+  bar: foo
+};
+`,
+  `
+function foo() {}
+
+export default {
+  bar: foo
+};
+`,
+)
+
 inlineTest('default exports - Babel',
   `
 exports.default = void 0;

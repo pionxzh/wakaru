@@ -3,6 +3,7 @@ import { mergeComments } from '@wakaru/ast-utils/comments'
 import { generateName, isValidIdentifier } from '@wakaru/ast-utils/identifier'
 import { ImportManager } from '@wakaru/ast-utils/imports'
 import { isExportObject, isStringObjectProperty, isUndefined } from '@wakaru/ast-utils/matchers'
+import { getNodePosition } from '@wakaru/ast-utils/position'
 import { findReferences, renameIdentifier } from '@wakaru/ast-utils/reference'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { z } from 'zod'
@@ -435,6 +436,14 @@ function transformExport(context: Context) {
          * We will keep the last one and prune the previous one.
          */
         if (exportsMap.has(name)) {
+            // if the current export is before the previous export, we can safely ignore it
+            const prevPos = getNodePosition(exportsMap.get(name)!.path.node)
+            const currPos = getNodePosition(path.node)
+            if ((currPos?.start ?? 0) < (prevPos?.start ?? 0)) {
+                path.prune()
+                return
+            }
+
             /**
              * If the current path is referencing the previous export,
              * we can simply remove the current path.
