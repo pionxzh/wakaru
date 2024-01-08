@@ -480,7 +480,7 @@ function transformExport(context: Context) {
              */
             const shouldIgnoreMultipleExports = isInitializationExport(j, existingPath.node)
             if (!shouldIgnoreMultipleExports) {
-                console.warn(`Multiple exports of "${name}" found, only the last one will be kept`)
+                console.warn(`[${context.filename}] Multiple exports of "${name}" found, only the last one will be kept`)
             }
 
             exportsMap.delete(name)
