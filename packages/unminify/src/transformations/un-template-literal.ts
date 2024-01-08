@@ -65,7 +65,19 @@ export const transformAST: ASTTransformation = (context) => {
             if (!j.CallExpression.check(parent.node)) return
 
             const templateLiteral = args.reduce((acc, arg) => {
-                if (j.StringLiteral.check(arg)) return acc + arg.value
+                if (j.StringLiteral.check(arg)) {
+                    const escaped = arg.value
+                        .replace(/(?<!\\)([\n])/g, '\\n')
+                        .replace(/(?<!\\)([\t])/g, '\\t')
+                        .replace(/(?<!\\)([\r])/g, '\\r')
+                        .replace(/(?<!\\)([\b])/g, '\\b')
+                        .replace(/(?<!\\)([\f])/g, '\\f')
+                        .replace(/(?<!\\)([\v])/g, '\\v')
+                        .replace(/(?<!\\)([\0])/g, '\\0')
+                        .replace(/(?<!\\)`/g, '\\`')
+                        .replace(/(?<!\\)\$/g, '\\$')
+                    return acc + escaped
+                }
 
                 return `${acc}\${${j(arg).toSource()}}`
             }, '')
