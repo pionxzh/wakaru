@@ -108,7 +108,13 @@ function executeTransformationRules<P extends Record<string, any>>(
         if (hasError) break
     }
 
-    const code = currentSource ?? currentRoot?.toSource() ?? source
+    let code = currentSource
+    try {
+        code ??= currentRoot?.toSource() ?? source
+    }
+    catch (err) {
+        console.error(`\nFailed to print code ${filePath}`, err)
+    }
 
     return {
         path: filePath,
