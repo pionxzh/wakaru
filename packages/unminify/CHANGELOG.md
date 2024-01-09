@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.3](https://github.com/pionxzh/wakaru/compare/unminify-v0.1.2...unminify-v0.1.3) (2024-01-09)
+
+
+### Bug Fixes
+
+* handle escaped character in template literal ([ed66bf6](https://github.com/pionxzh/wakaru/commit/ed66bf647004f16955e11ba5fe3a0330ea9260fa))
+* print filename on warning "Multiple exports of ..." ([d784322](https://github.com/pionxzh/wakaru/commit/d784322248924ec94c96609b0949bfd2f82eecd1))
+* should stale the scope after renaming or adding new varaible ([3afdd7c](https://github.com/pionxzh/wakaru/commit/3afdd7cadcf75af5fb8f4ff0dbf5e87a80165771))
+* **un-esm:** properly handle the export order of mixed exports ([90b6c47](https://github.com/pionxzh/wakaru/commit/90b6c479370f7b8a1ab25200494399715ca3d272))
+* **unminify:** add error handling for code printing ([4e2b952](https://github.com/pionxzh/wakaru/commit/4e2b9525984312df7831131038aa9495515eb84c))
+* **unminify:** add error handling to early exit the rule loop ([22bd4c0](https://github.com/pionxzh/wakaru/commit/22bd4c0e3f0b1169a50191d68441f07ef2d19626))
+
 ## [0.1.2](https://github.com/pionxzh/wakaru/compare/unminify-v0.1.1...unminify-v0.1.2) (2024-01-06)
 
 
