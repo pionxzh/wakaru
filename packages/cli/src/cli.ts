@@ -464,7 +464,7 @@ async function nonInteractive(features: Feature[], {
 
     const perfOutputBase = singleFeature
         ? features.includes(Feature.Unpacker) ? unpackerOutput : unminifyOutput
-        : outputBase
+        : findCommonBaseDir([unpackerOutput, unminifyOutput]) ?? outputBase
     const perfOutputPath = path.join(perfOutputBase, 'perf.json')
 
     const outputPathsToCheck = []
@@ -631,6 +631,7 @@ function printPerfStats(measurements: TimingStat[]) {
 }
 
 function writePerfStats(measurements: TimingStat[], outputPath: string) {
+    fsa.ensureDirSync(path.dirname(outputPath))
     fsa.writeJSONSync(outputPath, measurements, {
         encoding: 'utf-8',
         spaces: 2,
