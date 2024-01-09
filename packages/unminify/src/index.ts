@@ -48,6 +48,7 @@ function executeTransformationRules<P extends Record<string, any>>(
         return rule
     })
 
+    let hasError = false
     for (const rule of flattenRules) {
         switch (rule.type) {
             case 'jscodeshift': {
@@ -60,6 +61,7 @@ function executeTransformationRules<P extends Record<string, any>>(
                     console.error(`\nFailed to parse rule ${filePath} with jscodeshift in rule ${rule.id}`, err)
                     printSourceWithErrorLoc(err, currentSource ?? source)
 
+                    hasError = true
                     break
                 }
 
@@ -91,6 +93,8 @@ function executeTransformationRules<P extends Record<string, any>>(
                 }
                 catch (err: any) {
                     console.error(`\nError running rule ${rule.id} on ${filePath}`, err)
+
+                    hasError = true
                 }
                 currentRoot = null
                 break
@@ -99,6 +103,9 @@ function executeTransformationRules<P extends Record<string, any>>(
                 throw new Error(`Unsupported rule type ${rule.type} from ${rule.id}`)
             }
         }
+
+        // stop if there is an error to prevent further damage
+        if (hasError) break
     }
 
     const code = currentSource ?? currentRoot?.toSource() ?? source
