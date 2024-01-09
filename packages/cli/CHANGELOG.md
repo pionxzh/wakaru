@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.6](https://github.com/pionxzh/wakaru/compare/cli-v0.0.5...cli-v0.0.6) (2024-01-09)
+
+
+### Bug Fixes
+
+* **cli:** `perf.json` will be generated at the common base dir when there are multiple output directories ([7997c83](https://github.com/pionxzh/wakaru/commit/7997c836ea6ec46ba6f51630b303c3cf00e51911)), closes [#85](https://github.com/pionxzh/wakaru/issues/85)
+
 ## [0.0.5](https://github.com/pionxzh/wakaru/compare/cli-v0.0.4...cli-v0.0.5) (2024-01-06)
 
 
