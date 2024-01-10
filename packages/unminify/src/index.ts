@@ -108,7 +108,7 @@ function executeTransformationRules<P extends Record<string, any>>(
         if (hasError) break
     }
 
-    let code = currentSource
+    let code = currentSource as string
     try {
         code ??= currentRoot?.toSource() ?? source
     }

@@ -15,6 +15,7 @@
     "noEmit": true,
     "allowSyntheticDefaultImports": true,
     "isolatedModules": true,
+    "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
   "references": [{ "path": "./tsconfig.node.json" }],
