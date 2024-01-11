@@ -409,8 +409,8 @@ importers:
         specifier: ^7.23.4
         version: 7.23.4
       lebab:
-        specifier: ^3.2.3
-        version: 3.2.3
+        specifier: ^3.2.4
+        version: 3.2.4
       pathe:
         specifier: ^1.1.1
         version: 1.1.1
@@ -7179,8 +7179,8 @@ packages:
     engines: {node: '>=6'}
     dev: true
 
-  /lebab@3.2.3:
-    resolution: {integrity: sha512-mwS5d96W+KlfChffQcbd8TT/93qpshhreHtx30bwSHFejZ/271pNCcpfiRydNMg+Dx2jIz54OK8GM6krBFxO1Q==}
+  /lebab@3.2.4:
+    resolution: {integrity: sha512-rtffzCSZ3LFG92Mqd05i2HcaMq73HfXtZWvP3AkvS3DdvfLAEr2pAcgpeQ7r/6DVoNBiFmMyK5Ho4t6AIkQU1w==}
     engines: {node: '>=6'}
     hasBin: true
     dependencies:

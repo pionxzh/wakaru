@@ -29,7 +29,7 @@
     "@babel/helper-validator-identifier": "^7.22.20",
     "@babel/preset-env": "^7.23.3",
     "@babel/types": "^7.23.4",
-    "lebab": "^3.2.3",
+    "lebab": "^3.2.4",
     "pathe": "^1.1.1",
     "picocolors": "^1.0.0",
     "prettier": "^2.8.8",
