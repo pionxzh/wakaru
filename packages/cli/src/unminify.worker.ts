@@ -13,7 +13,7 @@ export async function unminify(data?: UnminifyWorkerParams) {
         const source = await fsa.readFile(inputPath, 'utf-8')
         const fileInfo = { path: inputPath, source }
 
-        const { code, timing } = runDefaultTransformationRules(fileInfo, { moduleMeta, moduleMapping })
+        const { code, timing } = await runDefaultTransformationRules(fileInfo, { moduleMeta, moduleMapping })
         await fsa.ensureFile(outputPath)
         await fsa.writeFile(outputPath, code, 'utf-8')
 

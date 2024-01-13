@@ -26,7 +26,7 @@ export function runTransformationRules<P extends Record<string, any>>(
     return executeTransformationRules(fileInfo.source, fileInfo.path, rules, params)
 }
 
-function executeTransformationRules<P extends Record<string, any>>(
+async function executeTransformationRules<P extends Record<string, any>>(
     /** The source code */
     source: string,
     /** The file path */
@@ -84,7 +84,7 @@ function executeTransformationRules<P extends Record<string, any>>(
 
                 try {
                     const stopMeasure2 = timing.startMeasure(filePath, rule.id)
-                    currentSource = rule.execute({
+                    currentSource = await rule.execute({
                         source: currentSource,
                         filename: filePath,
                         params,

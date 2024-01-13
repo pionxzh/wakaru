@@ -1,7 +1,7 @@
 import type { JSCodeshiftTransformationRule } from './jscodeshiftRule'
 import type { StringTransformationRule } from './stringRule'
 import type { ModuleMapping, ModuleMeta } from './types'
-import type { Transform } from 'jscodeshift'
+import type { API, FileInfo, Options } from 'jscodeshift'
 import type { ZodSchema } from 'zod'
 
 export * from './jscodeshiftRule'
@@ -10,6 +10,21 @@ export * from './stringRule'
 export interface SharedParams {
     moduleMapping?: ModuleMapping
     moduleMeta?: ModuleMeta
+}
+
+/**
+ * `Transform` from `jscodeshift`. The type in `jscodeshift` is not accurate,
+ * so we have to re-define it here.
+ *
+ * Async support has been added in https://github.com/facebook/jscodeshift/pull/237
+ */
+export interface JSCodeshiftTransform {
+    /**
+     * If a string is returned and it is different from passed source, the transform is considered to be successful.
+     * If a string is returned but it's the same as the source, the transform is considered to be unsuccessful.
+     * If nothing is returned, the file is not supposed to be transformed (which is ok).
+     */
+    (file: FileInfo, api: API, options: Options): Promise<string | null | undefined | void> | string | null | undefined | void
 }
 
 export interface BaseTransformationRule {
@@ -34,7 +49,7 @@ export interface BaseTransformationRule {
     /**
      * convert to jscodeshift compatible transform
      */
-    toJSCodeshiftTransform(): Transform
+    toJSCodeshiftTransform(): JSCodeshiftTransform
 }
 
 export type TransformationRule<Schema extends ZodSchema = ZodSchema> =
@@ -71,13 +86,13 @@ export class MergedTransformationRule implements BaseTransformationRule {
         this.rules = rules
     }
 
-    toJSCodeshiftTransform(): Transform {
+    toJSCodeshiftTransform(): JSCodeshiftTransform {
         const rules = this.rules
-        return function mergedTransform(file, api, options) {
+        return async function mergedTransform(file, api, options) {
             let source = file.source
             for (const rule of rules) {
                 const transform = rule.toJSCodeshiftTransform()
-                const newResult = transform({ ...file, source }, api, options)
+                const newResult = await transform({ ...file, source }, api, options)
                 if (newResult) source = newResult
             }
             return source

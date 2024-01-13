@@ -1,8 +1,10 @@
-import type { BaseTransformationRule } from './rule'
-import type { Transform } from 'jscodeshift'
+import type { BaseTransformationRule, JSCodeshiftTransform } from './rule'
 import type { ZodSchema, z } from 'zod'
 
-export type StringTransformation<Schema extends ZodSchema = ZodSchema> = (code: string, params: z.infer<Schema>) => string | void
+export type StringTransformation<Schema extends ZodSchema = ZodSchema> = (
+    code: string,
+    params: z.infer<Schema>
+) => Promise<string | void> | string | void
 
 export class StringTransformationRule<Schema extends ZodSchema = ZodSchema> implements BaseTransformationRule {
     type = 'string' as const
@@ -33,7 +35,7 @@ export class StringTransformationRule<Schema extends ZodSchema = ZodSchema> impl
         this.schema = schema
     }
 
-    execute({
+    async execute({
         source, filename, params,
     }: {
         source: string
@@ -41,19 +43,19 @@ export class StringTransformationRule<Schema extends ZodSchema = ZodSchema> impl
         params: z.infer<Schema>
     }) {
         try {
-            return this.transform(source, params)
+            return await this.transform(source, params)
         }
         catch (err: any) {
             console.error(`\nError running rule ${this.name} on ${filename}`, err)
         }
     }
 
-    toJSCodeshiftTransform(): Transform {
-        const transform: Transform = (file, _api, options) => {
+    toJSCodeshiftTransform(): JSCodeshiftTransform {
+        const transform: JSCodeshiftTransform = async (file, _api, options) => {
             const { source } = file
             const params = options as z.infer<Schema>
             try {
-                const newSource = this.transform(source, params)
+                const newSource = await this.transform(source, params)
                 return newSource ?? source
             }
             catch (err) {

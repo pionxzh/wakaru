@@ -18,8 +18,8 @@ const main = async () => {
         title,
         ...([10, 100, 1000, 5000].map((count) => {
             const source = snippet.repeat(count)
-            return add(`items=${count}`, () => {
-                runTransformationRules({ path: '', source }, [title])
+            return add(`items=${count}`, async () => {
+                await runTransformationRules({ path: '', source }, [title])
             })
         })),
         cycle(),

@@ -1,6 +1,6 @@
 import { jscodeshiftWithParser as j, printSourceWithErrorLoc, toSource } from './jscodeshift'
-import type { BaseTransformationRule, SharedParams } from './rule'
-import type { Collection, JSCodeshift, Transform } from 'jscodeshift'
+import type { BaseTransformationRule, JSCodeshiftTransform, SharedParams } from './rule'
+import type { Collection, JSCodeshift } from 'jscodeshift'
 import type { ZodSchema, z } from 'zod'
 
 export interface Context {
@@ -61,8 +61,8 @@ export class JSCodeshiftTransformationRule<Schema extends ZodSchema = ZodSchema>
     /**
      * Generate a jscodeshift compatible transform
      */
-    toJSCodeshiftTransform(): Transform {
-        const transform: Transform = (file, api, options) => {
+    toJSCodeshiftTransform(): JSCodeshiftTransform {
+        const transform: JSCodeshiftTransform = (file, api, options) => {
             const root = api.jscodeshift(file.source)
 
             this.execute({
