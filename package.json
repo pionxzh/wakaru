@@ -43,7 +43,8 @@
     "patchedDependencies": {
       "ast-types@0.16.1": "patches/ast-types@0.16.1.patch",
       "@clack/core@0.3.3": "patches/@clack__core@0.3.3.patch",
-      "@clack/prompts@0.7.0": "patches/@clack__prompts@0.7.0.patch"
+      "@clack/prompts@0.7.0": "patches/@clack__prompts@0.7.0.patch",
+      "recast@0.23.4": "patches/recast@0.23.4.patch"
     }
   },
   "resolutions": {

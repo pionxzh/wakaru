@@ -1,0 +1,17 @@
+diff --git a/lib/util.js b/lib/util.js
+index 2d39d66a0ce21a1608880a27d4e2ad8a39c30850..621a4a44e7944ab1c866ef061b12da656749b07b 100644
+--- a/lib/util.js
++++ b/lib/util.js
+@@ -150,10 +150,10 @@ function expandLoc(parentLoc, childLoc) {
+ function fixFaultyLocations(node, lines) {
+     var loc = node.loc;
+     if (loc) {
+-        if (loc.start.line < 1) {
++        if (loc.start && loc.start.line < 1) {
+             loc.start.line = 1;
+         }
+-        if (loc.end.line < 1) {
++        if (loc.end && loc.end.line < 1) {
+             loc.end.line = 1;
+         }
+     }

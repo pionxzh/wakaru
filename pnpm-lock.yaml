@@ -17,6 +17,9 @@ patchedDependencies:
   ast-types@0.16.1:
     hash: lbcpk3ulhul2sxdbqn4xesbaem
     path: patches/ast-types@0.16.1.patch
+  recast@0.23.4:
+    hash: 23psoaevhjxlssqpbh6odvuj6q
+    path: patches/recast@0.23.4.patch
 
 importers:
 
@@ -7069,7 +7072,7 @@ packages:
       micromatch: 4.0.5
       neo-async: 2.6.2
       node-dir: 0.1.17
-      recast: 0.23.4
+      recast: 0.23.4(patch_hash=23psoaevhjxlssqpbh6odvuj6q)
       temp: 0.8.4
       write-file-atomic: 2.4.3
     transitivePeerDependencies:
@@ -7191,7 +7194,7 @@ packages:
       f-matches: 1.1.0
       glob: 10.3.4
       lodash: 4.17.21
-      recast: 0.23.4
+      recast: 0.23.4(patch_hash=23psoaevhjxlssqpbh6odvuj6q)
     dev: false
 
   /levn@0.4.1:
@@ -8359,7 +8362,7 @@ packages:
       tslib: 2.6.1
     dev: true
 
-  /recast@0.23.4:
+  /recast@0.23.4(patch_hash=23psoaevhjxlssqpbh6odvuj6q):
     resolution: {integrity: sha512-qtEDqIZGVcSZCHniWwZWbRy79Dc6Wp3kT/UmDA2RJKBPg7+7k51aQBZirHmUGn5uvHf2rg8DkjizrN26k61ATw==}
     engines: {node: '>= 4'}
     dependencies:
@@ -8368,6 +8371,7 @@ packages:
       esprima: 4.0.1
       source-map: 0.6.1
       tslib: 2.6.1
+    patched: true
 
   /reflect.getprototypeof@1.0.4:
     resolution: {integrity: sha512-ECkTw8TmJwW60lOTR+ZkODISW6RQ8+2CL3COqtiJKLd6MmB45hN51HprHFziKLGkAuTGQhBb91V8cy+KHlaCjw==}
