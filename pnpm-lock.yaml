@@ -437,6 +437,12 @@ importers:
         specifier: ^3.22.4
         version: 3.22.4
     devDependencies:
+      '@biomejs/js-api':
+        specifier: ^0.5.0
+        version: 0.5.0(@biomejs/wasm-nodejs@1.6.3)
+      '@biomejs/wasm-nodejs':
+        specifier: ^1.6.3
+        version: 1.6.3
       '@types/jscodeshift':
         specifier: ^0.11.11
         version: 0.11.11
@@ -1732,6 +1738,27 @@ packages:
 
   /@bcoe/v8-coverage@0.2.3:
     resolution: {integrity: sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==}
+    dev: true
+
+  /@biomejs/js-api@0.5.0(@biomejs/wasm-nodejs@1.6.3):
+    resolution: {integrity: sha512-H1G29hR7Y1fzVwqIC+7O8kyr/CWa2WNSHEKcAyVX8ams8UCJZyWxIqX50ytzY1BeKnXL5CedULmrXXptP8BZrQ==}
+    peerDependencies:
+      '@biomejs/wasm-bundler': ^1.6.1
+      '@biomejs/wasm-nodejs': ^1.6.1
+      '@biomejs/wasm-web': ^1.6.1
+    peerDependenciesMeta:
+      '@biomejs/wasm-bundler':
+        optional: true
+      '@biomejs/wasm-nodejs':
+        optional: true
+      '@biomejs/wasm-web':
+        optional: true
+    dependencies:
+      '@biomejs/wasm-nodejs': 1.6.3
+    dev: true
+
+  /@biomejs/wasm-nodejs@1.6.3:
+    resolution: {integrity: sha512-QJLAPspAF30Z/tOH/dRW0oKcUHYxIz0eqNM8VxXMKcdyMXPHyEw9PrmPd/aOo32w1wKzCbNutTzfj/Ie07M5yw==}
     dev: true
 
   /@clack/core@0.3.3(patch_hash=azvwdefg3jpdu6aakjan7setyi):
