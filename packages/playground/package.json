@@ -53,6 +53,7 @@
     "os": "^0.1.2",
     "sortablejs": "^1.15.0",
     "splitpanes": "^3.1.5",
+    "threads-es": "^1.0.0",
     "vue": "^3.3.9",
     "vue-codemirror": "^6.1.1",
     "vue-router": "4.2.5"

@@ -13,20 +13,18 @@ import { encodeOption } from '../composables/url'
 import { useModule } from '../composables/useModule'
 import { useModuleMapping } from '../composables/useModuleMapping'
 import { useModuleMeta } from '../composables/useModuleMeta'
-import { useUnminify } from '../composables/useUnminify'
+import { unminify } from '../worker'
+
+const [openSideBar, setOpenSideBar] = useState(false)
 
 const { params: { id } } = useRoute()
 const { module, setModule } = useModule(id as string)
 const { moduleMeta } = useModuleMeta()
 const { moduleMapping } = useModuleMapping()
-
-const [openSideBar, setOpenSideBar] = useState(false)
+const moduleName = computed(() => moduleMapping.value[module.value.id])
 
 const enabledRuleIds = useAtomValue(enabledRuleIdsAtom)
 const disabledRuleIds = useAtomValue(disabledRuleIdsAtom)
-
-const unminify = useUnminify()
-const moduleName = computed(() => moduleMapping.value[module.value.id])
 
 watch([enabledRuleIds, () => module.value.code], async () => {
     const result = await unminify({
@@ -39,7 +37,7 @@ watch([enabledRuleIds, () => module.value.code], async () => {
     setModule({ ...module.value, transformed: result.transformed })
 }, { immediate: true })
 
-const onClick = () => {
+const copySharableUrl = () => {
     const hash = encodeOption({
         code: module.value.code,
         rules: disabledRuleIds.value.length ? disabledRuleIds.value : undefined,
@@ -58,7 +56,7 @@ const onClick = () => {
         <Card class="border-x border-gray-700">
             <template #title>
                 Source
-                <ShareBtn @click="onClick" />
+                <ShareBtn @click="copySharableUrl" />
             </template>
             <div class="w-full">
                 <CodemirrorEditor
