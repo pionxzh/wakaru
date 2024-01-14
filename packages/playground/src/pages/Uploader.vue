@@ -18,9 +18,8 @@ import { decodeHash } from '../composables/url'
 import { useFileIds } from '../composables/useFileIds'
 import { useModuleMapping } from '../composables/useModuleMapping'
 import { useModuleMeta } from '../composables/useModuleMeta'
-import { useUnminify } from '../composables/useUnminify'
-import { useUnpacker } from '../composables/useUnpacker'
 import { KEY_FILE_PREFIX } from '../const'
+import { unminify, unpack } from '../worker'
 import type { TransformedModule } from '../types'
 import type { ModuleMapping, ModuleMeta } from '@wakaru/ast-utils/types'
 
@@ -30,9 +29,6 @@ const route = useRoute()
 const [source] = useState('')
 const [isLoading, setIsLoading] = useState(false)
 const [processedCount, setProcessedCount] = useState(0)
-
-const unpacker = useUnpacker()
-const unminify = useUnminify()
 
 const setDisabledRuleIds = useSetAtom(disabledRuleIdsAtom)
 const { fileIds, setFileIds } = useFileIds()
@@ -87,7 +83,7 @@ async function startUnpack(input: string) {
     reset()
 
     try {
-        const { modules, moduleIdMapping } = await unpacker(input)
+        const { modules, moduleIdMapping } = await unpack(input)
         const unpackedModules = modules.map<TransformedModule>((module) => {
             const { id, isEntry, code, tags } = module
             return {
