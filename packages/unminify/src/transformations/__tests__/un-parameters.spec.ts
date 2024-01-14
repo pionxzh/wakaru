@@ -76,7 +76,7 @@ function foo() {
   var b = arguments.length > 1 ? arguments[1] : undefined;
 }
 `,
-`
+  `
 function foo(a = "foo", b) {}
 `,
 )

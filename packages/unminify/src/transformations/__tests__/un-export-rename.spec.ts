@@ -27,7 +27,7 @@ export function b() {}
 )
 
 inlineTest('merge function expression and export declaration with complex scope',
-`
+  `
 function test() {
     function a() {}
 }
@@ -38,7 +38,7 @@ function a(n) {
 
 export const fib = a;
 `,
-`
+  `
 function test() {
     function a() {}
 }

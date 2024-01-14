@@ -1,8 +1,7 @@
-import { defineInlineTest, defineInlineTestWithOptions } from '@wakaru/test-utils'
+import { defineInlineTest } from '@wakaru/test-utils'
 import transform from '../un-jsx'
 
 const inlineTest = defineInlineTest(transform)
-const inlineTestWithOptions = defineInlineTestWithOptions(transform)
 
 inlineTest('jsx',
   `
@@ -241,18 +240,19 @@ function fn() {
 )
 
 inlineTest('jsx assignment',
-`
+  `
 var div = /*#__PURE__*/React.createElement(Component, {
   ...props,
   foo: "bar"
 });
 `,
-`
+  `
 var div = <Component {...props} foo="bar" />;
 `,
 )
 
-inlineTestWithOptions('jsx with custom pragma', { pragma: 'xxx' },
+inlineTest.withOptions({ pragma: 'xxx' })(
+  'jsx with custom pragma',
   `
 function fn() {
   return xxx("div", null);
@@ -425,10 +425,10 @@ var Baz = () => <div>
 )
 
 inlineTest('Babel: concatenates-adjacent-string-literals',
-`
+  `
 var x = /*#__PURE__*/React.createElement("div", null, "foo", "bar", "baz", /*#__PURE__*/React.createElement("div", null, "buz bang"), "qux", null, "quack");
 `,
-`
+  `
 var x = <div>
   foo
   bar
@@ -441,7 +441,7 @@ var x = <div>
 )
 
 inlineTest('Babel: does-not-add-source-self',
-`
+  `
 var x = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
   key: "1"
 }), /*#__PURE__*/React.createElement("div", {
@@ -454,7 +454,7 @@ var x = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/Reac
   key: "4"
 })));
 `,
-`
+  `
 var x = <>
   <div>
     <div key="1" />
@@ -467,10 +467,10 @@ var x = <>
 )
 
 inlineTest('Babel: dont-coerce-expression-containers',
-`
+  `
 React.createElement(Text, null, "To get started, edit index.ios.js!!!", "\\n", "Press Cmd+R to reload");
 `,
-`
+  `
 <Text>
   To get started, edit index.ios.js!!!
   {"\\n"}
@@ -480,7 +480,7 @@ React.createElement(Text, null, "To get started, edit index.ios.js!!!", "\\n", "
 )
 
 inlineTest('Babel: duplicate-props',
-`
+  `
 /*#__PURE__*/React.createElement("p", {
   prop: true,
   prop: true
@@ -498,7 +498,7 @@ inlineTest('Babel: duplicate-props',
   prop: true
 }, "text");
 `,
-`
+  `
 <p prop prop>text</p>;
 <p prop={prop} prop={prop}>text</p>;
 <p prop prop={prop}>text</p>;
@@ -507,7 +507,7 @@ inlineTest('Babel: duplicate-props',
 )
 
 inlineTest('Babel: flattens-spread',
-`
+  `
 /*#__PURE__*/React.createElement("p", props, "text");
 /*#__PURE__*/React.createElement("div", props, contents);
 /*#__PURE__*/React.createElement("img", {
@@ -526,7 +526,7 @@ inlineTest('Babel: flattens-spread',
   [__proto__]: null
 });
 `,
-`
+  `
 <p {...props}>text</p>;
 <div {...props}>
   {contents}
@@ -547,7 +547,7 @@ inlineTest('Babel: flattens-spread',
 )
 
 inlineTest('Babel: handle-spread-with-proto',
-`
+  `
 /*#__PURE__*/React.createElement("p", {
   ...{
     __proto__: null
@@ -559,7 +559,7 @@ inlineTest('Babel: handle-spread-with-proto',
   }
 }, contents);
 `,
-`
+  `
 <p
   {...{
     __proto__: null
@@ -609,7 +609,8 @@ inlineTest('Babel: should-allow-elements-as-attributes',
 `,
 )
 
-inlineTestWithOptions('Babel: should-allow-pragmaFrag-and-frag', { pragma: 'dom', pragmaFrag: 'DomFrag' },
+inlineTest.withOptions({ pragma: 'dom', pragmaFrag: 'DomFrag' })(
+  'Babel: should-allow-pragmaFrag-and-frag',
   `
 dom(DomFrag, null);
 `,

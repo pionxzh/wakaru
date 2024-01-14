@@ -3,14 +3,14 @@ import { defineInlineTest } from '@wakaru/test-utils'
 import transformAsyncAwait, { transform__awaiter, transform__generator } from '../un-async-await'
 
 const transformAwaiter = createJSCodeshiftTransformationRule({
-    name: 'awaiter',
-    transform: transform__awaiter,
+  name: 'awaiter',
+  transform: transform__awaiter,
 })
 const inlineTestAwaiter = defineInlineTest(transformAwaiter)
 
 const transformGenerator = createJSCodeshiftTransformationRule({
-    name: 'generator',
-    transform: transform__generator,
+  name: 'generator',
+  transform: transform__generator,
 })
 const inlineTestGenerator = defineInlineTest(transformGenerator)
 
@@ -68,7 +68,7 @@ function func() {
   });
 }
 `,
-`
+  `
 function func() {
   return __awaiter(this, void 0, void 0, function*() {
     var result, json;
@@ -83,7 +83,7 @@ function func() {
 
 // cSpell:words trys endfinally
 inlineTestGenerator('restore __generator to yield expression with try/catch/finally',
-`
+  `
 function func(x) {
   return __awaiter(this, void 0, void 0, function () {
     var e_1, e_2;
@@ -145,7 +145,7 @@ function func(x) {
   });
 }
 `,
-`
+  `
 function func(x) {
   return __awaiter(this, void 0, void 0, function*() {
     var e_1, e_2;
@@ -188,7 +188,7 @@ function func(x) {
 
 // conditional control flow
 inlineTestAsyncAwait.todo('[es5-asyncFunctionConditionals.js]',
-`
+  `
 function conditional0() {
   return __awaiter(this, void 0, void 0, function () {
     return __generator(this, function (_a) {
@@ -242,7 +242,7 @@ function conditional2() {
     });
   });
 }`,
-`
+  `
 async function conditional0() {
   a = ((await x)) ? y : z;
 }
@@ -257,7 +257,7 @@ async function conditional2() {
 )
 
 inlineTestAwaiter('restore __awaiter to async/await',
-`
+  `
 function func(x) {
   return __awaiter(this, void 0, void 0, function* () {
     yield 2;
@@ -284,7 +284,7 @@ function func(x) {
   });
 }
 `,
-`
+  `
 async function func(x) {
   await 2;
   try {
@@ -312,7 +312,7 @@ async function func(x) {
 )
 
 inlineTestAsyncAwait('empty async function',
-`
+  `
 function f() {
   return __awaiter(this, void 0, void 0, function () {
     return __generator(this, function (_a) {
@@ -320,12 +320,12 @@ function f() {
     });
   });
 }`,
-`
+  `
 async function f() {}`,
 )
 
 inlineTestAsyncAwait('restore to complete async/await',
-`
+  `
 function func(x) {
   return __awaiter(this, void 0, void 0, function () {
     var e_1, e_2;
@@ -375,7 +375,7 @@ function func(x) {
   });
 }
 `,
-`
+  `
 async function func(x) {
   var e_1, e_2;
   await 2;

@@ -1,77 +1,44 @@
-import { mergeTransformationRule } from '@wakaru/shared/rule'
-import { runInlineTest } from 'jscodeshift/src/testUtils'
-import { it } from 'vitest'
+import { executeTransformationRules } from '@wakaru/shared/runner'
+import { expect, it } from 'vitest'
 import type { TransformationRule } from '@wakaru/shared/rule'
 
-export function defineInlineTestWithOptions(rule: TransformationRule) {
-    return function inlineTest(
-        testName: string,
-        options: any,
-        input: string,
-        expectedOutput: string,
-    ) {
-        it(testName, () => {
-            runInlineTest(
-                rule.toJSCodeshiftTransform(),
-                options,
-                { source: input },
-                expectedOutput,
-                { parser: 'babylon' },
-            )
-        })
-    }
+interface InlineTest {
+    (testName: string, input: string, expected: string): void
 }
 
-type InlineTest = (
-    testName: string,
-    input: string,
-    expectedOutput: string,
-) => void
+type TestModifier = 'skip' | 'only' | 'todo' | 'fails'
 
-/**
- * Wrapper around `jscodeshift`'s `runInlineTest` that allows for a more
- * declarative syntax.
- *
- * - Supports multiple transforms
- * - Supports `skip` and `only` modifiers
- */
 export function defineInlineTest(rules: TransformationRule | TransformationRule[]) {
-    const mergedTransform = Array.isArray(rules)
-        ? mergeTransformationRule(rules.map(rule => rule.name).join(' + '), rules).toJSCodeshiftTransform()
-        : rules.toJSCodeshiftTransform()
-
     function _inlineTest(
-        modifier: 'skip' | 'only' | 'todo' | 'fails' | null,
+        modifier: TestModifier | null,
+        options: any,
         testName: string,
         input: string,
-        expectedOutput: string,
+        expected: string,
     ) {
         const itFn = modifier ? it[modifier] : it
-        itFn(testName, () => {
+        if (!itFn) throw new Error(`Unknown modifier "${modifier}" for test: ${testName}`)
+
+        /**
+         * Capture the stack trace of the test function call so that we can show it in the error
+         */
+        const _error = new Error('_')
+        const testCallStack = _error.stack ? _error.stack.split('\n')[2] : null
+
+        itFn(testName, async () => {
             try {
-                runInlineTest(
-                    mergedTransform,
-                    {},
-                    { source: input, path: `"testName"` },
-                    expectedOutput,
-                    { parser: 'babylon' },
-                )
+                const output = await executeTransformationRules(input, 'test.js', rules, options)
+                expect(output.code.trim().replace(/\r\n/g, '\n'))
+                    .toEqual(expected.trim().replace(/\r\n/g, '\n'))
             }
             catch (err) {
+                console.error('Error in test:', testCallStack)
                 /**
                  * Prevent test utils from showing up in the stack trace.
                  */
                 if (err instanceof Error && err.stack) {
-                    const stack = err.stack
-                    const stacks = stack.split('\n')
-                    const newStacks = stacks.filter((line) => {
-                        const blockList = [
-                            // /@vitest\/runner/,
-                            /test-utils\\src\\index\.ts/,
-                            /jscodeshift\\src\\testUtils\.js/,
-                        ]
-                        return !blockList.some(regex => regex.test(line))
-                    })
+                    const stacks = err.stack.split('\n')
+                    const newStacks = [testCallStack, ...stacks]
                     err.stack = newStacks.join('\n')
                 }
                 throw err
@@ -79,7 +46,18 @@ export function defineInlineTest(rules: TransformationRule | TransformationRule[
         })
     }
 
-    const inlineTest = _inlineTest.bind(null, null) as InlineTest & {
+    const createModifiedFunction = (modifier: TestModifier | null, options: any = {}): InlineTest => {
+        return Object.assign(
+            _inlineTest.bind(null, modifier, options),
+            {
+                withOptions: (newOptions: any) => {
+                    return createModifiedFunction(modifier, newOptions)
+                },
+            },
+        )
+    }
+
+    const inlineTest = createModifiedFunction(null) as InlineTest & {
         /**
          * Use `.skip` to skip a test in a given suite. Consider using `.todo` or `.fixme` instead
          * if those are more appropriate.
@@ -98,12 +76,17 @@ export function defineInlineTest(rules: TransformationRule | TransformationRule[
          * Use `.fixme` when you are writing a test and **expecting** it to fail.
          */
         fixme: InlineTest
+        /**
+         * Use `.withOptions` to pass options to the transformation rules.
+         */
+        withOptions: (options: any) => InlineTest
     }
 
-    inlineTest.skip = _inlineTest.bind(null, 'skip')
-    inlineTest.only = _inlineTest.bind(null, 'only')
-    inlineTest.todo = _inlineTest.bind(null, 'todo')
-    inlineTest.fixme = _inlineTest.bind(null, 'fails')
+    inlineTest.skip = createModifiedFunction('skip')
+    inlineTest.only = createModifiedFunction('only')
+    inlineTest.todo = createModifiedFunction('todo')
+    inlineTest.fixme = createModifiedFunction('fails')
+    inlineTest.withOptions = options => _inlineTest.bind(null, null, options)
 
     return inlineTest
 }

@@ -53,7 +53,7 @@ inlineTest('should keep non-consecutive-concat calls',
   `
 "the".concat(first, " take the ").concat(second, " and ").split(' ').concat(third);
 `,
-`
+  `
 \`the\${first} take the \${second} and \`.split(' ').concat(third);
 `,
 )

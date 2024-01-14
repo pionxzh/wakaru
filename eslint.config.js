@@ -23,6 +23,12 @@ export default pionxzh(
         },
     },
     {
+        files: ['packages/unminify/**/*.spec.ts'],
+        rules: {
+            'style/indent': ['error', 2],
+        },
+    },
+    {
         files: ['examples/**'],
         rules: {
             'no-var': 'off',

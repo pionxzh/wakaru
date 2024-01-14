@@ -58,7 +58,7 @@ class Foo {
 )
 
 inlineTest('Babel loose class declaration',
-`
+  `
 var C = /*#__PURE__*/function () {
   function C() {
     this.field = 1;
@@ -70,7 +70,7 @@ var C = /*#__PURE__*/function () {
   return C;
 }();
 `,
-`
+  `
 class C {
   constructor() {
     this.field = 1;
@@ -83,7 +83,7 @@ class C {
 `)
 
 inlineTest('extend super class',
-`
+  `
 import babelInherits from "@babel/runtime/helpers/inherits";
 
 var BabelSuperClass = /*#__PURE__*/_createClass(function BabelSuperClass() {
@@ -144,7 +144,7 @@ var TsSubClass = /** @class */ (function (_super) {
     return TsSubClass;
 }(TsSuperClass));
 `,
-`
+  `
 var BabelSuperClass = /*#__PURE__*/_createClass(function BabelSuperClass() {
     _classCallCheck(this, BabelSuperClass);
 });
@@ -193,7 +193,7 @@ class TsSubClass extends TsSuperClass {
 `)
 
 inlineTest.todo('ultimate class declaration',
-`
+  `
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -315,7 +315,7 @@ var AdvancedClass = /** @class */ (function () {
     return AdvancedClass;
 }());
 `,
-`
+  `
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -412,7 +412,7 @@ class AdvancedClass {
 )
 
 inlineTest('should not convert to class',
-`
+  `
 var A = (function (p) {
     function A() {
         console.log(p);
@@ -420,7 +420,7 @@ var A = (function (p) {
     return A;
 }(p));
 `,
-`
+  `
 var A = (function (p) {
     function A() {
         console.log(p);

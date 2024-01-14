@@ -290,11 +290,11 @@ do {} while (x && a());
 )
 
 inlineTest('if-else statement with logical expression',
-`
+  `
 if (x) null === state && a();
 else if (y) null !== state && b();
 `,
-`
+  `
 if (x) {
   if (null === state) {
     a();
@@ -308,7 +308,7 @@ if (x) {
 )
 
 inlineTest('switch statement #1',
-`
+  `
 foo == 'bar'
 ? bar()
 : foo == 'baz'
@@ -317,7 +317,7 @@ foo == 'bar'
     ? qux()
     : quux()
 `,
-`
+  `
 switch (foo) {
 case 'bar':
   bar();
@@ -374,14 +374,14 @@ default:
 )
 
 inlineTest('switch statement #3',
-`
+  `
 foo == 'bar'
   ? bar()
   : foo == 'baz'
     ? baz()
     : foo == 'qux' || foo == 'quux' && qux();
 `,
-`
+  `
 switch (foo) {
 case 'bar':
   bar();
@@ -407,7 +407,7 @@ e === 2 || e === 9
   ? baz()
   : fail(e);
 `,
-`
+  `
 switch (e) {
 case 2:
 case 9:

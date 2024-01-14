@@ -1,8 +1,7 @@
-import { defineInlineTest, defineInlineTestWithOptions } from '@wakaru/test-utils'
+import { defineInlineTest } from '@wakaru/test-utils'
 import transform from '../un-esm'
 
 const inlineTest = defineInlineTest(transform)
-const inlineTestOpt = defineInlineTestWithOptions(transform)
 
 inlineTest('imports will be collected, merged and dedupe',
   `
@@ -128,7 +127,7 @@ import "foo";
 )
 
 inlineTest('bare import #2',
-`
+  `
 require('foo');
 require('foo');
 `,
@@ -238,7 +237,8 @@ function fn() {
 `,
 )
 
-inlineTestOpt('require should be hoisted #1', { hoist: true },
+inlineTest.withOptions({ hoist: true })(
+  'require should be hoisted #1',
   `
 function fn() {
   require('foo');
@@ -257,7 +257,8 @@ function fn() {
 `,
 )
 
-inlineTestOpt('require should be hoisted #2', { hoist: true },
+inlineTest.withOptions({ hoist: true })(
+  'require should be hoisted #2',
   `
 function fn() {
   var bar = 1;
@@ -275,7 +276,8 @@ function fn() {
 `,
 )
 
-inlineTestOpt('require should be hoisted #3', { hoist: true },
+inlineTest.withOptions({ hoist: true })(
+  'require should be hoisted #3',
   `
 var bar = 1;
 function fn() {
@@ -293,7 +295,8 @@ function fn() {
 `,
 )
 
-inlineTestOpt('nameless require #1', { hoist: true },
+inlineTest.withOptions({ hoist: true })(
+  'nameless require #1',
   `
 var foo = require("bar")("baz");
 var buz = require("bar").bar("baz");
@@ -305,7 +308,8 @@ var buz = bar.bar("baz");
 `,
 )
 
-inlineTestOpt('nameless require #2', { hoist: true },
+inlineTest.withOptions({ hoist: true })(
+  'nameless require #2',
   `
 var foo = require("foo")("baz");
 var buz = require("foo").bar("baz");
@@ -665,7 +669,8 @@ module["exports"] = 1;
  * ```js
  * export { default as foo } from "bar";
  */
-inlineTestOpt('export with require #1', { hoist: true },
+inlineTest.withOptions({ hoist: true })(
+  'export with require #1',
   `
 module.exports.foo = require('bar');
 `,
@@ -674,8 +679,8 @@ import bar from "bar";
 export const foo = bar;
 `,
 )
-
-inlineTestOpt('export with require #2', { hoist: true },
+inlineTest.withOptions({ hoist: true })(
+  'export with require #2',
   `
 module.exports = require('bar');
 `,
@@ -685,7 +690,8 @@ export default bar;
 `,
 )
 
-inlineTestOpt('export with require #3', { hoist: true },
+inlineTest.withOptions({ hoist: true })(
+  'export with require #3',
   `
 var bar = 1;
 module.exports = require('bar');
@@ -701,7 +707,8 @@ export default bar$0;
  * TODO: Not sure where to merge the short-hand property
  * Should be a new rule to handle this
  */
-inlineTestOpt('export with require #4', { hoist: true },
+inlineTest.withOptions({ hoist: true })(
+  'export with require #4',
   `
 module.exports = {
   encode: require('encode'),
