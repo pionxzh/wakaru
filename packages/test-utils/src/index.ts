@@ -32,7 +32,6 @@ export function defineInlineTest(rules: TransformationRule | TransformationRule[
                     .toEqual(expected.trim().replace(/\r\n/g, '\n'))
             }
             catch (err) {
-                console.error('Error in test:', testCallStack)
                 /**
                  * Prevent test utils from showing up in the stack trace.
                  */
