@@ -37,6 +37,9 @@ enum Feature {
     Unminify = 'Unminify',
 }
 
+const INPUT_SIZE_WARNING = 1024 * 1024 * 5 // 5MB
+const INPUT_SIZE_WARNING_MESSAGE = (filename: string) => `The size of the input file ${c.cyan(filename)} exceeds ${INPUT_SIZE_WARNING / 1024 / 1024}MB. Processing might take longer and consume more memory than usual. In case of an 'Out of Memory' error, consider increasing the maximum old space size by setting the ${c.green('--max-old-space-size')} environment variable.`
+
 const defaultOutputBase = './out/'
 const defaultUnpackerOutputFolder = 'unpack'
 const defaultUnminifyOutputFolder = 'unminify'
@@ -271,6 +274,14 @@ async function interactive({
         }
         _overwrite = true
 
+        for (const inputPath of inputPaths) {
+            const fileSize = fsa.statSync(inputPath).size
+            console.log('fileSize', fileSize)
+            if (fileSize > INPUT_SIZE_WARNING) {
+                log.warning(INPUT_SIZE_WARNING_MESSAGE(path.relative(cwd, inputPath)))
+            }
+        }
+
         const items: UnpackerItem[] = []
         const stopTiming = timing.start()
         for (const inputPath of inputPaths) {
@@ -375,6 +386,13 @@ async function interactive({
             if (!overwrite) {
                 cancel('Output directory already exists')
                 return process.exit(1)
+            }
+        }
+
+        for (const inputPath of unminifyInputPaths) {
+            const fileSize = fsa.statSync(inputPath).size
+            if (fileSize > INPUT_SIZE_WARNING) {
+                log.warning(INPUT_SIZE_WARNING_MESSAGE(path.relative(cwd, inputPath)))
             }
         }
 
@@ -504,6 +522,14 @@ async function nonInteractive(features: Feature[], {
         const outputPath = path.resolve(unpackerOutput)
         const relativeOutputPath = getRelativePath(cwd, outputPath)
 
+        for (const inputPath of inputPaths) {
+            const fileSize = fsa.statSync(inputPath).size
+            console.log('fileSize', fileSize)
+            if (fileSize > INPUT_SIZE_WARNING) {
+                log.warning(INPUT_SIZE_WARNING_MESSAGE(path.relative(cwd, inputPath)))
+            }
+        }
+
         const items: UnpackerItem[] = []
         const stopTiming = timing.start()
         for (const inputPath of inputPaths) {
@@ -549,6 +575,14 @@ async function nonInteractive(features: Feature[], {
 
         const outputDir = path.resolve(unminifyOutput)
         const relativeOutputPath = getRelativePath(cwd, outputDir)
+
+        for (const inputPath of unminifyInputPaths) {
+            const fileSize = fsa.statSync(inputPath).size
+            console.log('fileSize', fileSize)
+            if (fileSize > INPUT_SIZE_WARNING) {
+                log.warning(INPUT_SIZE_WARNING_MESSAGE(path.relative(cwd, inputPath)))
+            }
+        }
 
         log.step(`Unminifying... ${c.dim(`(concurrency: ${concurrency})`)}`)
 
