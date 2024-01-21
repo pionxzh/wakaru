@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.4](https://github.com/pionxzh/wakaru/compare/unminify-v0.1.3...unminify-v0.1.4) (2024-01-21)
+
+
+### Features
+
+* support async transformation ([9e37839](https://github.com/pionxzh/wakaru/commit/9e37839a731f492cf7719f4a66e8feced975fc66))
+
+
+### Bug Fixes
+
+* bump `lebab` to 3.2.4 ([fb1df55](https://github.com/pionxzh/wakaru/commit/fb1df556a3af22d77ff0e7d1a75ff9480d638e1a))
+
 ## [0.1.3](https://github.com/pionxzh/wakaru/compare/unminify-v0.1.2...unminify-v0.1.3) (2024-01-09)
 
 

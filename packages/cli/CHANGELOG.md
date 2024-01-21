@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.7](https://github.com/pionxzh/wakaru/compare/cli-v0.0.6...cli-v0.0.7) (2024-01-21)
+
+
+### Features
+
+* **cli:** add file size checker and warning ([f76be29](https://github.com/pionxzh/wakaru/commit/f76be2928146031d00a35529052e516c3f5ea47a))
+* support async transformation ([9e37839](https://github.com/pionxzh/wakaru/commit/9e37839a731f492cf7719f4a66e8feced975fc66))
+
 ## [0.0.6](https://github.com/pionxzh/wakaru/compare/cli-v0.0.5...cli-v0.0.6) (2024-01-09)
 
 
