@@ -21,6 +21,9 @@ import { SharedDataVersion } from '../const'
 import { unpack } from '../worker'
 import type { TransformedModule } from '../types'
 
+const INPUT_SIZE_WARNING = 1024 * 1024 * 5 // 5MB
+const INPUT_SIZE_WARNING_MESSAGE = `The input file size exceeds ${INPUT_SIZE_WARNING / 1024 / 1024}MB. Processing may take longer and consume more memory than usual. If you experience an 'Out of Memory' error, please consider using the CLI for better performance.`
+
 const route = useRoute()
 const router = useRouter()
 
@@ -60,7 +63,16 @@ function onUpload(file: File) {
     const reader = new FileReader()
     reader.onload = (event) => {
         const scriptContent = event.target?.result
-        if (!scriptContent || typeof scriptContent !== 'string') return
+        if (!scriptContent || typeof scriptContent !== 'string') {
+            // eslint-disable-next-line no-alert
+            alert('Invalid file content')
+            return
+        }
+
+        if (file.size > INPUT_SIZE_WARNING) {
+            // eslint-disable-next-line no-alert
+            alert(INPUT_SIZE_WARNING_MESSAGE)
+        }
 
         resetModules()
         startUnpack(scriptContent)
