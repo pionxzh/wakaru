@@ -1,38 +1,29 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { useAtom, useAtomValue } from 'jotai-vue'
+import { moduleMappingAtom, modulesAtom } from '../atoms/module'
 import useState from '../composables/shared/useState'
-import { useFileIds } from '../composables/useFileIds'
-import { useModuleMapping } from '../composables/useModuleMapping'
 import InputBox from './InputBox.vue'
 import Separator from './Separator.vue'
 
 type FileId = number | string
 
-const [editingFileId, useEditingFileId] = useState<FileId>(-1)
-const { fileIds } = useFileIds()
-const { moduleMapping } = useModuleMapping()
-
-const files = computed(() => {
-    return fileIds.value.map((id) => {
-        return {
-            id,
-            name: moduleMapping.value[id] ?? `modules-${id}.js`,
-        }
-    })
-})
+const modules = useAtomValue(modulesAtom)
+const [moduleMapping, setModuleMapping] = useAtom(moduleMappingAtom)
+const [editingFileId, setEditingFileId] = useState<FileId>(-1)
 
 function cancelRename() {
-    useEditingFileId(-1)
+    setEditingFileId(-1)
 }
 
 function rename(fileId: FileId, e: Event) {
-    useEditingFileId(-1)
+    setEditingFileId(-1)
+
     const newName = (e.target as HTMLInputElement).value
     if (newName && newName !== moduleMapping.value[fileId]) {
-        moduleMapping.value = {
+        setModuleMapping({
             ...moduleMapping.value,
             [fileId]: newName,
-        }
+        })
     }
 }
 </script>
@@ -83,32 +74,32 @@ function rename(fileId: FileId, e: Event) {
             <Separator class="px-3" />
 
             <li
-                v-for="file in files"
-                :key="file.id"
-                :title="file.name"
+                v-for="mod in modules"
+                :key="mod.id"
+                :title="mod.name"
                 class="cursor-pointer"
-                @dblclick="editingFileId = file.id"
+                @dblclick="editingFileId = mod.id"
             >
                 <router-link
-                    :to="{ name: 'file', params: { id: file.id } }"
+                    :to="{ name: 'file', params: { id: mod.id } }"
                     class="flex items-center pl-6 pr-2 py-1 w-full text-base font-normal transition duration-75
                     text-gray-900 dark:text-white
                     hover:bg-gray-200 dark:hover:bg-gray-700"
-                    :class="{ 'bg-gray-100 dark:bg-gray-700': editingFileId === file.id }"
+                    :class="{ 'bg-gray-100 dark:bg-gray-700': editingFileId === mod.id }"
                     exact-active-class="active bg-gray-100 dark:bg-gray-700"
                 >
                     <FontAwesomeIcon
-                        v-if="file.name === 'package.json'"
+                        v-if="mod.name === 'package.json'"
                         icon="fa-brands fa-npm"
                         class="flex-shrink-0 w-5 h-5 text-gray-500 dark:text-gray-400"
                     />
                     <FontAwesomeIcon
-                        v-if="file.name.endsWith('.json')"
+                        v-if="mod.name.endsWith('.json')"
                         icon="fa-solid fa-file-code"
                         class="flex-shrink-0 w-5 h-5 text-gray-500 dark:text-gray-400"
                     />
                     <FontAwesomeIcon
-                        v-if="file.name.endsWith('.js')"
+                        v-if="mod.name.endsWith('.js')"
                         icon="fa-brands fa-js"
                         class="flex-shrink-0 w-5 h-5 text-gray-500 dark:text-gray-400"
                     />
@@ -117,25 +108,25 @@ function rename(fileId: FileId, e: Event) {
                         icon="fa-solid fa-code"
                         class="flex-shrink-0 w-5 h-5 text-gray-500 dark:text-gray-400"
                     />
-                    <template v-if="editingFileId === file.id">
+                    <template v-if="editingFileId === mod.id">
                         <div
                             class="absolute w-full h-full left-0 right-0 top-0 bottom-0 z-0 cursor-default
                             bg-gray-800 dark:bg-black
                             bg-opacity-20 dark:opacity-50"
                         />
                         <InputBox
-                            :model-value="file.name"
+                            :model-value="mod.name"
                             auto-select
                             class="flex-1 ml-2 text-left whitespace-nowrap z-10
                             bg-white dark:bg-gray-900
                             border border-gray-300 dark:border-gray-700"
-                            @keyup.enter="rename(file.id, $event)"
+                            @keyup.enter="rename(mod.id, $event)"
                             @keyup.esc="cancelRename"
-                            @blur="rename(file.id, $event)"
+                            @blur="rename(mod.id, $event)"
                         />
                     </template>
                     <span v-else class="flex-1 ml-2 text-left whitespace-nowrap">
-                        {{ file.name }}
+                        {{ mod.name }}
                     </span>
                 </router-link>
             </li>
