@@ -292,10 +292,13 @@ importers:
         version: 10.6.1(vue@3.3.9)
       '@vueuse/integrations':
         specifier: ^10.6.1
-        version: 10.6.1(sortablejs@1.15.0)(vue@3.3.9)
+        version: 10.6.1(idb-keyval@6.2.1)(sortablejs@1.15.0)(vue@3.3.9)
       '@wakaru/ast-utils':
         specifier: workspace:*
         version: link:../ast-utils
+      '@wakaru/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@wakaru/unminify':
         specifier: workspace:*
         version: link:../unminify
@@ -311,6 +314,9 @@ importers:
       fflate:
         specifier: ^0.8.1
         version: 0.8.1
+      idb-keyval:
+        specifier: ^6.2.1
+        version: 6.2.1
       jotai:
         specifier: ^2.6.0
         version: 2.6.0(@types/react@18.2.38)(react@18.2.0)
@@ -4642,7 +4648,7 @@ packages:
       - vue
     dev: false
 
-  /@vueuse/integrations@10.6.1(sortablejs@1.15.0)(vue@3.3.9):
+  /@vueuse/integrations@10.6.1(idb-keyval@6.2.1)(sortablejs@1.15.0)(vue@3.3.9):
     resolution: {integrity: sha512-mPDupuofMJ4DPmtX/FfP1MajmWRzYDv8WSaTCo8LQ5kFznjWgmUQ16ApjYqgMquqffNY6+IRMdMgosLDRZOSZA==}
     peerDependencies:
       async-validator: '*'
@@ -4685,6 +4691,7 @@ packages:
     dependencies:
       '@vueuse/core': 10.6.1(vue@3.3.9)
       '@vueuse/shared': 10.6.1(vue@3.3.9)
+      idb-keyval: 6.2.1
       sortablejs: 1.15.0
       vue-demi: 0.14.6(vue@3.3.9)
     transitivePeerDependencies:
@@ -6644,6 +6651,10 @@ packages:
       safer-buffer: 2.1.2
     dev: true
     optional: true
+
+  /idb-keyval@6.2.1:
+    resolution: {integrity: sha512-8Sb3veuYCyrZL+VBt9LJfZjLUPWVvqn8tG28VqYNFCo43KHcKuq+b4EiXGeuaLAQWL2YmyDgMp2aSpH9JHsEQg==}
+    dev: false
 
   /ignore-walk@6.0.3:
     resolution: {integrity: sha512-C7FfFoTA+bI10qfeydT8aZbvr91vAEU+2W5BZUlzPec47oNb07SsOfwYrtxuvOYdUApPP/Qlh4DtAO51Ekk2QA==}

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Header from './components/Header.vue'
 import SideBar from './components/SideBar.vue'
+import Main from './Main.vue'
 </script>
 
 <template>
@@ -9,9 +10,9 @@ import SideBar from './components/SideBar.vue'
 
         <div>
             <SideBar />
-            <main style="height: calc(100vh - 4rem); padding-left: 16rem;">
-                <router-view :key="$route.path" />
-            </main>
+            <Suspense>
+                <Main />
+            </Suspense>
         </div>
     </div>
 </template>

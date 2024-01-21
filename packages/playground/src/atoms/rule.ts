@@ -3,6 +3,12 @@ import { atomWithStorage } from 'jotai/utils'
 import { atom } from 'jotai/vanilla'
 import { KEY_DISABLED_RULES, KEY_RULE_ORDER } from '../const'
 
+export const prettifyRules = [
+    'un-sequence-expression1',
+    'un-variable-merging',
+    'prettier',
+]
+
 export const allRulesAtom = atom(() => transformationRules)
 
 export const ruleOrderAtom = atomWithStorage<string[]>(KEY_RULE_ORDER, transformationRules.map(rule => rule.id))

@@ -25,6 +25,7 @@ function atou(base64: string): string {
 }
 
 interface DecodedOptions {
+    version?: number
     code?: string
     rules?: string[]
     mapping?: ModuleMapping

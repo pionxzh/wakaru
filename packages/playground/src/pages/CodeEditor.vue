@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { TransitionRoot } from '@headlessui/vue'
-import { useAtomValue } from 'jotai-vue'
-import { computed, toRaw, watch } from 'vue'
+import { watchDebounced } from '@vueuse/core'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai-vue'
 import { useRoute } from 'vue-router'
+import { getModuleAtom, moduleMappingAtom, moduleMetaAtom, unminifyModuleAtom } from '../atoms/module'
 import { disabledRuleIdsAtom, enabledRuleIdsAtom } from '../atoms/rule'
 import Card from '../components/Card.vue'
 import CodemirrorEditor from '../components/CodemirrorEditor.vue'
@@ -10,35 +11,30 @@ import RuleList from '../components/RuleList.vue'
 import ShareBtn from '../components/ShareBtn.vue'
 import useState from '../composables/shared/useState'
 import { encodeOption } from '../composables/url'
-import { useModule } from '../composables/useModule'
-import { useModuleMapping } from '../composables/useModuleMapping'
-import { useModuleMeta } from '../composables/useModuleMeta'
-import { unminify } from '../worker'
+import { SharedDataVersion } from '../const'
 
 const [openSideBar, setOpenSideBar] = useState(false)
 
 const { params: { id } } = useRoute()
-const { module, setModule } = useModule(id as string)
-const { moduleMeta } = useModuleMeta()
-const { moduleMapping } = useModuleMapping()
-const moduleName = computed(() => moduleMapping.value[module.value.id])
+const moduleAtom = getModuleAtom(id as string)
+const [module, setModule] = useAtom(moduleAtom)
+const moduleMeta = useAtomValue(moduleMetaAtom)
+const moduleMapping = useAtomValue(moduleMappingAtom)
 
 const enabledRuleIds = useAtomValue(enabledRuleIdsAtom)
 const disabledRuleIds = useAtomValue(disabledRuleIdsAtom)
 
-watch([enabledRuleIds, () => module.value.code], async () => {
-    const result = await unminify({
-        name: moduleName.value,
-        module: module.value,
-        transformationRuleIds: toRaw(enabledRuleIds.value),
-        moduleMeta: moduleMeta.value,
-        moduleMapping: moduleMapping.value,
-    })
-    setModule({ ...module.value, transformed: result.transformed })
-}, { immediate: true })
+const unminifyModule = useSetAtom(unminifyModuleAtom)
+
+watchDebounced(
+    [enabledRuleIds, () => module.value?.code],
+    () => unminifyModule(moduleAtom),
+    { immediate: true, debounce: 500 },
+)
 
 const copySharableUrl = () => {
     const hash = encodeOption({
+        version: SharedDataVersion,
         code: module.value.code,
         rules: disabledRuleIds.value.length ? disabledRuleIds.value : undefined,
         mapping: moduleMapping.value,
@@ -64,7 +60,7 @@ const copySharableUrl = () => {
                     :style="{
                         height: 'calc(100vh - 9rem);',
                     }"
-                    @update:model-value="setModule({ ...module, code: $event })"
+                    @update:model-value="setModule({ code: $event })"
                 />
             </div>
         </Card>

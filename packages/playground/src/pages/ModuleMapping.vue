@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import { useAtom } from 'jotai-vue'
 import { ref, watch } from 'vue'
+import { moduleMappingAtom } from '../atoms/module'
 import Card from '../components/Card.vue'
 import CodemirrorEditor from '../components/CodemirrorEditor.vue'
-import { useModuleMapping } from '../composables/useModuleMapping'
 
-const { moduleMapping, setModuleMapping } = useModuleMapping()
+const [moduleMapping, setModuleMapping] = useAtom(moduleMappingAtom)
 const code = ref(JSON.stringify(moduleMapping.value, null, 2))
 
 watch(code, (value) => {
@@ -13,6 +14,7 @@ watch(code, (value) => {
     }
     catch (e) {
         console.error(e)
+        // TODO: hint user that the JSON is invalid
     }
 })
 </script>
