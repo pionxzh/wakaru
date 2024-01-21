@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.8](https://github.com/pionxzh/wakaru/compare/cli-v0.0.7...cli-v0.0.8) (2024-01-21)
+
+
+### Bug Fixes
+
+* **cli:** remove debug log ([627870c](https://github.com/pionxzh/wakaru/commit/627870cbc7fff7ecbb030566d6c7377e2b5c5018))
+
 ## [0.0.7](https://github.com/pionxzh/wakaru/compare/cli-v0.0.6...cli-v0.0.7) (2024-01-21)
 
 
