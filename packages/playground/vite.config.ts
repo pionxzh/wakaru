@@ -6,6 +6,12 @@ import { defineConfig } from 'vite'
 export default defineConfig({
     plugins: [vue()],
     build: {
+        target: [
+            'chrome89',
+            'edge89',
+            'firefox89',
+            'safari15',
+        ],
         rollupOptions: {
             input: {
                 main: path.resolve(__dirname, 'index.html'),
