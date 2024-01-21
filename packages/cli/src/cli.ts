@@ -276,7 +276,6 @@ async function interactive({
 
         for (const inputPath of inputPaths) {
             const fileSize = fsa.statSync(inputPath).size
-            console.log('fileSize', fileSize)
             if (fileSize > INPUT_SIZE_WARNING) {
                 log.warning(INPUT_SIZE_WARNING_MESSAGE(path.relative(cwd, inputPath)))
             }
@@ -524,7 +523,6 @@ async function nonInteractive(features: Feature[], {
 
         for (const inputPath of inputPaths) {
             const fileSize = fsa.statSync(inputPath).size
-            console.log('fileSize', fileSize)
             if (fileSize > INPUT_SIZE_WARNING) {
                 log.warning(INPUT_SIZE_WARNING_MESSAGE(path.relative(cwd, inputPath)))
             }
@@ -578,7 +576,6 @@ async function nonInteractive(features: Feature[], {
 
         for (const inputPath of unminifyInputPaths) {
             const fileSize = fsa.statSync(inputPath).size
-            console.log('fileSize', fileSize)
             if (fileSize > INPUT_SIZE_WARNING) {
                 log.warning(INPUT_SIZE_WARNING_MESSAGE(path.relative(cwd, inputPath)))
             }
