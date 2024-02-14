@@ -3,7 +3,7 @@
   "type": "module",
   "version": "0.0.1",
   "private": true,
-  "packageManager": "pnpm@8.8.0",
+  "packageManager": "pnpm@8.15.2",
   "author": "Pionxzh",
   "license": "MIT",
   "scripts": {
