@@ -29,7 +29,6 @@ export default defineConfig({
     },
     define: {
         'process.env.NODE_DEBUG': undefined,
-        'typeof window !== "undefined" && typeof window.document !== "undefined"': true,
     },
     resolve: {
         alias: {

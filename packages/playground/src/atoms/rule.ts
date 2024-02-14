@@ -1,6 +1,6 @@
 import { transformationRules } from '@wakaru/unminify'
-import { atomWithStorage } from 'jotai/utils'
 import { atom } from 'jotai/vanilla'
+import { atomWithStorage } from 'jotai/vanilla/utils'
 import { KEY_DISABLED_RULES, KEY_RULE_ORDER } from '../const'
 
 export const prettifyRules = [
