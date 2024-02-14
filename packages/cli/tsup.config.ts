@@ -8,12 +8,12 @@ export default defineConfig({
     shims: true,
     dts: false,
     splitting: true,
-    sourcemap: true,
+    sourcemap: false,
     clean: true,
     define: {
         'process.env.NODE_DEBUG': 'undefined',
     },
-    // minify: true,
+    minify: true,
     noExternal: [
         'jscodeshift',
         'ast-types',
