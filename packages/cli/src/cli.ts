@@ -400,7 +400,8 @@ async function interactive({
         const s = spinner()
         s.start('...')
 
-        const pool = new FixedThreadPool<UnminifyWorkerParams, Timing | null>(concurrency, unminifyWorkerFile)
+        const poolSize = Math.min(concurrency, unminifyInputPaths.length)
+        const pool = new FixedThreadPool<UnminifyWorkerParams, Timing | null>(poolSize, unminifyWorkerFile)
         const unminify = async (inputPath: string) => {
             const outputPath = path.join(outputDir, path.relative(commonBaseDir, inputPath))
             const result = await pool.execute({ inputPath, outputPath, moduleMeta, moduleMapping })
@@ -586,7 +587,8 @@ async function nonInteractive(features: Feature[], {
         const s = spinner()
         s.start('...')
 
-        const pool = new FixedThreadPool<UnminifyWorkerParams, Timing | null>(concurrency, unminifyWorkerFile)
+        const poolSize = Math.min(concurrency, unminifyInputPaths.length)
+        const pool = new FixedThreadPool<UnminifyWorkerParams, Timing | null>(poolSize, unminifyWorkerFile)
         const unminify = async (inputPath: string) => {
             const outputPath = path.join(outputDir, path.relative(commonBaseDir, inputPath))
             const result = await pool.execute({ inputPath, outputPath, moduleMeta, moduleMapping })
