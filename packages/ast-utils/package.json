@@ -42,13 +42,13 @@
   },
   "devDependencies": {
     "@babel/helper-validator-identifier": "^7.22.20",
-    "@babel/types": "^7.23.4",
+    "@babel/types": "^7.23.9",
     "@types/jscodeshift": "^0.11.11",
     "@wakaru/ds": "workspace:*",
     "@wakaru/shared": "workspace:*",
     "@wakaru/test-utils": "workspace:*",
     "ast-types": "^0.16.1",
     "jscodeshift": "^0.15.1",
-    "typescript": "^5.3.2"
+    "typescript": "^5.3.3"
   }
 }
