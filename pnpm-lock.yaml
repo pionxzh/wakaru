@@ -102,6 +102,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@ast-grep/napi':
+        specifier: ^0.18.1
+        version: 0.18.1
       fs-extra:
         specifier: ^11.2.0
         version: 11.2.0
@@ -570,7 +573,6 @@ packages:
     cpu: [arm64]
     os: [darwin]
     requiresBuild: true
-    dev: true
     optional: true
 
   /@ast-grep/napi-darwin-x64@0.18.1:
@@ -579,7 +581,6 @@ packages:
     cpu: [x64]
     os: [darwin]
     requiresBuild: true
-    dev: true
     optional: true
 
   /@ast-grep/napi-linux-arm64-gnu@0.18.1:
@@ -588,7 +589,6 @@ packages:
     cpu: [arm64]
     os: [linux]
     requiresBuild: true
-    dev: true
     optional: true
 
   /@ast-grep/napi-linux-x64-gnu@0.18.1:
@@ -597,7 +597,6 @@ packages:
     cpu: [x64]
     os: [linux]
     requiresBuild: true
-    dev: true
     optional: true
 
   /@ast-grep/napi-win32-arm64-msvc@0.18.1:
@@ -606,7 +605,6 @@ packages:
     cpu: [arm64]
     os: [win32]
     requiresBuild: true
-    dev: true
     optional: true
 
   /@ast-grep/napi-win32-ia32-msvc@0.18.1:
@@ -615,7 +613,6 @@ packages:
     cpu: [ia32]
     os: [win32]
     requiresBuild: true
-    dev: true
     optional: true
 
   /@ast-grep/napi-win32-x64-msvc@0.18.1:
@@ -624,7 +621,6 @@ packages:
     cpu: [x64]
     os: [win32]
     requiresBuild: true
-    dev: true
     optional: true
 
   /@ast-grep/napi@0.18.1:
@@ -638,7 +634,6 @@ packages:
       '@ast-grep/napi-win32-arm64-msvc': 0.18.1
       '@ast-grep/napi-win32-ia32-msvc': 0.18.1
       '@ast-grep/napi-win32-x64-msvc': 0.18.1
-    dev: true
 
   /@babel/code-frame@7.23.5:
     resolution: {integrity: sha512-CgH3s1a96LipHCmSUmYFPwY7MNx8C3avkq7i4Wl3cfa662ldtUe4VM1TPXX70pfmrlWTb6jLqTYrZyT2ZTJBgA==}

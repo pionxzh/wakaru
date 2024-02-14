@@ -1,6 +1,6 @@
 import { nonNullable } from '@wakaru/shared/array'
 import { executeTransformationRules } from '@wakaru/shared/runner'
-import { transformationRules } from './transformations'
+import { transformationRules } from './transformations/node'
 import type { FileInfo } from 'jscodeshift'
 
 export { transformationRules, transformationRuleIds } from './transformations'

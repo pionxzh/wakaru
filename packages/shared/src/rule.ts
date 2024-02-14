@@ -5,7 +5,6 @@ import type { ModuleMapping, ModuleMeta } from './types'
 import type { API, FileInfo, Options } from 'jscodeshift'
 import type { ZodSchema } from 'zod'
 
-export * from './astGrepRule'
 export * from './jscodeshiftRule'
 export * from './stringRule'
 

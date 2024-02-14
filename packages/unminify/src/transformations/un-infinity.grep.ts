@@ -1,4 +1,4 @@
-import { createAstGrepTransformationRule } from '@wakaru/shared/rule'
+import { createAstGrepTransformationRule } from '@wakaru/shared/astGrepRule'
 
 /**
  * Converts `1 / 0` to `Infinity`.

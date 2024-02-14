@@ -1,11 +1,9 @@
 /* eslint-disable no-console */
-import { runTransformationRules, transformationRulesForCLI } from '@wakaru/unminify'
+import { runTransformationRules, transformationRuleIds } from '@wakaru/unminify/nodejs'
 import fsa from 'fs-extra'
 import { ThreadWorker } from 'poolifier'
 import type { UnminifyWorkerParams } from './types'
 import type { Timing } from '@wakaru/shared/timing'
-
-const ruleIds = transformationRulesForCLI.map(rule => rule.id)
 
 export async function unminify(data?: UnminifyWorkerParams) {
     if (!data) throw new Error('No data received')
@@ -15,7 +13,7 @@ export async function unminify(data?: UnminifyWorkerParams) {
         const source = await fsa.readFile(inputPath, 'utf-8')
         const fileInfo = { path: inputPath, source }
 
-        const { code, timing } = await runTransformationRules(fileInfo, ruleIds, { moduleMeta, moduleMapping })
+        const { code, timing } = await runTransformationRules(fileInfo, transformationRuleIds, { moduleMeta, moduleMapping })
         await fsa.ensureFile(outputPath)
         await fsa.writeFile(outputPath, code, 'utf-8')
 

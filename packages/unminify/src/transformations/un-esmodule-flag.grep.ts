@@ -1,4 +1,4 @@
-import { createAstGrepTransformationRule } from '@wakaru/shared/rule'
+import { createAstGrepTransformationRule } from '@wakaru/shared/astGrepRule'
 
 /**
  * Removes the `__esModule` flag from the module.

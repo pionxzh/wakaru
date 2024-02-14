@@ -1,4 +1,4 @@
-import { createAstGrepTransformationRule } from '@wakaru/shared/rule'
+import { createAstGrepTransformationRule } from '@wakaru/shared/astGrepRule'
 
 /**
  * Converts minified `boolean` to simple `true`/`false`.
