@@ -32,6 +32,7 @@ export default defineConfig({
     },
     resolve: {
         alias: {
+            'os': 'rollup-plugin-node-polyfills/polyfills/os',
             'constants': 'rollup-plugin-node-polyfills/polyfills/constants',
             '@wakaru/unminify': path.resolve(__dirname, '../unminify/src/index.ts'),
             '@wakaru/unpacker': path.resolve(__dirname, '../unpacker/src/index.ts'),
