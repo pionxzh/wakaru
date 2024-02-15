@@ -16,6 +16,21 @@ import bar from "foo";
 `,
 )
 
+inlineTest('imports will be kept normally',
+  `
+import "foo";
+import bar from "bar";
+import { baz } from "baz";
+import * as qux from "qux";
+`,
+  `
+import "foo";
+import bar from "bar";
+import { baz } from "baz";
+import * as qux from "qux";
+`,
+)
+
 inlineTest('require to import',
   `
 var foo = require('foo');

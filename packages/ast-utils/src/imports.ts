@@ -168,7 +168,7 @@ export class ImportManager {
                 const sourceValue = source.value
                 this.addImportOrder(sourceValue)
 
-                if (!specifiers) {
+                if (!specifiers || specifiers.length === 0) {
                     this.addBareImport(sourceValue)
                     this.importDecls.push(path)
                     return
