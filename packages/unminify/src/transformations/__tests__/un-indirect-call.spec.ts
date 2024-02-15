@@ -20,6 +20,8 @@ inlineTest('multiple indirect call from different sources',
   `
 import s from "react";
 import t from "another";
+import randomUnusedImport from "third";
+import sameSourceUnusedImport from "react";
 
 var countRef = (0, s.useRef)(0);
 var secondRef = (0, t.useRef)(0);
@@ -28,6 +30,7 @@ var thirdRef = (0, t.useRef)(0);
   `
 import { useRef } from "react";
 import { useRef as useRef$0 } from "another";
+import randomUnusedImport from "third";
 
 var countRef = useRef(0);
 var secondRef = useRef$0(0);

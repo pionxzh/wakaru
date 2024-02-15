@@ -47,6 +47,8 @@ export const transformAST: ASTTransformation = (context) => {
      */
     const replaceMapping = new Map<string, string>()
 
+    const processedImportSources = new Set<string>()
+
     root
         .find(j.CallExpression, {
             callee: {
@@ -109,6 +111,7 @@ export const transformAST: ASTTransformation = (context) => {
                 const namedSpecifierLocalName = generateName(namedSpecifierName, rootScope, importManager.getAllLocals())
                 importManager.addNamedImport(source, namedSpecifierName, namedSpecifierLocalName)
                 replaceMapping.set(key, namedSpecifierLocalName)
+                processedImportSources.add(source)
 
                 const newCallExpression = j.callExpression(j.identifier(namedSpecifierLocalName), node.arguments)
                 path.replace(newCallExpression)
@@ -222,10 +225,12 @@ export const transformAST: ASTTransformation = (context) => {
 
     importManager.applyImportToRoot(j, root)
 
-    importManager.defaultImports.forEach((defaultImport) => {
-        defaultImport.forEach((specifier) => {
-            removeDefaultImportIfUnused(j, root, specifier)
-        })
+    importManager.defaultImports.forEach((locals, source) => {
+        if (processedImportSources.has(source)) {
+            locals.forEach((local) => {
+                removeDefaultImportIfUnused(j, root, local)
+            })
+        }
     })
 }
 
@@ -234,7 +239,7 @@ function isPositionBetween(node: ASTNode, before: ASTNode, after: ASTNode) {
     const posBefore = getNodePosition(before)
     const posAfter = getNodePosition(after)
 
-    // no position info, means it's our a inserted node
+    // no position info, means it's a inserted node
     // assume we have inserted it correctly before
     if (!posNode || !posBefore || !posAfter) return true
 
