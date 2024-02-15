@@ -25,7 +25,6 @@
     "mitt": "^3.0.1",
     "monaco-editor": "^0.46.0",
     "monaco-editor-auto-typings": "^0.4.5",
-    "os": "^0.1.2",
     "react": "^18.2.0",
     "react-complex-tree": "^2.2.3",
     "react-dom": "^18.2.0",

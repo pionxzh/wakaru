@@ -201,7 +201,6 @@ importers:
       monaco-editor-auto-typings:
         specifier: ^0.4.5
         version: 0.4.5(monaco-editor@0.46.0)
-      os: {specifier: ^0.1.2, version: 0.1.2}
       react:
         specifier: ^18.2.0
         version: 18.2.0
@@ -323,7 +322,6 @@ importers:
       jotai-vue:
         specifier: ^0.1.0
         version: 0.1.0(jotai@2.6.4)(vue@3.3.9)
-      os: {specifier: ^0.1.2, version: 0.1.2}
       sortablejs:
         specifier: ^1.15.0
         version: 1.15.0
@@ -7632,10 +7630,6 @@ packages:
       prelude-ls: 1.2.1
       type-check: 0.4.0
     dev: true
-
-  /os@0.1.2:
-    resolution: {integrity: sha512-ZoXJkvAnljwvc56MbvhtKVWmSkzV712k42Is2mA0+0KTSRakq5XXuXpjZjgAt9ctzl51ojhQWakQQpmOvXWfjQ==}
-    dev: false
 
   /p-limit@2.3.0:
     resolution: {integrity: sha512-//88mFWSJx8lxCzwdAABTJL2MyWB12+eIY7MDL2SqLmAkeKU9qxRvWuSyTjm3FUmpBEMuFfckAIqEaVGUDxb6w==}

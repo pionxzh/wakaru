@@ -52,7 +52,6 @@
     "idb-keyval": "^6.2.1",
     "jotai": "^2.6.0",
     "jotai-vue": "^0.1.0",
-    "os": "^0.1.2",
     "sortablejs": "^1.15.0",
     "splitpanes": "^3.1.5",
     "threads-es": "^1.0.0",
