@@ -618,3 +618,14 @@ dom(DomFrag, null);
 <></>;
 `,
 )
+
+inlineTest('should not transform document.createElement calls',
+  `
+var x = document.createElement("div", attrs);
+var y = window.document.createElement("div", attrs);
+`,
+  `
+var x = document.createElement("div", attrs);
+var y = window.document.createElement("div", attrs);
+`,
+)

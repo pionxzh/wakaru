@@ -531,6 +531,9 @@ function getPragma(j: JSCodeshift, node: ExpressionKind, pragmas: string[]): str
         && j.Identifier.check(node.object)
         && j.Identifier.check(node.property)
     ) {
+        if (node.object.name === 'document' && node.property.name === 'createElement') {
+            return null
+        }
         return pragmas.includes(node.property.name) ? node.property.name : null
     }
 
