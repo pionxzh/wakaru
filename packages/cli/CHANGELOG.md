@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.9](https://github.com/pionxzh/wakaru/compare/cli-v0.0.8...cli-v0.0.9) (2024-02-16)
+
+
+### Bug Fixes
+
+* **cli:** worker pool size should not more than file count ([63c6f02](https://github.com/pionxzh/wakaru/commit/63c6f02c16d397bf73d66d937e7a8cbc5e280f34))
+* reduce cli size by enabling minify ([25cd173](https://github.com/pionxzh/wakaru/commit/25cd173c07d1f0731d0446e4d724dadb1f072684))
+
 ## [0.0.8](https://github.com/pionxzh/wakaru/compare/cli-v0.0.7...cli-v0.0.8) (2024-01-21)
 
 

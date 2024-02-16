@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.5](https://github.com/pionxzh/wakaru/compare/unminify-v0.1.4...unminify-v0.1.5) (2024-02-16)
+
+
+### Bug Fixes
+
+* **jsx:** should not transform `document.createElement` to JSX ([86469e7](https://github.com/pionxzh/wakaru/commit/86469e73dbc85cbb0919552b29bb92c54fe996c6))
+* **smart-inline:** fix missing renaming in property descturing ([55e2938](https://github.com/pionxzh/wakaru/commit/55e293808c98aa91e38acd706559a0d561b44764)), closes [#117](https://github.com/pionxzh/wakaru/issues/117)
+* **un-esm:** fix missing bare import ([7f6f199](https://github.com/pionxzh/wakaru/commit/7f6f1995146944c1fb050714eef07c402fa293a4))
+* **un-indirect-call:** should not remove unused default imports from unprocessed sources ([cfc00a9](https://github.com/pionxzh/wakaru/commit/cfc00a9f812d591e529eedc4113c03230327766a))
+* **un-jsx:** disable preact's `h` pragma to avoid conflicting with normal minified code ([a97c8ea](https://github.com/pionxzh/wakaru/commit/a97c8eaff917236e297df21f2300530351fa5b11))
+
 ## [0.1.4](https://github.com/pionxzh/wakaru/compare/unminify-v0.1.3...unminify-v0.1.4) (2024-01-21)
 
 
