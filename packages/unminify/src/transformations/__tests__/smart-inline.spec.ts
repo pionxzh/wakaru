@@ -250,6 +250,25 @@ function foo() {
 `,
 )
 
+inlineTest('property destructuring - consecutive assignments',
+  `
+const t = s.target;
+const p = t.parentElement;
+const v = p.value;
+`,
+  `
+const {
+  target
+} = s;
+const {
+  parentElement
+} = target;
+const {
+  value
+} = parentElement;
+`,
+)
+
 inlineTest('array destructuring',
   `
 const t = e[0];

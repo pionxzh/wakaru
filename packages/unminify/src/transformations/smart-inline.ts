@@ -1,7 +1,7 @@
 import { mergeComments } from '@wakaru/ast-utils/comments'
 import { generateName } from '@wakaru/ast-utils/identifier'
 import { createObjectProperty } from '@wakaru/ast-utils/object'
-import { findReferences } from '@wakaru/ast-utils/reference'
+import { findReferences, renameIdentifier } from '@wakaru/ast-utils/reference'
 import { MultiMap } from '@wakaru/ds'
 import { nonNullable } from '@wakaru/shared/array'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
@@ -218,7 +218,12 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
         body.splice(insertIndex, 0, destructuring)
     })
 
+    const renameMap = new Map<string, string>()
     objectAccessDeclarationMap.forEach((declarations, objectName) => {
+        if (renameMap.has(objectName)) {
+            objectName = renameMap.get(objectName)!
+        }
+
         // Rename all variables to their property names
         let insertIndex = body.length
         const destructuringPropertyMap = new Map<string, string>()
@@ -252,7 +257,8 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
 
             const newPropertyName = destructuringPropertyMap.get(propertyName)
                 || generateName(propertyName, scope, declaredNames)
-            scope.rename(variableName, newPropertyName)
+            renameIdentifier(j, scope, variableName, newPropertyName)
+            renameMap.set(variableName, newPropertyName)
             // TODO: should we move this into `scope.rename`?
             scope.markAsStale()
             destructuringPropertyMap.set(propertyName, newPropertyName)
@@ -270,6 +276,7 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
         const kinds = [...destructuringPropertyMap.keys()].map(n => variableKindMap.get(n)).filter(nonNullable)
         const kind = getMostRestrictiveKind(kinds)
         if (!kind) return
+
         const properties = [...destructuringPropertyMap.entries()]
             .map(([propertyName, newPropertyName]) => {
                 const property = createObjectProperty(j, propertyName, j.identifier(newPropertyName))
