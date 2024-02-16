@@ -392,7 +392,7 @@ function Foo() {}
 
 inlineTest('jsx with xml namespace',
   `
-h("f:image", {
+jsx("f:image", {
   "n:attr": true
 });
 `,

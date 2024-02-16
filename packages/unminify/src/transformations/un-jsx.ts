@@ -35,7 +35,9 @@ const DEFAULT_PRAGMA_CANDIDATES = [
     '_jsxs', // `import { jsxs as _jsxs } from 'react/jsx-runtime'`
     'jsxDEV', // runtime = "automatic" (`jsxRuntime.jsxDEV`) (dev only)
     'jsxsDEV', // runtime = "automatic" (`jsxRuntime.jsxsDEV`) (dev only)
-    'h', // Preact
+    // FIXME: disabled as it will conflict with minified code
+    // bring this back when we have a way to tell if the caller is `preact`
+    // 'h', // Preact
 ]
 
 const DEFAULT_PRAGMA_FRAG_CANDIDATES = [
