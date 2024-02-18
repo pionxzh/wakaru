@@ -3,6 +3,7 @@ import moduleMapping from './module-mapping'
 import prettier from './prettier'
 import smartInline from './smart-inline'
 import smartRename from './smart-rename'
+import unArgumentSpread from './un-argument-spread'
 import unAssignmentMerging from './un-assignment-merging'
 import unAsyncAwait from './un-async-await'
 import unBoolean from './un-boolean'
@@ -78,6 +79,7 @@ export const transformationRules: TransformationRule[] = [
     unConditionals, // need to run after `un-optional-chaining` and `un-nullish-coalescing`
     unSequenceExpression, // split sequence expressions introduced by `un-conditionals`
     unParameters, // relies on `un-flip-comparisons` to work
+    unArgumentSpread,
     unJsx,
     unIife,
     unES6Class,

@@ -32,6 +32,7 @@ It covers most of the patterns that are used by the following tools:
 - [Syntax Upgrade](#syntax-upgrade)
   - [`un-template-literal`](#un-template-literal)
   - [`un-parameter`](#un-parameter)
+  - [`un-argument-spread`](#un-argument-spread)
   - [`un-enum`](#un-enum)
   - [`smart-inline`](#smart-inline)
   - [`un-optional-chaining`](#un-optional-chaining)
@@ -432,6 +433,17 @@ Restore parameters. Support normal parameters and default parameters.
 + function foo(...args) {
 +   console.log(args);
 + }
+```
+
+### `un-argument-spread`
+
+Transform `fn.apply` calls to spread operator.
+
+```diff
+- fn.apply(void 0, arr);
++ fn(...arr);
+- obj.fn.apply(obj, arr);
++ obj.fn(...arr);
 ```
 
 ### `un-enum`

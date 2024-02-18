@@ -73,7 +73,7 @@ export function isLooseFalse(j: JSCodeshift, node: ASTNode): node is BooleanLite
  * Check if node is `null` literal
  */
 export function isNull(j: JSCodeshift, node: ASTNode): node is NullLiteral {
-    return j.NullLiteral.check(node) && node.value === null
+    return j.NullLiteral.check(node)
 }
 
 /**
