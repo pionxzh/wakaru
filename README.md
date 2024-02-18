@@ -23,21 +23,20 @@ See [live demo][Demo] for detailed examples.
 Converts transpiled code back to its readable form and restores downgraded syntaxes.
 
 Supports the following transpilers:
-  - [Terser][Terser]
-  - [Babel][Babel]
-  - [SWC][SWC]
-  - [TypeScript][TypeScript]
+  - Terser
+  - Babel
+  - SWC
+  - TypeScript
 
-See [Unminify Documentation](./packages/unminify/README.md) for the full list of supported rules.\
-☝☝☝ I would highly recommend you to check this out. It's really cool. ☝☝☝
+[Read the documentation](./packages/unminify/README.md) for more information.
 
 ### Unpacker
 
 Converts bundled JavaScript into separated modules
 
 Supports the following bundlers:
-  - [webpack][webpack]
-  - [browserify][browserify]
+  - webpack
+  - browserify
 
 ## Try it out
 
