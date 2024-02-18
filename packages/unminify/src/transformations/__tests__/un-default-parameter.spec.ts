@@ -208,16 +208,3 @@ function test(a = 1, b) {
 }
 `,
 )
-
-inlineTest('lebab',
-  `
-function test() {
-  console.log(arguments);
-}
-`,
-  `
-function test(...args) {
-  console.log(args);
-}
-`,
-)

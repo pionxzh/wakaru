@@ -425,6 +425,15 @@ Restore parameters. Support normal parameters and default parameters.
 + function foo(a = "foo", b, c = "bar") {}
 ```
 
+```diff
+- function foo() {
+-   console.log(arguments);
+- }
++ function foo(...args) {
++   console.log(args);
++ }
+```
+
 ### `un-enum`
 
 Restore TypeScript enum syntax.
