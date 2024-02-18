@@ -117,20 +117,23 @@ function handlePropertyRename(j: JSCodeshift, objectPattern: ObjectPattern, scop
         const value = j.AssignmentPattern.check(property.value) ? property.value.left : property.value
         if (!j.Identifier.check(value)) return
 
-        // If the key is longer than the value, rename the value
-        if (key.name.length > value.name.length) {
-            let newName = key.name
-
-            // if the newName is not a valid identifier, _{newName} is used instead
-            if (!isValidIdentifier(newName)) {
-                newName = generateName(`_${newName}`)
-            }
-
-            if (isDeclared(scope, newName)) return
-
-            renameIdentifier(j, scope, value.name, newName)
-            property.shorthand = newName === value.name
+        if (key.name === value.name) {
+            property.shorthand = true
+            return
         }
+
+        let newName = key.name
+
+        // if the newName is not a valid identifier, _{newName} is used instead
+        if (!isValidIdentifier(newName) || isDeclared(scope, newName)) {
+            newName = generateName(`_${newName}`, scope)
+        }
+
+        // if (isDeclared(scope, newName)) return
+
+        renameIdentifier(j, scope, value.name, newName)
+        scope.markAsStale()
+        property.shorthand = newName === value.name
     })
 }
 

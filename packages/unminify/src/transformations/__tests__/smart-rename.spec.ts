@@ -8,7 +8,8 @@ inlineTest('object destructuring rename',
 const {
   gql: t,
   dispatchers: o,
-  listener: i = noop
+  listener: i = noop,
+  sameName: sameName
 } = n;
 o.delete(t, i);
 `,
@@ -16,7 +17,8 @@ o.delete(t, i);
 const {
   gql,
   dispatchers,
-  listener = noop
+  listener = noop,
+  sameName
 } = n;
 dispatchers.delete(gql, listener);
 `,
@@ -151,15 +153,15 @@ function foo({
 const gql = 1;
 
 function foo({
-  gql: t,
+  gql: gql$0,
   dispatchers,
   listener
 }, {
-  gql: a,
-  dispatchers: b,
-  listener: c
+  gql: gql$1,
+  dispatchers: dispatchers$0,
+  listener: listener$0
 }) {
-  dispatchers.delete(t, listener, a, b, c);
+  dispatchers.delete(gql$0, listener, gql$1, dispatchers$0, listener$0);
 }
 `,
 )
