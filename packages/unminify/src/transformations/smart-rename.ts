@@ -129,10 +129,7 @@ function handlePropertyRename(j: JSCodeshift, objectPattern: ObjectPattern, scop
             newName = generateName(`_${newName}`, scope)
         }
 
-        // if (isDeclared(scope, newName)) return
-
         renameIdentifier(j, scope, value.name, newName)
-        scope.markAsStale()
         property.shorthand = newName === value.name
     })
 }
