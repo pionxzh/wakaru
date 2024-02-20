@@ -200,8 +200,8 @@ const Foo = () => {
   `
 const Foo = () => {
   const Component = g ? "p" : "div";
-  const Component$0 = r ? "a" : "div";
-  return <div><Component$0 key="b">bar</Component$0><Component key={c}>baz</Component></div>;
+  const Component_1 = r ? "a" : "div";
+  return <div><Component_1 key="b">bar</Component_1><Component key={c}>baz</Component></div>;
 };
 `,
 )

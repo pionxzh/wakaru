@@ -153,15 +153,15 @@ function foo({
 const gql = 1;
 
 function foo({
-  gql: gql$0,
+  gql: gql_1,
   dispatchers,
   listener
 }, {
-  gql: gql$1,
-  dispatchers: dispatchers$0,
-  listener: listener$0
+  gql: gql_2,
+  dispatchers: dispatchers_1,
+  listener: listener_1
 }) {
-  dispatchers.delete(gql$0, listener, gql$1, dispatchers$0, listener$0);
+  dispatchers.delete(gql_1, listener, gql_2, dispatchers_1, listener_1);
 }
 `,
 )

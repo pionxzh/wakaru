@@ -191,8 +191,8 @@ var bar = 1;
 console.log(bar);
 `,
   `
-import { bar as bar$0 } from "foo";
-var { baz } = bar$0;
+import { bar as bar_1 } from "foo";
+var { baz } = bar_1;
 var bar = 1;
 console.log(bar);
 `,
@@ -282,10 +282,10 @@ function fn() {
 }
 `,
   `
-import { bar as bar$0 } from "foo";
+import { bar as bar_1 } from "foo";
 function fn() {
   var bar = 1;
-  var { baz } = bar$0;
+  var { baz } = bar_1;
   return baz;
 }
 `,
@@ -301,10 +301,10 @@ function fn() {
 }
 `,
   `
-import { bar as bar$0 } from "foo";
+import { bar as bar_1 } from "foo";
 var bar = 1;
 function fn() {
-  var { baz } = bar$0;
+  var { baz } = bar_1;
   return baz;
 }
 `,
@@ -330,9 +330,9 @@ var foo = require("foo")("baz");
 var buz = require("foo").bar("baz");
 `,
   `
-import foo$0 from "foo";
-var foo = foo$0("baz");
-var buz = foo$0.bar("baz");
+import foo_1 from "foo";
+var foo = foo_1("baz");
+var buz = foo_1.bar("baz");
 `,
 )
 
@@ -505,21 +505,21 @@ console.log(foo);
 exports.foo = 2;
 
 const bar = 2;
-const bar$0 = 3;
-console.log(bar, bar$0);
+const bar_1 = 3;
+console.log(bar, bar_1);
 module.exports.bar = 4;
 `,
   `
 var foo = 1;
 console.log(foo);
-const foo$0 = 2;
-export { foo$0 as foo };
+const foo_1 = 2;
+export { foo_1 as foo };
 
 const bar = 2;
-const bar$0 = 3;
-console.log(bar, bar$0);
-const bar$1 = 4;
-export { bar$1 as bar };
+const bar_1 = 3;
+console.log(bar, bar_1);
+const bar_2 = 4;
+export { bar_2 as bar };
 `,
 )
 
@@ -712,9 +712,9 @@ var bar = 1;
 module.exports = require('bar');
 `,
   `
-import bar$0 from "bar";
+import bar_1 from "bar";
 var bar = 1;
-export default bar$0;
+export default bar_1;
 `,
 )
 

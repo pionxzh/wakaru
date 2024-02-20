@@ -29,12 +29,12 @@ var thirdRef = (0, t.useRef)(0);
 `,
   `
 import { useRef } from "react";
-import { useRef as useRef$0 } from "another";
+import { useRef as useRef_1 } from "another";
 import randomUnusedImport from "third";
 
 var countRef = useRef(0);
-var secondRef = useRef$0(0);
-var thirdRef = useRef$0(0);
+var secondRef = useRef_1(0);
+var thirdRef = useRef_1(0);
 `,
 )
 
@@ -88,11 +88,11 @@ const { useRef } = s;
 const s = require("react");
 
 const {
-  useRef: useRef$0,
+  useRef: useRef_1,
   useMemo
 } = s;
 
-var countRef = useRef$0(0);
+var countRef = useRef_1(0);
 var secondRef = useMemo(() => {}, []);
 
 const { useRef } = s;
@@ -109,7 +109,7 @@ var countRef = (0, s.useRef)(0);
 var secondRef = (0, p.useRef)(0);
 `,
   `
-import { useRef as useRef$0 } from "r2";
+import { useRef as useRef_1 } from "r2";
 
 const s = require("react");
 
@@ -118,7 +118,7 @@ const {
 } = s;
 
 var countRef = useRef(0);
-var secondRef = useRef$0(0);
+var secondRef = useRef_1(0);
 `,
 )
 
@@ -141,12 +141,12 @@ const {
 const t = require(9527);
 
 const {
-  useRef: useRef$0
+  useRef: useRef_1
 } = t;
 
 var countRef = useRef(0);
-var secondRef = useRef$0(0);
-var thirdRef = useRef$0(0);
+var secondRef = useRef_1(0);
+var thirdRef = useRef_1(0);
 `,
 )
 
@@ -160,11 +160,11 @@ const fn = () => {
 }
 `,
   `
-import { useRef as useRef$0 } from "react";
+import { useRef as useRef_1 } from "react";
 
 const fn = () => {
   const useRef = 1;
-  useRef$0(0);
+  useRef_1(0);
 }
 `,
 )

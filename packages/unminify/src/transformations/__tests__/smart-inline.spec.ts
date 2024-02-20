@@ -180,11 +180,11 @@ const {
 } = e;
 
 const {
-  size: size$0,
-  color: color$0
+  size: size_1,
+  color: color_1
 } = f;
 
-console.log(size, color, size$0, color$0);
+console.log(size, color, size_1, color_1);
 `,
 )
 
@@ -207,9 +207,9 @@ var {
 if (3 === tag) {
   for (tag = r.return; null !== tag; ) {
     var {
-      tag: tag$0
+      tag: tag_1
     } = tag;
-    if (3 === tag$0) {
+    if (3 === tag_1) {
       tag = tag.return;
     }
   }
@@ -239,9 +239,9 @@ function foo() {
   if (3 === tag) {
     for (tag = r.return; null !== tag; ) {
       var {
-        tag: tag$0
+        tag: tag_1
       } = tag;
-      if (3 === tag$0) {
+      if (3 === tag_1) {
         tag = tag.return;
       }
     }

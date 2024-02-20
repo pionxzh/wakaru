@@ -43,7 +43,7 @@ export const transformAST: ASTTransformation = (context) => {
      */
 
     /**
-     * `s.foo` (indirect call) -> `foo$0` (local specifiers)
+     * `s.foo` (indirect call) -> `foo_1` (local specifiers)
      */
     const replaceMapping = new Map<string, string>()
 
@@ -130,7 +130,7 @@ export const transformAST: ASTTransformation = (context) => {
                 },
             }).filter(path => isTopLevel(j, path))
             if (requireDecl.size() > 0) {
-                // find `const { useRef } = react` or `const { useRef: useRef$0 } = react`
+                // find `const { useRef } = react` or `const { useRef: useRef_1 } = react`
                 const propertyDecl = root.find(j.VariableDeclarator, {
                     id: {
                         type: 'ObjectPattern',
@@ -152,7 +152,7 @@ export const transformAST: ASTTransformation = (context) => {
                 })
 
                 if (propertyDecl.size() === 0) {
-                    // generate `const { useRef: useRef$0 } = react`
+                    // generate `const { useRef: useRef_1 } = react`
                     const key = j.identifier(property.name)
                     const valueName = generateName(property.name, rootScope, [...replaceMapping.values()])
                     replaceMapping.set(`${defaultSpecifierName}.${namedSpecifierName}`, valueName)
@@ -206,7 +206,7 @@ export const transformAST: ASTTransformation = (context) => {
                     return
                 }
 
-                // extract `useRef$0` from `const { useRef: useRef$0 } = react`
+                // extract `useRef_1` from `const { useRef: useRef_1 } = react`
                 const propertyNode = propertyDecl.get().node
                 const propertyValue = propertyNode.id as ObjectPattern
                 const targetProperty = propertyValue.properties.find((p) => {
