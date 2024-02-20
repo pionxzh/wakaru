@@ -69,9 +69,9 @@ function getUniqueName(name: string, scope: Scope | null = null, existedNames: s
         return name
     }
 
-    let i = 0
-    while (isConflict(`${name}$${i}`)) {
+    let i = 1
+    while (isConflict(`${name}_${i}`)) {
         i++
     }
-    return `${name}$${i}`
+    return `${name}_${i}`
 }

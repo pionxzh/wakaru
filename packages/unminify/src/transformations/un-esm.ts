@@ -580,8 +580,8 @@ function transformExport(context: Context) {
                  * module.exports.foo = 2
                  * ->
                  * const foo = 1
-                 * const foo$0 = 2
-                 * export { foo$0 as foo }
+                 * const foo_1 = 2
+                 * export { foo_1 as foo }
                  */
                 const oldName = name
                 const newName = generateName(oldName, path.scope)
