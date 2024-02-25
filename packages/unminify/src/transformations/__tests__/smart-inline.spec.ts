@@ -48,6 +48,65 @@ const o = t;
 `,
 )
 
+inlineTest('global variable inlining',
+  `
+const w = window;
+const d = document;
+const c = d.createElement('canvas');
+`,
+  `
+const w = window;
+const c = document.createElement('canvas');
+`,
+)
+
+inlineTest('global variable inlining - with inner shadowing',
+  `
+const w = window;
+function foo() {
+  const w = 1;
+  console.log(w);
+}
+`,
+  `
+const w = window;
+function foo() {
+  const w = 1;
+  console.log(w);
+}
+`,
+)
+
+inlineTest('global variable inlining - with global shadowing',
+  `
+const document = 1;
+const d = document.toFixed();
+const c = d.split('');
+`,
+  `
+const document = 1;
+const d = document.toFixed();
+const c = d.split('');
+`,
+)
+
+inlineTest('property access path renaming',
+  `
+const t = s.target;
+const p = t.parentElement;
+const v = p.value;
+
+const t2 = s.target.parentElement;
+`,
+  `
+const s_target = s.target;
+const s_target_parentElement = s_target.parentElement;
+const s_target_parentElement_value = s_target_parentElement.value;
+
+const t2 = s.target.parentElement;
+`,
+)
+
 inlineTest('property destructuring',
   `
 const t = e.x;
@@ -191,9 +250,11 @@ console.log(size, color, size_1, color_1);
 inlineTest('property destructuring - resolve naming conflicts #2',
   `
 var u = r.tag;
+var t = r.name;
 if (3 === u) {
   for (u = r.return; null !== u; ) {
     var i = u.tag;
+    var o = u.name;
     if (3 === i) {
       u = u.return;
     }
@@ -202,13 +263,17 @@ if (3 === u) {
 `,
   `
 var {
-  tag
+  tag,
+  name
 } = r;
+
 if (3 === tag) {
   for (tag = r.return; null !== tag; ) {
     var {
-      tag: tag_1
+      tag: tag_1,
+      name: name_1
     } = tag;
+
     if (3 === tag_1) {
       tag = tag.return;
     }
@@ -221,9 +286,11 @@ inlineTest('property destructuring - resolve naming conflicts #3',
   `
 function foo() {
   var u = r.tag;
+  var t = r.name;
   if (3 === u) {
     for (u = r.return; null !== u; ) {
       var i = u.tag;
+      var o = u.name;
       if (3 === i) {
         u = u.return;
       }
@@ -234,38 +301,23 @@ function foo() {
   `
 function foo() {
   var {
-    tag
+    tag,
+    name
   } = r;
+
   if (3 === tag) {
     for (tag = r.return; null !== tag; ) {
       var {
-        tag: tag_1
+        tag: tag_1,
+        name: name_1
       } = tag;
+
       if (3 === tag_1) {
         tag = tag.return;
       }
     }
   }
 }
-`,
-)
-
-inlineTest('property destructuring - consecutive assignments',
-  `
-const t = s.target;
-const p = t.parentElement;
-const v = p.value;
-`,
-  `
-const {
-  target
-} = s;
-const {
-  parentElement
-} = target;
-const {
-  value
-} = parentElement;
 `,
 )
 

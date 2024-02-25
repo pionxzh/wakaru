@@ -61,8 +61,8 @@ export function generateName(input: string, scope: Scope | null = null, existedN
 
 function getUniqueName(name: string, scope: Scope | null = null, existedNames: string[] = []): string {
     const isConflict = (n: string) => {
-        if (scope && isDeclared(scope, n)) return true
         if (existedNames.includes(n)) return true
+        if (scope && isDeclared(scope, n)) return true
         return false
     }
     if (!isConflict(name)) {

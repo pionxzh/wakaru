@@ -6,7 +6,7 @@ import { MultiMap } from '@wakaru/ds'
 import { nonNullable } from '@wakaru/shared/array'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import type { ASTTransformation } from '@wakaru/shared/rule'
-import type { CommentKind, StatementKind } from 'ast-types/lib/gen/kinds'
+import type { CommentKind, ExpressionKind, StatementKind } from 'ast-types/lib/gen/kinds'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ExpressionStatement, Identifier, JSCodeshift, MemberExpression, NumericLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
@@ -220,6 +220,28 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
 
     const renameMap = new Map<string, string>()
     objectAccessDeclarationMap.forEach((declarations, objectName) => {
+        if (declarations.size === 1) {
+            declarations.forEach((declaration) => {
+                // If there's only one declaration, we can rename it to the combined name.
+                // for example, `const a = b.c;` -> `const b_c = b.c;`
+                if (
+                    j.VariableDeclaration.check(declaration)
+                    && declaration.declarations.length === 1
+                    && j.VariableDeclarator.check(declaration.declarations[0])
+                    && j.Identifier.check(declaration.declarations[0].id)
+                    && j.MemberExpression.check(declaration.declarations[0].init)
+                ) {
+                    const variableName = declaration.declarations[0].id.name
+                    const init = declaration.declarations[0].init
+                    const expressionName = generateNameFromExpression(j, init)
+                    const newVariableName = generateName(expressionName, scope, declaredNames)
+                    renameIdentifier(j, scope, variableName, newVariableName)
+                    renameMap.set(variableName, newVariableName)
+                }
+            })
+            return
+        }
+
         if (renameMap.has(objectName)) {
             objectName = renameMap.get(objectName)!
         }
@@ -317,10 +339,37 @@ function handleTempVariableInline(j: JSCodeshift, body: StatementKind[], scope: 
     for (let i = 1; i < body.length; i++) {
         const prevStatement = body[i - 1]
         const statement = body[i]
-        if (isOnlyDeclarator(j, prevStatement) && isOnlyDeclarator(j, statement)) {
-            if (prevStatement.kind !== 'const' || statement.kind !== 'const') continue
 
-            const prevDeclarator = prevStatement.declarations[0] as VariableDeclarator
+        if (!isSingleConstDeclarator(j, prevStatement)) continue
+
+        const prevDeclarator = prevStatement.declarations[0] as VariableDeclarator
+        /**
+         * Global variable inlining
+         *
+         * @example
+         * const d = document
+         * const c = d.createElement
+         * ->
+         * const c = document.createElement
+         */
+        if (j.Identifier.check(prevDeclarator.id) && j.Identifier.check(prevDeclarator.init)) {
+            const idName = prevDeclarator.id.name
+            const initName = prevDeclarator.init.name
+            if (isGlobalIdentifier(initName, scope)) {
+                const references = findReferences(j, scope, idName)
+                if (references.size() > 1) {
+                    references.forEach((path) => {
+                        path.node.name = initName
+                    })
+                    scope.markAsStale()
+
+                    statementsToRemove.add(prevStatement)
+                    continue
+                }
+            }
+        }
+
+        if (isSingleConstDeclarator(j, statement)) {
             const declarator = statement.declarations[0] as VariableDeclarator
             if (!j.Identifier.check(prevDeclarator.id) || !j.Identifier.check(declarator.init)) continue
             // is the previous id same as current init?
@@ -343,10 +392,31 @@ function handleTempVariableInline(j: JSCodeshift, body: StatementKind[], scope: 
     })
 }
 
-function isOnlyDeclarator(j: JSCodeshift, statement: StatementKind): statement is VariableDeclaration {
+function isSingleConstDeclarator(j: JSCodeshift, statement: StatementKind): statement is VariableDeclaration {
     return j.VariableDeclaration.check(statement)
+        && statement.kind === 'const'
         && statement.declarations.length === 1
         && j.VariableDeclarator.check(statement.declarations[0])
+}
+
+const globalIdentifiers = new Set([
+    'window',
+    'document',
+    'Function',
+    'Object',
+    'Array',
+    'String',
+    'Number',
+    'Boolean',
+    'Symbol',
+    'Date',
+    'RegExp',
+    'navigator',
+    'location',
+    'history',
+])
+function isGlobalIdentifier(name: string, scope: Scope) {
+    return globalIdentifiers.has(name) && !scope.declares(name)
 }
 
 const kindToVal: Record<Kind, number> = {
@@ -376,3 +446,20 @@ export default createJSCodeshiftTransformationRule({
     name: 'smart-inline',
     transform: transformAST,
 })
+
+/**
+ * Returns the element name of a MemberExpression or Identifier.
+ * For example:
+ *   getElementName(j, a.b.c) -> a_b_c
+ *   getElementName(j, a) -> a
+ */
+function generateNameFromExpression(j: JSCodeshift, node: ExpressionKind): string {
+    if (j.Identifier.check(node)) return node.name
+    if (j.StringLiteral.check(node)) return node.value
+
+    if (j.MemberExpression.check(node)) {
+        return `${generateNameFromExpression(j, node.object)}_${generateNameFromExpression(j, node.property)}`
+    }
+
+    return '_'
+}
