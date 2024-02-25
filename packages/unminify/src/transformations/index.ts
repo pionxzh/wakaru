@@ -72,6 +72,7 @@ export const transformationRules: TransformationRule[] = [
     unFlipComparisons,
 
     // advanced syntax upgrade
+    unIife,
     smartInline, // relies on `lebab`'s `let` to `const` and `un-sequence-expression`
     smartRename, // partially relies on `un-indirect-call` to work
     unOptionalChaining,
@@ -81,7 +82,6 @@ export const transformationRules: TransformationRule[] = [
     unParameters, // relies on `un-flip-comparisons` to work
     unArgumentSpread,
     unJsx,
-    unIife,
     unES6Class,
     unAsyncAwait,
 
