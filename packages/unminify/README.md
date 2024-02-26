@@ -496,6 +496,25 @@ Inline reassigned temp variables.
 + const c = d;
 ```
 
+Inline common global variable references.
+
+```diff
+- const d = document;
+- const c = d.createElement('canvas');
++ const c = document.createElement('canvas');
+```
+
+Rename variables based on object property access.
+
+```diff
+- const t = s.target;
+- const p = t.parent;
+- const v = p.value;
++ const s_target = s.target;
++ const s_target_parent = s_target.parent;
++ const s_target_parent_value = s_target_parent.value;
+```
+
 ### `un-optional-chaining`
 
 Restore [optional chaining](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Optional_chaining) syntax.\
