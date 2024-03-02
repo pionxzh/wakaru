@@ -17,6 +17,9 @@ jobs:
         id: release
         with:
           release-type: node
+          include-component-in-tag: true
+          config-file: ./release-please-config.json
+          manifest-file: ./.release-please-manifest.json
 
       - uses: actions/checkout@v4
         with:
