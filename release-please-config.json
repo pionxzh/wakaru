@@ -1,8 +1,11 @@
 {
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "pull-request-title-pattern": "chore: release ${version}",
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
-  "monorepoTags": true,
+  "release-type": "node",
+  "monorepo-tags": true,
+  "include-component-in-tag": true,
   "packages": {
     "packages/cli": {
       "component": "cli"
