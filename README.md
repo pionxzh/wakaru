@@ -2,6 +2,8 @@
 
 [![deploy][DeployBadge]][Playground]
 [![codecov][CodecovBadge]][CodecovRepo]
+[![Telegram-group](https://img.shields.io/badge/Telegram-group-blue)](https://t.me/wakarujs)
+
 
 Wakaru is the Javascript decompiler for modern frontend. It brings back the original code from a bundled and transpiled source.
 
