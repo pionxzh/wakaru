@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.0](https://github.com/pionxzh/wakaru/compare/unminify-v0.1.5...unminify-v0.2.0) (2024-03-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* update the format of conflic name from `{name}$0` to `{name}_1`
+
+### Features
+
+* add `un-argument-spread` into `un-parameters` ([92fec7f](https://github.com/pionxzh/wakaru/commit/92fec7fdc48dfc4297a40ee96d03a894dd2d440a))
+* add `un-argument-spread` rule ([1f5fbd6](https://github.com/pionxzh/wakaru/commit/1f5fbd63876a32cd87d48c7b032af9b6440f7d28))
+* **smart-inline:** support global variable inlining and property access path renaming ([1a91aa4](https://github.com/pionxzh/wakaru/commit/1a91aa4418e8e606efa6a4a6b3e3b4966195a38f))
+
+
+### Bug Fixes
+
+* adjust iife rule order ([b5c3fc7](https://github.com/pionxzh/wakaru/commit/b5c3fc74edbcba7540de8fb4959bee29f7e8f623))
+* **smart-rename:** remove destructuring length limitation ([23cf3e4](https://github.com/pionxzh/wakaru/commit/23cf3e45358513e59d60dfd4370ff3881bf84f9d))
+* update the format of conflic name from `{name}$0` to `{name}_1` ([dac2125](https://github.com/pionxzh/wakaru/commit/dac212547e9a1b941a856d6ff317dcc976584184))
+
 ## [0.1.5](https://github.com/pionxzh/wakaru/compare/unminify-v0.1.4...unminify-v0.1.5) (2024-02-16)
 
 
