@@ -1,7 +1,8 @@
 {
-  "pull-request-title-pattern": "chore: release${component} ${version}",
+  "pull-request-title-pattern": "chore: release ${version}",
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
+  "monorepoTags": true,
   "packages": {
     "packages/cli": {
       "component": "cli"
