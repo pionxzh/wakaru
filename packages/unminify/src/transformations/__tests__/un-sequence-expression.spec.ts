@@ -220,6 +220,15 @@ inlineTest('split for init sequence expression',
 for (a(), b(); c(); d(), e()) {
   f(), g()
 }
+
+var o = [];
+for (var x in o.push("PASS"), o) {
+  console.log(o[x]);
+}
+
+for (let x in (a(), b(), c())) {
+  console.log(x);
+}
 `,
   `
 a();
@@ -228,6 +237,20 @@ b();
 for (; c(); d(), e()) {
   f();
   g();
+}
+
+var o = [];
+o.push("PASS");
+
+for (var x in o) {
+  console.log(o[x]);
+}
+
+a();
+b();
+
+for (let x in c()) {
+  console.log(x);
 }
 `,
 )

@@ -196,6 +196,36 @@ export const transformAST: ASTTransformation = (context) => {
             }
         })
 
+    // `for (let x in (a(), b(), c())) {}` -> `a(); b(); for (let x in c()) {}`
+    root
+        .find(j.ForInStatement, { right: { type: 'SequenceExpression' } })
+        .forEach((path) => {
+            const right = path.node.right as SequenceExpression
+
+            const { expressions } = right
+            const [last, ...rest] = [...expressions].reverse()
+            const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
+            replacement.push(j.forInStatement(path.node.left, last, path.node.body))
+
+            mergeComments(replacement, path.node.comments)
+            replaceWithMultipleStatements(j, path, replacement)
+        })
+
+    // `for (let x of (a(), b(), c())) {}` -> `a(); b(); for (let x of c()) {}`
+    root
+        .find(j.ForOfStatement, { right: { type: 'SequenceExpression' } })
+        .forEach((path) => {
+            const right = path.node.right as SequenceExpression
+
+            const { expressions } = right
+            const [last, ...rest] = [...expressions].reverse()
+            const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
+            replacement.push(j.forOfStatement(path.node.left, last, path.node.body))
+
+            mergeComments(replacement, path.node.comments)
+            replaceWithMultipleStatements(j, path, replacement)
+        })
+
     // `a(), b(), c()` -> `a(); b(); c();`
     root
         .find(j.ExpressionStatement, { expression: { type: 'SequenceExpression' } })
