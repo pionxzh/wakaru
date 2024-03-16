@@ -285,9 +285,8 @@ for (; false; )
 foo();
 
 bar();
-x = 5;
 
-for (; false; )
+for (x = 5; false; )
   ;
 
 // 3
@@ -302,9 +301,7 @@ x = function() {
   foo in bar;
 };
 
-y = 5;
-
-for (; false; )
+for (y = 5; false; )
   ;
 `,
 )

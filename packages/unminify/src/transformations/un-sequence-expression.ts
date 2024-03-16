@@ -143,14 +143,20 @@ export const transformAST: ASTTransformation = (context) => {
         })
 
     // `for (a(), b(); c(); d(), e()) {}` -> `a(); b(); for (; c(); ) { d(); e(); }`
+    // `for (a(), b = 2; c(); d(), e()) {}` -> `a(); b(); for (; c(); ) { d(); e(); }`
     root
         .find(j.ForStatement, { init: { type: 'SequenceExpression' } })
         .forEach((path) => {
             const init = path.node.init as SequenceExpression
 
             const { expressions } = init
-            const replacement: any[] = expressions.map(e => j.expressionStatement(e))
-            replacement.push(j.forStatement(null, path.node.test, path.node.update, path.node.body))
+            const last = expressions[expressions.length - 1]
+            const ifLastIsAssignment = j.AssignmentExpression.check(last)
+
+            const restExpressions = ifLastIsAssignment ? expressions.slice(0, -1) : expressions
+            const replacement: any[] = restExpressions.map(e => j.expressionStatement(e))
+            const newInit = ifLastIsAssignment ? last : null
+            replacement.push(j.forStatement(newInit, path.node.test, path.node.update, path.node.body))
 
             mergeComments(replacement, path.node.comments)
             replaceWithMultipleStatements(j, path, replacement)
