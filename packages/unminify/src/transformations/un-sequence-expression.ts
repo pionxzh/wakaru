@@ -75,36 +75,6 @@ export const transformAST: ASTTransformation = (context) => {
             replaceWithMultipleStatements(j, path, replacement)
         })
 
-    // `while (a(), b(), c())` -> `a(); b(); while (c())`
-    root
-        .find(j.WhileStatement, { test: { type: 'SequenceExpression' } })
-        .forEach((path) => {
-            const test = path.node.test as SequenceExpression
-
-            const { expressions } = test
-            const [last, ...rest] = [...expressions].reverse()
-            const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
-            replacement.push(j.whileStatement(last, path.node.body))
-
-            mergeComments(replacement, path.node.comments)
-            replaceWithMultipleStatements(j, path, replacement)
-        })
-
-    // `do { a(), b(), c() } while (d(), e(), f())` -> `a(); b(); do { c() } while (d(), e(), f())`
-    root
-        .find(j.DoWhileStatement, { test: { type: 'SequenceExpression' } })
-        .forEach((path) => {
-            const test = path.node.test as SequenceExpression
-
-            const { expressions } = test
-            const [last, ...rest] = [...expressions].reverse()
-            const replacement: any[] = rest.reverse().map(e => j.expressionStatement(e))
-            replacement.push(j.doWhileStatement(path.node.body, last))
-
-            mergeComments(replacement, path.node.comments)
-            replaceWithMultipleStatements(j, path, replacement)
-        })
-
     // `switch (a(), b(), c())` -> `a(); b(); switch (c())`
     root
         .find(j.SwitchStatement, { discriminant: { type: 'SequenceExpression' } })

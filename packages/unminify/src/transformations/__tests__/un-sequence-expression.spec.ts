@@ -92,37 +92,31 @@ if (c()) {
 `,
 )
 
-inlineTest('split while sequence expression',
+inlineTest('do not split while sequence expression',
   `
 while (a(), b(), c()) {
   d(), e()
 }
 `,
   `
-a();
-b();
-
-while (c()) {
+while (a(), b(), c()) {
   d();
   e();
 }
 `,
 )
 
-inlineTest('split do-while sequence expression',
+inlineTest('do not split do-while sequence expression',
   `
 do {
   d(), e()
 } while (a(), b(), c())
 `,
   `
-a();
-b();
-
 do {
   d();
   e();
-} while (c());
+} while (a(), b(), c())
 `,
 )
 
