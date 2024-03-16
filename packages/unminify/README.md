@@ -27,6 +27,7 @@ It covers most of the patterns that are used by the following tools:
   - [`un-indirect-call`](#un-indirect-call)
   - [`un-type-constructor` (Unsafe)](#un-type-constructor-unsafe)
   - [`un-builtin-prototype`](#un-builtin-prototype)
+  - [`un-import-rename`](#un-import-rename)
   - [`smart-rename`](#smart-rename)
   - [`un-iife`](#un-iife)
 - [Syntax Upgrade](#syntax-upgrade)
@@ -332,6 +333,17 @@ Convert function calls on instances of built-in objects to equivalent calls on t
 
 - "".indexOf.call(e, "bar");
 + String.prototype.indexOf.call(e, "bar");
+```
+
+### `un-import-rename`
+
+Rename import specifier back to the original name
+
+```diff
+-import { foo as a } from 'bar';
+- a();
++import { foo } from 'bar';
++ foo();
 ```
 
 ### `smart-rename`

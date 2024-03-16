@@ -18,6 +18,7 @@ import unEsModuleFlag from './un-esmodule-flag'
 import unExportRename from './un-export-rename'
 import unFlipComparisons from './un-flip-comparisons'
 import unIife from './un-iife'
+import unImportRename from './un-import-rename'
 import unIndirectCall from './un-indirect-call'
 import unInfinity from './un-infinity'
 import unJsx from './un-jsx'
@@ -73,6 +74,7 @@ export const transformationRules: TransformationRule[] = [
 
     // advanced syntax upgrade
     unIife,
+    unImportRename, // should run after `un-esm` to cover all the import statements
     smartInline, // relies on `lebab`'s `let` to `const` and `un-sequence-expression`
     smartRename, // partially relies on `un-indirect-call` to work
     unOptionalChaining,
