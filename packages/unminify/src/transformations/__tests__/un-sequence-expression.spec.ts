@@ -77,11 +77,22 @@ var bar = (m => {
 
 inlineTest('split if sequence expression',
   `
+if (condition) a(), b();
+else c(), d();
+
 if (a(), b(), c()) {
   d(), e()
 }
 `,
   `
+if (condition) {
+  a();
+  b();
+} else {
+  c();
+  d();
+}
+
 a();
 b();
 
