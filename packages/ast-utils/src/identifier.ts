@@ -42,7 +42,6 @@ export function isValidIdentifier(
 export function generateName(input: string, scope: Scope | null = null, existedNames: string[] = []): string {
     const cleanName = input
         .replace(/^@/, '')
-        .replace(/^_+/, '')
         .replace(/_+$/, '')
         .replace(/_+/, '_')
         .replace(/^\.+/g, '')

@@ -1,3 +1,5 @@
+import { assertScopeExists } from '@wakaru/ast-utils/assert'
+import { generateName } from '@wakaru/ast-utils/identifier'
 import { isLogicalNot, isUndefined } from '@wakaru/ast-utils/matchers'
 import { isVariableIdentifier } from '@wakaru/ast-utils/reference'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
@@ -92,6 +94,9 @@ const BODY_LENGTH_THRESHOLD = 15
 function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | FunctionExpression | ArrowFunctionExpression | ObjectMethod | ClassMethod>) {
     const body = (path.node.body as BlockStatement).body
     if (body.length === 0) return
+
+    const scope = path.scope
+    assertScopeExists(scope)
 
     const params = path.node.params
 
@@ -206,6 +211,19 @@ function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | Function
                     return false
                 }
 
+                // insert placeholder parameter when there is a gap
+                if (normalMatch.index >= params.length) {
+                    for (let i = params.length; i < normalMatch.index; i++) {
+                        if (params[i]) continue
+
+                        const scope = path.get('body', 'body', index).scope
+                        assertScopeExists(scope)
+
+                        const parameterName = generateName(`_param_${i}`, scope)
+                        params.push(j.identifier(parameterName))
+                    }
+                }
+
                 params.splice(normalMatch.index, 0, identifier)
                 return false
             }
@@ -218,6 +236,19 @@ function handleBody(j: JSCodeshift, path: ASTPath<FunctionDeclaration | Function
                 if (exitingParam) {
                     params.splice(params.indexOf(identifier), 1, j.assignmentPattern(identifier, defaultParam))
                     return false
+                }
+
+                // insert placeholder parameter when there is a gap
+                if (defaultMatch.index >= params.length) {
+                    for (let i = params.length; i < defaultMatch.index; i++) {
+                        if (params[i]) continue
+
+                        const scope = path.get('body', 'body', index).scope
+                        assertScopeExists(scope)
+
+                        const parameterName = generateName(`_param_${i}`, scope)
+                        params.push(j.identifier(parameterName))
+                    }
                 }
 
                 params.splice(defaultMatch.index, 0, j.assignmentPattern(identifier, defaultParam))

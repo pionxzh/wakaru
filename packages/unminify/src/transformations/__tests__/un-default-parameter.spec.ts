@@ -25,6 +25,24 @@ function test(x = 1, y = 2, b, z = "hello", e = world(), f = true) {
 `,
 )
 
+inlineTest('default parameters - With gap',
+  `
+function test(a) {
+  var b = arguments.length > 1 ? arguments[1] : undefined;
+  var e = arguments.length > 4 && undefined !== arguments[4]
+    ? arguments[4]
+    : world();
+  var z = arguments.length > 6 && arguments[6] !== undefined ? arguments[6] : "hello";
+  var _param_3 = 1;
+}
+`,
+  `
+function test(a, b, _param_2, _param_3_1, e = world(), _param_5, z = "hello") {
+  var _param_3 = 1;
+}
+`,
+)
+
 inlineTest('default parameters - ArrowFunctionExpression',
   `
 const test = (a, b) => {

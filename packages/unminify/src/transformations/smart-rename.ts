@@ -125,8 +125,11 @@ function handlePropertyRename(j: JSCodeshift, objectPattern: ObjectPattern, scop
         let newName = key.name
 
         // if the newName is not a valid identifier, _{newName} is used instead
-        if (!isValidIdentifier(newName) || isDeclared(scope, newName)) {
+        if (!isValidIdentifier(newName)) {
             newName = generateName(`_${newName}`, scope)
+        }
+        else if (isDeclared(scope, newName)) {
+            newName = generateName(newName, scope)
         }
 
         renameIdentifier(j, scope, value.name, newName)

@@ -90,7 +90,7 @@ export const transformAST: ASTTransformation = (context, params) => {
                     left = j.variableDeclaration('var', [j.variableDeclarator(_result)])
                 }
                 else {
-                    const tempVariableName = generateName('_value', scope)
+                    const tempVariableName = generateName('value', scope)
                     left = j.identifier(tempVariableName)
                     const assignment = j.assignmentExpression('=', left, _result)
                     body.unshift(j.expressionStatement(assignment))
