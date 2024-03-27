@@ -55,6 +55,64 @@ function foo(c, d) {
 `,
 )
 
+inlineTest('should rename function parameters #2',
+  `
+function foo(a, b) {
+  function a() {
+    return a + b;
+  }
+
+  return a + b;
+}
+`,
+  `
+function foo(c, d) {
+  function a() {
+    return a + d;
+  }
+
+  return a + d;
+}
+`,
+)
+
+inlineTest('should rename function parameters #3',
+  `
+function z(e, t, n) {
+  "use strict";
+  !(function e() {
+    if (
+      "undefined" != typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ &&
+      "function" == typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE
+    )
+      try {
+        __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE(e);
+      } catch (e) {
+        console.error(e);
+      }
+  })();
+  e.exports = n(48);
+}
+`,
+  `
+function z(c, d, xx) {
+  "use strict";
+  !(function e() {
+    if (
+      "undefined" != typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ &&
+      "function" == typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE
+    )
+      try {
+        __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE(e);
+      } catch (e) {
+        console.error(e);
+      }
+  })();
+  c.exports = xx(48);
+}
+`,
+)
+
 inlineTest('Class',
   `
 function foo(a, b, x, z) {
