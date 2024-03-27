@@ -1,6 +1,6 @@
+import biome from './biome'
 import lebab from './lebab'
 import moduleMapping from './module-mapping'
-import prettier from './prettier'
 import smartInline from './smart-inline'
 import smartRename from './smart-rename'
 import unArgumentSpread from './un-argument-spread'
@@ -40,7 +40,7 @@ import type { TransformationRule } from '@wakaru/shared/rule'
 
 export const transformationRules: TransformationRule[] = [
     // first stage - basically prettify the code
-    prettier.withId('prettier'),
+    biome,
     moduleMapping,
     unCurlyBraces, // add curly braces so that other transformations can works easier, but generally this is not required
     unSequenceExpression, // curly braces can bring out return sequence expression, so it runs before this
@@ -88,5 +88,5 @@ export const transformationRules: TransformationRule[] = [
     unAsyncAwait,
 
     // last stage - prettify the code again after we finish all the transformations
-    prettier.withId('prettier-1'),
+    biome,
 ]

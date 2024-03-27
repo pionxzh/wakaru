@@ -14,6 +14,9 @@ export default defineConfig({
         'process.env.NODE_DEBUG': 'undefined',
     },
     minify: true,
+    external: [
+        '@biomejs/js-api',
+    ],
     noExternal: [
         'jscodeshift',
         'ast-types',
