@@ -3,7 +3,7 @@
   "type": "module",
   "version": "0.0.1",
   "private": true,
-  "packageManager": "pnpm@8.15.2",
+  "packageManager": "pnpm@8.15.5",
   "description": "🔪📦 Javascript decompiler, unpacker and unminify toolkit",
   "author": "Pionxzh",
   "license": "MIT",
@@ -27,17 +27,17 @@
   },
   "devDependencies": {
     "@pionxzh/eslint-config": "^1.0.1",
-    "@types/node": "^18.19.15",
-    "@vitest/coverage-v8": "^1.2.2",
-    "@vitest/ui": "^1.2.2",
-    "eslint": "^8.56.0",
+    "@types/node": "^18.19.26",
+    "@vitest/coverage-v8": "^1.4.0",
+    "@vitest/ui": "^1.4.0",
+    "eslint": "^8.57.0",
     "esno": "^0.17.0",
     "globby": "^11.1.0",
     "prettier": "^2.8.8",
     "taze": "^0.13.3",
-    "turbo": "^1.12.3",
-    "typescript": "^5.3.3",
-    "vitest": "^1.2.2"
+    "turbo": "^1.13.0",
+    "typescript": "^5.4.3",
+    "vitest": "^1.4.0"
   },
   "pnpm": {
     "patchedDependencies": {
