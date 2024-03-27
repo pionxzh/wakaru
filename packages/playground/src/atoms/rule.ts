@@ -1,4 +1,4 @@
-import { transformationRules } from '@wakaru/unminify'
+import { transformationRuleIds, transformationRules } from '@wakaru/unminify'
 import { atom } from 'jotai/vanilla'
 import { atomWithStorage } from 'jotai/vanilla/utils'
 import { KEY_DISABLED_RULES, KEY_RULE_ORDER } from '../const'
@@ -11,7 +11,7 @@ export const prettifyRules = [
 
 export const allRulesAtom = atom(() => transformationRules)
 
-export const ruleOrderAtom = atomWithStorage<string[]>(KEY_RULE_ORDER, transformationRules.map(rule => rule.id))
+export const ruleOrderAtom = atomWithStorage<string[]>(KEY_RULE_ORDER, transformationRuleIds)
 
 export const orderedRulesAtom = atom((get) => {
     const ruleOrder = get(ruleOrderAtom)
@@ -57,5 +57,5 @@ export const toggleRuleAtom = atom(null, (get, set, ruleId: string) => {
 
 export const resetRulesAtom = atom(null, (_get, set) => {
     set(disabledRuleIdsAtom, [])
-    set(ruleOrderAtom, transformationRules.map(rule => rule.id))
+    set(ruleOrderAtom, transformationRuleIds)
 })

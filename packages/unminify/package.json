@@ -6,6 +6,10 @@
   "author": "Pionxzh",
   "license": "MIT",
   "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./nodejs": "./src/nodejs.ts"
+  },
   "main": "src/index.ts",
   "bin": "dist/cli.cjs",
   "files": [

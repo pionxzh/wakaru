@@ -24,6 +24,7 @@
     "lint:fix": "eslint src --fix"
   },
   "dependencies": {
+    "@ast-grep/napi": "^0.18.1",
     "fs-extra": "^11.2.0",
     "globby": "^11.1.0",
     "picocolors": "^1.0.0",

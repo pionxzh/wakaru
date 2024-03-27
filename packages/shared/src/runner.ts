@@ -79,6 +79,26 @@ export async function executeTransformationRules<P extends Record<string, any>>(
                 currentRoot = null
                 break
             }
+            case 'ast-grep': {
+                const stopMeasure1 = timing.startMeasure(filePath, 'jscodeshift-print')
+                currentSource ??= currentRoot?.toSource() ?? source
+                stopMeasure1()
+
+                try {
+                    const stopMeasure2 = timing.startMeasure(filePath, rule.id)
+                    currentSource = rule.execute({
+                        source: currentSource,
+                        filename: filePath,
+                        params,
+                    }) ?? currentSource
+                    stopMeasure2()
+                }
+                catch (err: any) {
+                    console.error(`\nError running rule ${rule.id} on ${filePath}`, err)
+                }
+                currentRoot = null
+                break
+            }
             default: {
                 throw new Error(`Unsupported rule type ${rule.type} from ${rule.id}`)
             }

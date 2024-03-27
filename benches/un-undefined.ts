@@ -16,10 +16,16 @@ void 99;
 const main = async () => {
     await suite(
         title,
+        ...([10, 100, 1000].map((count) => {
+            const source = snippet.repeat(count)
+            return add(`jscodeshift=${count}`, async () => {
+                await runTransformationRules({ path: '', source }, [title])
+            })
+        })),
         ...([10, 100, 1000, 5000].map((count) => {
             const source = snippet.repeat(count)
-            return add(`items=${count}`, async () => {
-                await runTransformationRules({ path: '', source }, [title])
+            return add(`ast-grep=${count}`, async () => {
+                await runTransformationRules({ path: '', source }, [`${title}.grep`])
             })
         })),
         cycle(),

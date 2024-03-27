@@ -41,7 +41,12 @@ import type { TransformationRule } from '@wakaru/shared/rule'
 export const transformationRules: TransformationRule[] = [
     // first stage - basically prettify the code
     prettier.withId('prettier'),
-    moduleMapping,
+    unUseStrict, // grep
+    unBoolean, // grep
+    unUndefined, // grep
+    unInfinity, // grep
+    unEsModuleFlag, // grep
+    moduleMapping, // grep
     unCurlyBraces, // add curly braces so that other transformations can works easier, but generally this is not required
     unSequenceExpression, // curly braces can bring out return sequence expression, so it runs before this
     unVariableMerging,
@@ -55,11 +60,6 @@ export const transformationRules: TransformationRule[] = [
     // third stage - mostly one-to-one transformation
     lebab,
     unExportRename, // relies on `un-esm` to give us the export statements, and this can break some rules from `lebab`
-    unUseStrict,
-    unEsModuleFlag,
-    unBoolean,
-    unUndefined,
-    unInfinity,
     unTypeof,
     unNumericLiteral,
     unTemplateLiteral,
@@ -90,3 +90,5 @@ export const transformationRules: TransformationRule[] = [
     // last stage - prettify the code again after we finish all the transformations
     prettier.withId('prettier-1'),
 ]
+
+export const transformationRuleIds = transformationRules.map(rule => rule.id)
