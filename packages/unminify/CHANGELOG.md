@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.1](https://github.com/pionxzh/wakaru/compare/unminify-v0.2.0...unminify-v0.2.1) (2024-03-27)
+
+
+### Features
+
+* **un-sequence-expression:** support for in and for of loop ([f584dc1](https://github.com/pionxzh/wakaru/commit/f584dc1254a145a5f8242829419f305aaeb6d685))
+* **unminify:** add `un-import-rename` rule ([95d3d00](https://github.com/pionxzh/wakaru/commit/95d3d005a308b2c702d496bcc42d541b2930f77a))
+
+
+### Bug Fixes
+
+* **un-default-parameter:** handle parameters with gap ([#124](https://github.com/pionxzh/wakaru/issues/124)) ([1458630](https://github.com/pionxzh/wakaru/commit/1458630e9b676be0f2deb15c57c4ebc296531567))
+* **un-sequence-expression:** keep the last assignment in for init ([68e36c5](https://github.com/pionxzh/wakaru/commit/68e36c58f819670c4b9cc28940666310282e6e9b))
+* **un-sequence-expression:** shouold not split seqs in while condition ([4607903](https://github.com/pionxzh/wakaru/commit/4607903c2bf1a3fc639d466c4f2eabbee0095b08)), closes [#122](https://github.com/pionxzh/wakaru/issues/122)
+
 ## [0.2.0](https://github.com/pionxzh/wakaru/compare/unminify-v0.1.5...unminify-v0.2.0) (2024-03-02)
 
 
