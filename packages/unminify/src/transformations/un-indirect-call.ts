@@ -1,4 +1,5 @@
 import { isTopLevel } from '@wakaru/ast-utils'
+import { assertScopeExists } from '@wakaru/ast-utils/assert'
 import { generateName } from '@wakaru/ast-utils/identifier'
 import { ImportManager } from '@wakaru/ast-utils/imports'
 import { insertAfter } from '@wakaru/ast-utils/insert'
@@ -71,6 +72,9 @@ export const transformAST: ASTTransformation = (context) => {
             },
         })
         .forEach((path) => {
+            const scope = path.scope
+            assertScopeExists(scope)
+
             const { node } = path
             const callee = node.callee as SequenceExpression
             const memberExpression = callee.expressions[1] as MemberExpression
@@ -103,12 +107,14 @@ export const transformAST: ASTTransformation = (context) => {
                 const namedImportLocalName = [...(importManager.namedImports.get(source)?.get(namedSpecifierName) ?? [])][0]
                 if (namedImportLocalName) {
                     replaceMapping.set(key, namedImportLocalName)
+                    processedImportSources.add(source)
+
                     const newCallExpression = j.callExpression(j.identifier(namedImportLocalName), node.arguments)
                     path.replace(newCallExpression)
                     return
                 }
 
-                const namedSpecifierLocalName = generateName(namedSpecifierName, rootScope, importManager.getAllLocals())
+                const namedSpecifierLocalName = generateName(namedSpecifierName, scope, importManager.getAllLocals())
                 importManager.addNamedImport(source, namedSpecifierName, namedSpecifierLocalName)
                 replaceMapping.set(key, namedSpecifierLocalName)
                 processedImportSources.add(source)
@@ -154,7 +160,7 @@ export const transformAST: ASTTransformation = (context) => {
                 if (propertyDecl.size() === 0) {
                     // generate `const { useRef: useRef_1 } = react`
                     const key = j.identifier(property.name)
-                    const valueName = generateName(property.name, rootScope, [...replaceMapping.values()])
+                    const valueName = generateName(property.name, scope, [...replaceMapping.values()])
                     replaceMapping.set(`${defaultSpecifierName}.${namedSpecifierName}`, valueName)
 
                     const value = j.identifier(valueName)

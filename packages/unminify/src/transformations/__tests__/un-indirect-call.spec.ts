@@ -3,7 +3,7 @@ import transform from '../un-indirect-call'
 
 const inlineTest = defineInlineTest(transform)
 
-inlineTest('indirect call from a imported module',
+inlineTest('indirect call from imported module',
   `
 import s from "react";
 
@@ -13,6 +13,39 @@ var countRef = (0, s.useRef)(0);
 import { useRef } from "react";
 
 var countRef = useRef(0);
+`,
+)
+
+inlineTest('indirect call from imported module with existing named import',
+  `
+import s from "react";
+import { useRef } from "react";
+
+var countRef = (0, s.useRef)(0);
+`,
+  `
+import { useRef } from "react";
+
+var countRef = useRef(0);
+`,
+)
+
+inlineTest('indirect call from imported module with naming conflicts with local variables',
+  `
+import s from "react";
+
+const fn = () => {
+  const useRef = 1;
+  (0, s.useRef)(0);
+}
+`,
+  `
+import { useRef as useRef_1 } from "react";
+
+const fn = () => {
+  const useRef = 1;
+  useRef_1(0);
+}
 `,
 )
 
@@ -38,7 +71,7 @@ var thirdRef = useRef_1(0);
 `,
 )
 
-inlineTest('indirect call from a required module',
+inlineTest('indirect call from required module',
   `
 const s = require("react");
 
@@ -150,9 +183,9 @@ var thirdRef = useRef_1(0);
 `,
 )
 
-inlineTest.fixme('indirect call with naming conflicts with local variables',
+inlineTest('indirect call from required module with naming conflicts with local variables',
   `
-import s from "react";
+const s = require("react");
 
 const fn = () => {
   const useRef = 1;
@@ -160,7 +193,11 @@ const fn = () => {
 }
 `,
   `
-import { useRef as useRef_1 } from "react";
+const s = require("react");
+
+const {
+  useRef: useRef_1
+} = s;
 
 const fn = () => {
   const useRef = 1;
