@@ -103,9 +103,7 @@ export default o;
 `,
 )
 
-// FIXME: https://github.com/facebook/jscodeshift/issues/263
-// JSCodeShift and `ast-types` didn't create the correct scope for BlockStatement
-inlineTest.todo('should handle the scope correctly',
+inlineTest('should handle the scope correctly',
   `
 const a = 1;
 console.log(a);
