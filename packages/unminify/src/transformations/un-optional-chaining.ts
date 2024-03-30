@@ -60,11 +60,12 @@ function convertOptionalChaining(j: JSCodeshift, path: ASTPath<ConditionalExpres
     // renderDebugDecisionTree(j, decisionTree)
 
     const _result = constructOptionalChaining(j, path, decisionTree, 0)
-    const result = _result && isNotNull ? negateCondition(j, _result) : _result
-    if (result) {
-        // console.log('<<<', `${picocolors.cyan(j(result).toSource())}`)
-        mergeComments(result, expression.comments)
-    }
+    if (!_result) return null
+
+    const result = isNotNull ? negateCondition(j, _result) : _result
+    // console.log('<<<', `${picocolors.cyan(j(result).toSource())}`)
+    mergeComments(result, expression.comments)
+
     return result
 }
 
@@ -141,6 +142,15 @@ function constructOptionalChaining(
             else if (j.MemberExpression.check(left)) {
                 return applyOptionalChaining(j, cond, left, undefined)
             }
+        }
+
+        if (falseBranch) {
+            const cond = constructOptionalChaining(j, path, falseBranch, 0)
+            if (!cond) return null
+
+            const result = applyOptionalChaining(j, cond, condition as Identifier, undefined)
+            // combine the condition with the original condition
+            return j.logicalExpression('||', condition, result)
         }
     }
     else if (flag === 1) {
