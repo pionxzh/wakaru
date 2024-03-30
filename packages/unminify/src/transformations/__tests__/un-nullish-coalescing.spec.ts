@@ -1,5 +1,6 @@
 import { defineInlineTest } from '@wakaru/test-utils'
 import transform from '../un-nullish-coalescing'
+import unParameters from '../un-parameters'
 
 const inlineTest = defineInlineTest(transform)
 
@@ -104,7 +105,6 @@ function foo2(opts) {
 var { qux = foo.bar ?? "qux" } = {};
 
 // transform-in-default-param
-var _foo_bar1;
 function foo(foo, qux = foo.bar ?? "qux") {}
 function bar(bar, qux = bar ?? "qux") {}
 
@@ -119,7 +119,7 @@ function foo4() {
 )
 
 // TODO: ES5 default parameter will be transformed to a form that we don't support yet.
-inlineTest.todo('SWC - ES5',
+defineInlineTest([transform, unParameters])('SWC - ES5',
   `
 foo !== null && foo !== void 0 ? foo : "bar";
 
@@ -147,7 +147,7 @@ function bar(bar) {
 
 // transform-static-refs-in-default
 function foo3(foo) {
-  var _$bar = arguments.length > 1 && arguments[1] !== void 0 ? arguments[1] : foo !== null && foo !== void 0 ? foo : "bar";
+  var bar = arguments.length > 1 && arguments[1] !== void 0 ? arguments[1] : foo !== null && foo !== void 0 ? foo : "bar";
 }
 
 // transform-static-refs-in-function
@@ -167,7 +167,7 @@ function foo2(opts) {
 }
 
 // transform-in-default-destructuring
-var { qux = foo.bar ?? "qux" } = {};
+var _ref1 = {}, _ref_qux = _ref1.qux, qux = _ref_qux === void 0 ? foo.bar ?? "qux" : _ref_qux;
 
 // transform-in-default-param
 function foo(foo, qux = foo.bar ?? "qux") {}
@@ -175,6 +175,11 @@ function bar(bar, qux = bar ?? "qux") {}
 
 // transform-static-refs-in-default
 function foo3(foo, bar = foo ?? "bar") {}
+
+// transform-static-refs-in-function
+function foo4() {
+  var _$foo = this ?? {};
+}
 `,
 )
 
@@ -184,6 +189,9 @@ var _a, _b;
 foo !== null && foo !== void 0 ? foo : "bar";
 
 (_a = foo !== null && foo !== void 0 ? foo : bar) !== null && _a !== void 0 ? _a : "quz";
+
+// transform-in-default-destructuring
+var _c = {}.qux, qux = _c === void 0 ? (_b = foo.bar) !== null && _b !== void 0 ? _b : "qux" : _c;
 
 // transform-in-default-param
 function foo(foo, qux) { var _a; if (qux === void 0) { qux = (_a = foo.bar) !== null && _a !== void 0 ? _a : "qux"; } }
@@ -204,13 +212,17 @@ function foo4() {
 }
 `,
   `
-var _b;
 foo ?? "bar";
 
 foo ?? bar ?? "quz";
 
+// transform-in-default-destructuring
+var _c = {}.qux, qux = _c === void 0 ? foo.bar ?? "qux" : _c;
+
 // transform-in-default-param
-function foo(foo, qux) { var _a; if (qux === void 0) { qux = foo.bar ?? "qux"; } }
+function foo(foo, qux) {
+  if (qux === void 0) { qux = foo.bar ?? "qux"; }
+}
 function bar(bar, qux = bar ?? "qux") {}
 
 // transform-in-function
@@ -228,7 +240,11 @@ function foo4() {
 `,
 )
 
-inlineTest.fixme('TypeScript - Fail cases',
+// TODO: This destructuring pattern is not supported yet.
+// var _c = {}.qux, qux = _c === void 0 ? (_b = foo.bar) !== null && _b !== void 0 ? _b : "qux" : _c;
+// ->
+// var { qux = foo.bar ?? "qux" } = {};
+defineInlineTest([transform, unParameters])('TypeScript - ES5',
   `
 // transform-in-default-destructuring
 var _c = {}.qux, qux = _c === void 0 ? (_b = foo.bar) !== null && _b !== void 0 ? _b : "qux" : _c;
@@ -249,7 +265,7 @@ function foo3(foo, bar) {
 `,
   `
 // transform-in-default-destructuring
-var { qux = foo.bar ?? "qux" } = {};
+var _c = {}.qux, qux = _c === void 0 ? foo.bar ?? "qux" : _c;
 
 // transform-in-default-param
 function foo(foo, qux = foo.bar ?? "qux") {}

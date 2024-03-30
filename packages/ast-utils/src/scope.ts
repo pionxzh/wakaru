@@ -1,5 +1,6 @@
 import { fromPaths } from 'jscodeshift/src/Collection'
 import { mergeComments } from './comments'
+import { findReferences } from './reference'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, Collection, Identifier, ImportDeclaration, JSCodeshift, Statement, VariableDeclaration } from 'jscodeshift'
 
@@ -21,13 +22,10 @@ export function findDeclarations(scope: Scope, name: string): Collection<Identif
 }
 
 export function removeDeclarationIfUnused(j: JSCodeshift, path: ASTPath, name: string) {
-    const closestScope = j(path).closestScope().get()
-    if (!closestScope) return
+    const scope = path.scope?.lookup(name)
+    if (!scope) return
 
-    const idsUsedInScope = j(closestScope).find(j.Identifier, { name }).filter((idPath) => {
-        const pathScope = idPath.scope?.lookup(name)
-        return pathScope === closestScope.scope
-    })
+    const idsUsedInScope = findReferences(j, scope, name)
     const idsUsedInPath = j(path).find(j.Identifier, { name })
     const idsUsed = idsUsedInScope.length - idsUsedInPath.length
     if (idsUsed === 1) {

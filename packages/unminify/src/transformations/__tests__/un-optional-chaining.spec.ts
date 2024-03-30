@@ -211,7 +211,6 @@ class C {
     return !!(o?.a.b?.c.d);
   }
   static testIfDeep(o) {
-    var _o$obj;
     if (o.obj?.a.b?.c.d) {
       return true;
     }
@@ -241,7 +240,6 @@ class C {
     return !!(o.obj?.a.b?.c.d);
   }
   static testLogicalInIf(o) {
-    var _o$a$b4, _o$a;
     if (o?.a.b?.c.d && o?.a?.b.c.d) {
       return true;
     }
@@ -251,7 +249,6 @@ class C {
     return (o?.a.b?.c.d) && (o?.a?.b.c.d);
   }
   static testNullishCoalescing(o) {
-    var _o$a$b$c$non_existent, _o$a$b6, _o$a$b7;
     if (o?.a.b?.c.non_existent ?? o?.a.b?.c.d) {
       return o?.a.b?.c.non_existent ?? o?.a.b?.c.d;
     }
@@ -508,11 +505,7 @@ function h(a, { b = (_a_b = a.b) === null || _a_b === void 0 ? void 0 : (_a_b_c 
 function i(a, { b = ((_a_b1 = a.b) === null || _a_b1 === void 0 ? void 0 : (_a_b_c1 = _a_b1.c) === null || _a_b_c1 === void 0 ? void 0 : _a_b_c1.d).e }) {}
 function j(a, { b = (_a1 = a) === null || _a1 === void 0 ? void 0 : (_a_b2 = _a1.b) === null || _a_b2 === void 0 ? void 0 : _a_b2.c().d.e }) {}
 `,
-  // FIXME: These temporary variables are not removed
-  // because the implementation of `removeDeclarationIfUnused`
-  // will only go up scope once.
   `
-var _a, _a_b_c, _a_b, _a_b_c1, _a_b1, _a_b2, _a1;
 function f(a = (()=>{
   return x?.y;
 })()) {}
