@@ -35,7 +35,6 @@ import type { Module } from '@wakaru/unpacker'
 enum Feature {
     Unpacker = 'Unpacker',
     Unminify = 'Unminify',
-    Perf = 'Perf',
 }
 
 const INPUT_SIZE_WARNING = 1024 * 1024 * 5 // 5MB
@@ -495,7 +494,7 @@ async function nonInteractive(features: Feature[], {
     const outputPathsToCheck = []
     if (features.includes(Feature.Unpacker)) outputPathsToCheck.push(unpackerOutput)
     if (features.includes(Feature.Unminify)) outputPathsToCheck.push(unminifyOutput)
-    if (features.includes(Feature.Perf)) outputPathsToCheck.push(perfOutputPath)
+    outputPathsToCheck.push(perfOutputPath)
 
     const outputValidationError = getValidateFromPaths(outputPathsToCheck, outputFolderValidation)
     if (outputValidationError) {
