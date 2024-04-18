@@ -35,6 +35,7 @@ import type { Module } from '@wakaru/unpacker'
 enum Feature {
     Unpacker = 'Unpacker',
     Unminify = 'Unminify',
+    Perf = 'Perf',
 }
 
 const INPUT_SIZE_WARNING = 1024 * 1024 * 5 // 5MB
@@ -71,6 +72,10 @@ yargs(hideBin(process.argv))
     })
     .option('unminify-output', {
         describe: 'Override the output directory for unminify (default: out/unminify/)',
+        type: 'string',
+    })
+    .option('perf-output', {
+        describe: 'Specify the output directory (default: /)',
         type: 'string',
     })
     .option('force', {
@@ -438,6 +443,7 @@ async function nonInteractive(features: Feature[], {
     output: _output,
     'unpacker-output': _unpackerOutput,
     'unminify-output': _unminifyOutput,
+    'perf-output': _perfOutput,
     force = false,
     concurrency = 1,
     perf,
@@ -446,6 +452,7 @@ async function nonInteractive(features: Feature[], {
     output: string | undefined
     'unpacker-output': string | undefined
     'unminify-output': string | undefined
+    'perf-output': string | undefined
     force: boolean | undefined
     concurrency: number | undefined
     perf: boolean | undefined
@@ -480,14 +487,15 @@ async function nonInteractive(features: Feature[], {
     const unpackerOutput = _unpackerOutput ?? (singleFeature ? outputBase : path.join(outputBase, defaultUnpackerOutputFolder))
     const unminifyOutput = _unminifyOutput ?? (singleFeature ? outputBase : path.join(outputBase, defaultUnminifyOutputFolder))
 
-    const perfOutputBase = singleFeature
+    const perfOutputBase = _perfOutput || (singleFeature
         ? features.includes(Feature.Unpacker) ? unpackerOutput : unminifyOutput
-        : findCommonBaseDir([unpackerOutput, unminifyOutput]) ?? outputBase
+        : findCommonBaseDir([unpackerOutput, unminifyOutput]) ?? outputBase)
     const perfOutputPath = path.join(perfOutputBase, 'perf.json')
 
     const outputPathsToCheck = []
     if (features.includes(Feature.Unpacker)) outputPathsToCheck.push(unpackerOutput)
     if (features.includes(Feature.Unminify)) outputPathsToCheck.push(unminifyOutput)
+    if (features.includes(Feature.Perf)) outputPathsToCheck.push(perfOutputPath)
 
     const outputValidationError = getValidateFromPaths(outputPathsToCheck, outputFolderValidation)
     if (outputValidationError) {
