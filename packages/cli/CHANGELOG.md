@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.10](https://github.com/pionxzh/wakaru/compare/cli-v0.0.9...cli-v0.0.10) (2024-04-23)
+
+
+### Features
+
+* added support for `--perf-output` in CLI ([e4ce13c](https://github.com/pionxzh/wakaru/commit/e4ce13c8c8128fe471f22d06cd4fec2880ceab9a))
+
 ## [0.0.9](https://github.com/pionxzh/wakaru/compare/cli-v0.0.8...cli-v0.0.9) (2024-02-16)
 
 
