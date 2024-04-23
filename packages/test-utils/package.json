@@ -20,13 +20,13 @@
     "lint:fix": "eslint src --fix"
   },
   "dependencies": {
-    "vitest": "^1.4.0"
+    "vitest": "^1.5.0"
   },
   "devDependencies": {
     "@types/jscodeshift": "^0.11.11",
     "@wakaru/shared": "workspace:*",
     "jscodeshift": "^0.15.2",
-    "typescript": "^5.4.3"
+    "typescript": "^5.4.5"
   },
   "publishConfig": {
     "exports": {

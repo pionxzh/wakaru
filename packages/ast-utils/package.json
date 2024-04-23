@@ -49,6 +49,6 @@
     "@wakaru/test-utils": "workspace:*",
     "ast-types": "^0.16.1",
     "jscodeshift": "^0.15.2",
-    "typescript": "^5.4.3"
+    "typescript": "^5.4.5"
   }
 }

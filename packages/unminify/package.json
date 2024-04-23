@@ -32,7 +32,7 @@
     "lebab": "^3.2.4",
     "picocolors": "^1.0.0",
     "prettier": "^2.8.8",
-    "zod": "^3.22.4"
+    "zod": "^3.23.4"
   },
   "devDependencies": {
     "@types/jscodeshift": "^0.11.11",
@@ -45,7 +45,7 @@
     "ast-types": "^0.16.1",
     "jscodeshift": "^0.15.2",
     "tsup": "^8.0.2",
-    "typescript": "^5.4.3"
+    "typescript": "^5.4.5"
   },
   "publishConfig": {
     "exports": {
