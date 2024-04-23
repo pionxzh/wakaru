@@ -67,6 +67,7 @@ Run `npx @wakaru/cli --help` to see the full list of options.
 | `--force`       | `false` | Force overwrite output directory        |
 | `--concurrency` | `1`     | Specific the number of concurrent tasks |
 | `--perf`        | `false` | Show performance metrics                |
+| `--perf-output` |         | Performance metrics output directory    |
 
 `--concurrency` can be used to speed up the process. But please aware that the process might OOM if the input file is too large.
 
