@@ -178,7 +178,7 @@ export function convertExportsGetterForWebpack5(j: JSCodeshift, collection: Coll
                 exportValue = fn.body.body[0].argument
             }
 
-            if (j.Identifier.check(fn.body)) {
+            if (j.Identifier.check(fn.body) || j.MemberExpression.check(fn.body)) {
                 exportValue = fn.body
             }
 
