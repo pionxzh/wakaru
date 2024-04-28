@@ -2,7 +2,7 @@ import { renameFunctionParameters } from '@wakaru/ast-utils'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack4, convertRequireHelpersForWebpack5 } from './requireHelpers'
 import type { ModuleMapping } from '@wakaru/ast-utils/types'
-import type { ArrayExpression, Collection, FunctionExpression, JSCodeshift, MemberExpression, NumericLiteral, ObjectExpression, ObjectProperty, StringLiteral } from 'jscodeshift'
+import type { ArrayExpression, ArrowFunctionExpression, BlockStatement, Collection, FunctionExpression, JSCodeshift, MemberExpression, NumericLiteral, ObjectExpression, ObjectProperty, StringLiteral } from 'jscodeshift'
 
 /**
  * Find the modules array in webpack jsonp chunk.
@@ -83,7 +83,9 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
                         return properties.every((property) => {
                             return j.ObjectProperty.check(property)
                                     && (j.StringLiteral.check(property.key) || j.NumericLiteral.check(property.key))
-                                    && j.FunctionExpression.check(property.value)
+                                    && (j.FunctionExpression.check(property.value)
+                                    || (j.ArrowFunctionExpression.check(property.value) && j.BlockStatement.check(property.value.body))
+                                    )
                         })
                     },
                 },
@@ -99,12 +101,13 @@ export function getModulesForWebpackJsonP(j: JSCodeshift, root: Collection):
         moreModules.properties.forEach((property) => {
             const prop = property as ObjectProperty
             const moduleId = (prop.key as StringLiteral | NumericLiteral).value
-            const functionExpression = prop.value as FunctionExpression
+            const functionExpression = prop.value as FunctionExpression | ArrowFunctionExpression
             renameFunctionParameters(j, functionExpression, ['module', 'exports', 'require'])
+            const functionBody = functionExpression.body as BlockStatement
 
-            const program = j.program(functionExpression.body.body)
-            if (functionExpression.body.directives) {
-                program.directives = [...(program.directives || []), ...functionExpression.body.directives]
+            const program = j.program(functionBody.body)
+            if (functionBody.directives) {
+                program.directives = [...(program.directives || []), ...functionBody.directives]
             }
             const moduleContent = j(program)
             convertRequireHelpersForWebpack4(j, moduleContent)
