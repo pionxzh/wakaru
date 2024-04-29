@@ -33,13 +33,13 @@ export function isStatementIIFE(j: JSCodeshift, node: Statement): node is Expres
  * ```
  */
 export function isIIFE(j: JSCodeshift, node: ASTNode): node is ExpressionStatement {
+    if (j.UnaryExpression.check(node) && node.operator === '!') {
+        node = node.argument
+    }
+
     if (j.CallExpression.check(node)) {
         return j.FunctionExpression.check(node.callee)
             || j.ArrowFunctionExpression.check(node.callee)
-    }
-
-    if (j.UnaryExpression.check(node) && node.operator === '!') {
-        return j.FunctionExpression.check(node.argument)
     }
 
     return false
