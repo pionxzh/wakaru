@@ -6,10 +6,7 @@ import type { ASTNode, ASTPath, CallExpression, Collection, ExpressionStatement,
  * ```js
  * (() => { ... })(...)
  * (function() { ... })(...)
- * ```
- *
- * @example
- * ```js
+ * !(() => { ... })(...)
  * !function() { ... }(...)
  * ```
  */
@@ -25,10 +22,7 @@ export function isStatementIIFE(j: JSCodeshift, node: Statement): node is Expres
  * ```js
  * (() => { ... })(...)
  * (function() { ... })(...)
- * ```
- *
- * @example
- * ```js
+ * !(() => { ... })(...)
  * !function() { ... }(...)
  * ```
  */
@@ -73,6 +67,12 @@ export function findIIFEs(
                 operator: '!',
                 argument: {
                     type: 'CallExpression',
+                    callee: {
+                        type: (type: string) => {
+                            return type === 'FunctionExpression'
+                                || type === 'ArrowFunctionExpression'
+                        },
+                    },
                 },
             },
         })
