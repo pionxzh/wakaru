@@ -4,7 +4,7 @@ import { getTopLevelStatements } from '@wakaru/ast-utils/program'
 import { Module } from '../../Module'
 import { convertRequireHelpersForWebpack5 } from './requireHelpers'
 import type { ModuleMapping } from '@wakaru/ast-utils/types'
-import type { ArrowFunctionExpression, Collection, FunctionExpression, JSCodeshift, ObjectProperty, Statement, StringLiteral, VariableDeclaration } from 'jscodeshift'
+import type { ArrowFunctionExpression, CallExpression, Collection, ExpressionStatement, FunctionExpression, JSCodeshift, ObjectProperty, Statement, StringLiteral, UnaryExpression, VariableDeclaration } from 'jscodeshift'
 
 /**
  * Find the modules map in webpack 5 bootstrap.
@@ -46,11 +46,15 @@ export function getModulesForWebpack5(j: JSCodeshift, root: Collection):
     const moduleIdMapping: ModuleMapping = {}
 
     const statements = getTopLevelStatements(root)
-    const webpackBootstrap = statements.find(node => isStatementIIFE(j, node))
+    const webpackBootstrap = statements.find(node => isStatementIIFE(j, node)) as ExpressionStatement | undefined
     if (!webpackBootstrap) return null
 
-    // @ts-expect-error - skip type check
-    const statementsInBootstrap: Statement[] = webpackBootstrap.expression.callee.body.body
+    const expression = webpackBootstrap.expression as CallExpression | UnaryExpression
+    const callExpression = (j.CallExpression.check(expression) ? expression : expression.argument) as CallExpression
+    const callee = callExpression.callee as FunctionExpression | ArrowFunctionExpression
+    if (!j.BlockStatement.check(callee.body)) return null
+
+    const statementsInBootstrap: Statement[] = callee.body.body
     const webpackModules = statementsInBootstrap.find((node) => {
         if (node.type !== 'VariableDeclaration') return false
 
