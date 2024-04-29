@@ -65,7 +65,8 @@ export default createJSCodeshiftTransformationRule({
 
                 if (imported.name !== local.name) return
 
-                path.replace(j.importSpecifier(j.identifier(imported.name)))
+                const newIdent = j.identifier(imported.name)
+                path.replace(j.importSpecifier(newIdent, newIdent))
             })
     },
 })

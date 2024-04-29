@@ -1,5 +1,6 @@
 import { defineInlineTest } from '@wakaru/test-utils'
 import transform from '../un-import-rename'
+import unOptionalChaining from '../un-optional-chaining'
 
 const inlineTest = defineInlineTest(transform)
 
@@ -45,5 +46,22 @@ import { foo, bar } from 'B';
 
 const foo_1 = 'local';
 console.log(foo_2, bar_1, foo, bar, foo_1);
+`,
+)
+
+defineInlineTest([transform, unOptionalChaining])('avoid crash when combined with scopes',
+  `
+import { foo as a, bar as b, code } from '_';
+
+console.log(a, b, code);
+
+var _a;
+(_a = a) === null || _a === void 0 ? void 0 : _a.b;
+`, `
+import { foo, bar, code } from '_';
+
+console.log(foo, bar, code);
+
+foo?.b;
 `,
 )
