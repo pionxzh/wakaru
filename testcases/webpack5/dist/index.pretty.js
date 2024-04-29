@@ -35,6 +35,7 @@
         __webpack_require__.r(__webpack_exports__);
         /* harmony export */ __webpack_require__.d(__webpack_exports__, {
           /* harmony export */ A: () => /* binding */ A,
+          /* harmony export */ A_A: () => /* binding */ A_A,
           /* harmony export */
         });
         class A {
@@ -44,6 +45,12 @@
 
           print() {
             console.log("a", this.version);
+          }
+        }
+
+        class A_A {
+          constructor() {
+            this.label = "a_a";
           }
         }
 
@@ -100,6 +107,53 @@
           const json = await result.json();
           return json;
         };
+
+        /***/
+      },
+
+    /***/ "./src/d.js":
+      /*!******************!*\
+  !*** ./src/d.js ***!
+  \******************/
+      /***/ (
+        __unused_webpack___webpack_module__,
+        __webpack_exports__,
+        __webpack_require__
+      ) => {
+        __webpack_require__.r(__webpack_exports__);
+        /* harmony export */ __webpack_require__.d(__webpack_exports__, {
+          /* harmony export */ A: () =>
+            /* reexport safe */ _a_js__WEBPACK_IMPORTED_MODULE_0__.A,
+          /* harmony export */ A_A: () =>
+            /* reexport safe */ _a_js__WEBPACK_IMPORTED_MODULE_0__.A_A,
+          /* harmony export */
+        });
+        /* harmony import */ var _a_js__WEBPACK_IMPORTED_MODULE_0__ =
+          __webpack_require__(/*! ./a.js */ "./src/a.js");
+        // re-export
+
+        /***/
+      },
+
+    /***/ "./src/e.js":
+      /*!******************!*\
+  !*** ./src/e.js ***!
+  \******************/
+      /***/ (
+        __unused_webpack___webpack_module__,
+        __webpack_exports__,
+        __webpack_require__
+      ) => {
+        __webpack_require__.r(__webpack_exports__);
+        /* harmony export */ __webpack_require__.d(__webpack_exports__, {
+          /* harmony export */ A: () =>
+            /* reexport safe */ _a_js__WEBPACK_IMPORTED_MODULE_0__.A,
+          /* harmony export */
+        });
+        /* harmony import */ var _a_js__WEBPACK_IMPORTED_MODULE_0__ =
+          __webpack_require__(/*! ./a.js */ "./src/a.js");
+
+        // partial re-export
 
         /***/
       },
@@ -192,24 +246,33 @@
   !*** ./src/index.js ***!
   \**********************/
     __webpack_require__.r(__webpack_exports__);
-    /* harmony import */ var _a_js__WEBPACK_IMPORTED_MODULE_0__ =
-      __webpack_require__(/*! ./a.js */ "./src/a.js");
-    /* harmony import */ var _b_js__WEBPACK_IMPORTED_MODULE_1__ =
-      __webpack_require__(/*! ./b.js */ "./src/b.js");
-    /* harmony import */ var _c_js__WEBPACK_IMPORTED_MODULE_2__ =
-      __webpack_require__(/*! ./c.js */ "./src/c.js");
-    /* harmony import */ var _1_js__WEBPACK_IMPORTED_MODULE_3__ =
+    /* harmony import */ var _1_js__WEBPACK_IMPORTED_MODULE_0__ =
       __webpack_require__(/*! ./1.js */ "./src/1.js");
+    /* harmony import */ var _a_js__WEBPACK_IMPORTED_MODULE_1__ =
+      __webpack_require__(/*! ./a.js */ "./src/a.js");
+    /* harmony import */ var _b_js__WEBPACK_IMPORTED_MODULE_2__ =
+      __webpack_require__(/*! ./b.js */ "./src/b.js");
+    /* harmony import */ var _c_js__WEBPACK_IMPORTED_MODULE_3__ =
+      __webpack_require__(/*! ./c.js */ "./src/c.js");
+    /* harmony import */ var _d_js__WEBPACK_IMPORTED_MODULE_4__ =
+      __webpack_require__(/*! ./d.js */ "./src/d.js");
+    /* harmony import */ var _e_js__WEBPACK_IMPORTED_MODULE_5__ =
+      __webpack_require__(/*! ./e.js */ "./src/e.js");
+
+    const d = new _d_js__WEBPACK_IMPORTED_MODULE_4__.A();
+    const e = new _e_js__WEBPACK_IMPORTED_MODULE_5__.A();
 
     console.log(
-      _b_js__WEBPACK_IMPORTED_MODULE_1__.version,
-      _a_js__WEBPACK_IMPORTED_MODULE_0__.A
+      _b_js__WEBPACK_IMPORTED_MODULE_2__.version,
+      _a_js__WEBPACK_IMPORTED_MODULE_1__.A,
+      d,
+      e
     );
-    (0, _b_js__WEBPACK_IMPORTED_MODULE_1__["default"])();
-    (0, _c_js__WEBPACK_IMPORTED_MODULE_2__.getC)().then(console.log);
+    (0, _b_js__WEBPACK_IMPORTED_MODULE_2__["default"])();
+    (0, _c_js__WEBPACK_IMPORTED_MODULE_3__.getC)().then(console.log);
 
     // const M1 = await import('./1.js')
-    (0, _1_js__WEBPACK_IMPORTED_MODULE_3__["default"])();
+    (0, _1_js__WEBPACK_IMPORTED_MODULE_0__["default"])();
   })();
 
   /******/

@@ -7,3 +7,9 @@ export class A {
         console.log('a', this.version)
     }
 }
+
+export class A_A {
+    constructor() {
+        this.label = 'a_a'
+    }
+}
