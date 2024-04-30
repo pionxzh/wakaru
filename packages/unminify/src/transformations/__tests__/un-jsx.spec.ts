@@ -154,7 +154,7 @@ inlineTest('jsx with dynamic Component tag',
   `
 function fn() {
   return React.createElement(
-    r ? "a" : "div",
+    "div",
     null,
     "Hello",
   );
@@ -162,8 +162,7 @@ function fn() {
 `,
   `
 function fn() {
-  const Component = r ? "a" : "div";
-  return <Component>Hello</Component>;
+  return <div>Hello</div>;
 }
 `,
 )
@@ -171,6 +170,7 @@ function fn() {
 inlineTest('jsx with dynamic Component tag #2',
   `
 function fn() {
+  const components = ["div", "a"]
   return React.createElement(
     components[0],
     null,
@@ -180,8 +180,7 @@ function fn() {
 `,
   `
 function fn() {
-  const Component = components[0];
-  return <Component>Hello</Component>;
+  return <div>Hello</div>;
 }
 `,
 )
@@ -189,6 +188,8 @@ function fn() {
 inlineTest('jsx with dynamic Component tag #3',
   `
 const Foo = () => {
+  const r = true;
+  const g = false;
   return jsxs("div", {
     children: [
       jsx(r ? "a" : "div", { children: "bar" }, "b"),
@@ -199,10 +200,77 @@ const Foo = () => {
 `,
   `
 const Foo = () => {
-  const Component = g ? "p" : "div";
-  const Component_1 = r ? "a" : "div";
-  return <div><Component_1 key="b">bar</Component_1><Component key={c}>baz</Component></div>;
+  return <div><a key="b">bar</a><div key={c}>baz</div></div>;
 };
+`,
+)
+
+inlineTest('jsx with dynamic Component tag #4',
+  `
+function fn() {
+  const value = "wakaru"
+  return React.createElement(
+    value ? "a" : "div",
+    null,
+    "Hello",
+  );
+}
+`,
+  `
+function fn() {
+  return <a>Hello</a>;
+}
+`,
+)
+
+inlineTest('jsx with dynamic Component tag #5',
+  `
+function fn() {
+  const value = ""
+  return React.createElement(
+    value ? "a" : "div",
+    null,
+    "Hello",
+  );
+}
+`,
+  `
+function fn() {
+  return <div>Hello</div>;
+}
+`,
+)
+
+inlineTest('jsx with dynamic Component tag #6',
+  `
+function fn() {
+  const Name = "div";
+  const attrs = {id: "x"};
+  return React.createElement(Name, attrs);
+}
+`,
+  `
+function fn() {
+  const attrs = {id: "x"};
+  return <div {...attrs} />;
+}
+`,
+)
+
+inlineTest('jsx with dynamic Component tag #7',
+  `
+function fn() {
+  return React.createElement(
+    true ? "a" : "div",
+    null,
+    "Hello",
+  );
+}
+`,
+  `
+function fn() {
+  return <div>Hello</div>;
+}
 `,
 )
 

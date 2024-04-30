@@ -4,6 +4,7 @@ import { removePureAnnotation } from '@wakaru/ast-utils/comments'
 import { generateName } from '@wakaru/ast-utils/identifier'
 import { insertBefore } from '@wakaru/ast-utils/insert'
 import { isNull, isTrue, isUndefined } from '@wakaru/ast-utils/matchers'
+import { removeDeclarationIfUnused } from '@wakaru/ast-utils/scope'
 import { nonNullable } from '@wakaru/shared/array'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { z } from 'zod'
@@ -102,17 +103,16 @@ export const transformAST: ASTTransformation<typeof Schema> = (context, params) 
         // bottom-up transformation
         .reverse()
         .forEach((path) => {
-            const jsxElement = toJSX(j, path, pragmas, pragmaFrags)
+            const jsxElement = toJSX(j, path, pragmas, pragmaFrags, root)
             if (jsxElement) {
                 const parentWithComments = j.ExpressionStatement.check(path.parent.node) ? path.parent : path
                 removePureAnnotation(j, parentWithComments.node)
-
                 path.replace(jsxElement)
             }
         })
 }
 
-function toJSX(j: JSCodeshift, path: ASTPath<CallExpression>, pragmas: string[], pragmaFrags: string[]): JSXElement | JSXFragment | null {
+function toJSX(j: JSCodeshift, path: ASTPath<CallExpression>, pragmas: string[], pragmaFrags: string[], root: Collection): JSXElement | JSXFragment | null {
     const scope = path.scope
     assertScopeExists(scope)
 
@@ -131,13 +131,71 @@ function toJSX(j: JSCodeshift, path: ASTPath<CallExpression>, pragmas: string[],
     if (isCapitalizationInvalid(j, type)) return null
 
     let tag = toJsxTag(j, type)
+    const tagClone = tag
+
+    // constant tag name will convert into JSX tag
+    if (j.JSXIdentifier.check(tag)) {
+        root.find(j.VariableDeclarator, {
+            id: {
+                type: 'Identifier',
+                name: tag.name,
+            },
+        }).forEach((path: any) => {
+            const { id: { loc: { identifierName } } } = path.node
+            if (tag.name.toLowerCase() === identifierName.toLowerCase()) {
+                tag = { ...tag, name: path.node?.init?.value }
+            }
+        })
+    }
+
     // If a tag cannot be converted to JSX tag, convert it to a variable
     if (!tag && !j.SpreadElement.check(type)) {
         const name = generateName('Component', scope)
         tag = j.jsxIdentifier(name)
 
         const variableDeclaration = j.variableDeclaration('const', [j.variableDeclarator(j.identifier(name), type)])
-        insertBefore(j, path, variableDeclaration)
+
+        // if variable has array
+        const isVariableDeclarationArray = root.find(j.VariableDeclarator, {
+            id: {
+                type: 'Identifier',
+                name: variableDeclaration.declarations[0].init?.object?.name,
+            },
+        })
+
+        if (isVariableDeclarationArray.length) {
+            isVariableDeclarationArray.forEach((path: any) => {
+                removeDeclarationIfUnused(j, path, path.node.id.name)
+                // this will pick value against index
+                tag = { ...tag, name: path.node.init.elements[variableDeclaration.declarations[0].init.property.value].value }
+            })
+        }
+
+        const isVariableDeclaration = root.find(j.VariableDeclarator, {
+            id: {
+                type: 'Identifier',
+                name: variableDeclaration.declarations[0].init?.test?.name,
+            },
+        })
+
+        // if ternary operator variable value exist
+        if (isVariableDeclaration.length) {
+            isVariableDeclaration.forEach((path: any) => {
+                removeDeclarationIfUnused(j, path, path.node.id.name)
+                if (path.node.init.value) {
+                    tag = { ...tag, name: variableDeclaration.declarations[0].init.consequent.value }
+                }
+                else {
+                    tag = { ...tag, name: variableDeclaration.declarations[0].init.alternate.value }
+                }
+            })
+        }
+        else {
+            if (variableDeclaration.declarations[0].init?.alternate?.value) {
+                tag = { ...tag, name: variableDeclaration.declarations[0].init.alternate.value }
+            }
+        }
+        // insertBefore(j, path, variableDeclaration)
         scope.markAsStale()
     }
     if (!tag) return null
@@ -195,6 +253,10 @@ function toJSX(j: JSCodeshift, path: ASTPath<CallExpression>, pragmas: string[],
         if (isFrag1 || isFrag2) {
             return j.jsxFragment(j.jsxOpeningFragment(), j.jsxClosingFragment(), children)
         }
+    }
+
+    if (j.JSXIdentifier.check(tagClone)) {
+        removeDeclarationIfUnused(j, path, tagClone.name)
     }
 
     const openingElement = j.jsxOpeningElement(tag, attributes)
