@@ -299,48 +299,6 @@ function fn() {
 `,
 )
 
-inlineTest('jsx with dynamic Component tag - tag name in an array',
-  `
-function fn() {
-  const components = ["div", "a"]
-  return React.createElement(
-    components[0],
-    null,
-    "Hello",
-  );
-}
-`,
-  `
-function fn() {
-  return <div>Hello</div>;
-}
-`,
-)
-
-inlineTest('jsx with dynamic Component tag - tag name in an array #invalid',
-  `
-function fn() {
-  const components = ["div", "a"]
-  return React.createElement(
-    components[3],
-    null,
-    "Hello",
-  );
-}
-`,
-  `
-function fn() {
-  const components = ["div", "a"]
-  const Component = components[3];
-  return React.createElement(
-    Component,
-    null,
-    "Hello",
-  );
-}
-`,
-)
-
 inlineTest('jsx with child text that should be wrapped',
   `
 function fn() {

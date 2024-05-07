@@ -154,23 +154,6 @@ function toJSX(j: JSCodeshift, path: ASTPath<CallExpression>, pragmas: string[],
         tag = j.jsxIdentifier(name)
 
         const variableDeclaration = j.variableDeclaration('const', [j.variableDeclarator(j.identifier(name), type)])
-
-        // if variable has array
-        const isVariableDeclarationArray = root.find(j.VariableDeclarator, {
-            id: {
-                type: 'Identifier',
-                name: variableDeclaration.declarations[0].init?.object?.name,
-            },
-        })
-
-        if (isVariableDeclarationArray.length) {
-            isVariableDeclarationArray.forEach((path: any) => {
-                removeDeclarationIfUnused(j, path, path.node.id.name)
-                // this will pick value against index
-                tag = { ...tag, name: path.node.init.elements[variableDeclaration.declarations[0].init.property.value].value }
-            })
-        }
-
         const isVariableDeclaration = root.find(j.VariableDeclarator, {
             id: {
                 type: 'Identifier',
