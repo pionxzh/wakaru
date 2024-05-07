@@ -154,31 +154,7 @@ function toJSX(j: JSCodeshift, path: ASTPath<CallExpression>, pragmas: string[],
         tag = j.jsxIdentifier(name)
 
         const variableDeclaration = j.variableDeclaration('const', [j.variableDeclarator(j.identifier(name), type)])
-        const isVariableDeclaration = root.find(j.VariableDeclarator, {
-            id: {
-                type: 'Identifier',
-                name: variableDeclaration.declarations[0].init?.test?.name,
-            },
-        })
-
-        // if ternary operator variable value exist
-        if (isVariableDeclaration.length) {
-            isVariableDeclaration.forEach((path: any) => {
-                removeDeclarationIfUnused(j, path, path.node.id.name)
-                if (path.node.init.value) {
-                    tag = { ...tag, name: variableDeclaration.declarations[0].init.consequent.value }
-                }
-                else {
-                    tag = { ...tag, name: variableDeclaration.declarations[0].init.alternate.value }
-                }
-            })
-        }
-        else {
-            if (variableDeclaration.declarations[0].init?.alternate?.value) {
-                tag = { ...tag, name: variableDeclaration.declarations[0].init.alternate.value }
-            }
-        }
-        // insertBefore(j, path, variableDeclaration)
+        insertBefore(j, path, variableDeclaration)
         scope.markAsStale()
     }
     if (!tag) return null
