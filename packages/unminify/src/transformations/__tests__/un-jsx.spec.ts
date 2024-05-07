@@ -154,7 +154,7 @@ inlineTest('jsx with dynamic Component tag',
   `
 function fn() {
   return React.createElement(
-    "div",
+    r ? "a" : "div",
     null,
     "Hello",
   );
@@ -162,7 +162,8 @@ function fn() {
 `,
   `
 function fn() {
-  return <div>Hello</div>;
+  const Component = r ? "a" : "div";
+  return <Component>Hello</Component>;
 }
 `,
 )
@@ -170,7 +171,6 @@ function fn() {
 inlineTest('jsx with dynamic Component tag #2',
   `
 function fn() {
-  const components = ["div", "a"]
   return React.createElement(
     components[0],
     null,
@@ -180,12 +180,79 @@ function fn() {
 `,
   `
 function fn() {
-  return <div>Hello</div>;
+  const Component = components[0];
+  return <Component>Hello</Component>;
 }
 `,
 )
 
 inlineTest('jsx with dynamic Component tag #3',
+  `
+const Foo = () => {
+  return jsxs("div", {
+    children: [
+      jsx(r ? "a" : "div", { children: "bar" }, "b"),
+      jsx(g ? "p" : "div", { children: "baz" }, c),
+    ]
+  });
+};
+`,
+  `
+const Foo = () => {
+  const Component = g ? "p" : "div";
+  const Component_1 = r ? "a" : "div";
+  return <div><Component_1 key="b">bar</Component_1><Component key={c}>baz</Component></div>;
+};
+`,
+)
+
+inlineTest('jsx with dynamic Component tag - tag name in constant variable',
+  `
+function fn() {
+  const Name = "div";
+  return React.createElement(Name, null);
+}
+`,
+  `
+function fn() {
+  return <div />;
+}
+`,
+)
+
+inlineTest('jsx with dynamic Component tag - tag name in constant variable but the value is not a string',
+  `
+function fn() {
+  const Name = 1;
+  return React.createElement(Name, null);
+}
+`,
+  `
+function fn() {
+  const Name = 1;
+  return <Name />;
+}
+`,
+)
+
+inlineTest('jsx with dynamic Component tag - ternary with constant boolean',
+  `
+function fn() {
+  return React.createElement(
+    true ? "a" : "div",
+    null,
+    "Hello",
+  );
+}
+`,
+  `
+function fn() {
+  return <div>Hello</div>;
+}
+`,
+)
+
+inlineTest('jsx with dynamic Component tag - ternary with constant boolean in a variable',
   `
 const Foo = () => {
   const r = true;
@@ -205,12 +272,19 @@ const Foo = () => {
 `,
 )
 
-inlineTest('jsx with dynamic Component tag #4',
+inlineTest('jsx with dynamic Component tag - ternary with constant value in a variable',
   `
 function fn() {
-  const value = "wakaru"
-  return React.createElement(
-    value ? "a" : "div",
+  const truthy = "wakaru"
+  const truthyComp = React.createElement(
+    truthy ? "a" : "div",
+    null,
+    "Hello",
+  );
+
+  const falsy = ""
+  const falsyComp = React.createElement(
+    falsy ? "a" : "div",
     null,
     "Hello",
   );
@@ -218,50 +292,19 @@ function fn() {
 `,
   `
 function fn() {
-  return <a>Hello</a>;
+  const truthyComp = <a>Hello</a>;
+
+  const falsyComp = <div>Hello</div>;
 }
 `,
 )
 
-inlineTest('jsx with dynamic Component tag #5',
+inlineTest('jsx with dynamic Component tag - tag name in an array',
   `
 function fn() {
-  const value = ""
+  const components = ["div", "a"]
   return React.createElement(
-    value ? "a" : "div",
-    null,
-    "Hello",
-  );
-}
-`,
-  `
-function fn() {
-  return <div>Hello</div>;
-}
-`,
-)
-
-inlineTest('jsx with dynamic Component tag #6',
-  `
-function fn() {
-  const Name = "div";
-  const attrs = {id: "x"};
-  return React.createElement(Name, attrs);
-}
-`,
-  `
-function fn() {
-  const attrs = {id: "x"};
-  return <div {...attrs} />;
-}
-`,
-)
-
-inlineTest('jsx with dynamic Component tag #7',
-  `
-function fn() {
-  return React.createElement(
-    true ? "a" : "div",
+    components[0],
     null,
     "Hello",
   );
@@ -270,6 +313,30 @@ function fn() {
   `
 function fn() {
   return <div>Hello</div>;
+}
+`,
+)
+
+inlineTest('jsx with dynamic Component tag - tag name in an array #invalid',
+  `
+function fn() {
+  const components = ["div", "a"]
+  return React.createElement(
+    components[3],
+    null,
+    "Hello",
+  );
+}
+`,
+  `
+function fn() {
+  const components = ["div", "a"]
+  const Component = components[3];
+  return React.createElement(
+    Component,
+    null,
+    "Hello",
+  );
 }
 `,
 )
