@@ -4,7 +4,7 @@ import { removePureAnnotation } from '@wakaru/ast-utils/comments'
 import { generateName } from '@wakaru/ast-utils/identifier'
 import { insertBefore } from '@wakaru/ast-utils/insert'
 import { isNull, isTrue, isUndefined } from '@wakaru/ast-utils/matchers'
-import { removeDeclarationIfUnused } from '@wakaru/ast-utils/scope'
+import { findDeclaration, removeDeclarationIfUnused } from '@wakaru/ast-utils/scope'
 import { nonNullable } from '@wakaru/shared/array'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { z } from 'zod'
@@ -103,7 +103,7 @@ export const transformAST: ASTTransformation<typeof Schema> = (context, params) 
         // bottom-up transformation
         .reverse()
         .forEach((path) => {
-            const jsxElement = toJSX(j, path, pragmas, pragmaFrags, root)
+            const jsxElement = toJSX(j, path, pragmas, pragmaFrags)
             if (jsxElement) {
                 const parentWithComments = j.ExpressionStatement.check(path.parent.node) ? path.parent : path
                 removePureAnnotation(j, parentWithComments.node)
@@ -112,7 +112,7 @@ export const transformAST: ASTTransformation<typeof Schema> = (context, params) 
         })
 }
 
-function toJSX(j: JSCodeshift, path: ASTPath<CallExpression>, pragmas: string[], pragmaFrags: string[], root: Collection): JSXElement | JSXFragment | null {
+function toJSX(j: JSCodeshift, path: ASTPath<CallExpression>, pragmas: string[], pragmaFrags: string[]): JSXElement | JSXFragment | null {
     const scope = path.scope
     assertScopeExists(scope)
 
@@ -131,21 +131,25 @@ function toJSX(j: JSCodeshift, path: ASTPath<CallExpression>, pragmas: string[],
     if (isCapitalizationInvalid(j, type)) return null
 
     let tag = toJsxTag(j, type)
-    const tagClone = tag
 
     // constant tag name will convert into JSX tag
     if (j.JSXIdentifier.check(tag)) {
-        root.find(j.VariableDeclarator, {
-            id: {
-                type: 'Identifier',
-                name: tag.name,
-            },
-        }).forEach((path: any) => {
-            const { id: { loc: { identifierName } } } = path.node
-            if (tag.name.toLowerCase() === identifierName.toLowerCase()) {
-                tag = { ...tag, name: path.node?.init?.value }
+        const scope = path.scope
+        assertScopeExists(scope)
+
+        const tagName = tag.name
+        const declaration = findDeclaration(scope, tagName)
+        if (declaration) {
+            // if the tag is a variable and it's string literal, inline it
+            const variableDeclarator = j(declaration).closest(j.VariableDeclarator)
+            if (variableDeclarator.size() === 1) {
+                const init = variableDeclarator.get().node.init
+                if (j.StringLiteral.check(init)) {
+                    tag = j.jsxIdentifier(init.value)
+                    removeDeclarationIfUnused(j, path, tagName)
+                }
             }
-        })
+        }
     }
 
     // If a tag cannot be converted to JSX tag, convert it to a variable
@@ -212,10 +216,6 @@ function toJSX(j: JSCodeshift, path: ASTPath<CallExpression>, pragmas: string[],
         if (isFrag1 || isFrag2) {
             return j.jsxFragment(j.jsxOpeningFragment(), j.jsxClosingFragment(), children)
         }
-    }
-
-    if (j.JSXIdentifier.check(tagClone)) {
-        removeDeclarationIfUnused(j, path, tagClone.name)
     }
 
     const openingElement = j.jsxOpeningElement(tag, attributes)
