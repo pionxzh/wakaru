@@ -4,6 +4,7 @@ import { removePureAnnotation } from '@wakaru/ast-utils/comments'
 import { generateName } from '@wakaru/ast-utils/identifier'
 import { insertBefore } from '@wakaru/ast-utils/insert'
 import { isNull, isTrue, isUndefined } from '@wakaru/ast-utils/matchers'
+import { findDeclaration, removeDeclarationIfUnused } from '@wakaru/ast-utils/scope'
 import { nonNullable } from '@wakaru/shared/array'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { z } from 'zod'
@@ -106,7 +107,6 @@ export const transformAST: ASTTransformation<typeof Schema> = (context, params) 
             if (jsxElement) {
                 const parentWithComments = j.ExpressionStatement.check(path.parent.node) ? path.parent : path
                 removePureAnnotation(j, parentWithComments.node)
-
                 path.replace(jsxElement)
             }
         })
@@ -131,6 +131,27 @@ function toJSX(j: JSCodeshift, path: ASTPath<CallExpression>, pragmas: string[],
     if (isCapitalizationInvalid(j, type)) return null
 
     let tag = toJsxTag(j, type)
+
+    // constant tag name will convert into JSX tag
+    if (j.JSXIdentifier.check(tag)) {
+        const scope = path.scope
+        assertScopeExists(scope)
+
+        const tagName = tag.name
+        const declaration = findDeclaration(scope, tagName)
+        if (declaration) {
+            // if the tag is a variable and it's string literal, inline it
+            const variableDeclarator = j(declaration).closest(j.VariableDeclarator)
+            if (variableDeclarator.size() === 1) {
+                const init = variableDeclarator.get().node.init
+                if (j.StringLiteral.check(init)) {
+                    tag = j.jsxIdentifier(init.value)
+                    removeDeclarationIfUnused(j, path, tagName)
+                }
+            }
+        }
+    }
+
     // If a tag cannot be converted to JSX tag, convert it to a variable
     if (!tag && !j.SpreadElement.check(type)) {
         const name = generateName('Component', scope)

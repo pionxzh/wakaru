@@ -206,6 +206,35 @@ const Foo = () => {
 `,
 )
 
+inlineTest('jsx with dynamic Component tag - tag name in constant variable',
+  `
+function fn() {
+  const Name = "div";
+  return React.createElement(Name, null);
+}
+`,
+  `
+function fn() {
+  return <div />;
+}
+`,
+)
+
+inlineTest('jsx with dynamic Component tag - tag name in constant variable but the value is not a string',
+  `
+function fn() {
+  const Name = 1;
+  return React.createElement(Name, null);
+}
+`,
+  `
+function fn() {
+  const Name = 1;
+  return <Name />;
+}
+`,
+)
+
 inlineTest('jsx with child text that should be wrapped',
   `
 function fn() {
