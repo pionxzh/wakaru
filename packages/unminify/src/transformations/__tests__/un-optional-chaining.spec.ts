@@ -781,3 +781,12 @@ foo?.bar;
 a?.b?.c;
 `,
 )
+
+inlineTest('works in nested structures',
+  `
+null !== (o = null === (s = c.foo.bar) || void 0 === s ? void 0 : s.baz.z) && void 0 !== o && o;
+`,
+  `
+null !== (o = c.foo.bar?.baz.z) && void 0 !== o && o;
+`,
+)

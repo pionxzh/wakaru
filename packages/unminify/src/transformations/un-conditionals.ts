@@ -107,7 +107,7 @@ export const transformAST: ASTTransformation = (context) => {
         })
         .forEach((path) => {
             const conditionExpression = path.node.expression as ConditionalExpression
-            const decisionTree = makeDecisionTree(j, conditionExpression)
+            const decisionTree = makeDecisionTree(j, conditionExpression, false)
             if (!shouldTransform(j, decisionTree)) return
 
             const replacements = renderDecisionTree(j, decisionTree)
@@ -140,7 +140,7 @@ export const transformAST: ASTTransformation = (context) => {
         })
         .forEach((path) => {
             const conditionExpression = path.node.argument as ConditionalExpression
-            const decisionTree = makeDecisionTree(j, conditionExpression)
+            const decisionTree = makeDecisionTree(j, conditionExpression, true)
             if (!shouldTransform(j, decisionTree)) return
 
             const replacements = renderDecisionTreeWithReturn(j, decisionTree)
@@ -158,7 +158,7 @@ export const transformAST: ASTTransformation = (context) => {
         })
         .forEach((path) => {
             const logicalExpression = path.node.expression as LogicalExpression
-            const decisionTree = makeDecisionTree(j, logicalExpression)
+            const decisionTree = makeDecisionTree(j, logicalExpression, false)
             if (!shouldTransform(j, decisionTree)) return
 
             const replacements = renderDecisionTree(j, decisionTree)

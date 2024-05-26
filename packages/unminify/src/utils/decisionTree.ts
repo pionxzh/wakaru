@@ -8,12 +8,12 @@ export interface DecisionTree {
     falseBranch: DecisionTree | null
 }
 
-export function makeDecisionTree(j: JSCodeshift, node: ExpressionKind): DecisionTree {
+export function makeDecisionTree(j: JSCodeshift, node: ExpressionKind, requireReturnValue: boolean): DecisionTree {
     if (j.ConditionalExpression.check(node)) {
         return {
             condition: node.test,
-            trueBranch: makeDecisionTree(j, node.consequent),
-            falseBranch: makeDecisionTree(j, node.alternate),
+            trueBranch: makeDecisionTree(j, node.consequent, requireReturnValue),
+            falseBranch: makeDecisionTree(j, node.alternate, requireReturnValue),
         }
     }
 
@@ -21,16 +21,20 @@ export function makeDecisionTree(j: JSCodeshift, node: ExpressionKind): Decision
         if (node.operator === '&&') {
             return {
                 condition: node.left,
-                trueBranch: makeDecisionTree(j, node.right),
-                falseBranch: null,
+                trueBranch: makeDecisionTree(j, node.right, requireReturnValue),
+                falseBranch: requireReturnValue && isNodeReturningBoolean(j, node.left)
+                    ? { condition: j.booleanLiteral(false), trueBranch: null, falseBranch: null }
+                    : null,
             }
         }
 
         if (node.operator === '||') {
             return {
                 condition: node.left,
-                trueBranch: null,
-                falseBranch: makeDecisionTree(j, node.right),
+                trueBranch: requireReturnValue && isNodeReturningBoolean(j, node.left)
+                    ? { condition: j.booleanLiteral(true), trueBranch: null, falseBranch: null }
+                    : null,
+                falseBranch: makeDecisionTree(j, node.right, requireReturnValue),
             }
         }
 
@@ -108,4 +112,19 @@ export function renderDebugDecisionTree(j: JSCodeshift, tree: DecisionTree) {
     }, 2)
     // eslint-disable-next-line no-console
     console.log(output)
+}
+
+function isNodeReturningBoolean(j: JSCodeshift, node: ExpressionKind): boolean {
+    if (j.BooleanLiteral.check(node)) return true
+
+    if (j.LogicalExpression.check(node) && (node.operator === '&&' || node.operator === '||')) {
+        return isNodeReturningBoolean(j, node.left) && isNodeReturningBoolean(j, node.right)
+    }
+
+    return isComparison(j, node)
+}
+
+const comparisonOperators = ['==', '===', '!=', '!==', '>', '>=', '<', '<=']
+function isComparison(j: JSCodeshift, node: ExpressionKind): boolean {
+    return j.BinaryExpression.check(node) && comparisonOperators.includes(node.operator)
 }

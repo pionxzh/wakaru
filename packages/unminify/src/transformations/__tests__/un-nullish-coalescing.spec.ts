@@ -1,5 +1,6 @@
 import { defineInlineTest } from '@wakaru/test-utils'
 import transform from '../un-nullish-coalescing'
+import unOptionalChaining from '../un-optional-chaining'
 import unParameters from '../un-parameters'
 
 const inlineTest = defineInlineTest(transform)
@@ -273,5 +274,25 @@ function bar(bar, qux = bar ?? "qux") {}
 
 // transform-static-refs-in-default
 function foo3(foo, bar = foo ?? "bar") {}
+`,
+)
+
+inlineTest('falsy fallback value should be accepted',
+  `
+null !== (e = m.foo) && void 0 !== e ? e : void 0;
+null !== (e = l.foo.bar) && void 0 !== e && e;
+`,
+  `
+m.foo ?? void 0;
+l.foo.bar ?? false;
+`,
+)
+
+defineInlineTest([unOptionalChaining, transform])('works with optional chaining',
+  `
+null !== (o = null === (s = c.foo.bar) || void 0 === s ? void 0 : s.baz.z) && void 0 !== o && o;
+`,
+  `
+c.foo.bar?.baz.z ?? false;
 `,
 )

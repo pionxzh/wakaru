@@ -95,12 +95,18 @@ export function isLogicalNot(j: JSCodeshift, node: ASTNode): node is UnaryExpres
     return j.UnaryExpression.check(node) && node.operator === '!'
 }
 
+/**
+ * Check if node is `value !== null` or `null !== value`
+ */
 export function isNotNullBinary(j: JSCodeshift, node: ASTNode): node is BinaryExpression {
     return j.BinaryExpression.check(node)
     && node.operator === '!=='
     && (isNull(j, node.left) || isNull(j, node.right))
 }
 
+/**
+ * Check if node is `value === null` or `null === value`
+ */
 export function isNullBinary(j: JSCodeshift, node: ASTNode): node is BinaryExpression {
     return j.BinaryExpression.check(node)
     && node.operator === '==='
