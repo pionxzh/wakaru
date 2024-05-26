@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint src",
-    "lint:fix": "eslint src --fix"
+    "lint": "eslint src --max-warnings=0",
+    "lint:fix": "eslint src --fix --max-warnings=0"
   },
   "dependencies": {
     "@heroicons/react": "^2.1.3",

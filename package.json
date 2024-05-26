@@ -20,8 +20,8 @@
     "test:update": "turbo run test:update",
     "test:watch": "turbo run test:watch",
     "test:type": "turbo run test:type",
-    "lint": "turbo run lint --max-warnings=0",
-    "lint:fix": "turbo run lint:fix --max-warnings=0",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint:fix",
     "bump-deps": "pnpm exec taze",
     "generate:pretty-testcases": "esno scripts/pretty-testcases.ts"
   },

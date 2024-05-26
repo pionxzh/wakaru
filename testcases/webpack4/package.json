@@ -7,8 +7,8 @@
   "license": "MIT",
   "scripts": {
     "build": "cross-env NODE_OPTIONS=\"--openssl-legacy-provider\" webpack --mode production",
-    "lint": "eslint src",
-    "lint:fix": "eslint src --fix"
+    "lint": "eslint src --max-warnings=0",
+    "lint:fix": "eslint src --fix --max-warnings=0"
   },
   "dependencies": {
     "history": "^4.10.1",

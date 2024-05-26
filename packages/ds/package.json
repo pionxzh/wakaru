@@ -16,8 +16,8 @@
   },
   "scripts": {
     "test:type": "tsc --noEmit",
-    "lint": "eslint src",
-    "lint:fix": "eslint src --fix"
+    "lint": "eslint src --max-warnings=0",
+    "lint:fix": "eslint src --fix --max-warnings=0"
   },
   "publishConfig": {
     "exports": {
