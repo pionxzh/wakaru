@@ -26,6 +26,13 @@ export default pionxzh(
         files: ['packages/unminify/**/*.spec.ts'],
         rules: {
             'style/indent': ['error', 2],
+            'no-restricted-syntax': [
+                'warn',
+                {
+                    selector: 'CallExpression[callee.property.name=\'only\']',
+                    message: '`.only` tests are used for local tests only',
+                },
+            ],
         },
     },
     {
