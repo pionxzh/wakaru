@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.2](https://github.com/pionxzh/wakaru/compare/unminify-v0.2.1...unminify-v0.2.2) (2024-05-26)
+
+
+### Features
+
+* **un-jsx:** inline constant tag inlining ([#129](https://github.com/pionxzh/wakaru/issues/129)) ([2fb95bb](https://github.com/pionxzh/wakaru/commit/2fb95bb97a87f0c7c4dc4dccb8b3393249c2d37c))
+
+
+### Bug Fixes
+
+* pass local name for imports to avoid crash ([cbfbc04](https://github.com/pionxzh/wakaru/commit/cbfbc04d140dc48a037a05372ee4c77ed7f0b618))
+* **unminify:** fix edge cases of `un-optional-chaining` and `un-nullish-coalescing` ([a3511ba](https://github.com/pionxzh/wakaru/commit/a3511ba18fba3a6bd007a3569718c44f6b4f32cf))
+
 ## [0.2.1](https://github.com/pionxzh/wakaru/compare/unminify-v0.2.0...unminify-v0.2.1) (2024-04-23)
 
 

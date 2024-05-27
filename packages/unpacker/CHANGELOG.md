@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2](https://github.com/pionxzh/wakaru/compare/unpacker-v0.1.1...unpacker-v0.1.2) (2024-05-26)
+
+
+### Features
+
+* Allow Arrow functions in module definitions ([6a60b92](https://github.com/pionxzh/wakaru/commit/6a60b9222ebcc7099f4ba162ecc868343bdb18ff))
+* Allow re-exports from modules in Webpack5 ([89065a4](https://github.com/pionxzh/wakaru/commit/89065a4e689b08d3e098c2e2d9eb647f896f78c8))
+
 ## [0.1.1](https://github.com/pionxzh/wakaru/compare/unpacker-v0.1.0...unpacker-v0.1.1) (2024-01-06)
 
 
