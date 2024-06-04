@@ -1,3 +1,4 @@
+import type { AstGrepTransformationRule } from './astGrepRule'
 import type { JSCodeshiftTransformationRule } from './jscodeshiftRule'
 import type { StringTransformationRule } from './stringRule'
 import type { ModuleMapping, ModuleMeta } from './types'
@@ -28,7 +29,7 @@ export interface JSCodeshiftTransform {
 }
 
 export interface BaseTransformationRule {
-    type: 'jscodeshift' | 'string' | 'rule-set'
+    type: 'jscodeshift' | 'string' | 'ast-grep' | 'rule-set'
     /**
      * The unique id of the rule
      */
@@ -55,6 +56,7 @@ export interface BaseTransformationRule {
 export type TransformationRule<Schema extends ZodSchema = ZodSchema> =
     | JSCodeshiftTransformationRule<Schema>
     | StringTransformationRule<Schema>
+    | AstGrepTransformationRule<Schema>
     | MergedTransformationRule
 
 export class MergedTransformationRule implements BaseTransformationRule {

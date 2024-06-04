@@ -7,6 +7,7 @@
   "sideEffects": false,
   "exports": {
     "./array": "./src/array.ts",
+    "./astGrepRule": "./src/astGrepRule.ts",
     "./jscodeshift": "./src/jscodeshift.ts",
     "./rule": "./src/rule.ts",
     "./runner": "./src/runner.ts",
@@ -33,9 +34,11 @@
     "pathe": "^1.1.2"
   },
   "devDependencies": {
+    "@ast-grep/napi": "^0.18.1",
     "@types/jscodeshift": "^0.11.11",
     "ast-types": "^0.16.1",
     "jscodeshift": "^0.15.2",
+    "magic-string": "^0.30.5",
     "typescript": "^5.3.3",
     "zod": "^3.22.4"
   }
