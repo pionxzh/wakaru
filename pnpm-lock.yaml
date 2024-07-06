@@ -102,6 +102,12 @@ importers:
 
   packages/cli:
     dependencies:
+      '@wakaru/unminify':
+        specifier: workspace:*
+        version: link:../unminify
+      '@wakaru/unpacker':
+        specifier: workspace:*
+        version: link:../unpacker
       fs-extra:
         specifier: ^11.2.0
         version: 11.2.0
@@ -142,12 +148,6 @@ importers:
       '@wakaru/test-utils':
         specifier: workspace:*
         version: link:../test-utils
-      '@wakaru/unminify':
-        specifier: workspace:*
-        version: link:../unminify
-      '@wakaru/unpacker':
-        specifier: workspace:*
-        version: link:../unpacker
       tsup:
         specifier: ^8.0.2
         version: 8.0.2(typescript@5.4.5)

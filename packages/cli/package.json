@@ -24,6 +24,8 @@
     "lint:fix": "eslint src --fix --max-warnings=0"
   },
   "dependencies": {
+    "@wakaru/unminify": "workspace:*",
+    "@wakaru/unpacker": "workspace:*",
     "fs-extra": "^11.2.0",
     "globby": "^11.1.0",
     "picocolors": "^1.0.0",
@@ -39,8 +41,6 @@
     "@wakaru/ast-utils": "workspace:*",
     "@wakaru/shared": "workspace:*",
     "@wakaru/test-utils": "workspace:*",
-    "@wakaru/unminify": "workspace:*",
-    "@wakaru/unpacker": "workspace:*",
     "tsup": "^8.0.2",
     "typescript": "^5.4.5"
   }

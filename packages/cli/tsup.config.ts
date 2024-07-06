@@ -19,6 +19,5 @@ export default defineConfig({
         'ast-types',
         '@clack/core', // patched
         '@clack/prompts', // patched
-        /@wakaru\/.+/,
     ],
 })
