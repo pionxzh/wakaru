@@ -202,7 +202,7 @@ function handleReactRename(j: JSCodeshift, root: Collection) {
 
             // rename the identifier
             const oldName = id.name
-            const newName = generateName(`${pascalCase(oldName)}Ref`, scope)
+            const newName = generateName(`${oldName}Ref`, scope)
             renameIdentifier(j, scope, oldName, newName)
         })
 

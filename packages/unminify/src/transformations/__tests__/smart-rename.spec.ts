@@ -236,14 +236,14 @@ const d = useRef();
 const ef = o.useRef(null);
 
 const g = o.useRef(a, b); // invalid parameters
-const ButtonRef = o.useRef(null); // name is not minified
+const buttonRef = o.useRef(null); // name is not minified
 `,
   `
-const DRef = useRef();
-const EfRef = o.useRef(null);
+const dRef = useRef();
+const efRef = o.useRef(null);
 
 const g = o.useRef(a, b); // invalid parameters
-const ButtonRef = o.useRef(null); // name is not minified
+const buttonRef = o.useRef(null); // name is not minified
 `,
 )
 
