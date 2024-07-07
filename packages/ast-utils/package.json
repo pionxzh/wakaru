@@ -16,6 +16,7 @@
     "./identifier": "./src/identifier.ts",
     "./imports": "./src/imports.ts",
     "./insert": "./src/insert.ts",
+    "./kinds": "./src/kinds.ts",
     "./matchers": "./src/matchers/index.ts",
     "./object": "./src/object.ts",
     "./parenthesized": "./src/parenthesized.ts",

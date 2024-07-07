@@ -790,3 +790,20 @@ null !== (o = null === (s = c.foo.bar) || void 0 === s ? void 0 : s.baz.z) && vo
 null !== (o = c.foo.bar?.baz.z) && void 0 !== o && o;
 `,
 )
+
+inlineTest('should not mutate the original AST',
+  `
+function foo() {
+  Y || (Y = setTimeout(() => {
+    (Y = null);
+  }))
+}
+`,
+  `
+function foo() {
+  Y || (Y = setTimeout(() => {
+    (Y = null);
+  }))
+}
+`,
+)

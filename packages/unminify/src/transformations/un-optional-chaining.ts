@@ -1,4 +1,5 @@
 import { mergeComments } from '@wakaru/ast-utils/comments'
+import { memberExpressionKindTypes, patternKindTypes } from '@wakaru/ast-utils/kinds'
 import { areNodesEqual, isNotNullBinary, isNull, isNullBinary, isTrue, isUndefined, isUndefinedBinary } from '@wakaru/ast-utils/matchers'
 import { smartParenthesized } from '@wakaru/ast-utils/parenthesized'
 import { removeDeclarationIfUnused } from '@wakaru/ast-utils/scope'
@@ -196,9 +197,7 @@ function applyOptionalChaining<T extends ExpressionKind>(
              * The output will be a little bit ugly, but it
              * will eventually be cleaned up by prettier.
              */
-            const object = targetExpression
-                ? smartParenthesized(j, targetExpression)
-                : node.object
+            const object = targetExpression ? smartParenthesized(j, targetExpression) : node.object
             transformed = true
             return j.optionalMemberExpression(object, node.property, node.computed) as T
         }
@@ -208,9 +207,7 @@ function applyOptionalChaining<T extends ExpressionKind>(
 
     if ((j.CallExpression.check(node) || j.OptionalCallExpression.check(node))) {
         if ((j.MemberExpression.check(node.callee) || j.OptionalMemberExpression.check(node.callee))) {
-            if (j.MemberExpression.check(node.callee.object)
-                && j.Identifier.check(node.callee.property)
-            ) {
+            if (j.MemberExpression.check(node.callee.object) && j.Identifier.check(node.callee.property)) {
                 if (
                     node.callee.property.name === 'call'
                     && areNodesEqual(j, node.arguments[0], tempVariable)
@@ -218,12 +215,12 @@ function applyOptionalChaining<T extends ExpressionKind>(
                     const argumentStartsWithThis = areNodesEqual(j, node.arguments[0], tempVariable)
                     const [_, ..._args] = node.arguments
                     const args = argumentStartsWithThis ? _args : node.arguments
-                    const callee = node.callee
-                    const optionalCallExpression = j.optionalCallExpression(callee.object as Identifier, args)
-                    optionalCallExpression.callee = applyOptionalChaining(j, optionalCallExpression.callee, tempVariable, targetExpression)
-                    optionalCallExpression.arguments = optionalCallExpression.arguments.map((arg) => {
-                        return j.SpreadElement.check(arg) ? arg : applyOptionalChaining(j, arg, tempVariable, targetExpression)
-                    })
+                    const optionalCallExpression = j.optionalCallExpression(
+                        applyOptionalChaining(j, node.callee.object, tempVariable, targetExpression),
+                        args.map((arg) => {
+                            return j.SpreadElement.check(arg) ? arg : applyOptionalChaining(j, arg, tempVariable, targetExpression)
+                        }),
+                    )
                     transformed = true
                     return optionalCallExpression as T
                 }
@@ -235,12 +232,12 @@ function applyOptionalChaining<T extends ExpressionKind>(
                     const args = j.ArrayExpression.check(arg)
                         ? arg.elements.map(element => element ?? j.identifier('undefined')) as Array<ExpressionKind | SpreadElement>
                         : [j.spreadElement(arg)]
-                    const callee = node.callee
-                    const optionalCallExpression = j.optionalCallExpression(callee.object as Identifier, args)
-                    optionalCallExpression.callee = applyOptionalChaining(j, optionalCallExpression.callee, tempVariable, targetExpression)
-                    optionalCallExpression.arguments = optionalCallExpression.arguments.map((arg) => {
-                        return j.SpreadElement.check(arg) ? arg : applyOptionalChaining(j, arg, tempVariable, targetExpression)
-                    })
+                    const optionalCallExpression = j.optionalCallExpression(
+                        applyOptionalChaining(j, node.callee.object, tempVariable, targetExpression),
+                        args.map((arg) => {
+                            return j.SpreadElement.check(arg) ? arg : applyOptionalChaining(j, arg, tempVariable, targetExpression)
+                        }),
+                    )
                     transformed = true
                     return optionalCallExpression as T
                 }
@@ -251,12 +248,13 @@ function applyOptionalChaining<T extends ExpressionKind>(
                 ) {
                     const calleeObj = node.callee.object
                     const isOptional = !j.AssignmentExpression.check(calleeObj.object)
-                    const memberExpression = isOptional
-                        ? j.optionalMemberExpression(calleeObj.object, calleeObj.property, calleeObj.computed)
-                        : j.memberExpression(calleeObj.object, calleeObj.property, calleeObj.computed)
+                    const builder = isOptional ? j.optionalMemberExpression : j.memberExpression
+                    const memberExpression = builder(
+                        applyOptionalChaining(j, calleeObj.object, tempVariable, targetExpression),
+                        applyOptionalChaining(j, calleeObj.property, tempVariable, targetExpression),
+                        calleeObj.computed,
+                    )
                     if (isOptional) transformed = true
-                    memberExpression.object = applyOptionalChaining(j, memberExpression.object, tempVariable, targetExpression)
-                    memberExpression.property = applyOptionalChaining(j, memberExpression.property, tempVariable, targetExpression)
                     return memberExpression as T
                 }
             }
@@ -264,11 +262,12 @@ function applyOptionalChaining<T extends ExpressionKind>(
             if (areNodesEqual(j, node.callee.object, tempVariable)) {
                 if (j.Identifier.check(node.callee.property)) {
                     if (node.callee.property.name === 'call') {
-                        const optionalCallExpression = j.optionalCallExpression(targetExpression as Identifier, node.arguments)
-                        optionalCallExpression.callee = applyOptionalChaining(j, optionalCallExpression.callee, tempVariable, targetExpression)
-                        optionalCallExpression.arguments = optionalCallExpression.arguments.map((arg) => {
-                            return j.SpreadElement.check(arg) ? arg : applyOptionalChaining(j, arg, tempVariable, targetExpression)
-                        }).splice(1)
+                        const optionalCallExpression = j.optionalCallExpression(
+                            targetExpression as Identifier,
+                            node.arguments.slice(1).map((arg) => {
+                                return j.SpreadElement.check(arg) ? arg : applyOptionalChaining(j, arg, tempVariable, targetExpression)
+                            }),
+                        )
                         transformed = true
                         return optionalCallExpression as T
                     }
@@ -279,11 +278,12 @@ function applyOptionalChaining<T extends ExpressionKind>(
                         const args = j.ArrayExpression.check(arg)
                             ? arg.elements.map(element => element ?? j.identifier('undefined')) as Array<ExpressionKind | SpreadElement>
                             : [j.spreadElement(arg)]
-                        const optionalCallExpression = j.optionalCallExpression(targetExpression as Identifier, args)
-                        optionalCallExpression.callee = applyOptionalChaining(j, optionalCallExpression.callee, tempVariable, targetExpression)
-                        optionalCallExpression.arguments = optionalCallExpression.arguments.map((arg) => {
-                            return j.SpreadElement.check(arg) ? arg : applyOptionalChaining(j, arg, tempVariable, targetExpression)
-                        })
+                        const optionalCallExpression = j.optionalCallExpression(
+                            targetExpression as Identifier,
+                            args.map((arg) => {
+                                return j.SpreadElement.check(arg) ? arg : applyOptionalChaining(j, arg, tempVariable, targetExpression)
+                            }),
+                        )
                         transformed = true
                         return optionalCallExpression as T
                     }
@@ -303,10 +303,10 @@ function applyOptionalChaining<T extends ExpressionKind>(
         })) {
             const target = targetExpression || (node.callee as SequenceExpression).expressions[1]
             const callee = smartParenthesized(j, j.sequenceExpression([j.numericLiteral(0), target]))
-            const optionalCallExpression = j.optionalCallExpression(callee, node.arguments)
-            optionalCallExpression.arguments = optionalCallExpression.arguments.map((arg) => {
+            const args = node.arguments.map((arg) => {
                 return j.SpreadElement.check(arg) ? arg : applyOptionalChaining(j, arg, tempVariable, targetExpression)
             })
+            const optionalCallExpression = j.optionalCallExpression(callee, args)
             transformed = true
             return optionalCallExpression as T
         }
@@ -317,27 +317,34 @@ function applyOptionalChaining<T extends ExpressionKind>(
             return j.optionalCallExpression(target, node.arguments) as T
         }
 
-        node.callee = applyOptionalChaining(j, node.callee, tempVariable, targetExpression)
-        node.arguments = node.arguments.map((arg) => {
+        const isOptional = j.OptionalCallExpression.check(node)
+        const builder = isOptional ? j.optionalCallExpression : j.callExpression
+        const callee = applyOptionalChaining(j, node.callee, tempVariable, targetExpression)
+        const args = node.arguments.map((arg) => {
             return j.SpreadElement.check(arg) ? arg : applyOptionalChaining(j, arg, tempVariable, targetExpression)
         })
+        return builder(callee, args) as T
     }
 
     if (j.AssignmentExpression.check(node)) {
-        if (areNodesEqual(j, node.left, tempVariable) && targetExpression) {
+        if (targetExpression && areNodesEqual(j, node.left, tempVariable)) {
             if (node.right === targetExpression) {
                 return targetExpression as T
             }
-            node.left = targetExpression as any
+
+            if (memberExpressionKindTypes.some(type => type.check(targetExpression)) || patternKindTypes.some(type => type.check(targetExpression))) {
+                node = j.assignmentExpression(node.operator, targetExpression as any, node.right) as T
+            }
         }
     }
 
-    if (j.Identifier.check(node) && areNodesEqual(j, node, tempVariable) && targetExpression) {
+    if (targetExpression && j.Identifier.check(node) && areNodesEqual(j, node, tempVariable)) {
         return smartParenthesized(j, targetExpression) as T
     }
 
     if (j.UnaryExpression.check(node)) {
-        node.argument = applyOptionalChaining(j, node.argument, tempVariable, targetExpression)
+        const arg = applyOptionalChaining(j, node.argument, tempVariable, targetExpression)
+        node = j.unaryExpression(node.operator, arg, node.prefix) as T
     }
 
     return node
