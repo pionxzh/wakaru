@@ -10,7 +10,9 @@ export default pionxzh(
         ignores: [
             '**/node_modules/**',
             '**/dist/**',
-            '**/browserfs/**',
+            'packages/browserfs/**',
+            'packages/e2e/fixtures',
+            'packages/e2e/snapshots',
         ],
     },
     {
