@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.3](https://github.com/pionxzh/wakaru/compare/unminify-v0.2.2...unminify-v0.2.3) (2024-07-13)
+
+
+### Bug Fixes
+
+* **optional-chaining:** avoid mutating the original ast, handle edge cases ([8d2d0da](https://github.com/pionxzh/wakaru/commit/8d2d0daa1591a9f9836aac7410cbba77838e44bc))
+* **smart-rename:** name of useRef should not need pascalCase ([0e586d5](https://github.com/pionxzh/wakaru/commit/0e586d5c885eb5a4806411395c6c698b278b8a4b))
+* **un-variable-merging:** should not split varaible declration in for init that was actually used ([acd9379](https://github.com/pionxzh/wakaru/commit/acd9379f34dac38ccdaa9529ce8f073401aef38a))
+
 ## [0.2.2](https://github.com/pionxzh/wakaru/compare/unminify-v0.2.1...unminify-v0.2.2) (2024-05-26)
 
 
