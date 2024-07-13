@@ -59,11 +59,19 @@ inlineTest('variable declaration that is not used in for statement should not be
 for (var i = 0, j = 0, k = 0; j < 10; k++) {
   console.log(k);
 }
+
+for (var _len = arguments.length, _arguments = new Array(_len > 2 ? _len - 2 : 0), _key = 2; _key < _len; _key++) {
+  _arguments[_key - 2] = arguments[_key];
+}
 `,
   `
 var i = 0;
 for (var j = 0, k = 0; j < 10; k++) {
   console.log(k);
+}
+
+for (var _len = arguments.length, _arguments = new Array(_len > 2 ? _len - 2 : 0), _key = 2; _key < _len; _key++) {
+  _arguments[_key - 2] = arguments[_key];
 }
 `,
 )

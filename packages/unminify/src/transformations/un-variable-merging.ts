@@ -1,5 +1,6 @@
 import { mergeComments } from '@wakaru/ast-utils/comments'
 import { replaceWithMultipleStatements } from '@wakaru/ast-utils/insert'
+import { findReferences } from '@wakaru/ast-utils/reference'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { ForStatement } from 'jscodeshift'
@@ -32,23 +33,21 @@ export const transformAST: ASTTransformation = (context) => {
         .find(j.VariableDeclaration)
         .forEach((p) => {
             if (j.ForStatement.check(p.parent.node)) {
-                const { init, test, update } = p.parent.node as ForStatement
+                const { init } = p.parent.node as ForStatement
                 if (init && j.VariableDeclaration.check(init) && init.kind === 'var') {
                     const initDeclarators = init.declarations
                     // filter out the declarations that are used in test or update
-                    const usedDeclarators = initDeclarators.filter((d) => {
-                        if (!j.VariableDeclarator.check(d)) return false
+                    const usedDeclarators = initDeclarators.filter((declarator) => {
+                        if (!j.VariableDeclarator.check(declarator)) return false
 
-                        const { id } = d
+                        const { id } = declarator
                         if (!j.Identifier.check(id)) return false
 
                         // check if the name is declared outside of the for statement
                         if (p.parent?.parent?.scope.lookup(id.name)) return true
 
-                        const name = id.name
-                        const isUsedInTest = test && j(test).find(j.Identifier, { name }).size() > 0
-                        const isUsedInUpdate = update && j(update).find(j.Identifier, { name }).size() > 0
-                        if (isUsedInTest || isUsedInUpdate) return true
+                        const isUsed = findReferences(j, p.parent, id.name).size() > 1
+                        if (isUsed) return true
 
                         return false
                     })
