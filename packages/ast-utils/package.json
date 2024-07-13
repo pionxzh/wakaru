@@ -2,6 +2,7 @@
   "name": "@wakaru/ast-utils",
   "type": "module",
   "version": "0.0.1",
+  "private": true,
   "description": "🔪📦 Unminify and beautify bundled code",
   "author": "Pionxzh",
   "license": "MIT",
