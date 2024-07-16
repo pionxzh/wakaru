@@ -15,7 +15,7 @@ patchedDependencies:
     hash: 36xyfdqenv7nzg2cvzv4gqpwgu
     path: patches/@clack__prompts@0.7.0.patch
   ast-types@0.16.1:
-    hash: aup2dom46xoiokq4ilz5eyhxym
+    hash: 4z32plv5kcgck3jkbmsztt7p2e
     path: patches/ast-types@0.16.1.patch
   recast@0.23.4:
     hash: 23psoaevhjxlssqpbh6odvuj6q
@@ -90,7 +90,7 @@ importers:
         version: link:../test-utils
       ast-types:
         specifier: ^0.16.1
-        version: 0.16.1(patch_hash=aup2dom46xoiokq4ilz5eyhxym)
+        version: 0.16.1(patch_hash=4z32plv5kcgck3jkbmsztt7p2e)
       jscodeshift:
         specifier: ^0.15.2
         version: 0.15.2(@babel/preset-env@7.23.9)
@@ -380,7 +380,7 @@ importers:
         version: 0.11.11
       ast-types:
         specifier: ^0.16.1
-        version: 0.16.1(patch_hash=aup2dom46xoiokq4ilz5eyhxym)
+        version: 0.16.1(patch_hash=4z32plv5kcgck3jkbmsztt7p2e)
       jscodeshift:
         specifier: ^0.15.2
         version: 0.15.2(@babel/preset-env@7.23.9)
@@ -469,7 +469,7 @@ importers:
         version: link:../test-utils
       ast-types:
         specifier: ^0.16.1
-        version: 0.16.1(patch_hash=aup2dom46xoiokq4ilz5eyhxym)
+        version: 0.16.1(patch_hash=4z32plv5kcgck3jkbmsztt7p2e)
       jscodeshift:
         specifier: ^0.15.2
         version: 0.15.2(@babel/preset-env@7.23.9)
@@ -514,7 +514,7 @@ importers:
         version: link:../test-utils
       ast-types:
         specifier: ^0.16.1
-        version: 0.16.1(patch_hash=aup2dom46xoiokq4ilz5eyhxym)
+        version: 0.16.1(patch_hash=4z32plv5kcgck3jkbmsztt7p2e)
       jscodeshift:
         specifier: ^0.15.2
         version: 0.15.2(@babel/preset-env@7.23.9)
@@ -4403,7 +4403,7 @@ packages:
   /@types/jscodeshift@0.11.11:
     resolution: {integrity: sha512-d7CAfFGOupj5qCDqMODXxNz2/NwCv/Lha78ZFbnr6qpk3K98iSB8I+ig9ERE2+EeYML352VMRsjPyOpeA+04eQ==}
     dependencies:
-      ast-types: 0.16.1(patch_hash=aup2dom46xoiokq4ilz5eyhxym)
+      ast-types: 0.16.1(patch_hash=4z32plv5kcgck3jkbmsztt7p2e)
       recast: 0.20.5
     dev: true
 
@@ -5062,7 +5062,7 @@ packages:
   /assertion-error@1.1.0:
     resolution: {integrity: sha512-jgsaNduz+ndvGyFt3uSuWqvy4lCnIJiovtouQN5JZHOKCS2QuhEdbcQHFhVksz2N2U9hXJo8odG7ETyWlEeuDw==}
 
-  /ast-types@0.16.1(patch_hash=aup2dom46xoiokq4ilz5eyhxym):
+  /ast-types@0.16.1(patch_hash=4z32plv5kcgck3jkbmsztt7p2e):
     resolution: {integrity: sha512-6t10qk83GOG8p0vKmaCr8eiilZwO171AvbROMtvvNiwrTly62t+7XkA8RdIIVbpMhCASAsxgAzdRSwh6nw/5Dg==}
     engines: {node: '>=4'}
     dependencies:
@@ -8022,7 +8022,7 @@ packages:
     resolution: {integrity: sha512-E5qICoPoNL4yU0H0NoBDntNB0Q5oMSNh9usFctYniLBluTthi3RsQVBXIJNbApOlvSwW/RGxIuokPcAc59J5fQ==}
     engines: {node: '>= 4'}
     dependencies:
-      ast-types: 0.16.1(patch_hash=aup2dom46xoiokq4ilz5eyhxym)
+      ast-types: 0.16.1(patch_hash=4z32plv5kcgck3jkbmsztt7p2e)
       esprima: 4.0.1
       source-map: 0.6.1
       tslib: 2.6.1
@@ -8033,7 +8033,7 @@ packages:
     engines: {node: '>= 4'}
     dependencies:
       assert: 2.1.0
-      ast-types: 0.16.1(patch_hash=aup2dom46xoiokq4ilz5eyhxym)
+      ast-types: 0.16.1(patch_hash=4z32plv5kcgck3jkbmsztt7p2e)
       esprima: 4.0.1
       source-map: 0.6.1
       tslib: 2.6.1

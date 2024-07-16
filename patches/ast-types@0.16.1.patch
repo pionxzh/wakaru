@@ -1,5 +1,5 @@
 diff --git a/lib/def/flow.js b/lib/def/flow.js
-index 52235f04b59fcc061fbd2052b6a6d41ffc09ece3..347a74aec209cb8de312099b3c31be470fa8ab11 100644
+index 52235f04b59fcc061fbd2052b6a6d41ffc09ece3..9acd8e2766994c15499d0e410564c64857a92494 100644
 --- a/lib/def/flow.js
 +++ b/lib/def/flow.js
 @@ -213,6 +213,9 @@ function default_1(fork) {
@@ -13,7 +13,7 @@ index 52235f04b59fcc061fbd2052b6a6d41ffc09ece3..347a74aec209cb8de312099b3c31be47
          .bases("Node")
          .build("id")
 diff --git a/lib/gen/builders.d.ts b/lib/gen/builders.d.ts
-index 1773656ab7fd5ec8d66b53ad995d1adb8a0ae99f..f49e88536ab1baae0e0eceabba7c62ecf51f6895 100644
+index 1773656ab7fd5ec8d66b53ad995d1adb8a0ae99f..219f3c9bbce7b6bdd52f85d1e3d58896ee9eccf1 100644
 --- a/lib/gen/builders.d.ts
 +++ b/lib/gen/builders.d.ts
 @@ -1433,6 +1433,23 @@ export interface TypeParameterBuilder {
@@ -49,7 +49,7 @@ index 1773656ab7fd5ec8d66b53ad995d1adb8a0ae99f..f49e88536ab1baae0e0eceabba7c62ec
      interfaceExtends: InterfaceExtendsBuilder;
      interfaceDeclaration: InterfaceDeclarationBuilder;
 diff --git a/lib/gen/kinds.d.ts b/lib/gen/kinds.d.ts
-index 572dba2650a8716b627511a4b473f25bd44bfc2a..b56ebaad67ab04c99d0620330de1e41766cfe317 100644
+index 572dba2650a8716b627511a4b473f25bd44bfc2a..49a4dfcd10ddd80d9194216b0ae83c5603834e26 100644
 --- a/lib/gen/kinds.d.ts
 +++ b/lib/gen/kinds.d.ts
 @@ -1,12 +1,12 @@
@@ -95,7 +95,7 @@ index 572dba2650a8716b627511a4b473f25bd44bfc2a..b56ebaad67ab04c99d0620330de1e417
  export type InterfaceExtendsKind = namedTypes.InterfaceExtends;
  export type InterfaceDeclarationKind = namedTypes.InterfaceDeclaration | namedTypes.DeclareInterface | namedTypes.DeclareClass;
 diff --git a/lib/gen/namedTypes.d.ts b/lib/gen/namedTypes.d.ts
-index 4cac31f492dce394984f80f6f308dd6953002966..8b813a2ca1553c3c9c6bd0c7189935a38744501f 100644
+index 4cac31f492dce394984f80f6f308dd6953002966..3f84d3ef57f8bd959d429f0ecfec73e81a7ec40a 100644
 --- a/lib/gen/namedTypes.d.ts
 +++ b/lib/gen/namedTypes.d.ts
 @@ -819,6 +819,9 @@ export declare namespace namedTypes {
@@ -134,7 +134,7 @@ index 4cac31f492dce394984f80f6f308dd6953002966..8b813a2ca1553c3c9c6bd0c7189935a3
      InterfaceExtends: Type<namedTypes.InterfaceExtends>;
      InterfaceDeclaration: Type<namedTypes.InterfaceDeclaration>;
 diff --git a/lib/gen/visitor.d.ts b/lib/gen/visitor.d.ts
-index d0c697224b44e25d1559baa931fddb73baac910f..a6ba1b4f79c34cb54ffa7bd6a140c7feba1ef439 100644
+index d0c697224b44e25d1559baa931fddb73baac910f..7af5737e304eb7f020b64a49acf0e9764dce4779 100644
 --- a/lib/gen/visitor.d.ts
 +++ b/lib/gen/visitor.d.ts
 @@ -171,6 +171,7 @@ export interface Visitor<M = {}> {
@@ -146,7 +146,7 @@ index d0c697224b44e25d1559baa931fddb73baac910f..a6ba1b4f79c34cb54ffa7bd6a140c7fe
      visitInterfaceExtends?(this: Context & M, path: NodePath<namedTypes.InterfaceExtends>): any;
      visitInterfaceDeclaration?(this: Context & M, path: NodePath<namedTypes.InterfaceDeclaration>): any;
 diff --git a/lib/node-path.d.ts b/lib/node-path.d.ts
-index 14599f0944078149b138f58618422b8fc740f558..afc9699f7672955f33d98c14253a15cffcbd1bd8 100644
+index 14599f0944078149b138f58618422b8fc740f558..1496d74d761896678d4f633fadd985bb38026889 100644
 --- a/lib/node-path.d.ts
 +++ b/lib/node-path.d.ts
 @@ -4,7 +4,7 @@ import { Scope } from "./scope";
@@ -159,7 +159,7 @@ index 14599f0944078149b138f58618422b8fc740f558..afc9699f7672955f33d98c14253a15cf
      prune(...args: any[]): any;
      _computeNode(): any;
 diff --git a/lib/scope.d.ts b/lib/scope.d.ts
-index 21bf0f3f8abd247e6a67e0003a14f1f016801c6d..911eef13f46b9932694a5e412a07cc2c4bedd085 100644
+index 21bf0f3f8abd247e6a67e0003a14f1f016801c6d..b6253b8ec8a578db75f1c210ff008ce6e469d51f 100644
 --- a/lib/scope.d.ts
 +++ b/lib/scope.d.ts
 @@ -9,16 +9,18 @@ export interface Scope {
@@ -188,7 +188,7 @@ index 21bf0f3f8abd247e6a67e0003a14f1f016801c6d..911eef13f46b9932694a5e412a07cc2c
  export interface ScopeConstructor {
      new (path: NodePath, parentScope: any): Scope;
 diff --git a/lib/scope.js b/lib/scope.js
-index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..36e5093dd5231a74121d70b178094afda274443d 100644
+index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..d9a84c4403e80aa12c5a57d523acbd8f16abaa0c 100644
 --- a/lib/scope.js
 +++ b/lib/scope.js
 @@ -2,6 +2,7 @@
@@ -199,7 +199,18 @@ index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..36e5093dd5231a74121d70b178094afd
  var types_1 = tslib_1.__importDefault(require("./types"));
  var hasOwn = Object.prototype.hasOwnProperty;
  function scopePlugin(fork) {
-@@ -42,13 +43,28 @@ function scopePlugin(fork) {
+@@ -16,8 +17,8 @@ function scopePlugin(fork) {
+         if (!(this instanceof Scope)) {
+             throw new Error("Scope constructor cannot be invoked without 'new'");
+         }
+-        if (!TypeParameterScopeType.check(path.value)) {
+-            ScopeType.assert(path.value);
++        if (!TypeParameterScopeType.check(path.value) && !ScopeType.check(path.value) && !isForScopeType(path.value)) {
++            throw new Error("Invalid scope node type " + path.value.type);
+         }
+         var depth;
+         if (parentScope) {
+@@ -42,19 +43,45 @@ function scopePlugin(fork) {
      };
      var ScopeType = Type.or(
      // Program nodes introduce global scopes.
@@ -220,9 +231,9 @@ index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..36e5093dd5231a74121d70b178094afd
 +
 +    // The following are statements that create block scopes
 +    namedTypes.IfStatement,
-+    namedTypes.ForStatement,
-+    namedTypes.ForInStatement,
-+    namedTypes.ForOfStatement,
++    // namedTypes.ForStatement,
++    // namedTypes.ForInStatement,
++    // namedTypes.ForOfStatement,
 +    namedTypes.TryStatement,
 +
 +    // Add BlockStatement as it can introduce a scope when using let/const
@@ -231,7 +242,25 @@ index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..36e5093dd5231a74121d70b178094afd
      // These types introduce scopes that are restricted to type parameters in
      // Flow (this doesn't apply to ECMAScript).
      var TypeParameterScopeType = Type.or(namedTypes.Function, namedTypes.ClassDeclaration, namedTypes.ClassExpression, namedTypes.InterfaceDeclaration, namedTypes.TSInterfaceDeclaration, namedTypes.TypeAlias, namedTypes.TSTypeAliasDeclaration);
-@@ -96,6 +112,9 @@ function scopePlugin(fork) {
++    var ForLoopScopeType = Type.or(namedTypes.ForStatement, namedTypes.ForInStatement, namedTypes.ForOfStatement);
++    var isForScopeType = function isScopeType (node) {
++        if (ForLoopScopeType.check(node)) {
++            const variableDeclarator = node.init || node.left;
++            return variableDeclarator
++                && namedTypes.VariableDeclaration.check(variableDeclarator)
++                && variableDeclarator.kind !== "var";
++        }
++
++        return false;
++    }
+     var FlowOrTSTypeParameterType = Type.or(namedTypes.TypeParameter, namedTypes.TSTypeParameter);
+     Scope.isEstablishedBy = function (node) {
+-        return ScopeType.check(node) || TypeParameterScopeType.check(node);
++        return ScopeType.check(node) || TypeParameterScopeType.check(node) || isForScopeType(node);
+     };
+     var Sp = Scope.prototype;
+     // Will be overridden after an instance lazily calls scanScope.
+@@ -96,6 +123,9 @@ function scopePlugin(fork) {
          bodyPath.unshift(b.variableDeclaration("var", [b.variableDeclarator(identifier, init || null)]));
          return identifier;
      };
@@ -241,7 +270,36 @@ index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..36e5093dd5231a74121d70b178094afd
      Sp.scan = function (force) {
          if (force || !this.didScan) {
              for (var name in this.bindings) {
-@@ -278,8 +297,11 @@ function scopePlugin(fork) {
+@@ -129,7 +159,8 @@ function scopePlugin(fork) {
+             }
+         }
+         if (ScopeType.check(node)) {
+-            if (namedTypes.CatchClause.check(node)) {
++            // https://github.com/benjamn/ast-types/pull/946
++            if (namedTypes.CatchClause.check(node) && node.param !== null) {
+                 // A catch clause establishes a new scope but the only variable
+                 // bound in that scope is the catch parameter. Any other
+                 // declarations create bindings in the outer scope.
+@@ -139,6 +170,9 @@ function scopePlugin(fork) {
+                 recursiveScanScope(path, bindings, scopeTypes);
+             }
+         }
++        if (isForScopeType(node)) {
++            recursiveScanScope(path, bindings, scopeTypes);
++        }
+     }
+     function recursiveScanScope(path, bindings, scopeTypes) {
+         var node = path.value;
+@@ -228,7 +262,7 @@ function scopePlugin(fork) {
+                 namedTypes.TSInterfaceDeclaration.check(node))) {
+             addTypePattern(path.get("id"), scopeTypes);
+         }
+-        else if (ScopeType.check(node)) {
++        else if (ScopeType.check(node) || isForScopeType(node)) {
+             if (namedTypes.CatchClause.check(node) &&
+                 // TODO Broaden this to accept any pattern.
+                 namedTypes.Identifier.check(node.param)) {
+@@ -278,8 +312,11 @@ function scopePlugin(fork) {
                          namedTypes.ObjectProperty.check(property))) {
                      addPattern(propertyPath.get('value'), bindings);
                  }
@@ -255,7 +313,7 @@ index 81d6b01ce4c07ebaf75f8551fcef0c9151252d4e..36e5093dd5231a74121d70b178094afd
                      addPattern(propertyPath.get('argument'), bindings);
                  }
              });
-@@ -350,6 +372,28 @@ function scopePlugin(fork) {
+@@ -350,6 +387,28 @@ function scopePlugin(fork) {
              scope = scope.parent;
          return scope;
      };
