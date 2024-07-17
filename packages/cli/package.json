@@ -42,6 +42,6 @@
     "@wakaru/shared": "workspace:*",
     "@wakaru/test-utils": "workspace:*",
     "tsup": "^8.0.2",
-    "typescript": "^5.4.5"
+    "typescript": "^5.5.3"
   }
 }

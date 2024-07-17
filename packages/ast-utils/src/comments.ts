@@ -47,7 +47,6 @@ export function removePureAnnotation(j: JSCodeshift, node: Node) {
     return node
 }
 
-// /*#__PURE__*/
 function isPureAnnotation(j: JSCodeshift, comment: CommentKind) {
     return j.CommentBlock.check(comment)
     && comment.value.trim() === '#__PURE__'
