@@ -18,6 +18,17 @@ export function renameFunctionParameters(j: JSCodeshift, node: FunctionDeclarati
             const newName = parameters[index]
             if (!newName || oldName === newName) return
 
+            /**
+             * Skip if the old name is declared multiple times
+             * it means the parameter is shadowed by another variable
+             * in the same scope
+             */
+            const bindings = targetScope.getBindings()
+            if (bindings[oldName]?.length > 1) {
+                param.name = newName
+                return
+            }
+
             renameIdentifier(j, targetScope, oldName, newName)
         }
     })

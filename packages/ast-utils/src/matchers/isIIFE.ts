@@ -1,4 +1,3 @@
-import { fromPaths } from 'jscodeshift/src/Collection'
 import type { ASTNode, ASTPath, CallExpression, Collection, ExpressionStatement, JSCodeshift, Statement } from 'jscodeshift'
 
 /**
@@ -80,5 +79,5 @@ export function findIIFEs(
         .map(path => (path.get('expression', 'argument') as ASTPath<CallExpression>))
         .paths()
 
-    return fromPaths([...collection1, ...collection2])
+    return j([...collection1, ...collection2])
 }

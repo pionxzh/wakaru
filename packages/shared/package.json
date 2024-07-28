@@ -7,6 +7,7 @@
   "sideEffects": false,
   "exports": {
     "./array": "./src/array.ts",
+    "./imports": "./src/imports.ts",
     "./jscodeshift": "./src/jscodeshift.ts",
     "./rule": "./src/rule.ts",
     "./runner": "./src/runner.ts",
@@ -29,14 +30,14 @@
     "lint:fix": "eslint src --fix --max-warnings=0"
   },
   "dependencies": {
-    "@babel/parser": "^7.24.1",
-    "pathe": "^1.1.2"
+    "@babel/parser": "^7.25.0",
+    "ast-types": "npm:ast-types-x@1.17.1",
+    "jscodeshift": "npm:jscodeshift-x@1.2.0",
+    "pathe": "^1.1.2",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/jscodeshift": "^0.11.11",
-    "ast-types": "^0.16.1",
-    "jscodeshift": "^0.15.2",
-    "typescript": "^5.3.3",
-    "zod": "^3.22.4"
+    "typescript": "^5.5.4"
   }
 }

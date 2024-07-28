@@ -4,6 +4,7 @@ import { removePureAnnotation } from '@wakaru/ast-utils/comments'
 import { generateName } from '@wakaru/ast-utils/identifier'
 import { insertBefore } from '@wakaru/ast-utils/insert'
 import { isNull, isTrue, isUndefined } from '@wakaru/ast-utils/matchers'
+import { renameIdentifier } from '@wakaru/ast-utils/reference'
 import { findDeclaration, removeDeclarationIfUnused } from '@wakaru/ast-utils/scope'
 import { nonNullable } from '@wakaru/shared/array'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
@@ -502,7 +503,7 @@ function renameComponentBasedOnDisplayName(j: JSCodeshift, root: Collection, pra
             }).size() > 0
             if (!isComponent) return
 
-            scope.rename(originalName, newName)
+            renameIdentifier(j, scope, originalName, newName)
         })
 }
 
@@ -539,7 +540,7 @@ function renameComponentToMakeItValid(j: JSCodeshift, root: Collection, pragmas:
                 const scope = path.scope?.lookup(originalName)
                 if (!scope) return
                 const newName = generateName(pascalCase(originalName), scope)
-                scope.rename(originalName, newName)
+                renameIdentifier(j, scope, originalName, newName)
             }
         })
 }

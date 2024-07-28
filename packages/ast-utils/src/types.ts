@@ -1,4 +1,4 @@
-import type { ImportInfo } from './imports'
+import type { ImportInfo } from '@wakaru/shared/imports'
 
 export type ModuleMapping = Record<number | string, string>
 

@@ -42,15 +42,16 @@
     "lint": "eslint src --max-warnings=0",
     "lint:fix": "eslint src --fix --max-warnings=0"
   },
+  "dependencies": {
+    "@babel/helper-validator-identifier": "^7.24.7",
+    "ast-types": "npm:ast-types-x@1.17.1",
+    "jscodeshift": "npm:jscodeshift-x@1.2.0"
+  },
   "devDependencies": {
-    "@babel/helper-validator-identifier": "^7.22.20",
-    "@babel/types": "^7.24.0",
     "@types/jscodeshift": "^0.11.11",
     "@wakaru/ds": "workspace:*",
     "@wakaru/shared": "workspace:*",
     "@wakaru/test-utils": "workspace:*",
-    "ast-types": "^0.16.1",
-    "jscodeshift": "^0.15.2",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.4"
   }
 }

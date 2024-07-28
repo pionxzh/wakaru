@@ -24,19 +24,20 @@
     "lint:fix": "eslint src --fix --max-warnings=0"
   },
   "dependencies": {
-    "@babel/core": "^7.23.9",
-    "@babel/helper-validator-identifier": "^7.22.20",
-    "@babel/preset-env": "^7.23.9",
-    "@babel/types": "^7.23.9",
-    "@rollup/plugin-commonjs": "^26.0.1",
-    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@babel/helper-validator-identifier": "^7.24.7",
+    "@babel/parser": "^7.25.0",
+    "ast-types": "npm:ast-types-x@1.17.1",
+    "jscodeshift": "npm:jscodeshift-x@1.2.0",
     "lebab": "^3.2.4",
-    "picocolors": "^1.0.0",
+    "pathe": "^1.1.2",
     "prettier": "^2.8.8",
-    "zod": "^3.23.4"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@swc/core": "^1.6.13",
+    "@babel/core": "^7.24.9",
+    "@rollup/plugin-commonjs": "^26.0.1",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@swc/core": "^1.7.2",
     "@types/jscodeshift": "^0.11.11",
     "@types/prettier": "^2.7.3",
     "@types/yargs": "^17.0.32",
@@ -44,12 +45,11 @@
     "@wakaru/ds": "workspace:*",
     "@wakaru/shared": "workspace:*",
     "@wakaru/test-utils": "workspace:*",
-    "ast-types": "^0.16.1",
-    "jscodeshift": "^0.15.2",
-    "rollup": "^4.18.1",
+    "picocolors": "^1.0.1",
+    "rollup": "^4.19.1",
     "rollup-plugin-dts": "^6.1.1",
     "rollup-plugin-swc3": "^0.11.2",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.4"
   },
   "publishConfig": {
     "exports": {

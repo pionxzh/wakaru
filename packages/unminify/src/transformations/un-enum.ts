@@ -216,7 +216,7 @@ function handleEnumIIFE(j: JSCodeshift, path: ASTPath<CallExpression>, iifePath:
     if (enumProperties.size === 0) return // bail if we can't find any enum properties
 
     let declarator: VariableDeclarator | null = null
-    const decls = findDeclarations(scope, externalEnumName).closest(j.VariableDeclarator)
+    const decls = findDeclarations(j, scope, externalEnumName).closest(j.VariableDeclarator)
     if (isVariableDecl) declarator = (iifePath.node as VariableDeclaration).declarations[0] as VariableDeclarator
     else {
         // find the closest declaration before the enum IIFE

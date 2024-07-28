@@ -3,7 +3,6 @@ import { replaceWithMultipleStatements } from '@wakaru/ast-utils/insert'
 import { findReferences } from '@wakaru/ast-utils/reference'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import type { ASTTransformation } from '@wakaru/shared/rule'
-import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, ForStatement } from 'jscodeshift'
 
 /**

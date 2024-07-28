@@ -181,7 +181,7 @@ export function findReferences(
 
             if (!path.scope) return false
 
-            let scope = path.scope
+            let scope: Scope | null = path.scope
             // we don't use `scope.lookup` here to avoid
             // traversing the whole scope chain
             while (scope && scope !== targetScope) {

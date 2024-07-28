@@ -1,4 +1,4 @@
-import type { ImportInfo } from '@wakaru/ast-utils/imports'
+import type { ImportInfo } from '@wakaru/shared/imports'
 import type { Collection } from 'jscodeshift'
 
 export class Module {

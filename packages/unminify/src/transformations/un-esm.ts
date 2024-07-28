@@ -558,11 +558,11 @@ function transformExport(context: Context) {
             // check if the name is declared in the scope
             // and it's not in the current path
             const rootScope = root.find(j.Program).get().scope as Scope | null
-            const bindings = rootScope?.getBindings()
+            const bindings = rootScope?.getBindings() ?? {}
             const binding = bindings?.[name]
             const isDeclared = binding?.length > 0
-            const isDeclaredInCurrentPath = binding?.some((p: NodePath) => {
-                let current: ASTPath | null = p
+            const isDeclaredInCurrentPath = binding?.some((p) => {
+                let current: NodePath | null = p
                 while (current) {
                     if (current.node === path.node) return true
                     current = current.parent

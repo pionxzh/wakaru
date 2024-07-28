@@ -26,6 +26,20 @@ export function b() {}
 `,
 )
 
+inlineTest('merge function declaration and export declaration - shadowing',
+  `
+function a() {
+  var a = 1;
+}
+export const b = a;
+`,
+  `
+export function b() {
+  var a = 1;
+}
+`,
+)
+
 inlineTest('merge function expression and export declaration with complex scope',
   `
 function test() {
