@@ -25,8 +25,8 @@
   },
   "dependencies": {
     "@babel/helper-validator-identifier": "^7.24.7",
-    "@babel/parser": "^7.25.0",
-    "ast-types": "npm:ast-types-x@1.17.1",
+    "@babel/parser": "^7.25.6",
+    "ast-types": "npm:ast-types-x@1.18.0",
     "jscodeshift": "npm:jscodeshift-x@1.2.0",
     "pathe": "^1.1.2",
     "zod": "^3.23.8"
@@ -34,12 +34,12 @@
   "devDependencies": {
     "@rollup/plugin-commonjs": "^26.0.1",
     "@rollup/plugin-node-resolve": "^15.2.3",
-    "@swc/core": "^1.7.2",
+    "@swc/core": "^1.7.22",
     "@types/jscodeshift": "^0.11.11",
     "@wakaru/ast-utils": "workspace:*",
     "@wakaru/shared": "workspace:*",
     "@wakaru/test-utils": "workspace:*",
-    "rollup": "^4.18.1",
+    "rollup": "^4.21.2",
     "rollup-plugin-dts": "^6.1.1",
     "rollup-plugin-swc3": "^0.11.2",
     "typescript": "^5.5.4"

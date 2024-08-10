@@ -44,7 +44,7 @@
     }
   },
   "resolutions": {
-    "ast-types": "npm:ast-types-x@1.17.1",
-    "recast": "npm:recast-x@1.0.3"
+    "ast-types": "npm:ast-types-x@1.18.0",
+    "recast": "npm:recast-x@1.0.5"
   }
 }
