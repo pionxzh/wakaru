@@ -95,6 +95,7 @@ inlineTest('property access path renaming',
 const t = s.target;
 const p = t.parentElement;
 const v = p.value;
+const x = v[index];
 
 const t2 = s.target.parentElement;
 `,
@@ -102,6 +103,7 @@ const t2 = s.target.parentElement;
 const s_target = s.target;
 const s_target_parentElement = s_target.parentElement;
 const s_target_parentElement_value = s_target_parentElement.value;
+const s_target_parentElement_value_index = s_target_parentElement_value[index];
 
 const t2 = s.target.parentElement;
 `,

@@ -223,7 +223,9 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
         if (declarations.size === 1) {
             declarations.forEach((declaration) => {
                 // If there's only one declaration, we can rename it to the combined name.
-                // for example, `const a = b.c;` -> `const b_c = b.c;`
+                // for example
+                // `const a = b.c;` -> `const b_c = b.c;`
+                // `const a = b[c];` -> `const b_c = b[c];`
                 if (
                     j.VariableDeclaration.check(declaration)
                     && declaration.declarations.length === 1
