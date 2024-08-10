@@ -177,7 +177,7 @@ export function findReferences(
         .filter(path => isVariableIdentifier(j, path))
         .filter((path) => {
             // ignore properties (e.g. in MemberExpression
-            if (path.name === 'property') return false
+            if (path.name === 'property' && j.MemberExpression.check(path.parent.node) && !path.parent.node.computed) return false
 
             if (!path.scope) return false
 

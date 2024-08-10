@@ -39,7 +39,7 @@ const foo2 = ({
   dispatchers: o,
   listener: i
 }) => {
-  o.delete(t, i);
+  t[o].delete(i);
 }
 
 const foo3 = function ({
@@ -92,7 +92,7 @@ const foo2 = ({
   dispatchers,
   listener
 }) => {
-  dispatchers.delete(gql, listener);
+  gql[dispatchers].delete(listener);
 }
 
 const foo3 = function ({
