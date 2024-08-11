@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.11](https://github.com/pionxzh/wakaru/compare/cli-v0.0.10...cli-v0.0.11) (2024-08-10)
+
+
+### Bug Fixes
+
+* **cli:** remove cli bundling workaround ([a52caca](https://github.com/pionxzh/wakaru/commit/a52cacae35ca4f9d080550e5ded9317394b1b740))
+
 ## [0.0.10](https://github.com/pionxzh/wakaru/compare/cli-v0.0.9...cli-v0.0.10) (2024-04-23)
 
 
