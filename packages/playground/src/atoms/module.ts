@@ -9,7 +9,7 @@ import { atom, getDefaultStore } from 'jotai/vanilla'
 import { KEY_FILE_PREFIX, KEY_MODULE_MAPPING, KEY_MODULE_META } from '../const'
 import { unminify } from '../worker'
 import { enabledRuleIdsAtom, prettifyRules } from './rule'
-import type { ImportInfo } from '@wakaru/ast-utils/imports'
+import type { ImportInfo } from '@wakaru/shared/imports'
 import type { ModuleMapping, ModuleMeta } from '@wakaru/shared/types'
 
 export type ModuleId = number | string

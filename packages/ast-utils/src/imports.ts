@@ -1,37 +1,7 @@
 import { MultiMap } from '@wakaru/ds'
 import { isTopLevel } from './isTopLevel'
-import type { NodePath } from 'ast-types/lib/node-path'
-import type { ASTNode, CallExpression, Collection, ImportDeclaration, JSCodeshift, StringLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
-
-type Source = string
-type Imported = string
-type Local = string
-
-export interface DefaultImport {
-    type: 'default'
-    name: string
-    source: Source
-}
-
-export interface NamespaceImport {
-    type: 'namespace'
-    name: string
-    source: Source
-}
-
-export interface NamedImport {
-    type: 'named'
-    name: string
-    local: Local
-    source: Source
-}
-
-export interface BareImport {
-    type: 'bare'
-    source: Source
-}
-
-export type ImportInfo = DefaultImport | NamespaceImport | NamedImport | BareImport
+import type { BareImport, DefaultImport, ImportInfo, Imported, Local, NamedImport, NamespaceImport, Source } from '@wakaru/shared/imports'
+import type { ASTNode, ASTPath, CallExpression, Collection, ImportDeclaration, JSCodeshift, StringLiteral, VariableDeclaration, VariableDeclarator } from 'jscodeshift'
 
 export class ImportManager {
     private importSourceOrder = new Set<Source>()
@@ -40,7 +10,7 @@ export class ImportManager {
     namedImports = new Map<Source, MultiMap<Imported, Local>>()
     bareImports = new Set<Source>()
 
-    private importDecls: Array<NodePath<ImportDeclaration>> = []
+    private importDecls: Array<ASTPath<ImportDeclaration>> = []
 
     get importMap() {
         /**

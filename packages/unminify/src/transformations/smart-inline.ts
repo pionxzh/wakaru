@@ -283,7 +283,6 @@ function handleDestructuring(j: JSCodeshift, body: StatementKind[], scope: Scope
                 || generateName(propertyName, scope, declaredNames)
             renameIdentifier(j, scope, variableName, newPropertyName)
             renameMap.set(variableName, newPropertyName)
-            // TODO: should we move this into `scope.rename`?
             scope.markAsStale()
             destructuringPropertyMap.set(propertyName, newPropertyName)
             preservedComments.push(...(declaration.comments || []))

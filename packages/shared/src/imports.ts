@@ -1,5 +1,6 @@
-type Source = string
-type Local = string
+export type Source = string
+export type Imported = string
+export type Local = string
 
 export interface DefaultImport {
     type: 'default'

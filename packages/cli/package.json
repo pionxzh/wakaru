@@ -28,7 +28,7 @@
     "@wakaru/unpacker": "workspace:*",
     "fs-extra": "^11.2.0",
     "globby": "^11.1.0",
-    "picocolors": "^1.0.0",
+    "picocolors": "^1.0.1",
     "poolifier": "^3.1.30",
     "yargs": "^17.7.2"
   },
@@ -42,6 +42,6 @@
     "@wakaru/shared": "workspace:*",
     "@wakaru/test-utils": "workspace:*",
     "tsup": "^8.0.2",
-    "typescript": "^5.4.5"
+    "typescript": "^5.5.4"
   }
 }

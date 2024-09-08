@@ -1,4 +1,5 @@
 import { isTopLevel } from '@wakaru/ast-utils'
+import { renameIdentifier } from '@wakaru/ast-utils/reference'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import type { ASTTransformation, Context } from '@wakaru/shared/rule'
 import type { Scope } from 'ast-types/lib/scope'
@@ -224,6 +225,5 @@ function renameInRoot(j: JSCodeshift, root: Collection, oldName: string, newName
     const rootScope = root.find(j.Program).get().scope as Scope | null
     if (!rootScope || !rootScope.declares(oldName) || rootScope.declares(newName)) return
 
-    rootScope.rename(oldName, newName)
-    rootScope.markAsStale()
+    renameIdentifier(j, rootScope, oldName, newName)
 }

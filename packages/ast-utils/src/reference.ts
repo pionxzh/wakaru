@@ -171,6 +171,7 @@ export function findReferences(
 ): Collection<Identifier> {
     const targetScope = 'bindings' in nodeOrScope ? nodeOrScope : j(nodeOrScope).get().scope as Scope
     const range = 'bindings' in nodeOrScope ? nodeOrScope.path : nodeOrScope
+    const rangeNode = 'node' in range ? range.node : range
 
     return j(range)
         .find(j.Identifier, { name: identifierName })
@@ -179,9 +180,14 @@ export function findReferences(
             // ignore properties (e.g. in MemberExpression
             if (path.name === 'property' && j.MemberExpression.check(path.parent.node) && !path.parent.node.computed) return false
 
+            // ignore function name that is at the top level
+            if (path.parent.node === rangeNode && j.FunctionDeclaration.check(path.parent.node) && path.parent.node.id === path.node) {
+                return false
+            }
+
             if (!path.scope) return false
 
-            let scope = path.scope
+            let scope: Scope | null = path.scope
             // we don't use `scope.lookup` here to avoid
             // traversing the whole scope chain
             while (scope && scope !== targetScope) {

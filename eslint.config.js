@@ -11,6 +11,7 @@ export default pionxzh(
             '**/node_modules/**',
             '**/dist/**',
             'packages/browserfs/**',
+            'packages/cli/test-*.js',
             'packages/e2e/fixtures',
             'packages/e2e/snapshots',
         ],
@@ -25,7 +26,7 @@ export default pionxzh(
         },
     },
     {
-        files: ['packages/unminify/**/*.spec.ts'],
+        files: ['packages/**/*.spec.ts'],
         rules: {
             'style/indent': ['error', 2],
             'no-restricted-syntax': [

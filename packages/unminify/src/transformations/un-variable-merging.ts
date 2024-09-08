@@ -3,7 +3,7 @@ import { replaceWithMultipleStatements } from '@wakaru/ast-utils/insert'
 import { findReferences } from '@wakaru/ast-utils/reference'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import type { ASTTransformation } from '@wakaru/shared/rule'
-import type { ForStatement } from 'jscodeshift'
+import type { ASTPath, ForStatement } from 'jscodeshift'
 
 /**
  * Separate variable declarators into multiple statements.
@@ -33,7 +33,8 @@ export const transformAST: ASTTransformation = (context) => {
         .find(j.VariableDeclaration)
         .forEach((p) => {
             if (j.ForStatement.check(p.parent.node)) {
-                const { init } = p.parent.node as ForStatement
+                const forPath = p.parent as ASTPath<ForStatement>
+                const { init } = forPath.node
                 if (init && j.VariableDeclaration.check(init) && init.kind === 'var') {
                     const initDeclarators = init.declarations
                     // filter out the declarations that are used in test or update
@@ -44,7 +45,17 @@ export const transformAST: ASTTransformation = (context) => {
                         if (!j.Identifier.check(id)) return false
 
                         // check if the name is declared outside of the for statement
-                        if (p.parent?.parent?.scope.lookup(id.name)) return true
+                        const forParent = forPath?.parent
+                        const isDeclaredInForParent = j(forParent)
+                            .find(j.VariableDeclarator, {
+                                id: {
+                                    type: 'Identifier',
+                                    name: id.name,
+                                },
+                            })
+                            .filter(pp => pp.parent.parent === forParent)
+                            .size() > 0
+                        if (isDeclaredInForParent) return true
 
                         const isUsed = findReferences(j, p.parent, id.name).size() > 1
                         if (isUsed) return true

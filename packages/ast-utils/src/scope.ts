@@ -1,10 +1,9 @@
-import { fromPaths } from 'jscodeshift/src/Collection'
 import { mergeComments } from './comments'
 import { findReferences } from './reference'
 import type { Scope } from 'ast-types/lib/scope'
 import type { ASTPath, Collection, Identifier, ImportDeclaration, JSCodeshift, Statement, VariableDeclaration } from 'jscodeshift'
 
-export function isDeclared(scope: Scope, name: string) {
+export function isDeclared(scope: Scope | null, name: string) {
     while (scope) {
         if (scope.declares(name)) return true
         scope = scope.parent
@@ -17,8 +16,8 @@ export function findDeclaration(scope: Scope, name: string): ASTPath<Identifier>
     return scope.lookup(name)?.getBindings()[name]?.[0]
 }
 
-export function findDeclarations(scope: Scope, name: string): Collection<Identifier> {
-    return fromPaths(scope.lookup(name)?.getBindings()[name] ?? [])
+export function findDeclarations(j: JSCodeshift, scope: Scope, name: string): Collection<Identifier> {
+    return j(scope.lookup(name)?.getBindings()[name] ?? [])
 }
 
 export function removeDeclarationIfUnused(j: JSCodeshift, path: ASTPath, name: string) {

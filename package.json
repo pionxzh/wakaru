@@ -32,22 +32,19 @@
     "@vitest/ui": "^1.5.0",
     "eslint": "^8.57.0",
     "esno": "^0.17.0",
-    "globby": "^11.1.0",
-    "prettier": "^2.8.8",
     "taze": "^0.13.6",
     "turbo": "^1.13.2",
-    "typescript": "^5.4.5",
+    "typescript": "^5.5.4",
     "vitest": "^1.5.0"
   },
   "pnpm": {
     "patchedDependencies": {
-      "ast-types@0.16.1": "patches/ast-types@0.16.1.patch",
       "@clack/core@0.3.3": "patches/@clack__core@0.3.3.patch",
-      "@clack/prompts@0.7.0": "patches/@clack__prompts@0.7.0.patch",
-      "recast@0.23.4": "patches/recast@0.23.4.patch"
+      "@clack/prompts@0.7.0": "patches/@clack__prompts@0.7.0.patch"
     }
   },
   "resolutions": {
-    "ast-types": "^0.16.1"
+    "ast-types": "npm:ast-types-x@1.18.0",
+    "recast": "npm:recast-x@1.0.5"
   }
 }

@@ -15,8 +15,6 @@ export default defineConfig({
     },
     minify: true,
     noExternal: [
-        'jscodeshift',
-        'ast-types',
         '@clack/core', // patched
         '@clack/prompts', // patched
     ],

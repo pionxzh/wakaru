@@ -1,6 +1,5 @@
 // @ts-expect-error no types
-import { isIdentifierName, isKeyword, isStrictReservedWord } from '@babel/helper-validator-identifier'
-import { toIdentifier } from '@babel/types'
+import { isIdentifierChar, isIdentifierName, isKeyword, isStrictReservedWord } from '@babel/helper-validator-identifier'
 import { isDeclared } from './scope'
 import type { Scope } from 'ast-types/lib/scope'
 
@@ -73,4 +72,31 @@ function getUniqueName(name: string, scope: Scope | null = null, existedNames: s
         i++
     }
     return `${name}_${i}`
+}
+
+/**
+ * Fork from https://github.com/babel/babel/blob/main/packages/babel-types/src/converters/toIdentifier.ts
+ */
+function toIdentifier(input: string): string {
+    input = `${input}`
+
+    // replace all non-valid identifiers with dashes
+    let name = ''
+    for (const c of input) {
+        name += isIdentifierChar(c.codePointAt(0)) ? c : '-'
+    }
+
+    // remove all dashes and numbers from start of name
+    name = name.replace(/^[-0-9]+/, '')
+
+    // camel case
+    name = name.replace(/[-\s]+(.)?/g, (_match, c) => {
+        return c ? c.toUpperCase() : ''
+    })
+
+    if (!isValidIdentifier(name)) {
+        name = `_${name}`
+    }
+
+    return name || '_'
 }

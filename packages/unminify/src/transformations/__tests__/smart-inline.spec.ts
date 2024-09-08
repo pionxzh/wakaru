@@ -323,6 +323,25 @@ function foo() {
 `,
 )
 
+inlineTest('property destructuring - resolve naming conflicts #4',
+  `
+function J(U) {
+  const B = U.children;
+  const G = U.className;
+  const J = U.description;
+}
+`,
+  `
+function J(U) {
+  const {
+    children,
+    className,
+    description
+  } = U;
+}
+`,
+)
+
 inlineTest('array destructuring',
   `
 const t = e[0];
