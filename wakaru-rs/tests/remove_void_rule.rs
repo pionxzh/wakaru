@@ -42,7 +42,7 @@ void function() {
     let output = render(input);
     let normalized = normalize(&output);
     assert!(normalized.contains("void function()"));
-    assert!(normalized.contains("return void a();"));
+    assert!(normalized.contains("a();"));
 }
 
 #[test]

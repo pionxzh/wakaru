@@ -32,3 +32,18 @@ function foo(str) {
     assert!(normalized.starts_with("function foo(str)"));
     assert!(normalized.contains("function foo(str) { return str === 'use strict'; }"));
 }
+
+#[test]
+fn keeps_non_directive_use_strict_string_literals() {
+    let input = r#"
+function foo() {
+  a();
+  'use strict';
+  return 1;
+}
+"#;
+
+    let output = render(input);
+    let normalized = normalize(&output);
+    assert!(normalized.contains("a(); 'use strict'; return 1;"));
+}
