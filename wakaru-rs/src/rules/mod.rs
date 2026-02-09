@@ -1,6 +1,7 @@
 mod flip_comparisons;
 mod remove_void;
 mod simplify_sequence;
+mod un_infinity;
 mod unminify_booleans;
 
 use swc_core::ecma::ast::Module;
@@ -9,6 +10,7 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 pub use flip_comparisons::FlipComparisons;
 pub use remove_void::RemoveVoid;
 pub use simplify_sequence::SimplifySequence;
+pub use un_infinity::UnInfinity;
 pub use unminify_booleans::UnminifyBooleans;
 
 pub trait Rule: VisitMut {
@@ -33,4 +35,5 @@ pub fn apply_default_rules(module: &mut Module) {
         module.visit_mut_with(&mut RemoveVoid);
     }
     module.visit_mut_with(&mut UnminifyBooleans);
+    module.visit_mut_with(&mut UnInfinity);
 }

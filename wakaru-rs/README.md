@@ -13,6 +13,7 @@ Implemented:
   - `FlipComparisons` (`null == x` -> `x == null`)
   - `RemoveVoid` (`void 0` -> `undefined`)
   - `UnminifyBooleans` (`!0`/`!1` -> `true`/`false`)
+  - `UnInfinity` (`1 / 0` -> `Infinity`, `-1 / 0` -> `-Infinity`)
 - Run hygiene + fixer
 - Print readable JavaScript output
 
