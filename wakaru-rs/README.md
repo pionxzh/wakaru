@@ -16,6 +16,7 @@ Implemented:
   - `UnInfinity` (`1 / 0` -> `Infinity`, `-1 / 0` -> `-Infinity`)
   - `UnTypeof` (`typeof x < "u"` -> `typeof x !== "undefined"`)
   - `UnTemplateLiteral` (`"a".concat(b)` -> `` `a${b}` ``)
+  - `UnBracketNotation` (`obj['foo']` -> `obj.foo`, `obj['1']` -> `obj[1]`)
 - Run hygiene + fixer
 - Print readable JavaScript output
 

@@ -1,6 +1,7 @@
 mod flip_comparisons;
 mod remove_void;
 mod simplify_sequence;
+mod un_bracket_notation;
 mod un_infinity;
 mod unminify_booleans;
 mod un_numeric_literal;
@@ -13,6 +14,7 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 pub use flip_comparisons::FlipComparisons;
 pub use remove_void::RemoveVoid;
 pub use simplify_sequence::SimplifySequence;
+pub use un_bracket_notation::UnBracketNotation;
 pub use un_infinity::UnInfinity;
 pub use unminify_booleans::UnminifyBooleans;
 pub use un_numeric_literal::UnNumericLiteral;
@@ -44,5 +46,6 @@ pub fn apply_default_rules(module: &mut Module) {
     module.visit_mut_with(&mut UnInfinity);
     module.visit_mut_with(&mut UnTypeof);
     module.visit_mut_with(&mut UnNumericLiteral);
+    module.visit_mut_with(&mut UnBracketNotation);
     module.visit_mut_with(&mut UnTemplateLiteral);
 }
