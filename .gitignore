@@ -12,6 +12,7 @@ libs/**/dist
 *.local
 coverage
 dist
+target
 
 # Editor directories and files
 !.vscode/extensions.json

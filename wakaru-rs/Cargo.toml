@@ -1,0 +1,29 @@
+[package]
+name = "wakaru-rs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Rust rewrite of Wakaru unminify pipeline"
+
+[lib]
+name = "wakaru_rs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wakaru-rs"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+rayon = "1.11"
+swc_core = { version = "56", features = [
+  "common",
+  "ecma_ast",
+  "ecma_codegen",
+  "ecma_parser",
+  "ecma_parser_typescript",
+  "ecma_transforms",
+  "ecma_utils",
+  "ecma_visit",
+] }
