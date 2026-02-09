@@ -5,6 +5,7 @@ mod un_bracket_notation;
 mod un_infinity;
 mod unminify_booleans;
 mod un_numeric_literal;
+mod un_return;
 mod un_template_literal;
 mod un_typeof;
 
@@ -18,6 +19,7 @@ pub use un_bracket_notation::UnBracketNotation;
 pub use un_infinity::UnInfinity;
 pub use unminify_booleans::UnminifyBooleans;
 pub use un_numeric_literal::UnNumericLiteral;
+pub use un_return::UnReturn;
 pub use un_template_literal::UnTemplateLiteral;
 pub use un_typeof::UnTypeof;
 
@@ -48,4 +50,5 @@ pub fn apply_default_rules(module: &mut Module) {
     module.visit_mut_with(&mut UnNumericLiteral);
     module.visit_mut_with(&mut UnBracketNotation);
     module.visit_mut_with(&mut UnTemplateLiteral);
+    module.visit_mut_with(&mut UnReturn);
 }
