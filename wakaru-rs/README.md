@@ -15,6 +15,7 @@ Implemented:
   - `UnminifyBooleans` (`!0`/`!1` -> `true`/`false`)
   - `UnInfinity` (`1 / 0` -> `Infinity`, `-1 / 0` -> `-Infinity`)
   - `UnTypeof` (`typeof x < "u"` -> `typeof x !== "undefined"`)
+  - `UnTemplateLiteral` (`"a".concat(b)` -> `` `a${b}` ``)
 - Run hygiene + fixer
 - Print readable JavaScript output
 
