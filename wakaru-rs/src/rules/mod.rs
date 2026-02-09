@@ -3,6 +3,7 @@ mod remove_void;
 mod simplify_sequence;
 mod un_infinity;
 mod unminify_booleans;
+mod un_numeric_literal;
 mod un_typeof;
 
 use swc_core::ecma::ast::Module;
@@ -13,6 +14,7 @@ pub use remove_void::RemoveVoid;
 pub use simplify_sequence::SimplifySequence;
 pub use un_infinity::UnInfinity;
 pub use unminify_booleans::UnminifyBooleans;
+pub use un_numeric_literal::UnNumericLiteral;
 pub use un_typeof::UnTypeof;
 
 pub trait Rule: VisitMut {
@@ -39,4 +41,5 @@ pub fn apply_default_rules(module: &mut Module) {
     module.visit_mut_with(&mut UnminifyBooleans);
     module.visit_mut_with(&mut UnInfinity);
     module.visit_mut_with(&mut UnTypeof);
+    module.visit_mut_with(&mut UnNumericLiteral);
 }
