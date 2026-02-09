@@ -3,6 +3,7 @@ mod remove_void;
 mod simplify_sequence;
 mod un_bracket_notation;
 mod un_infinity;
+mod un_indirect_call;
 mod unminify_booleans;
 mod un_numeric_literal;
 mod un_return;
@@ -18,6 +19,7 @@ pub use remove_void::RemoveVoid;
 pub use simplify_sequence::SimplifySequence;
 pub use un_bracket_notation::UnBracketNotation;
 pub use un_infinity::UnInfinity;
+pub use un_indirect_call::UnIndirectCall;
 pub use unminify_booleans::UnminifyBooleans;
 pub use un_numeric_literal::UnNumericLiteral;
 pub use un_return::UnReturn;
@@ -48,6 +50,7 @@ pub fn apply_default_rules(module: &mut Module) {
     }
     module.visit_mut_with(&mut UnminifyBooleans);
     module.visit_mut_with(&mut UnInfinity);
+    module.visit_mut_with(&mut UnIndirectCall);
     module.visit_mut_with(&mut UnTypeof);
     module.visit_mut_with(&mut UnNumericLiteral);
     module.visit_mut_with(&mut UnBracketNotation);

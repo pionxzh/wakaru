@@ -19,6 +19,7 @@ Implemented:
   - `UnBracketNotation` (`obj['foo']` -> `obj.foo`, `obj['1']` -> `obj[1]`)
   - `UnReturn` (remove redundant tail `return undefined` / `return;`, convert tail `return void expr`)
   - `UnUseStrict` (remove `'use strict'` directives)
+  - `UnIndirectCall` (`(0, obj.fn)(x)` -> `obj.fn(x)`)
 - Run hygiene + fixer
 - Print readable JavaScript output
 
