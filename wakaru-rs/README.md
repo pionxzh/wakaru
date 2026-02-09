@@ -18,6 +18,7 @@ Implemented:
   - `UnTemplateLiteral` (`"a".concat(b)` -> `` `a${b}` ``)
   - `UnBracketNotation` (`obj['foo']` -> `obj.foo`, `obj['1']` -> `obj[1]`)
   - `UnReturn` (remove redundant tail `return undefined` / `return;`, convert tail `return void expr`)
+  - `UnUseStrict` (remove `'use strict'` directives)
 - Run hygiene + fixer
 - Print readable JavaScript output
 
