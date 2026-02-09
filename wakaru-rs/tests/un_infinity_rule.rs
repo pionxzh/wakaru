@@ -1,6 +1,6 @@
 mod common;
 
-use common::render;
+use common::{assert_compact_eq, render};
 
 #[test]
 fn transforms_one_div_zero_to_infinity() {
@@ -20,10 +20,21 @@ x / 0;
 
 [0 / 0, 1 / 0]
 "#;
+    let expected = r#"
+0 / 0;
+Infinity;
+-Infinity;
+99 / 0;
+
+'0' / 0;
+'1' / 0;
+'-1' / 0;
+'99' / 0;
+
+x / 0;
+
+[0 / 0, Infinity];
+"#;
     let output = render(input);
-    let compact = output.chars().filter(|c| !c.is_whitespace()).collect::<String>();
-    assert!(compact.contains("0/0;Infinity;-Infinity;99/0;"));
-    assert!(compact.contains("'0'/0;'1'/0;'-1'/0;'99'/0;"));
-    assert!(compact.contains("x/0;"));
-    assert!(compact.contains("[0/0,Infinity];"));
+    assert_compact_eq(&output, expected);
 }

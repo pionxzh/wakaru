@@ -20,3 +20,13 @@ pub fn normalize(input: &str) -> String {
 pub fn assert_normalized_eq(output: &str, expected: &str) {
     assert_eq!(normalize(output), normalize(expected));
 }
+
+#[allow(dead_code)]
+pub fn compact(input: &str) -> String {
+    input.chars().filter(|c| !c.is_whitespace()).collect::<String>()
+}
+
+#[allow(dead_code)]
+pub fn assert_compact_eq(output: &str, expected: &str) {
+    assert_eq!(compact(output), compact(expected));
+}

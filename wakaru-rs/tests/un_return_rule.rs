@@ -1,6 +1,6 @@
 mod common;
 
-use common::{normalize, render};
+use common::{assert_compact_eq, render};
 
 #[test]
 fn transforms_return_void_expr_to_expression_statement() {
@@ -10,8 +10,13 @@ function foo() {
   return void a()
 }
 "#;
+    let expected = r#"
+function foo() {
+  a();
+}
+"#;
     let output = render(input);
-    assert!(normalize(&output).contains("function foo() { a(); }"));
+    assert_compact_eq(&output, expected);
 }
 
 #[test]
@@ -29,11 +34,19 @@ const bar = () => {
   return void 0
 }
 "#;
+    let expected = r#"
+function foo() {
+  const a = 1;
+}
+
+const bar = ()=>{
+  const a = 1;
+  if (a) return undefined;
+};
+"#;
 
     let output = render(input);
-    let normalized = normalize(&output);
-    assert!(normalized.contains("function foo() { const a = 1; }"));
-    assert!(normalized.contains("const bar = ()=>{ const a = 1; if (a) return undefined; };"));
+    assert_compact_eq(&output, expected);
 }
 
 #[test]
@@ -51,8 +64,18 @@ function foo() {
   }
 }
 "#;
+    let expected = r#"
+function foo() {
+  const count = 5;
+  while (count--) {
+    return undefined;
+  }
+
+  for(let i = 0; i < 10; i++){
+    return void foo();
+  }
+}
+"#;
     let output = render(input);
-    let normalized = normalize(&output);
-    assert!(normalized.contains("return undefined;"));
-    assert!(normalized.contains("return void foo();"));
+    assert_compact_eq(&output, expected);
 }

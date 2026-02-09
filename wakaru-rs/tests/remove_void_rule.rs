@@ -1,6 +1,6 @@
 mod common;
 
-use common::{normalize, render};
+use common::{assert_compact_eq, normalize, render};
 
 #[test]
 fn transforms_void_zero_in_comparison() {
@@ -10,10 +10,13 @@ if(void 0 !== a) {
   console.log('a')
 }
 "#;
+    let expected = r#"
+if (a !== undefined) {
+  console.log('a');
+}
+"#;
     let output = render(input);
-    let normalized = normalize(&output);
-    assert!(normalized.contains("a !== undefined"));
-    assert!(!normalized.contains("void 0"));
+    assert_compact_eq(&output, expected);
 }
 
 #[test]
@@ -38,11 +41,15 @@ void function() {
   return void a()
 }
 "#;
+    let expected = r#"
+void function() {
+  console.log('a');
+  a();
+};
+"#;
 
     let output = render(input);
-    let normalized = normalize(&output);
-    assert!(normalized.contains("void function()"));
-    assert!(normalized.contains("a();"));
+    assert_compact_eq(&output, expected);
 }
 
 #[test]
@@ -57,9 +64,14 @@ if (undefined !== a) {
   console.log('a', void 0);
 }
 "#;
+    let expected = r#"
+var undefined = 42;
+console.log(void 0);
+if (a !== undefined) {
+  console.log('a', void 0);
+}
+"#;
 
     let output = render(input);
-    let normalized = normalize(&output);
-    assert!(normalized.contains("console.log(void 0);"));
-    assert!(normalized.contains("console.log('a', void 0);"));
+    assert_compact_eq(&output, expected);
 }

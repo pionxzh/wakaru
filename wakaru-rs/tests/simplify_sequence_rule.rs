@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_normalized_eq, normalize, render};
+use common::{assert_compact_eq, assert_normalized_eq, render};
 
 #[test]
 fn splits_top_level_sequence_expression_statement() {
@@ -26,9 +26,14 @@ while (a(), b(), c()) {
   d(), e()
 }
 "#;
+    let expected = r#"
+while (a(), b(), c()) {
+  d();
+  e();
+}
+"#;
     let output = render(input);
-    let compact = output.chars().filter(|c| !c.is_whitespace()).collect::<String>();
-    assert!(compact.contains("while(a(),b(),c()){d();e();}"));
+    assert_compact_eq(&output, expected);
 }
 
 #[test]
@@ -38,11 +43,18 @@ fn splits_return_sequence_expression() {
 if(a) return b(), c();
 else return d = 1, e = 2, f = 3;
 "#;
-
+    let expected = r#"
+if (a) {
+  b();
+  return c();
+} else {
+  d = 1;
+  e = 2;
+  return f = 3;
+}
+"#;
     let output = render(input);
-    let normalized = normalize(&output);
-    assert!(normalized.contains("if (a) { b(); return c(); }"));
-    assert!(normalized.contains("else { d = 1; e = 2; return f = 3; }"));
+    assert_compact_eq(&output, expected);
 }
 
 #[test]
@@ -54,11 +66,17 @@ switch (a(), b(), c()) {
     d(), e()
 }
 "#;
-
+    let expected = r#"
+a();
+b();
+switch (c()) {
+  case 1:
+    d();
+    e();
+}
+"#;
     let output = render(input);
-    let normalized = normalize(&output);
-    assert!(normalized.contains("a(); b(); switch(c())"));
-    assert!(normalized.contains("d(); e();"));
+    assert_compact_eq(&output, expected);
 }
 
 #[test]
@@ -67,8 +85,12 @@ fn splits_throw_sequence_expression() {
     let input = r#"
 if(e !== null) throw a(), e
 "#;
-
+    let expected = r#"
+if (e !== null) {
+  a();
+  throw e;
+}
+"#;
     let output = render(input);
-    let normalized = normalize(&output);
-    assert!(normalized.contains("if (e !== null) { a(); throw e; }"));
+    assert_compact_eq(&output, expected);
 }

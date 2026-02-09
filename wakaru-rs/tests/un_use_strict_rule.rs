@@ -1,7 +1,6 @@
 mod common;
 
-use common::normalize;
-use common::render;
+use common::{assert_compact_eq, normalize, render};
 
 #[test]
 fn removes_use_strict_directive() {
@@ -26,11 +25,14 @@ function foo(str) {
   return str === 'use strict'
 }
 "#;
+    let expected = r#"
+function foo(str) {
+  return str === 'use strict';
+}
+"#;
 
     let output = render(input);
-    let normalized = normalize(&output);
-    assert!(normalized.starts_with("function foo(str)"));
-    assert!(normalized.contains("function foo(str) { return str === 'use strict'; }"));
+    assert_compact_eq(&output, expected);
 }
 
 #[test]
@@ -42,8 +44,14 @@ function foo() {
   return 1;
 }
 "#;
+    let expected = r#"
+function foo() {
+  a();
+  'use strict';
+  return 1;
+}
+"#;
 
     let output = render(input);
-    let normalized = normalize(&output);
-    assert!(normalized.contains("a(); 'use strict'; return 1;"));
+    assert_compact_eq(&output, expected);
 }
