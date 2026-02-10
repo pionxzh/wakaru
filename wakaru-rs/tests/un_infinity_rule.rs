@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_compact_eq, render};
+use common::{assert_eq_normalized, render};
 
 #[test]
 fn transforms_one_div_zero_to_infinity() {
@@ -33,8 +33,8 @@ Infinity;
 
 x / 0;
 
-[0 / 0, Infinity];
+    [0 / 0, Infinity];
 "#;
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }

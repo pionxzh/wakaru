@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod common;
+
 use wakaru_rs::{decompile, DecompileOptions};
 
 #[test]
@@ -47,7 +49,7 @@ fn decompile_output_is_stable_for_noop_pipeline() {
     )
     .expect("second decompile should succeed");
 
-    assert_eq!(normalize(&once), normalize(&twice));
+    assert_eq!(common::normalize(&once), common::normalize(&twice));
 }
 
 fn bundled_fixture_paths() -> Vec<PathBuf> {
@@ -64,8 +66,4 @@ fn bundled_fixture_paths() -> Vec<PathBuf> {
 
     paths.sort();
     paths
-}
-
-fn normalize(input: &str) -> String {
-    input.split_whitespace().collect::<Vec<_>>().join(" ")
 }
