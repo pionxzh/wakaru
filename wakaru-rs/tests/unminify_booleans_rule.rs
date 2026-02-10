@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_normalized_eq, render};
+use common::{assert_eq_normalized, render};
 
 #[test]
 fn transforms_bang_zero_and_bang_one() {
@@ -23,5 +23,6 @@ var obj = {
 "#;
 
     let output = render(input);
-    assert_normalized_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
+

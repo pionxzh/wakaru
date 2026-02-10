@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_compact_eq, normalize, render};
+use common::{assert_eq_normalized, render};
 
 #[test]
 fn transforms_void_zero_in_comparison() {
@@ -16,7 +16,7 @@ if (a !== undefined) {
 }
 "#;
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -27,9 +27,13 @@ void 0
 void 99
 void(0)
 "#;
+    let expected = r#"
+undefined;
+undefined;
+undefined;
+"#;
     let output = render(input);
-    let normalized = normalize(&output);
-    assert_eq!(normalized, "undefined; undefined; undefined;");
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -49,7 +53,7 @@ void function() {
 "#;
 
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -73,5 +77,6 @@ if (a !== undefined) {
 "#;
 
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
+

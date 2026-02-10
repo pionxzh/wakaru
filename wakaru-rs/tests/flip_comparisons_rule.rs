@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_normalized_eq, render};
+use common::{assert_eq_normalized, render};
 
 #[test]
 fn flips_supported_literal_on_left() {
@@ -41,7 +41,7 @@ bar <= 1;
 "#;
 
     let output = render(input);
-    assert_normalized_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -59,7 +59,7 @@ method() == 1;
 "#;
 
     let output = render(input);
-    assert_normalized_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -76,5 +76,6 @@ bar < 1.2;
 "#;
 
     let output = render(input);
-    assert_normalized_eq(&output, input);
+    assert_eq_normalized(&output, input);
 }
+

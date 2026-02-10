@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_compact_eq, render};
+use common::{assert_eq_normalized, render};
 
 #[test]
 fn transforms_return_void_expr_to_expression_statement() {
@@ -16,7 +16,7 @@ function foo() {
 }
 "#;
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -46,7 +46,7 @@ const bar = ()=>{
 "#;
 
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -77,5 +77,6 @@ function foo() {
 }
 "#;
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
+

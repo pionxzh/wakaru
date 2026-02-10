@@ -29,16 +29,6 @@ pub fn assert_eq_normalized(actual: &str, expected: &str) {
     assert_eq!(normalize(actual), normalize(expected));
 }
 
-#[allow(dead_code)]
-pub fn assert_normalized_eq(output: &str, expected: &str) {
-    assert_eq_normalized(output, expected);
-}
-
-#[allow(dead_code)]
-pub fn assert_compact_eq(output: &str, expected: &str) {
-    assert_eq_normalized(output, expected);
-}
-
 fn parse_module(code: &str, cm: Lrc<SourceMap>) -> Module {
     let fm = cm.new_source_file(FileName::Custom("normalize.js".to_string()).into(), code.to_string());
     let lexer = Lexer::new(
@@ -79,3 +69,4 @@ fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> String {
     }
     String::from_utf8(output).expect("normalization output is not utf-8")
 }
+

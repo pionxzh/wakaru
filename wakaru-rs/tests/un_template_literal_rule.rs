@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_compact_eq, render};
+use common::{assert_eq_normalized, render};
 
 #[test]
 fn restores_template_literal_from_concat_chain() {
@@ -23,7 +23,7 @@ var example6 = `test ${foo} ${bar}`;
 "#;
 
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -37,5 +37,6 @@ fn keeps_non_consecutive_concat_calls() {
 "#;
 
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
+

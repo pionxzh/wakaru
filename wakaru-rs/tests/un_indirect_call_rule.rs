@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_compact_eq, render};
+use common::{assert_eq_normalized, render};
 
 #[test]
 fn transforms_indirect_call_to_direct_member_call() {
@@ -15,7 +15,7 @@ import s from "react";
 var countRef = s.useRef(0);
 "#;
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -32,5 +32,6 @@ var countRef = s.useRef(0);
 var secondRef = s.useMemo(()=>{}, []);
 "#;
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
+

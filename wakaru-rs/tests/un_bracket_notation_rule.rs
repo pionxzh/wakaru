@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_compact_eq, render};
+use common::{assert_eq_normalized, render};
 
 #[test]
 fn transforms_bracket_notation_to_dot_or_numeric() {
@@ -29,7 +29,7 @@ obj[3.14];
 "#;
 
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -59,5 +59,6 @@ obj['prop-with-dash'];
 "#;
 
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
+

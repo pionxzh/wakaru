@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_compact_eq, assert_normalized_eq, render};
+use common::{assert_eq_normalized, render};
 
 #[test]
 fn splits_top_level_sequence_expression_statement() {
@@ -15,7 +15,7 @@ c();
 "#;
 
     let output = render(input);
-    assert_normalized_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -33,7 +33,7 @@ while (a(), b(), c()) {
 }
 "#;
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -54,7 +54,7 @@ if (a) {
 }
 "#;
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -76,7 +76,7 @@ switch (c()) {
 }
 "#;
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -92,5 +92,6 @@ if (e !== null) {
 }
 "#;
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
+

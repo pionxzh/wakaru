@@ -1,6 +1,6 @@
 mod common;
 
-use common::assert_normalized_eq;
+use common::assert_eq_normalized;
 use common::render;
 
 #[test]
@@ -20,7 +20,7 @@ typeof x === "undefined";
 "#;
 
     let output = render(input);
-    assert_normalized_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -40,5 +40,6 @@ typeof x === "undefined";
 "#;
 
     let output = render(input);
-    assert_normalized_eq(&output, input);
+    assert_eq_normalized(&output, input);
 }
+

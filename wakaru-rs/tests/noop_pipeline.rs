@@ -67,3 +67,4 @@ fn bundled_fixture_paths() -> Vec<PathBuf> {
     paths.sort();
     paths
 }
+

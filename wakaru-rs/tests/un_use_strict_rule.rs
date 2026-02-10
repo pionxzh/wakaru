@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_compact_eq, normalize, render};
+use common::{assert_eq_normalized, render};
 
 #[test]
 fn removes_use_strict_directive() {
@@ -8,9 +8,10 @@ fn removes_use_strict_directive() {
     let input = r#"
 'use strict'
 "#;
+    let expected = r#""#;
 
     let output = render(input);
-    assert_eq!(normalize(&output), "");
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -32,7 +33,7 @@ function foo(str) {
 "#;
 
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -53,5 +54,6 @@ function foo() {
 "#;
 
     let output = render(input);
-    assert_compact_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
+

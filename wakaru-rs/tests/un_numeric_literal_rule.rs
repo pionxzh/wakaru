@@ -1,6 +1,6 @@
 mod common;
 
-use common::assert_normalized_eq;
+use common::assert_eq_normalized;
 use common::render;
 
 #[test]
@@ -26,5 +26,6 @@ fn transforms_numeric_literals_with_different_notation() {
 "#;
 
     let output = render(input);
-    assert_normalized_eq(&output, expected);
+    assert_eq_normalized(&output, expected);
 }
+

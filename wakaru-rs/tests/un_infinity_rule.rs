@@ -38,3 +38,4 @@ x / 0;
     let output = render(input);
     assert_eq_normalized(&output, expected);
 }
+
