@@ -130,6 +130,8 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
 fn is_action_expr(expr: &Box<Expr>) -> bool {
     match expr.as_ref() {
         Expr::Call(_) | Expr::New(_) | Expr::Assign(_) | Expr::Yield(_) | Expr::Await(_) => true,
+        Expr::Seq(seq) => seq.exprs.iter().any(|e| is_action_expr(e)),
+        Expr::Paren(paren) => is_action_expr(&paren.expr),
         _ => false,
     }
 }
@@ -205,15 +207,28 @@ fn convert_alt_branch_to_stmt(expr: Expr) -> Stmt {
     }
 }
 
-/// Wrap an expression in a block statement (as an ExprStmt).
+/// Wrap an expression in a block statement.
+/// Sequence expressions (including paren-wrapped) are expanded into multiple ExprStmts.
 fn expr_to_block_stmt(expr: Expr) -> Stmt {
+    let inner = match expr {
+        Expr::Paren(paren) => *paren.expr,
+        other => other,
+    };
+    let stmts = match inner {
+        Expr::Seq(seq) => seq
+            .exprs
+            .into_iter()
+            .map(|e| Stmt::Expr(ExprStmt { span: DUMMY_SP, expr: e }))
+            .collect(),
+        other => vec![Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(other),
+        })],
+    };
     Stmt::Block(BlockStmt {
         span: DUMMY_SP,
         ctxt: Default::default(),
-        stmts: vec![Stmt::Expr(ExprStmt {
-            span: DUMMY_SP,
-            expr: Box::new(expr),
-        })],
+        stmts,
     })
 }
 

@@ -148,3 +148,23 @@ function fn() {
     let output = render(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn ternary_with_sequence_branches_converted() {
+    // cond ? (a(), b()) : (c(), d()) → if (cond) { a(); b(); } else { c(); d(); }
+    // Common webpack pattern for conditional side-effect blocks
+    let input = r#"
+arguments.length > 1 ? (check(a), check(b)) : (check(c), x = 0);
+"#;
+    let expected = r#"
+if (arguments.length > 1) {
+    check(a);
+    check(b);
+} else {
+    check(c);
+    x = 0;
+}
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
