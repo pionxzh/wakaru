@@ -59,8 +59,8 @@ function func() {
 "#;
     let expected = r#"
 function* func() {
-  var x;
-  var y;
+  let x;
+  let y;
   x = yield foo;
   y = yield bar;
   return y;
@@ -200,8 +200,8 @@ function func() {
 "#;
     let expected = r#"
 async function func() {
-  var x;
-  var y;
+  let x;
+  let y;
   x = await foo;
   y = await bar;
   return y;

@@ -104,13 +104,13 @@ do {
 #[test]
 fn wraps_arrow_function_expr_body_in_block_with_return() {
     // Reused from packages/unminify/src/transformations/__tests__/un-curly-braces.spec.ts
+    // Note: UnCurlyBraces wraps the expression body in a block, but ArrowFunction
+    // (which runs after) simplifies { return b(); } back to expression body b().
     let input = r#"
 const fn = () => b();
 "#;
     let expected = r#"
-const fn = () => {
-    return b();
-};
+const fn = () => b();
 "#;
     let output = render(input);
     assert_eq_normalized(&output, expected);

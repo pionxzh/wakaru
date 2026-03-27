@@ -125,6 +125,7 @@ exports.foo = 1;
 
 #[test]
 fn non_top_level_require_unchanged() {
+    // VarDeclToLetConst converts var to const since bar is never reassigned.
     let input = r#"
 function fn() {
   var bar = require('bar');
@@ -132,7 +133,7 @@ function fn() {
 "#;
     let expected = r#"
 function fn() {
-  var bar = require('bar');
+  const bar = require('bar');
 }
 "#;
     let output = render(input);

@@ -31,6 +31,9 @@ mod un_typeof;
 mod un_use_strict;
 mod un_variable_merging;
 mod un_while_loop;
+mod var_decl_to_let_const;
+mod obj_method_shorthand;
+mod arrow_function;
 
 use swc_core::ecma::ast::Module;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -68,6 +71,9 @@ pub use un_typeof::UnTypeof;
 pub use un_use_strict::UnUseStrict;
 pub use un_variable_merging::UnVariableMerging;
 pub use un_while_loop::UnWhileLoop;
+pub use var_decl_to_let_const::VarDeclToLetConst;
+pub use obj_method_shorthand::ObjMethodShorthand;
+pub use arrow_function::ArrowFunction;
 
 pub trait Rule: VisitMut {
     fn name(&self) -> &'static str;
@@ -116,6 +122,10 @@ pub fn apply_default_rules(module: &mut Module) {
     module.visit_mut_with(&mut UnEs6Class);
     module.visit_mut_with(&mut UnAsyncAwait);
     module.visit_mut_with(&mut UnEsm);
+    // lebab-style modernization
+    module.visit_mut_with(&mut VarDeclToLetConst);
+    module.visit_mut_with(&mut ObjMethodShorthand);
+    module.visit_mut_with(&mut ArrowFunction);
     module.visit_mut_with(&mut UnImportRename);
     module.visit_mut_with(&mut UnExportRename);
     module.visit_mut_with(&mut SmartInline);

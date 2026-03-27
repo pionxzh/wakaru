@@ -4,13 +4,14 @@ use common::{assert_eq_normalized, render};
 
 #[test]
 fn splits_var_declaration_into_individual_statements() {
+    // VarDeclToLetConst converts var to const since these vars are never reassigned.
     let input = r#"
 var a = 1, b = true, c = "hello";
 "#;
     let expected = r#"
-var a = 1;
-var b = true;
-var c = "hello";
+const a = 1;
+const b = true;
+const c = "hello";
 "#;
     let output = render(input);
     assert_eq_normalized(&output, expected);
@@ -46,11 +47,12 @@ const i = 3;
 
 #[test]
 fn does_not_split_single_declarator() {
+    // VarDeclToLetConst converts var to const since x is never reassigned.
     let input = r#"
 var x = 1;
 "#;
     let expected = r#"
-var x = 1;
+const x = 1;
 "#;
     let output = render(input);
     assert_eq_normalized(&output, expected);
@@ -73,14 +75,17 @@ export var c = "hello";
 #[test]
 fn extracts_unused_for_init_vars_before_loop() {
     // `i` is not used in test (j < 10) or update (k++), so it gets extracted.
+    // VarDeclToLetConst converts:
+    //   - `i` → const (never reassigned)
+    //   - `j, k` → let (k is incremented via k++)
     let input = r#"
 for (var i = 0, j = 0, k = 0; j < 10; k++) {
   console.log(k);
 }
 "#;
     let expected = r#"
-var i = 0;
-for (var j = 0, k = 0; j < 10; k++) {
+const i = 0;
+for (let j = 0, k = 0; j < 10; k++) {
   console.log(k);
 }
 "#;
@@ -106,11 +111,12 @@ for (const i = 0, j = 0, k = 0; j < 10; k++) {}
 #[test]
 fn prunes_empty_var_decl_in_for_init_when_all_extracted() {
     // All declarators are extracted, so the for init becomes None.
+    // VarDeclToLetConst converts i → const (never reassigned).
     let input = r#"
 for (var i = 0; j < 10; k++) {}
 "#;
     let expected = r#"
-var i = 0;
+const i = 0;
 for (; j < 10; k++) {}
 "#;
     let output = render(input);

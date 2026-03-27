@@ -10,9 +10,10 @@ import s from "react";
 
 var countRef = (0, s.useRef)(0);
 "#;
+    // VarDeclToLetConst converts var to const since countRef is never reassigned.
     let expected = r#"
 import s from "react";
-var countRef = s.useRef(0);
+const countRef = s.useRef(0);
 "#;
     let output = render(input);
     assert_eq_normalized(&output, expected);
@@ -27,10 +28,11 @@ const s = require("react");
 var countRef = (0, s.useRef)(0);
 var secondRef = (0, s.useMemo)(() => {}, []);
 "#;
+    // VarDeclToLetConst converts var to const since these vars are never reassigned.
     let expected = r#"
 import s from "react";
-var countRef = s.useRef(0);
-var secondRef = s.useMemo(()=>{}, []);
+const countRef = s.useRef(0);
+const secondRef = s.useMemo(()=>{}, []);
 "#;
     let output = render(input);
     assert_eq_normalized(&output, expected);

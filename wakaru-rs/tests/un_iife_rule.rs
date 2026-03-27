@@ -16,8 +16,10 @@ fn iife_single_char_params_renamed_to_longer_ident_args() {
   m.parentNode.insertBefore(a, m);
 })(window, document, 'script', 'https://www.google-analytics.com/analytics.js', 'ga');
 "#;
+    // ArrowFunction rule converts the IIFE's function expression to an arrow.
+    // The inner function using `arguments` is preserved as a function expression.
     let expected = r#"
-(function(window, document, o, g, r, a, m) {
+((window, document, o, g, r, a, m) => {
   window['GoogleAnalyticsObject'] = r;
   window[r] = window[r] || function() { (window[r].q = window[r].q||[]).push(arguments) }
   window[r].l = 1 * new Date();
@@ -45,8 +47,9 @@ fn iife_literal_args_extracted_to_const_when_no_arguments_usage() {
   m.parentNode.insertBefore(a, m);
 }(window, document, 'script', 'https://www.google-analytics.com/analytics.js', 'ga');
 "#;
+    // ArrowFunction rule converts the IIFE's function expression to an arrow.
     let expected = r#"
-!function(window, document, a, m) {
+!((window, document, a, m) => {
   const o = 'script';
   const g = 'https://www.google-analytics.com/analytics.js';
   const r = 'ga';
@@ -57,7 +60,7 @@ fn iife_literal_args_extracted_to_const_when_no_arguments_usage() {
   a.async = 1;
   a.src = g;
   m.parentNode.insertBefore(a, m);
-}(window, document);
+})(window, document);
 "#;
     let output = render(input);
     assert_eq_normalized(&output, expected);
@@ -92,8 +95,9 @@ fn iife_arg_with_shorter_name_not_renamed() {
   a.src = 'url';
 })(w, document);
 "#;
+    // ArrowFunction rule converts the IIFE's function expression to an arrow.
     let expected = r#"
-(function(i, document, a) {
+((i, document, a) => {
   i['GoogleAnalyticsObject'] = 'ga';
   a = document.createElement('script');
   a.src = 'url';

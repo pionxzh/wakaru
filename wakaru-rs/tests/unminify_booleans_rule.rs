@@ -13,11 +13,12 @@ var obj = {
   value: !0
 };
 "#;
+    // VarDeclToLetConst converts var obj to const since obj is never reassigned.
     let expected = r#"
 let a = false;
 const b = true;
 
-var obj = {
+const obj = {
   value: true
 };
 "#;

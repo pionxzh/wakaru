@@ -13,13 +13,14 @@ var example4 = 1 + "".concat(foo, "bar").concat(baz);
 var example5 = "".concat(1, f, "oo", true).concat(b, "ar", 0).concat(baz);
 var example6 = "test ".concat(foo, " ").concat(bar);
 "#;
+    // VarDeclToLetConst converts var to const since these vars are never reassigned.
     let expected = r#"
-var example1 = `the simple ${form}`;
-var example2 = `${1}`;
-var example3 = 1 + `${foo}${bar}${baz}`;
-var example4 = 1 + `${foo}bar${baz}`;
-var example5 = `${1}${f}oo${true}${b}ar${0}${baz}`;
-var example6 = `test ${foo} ${bar}`;
+const example1 = `the simple ${form}`;
+const example2 = `${1}`;
+const example3 = 1 + `${foo}${bar}${baz}`;
+const example4 = 1 + `${foo}bar${baz}`;
+const example5 = `${1}${f}oo${true}${b}ar${0}${baz}`;
+const example6 = `test ${foo} ${bar}`;
 "#;
 
     let output = render(input);

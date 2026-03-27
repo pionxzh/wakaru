@@ -50,13 +50,14 @@ process(n);
 #[test]
 fn no_inline_into_nested_function() {
     // t used inside nested fn — top-level count is 0, shouldn't inline
+    // ArrowFunction rule converts the function expression to an arrow function.
     let input = r#"
 const t = foo;
 const fn2 = function() { return t; };
 "#;
     let expected = r#"
 const t = foo;
-const fn2 = function() { return t; };
+const fn2 = () => t;
 "#;
     let output = render(input);
     assert_eq_normalized(&output, expected);

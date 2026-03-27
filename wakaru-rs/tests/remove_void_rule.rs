@@ -39,6 +39,7 @@ undefined;
 #[test]
 fn does_not_transform_void_function_call() {
     // Reused from packages/unminify/src/transformations/__tests__/un-undefined.spec.ts
+    // ArrowFunction rule converts the function expression to an arrow function.
     let input = r#"
 void function() {
   console.log('a')
@@ -46,10 +47,10 @@ void function() {
 }
 "#;
     let expected = r#"
-void function() {
+void (()=>{
   console.log('a');
   a();
-};
+});
 "#;
 
     let output = render(input);
@@ -59,6 +60,7 @@ void function() {
 #[test]
 fn does_not_transform_when_undefined_is_declared() {
     // Reused from packages/unminify/src/transformations/__tests__/un-undefined.spec.ts
+    // VarDeclToLetConst converts `var undefined = 42` to `const` since it's never reassigned.
     let input = r#"
 var undefined = 42;
 
@@ -69,7 +71,7 @@ if (undefined !== a) {
 }
 "#;
     let expected = r#"
-var undefined = 42;
+const undefined = 42;
 console.log(void 0);
 if (a !== undefined) {
   console.log('a', void 0);
