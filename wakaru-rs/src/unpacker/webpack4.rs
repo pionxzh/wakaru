@@ -59,6 +59,8 @@ struct WebpackRuntimeNormalizer {
     require_sym: Atom,
     /// The symbol name used for the exports parameter
     exports_sym: Atom,
+    /// Only match identifiers that resolver() marked as unresolved free-variable references.
+    unresolved_mark: Mark,
 }
 
 impl VisitMut for WebpackRuntimeNormalizer {
@@ -140,7 +142,7 @@ impl WebpackRuntimeNormalizer {
             return None;
         };
 
-        if &callee_obj.sym != &self.require_sym {
+        if callee_obj.sym != self.require_sym || callee_obj.ctxt.outer() != self.unresolved_mark {
             return None;
         }
 
@@ -188,6 +190,7 @@ impl WebpackRuntimeNormalizer {
 /// This lets un-esm convert them to proper ES import statements.
 struct RequireIdRewriter<'a> {
     require_sym: Atom,
+    unresolved_mark: Mark,
     id_to_filename: &'a std::collections::HashMap<usize, String>,
 }
 
@@ -203,7 +206,7 @@ impl VisitMut for RequireIdRewriter<'_> {
         let Expr::Ident(callee_ident) = &**callee_expr else {
             return;
         };
-        if callee_ident.sym != self.require_sym {
+        if callee_ident.sym != self.require_sym || callee_ident.ctxt.outer() != self.unresolved_mark {
             return;
         }
         if call.args.len() != 1 || call.args[0].spread.is_some() {
@@ -236,6 +239,7 @@ impl VisitMut for RequireIdRewriter<'_> {
 /// The call sites `o()` are later simplified by UnIife's expression-body IIFE handling.
 struct RequireNRewriter {
     require_sym: Atom,
+    unresolved_mark: Mark,
 }
 
 impl VisitMut for RequireNRewriter {
@@ -250,7 +254,7 @@ impl VisitMut for RequireNRewriter {
         let Callee::Expr(callee_expr) = &call.callee else { return };
         let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else { return };
         let Expr::Ident(obj_ident) = &**obj else { return };
-        if obj_ident.sym != self.require_sym {
+        if obj_ident.sym != self.require_sym || obj_ident.ctxt.outer() != self.unresolved_mark {
             return;
         }
         let MemberProp::Ident(prop_ident) = prop else { return };
@@ -566,6 +570,7 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bo
         {
             let mut id_rewriter = RequireIdRewriter {
                 require_sym: post_rename_require_sym.clone(),
+                unresolved_mark,
                 id_to_filename: &id_to_filename,
             };
             synthetic_module.visit_mut_with(&mut id_rewriter);
@@ -575,6 +580,7 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bo
         {
             let mut n_rewriter = RequireNRewriter {
                 require_sym: post_rename_require_sym.clone(),
+                unresolved_mark,
             };
             synthetic_module.visit_mut_with(&mut n_rewriter);
         }
@@ -591,6 +597,7 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bo
         let mut normalizer = WebpackRuntimeNormalizer {
             require_sym: final_require_sym,
             exports_sym,
+            unresolved_mark,
         };
         synthetic_module.visit_mut_with(&mut normalizer);
 
