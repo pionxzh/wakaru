@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, BindingIdent, ComputedPropName, Decl, Expr, ExprStmt, Ident, KeyValuePatProp,
-    Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectPat, ObjectPatProp, Pat,
-    PropName, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ArrayPat, BindingIdent, BlockStmtOrExpr, ComputedPropName, Decl, Expr, ExprStmt, Ident,
+    KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectPat,
+    ObjectPatProp, Pat, PropName, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -13,6 +13,11 @@ pub struct SmartInline;
 
 impl VisitMut for SmartInline {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        // Step 0: Inline zero-param arrow ident wrappers (const X = () => Y) globally.
+        // These are often produced by `require.n` rewriting and used inside nested functions,
+        // so they need cross-boundary inlining before per-stmt processing.
+        inline_module_arrow_wrappers(module);
+
         // Process module-level statements
         let stmts: Vec<Stmt> = module
             .body
@@ -69,6 +74,187 @@ fn process_stmts(stmts: Vec<Stmt>) -> Vec<Stmt> {
     // Pass 2: group consecutive property / array accesses into destructuring
     let stmts = group_destructuring(stmts);
     stmts
+}
+
+// ============================================================
+// Module-level arrow wrapper inlining
+// Handles: const X = () => Y  (zero-param arrow with ident body)
+// These are typically require.n-generated getters used inside nested functions.
+// Inlines globally (including across nested function/arrow boundaries).
+// After inlining, the second UnIife pass converts (() => Y)(...) → Y(...).
+// ============================================================
+
+fn try_extract_zero_param_arrow_ident(expr: &Expr) -> Option<Box<Expr>> {
+    let Expr::Arrow(arrow) = expr else { return None };
+    if !arrow.params.is_empty() {
+        return None;
+    }
+    if let BlockStmtOrExpr::Expr(body_expr) = arrow.body.as_ref() {
+        if matches!(body_expr.as_ref(), Expr::Ident(_)) {
+            return Some(body_expr.clone());
+        }
+    }
+    None
+}
+
+/// Scope-aware key for arrow wrapper candidates: (symbol, SyntaxContext from resolver).
+type BindingKey = (Atom, SyntaxContext);
+
+fn inline_module_arrow_wrappers(module: &mut Module) {
+    // Collect candidates: const X = () => identY at module level (Stmt items only).
+    // Use (sym, ctxt) keys so inner-scope variables with the same name are NOT replaced.
+    let mut candidates: HashMap<BindingKey, Box<Expr>> = HashMap::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else { continue };
+        if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
+            continue;
+        }
+        let decl = &var.decls[0];
+        let Pat::Ident(bi) = &decl.name else { continue };
+        let Some(init) = &decl.init else { continue };
+        if try_extract_zero_param_arrow_ident(init).is_some() {
+            candidates.insert((bi.id.sym.clone(), bi.id.ctxt), init.clone());
+        }
+    }
+
+    if candidates.is_empty() {
+        return;
+    }
+
+    // Count usages globally (including inside nested functions), excluding the definition stmts.
+    // Keyed by (sym, ctxt) so only the exact binding is counted.
+    let mut usage_count: HashMap<BindingKey, usize> =
+        candidates.keys().map(|k| (k.clone(), 0)).collect();
+
+    for item in &module.body {
+        // Skip the definition stmt itself
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item {
+            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
+                if let Pat::Ident(bi) = &var.decls[0].name {
+                    if candidates.contains_key(&(bi.id.sym.clone(), bi.id.ctxt)) {
+                        continue;
+                    }
+                }
+            }
+        }
+        let mut counter = GlobalIdentCounter { counts: &mut usage_count };
+        item.visit_with(&mut counter);
+    }
+
+    // Keep only those with at least one usage elsewhere
+    let to_inline: HashMap<BindingKey, Box<Expr>> = candidates
+        .into_iter()
+        .filter(|(key, _)| usage_count.get(key).copied().unwrap_or(0) >= 1)
+        .collect();
+
+    if to_inline.is_empty() {
+        return;
+    }
+
+    // Remove the definition stmts from the module body
+    module.body.retain(|item| {
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item {
+            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
+                if let Pat::Ident(bi) = &var.decls[0].name {
+                    if to_inline.contains_key(&(bi.id.sym.clone(), bi.id.ctxt)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    });
+
+    // Replace all usages globally (including inside nested functions)
+    let mut inliner = GlobalIdentInliner { map: &to_inline };
+    module.visit_mut_with(&mut inliner);
+}
+
+/// Counts ident usages everywhere, including inside nested functions/arrows.
+/// Uses (sym, ctxt) keys for scope-aware matching.
+struct GlobalIdentCounter<'a> {
+    counts: &'a mut HashMap<BindingKey, usize>,
+}
+
+impl Visit for GlobalIdentCounter<'_> {
+    fn visit_ident(&mut self, id: &Ident) {
+        if let Some(c) = self.counts.get_mut(&(id.sym.clone(), id.ctxt)) {
+            *c += 1;
+        }
+    }
+    // Skip non-computed member props and prop names (not value positions)
+    fn visit_member_prop(&mut self, prop: &MemberProp) {
+        if let MemberProp::Computed(c) = prop {
+            c.visit_with(self);
+        }
+    }
+    fn visit_prop_name(&mut self, _: &PropName) {}
+}
+
+/// Replaces ident usages everywhere, including inside nested functions/arrows.
+/// Uses (sym, ctxt) keys for scope-aware matching.
+struct GlobalIdentInliner<'a> {
+    map: &'a HashMap<BindingKey, Box<Expr>>,
+}
+
+impl GlobalIdentInliner<'_> {
+    /// If `replacement` is `() => ident`, return the inner ident expr.
+    fn inner_ident(replacement: &Expr) -> Option<&Expr> {
+        let Expr::Arrow(arrow) = replacement else { return None };
+        if !arrow.params.is_empty() { return None; }
+        if let BlockStmtOrExpr::Expr(body) = arrow.body.as_ref() {
+            if matches!(body.as_ref(), Expr::Ident(_)) {
+                return Some(body.as_ref());
+            }
+        }
+        None
+    }
+}
+
+impl VisitMut for GlobalIdentInliner<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        // Handle `X.a` where X is a zero-param arrow wrapper candidate.
+        // In webpack4, `require.n(m).a` is a property getter that returns the module,
+        // equivalent to calling the getter directly. Replace `X.a` with the inner ident.
+        if let Expr::Member(member) = expr {
+            let is_dot_a = match &member.prop {
+                MemberProp::Ident(p) => p.sym.as_ref() == "a",
+                MemberProp::Computed(c) => matches!(
+                    c.expr.as_ref(),
+                    Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("a")
+                ),
+                _ => false,
+            };
+            if is_dot_a {
+                if let Expr::Ident(id) = member.obj.as_ref() {
+                    let key = (id.sym.clone(), id.ctxt);
+                    if let Some(replacement) = self.map.get(&key) {
+                        if let Some(inner) = Self::inner_ident(replacement) {
+                            *expr = inner.clone();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Regular ident replacement: X → () => Y (call sites become (() => Y)() → Y via UnIife)
+        if let Expr::Ident(id) = expr {
+            let key = (id.sym.clone(), id.ctxt);
+            if let Some(replacement) = self.map.get(&key) {
+                *expr = *replacement.clone();
+                return;
+            }
+        }
+        expr.visit_mut_children_with(self);
+    }
+    fn visit_mut_member_prop(&mut self, prop: &mut MemberProp) {
+        if let MemberProp::Computed(c) = prop {
+            c.visit_mut_with(self);
+        }
+    }
+    fn visit_mut_prop_name(&mut self, _: &mut PropName) {}
+    // NOTE: intentionally does NOT stop at function/arrow/class boundaries
 }
 
 // ============================================================

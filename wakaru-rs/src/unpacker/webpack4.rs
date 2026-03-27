@@ -220,6 +220,49 @@ impl VisitMut for RequireIdRewriter<'_> {
     }
 }
 
+/// Rewrites `require.n(expr)` to `() => expr`.
+/// webpack's `__webpack_require__.n` wraps a module in a default-export getter.
+/// After ESM conversion, `require.n(r)` is equivalent to `() => r`.
+/// The call sites `o()` are later simplified by UnIife's expression-body IIFE handling.
+struct RequireNRewriter {
+    require_sym: Atom,
+}
+
+impl VisitMut for RequireNRewriter {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        // Match: require.n(single_arg)
+        let Expr::Call(call) = expr else { return };
+        if call.args.len() != 1 || call.args[0].spread.is_some() {
+            return;
+        }
+        let Callee::Expr(callee_expr) = &call.callee else { return };
+        let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else { return };
+        let Expr::Ident(obj_ident) = &**obj else { return };
+        if obj_ident.sym != self.require_sym {
+            return;
+        }
+        let MemberProp::Ident(prop_ident) = prop else { return };
+        if prop_ident.sym.as_ref() != "n" {
+            return;
+        }
+
+        // Replace `require.n(arg)` with `() => arg`
+        let arg = call.args[0].expr.clone();
+        *expr = Expr::Arrow(swc_core::ecma::ast::ArrowExpr {
+            span: Default::default(),
+            ctxt: Default::default(),
+            params: vec![],
+            body: Box::new(swc_core::ecma::ast::BlockStmtOrExpr::Expr(arg)),
+            is_async: false,
+            is_generator: false,
+            type_params: None,
+            return_type: None,
+        });
+    }
+}
+
 /// Extracts the return value from a getter function `function() { return val; }` or `() => val`.
 fn extract_getter_value(expr: &Expr) -> Option<Box<Expr>> {
     match expr {
@@ -471,6 +514,14 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>) -> Option<Unpac
                 id_to_filename: &id_to_filename,
             };
             synthetic_module.visit_mut_with(&mut id_rewriter);
+        }
+
+        // Step 1c: rewrite require.n(expr) → () => expr (webpack default-export getter)
+        {
+            let mut n_rewriter = RequireNRewriter {
+                require_sym: post_rename_require_sym.clone(),
+            };
+            synthetic_module.visit_mut_with(&mut n_rewriter);
         }
 
         // Step 2: normalize webpack runtime helpers (require.r / require.d)

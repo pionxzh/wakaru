@@ -129,5 +129,7 @@ pub fn apply_default_rules(module: &mut Module) {
     module.visit_mut_with(&mut UnImportRename);
     module.visit_mut_with(&mut UnExportRename);
     module.visit_mut_with(&mut SmartInline);
+    // Second UnIife pass: simplify any (() => expr)() patterns created by SmartInline inlining
+    module.visit_mut_with(&mut UnIife);
     module.visit_mut_with(&mut SmartRename);
 }

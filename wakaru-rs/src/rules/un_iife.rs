@@ -13,8 +13,42 @@ impl VisitMut for UnIife {
         expr.visit_mut_children_with(self);
 
         if let Expr::Call(call_expr) = expr {
+            // Try to simplify `(() => expr)()` (zero-param, expression-body arrow IIFE with no args)
+            if let Some(inner) = try_simplify_arrow_expr_iife(call_expr) {
+                *expr = *inner;
+                return;
+            }
             process_iife(call_expr);
         }
+    }
+}
+
+/// Simplifies `(() => expr)()` → `expr` (zero-param arrow with expression body, called with no args).
+/// This handles the output of `require.n(r)` → `() => r` after inlining.
+fn try_simplify_arrow_expr_iife(call: &CallExpr) -> Option<Box<Expr>> {
+    // Must have no arguments
+    if !call.args.is_empty() {
+        return None;
+    }
+    let Callee::Expr(callee_expr) = &call.callee else {
+        return None;
+    };
+    let arrow = match callee_expr.as_ref() {
+        Expr::Arrow(a) => a,
+        Expr::Paren(p) => match p.expr.as_ref() {
+            Expr::Arrow(a) => a,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    // Must have no params
+    if !arrow.params.is_empty() {
+        return None;
+    }
+    // Body must be an expression (not a block)
+    match arrow.body.as_ref() {
+        BlockStmtOrExpr::Expr(e) => Some(e.clone()),
+        _ => None,
     }
 }
 
