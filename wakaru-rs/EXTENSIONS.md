@@ -56,9 +56,10 @@ class Child extends Base {
 }
 ```
 
-The three skipped patterns are:
+The four skipped patterns are:
 - `if (typeof _super !== "function" && _super !== null) { throw ... }` — type guard
 - `t.prototype = Object.create(...)` — instance chain setup
+- `t.prototype.constructor = t` — redundant constructor back-assignment
 - `_super && (Object.setPrototypeOf ? ... : t.__proto__ = _super)` — static chain setup
 
 ---
@@ -169,6 +170,7 @@ filename so that `__webpack_require__(42)` becomes `require("./foo")`.
 
 **`RequireNRewriter`** — rewrites `__webpack_require__.n(r)` calls.
 `require.n` wraps ES-module-namespace objects in a getter function.  The
-rewriter folds the call into an arrow wrapper `const X = () => r`, which is
-then eliminated by `smart-inline`'s arrow wrapper pass, leaving direct
-references to the module throughout the code.
+rewriter rewrites the call expression `require.n(r)` to `() => r` in place,
+so a binding like `const o = require.n(r)` becomes `const o = () => r`.
+That arrow wrapper is then eliminated by `smart-inline`'s arrow wrapper pass,
+leaving direct references to the module throughout the code.
