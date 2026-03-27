@@ -36,3 +36,19 @@ var secondRef = s.useMemo(()=>{}, []);
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn transforms_object_wrap_indirect_call() {
+    // Object(fn.method)(args) → fn.method(args)
+    // webpack bundles use Object() to avoid `this` binding on member expressions
+    let input = r#"
+Object(r.h)(e, "msg");
+Object(r.validate)(x);
+"#;
+    let expected = r#"
+r.h(e, "msg");
+r.validate(x);
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+

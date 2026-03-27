@@ -5,7 +5,7 @@ use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::ast::Module;
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax, TsSyntax};
-use swc_core::ecma::transforms::base::{fixer::fixer, hygiene::hygiene, resolver};
+use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::visit::VisitMutWith;
 
 use crate::rules::apply_default_rules;
@@ -34,7 +34,6 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<String> {
 
         apply_default_rules(&mut module);
 
-        module.visit_mut_with(&mut hygiene());
         module.visit_mut_with(&mut fixer(None));
 
         print_js(&module, cm)
