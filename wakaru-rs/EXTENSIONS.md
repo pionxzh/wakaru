@@ -91,11 +91,23 @@ function foo() { return r; }
 
 **`.a` accessor inlining (webpack4 `require.n` pattern):**
 
-webpack4's `__webpack_require__.n(module)` returns an object whose `.a`
-property is a getter that returns the module.  After rewriting, this becomes
-`const o = () => r` where `o.a` is used at call sites.  Naively inlining `o`
-would produce `(() => r).a` which is `undefined`.  wakaru-rs detects the `X.a`
-accessor pattern and replaces it directly with the inner identifier:
+webpack4's `__webpack_require__.n(module)` always defines a property named
+literally `'a'` on the returned getter function:
+
+```js
+// webpack4 runtime (simplified)
+__webpack_require__.n = function(module) {
+    var getter = module.__esModule ? () => module.default : () => module;
+    Object.defineProperty(getter, 'a', { enumerable: true, get: getter });
+    return getter;
+};
+```
+
+`getter.a` is therefore equivalent to `getter()`.  After rewriting `require.n`
+calls, call sites that use `.a` become `o.a`.  Naively inlining `o = () => r`
+would produce `(() => r).a` which is `undefined` at runtime.  wakaru-rs
+detects the `X.a` accessor pattern and replaces it directly with the inner
+identifier:
 
 ```js
 // input
@@ -126,14 +138,19 @@ initialized (TDZ violation):
 ```js
 // input
 for (var n = 10, a = new Array(n), i = 0; i < n; i++) { ... }
+```
 
-// original output — BROKEN after var→let/const: `a = new Array(n)` runs
-// before `n` is declared, triggering a TDZ ReferenceError
-const n = 10;
-const a = new Array(n);  // ReferenceError: n is not defined
-for (let i = 0; i < n; i++) { ... }
+The test is `i < n` and the update is `i++`, so the original correctly keeps
+`n` and `i` in the for-init and extracts only `a`.  After extraction and
+`VarDeclToLetConst`:
 
-// wakaru-rs output — correct: n and a stay together in the for-init
+```js
+// original output — BROKEN
+// `n` is still declared inside the for(...) below, not yet executed
+const a = new Array(n);  // ReferenceError: n is not defined (TDZ)
+for (let n = 10, i = 0; i < n; i++) { ... }
+
+// wakaru-rs output — correct: a depends on n, so both stay in the for-init
 for (let n = 10, a = new Array(n), i = 0; i < n; i++) { ... }
 ```
 
