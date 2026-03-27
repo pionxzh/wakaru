@@ -1,0 +1,873 @@
+use swc_core::atoms::Atom;
+use swc_core::common::DUMMY_SP;
+use swc_core::ecma::ast::{
+    BindingIdent, BlockStmt, CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod,
+    ComputedPropName, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function,
+    IdentName, MemberExpr, MemberProp, MethodKind, ModuleItem, Param, ParamOrTsParamProp,
+    Pat, PropName, Stmt, VarDecl,
+};
+use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+
+pub struct UnEs6Class;
+
+impl VisitMut for UnEs6Class {
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        stmts.visit_mut_children_with(self);
+
+        let old = std::mem::take(stmts);
+        for stmt in old {
+            match stmt {
+                Stmt::Decl(Decl::Var(ref var_decl)) => {
+                    if let Some(class_decl) = try_iife_to_class(var_decl) {
+                        stmts.push(Stmt::Decl(Decl::Class(class_decl)));
+                    } else {
+                        stmts.push(stmt);
+                    }
+                }
+                other => stmts.push(other),
+            }
+        }
+    }
+
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        items.visit_mut_children_with(self);
+
+        let old = std::mem::take(items);
+        for item in old {
+            match item {
+                ModuleItem::Stmt(Stmt::Decl(Decl::Var(ref var_decl))) => {
+                    if let Some(class_decl) = try_iife_to_class(var_decl) {
+                        items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
+                    } else {
+                        items.push(item);
+                    }
+                }
+                other => items.push(other),
+            }
+        }
+    }
+}
+
+// ============================================================
+// Core transformation
+// ============================================================
+
+/// Attempt to convert a `var Foo = (function(...) { ... }(...))` pattern into a ClassDecl.
+/// Returns None if the pattern doesn't match.
+fn try_iife_to_class(var: &VarDecl) -> Option<ClassDecl> {
+    // Must be a single declarator
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let declarator = &var.decls[0];
+
+    // Name must be a plain identifier
+    let Pat::Ident(BindingIdent { id: class_name, .. }) = &declarator.name else {
+        return None;
+    };
+
+    // Must have an initializer
+    let init = declarator.init.as_ref()?;
+
+    // The init must be an IIFE call expression (possibly paren-wrapped)
+    let call = extract_iife_call(init)?;
+
+    // Callee must be a function expression (possibly paren-wrapped)
+    let Callee::Expr(callee_expr) = &call.callee else {
+        return None;
+    };
+    let fn_expr = extract_fn_expr(callee_expr)?;
+
+    // The IIFE takes 0 args (no extends) or 1 arg (extends from _super)
+    let (super_class, inner_param): (Option<Box<Expr>>, Option<Atom>) = match call.args.len() {
+        0 => (None, None),
+        1 => {
+            // Expect exactly 1 function parameter as well
+            if fn_expr.function.params.len() != 1 {
+                return None;
+            }
+            let Pat::Ident(BindingIdent { id: param_id, .. }) = &fn_expr.function.params[0].pat
+            else {
+                return None;
+            };
+            let super_expr = call.args[0].expr.clone();
+            // Only accept a plain identifier as the super arg
+            if !matches!(super_expr.as_ref(), Expr::Ident(_)) {
+                return None;
+            }
+            (Some(super_expr), Some(param_id.sym.clone()))
+        }
+        _ => return None,
+    };
+
+    // 0-arg IIFE must have 0 params as well
+    if call.args.is_empty() && !fn_expr.function.params.is_empty() {
+        return None;
+    }
+
+    let body = fn_expr.function.body.as_ref()?;
+    let class_body = parse_class_body(&body.stmts, &class_name.sym, inner_param.as_deref())?;
+
+    Some(ClassDecl {
+        ident: class_name.clone(),
+        declare: false,
+        class: Box::new(Class {
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            decorators: vec![],
+            body: class_body,
+            super_class,
+            is_abstract: false,
+            type_params: None,
+            super_type_params: None,
+            implements: vec![],
+        }),
+    })
+}
+
+// ============================================================
+// IIFE structure helpers
+// ============================================================
+
+/// Strip parentheses and try to extract the inner CallExpr that represents the IIFE invocation.
+///
+/// Handles both:
+///   `(function() { ... }())` — outer Paren wrapping a Call whose callee is FnExpr
+///   `(function() { ... })()` — Call whose callee is a Paren wrapping FnExpr
+fn extract_iife_call(expr: &Expr) -> Option<&CallExpr> {
+    let stripped = strip_parens(expr);
+    match stripped {
+        Expr::Call(call) => {
+            // Verify the callee (possibly paren-wrapped) is a function expression
+            let Callee::Expr(callee) = &call.callee else {
+                return None;
+            };
+            if extract_fn_expr(callee).is_some() {
+                Some(call)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn extract_fn_expr(expr: &Expr) -> Option<&FnExpr> {
+    match expr {
+        Expr::Fn(fn_expr) => Some(fn_expr),
+        Expr::Paren(paren) => extract_fn_expr(&paren.expr),
+        _ => None,
+    }
+}
+
+fn strip_parens(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_parens(&paren.expr),
+        _ => expr,
+    }
+}
+
+// ============================================================
+// Class body parsing
+// ============================================================
+
+/// Parse the statements inside the IIFE body and collect class members.
+///
+/// `class_name` — the outer variable name (e.g. `"Foo"`)
+/// `super_param` — the IIFE parameter name that represents `_super` (if inheriting)
+///
+/// Returns None if any statement is unrecognised (conservative — no false positives).
+fn parse_class_body(
+    stmts: &[Stmt],
+    class_name: &str,
+    super_param: Option<&str>,
+) -> Option<Vec<ClassMember>> {
+    // The first real statement should define the constructor function.
+    // We need to identify the inner constructor function name (often mangled, e.g. `t`).
+    let inner_ctor_name = find_inner_constructor_name(stmts)?;
+
+    let mut members: Vec<ClassMember> = Vec::new();
+    // Tracks whether we've seen and handled the `__extends` / `_inherits` call
+    let mut extends_handled = false;
+    // Tracks an alias for `t.prototype` introduced in Babel loose mode:
+    //   `var proto = t.prototype;`
+    let mut proto_alias: Option<Atom> = None;
+
+    // We process in two passes:
+    //  1. Locate constructor FnDecl / FnExpr
+    //  2. Walk all other statements for method/property assignments
+    //
+    // Actually we do a single forward pass for simplicity.
+
+    for stmt in stmts {
+        // `return t;` or `return _createClass(t, ...)` — end of IIFE body
+        if let Stmt::Return(ret_stmt) = stmt {
+            if let Some(ret_expr) = &ret_stmt.arg {
+                let stripped = strip_parens(ret_expr);
+                match stripped {
+                    // Plain `return t;`
+                    Expr::Ident(id) if id.sym.as_ref() == inner_ctor_name => {
+                        // Nothing to do
+                    }
+                    // `return _createClass(t, [{ key: "method", value: fn }], [{ ... }])`
+                    Expr::Call(call) => {
+                        if !try_parse_create_class(call, inner_ctor_name, &mut members) {
+                            return None;
+                        }
+                    }
+                    _ => return None,
+                }
+            }
+            continue;
+        }
+
+        // `__extends(t, _super)` or `_inherits(t, _super)` call statement
+        if let Some(sp) = super_param {
+            if let Some(()) = try_parse_extends_call(stmt, inner_ctor_name, sp) {
+                extends_handled = true;
+                continue;
+            }
+        }
+
+        // `function t(...) { ... }` — the constructor
+        if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
+            if fn_decl.ident.sym.as_ref() == inner_ctor_name {
+                let ctor = build_constructor(&fn_decl.function)?;
+                // Only add a constructor member if the body is non-empty
+                if !is_empty_constructor(&fn_decl.function) {
+                    members.push(ClassMember::Constructor(ctor));
+                }
+                continue;
+            }
+            return None;
+        }
+
+        // Expression statements
+        if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
+            // `t.prototype.method = function() { ... }`
+            // `t.staticMethod = function() { ... }`
+            // `t.prototype = Object.create(_super.prototype)` (inheritance setup — skip)
+            // `Object.defineProperty(t.prototype, "prop", { get: fn, set: fn })`
+            if try_parse_method_assignment(expr, inner_ctor_name, &proto_alias, &mut members) {
+                continue;
+            }
+
+            // Babel loose mode: `Object.defineProperty(t.prototype, ...)`
+            if try_parse_object_define_property(expr, inner_ctor_name, &proto_alias, &mut members) {
+                continue;
+            }
+
+            // Skip `t.prototype = Object.create(...)` (prototype chain setup for inheritance)
+            if is_prototype_object_create(expr, inner_ctor_name) {
+                continue;
+            }
+
+            // Skip `t.prototype.constructor = t` (redundant constructor assignment)
+            if is_prototype_constructor_assign(expr, inner_ctor_name) {
+                continue;
+            }
+
+            // `_createClass(t, [...], [...])` as a statement (Babel non-loose)
+            if let Expr::Call(call) = expr.as_ref() {
+                if try_parse_create_class(call, inner_ctor_name, &mut members) {
+                    continue;
+                }
+            }
+
+            return None;
+        }
+
+        // Babel loose mode: `var proto = t.prototype;`
+        if let Stmt::Decl(Decl::Var(var_decl)) = stmt {
+            if let Some(alias) = try_parse_proto_alias(var_decl, inner_ctor_name) {
+                proto_alias = Some(alias);
+                continue;
+            }
+            return None;
+        }
+
+        return None;
+    }
+
+    // If the IIFE takes a _super param but we never saw __extends, reject
+    if super_param.is_some() && !extends_handled {
+        return None;
+    }
+
+    let _ = class_name; // used only for documentation purposes
+    Some(members)
+}
+
+// ============================================================
+// Statement parsers
+// ============================================================
+
+/// Detect `__extends(t, _super)` or `_inherits(t, _super)` and return `Some(())` if matched.
+fn try_parse_extends_call(stmt: &Stmt, ctor_name: &str, super_param: &str) -> Option<()> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let callee = strip_parens(callee);
+    let Expr::Ident(fn_name) = callee else {
+        return None;
+    };
+    if fn_name.sym.as_ref() != "__extends" && fn_name.sym.as_ref() != "_inherits" {
+        return None;
+    }
+    if call.args.len() != 2 {
+        return None;
+    }
+    // First arg must be the inner constructor name
+    let arg0 = strip_parens(&call.args[0].expr);
+    if !matches!(arg0, Expr::Ident(id) if id.sym.as_ref() == ctor_name) {
+        return None;
+    }
+    // Second arg must be the super param
+    let arg1 = strip_parens(&call.args[1].expr);
+    if !matches!(arg1, Expr::Ident(id) if id.sym.as_ref() == super_param) {
+        return None;
+    }
+    Some(())
+}
+
+/// Detect `var proto = t.prototype` (Babel loose mode proto alias).
+fn try_parse_proto_alias(var_decl: &VarDecl, ctor_name: &str) -> Option<Atom> {
+    if var_decl.decls.len() != 1 {
+        return None;
+    }
+    let d = &var_decl.decls[0];
+    let Pat::Ident(BindingIdent { id: alias_id, .. }) = &d.name else {
+        return None;
+    };
+    let init = d.init.as_ref()?;
+    // Must be `t.prototype`
+    if !is_prototype_member_expr(init, ctor_name) {
+        return None;
+    }
+    Some(alias_id.sym.clone())
+}
+
+/// Try to parse `t.prototype.method = function...` or `t.staticProp = function...`
+/// or `proto.method = function...` (when `proto_alias` is set).
+///
+/// Returns true if the expression was recognised and a class member was added.
+fn try_parse_method_assignment(
+    expr: &Expr,
+    ctor_name: &str,
+    proto_alias: &Option<Atom>,
+    members: &mut Vec<ClassMember>,
+) -> bool {
+    let Expr::Assign(assign) = expr else {
+        return false;
+    };
+    if assign.op != swc_core::ecma::ast::AssignOp::Assign {
+        return false;
+    }
+
+    let swc_core::ecma::ast::AssignTarget::Simple(
+        swc_core::ecma::ast::SimpleAssignTarget::Member(lhs_member),
+    ) = &assign.left
+    else {
+        return false;
+    };
+
+    // Determine if this is a static or prototype method assignment
+    //
+    // Static:    `t.methodName = function() {}`
+    // Prototype: `t.prototype.methodName = function() {}`
+    // Loose:     `proto.methodName = function() {}` (proto_alias set)
+
+    let (is_static, method_name) =
+        if let Some(name) = extract_static_method_name(&lhs_member.obj, &lhs_member.prop, ctor_name) {
+            (true, name)
+        } else if let Some(name) =
+            extract_proto_method_name(&lhs_member.obj, &lhs_member.prop, ctor_name, proto_alias)
+        {
+            (false, name)
+        } else {
+            return false;
+        };
+
+    // The RHS must be a function expression (named or anonymous)
+    let rhs = strip_parens(&assign.right);
+    let fn_expr = match rhs {
+        Expr::Fn(f) => f,
+        _ => return false,
+    };
+
+    let method = build_class_method(method_name, fn_expr, is_static, MethodKind::Method);
+    members.push(ClassMember::Method(method));
+    true
+}
+
+/// Try to parse `Object.defineProperty(t.prototype, "name", { get: fn, set: fn })`.
+fn try_parse_object_define_property(
+    expr: &Expr,
+    ctor_name: &str,
+    proto_alias: &Option<Atom>,
+    members: &mut Vec<ClassMember>,
+) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+
+    // Callee must be `Object.defineProperty`
+    if !is_object_define_property_callee(&call.callee) {
+        return false;
+    }
+
+    if call.args.len() != 3 {
+        return false;
+    }
+
+    // First arg: `t.prototype` or alias
+    let target = strip_parens(&call.args[0].expr);
+    let is_proto_target =
+        is_prototype_member_expr(target, ctor_name) || is_proto_alias_expr(target, proto_alias);
+    if !is_proto_target {
+        return false;
+    }
+
+    // Second arg: property name (string literal)
+    let prop_name_expr = strip_parens(&call.args[1].expr);
+    let Expr::Lit(swc_core::ecma::ast::Lit::Str(s)) = prop_name_expr else {
+        return false;
+    };
+    let sym: Atom = s.value.as_str().unwrap_or("").into();
+
+    // Third arg: descriptor object `{ get: fn, set: fn, value: fn, ... }`
+    let descriptor = strip_parens(&call.args[2].expr);
+    let Expr::Object(obj) = descriptor else {
+        return false;
+    };
+
+    for prop in &obj.props {
+        let swc_core::ecma::ast::PropOrSpread::Prop(p) = prop else {
+            continue;
+        };
+        let swc_core::ecma::ast::Prop::KeyValue(kv) = p.as_ref() else {
+            continue;
+        };
+        let key_name = match &kv.key {
+            PropName::Ident(iden) => iden.sym.clone(),
+            PropName::Str(s) => s.value.as_str().unwrap_or("").into(),
+            _ => continue,
+        };
+        let kind = match key_name.as_ref() {
+            "get" => MethodKind::Getter,
+            "set" => MethodKind::Setter,
+            _ => continue,
+        };
+        let fn_expr = match strip_parens(&kv.value) {
+            Expr::Fn(f) => f,
+            _ => continue,
+        };
+        let method_key = PropName::Ident(IdentName::new(sym.clone(), DUMMY_SP));
+        let method = build_class_method(method_key, fn_expr, false, kind);
+        members.push(ClassMember::Method(method));
+    }
+
+    true
+}
+
+/// Parse `_createClass(t, instanceMethods, staticMethods)` where each methods array
+/// contains `{ key: "name", value: function() {} }` objects.
+fn try_parse_create_class(
+    call: &CallExpr,
+    ctor_name: &str,
+    members: &mut Vec<ClassMember>,
+) -> bool {
+    // Callee must be `_createClass`
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    if !matches!(strip_parens(callee), Expr::Ident(id) if id.sym.as_ref() == "_createClass") {
+        return false;
+    }
+
+    // Args: (ClassName, [instance methods], [static methods]?)
+    if call.args.len() < 2 || call.args.len() > 3 {
+        return false;
+    }
+
+    // First arg must be the constructor ident
+    let arg0 = strip_parens(&call.args[0].expr);
+    if !matches!(arg0, Expr::Ident(id) if id.sym.as_ref() == ctor_name) {
+        return false;
+    }
+
+    // Instance methods
+    if !parse_create_class_array(&call.args[1], false, members) {
+        return false;
+    }
+
+    // Static methods (optional 3rd arg)
+    if call.args.len() == 3 {
+        if !parse_create_class_array(&call.args[2], true, members) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn parse_create_class_array(
+    arg: &ExprOrSpread,
+    is_static: bool,
+    members: &mut Vec<ClassMember>,
+) -> bool {
+    let arr_expr = strip_parens(&arg.expr);
+    // Allow `null` for the static array (Babel sometimes passes null)
+    if matches!(arr_expr, Expr::Lit(swc_core::ecma::ast::Lit::Null(_))) {
+        return true;
+    }
+    let Expr::Array(arr) = arr_expr else {
+        return false;
+    };
+
+    for elem in &arr.elems {
+        let Some(elem) = elem else {
+            continue;
+        };
+        let Expr::Object(obj) = strip_parens(&elem.expr) else {
+            return false;
+        };
+
+        let mut key_name: Option<Atom> = None;
+        let mut value_fn: Option<&FnExpr> = None;
+        let mut method_kind = MethodKind::Method;
+
+        for prop in &obj.props {
+            let swc_core::ecma::ast::PropOrSpread::Prop(p) = prop else {
+                continue;
+            };
+            let swc_core::ecma::ast::Prop::KeyValue(kv) = p.as_ref() else {
+                return false;
+            };
+            let k = match &kv.key {
+                PropName::Ident(i) => i.sym.clone(),
+                PropName::Str(s) => s.value.as_str().unwrap_or("").into(),
+                _ => return false,
+            };
+            match k.as_ref() {
+                "key" => {
+                    let Expr::Lit(swc_core::ecma::ast::Lit::Str(s)) =
+                        strip_parens(&kv.value)
+                    else {
+                        return false;
+                    };
+                    key_name = Some(s.value.as_str().unwrap_or("").into());
+                }
+                "value" => {
+                    let Expr::Fn(f) = strip_parens(&kv.value) else {
+                        return false;
+                    };
+                    value_fn = Some(f);
+                }
+                "get" => {
+                    let Expr::Fn(f) = strip_parens(&kv.value) else {
+                        return false;
+                    };
+                    method_kind = MethodKind::Getter;
+                    value_fn = Some(f);
+                }
+                "set" => {
+                    let Expr::Fn(f) = strip_parens(&kv.value) else {
+                        return false;
+                    };
+                    method_kind = MethodKind::Setter;
+                    value_fn = Some(f);
+                }
+                // `writable`, `enumerable`, `configurable` — skip
+                _ => {}
+            }
+        }
+
+        let (Some(name_sym), Some(fn_expr)) = (key_name, value_fn) else {
+            return false;
+        };
+        let method_key = PropName::Ident(IdentName::new(name_sym, DUMMY_SP));
+        let method = build_class_method(method_key, fn_expr, is_static, method_kind);
+        members.push(ClassMember::Method(method));
+    }
+
+    true
+}
+
+// ============================================================
+// Detection helpers
+// ============================================================
+
+/// Find the name of the inner constructor function (`t` in the IIFE body).
+/// The first `function <name>(...) { ... }` declaration in the body is the constructor.
+fn find_inner_constructor_name(stmts: &[Stmt]) -> Option<&str> {
+    for stmt in stmts {
+        if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
+            return Some(fn_decl.ident.sym.as_ref());
+        }
+    }
+    None
+}
+
+/// Return true if `expr` is `t.prototype` where `t` is `ctor_name`.
+fn is_prototype_member_expr(expr: &Expr, ctor_name: &str) -> bool {
+    let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
+        return false;
+    };
+    let Expr::Ident(obj_id) = obj.as_ref() else {
+        return false;
+    };
+    if obj_id.sym.as_ref() != ctor_name {
+        return false;
+    }
+    matches!(prop, MemberProp::Ident(n) if n.sym.as_ref() == "prototype")
+}
+
+/// Return true if `expr` matches the proto alias identifier.
+fn is_proto_alias_expr(expr: &Expr, proto_alias: &Option<Atom>) -> bool {
+    let Some(alias) = proto_alias else {
+        return false;
+    };
+    matches!(expr, Expr::Ident(id) if &id.sym == alias)
+}
+
+/// Check if `expr` is `t.prototype = Object.create(...)`.
+fn is_prototype_object_create(expr: &Expr, ctor_name: &str) -> bool {
+    let Expr::Assign(assign) = expr else {
+        return false;
+    };
+    if assign.op != swc_core::ecma::ast::AssignOp::Assign {
+        return false;
+    }
+    let swc_core::ecma::ast::AssignTarget::Simple(
+        swc_core::ecma::ast::SimpleAssignTarget::Member(lhs),
+    ) = &assign.left
+    else {
+        return false;
+    };
+    // LHS: `t.prototype`
+    if !is_prototype_member_expr(&Expr::Member(MemberExpr {
+        span: DUMMY_SP,
+        obj: lhs.obj.clone(),
+        prop: lhs.prop.clone(),
+    }), ctor_name) {
+        return false;
+    }
+    // RHS: `Object.create(...)`
+    let rhs = strip_parens(&assign.right);
+    let Expr::Call(call) = rhs else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    is_object_create_callee(callee)
+}
+
+/// Check if `expr` is `t.prototype.constructor = t`.
+fn is_prototype_constructor_assign(expr: &Expr, ctor_name: &str) -> bool {
+    let Expr::Assign(assign) = expr else {
+        return false;
+    };
+    if assign.op != swc_core::ecma::ast::AssignOp::Assign {
+        return false;
+    }
+    let swc_core::ecma::ast::AssignTarget::Simple(
+        swc_core::ecma::ast::SimpleAssignTarget::Member(lhs),
+    ) = &assign.left
+    else {
+        return false;
+    };
+    // LHS must be `t.prototype.constructor`
+    let Expr::Member(obj_member) = lhs.obj.as_ref() else {
+        return false;
+    };
+    if !is_prototype_member_expr(
+        &Expr::Member(MemberExpr {
+            span: DUMMY_SP,
+            obj: obj_member.obj.clone(),
+            prop: obj_member.prop.clone(),
+        }),
+        ctor_name,
+    ) {
+        return false;
+    }
+    if !matches!(&lhs.prop, MemberProp::Ident(n) if n.sym.as_ref() == "constructor") {
+        return false;
+    }
+    // RHS must be `t`
+    matches!(strip_parens(&assign.right), Expr::Ident(id) if id.sym.as_ref() == ctor_name)
+}
+
+/// Extract the property name for a **static** assignment `t.prop = ...`.
+/// Returns `Some(PropName)` if `obj` is the constructor ident and `prop` is a static method name
+/// (not `prototype`).
+fn extract_static_method_name(
+    obj: &Expr,
+    prop: &MemberProp,
+    ctor_name: &str,
+) -> Option<PropName> {
+    let Expr::Ident(obj_id) = obj else {
+        return None;
+    };
+    if obj_id.sym.as_ref() != ctor_name {
+        return None;
+    }
+    match prop {
+        MemberProp::Ident(name) => {
+            // Skip `t.prototype`
+            if name.sym.as_ref() == "prototype" {
+                return None;
+            }
+            Some(PropName::Ident(IdentName::new(name.sym.clone(), DUMMY_SP)))
+        }
+        MemberProp::Computed(c) => {
+            if let Expr::Lit(swc_core::ecma::ast::Lit::Str(s)) = strip_parens(&c.expr) {
+                Some(PropName::Str(swc_core::ecma::ast::Str {
+                    span: DUMMY_SP,
+                    value: s.value.clone(),
+                    raw: None,
+                }))
+            } else {
+                Some(PropName::Computed(ComputedPropName {
+                    span: DUMMY_SP,
+                    expr: c.expr.clone(),
+                }))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Extract the property name for a **prototype** assignment.
+///
+/// Handles:
+///   `t.prototype.method` where `obj` is `t.prototype`
+///   `proto.method` where `obj` is the proto alias
+fn extract_proto_method_name(
+    obj: &Expr,
+    prop: &MemberProp,
+    ctor_name: &str,
+    proto_alias: &Option<Atom>,
+) -> Option<PropName> {
+    let obj_is_proto = is_prototype_member_expr(obj, ctor_name)
+        || is_proto_alias_expr(obj, proto_alias);
+    if !obj_is_proto {
+        return None;
+    }
+    // Skip the constructor property
+    if matches!(prop, MemberProp::Ident(n) if n.sym.as_ref() == "constructor") {
+        return None;
+    }
+    match prop {
+        MemberProp::Ident(name) => {
+            Some(PropName::Ident(IdentName::new(name.sym.clone(), DUMMY_SP)))
+        }
+        MemberProp::Computed(c) => {
+            if let Expr::Lit(swc_core::ecma::ast::Lit::Str(s)) = strip_parens(&c.expr) {
+                Some(PropName::Str(swc_core::ecma::ast::Str {
+                    span: DUMMY_SP,
+                    value: s.value.clone(),
+                    raw: None,
+                }))
+            } else {
+                Some(PropName::Computed(ComputedPropName {
+                    span: DUMMY_SP,
+                    expr: c.expr.clone(),
+                }))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn is_object_define_property_callee(callee: &Callee) -> bool {
+    let Callee::Expr(expr) = callee else {
+        return false;
+    };
+    let Expr::Member(m) = strip_parens(expr) else {
+        return false;
+    };
+    let Expr::Ident(obj_id) = m.obj.as_ref() else {
+        return false;
+    };
+    if obj_id.sym.as_ref() != "Object" {
+        return false;
+    }
+    matches!(&m.prop, MemberProp::Ident(n) if n.sym.as_ref() == "defineProperty")
+}
+
+fn is_object_create_callee(expr: &Expr) -> bool {
+    let Expr::Member(m) = strip_parens(expr) else {
+        return false;
+    };
+    let Expr::Ident(obj_id) = m.obj.as_ref() else {
+        return false;
+    };
+    if obj_id.sym.as_ref() != "Object" {
+        return false;
+    }
+    matches!(&m.prop, MemberProp::Ident(n) if n.sym.as_ref() == "create")
+}
+
+// ============================================================
+// Builder helpers
+// ============================================================
+
+fn build_constructor(function: &Function) -> Option<Constructor> {
+    let body = function.body.clone()?;
+    let params: Vec<ParamOrTsParamProp> = function
+        .params
+        .iter()
+        .map(|p| {
+            ParamOrTsParamProp::Param(Param {
+                span: DUMMY_SP,
+                decorators: vec![],
+                pat: p.pat.clone(),
+            })
+        })
+        .collect();
+
+    Some(Constructor {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        key: PropName::Ident(IdentName::new("constructor".into(), DUMMY_SP)),
+        params,
+        body: Some(body),
+        accessibility: None,
+        is_optional: false,
+    })
+}
+
+fn is_empty_constructor(function: &Function) -> bool {
+    match &function.body {
+        None => true,
+        Some(BlockStmt { stmts, .. }) => stmts.is_empty(),
+    }
+}
+
+fn build_class_method(
+    key: PropName,
+    fn_expr: &FnExpr,
+    is_static: bool,
+    kind: MethodKind,
+) -> ClassMethod {
+    ClassMethod {
+        span: DUMMY_SP,
+        key,
+        function: fn_expr.function.clone(),
+        kind,
+        is_static,
+        accessibility: None,
+        is_abstract: false,
+        is_optional: false,
+        is_override: false,
+    }
+}
+

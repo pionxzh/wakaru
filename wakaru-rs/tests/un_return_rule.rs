@@ -41,7 +41,9 @@ function foo() {
 
 const bar = ()=>{
   const a = 1;
-  if (a) return undefined;
+  if (a) {
+    return undefined;
+  }
 };
 "#;
 
