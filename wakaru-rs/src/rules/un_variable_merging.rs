@@ -131,14 +131,50 @@ fn extract_for_init_stmts(mut for_stmt: ForStmt) -> Vec<Stmt> {
 
     let VarDecl { span, ctxt, kind, declare, decls } = *init_var;
 
+    // Phase 1: determine which declarator indices must stay in the for init.
+    // Start with those whose bound names appear in test/update.
+    let mut must_keep: HashSet<usize> = HashSet::new();
+    for (i, decl) in decls.iter().enumerate() {
+        let names = bound_names_pat(&decl.name);
+        if names.iter().any(|n| used_names.contains(n)) {
+            must_keep.insert(i);
+        }
+    }
+
+    // Expand: any declarator whose init references a name bound by a must-keep declarator
+    // must also stay. These cannot be safely extracted because var→let/const conversion
+    // removes hoisting, and the referenced variable is only initialized at loop start.
+    // Repeat until stable (handles transitive dependencies).
+    loop {
+        let keep_names: HashSet<String> = must_keep
+            .iter()
+            .flat_map(|&i| bound_names_pat(&decls[i].name))
+            .collect();
+
+        let mut changed = false;
+        for (i, decl) in decls.iter().enumerate() {
+            if must_keep.contains(&i) {
+                continue;
+            }
+            let mut init_refs = HashSet::new();
+            if let Some(init) = &decl.init {
+                collect_ident_names_expr(init, &mut init_refs);
+            }
+            if init_refs.iter().any(|n| keep_names.contains(n)) {
+                must_keep.insert(i);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // Phase 2: partition declarators into keep/extract, preserving original order.
     let mut keep_in_for: Vec<VarDeclarator> = Vec::new();
     let mut extract_before: Vec<VarDeclarator> = Vec::new();
-
-    for decl in decls {
-        // Get the bound name(s) from this declarator's pattern
-        let names = bound_names_pat(&decl.name);
-        // If any bound name appears in test/update, keep it in the for
-        if names.iter().any(|n| used_names.contains(n)) {
+    for (i, decl) in decls.into_iter().enumerate() {
+        if must_keep.contains(&i) {
             keep_in_for.push(decl);
         } else {
             extract_before.push(decl);

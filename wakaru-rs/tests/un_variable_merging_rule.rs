@@ -109,6 +109,25 @@ for (const i = 0, j = 0, k = 0; j < 10; k++) {}
 }
 
 #[test]
+fn does_not_extract_for_init_var_when_init_depends_on_loop_var() {
+    // `a` references `n` which stays in the for init (used in test `a < n`).
+    // Extracting `a` before the loop would create a TDZ with let/const.
+    // So `a` must remain in the for init alongside `n`.
+    let input = r#"
+for (var n = 10, a = new Array(n), i = 0; i < n; i++) {
+  a[i] = i;
+}
+"#;
+    let expected = r#"
+for (let n = 10, a = new Array(n), i = 0; i < n; i++) {
+  a[i] = i;
+}
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn prunes_empty_var_decl_in_for_init_when_all_extracted() {
     // All declarators are extracted, so the for init becomes None.
     // VarDeclToLetConst converts i → const (never reassigned).
