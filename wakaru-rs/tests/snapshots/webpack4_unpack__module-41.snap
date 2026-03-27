@@ -1,0 +1,29 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+export default ((module)=>{
+    if (!module.webpackPolyfill) {
+        const exports = Object.create(module);
+        if (!exports.children) {
+            exports.children = [];
+        }
+        Object.defineProperty(exports, "loaded", {
+            enumerable: true,
+            get () {
+                return exports.l;
+            }
+        });
+        Object.defineProperty(exports, "id", {
+            enumerable: true,
+            get () {
+                return exports.i;
+            }
+        });
+        Object.defineProperty(exports, "exports", {
+            enumerable: true
+        });
+        exports.webpackPolyfill = 1;
+    }
+    return exports;
+});

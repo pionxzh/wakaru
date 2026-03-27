@@ -1,0 +1,17 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+export function a() {
+    return (a = Object.assign ? Object.assign.bind() : function(module) {
+        for(let exports = 1; exports < arguments.length; exports++){
+            const require = arguments[exports];
+            for(let a in require){
+                if (Object.prototype.hasOwnProperty.call(require, a)) {
+                    module[a] = require[a];
+                }
+            }
+        }
+        return module;
+    }).apply(this, arguments);
+}

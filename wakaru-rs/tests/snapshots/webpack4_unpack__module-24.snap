@@ -1,0 +1,1040 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import r from "./module-4.js";
+import i from "./module-3.js";
+import u from "./module-1.js";
+import c from "./module-8.js";
+import s from "./module-16.js";
+import b from "./module-5.js";
+import P from "./module-15.js";
+import U from "./module-14.js";
+import le from "./module-30.js";
+export const Router = s.a;
+function d(module, exports) {
+    if (!module) {
+        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    }
+    if (!exports || typeof exports != "object" && typeof exports != "function") {
+        return module;
+    }
+    return exports;
+}
+export const BrowserRouter = ((module)=>{
+    function exports() {
+        let require;
+        let r;
+        !((module, exports)=>{
+            if (!(module instanceof exports)) {
+                throw new TypeError("Cannot call a class as a function");
+            }
+        })(this, exports);
+        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
+            i[a] = arguments[a];
+        }
+        require = r = d(this, module.call(...[
+            this
+        ].concat(i)));
+        r.history = c.createBrowserHistory(r.props);
+        return d(r, require);
+    }
+    ((module, exports)=>{
+        if (typeof exports != "function" && exports !== null) {
+            throw new TypeError("Super expression must either be null or a function, not " + typeof exports);
+        }
+        module.prototype = Object.create(exports && exports.prototype, {
+            constructor: {
+                value: module,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        exports && (Object.setPrototypeOf ? Object.setPrototypeOf(module, exports) : module.__proto__ = exports);
+    })(exports, module);
+    exports.prototype.componentWillMount = function() {
+        r(!this.props.history, "<BrowserRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { BrowserRouter as Router }`.");
+    };
+    exports.prototype.render = function() {
+        return i.createElement(Router, {
+            history: this.history,
+            children: this.props.children
+        });
+    };
+    return exports;
+})(i.Component);
+BrowserRouter.propTypes = {
+    basename: u.string,
+    forceRefresh: u.bool,
+    getUserConfirmation: u.func,
+    keyLength: u.number,
+    children: u.node
+};
+function m(module, exports) {
+    if (!module) {
+        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    }
+    if (!exports || typeof exports != "object" && typeof exports != "function") {
+        return module;
+    }
+    return exports;
+}
+export const HashRouter = ((module)=>{
+    function exports() {
+        let require;
+        let r;
+        !((module, exports)=>{
+            if (!(module instanceof exports)) {
+                throw new TypeError("Cannot call a class as a function");
+            }
+        })(this, exports);
+        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
+            i[a] = arguments[a];
+        }
+        require = r = m(this, module.call(...[
+            this
+        ].concat(i)));
+        r.history = c.createHashHistory(r.props);
+        return m(r, require);
+    }
+    ((module, exports)=>{
+        if (typeof exports != "function" && exports !== null) {
+            throw new TypeError("Super expression must either be null or a function, not " + typeof exports);
+        }
+        module.prototype = Object.create(exports && exports.prototype, {
+            constructor: {
+                value: module,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        exports && (Object.setPrototypeOf ? Object.setPrototypeOf(module, exports) : module.__proto__ = exports);
+    })(exports, module);
+    exports.prototype.componentWillMount = function() {
+        r(!this.props.history, "<HashRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { HashRouter as Router }`.");
+    };
+    exports.prototype.render = function() {
+        return i.createElement(Router, {
+            history: this.history,
+            children: this.props.children
+        });
+    };
+    return exports;
+})(i.Component);
+HashRouter.propTypes = {
+    basename: u.string,
+    getUserConfirmation: u.func,
+    hashType: u.oneOf([
+        "hashbang",
+        "noslash",
+        "slash"
+    ]),
+    children: u.node
+};
+const w = Object.assign || function(module) {
+    for(let exports = 1; exports < arguments.length; exports++){
+        const require = arguments[exports];
+        for(let r in require){
+            if (Object.prototype.hasOwnProperty.call(require, r)) {
+                module[r] = require[r];
+            }
+        }
+    }
+    return module;
+};
+function E(module, exports) {
+    if (!module) {
+        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    }
+    if (!exports || typeof exports != "object" && typeof exports != "function") {
+        return module;
+    }
+    return exports;
+}
+const x = (module)=>!!(module.metaKey || module.altKey || module.ctrlKey || module.shiftKey);
+export const Link = ((module)=>{
+    function exports() {
+        let require;
+        let r;
+        !((module, exports)=>{
+            if (!(module instanceof exports)) {
+                throw new TypeError("Cannot call a class as a function");
+            }
+        })(this, exports);
+        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
+            i[a] = arguments[a];
+        }
+        require = r = E(this, module.call(...[
+            this
+        ].concat(i)));
+        r.handleClick = (module)=>{
+            if (r.props.onClick) {
+                r.props.onClick(module);
+            }
+            if (!module.defaultPrevented && module.button === 0 && !r.props.target && !x(module)) {
+                module.preventDefault();
+                const exports = r.context.router.history;
+                const require = r.props;
+                const { replace: o, to: i } = require;
+                if (o) {
+                    exports.replace(i);
+                } else {
+                    exports.push(i);
+                }
+            }
+        };
+        return E(r, require);
+    }
+    ((module, exports)=>{
+        if (typeof exports != "function" && exports !== null) {
+            throw new TypeError("Super expression must either be null or a function, not " + typeof exports);
+        }
+        module.prototype = Object.create(exports && exports.prototype, {
+            constructor: {
+                value: module,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        exports && (Object.setPrototypeOf ? Object.setPrototypeOf(module, exports) : module.__proto__ = exports);
+    })(exports, module);
+    exports.prototype.render = function() {
+        const module = this.props;
+        module.replace;
+        const { to: exports, innerRef: require } = module;
+        const r = ((module, exports)=>{
+            const require = {};
+            for(let r in module){
+                exports.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(module, r) && (require[r] = module[r]);
+            }
+            return require;
+        })(module, [
+            "replace",
+            "to",
+            "innerRef"
+        ]);
+        b(this.context.router, "You should not use <Link> outside a <Router>");
+        b(exports !== undefined, 'You must specify the "to" property');
+        const o = this.context.router.history;
+        const i = typeof exports == "string" ? c.createLocation(exports, null, null, o.location) : exports;
+        const u = o.createHref(i);
+        return i.createElement("a", w({}, r, {
+            onClick: this.handleClick,
+            href: u,
+            ref: require
+        }));
+    };
+    return exports;
+})(i.Component);
+Link.propTypes = {
+    onClick: u.func,
+    target: u.string,
+    replace: u.bool,
+    to: u.oneOfType([
+        u.string,
+        u.object
+    ]).isRequired,
+    innerRef: u.oneOfType([
+        u.string,
+        u.func
+    ])
+};
+Link.defaultProps = {
+    replace: false
+};
+Link.contextTypes = {
+    router: u.shape({
+        history: u.shape({
+            push: u.func.isRequired,
+            replace: u.func.isRequired,
+            createHref: u.func.isRequired
+        }).isRequired
+    }).isRequired
+};
+function S(module, exports) {
+    if (!module) {
+        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    }
+    if (!exports || typeof exports != "object" && typeof exports != "function") {
+        return module;
+    }
+    return exports;
+}
+export const MemoryRouter = ((module)=>{
+    function exports() {
+        let require;
+        let r;
+        !((module, exports)=>{
+            if (!(module instanceof exports)) {
+                throw new TypeError("Cannot call a class as a function");
+            }
+        })(this, exports);
+        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
+            i[a] = arguments[a];
+        }
+        require = r = S(this, module.call(...[
+            this
+        ].concat(i)));
+        r.history = c.createMemoryHistory(r.props);
+        return S(r, require);
+    }
+    ((module, exports)=>{
+        if (typeof exports != "function" && exports !== null) {
+            throw new TypeError("Super expression must either be null or a function, not " + typeof exports);
+        }
+        module.prototype = Object.create(exports && exports.prototype, {
+            constructor: {
+                value: module,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        exports && (Object.setPrototypeOf ? Object.setPrototypeOf(module, exports) : module.__proto__ = exports);
+    })(exports, module);
+    exports.prototype.componentWillMount = function() {
+        r(!this.props.history, "<MemoryRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { MemoryRouter as Router }`.");
+    };
+    exports.prototype.render = function() {
+        return i.createElement(s.a, {
+            history: this.history,
+            children: this.props.children
+        });
+    };
+    return exports;
+})(i.Component);
+MemoryRouter.propTypes = {
+    initialEntries: u.array,
+    initialIndex: u.number,
+    getUserConfirmation: u.func,
+    keyLength: u.number,
+    children: u.node
+};
+const _ = Object.assign || function(module) {
+    for(let exports = 1; exports < arguments.length; exports++){
+        const require = arguments[exports];
+        for(let r in require){
+            if (Object.prototype.hasOwnProperty.call(require, r)) {
+                module[r] = require[r];
+            }
+        }
+    }
+    return module;
+};
+function j(module, exports) {
+    if (!module) {
+        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    }
+    if (!exports || typeof exports != "object" && typeof exports != "function") {
+        return module;
+    }
+    return exports;
+}
+const R = (module)=>i.Children.count(module) === 0;
+const N = ((module)=>{
+    function exports() {
+        let require;
+        let r;
+        !((module, exports)=>{
+            if (!(module instanceof exports)) {
+                throw new TypeError("Cannot call a class as a function");
+            }
+        })(this, exports);
+        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
+            i[a] = arguments[a];
+        }
+        require = r = j(this, module.call(...[
+            this
+        ].concat(i)));
+        r.state = {
+            match: r.computeMatch(r.props, r.context.router)
+        };
+        return j(r, require);
+    }
+    ((module, exports)=>{
+        if (typeof exports != "function" && exports !== null) {
+            throw new TypeError("Super expression must either be null or a function, not " + typeof exports);
+        }
+        module.prototype = Object.create(exports && exports.prototype, {
+            constructor: {
+                value: module,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        exports && (Object.setPrototypeOf ? Object.setPrototypeOf(module, exports) : module.__proto__ = exports);
+    })(exports, module);
+    exports.prototype.getChildContext = function() {
+        return {
+            router: _({}, this.context.router, {
+                route: {
+                    location: this.props.location || this.context.router.route.location,
+                    match: this.state.match
+                }
+            })
+        };
+    };
+    exports.prototype.computeMatch = (module, exports)=>{
+        const { computedMatch: require, location: r, path: o, strict: i, exact: a, sensitive: u } = module;
+        if (require) {
+            return require;
+        }
+        b(exports, "You should not use <Route> or withRouter() outside a <Router>");
+        const l = exports.route;
+        const c = (r || l.location).pathname;
+        return P.a(c, {
+            path: o,
+            strict: i,
+            exact: a,
+            sensitive: u
+        }, l.match);
+    };
+    exports.prototype.componentWillMount = function() {
+        r(!(this.props.component && this.props.render), "You should not use <Route component> and <Route render> in the same route; <Route render> will be ignored");
+        r(!(this.props.component && this.props.children && !R(this.props.children)), "You should not use <Route component> and <Route children> in the same route; <Route children> will be ignored");
+        r(!(this.props.render && this.props.children && !R(this.props.children)), "You should not use <Route render> and <Route children> in the same route; <Route children> will be ignored");
+    };
+    exports.prototype.componentWillReceiveProps = function(module, exports) {
+        r(!(module.location && !this.props.location), '<Route> elements should not change from uncontrolled to controlled (or vice versa). You initially used no "location" prop and then provided one on a subsequent render.');
+        r(!(!module.location && this.props.location), '<Route> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
+        this.setState({
+            match: this.computeMatch(module, exports.router)
+        });
+    };
+    exports.prototype.render = function() {
+        const module = this.state.match;
+        const exports = this.props;
+        const { children: require, component: r, render: o } = exports;
+        const i = this.context.router;
+        const { history: u, route: l, staticContext: c } = i;
+        const s = {
+            match: module,
+            location: this.props.location || l.location,
+            history: u,
+            staticContext: c
+        };
+        if (r) {
+            if (module) {
+                return i.createElement(r, s);
+            }
+            return null;
+        }
+        if (o) {
+            if (module) {
+                return o(s);
+            }
+            return null;
+        }
+        if (typeof require == "function") {
+            return require(s);
+        }
+        if (require && !R(require)) {
+            return i.Children.only(require);
+        }
+        return null;
+    };
+    return exports;
+})(i.Component);
+N.propTypes = {
+    computedMatch: u.object,
+    path: u.string,
+    exact: u.bool,
+    strict: u.bool,
+    sensitive: u.bool,
+    component: u.func,
+    render: u.func,
+    children: u.oneOfType([
+        u.func,
+        u.node
+    ]),
+    location: u.object
+};
+N.contextTypes = {
+    router: u.shape({
+        history: u.object.isRequired,
+        route: u.object.isRequired,
+        staticContext: u.object
+    })
+};
+N.childContextTypes = {
+    router: u.object.isRequired
+};
+export const Route = N;
+const L = Object.assign || function(module) {
+    for(let exports = 1; exports < arguments.length; exports++){
+        const require = arguments[exports];
+        for(let r in require){
+            if (Object.prototype.hasOwnProperty.call(require, r)) {
+                module[r] = require[r];
+            }
+        }
+    }
+    return module;
+};
+const I = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (module)=>typeof module : (module)=>{
+    if (module && typeof Symbol == "function" && module.constructor === Symbol && module !== Symbol.prototype) {
+        return "symbol";
+    }
+    return typeof module;
+};
+export const NavLink = (module)=>{
+    const { to: exports, exact: require, strict: r, location: o, activeClassName: i, className: u, activeStyle: l, style: c, isActive: s, "aria-current": Router } = module;
+    const d = ((module, exports)=>{
+        const require = {};
+        for(let r in module){
+            exports.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(module, r) && (require[r] = module[r]);
+        }
+        return require;
+    })(module, [
+        "to",
+        "exact",
+        "strict",
+        "location",
+        "activeClassName",
+        "className",
+        "activeStyle",
+        "style",
+        "isActive",
+        "aria-current"
+    ]);
+    const BrowserRouter = (exports === undefined ? "undefined" : I(exports)) === "object" ? exports.pathname : exports;
+    const BrowserRouter = BrowserRouter && BrowserRouter.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
+    return i.createElement(Route, {
+        path: BrowserRouter,
+        exact: require,
+        strict: r,
+        location: o,
+        children (module) {
+            const { location: require, match: r } = module;
+            const o = !!(s ? s(r, require) : r);
+            return i.createElement(Link, L({
+                to: exports,
+                className: o ? [
+                    u,
+                    i
+                ].filter((module)=>module).join(" ") : u,
+                style: o ? L({}, c, l) : c,
+                "aria-current": o && Router || null
+            }, d));
+        }
+    });
+};
+NavLink.propTypes = {
+    to: Link.propTypes.to,
+    exact: u.bool,
+    strict: u.bool,
+    location: u.object,
+    activeClassName: u.string,
+    className: u.string,
+    activeStyle: u.object,
+    style: u.object,
+    isActive: u.func,
+    "aria-current": u.oneOf([
+        "page",
+        "step",
+        "location",
+        "date",
+        "time",
+        "true"
+    ])
+};
+NavLink.defaultProps = {
+    activeClassName: "active",
+    "aria-current": "page"
+};
+export const Prompt = ((module)=>{
+    function exports() {
+        ((module, exports)=>{
+            if (!(module instanceof exports)) {
+                throw new TypeError("Cannot call a class as a function");
+            }
+        })(this, exports);
+        return ((module, exports)=>{
+            if (!module) {
+                throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+            }
+            if (!exports || typeof exports != "object" && typeof exports != "function") {
+                return module;
+            }
+            return exports;
+        })(this, module.apply(this, arguments));
+    }
+    ((module, exports)=>{
+        if (typeof exports != "function" && exports !== null) {
+            throw new TypeError("Super expression must either be null or a function, not " + typeof exports);
+        }
+        module.prototype = Object.create(exports && exports.prototype, {
+            constructor: {
+                value: module,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        exports && (Object.setPrototypeOf ? Object.setPrototypeOf(module, exports) : module.__proto__ = exports);
+    })(exports, module);
+    exports.prototype.enable = function(module) {
+        if (this.unblock) {
+            this.unblock();
+        }
+        this.unblock = this.context.router.history.block(module);
+    };
+    exports.prototype.disable = function() {
+        if (this.unblock) {
+            this.unblock();
+            this.unblock = null;
+        }
+    };
+    exports.prototype.componentWillMount = function() {
+        b(this.context.router, "You should not use <Prompt> outside a <Router>");
+        if (this.props.when) {
+            this.enable(this.props.message);
+        }
+    };
+    exports.prototype.componentWillReceiveProps = function(module) {
+        if (module.when) {
+            if (!(this.props.when && this.props.message === module.message)) {
+                this.enable(module.message);
+            }
+        } else {
+            this.disable();
+        }
+    };
+    exports.prototype.componentWillUnmount = function() {
+        this.disable();
+    };
+    exports.prototype.render = ()=>null;
+    return exports;
+})(i.Component);
+Prompt.propTypes = {
+    when: u.bool,
+    message: u.oneOfType([
+        u.func,
+        u.string
+    ]).isRequired
+};
+Prompt.defaultProps = {
+    when: true
+};
+Prompt.contextTypes = {
+    router: u.shape({
+        history: u.shape({
+            block: u.func.isRequired
+        }).isRequired
+    }).isRequired
+};
+const W = {};
+let $ = 0;
+export const generatePath = (module = "/", exports = {})=>{
+    if (module === "/") {
+        return module;
+    }
+    return ((module)=>{
+        const exports = module;
+        const require = W[exports] || (W[exports] = {});
+        if (require[module]) {
+            return require[module];
+        }
+        const r = U.compile(module);
+        if ($ < 10000) {
+            require[module] = r;
+            $++;
+        }
+        return r;
+    })(module)(exports, {
+        pretty: true
+    });
+};
+const V = Object.assign || function(module) {
+    for(let exports = 1; exports < arguments.length; exports++){
+        const require = arguments[exports];
+        for(let r in require){
+            if (Object.prototype.hasOwnProperty.call(require, r)) {
+                module[r] = require[r];
+            }
+        }
+    }
+    return module;
+};
+export const Redirect = ((module)=>{
+    function exports() {
+        ((module, exports)=>{
+            if (!(module instanceof exports)) {
+                throw new TypeError("Cannot call a class as a function");
+            }
+        })(this, exports);
+        return ((module, exports)=>{
+            if (!module) {
+                throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+            }
+            if (!exports || typeof exports != "object" && typeof exports != "function") {
+                return module;
+            }
+            return exports;
+        })(this, module.apply(this, arguments));
+    }
+    ((module, exports)=>{
+        if (typeof exports != "function" && exports !== null) {
+            throw new TypeError("Super expression must either be null or a function, not " + typeof exports);
+        }
+        module.prototype = Object.create(exports && exports.prototype, {
+            constructor: {
+                value: module,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        exports && (Object.setPrototypeOf ? Object.setPrototypeOf(module, exports) : module.__proto__ = exports);
+    })(exports, module);
+    exports.prototype.isStatic = function() {
+        return this.context.router && this.context.router.staticContext;
+    };
+    exports.prototype.componentWillMount = function() {
+        b(this.context.router, "You should not use <Redirect> outside a <Router>");
+        if (this.isStatic()) {
+            this.perform();
+        }
+    };
+    exports.prototype.componentDidMount = function() {
+        if (!this.isStatic()) {
+            this.perform();
+        }
+    };
+    exports.prototype.componentDidUpdate = function(module) {
+        const exports = c.createLocation(module.to);
+        const require = c.createLocation(this.props.to);
+        if (c.locationsAreEqual(exports, require)) {
+            r(false, "You tried to redirect to the same route you're currently on: \"" + require.pathname + require.search + '"');
+        } else {
+            this.perform();
+        }
+    };
+    exports.prototype.computeTo = (module)=>{
+        const { computedMatch: exports, to: require } = module;
+        if (exports) {
+            if (typeof require == "string") {
+                return generatePath(require, exports.params);
+            }
+            return V({}, require, {
+                pathname: generatePath(require.pathname, exports.params)
+            });
+        }
+        return require;
+    };
+    exports.prototype.perform = function() {
+        const module = this.context.router.history;
+        const exports = this.props.push;
+        const require = this.computeTo(this.props);
+        if (exports) {
+            module.push(require);
+        } else {
+            module.replace(require);
+        }
+    };
+    exports.prototype.render = ()=>null;
+    return exports;
+})(i.Component);
+Redirect.propTypes = {
+    computedMatch: u.object,
+    push: u.bool,
+    from: u.string,
+    to: u.oneOfType([
+        u.string,
+        u.object
+    ]).isRequired
+};
+Redirect.defaultProps = {
+    push: false
+};
+Redirect.contextTypes = {
+    router: u.shape({
+        history: u.shape({
+            push: u.func.isRequired,
+            replace: u.func.isRequired
+        }).isRequired,
+        staticContext: u.object
+    }).isRequired
+};
+const Y = Object.assign || function(module) {
+    for(let exports = 1; exports < arguments.length; exports++){
+        const require = arguments[exports];
+        for(let r in require){
+            if (Object.prototype.hasOwnProperty.call(require, r)) {
+                module[r] = require[r];
+            }
+        }
+    }
+    return module;
+};
+function G(module, exports) {
+    if (!module) {
+        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    }
+    if (!exports || typeof exports != "object" && typeof exports != "function") {
+        return module;
+    }
+    return exports;
+}
+const X = (module)=>{
+    if (module.charAt(0) === "/") {
+        return module;
+    }
+    return "/" + module;
+};
+const J = (module, exports)=>{
+    if (module) {
+        return Y({}, exports, {
+            pathname: X(module) + exports.pathname
+        });
+    }
+    return exports;
+};
+const Z = (module)=>{
+    if (typeof module == "string") {
+        return module;
+    }
+    return c.createPath(module);
+};
+const ee = (module)=>()=>{
+        b(false, "You cannot %s with <StaticRouter>", module);
+    };
+const te = ()=>{};
+export const StaticRouter = ((module)=>{
+    function exports() {
+        let require;
+        let r;
+        !((module, exports)=>{
+            if (!(module instanceof exports)) {
+                throw new TypeError("Cannot call a class as a function");
+            }
+        })(this, exports);
+        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
+            i[a] = arguments[a];
+        }
+        require = r = G(this, module.call(...[
+            this
+        ].concat(i)));
+        r.createHref = (module)=>X(r.props.basename + Z(module));
+        r.handlePush = (module)=>{
+            const exports = r.props;
+            const { basename: require, context: o } = exports;
+            o.action = "PUSH";
+            o.location = J(require, c.createLocation(module));
+            o.url = Z(o.location);
+        };
+        r.handleReplace = (module)=>{
+            const exports = r.props;
+            const { basename: require, context: o } = exports;
+            o.action = "REPLACE";
+            o.location = J(require, c.createLocation(module));
+            o.url = Z(o.location);
+        };
+        r.handleListen = ()=>te;
+        r.handleBlock = ()=>te;
+        return G(r, require);
+    }
+    ((module, exports)=>{
+        if (typeof exports != "function" && exports !== null) {
+            throw new TypeError("Super expression must either be null or a function, not " + typeof exports);
+        }
+        module.prototype = Object.create(exports && exports.prototype, {
+            constructor: {
+                value: module,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        exports && (Object.setPrototypeOf ? Object.setPrototypeOf(module, exports) : module.__proto__ = exports);
+    })(exports, module);
+    exports.prototype.getChildContext = function() {
+        return {
+            router: {
+                staticContext: this.props.context
+            }
+        };
+    };
+    exports.prototype.componentWillMount = function() {
+        r(!this.props.history, "<StaticRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { StaticRouter as Router }`.");
+    };
+    exports.prototype.render = function() {
+        const module = this.props;
+        const exports = module.basename;
+        module.context;
+        const require = module.location;
+        const r = ((module, exports)=>{
+            const require = {};
+            for(let r in module){
+                exports.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(module, r) && (require[r] = module[r]);
+            }
+            return require;
+        })(module, [
+            "basename",
+            "context",
+            "location"
+        ]);
+        const o = {
+            createHref: this.createHref,
+            action: "POP",
+            location: ((module, exports)=>{
+                if (!module) {
+                    return exports;
+                }
+                const require = X(module);
+                if (exports.pathname.indexOf(require) !== 0) {
+                    return exports;
+                }
+                return Y({}, exports, {
+                    pathname: exports.pathname.substr(require.length)
+                });
+            })(exports, c.createLocation(require)),
+            push: this.handlePush,
+            replace: this.handleReplace,
+            go: ee("go"),
+            goBack: ee("goBack"),
+            goForward: ee("goForward"),
+            listen: this.handleListen,
+            block: this.handleBlock
+        };
+        return i.createElement(s.a, Y({}, r, {
+            history: o
+        }));
+    };
+    return exports;
+})(i.Component);
+StaticRouter.propTypes = {
+    basename: u.string,
+    context: u.object.isRequired,
+    location: u.oneOfType([
+        u.string,
+        u.object
+    ])
+};
+StaticRouter.defaultProps = {
+    basename: "",
+    location: "/"
+};
+StaticRouter.childContextTypes = {
+    router: u.object.isRequired
+};
+export const Switch = ((module)=>{
+    function exports() {
+        ((module, exports)=>{
+            if (!(module instanceof exports)) {
+                throw new TypeError("Cannot call a class as a function");
+            }
+        })(this, exports);
+        return ((module, exports)=>{
+            if (!module) {
+                throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+            }
+            if (!exports || typeof exports != "object" && typeof exports != "function") {
+                return module;
+            }
+            return exports;
+        })(this, module.apply(this, arguments));
+    }
+    ((module, exports)=>{
+        if (typeof exports != "function" && exports !== null) {
+            throw new TypeError("Super expression must either be null or a function, not " + typeof exports);
+        }
+        module.prototype = Object.create(exports && exports.prototype, {
+            constructor: {
+                value: module,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        exports && (Object.setPrototypeOf ? Object.setPrototypeOf(module, exports) : module.__proto__ = exports);
+    })(exports, module);
+    exports.prototype.componentWillMount = function() {
+        b(this.context.router, "You should not use <Switch> outside a <Router>");
+    };
+    exports.prototype.componentWillReceiveProps = function(module) {
+        r(!(module.location && !this.props.location), '<Switch> elements should not change from uncontrolled to controlled (or vice versa). You initially used no "location" prop and then provided one on a subsequent render.');
+        r(!(!module.location && this.props.location), '<Switch> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
+    };
+    exports.prototype.render = function() {
+        const module = this.context.router.route;
+        const exports = this.props.children;
+        const require = this.props.location || module.location;
+        let r = undefined;
+        let o = undefined;
+        i.Children.forEach(exports, (exports)=>{
+            if (r == null && i.isValidElement(exports)) {
+                const i = exports.props;
+                const { path: u, exact: l, strict: c, sensitive: s, from: Router } = i;
+                const d = u || Router;
+                o = exports;
+                r = P.a(require.pathname, {
+                    path: d,
+                    exact: l,
+                    strict: c,
+                    sensitive: s
+                }, module.match);
+            }
+        });
+        if (r) {
+            return i.cloneElement(o, {
+                location: require,
+                computedMatch: r
+            });
+        }
+        return null;
+    };
+    return exports;
+})(i.Component);
+Switch.contextTypes = {
+    router: u.shape({
+        route: u.object.isRequired
+    }).isRequired
+};
+Switch.propTypes = {
+    children: u.node,
+    location: u.object
+};
+export const matchPath = P.a;
+const se = Object.assign || function(module) {
+    for(let exports = 1; exports < arguments.length; exports++){
+        const require = arguments[exports];
+        for(let r in require){
+            if (Object.prototype.hasOwnProperty.call(require, r)) {
+                module[r] = require[r];
+            }
+        }
+    }
+    return module;
+};
+export const withRouter = (module)=>{
+    const exports = (exports)=>{
+        const require = exports.wrappedComponentRef;
+        const r = ((module, exports)=>{
+            const require = {};
+            for(let r in module){
+                exports.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(module, r) && (require[r] = module[r]);
+            }
+            return require;
+        })(exports, [
+            "wrappedComponentRef"
+        ]);
+        return i.createElement(Route, {
+            children (exports) {
+                return i.createElement(module, se({}, r, exports, {
+                    ref: require
+                }));
+            }
+        });
+    };
+    exports.displayName = "withRouter(" + (module.displayName || module.name) + ")";
+    exports.WrappedComponent = module;
+    exports.propTypes = {
+        wrappedComponentRef: u.func
+    };
+    return le(exports, module);
+};

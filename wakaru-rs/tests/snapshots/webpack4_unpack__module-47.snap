@@ -1,0 +1,5 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+export default require("./module-46.js");

@@ -1,0 +1,39 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import i from "./module-23.js";
+import a from "./module-18.js";
+import l from "./module-34.js";
+const r = f(require("./module-3.js"));
+const o = f(require("./module-49.js"));
+const u = s(require("./module-39.js"));
+const c = s(l);
+function s(module) {
+    if (module && module.__esModule) {
+        return module;
+    }
+    return {
+        default: module
+    };
+}
+function f(module) {
+    if (module && module.__esModule) {
+        return module;
+    }
+    const exports = {};
+    if (module != null) {
+        for(let require in module){
+            if (Object.prototype.hasOwnProperty.call(module, require)) {
+                exports[require] = module[require];
+            }
+        }
+    }
+    exports.default = module;
+    return exports;
+}
+o.render(r.createElement(i.Provider, {
+    store: c.default
+}, r.createElement(a.ConnectedRouter, {
+    history: l.history
+}, r.createElement(u.default, null))), document.getElementById("app"));

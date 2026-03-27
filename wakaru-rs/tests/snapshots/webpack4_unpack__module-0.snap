@@ -1,0 +1,254 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+export { i as x };
+export { l as b };
+export { c as e };
+export { s as c };
+export { f as d };
+export { p as r };
+export { h as u };
+export { m as o };
+export { y as h };
+export { w as v };
+export { E as w };
+export { x as f };
+export { k as l };
+export { T as q };
+export { S as m };
+export { O as t };
+export { C as y };
+export { R as s };
+export { A as p };
+export { L as k };
+export { I as A };
+export { D as i };
+const r = Object.assign || function(module) {
+    for(let exports = 1; exports < arguments.length; exports++){
+        const require = arguments[exports];
+        for(let r in require){
+            if (Object.prototype.hasOwnProperty.call(require, r)) {
+                module[r] = require[r];
+            }
+        }
+    }
+    return module;
+};
+const o = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (module)=>typeof module : (module)=>{
+    if (module && typeof Symbol == "function" && module.constructor === Symbol && module !== Symbol.prototype) {
+        return "symbol";
+    }
+    return typeof module;
+};
+const i = (module)=>"@@redux-saga/" + module;
+export const e = i("TASK");
+const u = i("HELPER");
+const l = i("MATCH");
+const c = i("CANCEL_PROMISE");
+const s = i("SAGA_ACTION");
+const f = i("SELF_CANCELLATION");
+const d = (module)=>()=>module;
+const p = d(true);
+const h = ()=>{};
+const m = (module)=>module;
+function y(module, exports, require) {
+    if (!exports(module)) {
+        R("error", "uncaught at check", require);
+        throw new Error(require);
+    }
+}
+const v = Object.prototype.hasOwnProperty;
+function b(module, exports) {
+    return q.notUndef(module) && v.call(module, exports);
+}
+export const q = {
+    undef (module) {
+        return module === null || module === undefined;
+    },
+    notUndef (module) {
+        return module !== null && module !== undefined;
+    },
+    func (module) {
+        return typeof module == "function";
+    },
+    number (module) {
+        return typeof module == "number";
+    },
+    string (module) {
+        return typeof module == "string";
+    },
+    array: Array.isArray,
+    object (module) {
+        return module && !q.array(module) && (module === undefined ? "undefined" : o(module)) === "object";
+    },
+    promise (module) {
+        return module && q.func(module.then);
+    },
+    iterator (module) {
+        return module && q.func(module.next) && q.func(module.throw);
+    },
+    iterable (module) {
+        if (module && q.func(Symbol)) {
+            return q.func(module[Symbol.iterator]);
+        }
+        return q.array(module);
+    },
+    task (module) {
+        return module && module[e];
+    },
+    observable (module) {
+        return module && q.func(module.subscribe);
+    },
+    buffer (module) {
+        return module && q.func(module.isEmpty) && q.func(module.take) && q.func(module.put);
+    },
+    pattern (module) {
+        return module && (q.string(module) || (module === undefined ? "undefined" : o(module)) === "symbol" || q.func(module) || q.array(module));
+    },
+    channel (module) {
+        return module && q.func(module.take) && q.func(module.close);
+    },
+    helper (module) {
+        return module && module[u];
+    },
+    stringableFunc (module) {
+        return q.func(module) && b(module, "toString");
+    }
+};
+const w = {
+    assign (module, exports) {
+        for(let require in exports){
+            if (b(exports, require)) {
+                module[require] = exports[require];
+            }
+        }
+    }
+};
+function E(module, exports) {
+    const require = module.indexOf(exports);
+    if (require >= 0) {
+        module.splice(require, 1);
+    }
+}
+const x = {
+    from (module) {
+        const exports = Array(module.length);
+        for(let require in module){
+            if (b(module, require)) {
+                exports[require] = module[require];
+            }
+        }
+        return exports;
+    }
+};
+function k(module = {}) {
+    const exports = r({}, module);
+    const require = new Promise((module, require)=>{
+        exports.resolve = module;
+        exports.reject = require;
+    });
+    exports.promise = require;
+    return exports;
+}
+function T(module) {
+    const exports = [];
+    for(let require = 0; require < module; require++){
+        exports.push(k());
+    }
+    return exports;
+}
+function S(module) {
+    const exports = !(arguments.length > 1 && arguments[1] !== undefined) || arguments[1];
+    let require = undefined;
+    const r = new Promise((r)=>{
+        require = setTimeout(()=>r(exports), module);
+    });
+    r[c] = ()=>clearTimeout(require);
+    return r;
+}
+function O() {
+    let module;
+    let exports = true;
+    let require = undefined;
+    let r = undefined;
+    module = {};
+    module[e] = true;
+    module.isRunning = ()=>exports;
+    module.result = ()=>require;
+    module.error = ()=>r;
+    module.setRunning = (module)=>exports = module;
+    module.setResult = (module)=>require = module;
+    module.setError = (module)=>r = module;
+    return module;
+}
+const C = ((module = 0)=>()=>++module)();
+const P = (module)=>{
+    throw module;
+};
+const _ = (module)=>{
+    return {
+        value: module,
+        done: true
+    };
+};
+export function t(module, exports = P, require = "") {
+    const r = arguments[3];
+    const o = {
+        name: require,
+        next: module,
+        throw: exports,
+        return: _
+    };
+    if (r) {
+        o[u] = true;
+    }
+    if (typeof Symbol != "undefined") {
+        o[Symbol.iterator] = ()=>o;
+    }
+    return o;
+}
+function R(module, exports, require = "") {
+    if (typeof window == "undefined") {
+        console.log("redux-saga " + module + ": " + exports + "\n" + (require && require.stack || require));
+    } else {
+        console[module](exports, require);
+    }
+}
+export function n(module, exports) {
+    return function() {
+        return module(...arguments);
+    };
+}
+export const z = (module, exports)=>module + " has been deprecated in favor of " + exports + ", please update your code";
+const A = (module)=>new Error("\n  redux-saga: Error checking hooks detected an inconsistent state. This is likely a bug\n  in redux-saga code and not yours. Thanks for reporting this in the project's github repo.\n  Error: " + module + "\n");
+const L = (module, exports)=>(module ? module + "." : "") + "setContext(props): argument " + exports + " is not a plain object";
+const I = (module)=>(exports)=>module(Object.defineProperty(exports, s, {
+            value: true
+        }));
+const D = function module(exports) {
+    return function() {
+        for(let require = arguments.length, r = Array(require), o = 0; o < require; o++){
+            r[o] = arguments[o];
+        }
+        const i = [];
+        const e = exports(...r);
+        return {
+            next (module) {
+                i.push(module);
+                return e.next(module);
+            },
+            clone () {
+                const require = module(exports)(...r);
+                i.forEach((module)=>require.next(module));
+                return require;
+            },
+            return (module) {
+                return e.return(module);
+            },
+            throw (module) {
+                return e.throw(module);
+            }
+        };
+    };
+};

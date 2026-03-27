@@ -1,0 +1,6 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+const r = ()=>{};
+export default r;

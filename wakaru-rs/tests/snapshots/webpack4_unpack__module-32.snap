@@ -1,0 +1,77 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import r from "./module-20.js";
+const o = {
+    childContextTypes: true,
+    contextType: true,
+    contextTypes: true,
+    defaultProps: true,
+    displayName: true,
+    getDefaultProps: true,
+    getDerivedStateFromError: true,
+    getDerivedStateFromProps: true,
+    mixins: true,
+    propTypes: true,
+    type: true
+};
+const i = {
+    name: true,
+    length: true,
+    prototype: true,
+    caller: true,
+    callee: true,
+    arguments: true,
+    arity: true
+};
+const a = {
+    $$typeof: true,
+    compare: true,
+    defaultProps: true,
+    displayName: true,
+    propTypes: true,
+    type: true
+};
+const u = {};
+function l(module) {
+    if (r.isMemo(module)) {
+        return a;
+    }
+    return u[module.$$typeof] || o;
+}
+u[r.ForwardRef] = {
+    $$typeof: true,
+    render: true,
+    defaultProps: true,
+    displayName: true,
+    propTypes: true
+};
+u[r.Memo] = a;
+const { defineProperty, getOwnPropertyNames, getOwnPropertySymbols, getOwnPropertyDescriptor, getPrototypeOf, prototype } = Object;
+export default (function module(exports, require, r) {
+    if (typeof require != "string") {
+        if (prototype) {
+            const o = getPrototypeOf(require);
+            if (o && o !== prototype) {
+                module(exports, o, r);
+            }
+        }
+        let a = getOwnPropertyNames(require);
+        if (getOwnPropertySymbols) {
+            a = a.concat(getOwnPropertySymbols(require));
+        }
+        const u = l(exports);
+        const m = l(require);
+        for(let y = 0; y < a.length; ++y){
+            const v = a[y];
+            if (!(i[v] || r && r[v] || m && m[v] || u && u[v])) {
+                const b = getOwnPropertyDescriptor(require, v);
+                try {
+                    defineProperty(exports, v, b);
+                } catch (module) {}
+            }
+        }
+    }
+    return exports;
+});

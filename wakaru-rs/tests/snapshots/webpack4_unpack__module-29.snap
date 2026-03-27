@@ -1,0 +1,58 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+const r = Object.getOwnPropertySymbols;
+const o = Object.prototype.hasOwnProperty;
+const i = Object.prototype.propertyIsEnumerable;
+export default (()=>{
+    try {
+        if (!Object.assign) {
+            return false;
+        }
+        const module = new String("abc");
+        module[5] = "de";
+        if (Object.getOwnPropertyNames(module)[0] === "5") {
+            return false;
+        }
+        const exports = {};
+        for(let require = 0; require < 10; require++){
+            exports["_" + String.fromCharCode(require)] = require;
+        }
+        if (Object.getOwnPropertyNames(exports).map((module)=>exports[module]).join("") !== "0123456789") {
+            return false;
+        }
+        const r = {};
+        "abcdefghijklmnopqrst".split("").forEach((module)=>{
+            r[module] = module;
+        });
+        return Object.keys(Object.assign({}, r)).join("") === "abcdefghijklmnopqrst";
+    } catch (module) {
+        return false;
+    }
+})() ? Object.assign : function(module, exports) {
+    let require;
+    let a;
+    const u = ((module)=>{
+        if (module === null || module === undefined) {
+            throw new TypeError("Object.assign cannot be called with null or undefined");
+        }
+        return Object(module);
+    })(module);
+    for(let l = 1; l < arguments.length; l++){
+        for(let c in require = Object(arguments[l])){
+            if (o.call(require, c)) {
+                u[c] = require[c];
+            }
+        }
+        if (r) {
+            a = r(require);
+            for(let s = 0; s < a.length; s++){
+                if (i.call(require, a[s])) {
+                    u[a[s]] = require[a[s]];
+                }
+            }
+        }
+    }
+    return u;
+};

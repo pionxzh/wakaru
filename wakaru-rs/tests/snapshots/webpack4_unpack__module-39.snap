@@ -1,0 +1,94 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import i from "./module-11.js";
+import a from "./module-24.js";
+const r = (()=>{
+    function module(module, exports) {
+        for(let require = 0; require < exports.length; require++){
+            const r = exports[require];
+            r.enumerable = r.enumerable || false;
+            r.configurable = true;
+            if ("value" in r) {
+                r.writable = true;
+            }
+            Object.defineProperty(module, r.key, r);
+        }
+    }
+    return (exports, require, r)=>{
+        if (require) {
+            module(exports.prototype, require);
+        }
+        if (r) {
+            module(exports, r);
+        }
+        return exports;
+    };
+})();
+const o = ((module)=>{
+    if (module && module.__esModule) {
+        return module;
+    }
+    const exports = {};
+    if (module != null) {
+        for(let require in module){
+            if (Object.prototype.hasOwnProperty.call(module, require)) {
+                exports[require] = module[require];
+            }
+        }
+    }
+    exports.default = module;
+    return exports;
+})(require("./module-3.js"));
+const u = ((module)=>{
+    if (module && module.__esModule) {
+        return module;
+    }
+    return {
+        default: module
+    };
+})(require("./module-38.js"));
+const l = ((module)=>{
+    function exports() {
+        ((module, exports)=>{
+            if (!(module instanceof exports)) {
+                throw new TypeError("Cannot call a class as a function");
+            }
+        })(this, exports);
+        return ((module, exports)=>{
+            if (!module) {
+                throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+            }
+            if (!exports || typeof exports != "object" && typeof exports != "function") {
+                return module;
+            }
+            return exports;
+        })(this, (exports.__proto__ || Object.getPrototypeOf(exports)).apply(this, arguments));
+    }
+    ((module, exports)=>{
+        if (typeof exports != "function" && exports !== null) {
+            throw new TypeError("Super expression must either be null or a function, not " + typeof exports);
+        }
+        module.prototype = Object.create(exports && exports.prototype, {
+            constructor: {
+                value: module,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        exports && (Object.setPrototypeOf ? Object.setPrototypeOf(module, exports) : module.__proto__ = exports);
+    })(exports, o.Component);
+    r(exports, [
+        {
+            key: "render",
+            value () {
+                console.log(this.props);
+                return o.createElement("div", null, u.default);
+            }
+        }
+    ]);
+    return exports;
+})();
+export default i.compose(a.withRouter)(l);

@@ -1,0 +1,14 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+!function module() {
+    if (typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ != "undefined" && typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE == "function") {
+        try {
+            __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE(module);
+        } catch (module) {
+            console.error(module);
+        }
+    }
+}();
+export default require("./module-48.js");

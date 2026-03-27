@@ -1,0 +1,272 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import r from "./module-21.js";
+export const __DO_NOT_USE__ActionTypes = {
+    INIT: "@@redux/INIT" + Math.random().toString(36).substring(7).split("").join("."),
+    REPLACE: "@@redux/REPLACE" + Math.random().toString(36).substring(7).split("").join(".")
+};
+const i = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (module)=>typeof module : (module)=>{
+    if (module && typeof Symbol == "function" && module.constructor === Symbol && module !== Symbol.prototype) {
+        return "symbol";
+    }
+    return typeof module;
+};
+const a = Object.assign || function(module) {
+    for(let exports = 1; exports < arguments.length; exports++){
+        const require = arguments[exports];
+        for(let r in require){
+            if (Object.prototype.hasOwnProperty.call(require, r)) {
+                module[r] = require[r];
+            }
+        }
+    }
+    return module;
+};
+function u(module) {
+    if ((module === undefined ? "undefined" : i(module)) !== "object" || module === null) {
+        return false;
+    }
+    for(let exports = module; Object.getPrototypeOf(exports) !== null;){
+        exports = Object.getPrototypeOf(exports);
+    }
+    return Object.getPrototypeOf(module) === exports;
+}
+export function createStore(module, exports, require) {
+    let a;
+    if (typeof exports == "function" && require === undefined) {
+        require = exports;
+        exports = undefined;
+    }
+    if (require !== undefined) {
+        if (typeof require != "function") {
+            throw new Error("Expected the enhancer to be a function.");
+        }
+        return require(createStore)(module, exports);
+    }
+    if (typeof module != "function") {
+        throw new Error("Expected the reducer to be a function.");
+    }
+    let c = module;
+    let combineReducers = exports;
+    let f = [];
+    let bindActionCreators = f;
+    let compose = false;
+    function applyMiddleware() {
+        if (bindActionCreators === f) {
+            bindActionCreators = f.slice();
+        }
+    }
+    function m() {
+        if (compose) {
+            throw new Error("You may not call store.getState() while the reducer is executing. The reducer has already received the state as an argument. Pass it down from the top reducer instead of reading it from the store.");
+        }
+        return combineReducers;
+    }
+    function y(module) {
+        if (typeof module != "function") {
+            throw new Error("Expected the listener to be a function.");
+        }
+        if (compose) {
+            throw new Error("You may not call store.subscribe() while the reducer is executing. If you would like to be notified after the store has been updated, subscribe from a component and invoke store.getState() in the callback to access the latest state. See https://redux.js.org/api-reference/store#subscribe(listener) for more details.");
+        }
+        let exports = true;
+        applyMiddleware();
+        bindActionCreators.push(module);
+        return ()=>{
+            if (exports) {
+                if (compose) {
+                    throw new Error("You may not unsubscribe from a store listener while the reducer is executing. See https://redux.js.org/api-reference/store#subscribe(listener) for more details.");
+                }
+                exports = false;
+                applyMiddleware();
+                const require = bindActionCreators.indexOf(module);
+                bindActionCreators.splice(require, 1);
+            }
+        };
+    }
+    function v(module) {
+        if (!u(module)) {
+            throw new Error("Actions must be plain objects. Use custom middleware for async actions.");
+        }
+        if (module.type === undefined) {
+            throw new Error('Actions may not have an undefined "type" property. Have you misspelled a constant?');
+        }
+        if (compose) {
+            throw new Error("Reducers may not dispatch actions.");
+        }
+        try {
+            compose = true;
+            combineReducers = c(combineReducers, module);
+        } finally{
+            compose = false;
+        }
+        for(let exports = f = bindActionCreators, require = 0; require < exports.length; require++){
+            exports[require]();
+        }
+        return module;
+    }
+    v({
+        type: __DO_NOT_USE__ActionTypes.INIT
+    });
+    a = {
+        dispatch: v,
+        subscribe: y,
+        getState: m,
+        replaceReducer (module) {
+            if (typeof module != "function") {
+                throw new Error("Expected the nextReducer to be a function.");
+            }
+            c = module;
+            v({
+                type: __DO_NOT_USE__ActionTypes.REPLACE
+            });
+        }
+    };
+    a[r.a] = ()=>{
+        let module;
+        const exports = y;
+        module = {
+            subscribe (module) {
+                if ((module === undefined ? "undefined" : i(module)) !== "object" || module === null) {
+                    throw new TypeError("Expected the observer to be an object.");
+                }
+                function require() {
+                    if (module.next) {
+                        module.next(m());
+                    }
+                }
+                require();
+                return {
+                    unsubscribe: exports(require)
+                };
+            }
+        };
+        module[r.a] = function() {
+            return this;
+        };
+        return module;
+    };
+    return a;
+}
+function c(module, exports) {
+    const require = exports && exports.type;
+    return "Given " + (require && 'action "' + String(require) + '"' || "an action") + ', reducer "' + module + '" returned undefined. To ignore an action, you must explicitly return the previous state. If you want this reducer to hold no value, you can return null instead of undefined.';
+}
+export function combineReducers(module) {
+    const require = {};
+    for(let exports = Object.keys(module), r = 0; r < exports.length; r++){
+        const i = exports[r];
+        0;
+        if (typeof module[i] == "function") {
+            require[i] = module[i];
+        }
+    }
+    const a = Object.keys(require);
+    let u = undefined;
+    try {
+        !((module)=>{
+            Object.keys(module).forEach((exports)=>{
+                const require = module[exports];
+                if (require(undefined, {
+                    type: __DO_NOT_USE__ActionTypes.INIT
+                }) === undefined) {
+                    throw new Error('Reducer "' + exports + "\" returned undefined during initialization. If the state passed to the reducer is undefined, you must explicitly return the initial state. The initial state may not be undefined. If you don't want to set a value for this reducer, you can use null instead of undefined.");
+                }
+                if (require(undefined, {
+                    type: "@@redux/PROBE_UNKNOWN_ACTION_" + Math.random().toString(36).substring(7).split("").join(".")
+                }) === undefined) {
+                    throw new Error('Reducer "' + exports + "\" returned undefined when probed with a random type. Don't try to handle " + __DO_NOT_USE__ActionTypes.INIT + ' or other actions in "redux/*" namespace. They are considered private. Instead, you must return the current state for any unknown actions, unless it is undefined, in which case you must return the initial state, regardless of the action type. The initial state may not be undefined, but can be null.');
+                }
+            });
+        })(require);
+    } catch (module) {
+        u = module;
+    }
+    return function(module = {}) {
+        const exports = arguments[1];
+        if (u) {
+            throw u;
+        }
+        let r = false;
+        const __DO_NOT_USE__ActionTypes = {};
+        for(let i = 0; i < a.length; i++){
+            const createStore = a[i];
+            const combineReducers = require[createStore];
+            const f = module[createStore];
+            const bindActionCreators = combineReducers(f, exports);
+            if (bindActionCreators === undefined) {
+                const compose = c(createStore, exports);
+                throw new Error(compose);
+            }
+            __DO_NOT_USE__ActionTypes[createStore] = bindActionCreators;
+            r = r || bindActionCreators !== f;
+        }
+        if (r) {
+            return __DO_NOT_USE__ActionTypes;
+        }
+        return module;
+    };
+}
+function f(module, exports) {
+    return function() {
+        return exports(module.apply(this, arguments));
+    };
+}
+export function bindActionCreators(module, exports) {
+    if (typeof module == "function") {
+        return f(module, exports);
+    }
+    if ((module === undefined ? "undefined" : i(module)) !== "object" || module === null) {
+        throw new Error("bindActionCreators expected an object or a function, instead received " + (module === null ? "null" : module === undefined ? "undefined" : i(module)) + '. Did you write "import ActionCreators from" instead of "import * as ActionCreators from"?');
+    }
+    const r = {};
+    for(let require = Object.keys(module), __DO_NOT_USE__ActionTypes = 0; __DO_NOT_USE__ActionTypes < require.length; __DO_NOT_USE__ActionTypes++){
+        const a = require[__DO_NOT_USE__ActionTypes];
+        const u = module[a];
+        if (typeof u == "function") {
+            r[a] = f(u, exports);
+        }
+    }
+    return r;
+}
+export function compose() {
+    for(let module = arguments.length, exports = Array(module), require = 0; require < module; require++){
+        exports[require] = arguments[require];
+    }
+    if (exports.length === 0) {
+        return (module)=>module;
+    }
+    if (exports.length === 1) {
+        return exports[0];
+    }
+    return exports.reduce((module, exports)=>function() {
+            return module(exports(...arguments));
+        });
+}
+export function applyMiddleware() {
+    for(let module = arguments.length, exports = Array(module), require = 0; require < module; require++){
+        exports[require] = arguments[require];
+    }
+    return (module)=>function() {
+            for(let require = arguments.length, r = Array(require), __DO_NOT_USE__ActionTypes = 0; __DO_NOT_USE__ActionTypes < require; __DO_NOT_USE__ActionTypes++){
+                r[__DO_NOT_USE__ActionTypes] = arguments[__DO_NOT_USE__ActionTypes];
+            }
+            const i = module(...r);
+            let u = ()=>{
+                throw new Error("Dispatching while constructing your middleware is not allowed. Other middleware would not be applied to this dispatch.");
+            };
+            const createStore = {
+                getState: i.getState,
+                dispatch () {
+                    return u(...arguments);
+                }
+            };
+            const c = exports.map((module)=>module(createStore));
+            u = compose(...c)(i.dispatch);
+            return a({}, i, {
+                dispatch: u
+            });
+        };
+}

@@ -1,0 +1,372 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+let r;
+let o;
+let i;
+let a;
+export let unstable_requestPaint;
+if (typeof window == "undefined" || typeof MessageChannel != "function") {
+    let l = null;
+    let c = null;
+    const s = ()=>{
+        if (l !== null) {
+            try {
+                const module = exports.unstable_now();
+                l(true, module);
+                l = null;
+            } catch (module) {
+                setTimeout(s, 0);
+                throw module;
+            }
+        }
+    };
+    const f = Date.now();
+    exports.unstable_now = ()=>Date.now() - f;
+    r = (module)=>{
+        if (l !== null) {
+            setTimeout(r, 0, module);
+        } else {
+            l = module;
+            setTimeout(s, 0);
+        }
+    };
+    o = (module, exports)=>{
+        c = setTimeout(module, exports);
+    };
+    i = ()=>{
+        clearTimeout(c);
+    };
+    a = ()=>false;
+    unstable_requestPaint = exports.unstable_forceFrameRate = ()=>{};
+} else {
+    const { performance: d, Date: p, setTimeout: h, clearTimeout: m } = window;
+    if (typeof console != "undefined") {
+        const y = window.cancelAnimationFrame;
+        if (typeof window.requestAnimationFrame != "function") {
+            console.error("This browser doesn't support requestAnimationFrame. Make sure that you load a polyfill in older browsers. https://fb.me/react-polyfills");
+        }
+        if (typeof y != "function") {
+            console.error("This browser doesn't support cancelAnimationFrame. Make sure that you load a polyfill in older browsers. https://fb.me/react-polyfills");
+        }
+    }
+    if (typeof d == "object" && typeof d.now == "function") {
+        exports.unstable_now = ()=>d.now();
+    } else {
+        const v = p.now();
+        exports.unstable_now = ()=>p.now() - v;
+    }
+    let b = false;
+    let g = null;
+    let w = -1;
+    let E = 5;
+    let x = 0;
+    a = ()=>exports.unstable_now() >= x;
+    unstable_requestPaint = ()=>{};
+    exports.unstable_forceFrameRate = (module)=>{
+        if (module < 0 || module > 125) {
+            console.error("forceFrameRate takes a positive int between 0 and 125, forcing framerates higher than 125 fps is not unsupported");
+        } else {
+            E = module > 0 ? Math.floor(1000 / module) : 5;
+        }
+    };
+    const k = new MessageChannel;
+    const T = k.port2;
+    k.port1.onmessage = ()=>{
+        if (g !== null) {
+            const module = exports.unstable_now();
+            x = module + E;
+            try {
+                if (g(true, module)) {
+                    T.postMessage(null);
+                } else {
+                    b = false;
+                    g = null;
+                }
+            } catch (module) {
+                T.postMessage(null);
+                throw module;
+            }
+        } else {
+            b = false;
+        }
+    };
+    r = (module)=>{
+        g = module;
+        if (!b) {
+            b = true;
+            T.postMessage(null);
+        }
+    };
+    o = (module, require)=>{
+        w = h(()=>{
+            module(exports.unstable_now());
+        }, require);
+    };
+    i = ()=>{
+        m(w);
+        w = -1;
+    };
+}
+function S(module, exports) {
+    let require = module.length;
+    module.push(exports);
+    module: while(true){
+        const r = require - 1 >>> 1;
+        const o = module[r];
+        if (!(o !== undefined && P(o, exports) > 0)) {
+            break module;
+        }
+        module[r] = exports;
+        module[require] = o;
+        require = r;
+    }
+}
+function O(module) {
+    if ((module = module[0]) === undefined) {
+        return null;
+    }
+    return module;
+}
+function C(module) {
+    const exports = module[0];
+    if (exports !== undefined) {
+        const require = module.pop();
+        if (require !== exports) {
+            module[0] = require;
+            module: for(let r = 0, o = module.length; r < o;){
+                const i = 2 * (r + 1) - 1;
+                const a = module[i];
+                const unstable_requestPaint = i + 1;
+                const l = module[unstable_requestPaint];
+                if (a !== undefined && P(a, require) < 0) {
+                    if (l !== undefined && P(l, a) < 0) {
+                        module[r] = l;
+                        module[unstable_requestPaint] = require;
+                        r = unstable_requestPaint;
+                    } else {
+                        module[r] = a;
+                        module[i] = require;
+                        r = i;
+                    }
+                } else {
+                    if (!(l !== undefined && P(l, require) < 0)) {
+                        break module;
+                    }
+                    module[r] = l;
+                    module[unstable_requestPaint] = require;
+                    r = unstable_requestPaint;
+                }
+            }
+        }
+        return exports;
+    }
+    return null;
+}
+function P(module, exports) {
+    const require = module.sortIndex - exports.sortIndex;
+    if (require !== 0) {
+        return require;
+    }
+    return module.id - exports.id;
+}
+const _ = [];
+const j = [];
+let R = 1;
+let N = null;
+let M = 3;
+let A = false;
+let L = false;
+let I = false;
+function D(module) {
+    for(let exports = O(j); exports !== null;){
+        if (exports.callback === null) {
+            C(j);
+        } else {
+            if (!(exports.startTime <= module)) {
+                break;
+            }
+            C(j);
+            exports.sortIndex = exports.expirationTime;
+            S(_, exports);
+        }
+        exports = O(j);
+    }
+}
+function F(module) {
+    I = false;
+    D(module);
+    if (!L) {
+        if (O(_) !== null) {
+            L = true;
+            r(z);
+        } else {
+            const exports = O(j);
+            if (exports !== null) {
+                o(F, exports.startTime - module);
+            }
+        }
+    }
+}
+function z(module, require) {
+    L = false;
+    if (I) {
+        I = false;
+        i();
+    }
+    A = true;
+    try {
+        D(require);
+        for(N = O(_); N !== null && (!(N.expirationTime > require) || module && !a());){
+            const unstable_requestPaint = N.callback;
+            if (unstable_requestPaint !== null) {
+                N.callback = null;
+                M = N.priorityLevel;
+                const l = unstable_requestPaint(N.expirationTime <= require);
+                require = exports.unstable_now();
+                if (typeof l == "function") {
+                    N.callback = l;
+                } else if (N === O(_)) {
+                    C(_);
+                }
+                D(require);
+            } else {
+                C(_);
+            }
+            N = O(_);
+        }
+        if (N !== null) var c = true;
+        else {
+            const s = O(j);
+            if (s !== null) {
+                o(F, s.startTime - require);
+            }
+            c = false;
+        }
+        return c;
+    } finally{
+        N = null;
+        M = M;
+        A = false;
+    }
+}
+function q(module) {
+    switch(module){
+        case 1:
+            return -1;
+        case 2:
+            return 250;
+        case 5:
+            return 1073741823;
+        case 4:
+            return 10000;
+        default:
+            return 5000;
+    }
+}
+export const unstable_IdlePriority = 5;
+export const unstable_ImmediatePriority = 1;
+export const unstable_LowPriority = 4;
+export const unstable_NormalPriority = 3;
+export const unstable_Profiling = null;
+export const unstable_UserBlockingPriority = 2;
+export const unstable_cancelCallback = (module)=>{
+    module.callback = null;
+};
+export const unstable_continueExecution = ()=>{
+    if (!(L || A)) {
+        L = true;
+        r(z);
+    }
+};
+export const unstable_getCurrentPriorityLevel = ()=>M;
+export const unstable_getFirstCallbackNode = ()=>O(_);
+export const unstable_next = (module)=>{
+    switch(M){
+        case 1:
+        case 2:
+        case 3:
+            let exports = 3;
+            break;
+        default:
+            exports = M;
+    }
+    M = exports;
+    try {
+        return module();
+    } finally{
+        M = M;
+    }
+};
+export const unstable_pauseExecution = ()=>{};
+export const unstable_runWithPriority = (module, exports)=>{
+    switch(module){
+        case 1:
+        case 2:
+        case 3:
+        case 4:
+        case 5:
+            break;
+        default:
+            module = 3;
+    }
+    M = module;
+    try {
+        return exports();
+    } finally{
+        M = M;
+    }
+};
+export const unstable_scheduleCallback = (module, require, a)=>{
+    const unstable_requestPaint = exports.unstable_now();
+    if (typeof a == "object" && a !== null) {
+        let l = a.delay;
+        l = typeof l == "number" && l > 0 ? unstable_requestPaint + l : unstable_requestPaint;
+        a = typeof a.timeout == "number" ? a.timeout : q(module);
+    } else {
+        a = q(module);
+        l = unstable_requestPaint;
+    }
+    module = {
+        id: R++,
+        callback: require,
+        priorityLevel: module,
+        startTime: l,
+        expirationTime: a = l + a,
+        sortIndex: -1
+    };
+    if (l > unstable_requestPaint) {
+        module.sortIndex = l;
+        S(j, module);
+        if (O(_) === null && module === O(j)) {
+            I ? i() : I = true;
+            o(F, l - unstable_requestPaint);
+        }
+    } else {
+        module.sortIndex = a;
+        S(_, module);
+        if (!(L || A)) {
+            L = true;
+            r(z);
+        }
+    }
+    return module;
+};
+export const unstable_shouldYield = ()=>{
+    const module = exports.unstable_now();
+    D(module);
+    const require = O(_);
+    return require !== N && N !== null && require !== null && require.callback !== null && require.startTime <= module && require.expirationTime < N.expirationTime || a();
+};
+export const unstable_wrapCallback = (module)=>{
+    const exports = M;
+    return function() {
+        M = exports;
+        try {
+            return module.apply(this, arguments);
+        } finally{
+            M = M;
+        }
+    };
+};

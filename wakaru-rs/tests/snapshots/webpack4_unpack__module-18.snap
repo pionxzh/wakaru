@@ -1,0 +1,160 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import r from "./module-3.js";
+import i from "./module-1.js";
+import u from "./module-16.js";
+import m from "./module-15.js";
+const l = Object.assign || function(module) {
+    for(let exports = 1; exports < arguments.length; exports++){
+        const require = arguments[exports];
+        for(let r in require){
+            if (Object.prototype.hasOwnProperty.call(require, r)) {
+                module[r] = require[r];
+            }
+        }
+    }
+    return module;
+};
+export const LOCATION_CHANGE = "@@router/LOCATION_CHANGE";
+const s = {
+    location: null
+};
+export function routerReducer(module = s, exports = {}) {
+    const { type: require, payload: r } = exports;
+    if (require === LOCATION_CHANGE) {
+        return l({}, module, {
+            location: r
+        });
+    }
+    return module;
+}
+function d(module, exports) {
+    if (!module) {
+        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    }
+    if (!exports || typeof exports != "object" && typeof exports != "function") {
+        return module;
+    }
+    return exports;
+}
+export const ConnectedRouter = ((module)=>{
+    function exports() {
+        let require;
+        let r;
+        !((module, exports)=>{
+            if (!(module instanceof exports)) {
+                throw new TypeError("Cannot call a class as a function");
+            }
+        })(this, exports);
+        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
+            i[a] = arguments[a];
+        }
+        require = r = d(this, module.call(...[
+            this
+        ].concat(i)));
+        r.handleLocationChange = (module)=>{
+            r.store.dispatch({
+                type: LOCATION_CHANGE,
+                payload: module
+            });
+        };
+        return d(r, require);
+    }
+    ((module, exports)=>{
+        if (typeof exports != "function" && exports !== null) {
+            throw new TypeError("Super expression must either be null or a function, not " + typeof exports);
+        }
+        module.prototype = Object.create(exports && exports.prototype, {
+            constructor: {
+                value: module,
+                enumerable: false,
+                writable: true,
+                configurable: true
+            }
+        });
+        exports && (Object.setPrototypeOf ? Object.setPrototypeOf(module, exports) : module.__proto__ = exports);
+    })(exports, module);
+    exports.prototype.componentWillMount = function() {
+        const module = this.props;
+        const { store: exports, history: require, isSSR: r } = module;
+        this.store = exports || this.context.store;
+        this.handleLocationChange(require.location);
+        if (!r) {
+            this.unsubscribeFromHistory = require.listen(this.handleLocationChange);
+        }
+    };
+    exports.prototype.componentWillUnmount = function() {
+        if (this.unsubscribeFromHistory) {
+            this.unsubscribeFromHistory();
+        }
+    };
+    exports.prototype.render = function() {
+        return r.createElement(u.a, this.props);
+    };
+    return exports;
+})(r.Component);
+ConnectedRouter.propTypes = {
+    store: i.object,
+    history: i.object.isRequired,
+    children: i.node,
+    isSSR: i.bool
+};
+ConnectedRouter.contextTypes = {
+    store: i.object
+};
+export const getLocation = (module)=>module.router.location;
+export const createMatchSelector = (module)=>{
+    let exports = null;
+    let require = null;
+    return (r)=>{
+        const o = (getLocation(r) || {}).pathname;
+        if (o === exports) {
+            return require;
+        }
+        exports = o;
+        const i = m.a(o, module);
+        if (!(i && require && i.url === require.url)) {
+            require = i;
+        }
+        return require;
+    };
+};
+export const CALL_HISTORY_METHOD = "@@router/CALL_HISTORY_METHOD";
+function g(module) {
+    return function() {
+        for(let exports = arguments.length, require = Array(exports), r = 0; r < exports; r++){
+            require[r] = arguments[r];
+        }
+        return {
+            type: CALL_HISTORY_METHOD,
+            payload: {
+                method: module,
+                args: require
+            }
+        };
+    };
+}
+export const push = g("push");
+export const replace = g("replace");
+export const go = g("go");
+export const goBack = g("goBack");
+export const goForward = g("goForward");
+export const routerActions = {
+    push: push,
+    replace: replace,
+    go: go,
+    goBack: goBack,
+    goForward: goForward
+};
+export function routerMiddleware(module) {
+    return ()=>(exports)=>(require)=>{
+                if (require.type !== CALL_HISTORY_METHOD) {
+                    return exports(require);
+                }
+                const r = require.payload;
+                const { method: o, args: i } = r;
+                module[o](...i);
+            };
+}

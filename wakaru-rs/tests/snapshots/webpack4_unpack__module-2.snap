@@ -1,0 +1,239 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import r from "./module-0.js";
+export { x as i };
+export { k as s };
+export { O as b };
+export { C as o };
+export { j as c };
+export { R as h };
+export { N as k };
+export { M as r };
+export { A as m };
+export { L as f };
+export { I as p };
+export { D as a };
+export { F as g };
+export { z as j };
+export { q as l };
+export { U as q };
+export { W as d };
+const o = r.x("IO");
+const i = "TAKE";
+const a = "PUT";
+const u = "ALL";
+const l = "RACE";
+const c = "CALL";
+const s = "CPS";
+const f = "FORK";
+const d = "JOIN";
+const p = "CANCEL";
+const h = "SELECT";
+const m = "ACTION_CHANNEL";
+const y = "CANCELLED";
+const v = "FLUSH";
+const b = "GET_CONTEXT";
+const g = "SET_CONTEXT";
+const w = "\n(HINT: if you are getting this errors in tests, consider using createMockTask from redux-saga/utils)";
+const E = (module, exports)=>{
+    let require;
+    require = {};
+    require[o] = true;
+    require[module] = exports;
+    return require;
+};
+const x = (module)=>{
+    r.h(W.fork(module), r.q.object, "detach(eff): argument must be a fork effect");
+    module[f].detached = true;
+    return module;
+};
+function k(module = "*") {
+    if (arguments.length) {
+        r.h(arguments[0], r.q.notUndef, "take(patternOrChannel): patternOrChannel is undefined");
+    }
+    if (r.q.pattern(module)) {
+        return E(i, {
+            pattern: module
+        });
+    }
+    if (r.q.channel(module)) {
+        return E(i, {
+            channel: module
+        });
+    }
+    throw new Error("take(patternOrChannel): argument " + String(module) + " is not valid channel or a valid pattern");
+}
+k.maybe = function() {
+    const module = k(...arguments);
+    module[i].maybe = true;
+    return module;
+};
+export const t = r.n(k.maybe, r.z("takem", "take.maybe"));
+export function n(module, exports) {
+    if (arguments.length > 1) {
+        r.h(module, r.q.notUndef, "put(channel, action): argument channel is undefined");
+        r.h(module, r.q.channel, "put(channel, action): argument " + module + " is not a valid channel");
+        r.h(exports, r.q.notUndef, "put(channel, action): argument action is undefined");
+    } else {
+        r.h(module, r.q.notUndef, "put(action): argument action is undefined");
+        exports = module;
+        module = null;
+    }
+    return E(a, {
+        channel: module,
+        action: exports
+    });
+}
+function O(module) {
+    return E(u, module);
+}
+function C(module) {
+    return E(l, module);
+}
+function P(module, exports, require) {
+    r.h(exports, r.q.notUndef, module + ": argument fn is undefined");
+    let o = null;
+    if (r.q.array(exports)) {
+        const i = exports;
+        o = i[0];
+        exports = i[1];
+    } else if (exports.fn) {
+        const a = exports;
+        o = a.context;
+        exports = a.fn;
+    }
+    if (o && r.q.string(exports) && r.q.func(o[exports])) {
+        exports = o[exports];
+    }
+    r.h(exports, r.q.func, module + ": argument " + exports + " is not a function");
+    return {
+        context: o,
+        fn: exports,
+        args: require
+    };
+}
+export function e(module) {
+    for(let exports = arguments.length, require = Array(exports > 1 ? exports - 1 : 0), r = 1; r < exports; r++){
+        require[r - 1] = arguments[r];
+    }
+    return E(c, P("call", module, require));
+}
+function j(module, exports, require = []) {
+    return E(c, P("apply", {
+        context: module,
+        fn: exports
+    }, require));
+}
+function R(module) {
+    for(let exports = arguments.length, require = Array(exports > 1 ? exports - 1 : 0), r = 1; r < exports; r++){
+        require[r - 1] = arguments[r];
+    }
+    return E(s, P("cps", module, require));
+}
+function N(module) {
+    for(let exports = arguments.length, require = Array(exports > 1 ? exports - 1 : 0), r = 1; r < exports; r++){
+        require[r - 1] = arguments[r];
+    }
+    return E(f, P("fork", module, require));
+}
+function M(module) {
+    for(let exports = arguments.length, require = Array(exports > 1 ? exports - 1 : 0), r = 1; r < exports; r++){
+        require[r - 1] = arguments[r];
+    }
+    return x(N(...[
+        module
+    ].concat(require)));
+}
+function A() {
+    for(let module = arguments.length, exports = Array(module), require = 0; require < module; require++){
+        exports[require] = arguments[require];
+    }
+    if (exports.length > 1) {
+        return O(exports.map((module)=>A(module)));
+    }
+    const o = exports[0];
+    r.h(o, r.q.notUndef, "join(task): argument task is undefined");
+    r.h(o, r.q.task, "join(task): argument " + o + " is not a valid Task object " + w);
+    return E(d, o);
+}
+function L() {
+    for(let module = arguments.length, exports = Array(module), require = 0; require < module; require++){
+        exports[require] = arguments[require];
+    }
+    if (exports.length > 1) {
+        return O(exports.map((module)=>L(module)));
+    }
+    const o = exports[0];
+    if (exports.length === 1) {
+        r.h(o, r.q.notUndef, "cancel(task): argument task is undefined");
+        r.h(o, r.q.task, "cancel(task): argument " + o + " is not a valid Task object " + w);
+    }
+    return E(p, o || r.d);
+}
+function I(module) {
+    for(let exports = arguments.length, require = Array(exports > 1 ? exports - 1 : 0), o = 1; o < exports; o++){
+        require[o - 1] = arguments[o];
+    }
+    if (arguments.length === 0) {
+        module = r.o;
+    } else {
+        r.h(module, r.q.notUndef, "select(selector,[...]): argument selector is undefined");
+        r.h(module, r.q.func, "select(selector,[...]): argument " + module + " is not a function");
+    }
+    return E(h, {
+        selector: module,
+        args: require
+    });
+}
+function D(module, exports) {
+    r.h(module, r.q.notUndef, "actionChannel(pattern,...): argument pattern is undefined");
+    if (arguments.length > 1) {
+        r.h(exports, r.q.notUndef, "actionChannel(pattern, buffer): argument buffer is undefined");
+        r.h(exports, r.q.buffer, "actionChannel(pattern, buffer): argument " + exports + " is not a valid buffer");
+    }
+    return E(m, {
+        pattern: module,
+        buffer: exports
+    });
+}
+function F() {
+    return E(y, {});
+}
+function z(module) {
+    r.h(module, r.q.channel, "flush(channel): argument " + module + " is not valid channel");
+    return E(v, module);
+}
+function q(module) {
+    r.h(module, r.q.string, "getContext(prop): argument " + module + " is not a string");
+    return E(b, module);
+}
+function U(module) {
+    r.h(module, r.q.object, r.k(null, module));
+    return E(g, module);
+}
+n.resolve = function() {
+    const module = n(...arguments);
+    module[a].resolve = true;
+    return module;
+};
+n.sync = r.n(n.resolve, r.z("put.sync", "put.resolve"));
+const H = (module)=>(exports)=>exports && exports[o] && exports[module];
+const W = {
+    take: H(i),
+    put: H(a),
+    all: H(u),
+    race: H(l),
+    call: H(c),
+    cps: H(s),
+    fork: H(f),
+    join: H(d),
+    cancel: H(p),
+    select: H(h),
+    actionChannel: H(m),
+    cancelled: H(y),
+    flush: H(v),
+    getContext: H(b),
+    setContext: H(g)
+};

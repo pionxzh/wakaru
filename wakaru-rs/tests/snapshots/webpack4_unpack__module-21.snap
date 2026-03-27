@@ -1,0 +1,11 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+((module, r)=>{
+    let o;
+    const i = require("./module-31.js");
+    o = typeof self != "undefined" ? self : typeof window != "undefined" ? window : module !== undefined ? module : r;
+    const a = i.a(o);
+    exports.a = a;
+}).call(this, require("./module-42.js"), require("./module-41.js")(module));

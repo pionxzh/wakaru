@@ -1,0 +1,47 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import "./module-13.js";
+import o from "./module-26.js";
+import i from "./module-19.js";
+let r;
+function a(module, exports, require) {
+    if (exports in module) {
+        Object.defineProperty(module, exports, {
+            value: require,
+            enumerable: true,
+            configurable: true,
+            writable: true
+        });
+    } else {
+        module[exports] = require;
+    }
+    return module;
+}
+const u = {
+    isLoading: false,
+    data: [],
+    error: ""
+};
+a(r = {}, i.FETCH_DATA + o.START, (module)=>Object.assign({}, module, {
+        isLoading: true
+    }));
+a(r, i.FETCH_DATA + o.SUCCESS, (module, exports)=>Object.assign({}, module, {
+        isLoading: false,
+        data: exports
+    }));
+a(r, i.FETCH_DATA + o.ERROR, (module, exports)=>Object.assign({}, module, {
+        isLoading: false,
+        error: exports
+    }));
+const l = r;
+export default function(module = u) {
+    const exports = arguments[1];
+    const require = l[exports.type];
+    if (require) {
+        return require(module, exports.payload);
+    }
+    return module;
+}
+;

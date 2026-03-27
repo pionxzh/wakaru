@@ -1,0 +1,20 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import r from "./module-11.js";
+import o from "./module-18.js";
+import "./module-13.js";
+const i = ((module)=>{
+    if (module && module.__esModule) {
+        return module;
+    }
+    return {
+        default: module
+    };
+})(require("./module-36.js"));
+const a = r.combineReducers({
+    router: o.routerReducer,
+    main: i.default
+});
+export default a;

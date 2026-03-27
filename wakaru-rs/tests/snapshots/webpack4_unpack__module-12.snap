@@ -1,0 +1,36 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+export { a };
+export { u as b };
+const r = [];
+let o = 0;
+function i(module) {
+    try {
+        u();
+        module();
+    } finally{
+        l();
+    }
+}
+function a(module) {
+    r.push(module);
+    if (!o) {
+        u();
+        b();
+    }
+}
+function u() {
+    o++;
+}
+function l() {
+    o--;
+}
+export function b() {
+    l();
+    let module = undefined;
+    while(!o && (module = r.shift()) !== undefined){
+        i(module);
+    }
+}

@@ -13,6 +13,9 @@ path = "src/lib.rs"
 name = "wakaru-rs"
 path = "src/main.rs"
 
+[dev-dependencies]
+insta = "1"
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }

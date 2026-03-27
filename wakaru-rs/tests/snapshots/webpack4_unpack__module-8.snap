@@ -1,0 +1,784 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import r from "./module-7.js";
+function o(module) {
+    return module.charAt(0) === "/";
+}
+function i(module, exports) {
+    let require = exports;
+    for(let r = require + 1, o = module.length; r < o; require += 1, r += 1){
+        module[require] = module[r];
+    }
+    module.pop();
+}
+const a = (module, exports = "")=>{
+    let require;
+    const r = module && module.split("/") || [];
+    let a = exports && exports.split("/") || [];
+    const u = module && o(module);
+    const l = exports && o(exports);
+    const c = u || l;
+    if (module && o(module)) {
+        a = r;
+    } else if (r.length) {
+        a.pop();
+        a = a.concat(r);
+    }
+    if (!a.length) {
+        return "/";
+    }
+    if (a.length) {
+        const s = a[a.length - 1];
+        require = s === "." || s === ".." || s === "";
+    } else {
+        require = false;
+    }
+    let f = 0;
+    for(let d = a.length; d >= 0; d--){
+        const p = a[d];
+        if (p === ".") {
+            i(a, d);
+        } else if (p === "..") {
+            i(a, d);
+            f++;
+        } else if (f) {
+            i(a, d);
+            f--;
+        }
+    }
+    if (!c) {
+        for(; f--; f){
+            a.unshift("..");
+        }
+    }
+    if (!(!c || a[0] === "" || a[0] && o(a[0]))) {
+        a.unshift("");
+    }
+    let h = a.join("/");
+    if (require && h.substr(-1) !== "/") {
+        h += "/";
+    }
+    return h;
+};
+function u(module) {
+    if (module.valueOf) {
+        return module.valueOf();
+    }
+    return Object.prototype.valueOf.call(module);
+}
+const l = function module(exports, require) {
+    if (exports === require) {
+        return true;
+    }
+    if (exports == null || require == null) {
+        return false;
+    }
+    if (Array.isArray(exports)) {
+        return Array.isArray(require) && exports.length === require.length && exports.every((exports, r)=>module(exports, require[r]));
+    }
+    if (typeof exports == "object" || typeof require == "object") {
+        const r = u(exports);
+        const o = u(require);
+        if (r !== exports || o !== require) {
+            return module(r, o);
+        }
+        return Object.keys(Object.assign({}, exports, require)).every((r)=>module(exports[r], require[r]));
+    }
+    return false;
+};
+const c = true;
+const s = "Invariant failed";
+function f(module, exports) {
+    if (!module) {
+        if (c) {
+            throw new Error(s);
+        }
+        const require = typeof exports == "function" ? exports() : exports;
+        const r = require ? `${s}: ${require}` : s;
+        throw new Error(r);
+    }
+}
+function d(module) {
+    if (module.charAt(0) === "/") {
+        return module;
+    }
+    return "/" + module;
+}
+function p(module) {
+    if (module.charAt(0) === "/") {
+        return module.substr(1);
+    }
+    return module;
+}
+function h(module, exports) {
+    if (((module, exports)=>module.toLowerCase().indexOf(exports.toLowerCase()) === 0 && -1 !== "/?#".indexOf(module.charAt(exports.length)))(module, exports)) {
+        return module.substr(exports.length);
+    }
+    return module;
+}
+function m(module) {
+    if (module.charAt(module.length - 1) === "/") {
+        return module.slice(0, -1);
+    }
+    return module;
+}
+export function parsePath(module) {
+    let exports = module || "/";
+    let require = "";
+    let r = "";
+    const o = exports.indexOf("#");
+    if (-1 !== o) {
+        r = exports.substr(o);
+        exports = exports.substr(0, o);
+    }
+    const i = exports.indexOf("?");
+    if (-1 !== i) {
+        require = exports.substr(i);
+        exports = exports.substr(0, i);
+    }
+    return {
+        pathname: exports,
+        search: require === "?" ? "" : require,
+        hash: r === "#" ? "" : r
+    };
+}
+export function createPath(module) {
+    const { pathname: exports, search: require, hash: r } = module;
+    let o = exports || "/";
+    if (require && require !== "?") {
+        o += require.charAt(0) === "?" ? require : "?" + require;
+    }
+    if (r && r !== "#") {
+        o += r.charAt(0) === "#" ? r : "#" + r;
+    }
+    return o;
+}
+export function createLocation(module, exports, require, o) {
+    let i;
+    if (typeof module == "string") {
+        i = parsePath(module);
+        i.state = exports;
+    } else {
+        if ((i = r.a({}, module)).pathname === undefined) {
+            i.pathname = "";
+        }
+        if (i.search) {
+            i.search.charAt(0) !== "?" && (i.search = "?" + i.search);
+        } else {
+            i.search = "";
+        }
+        if (i.hash) {
+            i.hash.charAt(0) !== "#" && (i.hash = "#" + i.hash);
+        } else {
+            i.hash = "";
+        }
+        if (exports !== undefined && i.state === undefined) {
+            i.state = exports;
+        }
+    }
+    try {
+        i.pathname = decodeURI(i.pathname);
+    } catch (module) {
+        throw module instanceof URIError ? new URIError('Pathname "' + i.pathname + '" could not be decoded. This is likely caused by an invalid percent-encoding.') : module;
+    }
+    if (require) {
+        i.key = require;
+    }
+    o ? i.pathname ? i.pathname.charAt(0) !== "/" && (i.pathname = a(i.pathname, o.pathname)) : i.pathname = o.pathname : i.pathname || (i.pathname = "/");
+    return i;
+}
+export function locationsAreEqual(module, exports) {
+    return module.pathname === exports.pathname && module.search === exports.search && module.hash === exports.hash && module.key === exports.key && l(module.state, exports.state);
+}
+function w() {
+    let module = null;
+    let exports = [];
+    return {
+        setPrompt (exports) {
+            module = exports;
+            return ()=>{
+                if (module === exports) {
+                    module = null;
+                }
+            };
+        },
+        confirmTransitionTo (exports, require, r, o) {
+            if (module != null) {
+                const i = typeof module == "function" ? module(exports, require) : module;
+                if (typeof i == "string") {
+                    if (typeof r == "function") {
+                        r(i, o);
+                    } else {
+                        o(true);
+                    }
+                } else {
+                    o(i !== false);
+                }
+            } else {
+                o(true);
+            }
+        },
+        appendListener (module) {
+            let require = true;
+            function r() {
+                if (require) {
+                    module(...arguments);
+                }
+            }
+            exports.push(r);
+            return ()=>{
+                require = false;
+                exports = exports.filter((module)=>module !== r);
+            };
+        },
+        notifyListeners () {
+            for(let module = arguments.length, require = new Array(module), r = 0; r < module; r++){
+                require[r] = arguments[r];
+            }
+            exports.forEach((module)=>module(...require));
+        }
+    };
+}
+const E = !(typeof window == "undefined" || !window.document || !window.document.createElement);
+function x(module, exports) {
+    exports(window.confirm(module));
+}
+const k = "popstate";
+const T = "hashchange";
+function S() {
+    try {
+        return window.history.state || {};
+    } catch (module) {
+        return {};
+    }
+}
+export function createBrowserHistory(module = {}) {
+    if (!E) {
+        f(false);
+    }
+    const exports = window.history;
+    const require = (()=>{
+        const module = window.navigator.userAgent;
+        return (-1 === module.indexOf("Android 2.") && -1 === module.indexOf("Android 4.0") || -1 === module.indexOf("Mobile Safari") || -1 !== module.indexOf("Chrome") || -1 !== module.indexOf("Windows Phone")) && window.history && "pushState" in window.history;
+    })();
+    const o = !(-1 === window.navigator.userAgent.indexOf("Trident"));
+    const i = module;
+    const a = i.forceRefresh;
+    const u = a !== undefined && a;
+    const l = i.getUserConfirmation;
+    const c = l === undefined ? x : l;
+    const s = i.keyLength;
+    const p = s === undefined ? 6 : s;
+    const parsePath = module.basename ? m(d(module.basename)) : "";
+    function locationsAreEqual(module) {
+        const exports = module || {};
+        const { key: require, state: r } = exports;
+        const o = window.location;
+        let i = o.pathname + o.search + o.hash;
+        if (parsePath) {
+            i = h(i, parsePath);
+        }
+        return createLocation(i, r, require);
+    }
+    function createBrowserHistory() {
+        return Math.random().toString(36).substr(2, p);
+    }
+    const C = w();
+    function P(module) {
+        r.a(q, module);
+        q.length = exports.length;
+        C.notifyListeners(q.location, q.action);
+    }
+    function _(module) {
+        if (!((module)=>module.state === undefined && -1 === navigator.userAgent.indexOf("CriOS"))(module)) {
+            createHashHistory(locationsAreEqual(module.state));
+        }
+    }
+    function j() {
+        createHashHistory(locationsAreEqual(S()));
+    }
+    let R = false;
+    function createHashHistory(module) {
+        if (R) {
+            R = false;
+            P();
+        } else {
+            C.confirmTransitionTo(module, "POP", c, (exports)=>{
+                if (exports) {
+                    P({
+                        action: "POP",
+                        location: module
+                    });
+                } else {
+                    ((module)=>{
+                        const exports = q.location;
+                        let require = createMemoryHistory.indexOf(exports.key);
+                        if (-1 === require) {
+                            require = 0;
+                        }
+                        let r = createMemoryHistory.indexOf(module.key);
+                        if (-1 === r) {
+                            r = 0;
+                        }
+                        const o = require - r;
+                        if (o) {
+                            R = true;
+                            I(o);
+                        }
+                    })(module);
+                }
+            });
+        }
+    }
+    const M = locationsAreEqual(S());
+    let createMemoryHistory = [
+        M.key
+    ];
+    function L(module) {
+        return parsePath + createPath(module);
+    }
+    function I(module) {
+        exports.go(module);
+    }
+    let D = 0;
+    function F(module) {
+        if ((D += module) === 1 && module === 1) {
+            window.addEventListener(k, _);
+            if (o) {
+                window.addEventListener(T, j);
+            }
+        } else if (D === 0) {
+            window.removeEventListener(k, _);
+            if (o) {
+                window.removeEventListener(T, j);
+            }
+        }
+    }
+    let z = false;
+    const q = {
+        length: exports.length,
+        action: "POP",
+        location: M,
+        createHref: L,
+        push (module, r) {
+            const o = createLocation(module, r, createBrowserHistory(), q.location);
+            C.confirmTransitionTo(o, "PUSH", c, (module)=>{
+                if (module) {
+                    const r = L(o);
+                    const { key: i, state: a } = o;
+                    if (require) {
+                        exports.pushState({
+                            key: i,
+                            state: a
+                        }, null, r);
+                        if (u) {
+                            window.location.href = r;
+                        } else {
+                            const l = createMemoryHistory.indexOf(q.location.key);
+                            const c = createMemoryHistory.slice(0, l + 1);
+                            c.push(o.key);
+                            createMemoryHistory = c;
+                            P({
+                                action: "PUSH",
+                                location: o
+                            });
+                        }
+                    } else {
+                        window.location.href = r;
+                    }
+                }
+            });
+        },
+        replace (module, r) {
+            const o = createLocation(module, r, createBrowserHistory(), q.location);
+            C.confirmTransitionTo(o, "REPLACE", c, (module)=>{
+                if (module) {
+                    const r = L(o);
+                    const { key: i, state: a } = o;
+                    if (require) {
+                        exports.replaceState({
+                            key: i,
+                            state: a
+                        }, null, r);
+                        if (u) {
+                            window.location.replace(r);
+                        } else {
+                            const l = createMemoryHistory.indexOf(q.location.key);
+                            if (-1 !== l) {
+                                createMemoryHistory[l] = o.key;
+                            }
+                            P({
+                                action: "REPLACE",
+                                location: o
+                            });
+                        }
+                    } else {
+                        window.location.replace(r);
+                    }
+                }
+            });
+        },
+        go: I,
+        goBack () {
+            I(-1);
+        },
+        goForward () {
+            I(1);
+        },
+        block (module = false) {
+            const exports = C.setPrompt(module);
+            if (!z) {
+                F(1);
+                z = true;
+            }
+            return ()=>{
+                if (z) {
+                    z = false;
+                    F(-1);
+                }
+                return exports();
+            };
+        },
+        listen (module) {
+            const exports = C.appendListener(module);
+            F(1);
+            return ()=>{
+                F(-1);
+                exports();
+            };
+        }
+    };
+    return q;
+}
+const C = "hashchange";
+const P = {
+    hashbang: {
+        encodePath (module) {
+            if (module.charAt(0) === "!") {
+                return module;
+            }
+            return "!/" + p(module);
+        },
+        decodePath (module) {
+            if (module.charAt(0) === "!") {
+                return module.substr(1);
+            }
+            return module;
+        }
+    },
+    noslash: {
+        encodePath: p,
+        decodePath: d
+    },
+    slash: {
+        encodePath: d,
+        decodePath: d
+    }
+};
+function _(module) {
+    const exports = module.indexOf("#");
+    if (-1 === exports) {
+        return module;
+    }
+    return module.slice(0, exports);
+}
+function j() {
+    const module = window.location.href;
+    const exports = module.indexOf("#");
+    if (-1 === exports) {
+        return "";
+    }
+    return module.substring(exports + 1);
+}
+function R(module) {
+    window.location.replace(_(window.location.href) + "#" + module);
+}
+export function createHashHistory(module = {}) {
+    if (!E) {
+        f(false);
+    }
+    const exports = window.history;
+    window.navigator.userAgent.indexOf("Firefox");
+    const require = module;
+    const o = require.getUserConfirmation;
+    const i = o === undefined ? x : o;
+    const a = require.hashType;
+    const u = a === undefined ? "slash" : a;
+    const l = module.basename ? m(d(module.basename)) : "";
+    const c = P[u];
+    const { encodePath: s, decodePath: p } = c;
+    function parsePath() {
+        let module = p(j());
+        if (l) {
+            module = h(module, l);
+        }
+        return createLocation(module);
+    }
+    const locationsAreEqual = w();
+    function k(module) {
+        r.a(q, module);
+        q.length = exports.length;
+        locationsAreEqual.notifyListeners(q.location, q.action);
+    }
+    let T = false;
+    let S = null;
+    function createBrowserHistory() {
+        const module = j();
+        const exports = s(module);
+        if (module !== exports) {
+            R(exports);
+        } else {
+            const require = parsePath();
+            const r = q.location;
+            if (!T && ((module, exports)=>module.pathname === exports.pathname && module.search === exports.search && module.hash === exports.hash)(r, require)) {
+                return;
+            }
+            if (S === createPath(require)) {
+                return;
+            }
+            S = null;
+            ((module)=>{
+                if (T) {
+                    T = false;
+                    k();
+                } else {
+                    locationsAreEqual.confirmTransitionTo(module, "POP", i, (exports)=>{
+                        if (exports) {
+                            k({
+                                action: "POP",
+                                location: module
+                            });
+                        } else {
+                            ((module)=>{
+                                const exports = q.location;
+                                let require = L.lastIndexOf(createPath(exports));
+                                if (-1 === require) {
+                                    require = 0;
+                                }
+                                let r = L.lastIndexOf(createPath(module));
+                                if (-1 === r) {
+                                    r = 0;
+                                }
+                                const o = require - r;
+                                if (o) {
+                                    T = true;
+                                    I(o);
+                                }
+                            })(module);
+                        }
+                    });
+                }
+            })(require);
+        }
+    }
+    const createHashHistory = j();
+    const M = s(createHashHistory);
+    if (createHashHistory !== M) {
+        R(M);
+    }
+    const createMemoryHistory = parsePath();
+    let L = [
+        createPath(createMemoryHistory)
+    ];
+    function I(module) {
+        exports.go(module);
+    }
+    let D = 0;
+    function F(module) {
+        if ((D += module) === 1 && module === 1) {
+            window.addEventListener(C, createBrowserHistory);
+        } else if (D === 0) {
+            window.removeEventListener(C, createBrowserHistory);
+        }
+    }
+    let z = false;
+    const q = {
+        length: exports.length,
+        action: "POP",
+        location: createMemoryHistory,
+        createHref (module) {
+            const exports = document.querySelector("base");
+            let require = "";
+            if (exports && exports.getAttribute("href")) {
+                require = _(window.location.href);
+            }
+            return require + "#" + s(l + createPath(module));
+        },
+        push (module, exports) {
+            const require = createLocation(module, undefined, undefined, q.location);
+            locationsAreEqual.confirmTransitionTo(require, "PUSH", i, (module)=>{
+                if (module) {
+                    const exports = createPath(require);
+                    const r = s(l + exports);
+                    if (j() !== r) {
+                        S = exports;
+                        ((module)=>{
+                            window.location.hash = module;
+                        })(r);
+                        const o = L.lastIndexOf(createPath(q.location));
+                        const i = L.slice(0, o + 1);
+                        i.push(exports);
+                        L = i;
+                        k({
+                            action: "PUSH",
+                            location: require
+                        });
+                    } else {
+                        k();
+                    }
+                }
+            });
+        },
+        replace (module, exports) {
+            const require = createLocation(module, undefined, undefined, q.location);
+            locationsAreEqual.confirmTransitionTo(require, "REPLACE", i, (module)=>{
+                if (module) {
+                    const exports = createPath(require);
+                    const r = s(l + exports);
+                    if (j() !== r) {
+                        S = exports;
+                        R(r);
+                    }
+                    const o = L.indexOf(createPath(q.location));
+                    if (-1 !== o) {
+                        L[o] = exports;
+                    }
+                    k({
+                        action: "REPLACE",
+                        location: require
+                    });
+                }
+            });
+        },
+        go: I,
+        goBack () {
+            I(-1);
+        },
+        goForward () {
+            I(1);
+        },
+        block (module = false) {
+            const exports = locationsAreEqual.setPrompt(module);
+            if (!z) {
+                F(1);
+                z = true;
+            }
+            return ()=>{
+                if (z) {
+                    z = false;
+                    F(-1);
+                }
+                return exports();
+            };
+        },
+        listen (module) {
+            const exports = locationsAreEqual.appendListener(module);
+            F(1);
+            return ()=>{
+                F(-1);
+                exports();
+            };
+        }
+    };
+    return q;
+}
+function M(module, exports, require) {
+    return Math.min(Math.max(module, exports), require);
+}
+export function createMemoryHistory(module = {}) {
+    const exports = module;
+    const { getUserConfirmation: require, initialEntries: o } = exports;
+    const i = o === undefined ? [
+        "/"
+    ] : o;
+    const a = exports.initialIndex;
+    const u = a === undefined ? 0 : a;
+    const l = exports.keyLength;
+    const c = l === undefined ? 6 : l;
+    const s = w();
+    function f(module) {
+        r.a(locationsAreEqual, module);
+        locationsAreEqual.length = locationsAreEqual.entries.length;
+        s.notifyListeners(locationsAreEqual.location, locationsAreEqual.action);
+    }
+    function d() {
+        return Math.random().toString(36).substr(2, c);
+    }
+    const p = M(u, 0, i.length - 1);
+    const h = i.map((module)=>createLocation(module, undefined, typeof module == "string" ? d() : module.key || d()));
+    function parsePath(module) {
+        const exports = M(locationsAreEqual.index + module, 0, locationsAreEqual.entries.length - 1);
+        const r = locationsAreEqual.entries[exports];
+        s.confirmTransitionTo(r, "POP", require, (module)=>{
+            if (module) {
+                f({
+                    action: "POP",
+                    location: r,
+                    index: exports
+                });
+            } else {
+                f();
+            }
+        });
+    }
+    const locationsAreEqual = {
+        length: h.length,
+        action: "POP",
+        location: h[p],
+        index: p,
+        entries: h,
+        createHref: createPath,
+        push (module, exports) {
+            const r = createLocation(module, exports, d(), locationsAreEqual.location);
+            s.confirmTransitionTo(r, "PUSH", require, (module)=>{
+                if (module) {
+                    const exports = locationsAreEqual.index + 1;
+                    const require = locationsAreEqual.entries.slice(0);
+                    if (require.length > exports) {
+                        require.splice(exports, require.length - exports, r);
+                    } else {
+                        require.push(r);
+                    }
+                    f({
+                        action: "PUSH",
+                        location: r,
+                        index: exports,
+                        entries: require
+                    });
+                }
+            });
+        },
+        replace (module, exports) {
+            const r = createLocation(module, exports, d(), locationsAreEqual.location);
+            s.confirmTransitionTo(r, "REPLACE", require, (module)=>{
+                if (module) {
+                    locationsAreEqual.entries[locationsAreEqual.index] = r;
+                    f({
+                        action: "REPLACE",
+                        location: r
+                    });
+                }
+            });
+        },
+        go: parsePath,
+        goBack () {
+            parsePath(-1);
+        },
+        goForward () {
+            parsePath(1);
+        },
+        canGo (module) {
+            const exports = locationsAreEqual.index + module;
+            return exports >= 0 && exports < locationsAreEqual.entries.length;
+        },
+        block (module = false) {
+            return s.setPrompt(module);
+        },
+        listen (module) {
+            return s.appendListener(module);
+        }
+    };
+    return locationsAreEqual;
+}

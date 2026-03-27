@@ -1,0 +1,27 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import r from "./module-11.js";
+import i from "./module-18.js";
+import a from "./module-8.js";
+const o = c(require("./module-22.js"));
+const u = c(require("./module-27.js"));
+const l = c(require("./module-33.js"));
+function c(module) {
+    if (module && module.__esModule) {
+        return module;
+    }
+    return {
+        default: module
+    };
+}
+const s = exports.history = a.createBrowserHistory();
+const f = o.default();
+const d = [
+    i.routerMiddleware(s),
+    f
+];
+const p = r.createStore(u.default, r.applyMiddleware.apply(undefined, d));
+f.run(l.default);
+export default p;

@@ -1,0 +1,51 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+const r = {
+    childContextTypes: true,
+    contextTypes: true,
+    defaultProps: true,
+    displayName: true,
+    getDefaultProps: true,
+    getDerivedStateFromProps: true,
+    mixins: true,
+    propTypes: true,
+    type: true
+};
+const o = {
+    name: true,
+    length: true,
+    prototype: true,
+    caller: true,
+    callee: true,
+    arguments: true,
+    arity: true
+};
+const { defineProperty, getOwnPropertyNames, getOwnPropertySymbols, getOwnPropertyDescriptor, getPrototypeOf } = Object;
+const s = getPrototypeOf && getPrototypeOf(Object);
+export default (function module(exports, require, f) {
+    if (typeof require != "string") {
+        if (s) {
+            const d = getPrototypeOf(require);
+            if (d && d !== s) {
+                module(exports, d, f);
+            }
+        }
+        let p = getOwnPropertyNames(require);
+        if (getOwnPropertySymbols) {
+            p = p.concat(getOwnPropertySymbols(require));
+        }
+        for(let h = 0; h < p.length; ++h){
+            const m = p[h];
+            if (!(r[m] || o[m] || f && f[m])) {
+                const y = getOwnPropertyDescriptor(require, m);
+                try {
+                    defineProperty(exports, m, y);
+                } catch (module) {}
+            }
+        }
+        return exports;
+    }
+    return exports;
+});

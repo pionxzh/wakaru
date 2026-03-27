@@ -1,0 +1,91 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import r from "./module-0.js";
+export { s as a };
+const o = "Channel's Buffer overflow!";
+const i = 1;
+const a = 3;
+const u = 4;
+const l = {
+    isEmpty: r.r,
+    put: r.u,
+    take: r.u
+};
+function c(module = 10) {
+    const exports = arguments[1];
+    let require = new Array(module);
+    let r = 0;
+    let l = 0;
+    let c = 0;
+    const s = (exports)=>{
+        require[l] = exports;
+        l = (l + 1) % module;
+        r++;
+    };
+    const f = ()=>{
+        if (r != 0) {
+            const exports = require[c];
+            require[c] = null;
+            r--;
+            c = (c + 1) % module;
+            return exports;
+        }
+    };
+    const d = ()=>{
+        const module = [];
+        while(r){
+            module.push(f());
+        }
+        return module;
+    };
+    return {
+        isEmpty () {
+            return r == 0;
+        },
+        put (f) {
+            if (r < module) {
+                s(f);
+            } else {
+                let p = undefined;
+                switch(exports){
+                    case i:
+                        throw new Error(o);
+                    case a:
+                        require[l] = f;
+                        c = l = (l + 1) % module;
+                        break;
+                    case u:
+                        p = 2 * module;
+                        require = d();
+                        r = require.length;
+                        l = require.length;
+                        c = 0;
+                        require.length = p;
+                        module = p;
+                        s(f);
+                }
+            }
+        },
+        take: f,
+        flush: d
+    };
+}
+const s = {
+    none () {
+        return l;
+    },
+    fixed (module) {
+        return c(module, i);
+    },
+    dropping (module) {
+        return c(module, 2);
+    },
+    sliding (module) {
+        return c(module, a);
+    },
+    expanding (module) {
+        return c(module, u);
+    }
+};

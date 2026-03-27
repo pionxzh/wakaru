@@ -1,0 +1,69 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+const r = typeof Symbol == "function" && Symbol.for;
+export const Element = r ? Symbol.for("react.element") : 60103;
+export const Portal = r ? Symbol.for("react.portal") : 60106;
+export const Fragment = r ? Symbol.for("react.fragment") : 60107;
+export const StrictMode = r ? Symbol.for("react.strict_mode") : 60108;
+export const Profiler = r ? Symbol.for("react.profiler") : 60114;
+export const ContextProvider = r ? Symbol.for("react.provider") : 60109;
+export const ContextConsumer = r ? Symbol.for("react.context") : 60110;
+export const AsyncMode = r ? Symbol.for("react.async_mode") : 60111;
+export const ConcurrentMode = r ? Symbol.for("react.concurrent_mode") : 60111;
+export const ForwardRef = r ? Symbol.for("react.forward_ref") : 60112;
+export const Suspense = r ? Symbol.for("react.suspense") : 60113;
+const m = r ? Symbol.for("react.suspense_list") : 60120;
+export const Memo = r ? Symbol.for("react.memo") : 60115;
+export const Lazy = r ? Symbol.for("react.lazy") : 60116;
+const b = r ? Symbol.for("react.block") : 60121;
+const g = r ? Symbol.for("react.fundamental") : 60117;
+const w = r ? Symbol.for("react.responder") : 60118;
+const E = r ? Symbol.for("react.scope") : 60119;
+export function typeOf(module) {
+    if (typeof module == "object" && module !== null) {
+        const exports = module.$$typeof;
+        switch(exports){
+            case Element:
+                switch(module = module.type){
+                    case AsyncMode:
+                    case ConcurrentMode:
+                    case Fragment:
+                    case Profiler:
+                    case StrictMode:
+                    case Suspense:
+                        return module;
+                    default:
+                        switch(module = module && module.$$typeof){
+                            case ContextConsumer:
+                            case ForwardRef:
+                            case Lazy:
+                            case Memo:
+                            case ContextProvider:
+                                return module;
+                            default:
+                                return exports;
+                        }
+                }
+            case Portal:
+                return exports;
+        }
+    }
+}
+export function isConcurrentMode(module) {
+    return typeOf(module) === ConcurrentMode;
+}
+export const isAsyncMode = (module)=>isConcurrentMode(module) || typeOf(module) === AsyncMode;
+export const isContextConsumer = (module)=>typeOf(module) === ContextConsumer;
+export const isContextProvider = (module)=>typeOf(module) === ContextProvider;
+export const isElement = (module)=>typeof module == "object" && module !== null && module.$$typeof === Element;
+export const isForwardRef = (module)=>typeOf(module) === ForwardRef;
+export const isFragment = (module)=>typeOf(module) === Fragment;
+export const isLazy = (module)=>typeOf(module) === Lazy;
+export const isMemo = (module)=>typeOf(module) === Memo;
+export const isPortal = (module)=>typeOf(module) === Portal;
+export const isProfiler = (module)=>typeOf(module) === Profiler;
+export const isStrictMode = (module)=>typeOf(module) === StrictMode;
+export const isSuspense = (module)=>typeOf(module) === Suspense;
+export const isValidElementType = (module)=>typeof module == "string" || typeof module == "function" || module === Fragment || module === ConcurrentMode || module === Profiler || module === StrictMode || module === Suspense || module === m || typeof module == "object" && module !== null && (module.$$typeof === Lazy || module.$$typeof === Memo || module.$$typeof === ContextProvider || module.$$typeof === ContextConsumer || module.$$typeof === ForwardRef || module.$$typeof === g || module.$$typeof === w || module.$$typeof === E || module.$$typeof === b);

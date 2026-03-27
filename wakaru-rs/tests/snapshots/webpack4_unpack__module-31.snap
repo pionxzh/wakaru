@@ -1,0 +1,19 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+export function a(module) {
+    let exports;
+    const require = module.Symbol;
+    if (typeof require == "function") {
+        if (require.observable) {
+            exports = require.observable;
+        } else {
+            exports = require("observable");
+            require.observable = exports;
+        }
+    } else {
+        exports = "@@observable";
+    }
+    return exports;
+}

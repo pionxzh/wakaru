@@ -1,0 +1,50 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import "./module-22.js";
+import r from "./module-17.js";
+import o from "./module-25.js";
+import i from "./module-19.js";
+const a = regeneratorRuntime.mark(l);
+const u = regeneratorRuntime.mark(c);
+function l() {
+    return regeneratorRuntime.wrap((module)=>{
+        while(true){
+            switch(module.prev = module.next){
+                case 0:
+                    module.next = 3;
+                    return r.take(i.FETCH_DATA);
+                case 3:
+                    module.next = 5;
+                    return r.put(o.startFetchingData());
+                case 5:
+                    module.next = 7;
+                    return r.put(o.fetchDataSuccess([]));
+                case 7:
+                    module.next = 0;
+                    break;
+                case 9:
+                case "end":
+                    return module.stop();
+            }
+        }
+    }, a, this);
+}
+function c() {
+    return regeneratorRuntime.wrap((module)=>{
+        while(true){
+            switch(module.prev = module.next){
+                case 0:
+                    module.next = 2;
+                    return r.all([
+                        l()
+                    ]);
+                case 2:
+                case "end":
+                    return module.stop();
+            }
+        }
+    }, u, this);
+}
+export default c;

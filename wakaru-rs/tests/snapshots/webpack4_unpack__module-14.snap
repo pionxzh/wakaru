@@ -1,0 +1,203 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import r from "./module-40.js";
+export default h;
+export const compile = (module, exports)=>tokensToFunction(parse(module, exports), exports);
+const o = new RegExp([
+    "(\\\\.)",
+    "([\\/.])?(?:(?:\\:(\\w+)(?:\\(((?:\\\\.|[^\\\\()])+)\\))?|\\(((?:\\\\.|[^\\\\()])+)\\))([+*?])?|(\\*))"
+].join("|"), "g");
+export function parse(module, exports) {
+    let require;
+    const r = [];
+    let parse = 0;
+    let a = 0;
+    let u = "";
+    const tokensToFunction = exports && exports.delimiter || "/";
+    while((require = o.exec(module)) != null){
+        const f = require[0];
+        const d = require[1];
+        const tokensToRegExp = require.index;
+        u += module.slice(a, tokensToRegExp);
+        a = tokensToRegExp + f.length;
+        if (d) {
+            u += d[1];
+        } else {
+            const h = module[a];
+            const [, , m, y, v, b, g, w] = require;
+            if (u) {
+                r.push(u);
+                u = "";
+            }
+            const E = m != null && h != null && h !== m;
+            const x = g === "+" || g === "*";
+            const k = g === "?" || g === "*";
+            const T = require[2] || tokensToFunction;
+            const S = v || b;
+            r.push({
+                name: y || parse++,
+                prefix: m || "",
+                delimiter: T,
+                optional: k,
+                repeat: x,
+                partial: E,
+                asterisk: !!w,
+                pattern: S ? s(S) : w ? ".*" : "[^" + c(T) + "]+?"
+            });
+        }
+    }
+    if (a < module.length) {
+        u += module.substr(a);
+    }
+    if (u) {
+        r.push(u);
+    }
+    return r;
+}
+function a(module) {
+    return encodeURI(module).replace(/[\/?#]/g, (module)=>"%" + module.charCodeAt(0).toString(16).toUpperCase());
+}
+function u(module) {
+    return encodeURI(module).replace(/[?#]/g, (module)=>"%" + module.charCodeAt(0).toString(16).toUpperCase());
+}
+export function tokensToFunction(module, exports) {
+    const require = new Array(module.length);
+    for(let o = 0; o < module.length; o++){
+        if (typeof module[o] == "object") {
+            require[o] = new RegExp("^(?:" + module[o].pattern + ")$", d(exports));
+        }
+    }
+    return (exports, o)=>{
+        let parse = "";
+        const tokensToFunction = exports || {};
+        const c = (o || {}).pretty ? a : encodeURIComponent;
+        for(let s = 0; s < module.length; s++){
+            const f = module[s];
+            if (typeof f != "string") {
+                let d;
+                const tokensToRegExp = tokensToFunction[f.name];
+                if (tokensToRegExp == null) {
+                    if (f.optional) {
+                        if (f.partial) {
+                            parse += f.prefix;
+                        }
+                        continue;
+                    }
+                    throw new TypeError('Expected "' + f.name + '" to be defined');
+                }
+                if (r(tokensToRegExp)) {
+                    if (!f.repeat) {
+                        throw new TypeError('Expected "' + f.name + '" to not repeat, but received `' + JSON.stringify(tokensToRegExp) + "`");
+                    }
+                    if (tokensToRegExp.length === 0) {
+                        if (f.optional) {
+                            continue;
+                        }
+                        throw new TypeError('Expected "' + f.name + '" to not be empty');
+                    }
+                    for(let h = 0; h < tokensToRegExp.length; h++){
+                        d = c(tokensToRegExp[h]);
+                        if (!require[s].test(d)) {
+                            throw new TypeError('Expected all "' + f.name + '" to match "' + f.pattern + '", but received `' + JSON.stringify(d) + "`");
+                        }
+                        parse += (h === 0 ? f.prefix : f.delimiter) + d;
+                    }
+                } else {
+                    d = f.asterisk ? u(tokensToRegExp) : c(tokensToRegExp);
+                    if (!require[s].test(d)) {
+                        throw new TypeError('Expected "' + f.name + '" to match "' + f.pattern + '", but received "' + d + '"');
+                    }
+                    parse += f.prefix + d;
+                }
+            } else {
+                parse += f;
+            }
+        }
+        return parse;
+    };
+}
+function c(module) {
+    return module.replace(/([.+*?=^!:${}()[\]|\/\\])/g, "\\$1");
+}
+function s(module) {
+    return module.replace(/([=!:$\/()])/g, "\\$1");
+}
+function f(module, exports) {
+    module.keys = exports;
+    return module;
+}
+function d(module) {
+    if (module && module.sensitive) {
+        return "";
+    }
+    return "i";
+}
+export function tokensToRegExp(module, exports, require) {
+    if (!r(exports)) {
+        require = exports || require;
+        exports = [];
+    }
+    const o = (require = require || {}).strict;
+    const parse = require.end !== false;
+    let a = "";
+    for(let u = 0; u < module.length; u++){
+        const tokensToFunction = module[u];
+        if (typeof tokensToFunction == "string") {
+            a += c(tokensToFunction);
+        } else {
+            const s = c(tokensToFunction.prefix);
+            let tokensToRegExp = "(?:" + tokensToFunction.pattern + ")";
+            exports.push(tokensToFunction);
+            if (tokensToFunction.repeat) {
+                tokensToRegExp += "(?:" + s + tokensToRegExp + ")*";
+            }
+            a += tokensToRegExp = tokensToFunction.optional ? tokensToFunction.partial ? s + "(" + tokensToRegExp + ")?" : "(?:" + s + "(" + tokensToRegExp + "))?" : s + "(" + tokensToRegExp + ")";
+        }
+    }
+    const h = c(require.delimiter || "/");
+    const m = a.slice(-h.length) === h;
+    if (!o) {
+        a = (m ? a.slice(0, -h.length) : a) + "(?:" + h + "(?=$))?";
+    }
+    a += parse ? "$" : o && m ? "" : "(?=" + h + "|$)";
+    return f(new RegExp("^" + a, d(require)), exports);
+}
+function h(module, exports, require) {
+    if (!r(exports)) {
+        require = exports || require;
+        exports = [];
+    }
+    require = require || {};
+    if (module instanceof RegExp) {
+        return ((module, exports)=>{
+            const require = module.source.match(/\((?!\?)/g);
+            if (require) {
+                for(let r = 0; r < require.length; r++){
+                    exports.push({
+                        name: r,
+                        prefix: null,
+                        delimiter: null,
+                        optional: false,
+                        repeat: false,
+                        partial: false,
+                        asterisk: false,
+                        pattern: null
+                    });
+                }
+            }
+            return f(module, exports);
+        })(module, exports);
+    }
+    if (r(module)) {
+        return ((module, exports, require)=>{
+            const r = [];
+            for(let o = 0; o < module.length; o++){
+                r.push(h(module[o], exports, require).source);
+            }
+            return f(new RegExp("(?:" + r.join("|") + ")", d(require)), exports);
+        })(module, exports, require);
+    }
+    return ((module, exports, require)=>tokensToRegExp(parse(module, require), exports, require))(module, exports, require);
+}

@@ -1,0 +1,15 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+const r = ((module)=>{
+    if (module && module.__esModule) {
+        return module;
+    }
+    return {
+        default: module
+    };
+})(require("./module-28.js"));
+export default {
+    FrontPage: r.default
+};

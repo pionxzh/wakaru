@@ -1,0 +1,218 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import r from "./module-0.js";
+import l from "./module-2.js";
+import c from "./module-6.js";
+import d from "./module-9.js";
+const o = {
+    done: true,
+    value: undefined
+};
+const i = {};
+function a(module) {
+    if (r.q.channel(module)) {
+        return "channel";
+    }
+    if (Array.isArray(module)) {
+        return String(module.map((module)=>String(module)));
+    }
+    return String(module);
+}
+function u(module, exports, require = "iterator") {
+    let a = undefined;
+    let u = exports;
+    function l(exports, require) {
+        if (u === i) {
+            return o;
+        }
+        if (require) {
+            u = i;
+            throw require;
+        }
+        if (a) {
+            a(exports);
+        }
+        const r = module[u]();
+        const [l, c, b] = r;
+        a = b;
+        if ((u = l) === i) {
+            return o;
+        }
+        return c;
+    }
+    return r.t(l, (module)=>l(null, module), require, true);
+}
+export function b(module, exports) {
+    for(let require = arguments.length, r = Array(require > 2 ? require - 2 : 0), o = 2; o < require; o++){
+        r[o - 2] = arguments[o];
+    }
+    const b = {
+        done: false,
+        value: l.s(module)
+    };
+    let f = undefined;
+    const d = (module)=>f = module;
+    return u({
+        q1 () {
+            return [
+                "q2",
+                b,
+                d
+            ];
+        },
+        q2 () {
+            if (f === c.a) {
+                return [
+                    i
+                ];
+            }
+            return [
+                "q1",
+                ((module)=>{
+                    return {
+                        done: false,
+                        value: l.k.apply(undefined, [
+                            exports
+                        ].concat(r, [
+                            module
+                        ]))
+                    };
+                })(f)
+            ];
+        }
+    }, "q1", "takeEvery(" + a(module) + ", " + exports.name + ")");
+}
+function f(module, exports) {
+    for(let require = arguments.length, r = Array(require > 2 ? require - 2 : 0), o = 2; o < require; o++){
+        r[o - 2] = arguments[o];
+    }
+    const b = {
+        done: false,
+        value: l.s(module)
+    };
+    const f = (module)=>{
+        return {
+            done: false,
+            value: l.k.apply(undefined, [
+                exports
+            ].concat(r, [
+                module
+            ]))
+        };
+    };
+    let d = undefined;
+    let p = undefined;
+    const h = (module)=>d = module;
+    const m = (module)=>p = module;
+    return u({
+        q1 () {
+            return [
+                "q2",
+                b,
+                m
+            ];
+        },
+        q2 () {
+            if (p === c.a) {
+                return [
+                    i
+                ];
+            }
+            if (d) {
+                return [
+                    "q3",
+                    ((module)=>{
+                        return {
+                            done: false,
+                            value: l.f(module)
+                        };
+                    })(d)
+                ];
+            }
+            return [
+                "q1",
+                f(p),
+                h
+            ];
+        },
+        q3 () {
+            return [
+                "q1",
+                f(p),
+                h
+            ];
+        }
+    }, "q1", "takeLatest(" + a(module) + ", " + exports.name + ")");
+}
+function p(module, exports, require) {
+    for(let o = arguments.length, b = Array(o > 3 ? o - 3 : 0), f = 3; f < o; f++){
+        b[f - 3] = arguments[f];
+    }
+    let p = undefined;
+    let h = undefined;
+    const m = {
+        done: false,
+        value: l.a(exports, d.a.sliding(1))
+    };
+    const y = {
+        done: false,
+        value: l.e(r.m, module)
+    };
+    const e = (module)=>p = module;
+    const b = (module)=>h = module;
+    return u({
+        q1 () {
+            return [
+                "q2",
+                m,
+                b
+            ];
+        },
+        q2 () {
+            return [
+                "q3",
+                {
+                    done: false,
+                    value: l.s(h)
+                },
+                e
+            ];
+        },
+        q3 () {
+            if (p === c.a) {
+                return [
+                    i
+                ];
+            }
+            return [
+                "q4",
+                ((module)=>{
+                    return {
+                        done: false,
+                        value: l.k.apply(undefined, [
+                            require
+                        ].concat(b, [
+                            module
+                        ]))
+                    };
+                })(p)
+            ];
+        },
+        q4 () {
+            return [
+                "q2",
+                y
+            ];
+        }
+    }, "q1", "throttle(" + a(exports) + ", " + require.name + ")");
+}
+export { m as a };
+export { y as c };
+export { f as d };
+export { p as f };
+const h = (module)=>"import { " + module + " } from 'redux-saga' has been deprecated in favor of import { " + module + " } from 'redux-saga/effects'.\nThe latter will not work with yield*, as helper effects are wrapped automatically for you in fork effect.\nTherefore yield " + module + " will return task descriptor to your saga and execute next lines of code.";
+const m = r.n(b, h("takeEvery"));
+const y = r.n(f, h("takeLatest"));
+export const e = r.n(p, h("throttle"));

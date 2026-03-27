@@ -1,0 +1,5 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+export default Array.isArray || ((module)=>Object.prototype.toString.call(module) == "[object Array]");

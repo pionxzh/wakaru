@@ -1,0 +1,620 @@
+---
+source: tests/webpack4_unpack.rs
+expression: code
+---
+import i from "./module-3.js";
+import u from "./module-1.js";
+import h from "./module-7.js";
+import y from "./module-32.js";
+import b from "./module-5.js";
+import w from "./module-20.js";
+import N from "./module-11.js";
+function r(module, exports) {
+    return (r = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : (module, exports)=>{
+        module.__proto__ = exports;
+        return module;
+    })(module, exports);
+}
+function o(module, exports) {
+    module.prototype = Object.create(exports.prototype);
+    module.prototype.constructor = module;
+    r(module, exports);
+}
+const c = u.shape({
+    trySubscribe: u.func.isRequired,
+    tryUnsubscribe: u.func.isRequired,
+    notifyNestedSubs: u.func.isRequired,
+    isSubscribed: u.func.isRequired
+});
+const s = u.shape({
+    subscribe: u.func.isRequired,
+    dispatch: u.func.isRequired,
+    getState: u.func.isRequired
+});
+i.forwardRef;
+export function createProvider(module = "store") {
+    let exports;
+    const require = module + "Subscription";
+    const r = ((exports)=>{
+        o(a, exports);
+        const r = a.prototype;
+        function a(require, r) {
+            let o;
+            o = exports.call(this, require, r) || this;
+            o[module] = require.store;
+            return o;
+        }
+        r.getChildContext = function() {
+            let exports;
+            exports = {};
+            exports[module] = this[module];
+            exports[require] = null;
+            return exports;
+        };
+        r.render = function() {
+            return i.Children.only(this.props.children);
+        };
+        return a;
+    })(i.Component);
+    r.propTypes = {
+        store: s.isRequired,
+        children: u.element.isRequired
+    };
+    r.childContextTypes = ((exports = {})[module] = s.isRequired, exports[require] = c, exports);
+    return r;
+}
+export const Provider = createProvider();
+function p(module) {
+    if (module === undefined) {
+        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    }
+    return module;
+}
+function m(module, exports) {
+    if (module == null) {
+        return {};
+    }
+    let require;
+    let r;
+    const o = {};
+    const i = Object.keys(module);
+    for(r = 0; r < i.length; r++){
+        require = i[r];
+        if (!(exports.indexOf(require) >= 0)) {
+            o[require] = module[require];
+        }
+    }
+    return o;
+}
+const E = null;
+const x = {
+    notify () {}
+};
+class k {
+    constructor(module, exports, require){
+        this.store = module;
+        this.parentSub = exports;
+        this.onStateChange = require;
+        this.unsubscribe = null;
+        this.listeners = x;
+    }
+    addNestedSub(module) {
+        this.trySubscribe();
+        return this.listeners.subscribe(module);
+    }
+    notifyNestedSubs() {
+        this.listeners.notify();
+    }
+    isSubscribed() {
+        return Boolean(this.unsubscribe);
+    }
+    trySubscribe() {
+        if (!this.unsubscribe) {
+            this.unsubscribe = this.parentSub ? this.parentSub.addNestedSub(this.onStateChange) : this.store.subscribe(this.onStateChange);
+            this.listeners = (()=>{
+                let module = [];
+                let exports = [];
+                return {
+                    clear () {
+                        exports = E;
+                        module = E;
+                    },
+                    notify () {
+                        for(let require = module = exports, r = 0; r < require.length; r++){
+                            require[r]();
+                        }
+                    },
+                    get () {
+                        return exports;
+                    },
+                    subscribe (require) {
+                        let r = true;
+                        if (exports === module) {
+                            exports = module.slice();
+                        }
+                        exports.push(require);
+                        return ()=>{
+                            if (r && module !== E) {
+                                r = false;
+                                if (exports === module) {
+                                    exports = module.slice();
+                                }
+                                exports.splice(exports.indexOf(require), 1);
+                            }
+                        };
+                    }
+                };
+            })();
+        }
+    }
+    tryUnsubscribe() {
+        if (this.unsubscribe) {
+            this.unsubscribe();
+            this.unsubscribe = null;
+            this.listeners.clear();
+            this.listeners = x;
+        }
+    }
+}
+const T = i.forwardRef !== undefined;
+let S = 0;
+const O = {};
+function C() {}
+export function connectAdvanced(module, exports = {}) {
+    let require;
+    let r;
+    const a = exports;
+    const u = a.getDisplayName;
+    const l = u === undefined ? (module)=>"ConnectAdvanced(" + module + ")" : u;
+    const createProvider = a.methodName;
+    const Provider = createProvider === undefined ? "connectAdvanced" : createProvider;
+    const y = a.renderCountProp;
+    const b = y === undefined ? undefined : y;
+    const E = a.shouldHandleStateChanges;
+    const x = E === undefined || E;
+    const connectAdvanced = a.storeKey;
+    const _ = connectAdvanced === undefined ? "store" : connectAdvanced;
+    const j = a.withRef;
+    const R = j !== undefined && j;
+    const N = m(a, [
+        "getDisplayName",
+        "methodName",
+        "renderCountProp",
+        "shouldHandleStateChanges",
+        "storeKey",
+        "withRef"
+    ]);
+    const M = _ + "Subscription";
+    const A = S++;
+    require = {};
+    require[_] = s;
+    require[M] = c;
+    const L = require;
+    r = {};
+    r[M] = c;
+    const I = r;
+    return (exports)=>{
+        b(w.isValidElementType(exports), "You must pass a component to the function returned by " + Provider + ". Instead received " + JSON.stringify(exports));
+        const require = exports.displayName || exports.name || "Component";
+        const r = l(require);
+        const a = h.a({}, N, {
+            getDisplayName: l,
+            methodName: Provider,
+            renderCountProp: b,
+            shouldHandleStateChanges: x,
+            storeKey: _,
+            withRef: R,
+            displayName: r,
+            wrappedComponentName: require,
+            WrappedComponent: exports
+        });
+        const u = ((require)=>{
+            function u(module, exports) {
+                let o;
+                o = require.call(this, module, exports) || this;
+                o.version = A;
+                o.state = {};
+                o.renderCount = 0;
+                o.store = module[_] || exports[_];
+                o.propsMode = Boolean(module[_]);
+                o.setWrappedInstance = o.setWrappedInstance.bind(p(p(o)));
+                b(o.store, 'Could not find "' + _ + '" in either the context or props of "' + r + '". Either wrap the root component in a <Provider>, or explicitly pass "' + _ + '" as a prop to "' + r + '".');
+                o.initSelector();
+                o.initSubscription();
+                return o;
+            }
+            o(u, require);
+            const l = u.prototype;
+            l.getChildContext = function() {
+                let module;
+                const exports = this.propsMode ? null : this.subscription;
+                module = {};
+                module[M] = exports || this.context[M];
+                return module;
+            };
+            l.componentDidMount = function() {
+                if (x) {
+                    this.subscription.trySubscribe();
+                    this.selector.run(this.props);
+                    if (this.selector.shouldComponentUpdate) {
+                        this.forceUpdate();
+                    }
+                }
+            };
+            l.componentWillReceiveProps = function(module) {
+                this.selector.run(module);
+            };
+            l.shouldComponentUpdate = function() {
+                return this.selector.shouldComponentUpdate;
+            };
+            l.componentWillUnmount = function() {
+                if (this.subscription) {
+                    this.subscription.tryUnsubscribe();
+                }
+                this.subscription = null;
+                this.notifyNestedSubs = C;
+                this.store = null;
+                this.selector.run = C;
+                this.selector.shouldComponentUpdate = false;
+            };
+            l.getWrappedInstance = function() {
+                b(R, "To access the wrapped instance, you need to specify { withRef: true } in the options argument of the " + Provider + "() call.");
+                return this.wrappedInstance;
+            };
+            l.setWrappedInstance = function(module) {
+                this.wrappedInstance = module;
+            };
+            l.initSelector = function() {
+                const exports = module(this.store.dispatch, a);
+                this.selector = ((module, exports)=>{
+                    const require = {
+                        run (r) {
+                            try {
+                                const o = module(exports.getState(), r);
+                                if (o !== require.props || require.error) {
+                                    require.shouldComponentUpdate = true;
+                                    require.props = o;
+                                    require.error = null;
+                                }
+                            } catch (module) {
+                                require.shouldComponentUpdate = true;
+                                require.error = module;
+                            }
+                        }
+                    };
+                    return require;
+                })(exports, this.store);
+                this.selector.run(this.props);
+            };
+            l.initSubscription = function() {
+                if (x) {
+                    const module = (this.propsMode ? this.props : this.context)[M];
+                    this.subscription = new k(this.store, module, this.onStateChange.bind(this));
+                    this.notifyNestedSubs = this.subscription.notifyNestedSubs.bind(this.subscription);
+                }
+            };
+            l.onStateChange = function() {
+                this.selector.run(this.props);
+                if (this.selector.shouldComponentUpdate) {
+                    this.componentDidUpdate = this.notifyNestedSubsOnComponentDidUpdate;
+                    this.setState(O);
+                } else {
+                    this.notifyNestedSubs();
+                }
+            };
+            l.notifyNestedSubsOnComponentDidUpdate = function() {
+                this.componentDidUpdate = undefined;
+                this.notifyNestedSubs();
+            };
+            l.isSubscribed = function() {
+                return Boolean(this.subscription) && this.subscription.isSubscribed();
+            };
+            l.addExtraProps = function(module) {
+                if (!(R || b || this.propsMode && this.subscription)) {
+                    return module;
+                }
+                const exports = h.a({}, module);
+                if (R) {
+                    exports.ref = this.setWrappedInstance;
+                }
+                if (b) {
+                    exports[b] = this.renderCount++;
+                }
+                if (this.propsMode && this.subscription) {
+                    exports[M] = this.subscription;
+                }
+                return exports;
+            };
+            l.render = function() {
+                const module = this.selector;
+                module.shouldComponentUpdate = false;
+                if (module.error) {
+                    throw module.error;
+                }
+                return i.createElement(exports, this.addExtraProps(module.props));
+            };
+            return u;
+        })(i.Component);
+        if (T) {
+            u.prototype.UNSAFE_componentWillReceiveProps = u.prototype.componentWillReceiveProps;
+            delete u.prototype.componentWillReceiveProps;
+        }
+        u.WrappedComponent = exports;
+        u.displayName = r;
+        u.childContextTypes = I;
+        u.contextTypes = L;
+        u.propTypes = L;
+        return y(u, exports);
+    };
+}
+const _ = Object.prototype.hasOwnProperty;
+function j(module, exports) {
+    if (module === exports) {
+        return module !== 0 || exports !== 0 || 1 / module == 1 / exports;
+    }
+    return module != module && exports != exports;
+}
+function R(module, exports) {
+    if (j(module, exports)) {
+        return true;
+    }
+    if (typeof module != "object" || module === null || typeof exports != "object" || exports === null) {
+        return false;
+    }
+    const require = Object.keys(module);
+    const r = Object.keys(exports);
+    if (require.length !== r.length) {
+        return false;
+    }
+    for(let o = 0; o < require.length; o++){
+        if (!_.call(exports, require[o]) || !j(module[require[o]], exports[require[o]])) {
+            return false;
+        }
+    }
+    return true;
+}
+function M(module) {
+    return (exports, require)=>{
+        const r = module(exports, require);
+        function o() {
+            return r;
+        }
+        o.dependsOnOwnProps = false;
+        return o;
+    };
+}
+function A(module) {
+    if (module.dependsOnOwnProps !== null && module.dependsOnOwnProps !== undefined) {
+        return Boolean(module.dependsOnOwnProps);
+    }
+    return module.length !== 1;
+}
+function L(module, exports) {
+    return (exports, require)=>{
+        require.displayName;
+        const r = (module, exports)=>{
+            if (r.dependsOnOwnProps) {
+                return r.mapToProps(module, exports);
+            }
+            return r.mapToProps(module);
+        };
+        r.dependsOnOwnProps = true;
+        r.mapToProps = (exports, require)=>{
+            r.mapToProps = module;
+            r.dependsOnOwnProps = A(module);
+            let o = r(exports, require);
+            if (typeof o == "function") {
+                r.mapToProps = o;
+                r.dependsOnOwnProps = A(o);
+                o = r(exports, require);
+            }
+            return o;
+        };
+        return r;
+    };
+}
+const I = [
+    (module)=>{
+        if (typeof module == "function") {
+            return L(module);
+        }
+    },
+    (module)=>{
+        if (module) {
+            return undefined;
+        }
+        return M((module)=>{
+            return {
+                dispatch: module
+            };
+        });
+    },
+    (module)=>{
+        if (module && typeof module == "object") {
+            return M((exports)=>N.bindActionCreators(module, exports));
+        }
+    }
+];
+const D = [
+    (module)=>{
+        if (typeof module == "function") {
+            return L(module);
+        }
+    },
+    (module)=>{
+        if (module) {
+            return undefined;
+        }
+        return M(()=>{
+            return {};
+        });
+    }
+];
+function F(module, exports, require) {
+    return h.a({}, require, module, exports);
+}
+const z = [
+    (module)=>{
+        if (typeof module == "function") {
+            return ((module)=>(exports, require)=>{
+                    require.displayName;
+                    let r;
+                    const { pure: o, areMergedPropsEqual: i } = require;
+                    let a = false;
+                    return (exports, require, u)=>{
+                        const l = module(exports, require, u);
+                        if (a) {
+                            if (!(o && i(l, r))) {
+                                r = l;
+                            }
+                        } else {
+                            a = true;
+                            r = l;
+                        }
+                        return r;
+                    };
+                })(module);
+        }
+    },
+    (module)=>{
+        if (module) {
+            return undefined;
+        }
+        return ()=>F;
+    }
+];
+function q(module, exports, require, r) {
+    return (o, i)=>require(module(o, i), exports(r, i), i);
+}
+function U(module, exports, require, r, o) {
+    let i;
+    let a;
+    let u;
+    let l;
+    let c;
+    const { areStatesEqual: s, areOwnPropsEqual: createProvider, areStatePropsEqual: Provider } = o;
+    let p = false;
+    function h(o, p) {
+        const h = !createProvider(p, a);
+        const m = !s(o, i);
+        i = o;
+        a = p;
+        if (h && m) {
+            u = module(i, a);
+            if (exports.dependsOnOwnProps) {
+                l = exports(r, a);
+            }
+            return c = require(u, l, a);
+        }
+        if (h) {
+            if (module.dependsOnOwnProps) {
+                u = module(i, a);
+            }
+            if (exports.dependsOnOwnProps) {
+                l = exports(r, a);
+            }
+            return c = require(u, l, a);
+        }
+        if (m) {
+            return (()=>{
+                const exports = module(i, a);
+                const r = !Provider(exports, u);
+                u = exports;
+                if (r) {
+                    c = require(u, l, a);
+                }
+                return c;
+            })();
+        }
+        return c;
+    }
+    return (o, s)=>{
+        if (p) {
+            return h(o, s);
+        }
+        return ((o, s)=>{
+            u = module(i = o, a = s);
+            l = exports(r, a);
+            c = require(u, l, a);
+            p = true;
+            return c;
+        })(o, s);
+    };
+}
+function H(module, exports) {
+    const { initMapStateToProps: require, initMapDispatchToProps: r, initMergeProps: o } = exports;
+    const i = m(exports, [
+        "initMapStateToProps",
+        "initMapDispatchToProps",
+        "initMergeProps"
+    ]);
+    const a = require(module, i);
+    const u = r(module, i);
+    const l = o(module, i);
+    return (i.pure ? U : q)(a, u, l, module, i);
+}
+function W(module, exports, require) {
+    for(let r = exports.length - 1; r >= 0; r--){
+        const o = exports[r](module);
+        if (o) {
+            return o;
+        }
+    }
+    return (exports, r)=>{
+        throw new Error("Invalid value of type " + typeof module + " for " + require + " argument when connecting component " + r.wrappedComponentName + ".");
+    };
+}
+function $(module, exports) {
+    return module === exports;
+}
+export const connect = ((module)=>{
+    const exports = module === undefined ? {} : module;
+    const require = exports.connectHOC;
+    const r = require === undefined ? connectAdvanced : require;
+    const o = exports.mapStateToPropsFactories;
+    const i = o === undefined ? D : o;
+    const a = exports.mapDispatchToPropsFactories;
+    const u = a === undefined ? I : a;
+    const l = exports.mergePropsFactories;
+    const c = l === undefined ? z : l;
+    const s = exports.selectorFactory;
+    const createProvider = s === undefined ? H : s;
+    return (module, exports, require, o = {})=>{
+        const a = o;
+        const l = a.pure;
+        const s = l === undefined || l;
+        const Provider = a.areStatesEqual;
+        const p = Provider === undefined ? $ : Provider;
+        const y = a.areOwnPropsEqual;
+        const v = y === undefined ? R : y;
+        const b = a.areStatePropsEqual;
+        const g = b === undefined ? R : b;
+        const w = a.areMergedPropsEqual;
+        const E = w === undefined ? R : w;
+        const x = m(a, [
+            "pure",
+            "areStatesEqual",
+            "areOwnPropsEqual",
+            "areStatePropsEqual",
+            "areMergedPropsEqual"
+        ]);
+        const k = W(module, i, "mapStateToProps");
+        const T = W(exports, u, "mapDispatchToProps");
+        const S = W(require, c, "mergeProps");
+        return r(createProvider, h.a({
+            methodName: "connect",
+            getDisplayName (module) {
+                return "Connect(" + module + ")";
+            },
+            shouldHandleStateChanges: Boolean(module),
+            initMapStateToProps: k,
+            initMapDispatchToProps: T,
+            initMergeProps: S,
+            pure: s,
+            areStatesEqual: p,
+            areOwnPropsEqual: v,
+            areStatePropsEqual: g,
+            areMergedPropsEqual: E
+        }, x));
+    };
+})();
