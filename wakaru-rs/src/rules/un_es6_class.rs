@@ -91,10 +91,7 @@ fn try_iife_to_class(var: &VarDecl) -> Option<ClassDecl> {
                 return None;
             };
             let super_expr = call.args[0].expr.clone();
-            // Only accept a plain identifier as the super arg
-            if !matches!(super_expr.as_ref(), Expr::Ident(_)) {
-                return None;
-            }
+            // Accept any expression as the super arg (plain ident, member expr, etc.)
             (Some(super_expr), Some(param_id.sym.clone()))
         }
         _ => return None,
@@ -259,12 +256,23 @@ fn parse_class_body(
 
             // Skip `t.prototype = Object.create(...)` (prototype chain setup for inheritance)
             if is_prototype_object_create(expr, inner_ctor_name) {
+                if super_param.is_some() {
+                    extends_handled = true;
+                }
                 continue;
             }
 
             // Skip `t.prototype.constructor = t` (redundant constructor assignment)
             if is_prototype_constructor_assign(expr, inner_ctor_name) {
                 continue;
+            }
+
+            // Skip inlined `_super && (Object.setPrototypeOf ? ...)` (static prototype chain)
+            if let Some(sp) = super_param {
+                if is_set_prototype_of_chain_expr(expr, sp) {
+                    extends_handled = true;
+                    continue;
+                }
             }
 
             // `_createClass(t, [...], [...])` as a statement (Babel non-loose)
@@ -284,6 +292,13 @@ fn parse_class_body(
                 continue;
             }
             return None;
+        }
+
+        // Skip `if (typeof _super !== "function" && _super !== null) { throw ... }`
+        if let Some(sp) = super_param {
+            if is_super_typecheck_if_stmt(stmt, sp) {
+                continue;
+            }
         }
 
         return None;
@@ -814,6 +829,70 @@ fn is_object_create_callee(expr: &Expr) -> bool {
         return false;
     }
     matches!(&m.prop, MemberProp::Ident(n) if n.sym.as_ref() == "create")
+}
+
+/// Check `_super && (Object.setPrototypeOf ? Object.setPrototypeOf(t, _super) : t.__proto__ = _super)`.
+/// This is the inlined static prototype chain setup emitted by webpack4 instead of `_inherits`.
+fn is_set_prototype_of_chain_expr(expr: &Expr, super_param: &str) -> bool {
+    let Expr::Bin(bin) = expr else { return false; };
+    if bin.op != swc_core::ecma::ast::BinaryOp::LogicalAnd {
+        return false;
+    }
+    // Left must be the super param ident
+    if !matches!(strip_parens(&bin.left), Expr::Ident(id) if id.sym.as_ref() == super_param) {
+        return false;
+    }
+    // Right must be a conditional whose test is `Object.setPrototypeOf`
+    let Expr::Cond(cond) = strip_parens(&bin.right) else { return false; };
+    let Expr::Member(m) = strip_parens(&cond.test) else { return false; };
+    let Expr::Ident(obj_id) = m.obj.as_ref() else { return false; };
+    obj_id.sym.as_ref() == "Object"
+        && matches!(&m.prop, MemberProp::Ident(n) if n.sym.as_ref() == "setPrototypeOf")
+}
+
+/// Check `if (typeof _super !== "function" && _super !== null) { throw ... }`.
+fn is_super_typecheck_if_stmt(stmt: &Stmt, super_param: &str) -> bool {
+    let Stmt::If(if_stmt) = stmt else { return false; };
+    let Expr::Bin(bin) = strip_parens(&if_stmt.test) else { return false; };
+    if bin.op != swc_core::ecma::ast::BinaryOp::LogicalAnd {
+        return false;
+    }
+    is_typeof_not_function(strip_parens(&bin.left), super_param)
+        && is_not_null_check(strip_parens(&bin.right), super_param)
+}
+
+/// Return true if `expr` is `typeof name !== "function"`.
+fn is_typeof_not_function(expr: &Expr, name: &str) -> bool {
+    let Expr::Bin(bin) = expr else { return false; };
+    if bin.op != swc_core::ecma::ast::BinaryOp::NotEqEq {
+        return false;
+    }
+    let Expr::Unary(u) = strip_parens(&bin.left) else { return false; };
+    if u.op != swc_core::ecma::ast::UnaryOp::TypeOf {
+        return false;
+    }
+    if !matches!(strip_parens(&u.arg), Expr::Ident(id) if id.sym.as_ref() == name) {
+        return false;
+    }
+    matches!(
+        strip_parens(&bin.right),
+        Expr::Lit(swc_core::ecma::ast::Lit::Str(s)) if s.value.as_str() == Some("function")
+    )
+}
+
+/// Return true if `expr` is `name !== null`.
+fn is_not_null_check(expr: &Expr, name: &str) -> bool {
+    let Expr::Bin(bin) = expr else { return false; };
+    if bin.op != swc_core::ecma::ast::BinaryOp::NotEqEq {
+        return false;
+    }
+    if !matches!(strip_parens(&bin.left), Expr::Ident(id) if id.sym.as_ref() == name) {
+        return false;
+    }
+    matches!(
+        strip_parens(&bin.right),
+        Expr::Lit(swc_core::ecma::ast::Lit::Null(_))
+    )
 }
 
 // ============================================================

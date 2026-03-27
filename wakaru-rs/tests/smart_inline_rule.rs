@@ -143,3 +143,63 @@ const { x, y } = obj;
     let output = render(input);
     assert_eq_normalized(&output, expected);
 }
+
+// ============================================================
+// Zero-param arrow wrapper inlining (require.n / webpack4 pattern)
+// ============================================================
+
+#[test]
+fn inline_arrow_wrapper_into_nested_function() {
+    // `const o = () => r` used once inside a nested function should be inlined
+    // globally across the function boundary, and the resulting (() => r)() call
+    // should collapse to just `r` via the second UnIife pass.
+    let input = r#"
+const o = () => r;
+function foo() {
+    return o();
+}
+"#;
+    let expected = r#"
+function foo() {
+    return r;
+}
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn inline_arrow_wrapper_at_all_use_sites() {
+    // Arrow wrappers are inlined everywhere regardless of use count —
+    // they are pure aliases with no semantic value (e.g. require.n wrappers).
+    let input = r#"
+const o = () => r;
+function foo() { return o(); }
+function bar() { return o(); }
+"#;
+    let expected = r#"
+function foo() { return r; }
+function bar() { return r; }
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn inline_arrow_wrapper_dot_a_accessor() {
+    // webpack4 require.n pattern: `X.a` where `X = () => r` inlines to `r` directly
+    // (avoids the broken `(()=>r).a` which would be undefined at runtime).
+    let input = r#"
+const o = () => r;
+function foo() {
+    return o.a;
+}
+"#;
+    let expected = r#"
+function foo() {
+    return r;
+}
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}

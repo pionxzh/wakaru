@@ -136,6 +136,25 @@ class Child extends Base {
 // ============================================================
 
 #[test]
+fn test_inheritance_member_expr_super() {
+    // Super class is a member expression (e.g. React.Component or module.Component)
+    let input = r#"
+var Child = (function(_super) {
+    _inherits(t, _super);
+    function t() {}
+    t.prototype.run = function run() {}
+    return t;
+}(module.Component));
+"#;
+    let expected = r#"
+class Child extends module.Component {
+    run() {}
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn test_getter_setter_define_property() {
     let input = r#"
 var MyClass = (function() {
@@ -246,6 +265,37 @@ class Child extends Parent {
     doSomething() { return true; }
 }
 "#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+// ============================================================
+// Inlined inheritance (webpack4 pattern without _inherits)
+// ============================================================
+
+#[test]
+fn test_inlined_inheritance_webpack4() {
+    // webpack4 inlines the _inherits logic directly instead of calling _inherits
+    let input = r#"
+var Child = (function(_super) {
+    if (typeof _super !== "function" && _super !== null) {
+        throw new TypeError("Super expression must either be null or a function");
+    }
+    function t() {
+        _super !== null && _super.apply(this, arguments);
+    }
+    t.prototype = Object.create(_super !== null && _super.prototype);
+    t.prototype.constructor = t;
+    _super && (Object.setPrototypeOf ? Object.setPrototypeOf(t, _super) : t.__proto__ = _super);
+    t.prototype.run = function run() { return true; }
+    return t;
+}(Base));"#;
+    let expected = r#"
+class Child extends Base {
+    constructor() {
+        _super !== null && _super.apply(this, arguments);
+    }
+    run() { return true; }
+}"#;
     assert_eq_normalized(&apply(input), expected);
 }
 

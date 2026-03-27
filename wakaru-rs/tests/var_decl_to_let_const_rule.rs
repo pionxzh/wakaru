@@ -95,3 +95,28 @@ function inc() {
     let output = render(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn var_same_name_different_scope_no_false_let() {
+    // Outer `r` is never reassigned in its own scope.
+    // Inner function has a shadowing `r` that IS reassigned.
+    // Scope-aware tracking must not conflate the two: outer → const, inner → let.
+    let input = r#"
+var r = outerModule;
+function factory() {
+    var r = innerModule;
+    r = otherModule;
+    return r;
+}
+"#;
+    let expected = r#"
+const r = outerModule;
+function factory() {
+    let r = innerModule;
+    r = otherModule;
+    return r;
+}
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
