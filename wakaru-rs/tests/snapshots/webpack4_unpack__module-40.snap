@@ -2,4 +2,4 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-export default Array.isArray || ((module)=>Object.prototype.toString.call(module) == "[object Array]");
+export default Array.isArray || ((e)=>Object.prototype.toString.call(e) == "[object Array]");

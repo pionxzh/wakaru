@@ -7,19 +7,19 @@ import o from "./module-11.js";
 import "./module-27.js";
 import "./module-13.js";
 import i from "./module-25.js";
-const a = ((module)=>{
-    if (module && module.__esModule) {
-        return module;
+const a = ((e)=>{
+    if (e && e.__esModule) {
+        return e;
     }
     return {
-        default: module
+        default: e
     };
 })(require("./module-35.js"));
 const u = {
     fetchData: i.fetchData
 };
-export default o.compose(r.connect((module)=>{
+export default o.compose(r.connect((e)=>{
     return {
-        data: module.main.data
+        data: e.main.data
     };
 }, u))(a.default);

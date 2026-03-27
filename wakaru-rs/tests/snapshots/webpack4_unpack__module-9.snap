@@ -13,57 +13,57 @@ const l = {
     put: r.u,
     take: r.u
 };
-function c(module = 10) {
-    const exports = arguments[1];
-    let require = new Array(module);
+function c(e = 10) {
+    const t = arguments[1];
+    let n = new Array(e);
     let r = 0;
     let l = 0;
     let c = 0;
-    const s = (exports)=>{
-        require[l] = exports;
-        l = (l + 1) % module;
+    const s = (t)=>{
+        n[l] = t;
+        l = (l + 1) % e;
         r++;
     };
     const f = ()=>{
         if (r != 0) {
-            const exports = require[c];
-            require[c] = null;
+            const t = n[c];
+            n[c] = null;
             r--;
-            c = (c + 1) % module;
-            return exports;
+            c = (c + 1) % e;
+            return t;
         }
     };
     const d = ()=>{
-        const module = [];
+        const e = [];
         while(r){
-            module.push(f());
+            e.push(f());
         }
-        return module;
+        return e;
     };
     return {
         isEmpty () {
             return r == 0;
         },
         put (f) {
-            if (r < module) {
+            if (r < e) {
                 s(f);
             } else {
                 let p = undefined;
-                switch(exports){
+                switch(t){
                     case i:
                         throw new Error(o);
                     case a:
-                        require[l] = f;
-                        c = l = (l + 1) % module;
+                        n[l] = f;
+                        c = l = (l + 1) % e;
                         break;
                     case u:
-                        p = 2 * module;
-                        require = d();
-                        r = require.length;
-                        l = require.length;
+                        p = 2 * e;
+                        n = d();
+                        r = n.length;
+                        l = n.length;
                         c = 0;
-                        require.length = p;
-                        module = p;
+                        n.length = p;
+                        e = p;
                         s(f);
                 }
             }
@@ -76,16 +76,16 @@ const s = {
     none () {
         return l;
     },
-    fixed (module) {
-        return c(module, i);
+    fixed (e) {
+        return c(e, i);
     },
-    dropping (module) {
-        return c(module, 2);
+    dropping (e) {
+        return c(e, 2);
     },
-    sliding (module) {
-        return c(module, a);
+    sliding (e) {
+        return c(e, a);
     },
-    expanding (module) {
-        return c(module, u);
+    expanding (e) {
+        return c(e, u);
     }
 };

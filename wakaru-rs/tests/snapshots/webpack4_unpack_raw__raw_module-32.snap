@@ -1,0 +1,65 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+var r = require("./module-20.js"), o = {
+    childContextTypes: !0,
+    contextType: !0,
+    contextTypes: !0,
+    defaultProps: !0,
+    displayName: !0,
+    getDefaultProps: !0,
+    getDerivedStateFromError: !0,
+    getDerivedStateFromProps: !0,
+    mixins: !0,
+    propTypes: !0,
+    type: !0
+}, i = {
+    name: !0,
+    length: !0,
+    prototype: !0,
+    caller: !0,
+    callee: !0,
+    arguments: !0,
+    arity: !0
+}, a = {
+    $$typeof: !0,
+    compare: !0,
+    defaultProps: !0,
+    displayName: !0,
+    propTypes: !0,
+    type: !0
+}, u = {};
+function l(e) {
+    return r.isMemo(e) ? a : u[e.$$typeof] || o;
+}
+u[r.ForwardRef] = {
+    $$typeof: !0,
+    render: !0,
+    defaultProps: !0,
+    displayName: !0,
+    propTypes: !0
+};
+u[r.Memo] = a;
+var c = Object.defineProperty, s = Object.getOwnPropertyNames, f = Object.getOwnPropertySymbols, d = Object.getOwnPropertyDescriptor, p = Object.getPrototypeOf, h = Object.prototype;
+module.exports = function e(t, n, r) {
+    if ("string" != typeof n) {
+        if (h) {
+            var o = p(n);
+            o && o !== h && e(t, o, r);
+        }
+        var a = s(n);
+        f && (a = a.concat(f(n)));
+        for(var u = l(t), m = l(n), y = 0; y < a.length; ++y){
+            var v = a[y];
+            if (!(i[v] || r && r[v] || m && m[v] || u && u[v])) {
+                var b = d(n, v);
+                try {
+                    c(t, v, b);
+                } catch (e) {}
+            }
+        }
+    }
+    return t;
+};

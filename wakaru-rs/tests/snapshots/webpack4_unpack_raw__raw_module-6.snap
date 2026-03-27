@@ -1,0 +1,109 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+exports.a = u;
+exports.e = l;
+exports.c = c;
+exports.b = d;
+exports.d = p;
+exports.f = h;
+var r = require("./module-0.js"), o = require("./module-9.js"), i = require("./module-12.js"), a = Object.assign || function(e) {
+    for(var t = 1; t < arguments.length; t++){
+        var n = arguments[t];
+        for(var r in n)Object.prototype.hasOwnProperty.call(n, r) && (e[r] = n[r]);
+    }
+    return e;
+}, u = {
+    type: "@@redux-saga/CHANNEL_END"
+}, l = function(e) {
+    return e && "@@redux-saga/CHANNEL_END" === e.type;
+};
+function c() {
+    var e = [];
+    return {
+        subscribe: function(t) {
+            return e.push(t), function() {
+                return Object(r.w)(e, t);
+            };
+        },
+        emit: function(t) {
+            for(var n = e.slice(), r = 0, o = n.length; r < o; r++)n[r](t);
+        }
+    };
+}
+var s = "invalid buffer passed to channel factory function", f = "Saga was provided with an undefined action";
+function d() {
+    var e = arguments.length > 0 && void 0 !== arguments[0] ? arguments[0] : o.a.fixed(), t = !1, n = [];
+    function i() {
+        if (t && n.length) throw Object(r.p)("Cannot have a closed channel with pending takers");
+        if (n.length && !e.isEmpty()) throw Object(r.p)("Cannot have pending takers with non empty buffer");
+    }
+    return Object(r.h)(e, r.q.buffer, s), {
+        take: function(o) {
+            i();
+            Object(r.h)(o, r.q.func, "channel.take's callback must be a function");
+            t && e.isEmpty() ? o(u) : e.isEmpty() ? (n.push(o), o.cancel = function() {
+                return Object(r.w)(n, o);
+            }) : o(e.take());
+        },
+        put: function(o) {
+            if (i(), Object(r.h)(o, r.q.notUndef, f), !t) {
+                if (!n.length) return e.put(o);
+                for(var a = 0; a < n.length; a++){
+                    var u = n[a];
+                    if (!u[r.b] || u[r.b](o)) return n.splice(a, 1), u(o);
+                }
+            }
+        },
+        flush: function(n) {
+            i();
+            Object(r.h)(n, r.q.func, "channel.flush' callback must be a function");
+            t && e.isEmpty() ? n(u) : n(e.flush());
+        },
+        close: function() {
+            if (i(), !t && (t = !0, n.length)) {
+                var e = n;
+                n = [];
+                for(var r = 0, o = e.length; r < o; r++)e[r](u);
+            }
+        },
+        get __takers__ () {
+            return n;
+        },
+        get __closed__ () {
+            return t;
+        }
+    };
+}
+function p(e) {
+    var t = arguments.length > 1 && void 0 !== arguments[1] ? arguments[1] : o.a.none(), n = arguments[2];
+    arguments.length > 2 && Object(r.h)(n, r.q.func, "Invalid match function passed to eventChannel");
+    var i = d(t), a = function() {
+        i.__closed__ || (u && u(), i.close());
+    }, u = e(function(e) {
+        l(e) ? a() : n && !n(e) || i.put(e);
+    });
+    if (i.__closed__ && u(), !r.q.func(u)) throw new Error("in eventChannel: subscribe should return a function to unsubscribe");
+    return {
+        take: i.take,
+        flush: i.flush,
+        close: a
+    };
+}
+function h(e) {
+    var t = p(function(t) {
+        return e(function(e) {
+            e[r.c] ? t(e) : Object(i.a)(function() {
+                return t(e);
+            });
+        });
+    });
+    return a({}, t, {
+        take: function(e, n) {
+            arguments.length > 1 && (Object(r.h)(n, r.q.func, "channel.take's matcher argument must be a function"), e[r.b] = n);
+            t.take(e);
+        }
+    });
+}

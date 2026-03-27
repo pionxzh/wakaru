@@ -34,11 +34,11 @@ const a = {
     type: true
 };
 const u = {};
-function l(module) {
-    if (r.isMemo(module)) {
+function l(e) {
+    if (r.isMemo(e)) {
         return a;
     }
-    return u[module.$$typeof] || o;
+    return u[e.$$typeof] || o;
 }
 u[r.ForwardRef] = {
     $$typeof: true,
@@ -49,29 +49,29 @@ u[r.ForwardRef] = {
 };
 u[r.Memo] = a;
 const { defineProperty, getOwnPropertyNames, getOwnPropertySymbols, getOwnPropertyDescriptor, getPrototypeOf, prototype } = Object;
-export default (function module(exports, require, r) {
-    if (typeof require != "string") {
+export default (function e(t, n, r) {
+    if (typeof n != "string") {
         if (prototype) {
-            const o = getPrototypeOf(require);
+            const o = getPrototypeOf(n);
             if (o && o !== prototype) {
-                module(exports, o, r);
+                e(t, o, r);
             }
         }
-        let a = getOwnPropertyNames(require);
+        let a = getOwnPropertyNames(n);
         if (getOwnPropertySymbols) {
-            a = a.concat(getOwnPropertySymbols(require));
+            a = a.concat(getOwnPropertySymbols(n));
         }
-        const u = l(exports);
-        const m = l(require);
+        const u = l(t);
+        const m = l(n);
         for(let y = 0; y < a.length; ++y){
             const v = a[y];
             if (!(i[v] || r && r[v] || m && m[v] || u && u[v])) {
-                const b = getOwnPropertyDescriptor(require, v);
+                const b = getOwnPropertyDescriptor(n, v);
                 try {
-                    defineProperty(exports, v, b);
-                } catch (module) {}
+                    defineProperty(t, v, b);
+                } catch (e) {}
             }
         }
     }
-    return exports;
+    return t;
 });

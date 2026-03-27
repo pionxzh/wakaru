@@ -3,27 +3,27 @@ source: tests/webpack4_unpack.rs
 expression: code
 ---
 import o from "./module-24.js";
-const r = ((module)=>{
-    if (module && module.__esModule) {
-        return module;
+const r = ((e)=>{
+    if (e && e.__esModule) {
+        return e;
     }
-    const exports = {};
-    if (module != null) {
-        for(let require in module){
-            if (Object.prototype.hasOwnProperty.call(module, require)) {
-                exports[require] = module[require];
+    const t = {};
+    if (e != null) {
+        for(let n in e){
+            if (Object.prototype.hasOwnProperty.call(e, n)) {
+                t[n] = e[n];
             }
         }
     }
-    exports.default = module;
-    return exports;
+    t.default = e;
+    return t;
 })(require("./module-3.js"));
-const i = ((module)=>{
-    if (module && module.__esModule) {
-        return module;
+const i = ((e)=>{
+    if (e && e.__esModule) {
+        return e;
     }
     return {
-        default: module
+        default: e
     };
 })(require("./module-37.js"));
 const a = r.createElement(o.Switch, null, r.createElement(o.Route, {

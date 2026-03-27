@@ -3,24 +3,24 @@ source: tests/webpack4_unpack.rs
 expression: code
 ---
 import r from "./module-7.js";
-function o(module) {
-    return module.charAt(0) === "/";
+function o(e) {
+    return e.charAt(0) === "/";
 }
-function i(module, exports) {
-    let require = exports;
-    for(let r = require + 1, o = module.length; r < o; require += 1, r += 1){
-        module[require] = module[r];
+function i(e, t) {
+    let n = t;
+    for(let r = n + 1, o = e.length; r < o; n += 1, r += 1){
+        e[n] = e[r];
     }
-    module.pop();
+    e.pop();
 }
-const a = (module, exports = "")=>{
-    let require;
-    const r = module && module.split("/") || [];
-    let a = exports && exports.split("/") || [];
-    const u = module && o(module);
-    const l = exports && o(exports);
+const a = (e, t = "")=>{
+    let n;
+    const r = e && e.split("/") || [];
+    let a = t && t.split("/") || [];
+    const u = e && o(e);
+    const l = t && o(t);
     const c = u || l;
-    if (module && o(module)) {
+    if (e && o(e)) {
         a = r;
     } else if (r.length) {
         a.pop();
@@ -31,9 +31,9 @@ const a = (module, exports = "")=>{
     }
     if (a.length) {
         const s = a[a.length - 1];
-        require = s === "." || s === ".." || s === "";
+        n = s === "." || s === ".." || s === "";
     } else {
-        require = false;
+        n = false;
     }
     let f = 0;
     for(let d = a.length; d >= 0; d--){
@@ -57,111 +57,111 @@ const a = (module, exports = "")=>{
         a.unshift("");
     }
     let h = a.join("/");
-    if (require && h.substr(-1) !== "/") {
+    if (n && h.substr(-1) !== "/") {
         h += "/";
     }
     return h;
 };
-function u(module) {
-    if (module.valueOf) {
-        return module.valueOf();
+function u(e) {
+    if (e.valueOf) {
+        return e.valueOf();
     }
-    return Object.prototype.valueOf.call(module);
+    return Object.prototype.valueOf.call(e);
 }
-const l = function module(exports, require) {
-    if (exports === require) {
+const l = function e(t, n) {
+    if (t === n) {
         return true;
     }
-    if (exports == null || require == null) {
+    if (t == null || n == null) {
         return false;
     }
-    if (Array.isArray(exports)) {
-        return Array.isArray(require) && exports.length === require.length && exports.every((exports, r)=>module(exports, require[r]));
+    if (Array.isArray(t)) {
+        return Array.isArray(n) && t.length === n.length && t.every((t, r)=>e(t, n[r]));
     }
-    if (typeof exports == "object" || typeof require == "object") {
-        const r = u(exports);
-        const o = u(require);
-        if (r !== exports || o !== require) {
-            return module(r, o);
+    if (typeof t == "object" || typeof n == "object") {
+        const r = u(t);
+        const o = u(n);
+        if (r !== t || o !== n) {
+            return e(r, o);
         }
-        return Object.keys(Object.assign({}, exports, require)).every((r)=>module(exports[r], require[r]));
+        return Object.keys(Object.assign({}, t, n)).every((r)=>e(t[r], n[r]));
     }
     return false;
 };
 const c = true;
 const s = "Invariant failed";
-function f(module, exports) {
-    if (!module) {
+function f(e, t) {
+    if (!e) {
         if (c) {
             throw new Error(s);
         }
-        const require = typeof exports == "function" ? exports() : exports;
-        const r = require ? `${s}: ${require}` : s;
+        const n = typeof t == "function" ? t() : t;
+        const r = n ? `${s}: ${n}` : s;
         throw new Error(r);
     }
 }
-function d(module) {
-    if (module.charAt(0) === "/") {
-        return module;
+function d(e) {
+    if (e.charAt(0) === "/") {
+        return e;
     }
-    return "/" + module;
+    return "/" + e;
 }
-function p(module) {
-    if (module.charAt(0) === "/") {
-        return module.substr(1);
+function p(e) {
+    if (e.charAt(0) === "/") {
+        return e.substr(1);
     }
-    return module;
+    return e;
 }
-function h(module, exports) {
-    if (((module, exports)=>module.toLowerCase().indexOf(exports.toLowerCase()) === 0 && -1 !== "/?#".indexOf(module.charAt(exports.length)))(module, exports)) {
-        return module.substr(exports.length);
+function h(e, t) {
+    if (((e, t)=>e.toLowerCase().indexOf(t.toLowerCase()) === 0 && -1 !== "/?#".indexOf(e.charAt(t.length)))(e, t)) {
+        return e.substr(t.length);
     }
-    return module;
+    return e;
 }
-function m(module) {
-    if (module.charAt(module.length - 1) === "/") {
-        return module.slice(0, -1);
+function m(e) {
+    if (e.charAt(e.length - 1) === "/") {
+        return e.slice(0, -1);
     }
-    return module;
+    return e;
 }
-export function parsePath(module) {
-    let exports = module || "/";
-    let require = "";
+export function parsePath(e) {
+    let t = e || "/";
+    let n = "";
     let r = "";
-    const o = exports.indexOf("#");
+    const o = t.indexOf("#");
     if (-1 !== o) {
-        r = exports.substr(o);
-        exports = exports.substr(0, o);
+        r = t.substr(o);
+        t = t.substr(0, o);
     }
-    const i = exports.indexOf("?");
+    const i = t.indexOf("?");
     if (-1 !== i) {
-        require = exports.substr(i);
-        exports = exports.substr(0, i);
+        n = t.substr(i);
+        t = t.substr(0, i);
     }
     return {
-        pathname: exports,
-        search: require === "?" ? "" : require,
+        pathname: t,
+        search: n === "?" ? "" : n,
         hash: r === "#" ? "" : r
     };
 }
-export function createPath(module) {
-    const { pathname: exports, search: require, hash: r } = module;
-    let o = exports || "/";
-    if (require && require !== "?") {
-        o += require.charAt(0) === "?" ? require : "?" + require;
+export function createPath(e) {
+    const { pathname: t, search: n, hash: r } = e;
+    let o = t || "/";
+    if (n && n !== "?") {
+        o += n.charAt(0) === "?" ? n : "?" + n;
     }
     if (r && r !== "#") {
         o += r.charAt(0) === "#" ? r : "#" + r;
     }
     return o;
 }
-export function createLocation(module, exports, require, o) {
+export function createLocation(e, t, n, o) {
     let i;
-    if (typeof module == "string") {
-        i = parsePath(module);
-        i.state = exports;
+    if (typeof e == "string") {
+        i = parsePath(e);
+        i.state = t;
     } else {
-        if ((i = r.a({}, module)).pathname === undefined) {
+        if ((i = r.a({}, e)).pathname === undefined) {
             i.pathname = "";
         }
         if (i.search) {
@@ -174,39 +174,39 @@ export function createLocation(module, exports, require, o) {
         } else {
             i.hash = "";
         }
-        if (exports !== undefined && i.state === undefined) {
-            i.state = exports;
+        if (t !== undefined && i.state === undefined) {
+            i.state = t;
         }
     }
     try {
         i.pathname = decodeURI(i.pathname);
-    } catch (module) {
-        throw module instanceof URIError ? new URIError('Pathname "' + i.pathname + '" could not be decoded. This is likely caused by an invalid percent-encoding.') : module;
+    } catch (e) {
+        throw e instanceof URIError ? new URIError('Pathname "' + i.pathname + '" could not be decoded. This is likely caused by an invalid percent-encoding.') : e;
     }
-    if (require) {
-        i.key = require;
+    if (n) {
+        i.key = n;
     }
     o ? i.pathname ? i.pathname.charAt(0) !== "/" && (i.pathname = a(i.pathname, o.pathname)) : i.pathname = o.pathname : i.pathname || (i.pathname = "/");
     return i;
 }
-export function locationsAreEqual(module, exports) {
-    return module.pathname === exports.pathname && module.search === exports.search && module.hash === exports.hash && module.key === exports.key && l(module.state, exports.state);
+export function locationsAreEqual(e, t) {
+    return e.pathname === t.pathname && e.search === t.search && e.hash === t.hash && e.key === t.key && l(e.state, t.state);
 }
 function w() {
-    let module = null;
-    let exports = [];
+    let e = null;
+    let t = [];
     return {
-        setPrompt (exports) {
-            module = exports;
+        setPrompt (t) {
+            e = t;
             return ()=>{
-                if (module === exports) {
-                    module = null;
+                if (e === t) {
+                    e = null;
                 }
             };
         },
-        confirmTransitionTo (exports, require, r, o) {
-            if (module != null) {
-                const i = typeof module == "function" ? module(exports, require) : module;
+        confirmTransitionTo (t, n, r, o) {
+            if (e != null) {
+                const i = typeof e == "function" ? e(t, n) : e;
                 if (typeof i == "string") {
                     if (typeof r == "function") {
                         r(i, o);
@@ -220,114 +220,114 @@ function w() {
                 o(true);
             }
         },
-        appendListener (module) {
-            let require = true;
+        appendListener (e) {
+            let n = true;
             function r() {
-                if (require) {
-                    module(...arguments);
+                if (n) {
+                    e(...arguments);
                 }
             }
-            exports.push(r);
+            t.push(r);
             return ()=>{
-                require = false;
-                exports = exports.filter((module)=>module !== r);
+                n = false;
+                t = t.filter((e)=>e !== r);
             };
         },
         notifyListeners () {
-            for(let module = arguments.length, require = new Array(module), r = 0; r < module; r++){
-                require[r] = arguments[r];
+            for(let e = arguments.length, n = new Array(e), r = 0; r < e; r++){
+                n[r] = arguments[r];
             }
-            exports.forEach((module)=>module(...require));
+            t.forEach((e)=>e(...n));
         }
     };
 }
 const E = !(typeof window == "undefined" || !window.document || !window.document.createElement);
-function x(module, exports) {
-    exports(window.confirm(module));
+function x(e, t) {
+    t(window.confirm(e));
 }
 const k = "popstate";
 const T = "hashchange";
 function S() {
     try {
         return window.history.state || {};
-    } catch (module) {
+    } catch (e) {
         return {};
     }
 }
-export function createBrowserHistory(module = {}) {
+export function createBrowserHistory(e = {}) {
     if (!E) {
         f(false);
     }
-    const exports = window.history;
-    const require = (()=>{
-        const module = window.navigator.userAgent;
-        return (-1 === module.indexOf("Android 2.") && -1 === module.indexOf("Android 4.0") || -1 === module.indexOf("Mobile Safari") || -1 !== module.indexOf("Chrome") || -1 !== module.indexOf("Windows Phone")) && window.history && "pushState" in window.history;
+    const t = window.history;
+    const n = (()=>{
+        const e = window.navigator.userAgent;
+        return (-1 === e.indexOf("Android 2.") && -1 === e.indexOf("Android 4.0") || -1 === e.indexOf("Mobile Safari") || -1 !== e.indexOf("Chrome") || -1 !== e.indexOf("Windows Phone")) && window.history && "pushState" in window.history;
     })();
     const o = !(-1 === window.navigator.userAgent.indexOf("Trident"));
-    const i = module;
+    const i = e;
     const a = i.forceRefresh;
     const u = a !== undefined && a;
     const l = i.getUserConfirmation;
     const c = l === undefined ? x : l;
     const s = i.keyLength;
     const p = s === undefined ? 6 : s;
-    const parsePath = module.basename ? m(d(module.basename)) : "";
-    function locationsAreEqual(module) {
-        const exports = module || {};
-        const { key: require, state: r } = exports;
+    const parsePath = e.basename ? m(d(e.basename)) : "";
+    function locationsAreEqual(e) {
+        const t = e || {};
+        const { key: n, state: r } = t;
         const o = window.location;
         let i = o.pathname + o.search + o.hash;
         if (parsePath) {
             i = h(i, parsePath);
         }
-        return createLocation(i, r, require);
+        return createLocation(i, r, n);
     }
     function createBrowserHistory() {
         return Math.random().toString(36).substr(2, p);
     }
     const C = w();
-    function P(module) {
-        r.a(q, module);
-        q.length = exports.length;
+    function P(e) {
+        r.a(q, e);
+        q.length = t.length;
         C.notifyListeners(q.location, q.action);
     }
-    function _(module) {
-        if (!((module)=>module.state === undefined && -1 === navigator.userAgent.indexOf("CriOS"))(module)) {
-            createHashHistory(locationsAreEqual(module.state));
+    function _(e) {
+        if (!((e)=>e.state === undefined && -1 === navigator.userAgent.indexOf("CriOS"))(e)) {
+            createHashHistory(locationsAreEqual(e.state));
         }
     }
     function j() {
         createHashHistory(locationsAreEqual(S()));
     }
     let R = false;
-    function createHashHistory(module) {
+    function createHashHistory(e) {
         if (R) {
             R = false;
             P();
         } else {
-            C.confirmTransitionTo(module, "POP", c, (exports)=>{
-                if (exports) {
+            C.confirmTransitionTo(e, "POP", c, (t)=>{
+                if (t) {
                     P({
                         action: "POP",
-                        location: module
+                        location: e
                     });
                 } else {
-                    ((module)=>{
-                        const exports = q.location;
-                        let require = createMemoryHistory.indexOf(exports.key);
-                        if (-1 === require) {
-                            require = 0;
+                    ((e)=>{
+                        const t = q.location;
+                        let n = createMemoryHistory.indexOf(t.key);
+                        if (-1 === n) {
+                            n = 0;
                         }
-                        let r = createMemoryHistory.indexOf(module.key);
+                        let r = createMemoryHistory.indexOf(e.key);
                         if (-1 === r) {
                             r = 0;
                         }
-                        const o = require - r;
+                        const o = n - r;
                         if (o) {
                             R = true;
                             I(o);
                         }
-                    })(module);
+                    })(e);
                 }
             });
         }
@@ -336,15 +336,15 @@ export function createBrowserHistory(module = {}) {
     let createMemoryHistory = [
         M.key
     ];
-    function L(module) {
-        return parsePath + createPath(module);
+    function L(e) {
+        return parsePath + createPath(e);
     }
-    function I(module) {
-        exports.go(module);
+    function I(e) {
+        t.go(e);
     }
     let D = 0;
-    function F(module) {
-        if ((D += module) === 1 && module === 1) {
+    function F(e) {
+        if ((D += e) === 1 && e === 1) {
             window.addEventListener(k, _);
             if (o) {
                 window.addEventListener(T, j);
@@ -358,18 +358,18 @@ export function createBrowserHistory(module = {}) {
     }
     let z = false;
     const q = {
-        length: exports.length,
+        length: t.length,
         action: "POP",
         location: M,
         createHref: L,
-        push (module, r) {
-            const o = createLocation(module, r, createBrowserHistory(), q.location);
-            C.confirmTransitionTo(o, "PUSH", c, (module)=>{
-                if (module) {
+        push (e, r) {
+            const o = createLocation(e, r, createBrowserHistory(), q.location);
+            C.confirmTransitionTo(o, "PUSH", c, (e)=>{
+                if (e) {
                     const r = L(o);
                     const { key: i, state: a } = o;
-                    if (require) {
-                        exports.pushState({
+                    if (n) {
+                        t.pushState({
                             key: i,
                             state: a
                         }, null, r);
@@ -391,14 +391,14 @@ export function createBrowserHistory(module = {}) {
                 }
             });
         },
-        replace (module, r) {
-            const o = createLocation(module, r, createBrowserHistory(), q.location);
-            C.confirmTransitionTo(o, "REPLACE", c, (module)=>{
-                if (module) {
+        replace (e, r) {
+            const o = createLocation(e, r, createBrowserHistory(), q.location);
+            C.confirmTransitionTo(o, "REPLACE", c, (e)=>{
+                if (e) {
                     const r = L(o);
                     const { key: i, state: a } = o;
-                    if (require) {
-                        exports.replaceState({
+                    if (n) {
+                        t.replaceState({
                             key: i,
                             state: a
                         }, null, r);
@@ -427,8 +427,8 @@ export function createBrowserHistory(module = {}) {
         goForward () {
             I(1);
         },
-        block (module = false) {
-            const exports = C.setPrompt(module);
+        block (e = false) {
+            const t = C.setPrompt(e);
             if (!z) {
                 F(1);
                 z = true;
@@ -438,15 +438,15 @@ export function createBrowserHistory(module = {}) {
                     z = false;
                     F(-1);
                 }
-                return exports();
+                return t();
             };
         },
-        listen (module) {
-            const exports = C.appendListener(module);
+        listen (e) {
+            const t = C.appendListener(e);
             F(1);
             return ()=>{
                 F(-1);
-                exports();
+                t();
             };
         }
     };
@@ -455,17 +455,17 @@ export function createBrowserHistory(module = {}) {
 const C = "hashchange";
 const P = {
     hashbang: {
-        encodePath (module) {
-            if (module.charAt(0) === "!") {
-                return module;
+        encodePath (e) {
+            if (e.charAt(0) === "!") {
+                return e;
             }
-            return "!/" + p(module);
+            return "!/" + p(e);
         },
-        decodePath (module) {
-            if (module.charAt(0) === "!") {
-                return module.substr(1);
+        decodePath (e) {
+            if (e.charAt(0) === "!") {
+                return e.substr(1);
             }
-            return module;
+            return e;
         }
     },
     noslash: {
@@ -477,100 +477,100 @@ const P = {
         decodePath: d
     }
 };
-function _(module) {
-    const exports = module.indexOf("#");
-    if (-1 === exports) {
-        return module;
+function _(e) {
+    const t = e.indexOf("#");
+    if (-1 === t) {
+        return e;
     }
-    return module.slice(0, exports);
+    return e.slice(0, t);
 }
 function j() {
-    const module = window.location.href;
-    const exports = module.indexOf("#");
-    if (-1 === exports) {
+    const e = window.location.href;
+    const t = e.indexOf("#");
+    if (-1 === t) {
         return "";
     }
-    return module.substring(exports + 1);
+    return e.substring(t + 1);
 }
-function R(module) {
-    window.location.replace(_(window.location.href) + "#" + module);
+function R(e) {
+    window.location.replace(_(window.location.href) + "#" + e);
 }
-export function createHashHistory(module = {}) {
+export function createHashHistory(e = {}) {
     if (!E) {
         f(false);
     }
-    const exports = window.history;
+    const t = window.history;
     window.navigator.userAgent.indexOf("Firefox");
-    const require = module;
-    const o = require.getUserConfirmation;
+    const n = e;
+    const o = n.getUserConfirmation;
     const i = o === undefined ? x : o;
-    const a = require.hashType;
+    const a = n.hashType;
     const u = a === undefined ? "slash" : a;
-    const l = module.basename ? m(d(module.basename)) : "";
+    const l = e.basename ? m(d(e.basename)) : "";
     const c = P[u];
     const { encodePath: s, decodePath: p } = c;
     function parsePath() {
-        let module = p(j());
+        let e = p(j());
         if (l) {
-            module = h(module, l);
+            e = h(e, l);
         }
-        return createLocation(module);
+        return createLocation(e);
     }
     const locationsAreEqual = w();
-    function k(module) {
-        r.a(q, module);
-        q.length = exports.length;
+    function k(e) {
+        r.a(q, e);
+        q.length = t.length;
         locationsAreEqual.notifyListeners(q.location, q.action);
     }
     let T = false;
     let S = null;
     function createBrowserHistory() {
-        const module = j();
-        const exports = s(module);
-        if (module !== exports) {
-            R(exports);
+        const e = j();
+        const t = s(e);
+        if (e !== t) {
+            R(t);
         } else {
-            const require = parsePath();
+            const n = parsePath();
             const r = q.location;
-            if (!T && ((module, exports)=>module.pathname === exports.pathname && module.search === exports.search && module.hash === exports.hash)(r, require)) {
+            if (!T && ((e, t)=>e.pathname === t.pathname && e.search === t.search && e.hash === t.hash)(r, n)) {
                 return;
             }
-            if (S === createPath(require)) {
+            if (S === createPath(n)) {
                 return;
             }
             S = null;
-            ((module)=>{
+            ((e)=>{
                 if (T) {
                     T = false;
                     k();
                 } else {
-                    locationsAreEqual.confirmTransitionTo(module, "POP", i, (exports)=>{
-                        if (exports) {
+                    locationsAreEqual.confirmTransitionTo(e, "POP", i, (t)=>{
+                        if (t) {
                             k({
                                 action: "POP",
-                                location: module
+                                location: e
                             });
                         } else {
-                            ((module)=>{
-                                const exports = q.location;
-                                let require = L.lastIndexOf(createPath(exports));
-                                if (-1 === require) {
-                                    require = 0;
+                            ((e)=>{
+                                const t = q.location;
+                                let n = L.lastIndexOf(createPath(t));
+                                if (-1 === n) {
+                                    n = 0;
                                 }
-                                let r = L.lastIndexOf(createPath(module));
+                                let r = L.lastIndexOf(createPath(e));
                                 if (-1 === r) {
                                     r = 0;
                                 }
-                                const o = require - r;
+                                const o = n - r;
                                 if (o) {
                                     T = true;
                                     I(o);
                                 }
-                            })(module);
+                            })(e);
                         }
                     });
                 }
-            })(require);
+            })(n);
         }
     }
     const createHashHistory = j();
@@ -582,12 +582,12 @@ export function createHashHistory(module = {}) {
     let L = [
         createPath(createMemoryHistory)
     ];
-    function I(module) {
-        exports.go(module);
+    function I(e) {
+        t.go(e);
     }
     let D = 0;
-    function F(module) {
-        if ((D += module) === 1 && module === 1) {
+    function F(e) {
+        if ((D += e) === 1 && e === 1) {
             window.addEventListener(C, createBrowserHistory);
         } else if (D === 0) {
             window.removeEventListener(C, createBrowserHistory);
@@ -595,35 +595,35 @@ export function createHashHistory(module = {}) {
     }
     let z = false;
     const q = {
-        length: exports.length,
+        length: t.length,
         action: "POP",
         location: createMemoryHistory,
-        createHref (module) {
-            const exports = document.querySelector("base");
-            let require = "";
-            if (exports && exports.getAttribute("href")) {
-                require = _(window.location.href);
+        createHref (e) {
+            const t = document.querySelector("base");
+            let n = "";
+            if (t && t.getAttribute("href")) {
+                n = _(window.location.href);
             }
-            return require + "#" + s(l + createPath(module));
+            return n + "#" + s(l + createPath(e));
         },
-        push (module, exports) {
-            const require = createLocation(module, undefined, undefined, q.location);
-            locationsAreEqual.confirmTransitionTo(require, "PUSH", i, (module)=>{
-                if (module) {
-                    const exports = createPath(require);
-                    const r = s(l + exports);
+        push (e, t) {
+            const n = createLocation(e, undefined, undefined, q.location);
+            locationsAreEqual.confirmTransitionTo(n, "PUSH", i, (e)=>{
+                if (e) {
+                    const t = createPath(n);
+                    const r = s(l + t);
                     if (j() !== r) {
-                        S = exports;
-                        ((module)=>{
-                            window.location.hash = module;
+                        S = t;
+                        ((e)=>{
+                            window.location.hash = e;
                         })(r);
                         const o = L.lastIndexOf(createPath(q.location));
                         const i = L.slice(0, o + 1);
-                        i.push(exports);
+                        i.push(t);
                         L = i;
                         k({
                             action: "PUSH",
-                            location: require
+                            location: n
                         });
                     } else {
                         k();
@@ -631,23 +631,23 @@ export function createHashHistory(module = {}) {
                 }
             });
         },
-        replace (module, exports) {
-            const require = createLocation(module, undefined, undefined, q.location);
-            locationsAreEqual.confirmTransitionTo(require, "REPLACE", i, (module)=>{
-                if (module) {
-                    const exports = createPath(require);
-                    const r = s(l + exports);
+        replace (e, t) {
+            const n = createLocation(e, undefined, undefined, q.location);
+            locationsAreEqual.confirmTransitionTo(n, "REPLACE", i, (e)=>{
+                if (e) {
+                    const t = createPath(n);
+                    const r = s(l + t);
                     if (j() !== r) {
-                        S = exports;
+                        S = t;
                         R(r);
                     }
                     const o = L.indexOf(createPath(q.location));
                     if (-1 !== o) {
-                        L[o] = exports;
+                        L[o] = t;
                     }
                     k({
                         action: "REPLACE",
-                        location: require
+                        location: n
                     });
                 }
             });
@@ -659,8 +659,8 @@ export function createHashHistory(module = {}) {
         goForward () {
             I(1);
         },
-        block (module = false) {
-            const exports = locationsAreEqual.setPrompt(module);
+        block (e = false) {
+            const t = locationsAreEqual.setPrompt(e);
             if (!z) {
                 F(1);
                 z = true;
@@ -670,36 +670,36 @@ export function createHashHistory(module = {}) {
                     z = false;
                     F(-1);
                 }
-                return exports();
+                return t();
             };
         },
-        listen (module) {
-            const exports = locationsAreEqual.appendListener(module);
+        listen (e) {
+            const t = locationsAreEqual.appendListener(e);
             F(1);
             return ()=>{
                 F(-1);
-                exports();
+                t();
             };
         }
     };
     return q;
 }
-function M(module, exports, require) {
-    return Math.min(Math.max(module, exports), require);
+function M(e, t, n) {
+    return Math.min(Math.max(e, t), n);
 }
-export function createMemoryHistory(module = {}) {
-    const exports = module;
-    const { getUserConfirmation: require, initialEntries: o } = exports;
+export function createMemoryHistory(e = {}) {
+    const t = e;
+    const { getUserConfirmation: n, initialEntries: o } = t;
     const i = o === undefined ? [
         "/"
     ] : o;
-    const a = exports.initialIndex;
+    const a = t.initialIndex;
     const u = a === undefined ? 0 : a;
-    const l = exports.keyLength;
+    const l = t.keyLength;
     const c = l === undefined ? 6 : l;
     const s = w();
-    function f(module) {
-        r.a(locationsAreEqual, module);
+    function f(e) {
+        r.a(locationsAreEqual, e);
         locationsAreEqual.length = locationsAreEqual.entries.length;
         s.notifyListeners(locationsAreEqual.location, locationsAreEqual.action);
     }
@@ -707,16 +707,16 @@ export function createMemoryHistory(module = {}) {
         return Math.random().toString(36).substr(2, c);
     }
     const p = M(u, 0, i.length - 1);
-    const h = i.map((module)=>createLocation(module, undefined, typeof module == "string" ? d() : module.key || d()));
-    function parsePath(module) {
-        const exports = M(locationsAreEqual.index + module, 0, locationsAreEqual.entries.length - 1);
-        const r = locationsAreEqual.entries[exports];
-        s.confirmTransitionTo(r, "POP", require, (module)=>{
-            if (module) {
+    const h = i.map((e)=>createLocation(e, undefined, typeof e == "string" ? d() : e.key || d()));
+    function parsePath(e) {
+        const t = M(locationsAreEqual.index + e, 0, locationsAreEqual.entries.length - 1);
+        const r = locationsAreEqual.entries[t];
+        s.confirmTransitionTo(r, "POP", n, (e)=>{
+            if (e) {
                 f({
                     action: "POP",
                     location: r,
-                    index: exports
+                    index: t
                 });
             } else {
                 f();
@@ -730,30 +730,30 @@ export function createMemoryHistory(module = {}) {
         index: p,
         entries: h,
         createHref: createPath,
-        push (module, exports) {
-            const r = createLocation(module, exports, d(), locationsAreEqual.location);
-            s.confirmTransitionTo(r, "PUSH", require, (module)=>{
-                if (module) {
-                    const exports = locationsAreEqual.index + 1;
-                    const require = locationsAreEqual.entries.slice(0);
-                    if (require.length > exports) {
-                        require.splice(exports, require.length - exports, r);
+        push (e, t) {
+            const r = createLocation(e, t, d(), locationsAreEqual.location);
+            s.confirmTransitionTo(r, "PUSH", n, (e)=>{
+                if (e) {
+                    const t = locationsAreEqual.index + 1;
+                    const n = locationsAreEqual.entries.slice(0);
+                    if (n.length > t) {
+                        n.splice(t, n.length - t, r);
                     } else {
-                        require.push(r);
+                        n.push(r);
                     }
                     f({
                         action: "PUSH",
                         location: r,
-                        index: exports,
-                        entries: require
+                        index: t,
+                        entries: n
                     });
                 }
             });
         },
-        replace (module, exports) {
-            const r = createLocation(module, exports, d(), locationsAreEqual.location);
-            s.confirmTransitionTo(r, "REPLACE", require, (module)=>{
-                if (module) {
+        replace (e, t) {
+            const r = createLocation(e, t, d(), locationsAreEqual.location);
+            s.confirmTransitionTo(r, "REPLACE", n, (e)=>{
+                if (e) {
                     locationsAreEqual.entries[locationsAreEqual.index] = r;
                     f({
                         action: "REPLACE",
@@ -769,15 +769,15 @@ export function createMemoryHistory(module = {}) {
         goForward () {
             parsePath(1);
         },
-        canGo (module) {
-            const exports = locationsAreEqual.index + module;
-            return exports >= 0 && exports < locationsAreEqual.entries.length;
+        canGo (e) {
+            const t = locationsAreEqual.index + e;
+            return t >= 0 && t < locationsAreEqual.entries.length;
         },
-        block (module = false) {
-            return s.setPrompt(module);
+        block (e = false) {
+            return s.setPrompt(e);
         },
-        listen (module) {
-            return s.appendListener(module);
+        listen (e) {
+            return s.appendListener(e);
         }
     };
     return locationsAreEqual;

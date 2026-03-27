@@ -1,0 +1,73 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+exports.a = s;
+var r = require("./module-0.js"), o = "Channel's Buffer overflow!", i = 1, a = 3, u = 4, l = {
+    isEmpty: r.r,
+    put: r.u,
+    take: r.u
+};
+function c() {
+    var e = arguments.length > 0 && void 0 !== arguments[0] ? arguments[0] : 10, t = arguments[1], n = new Array(e), r = 0, l = 0, c = 0, s = function(t) {
+        n[l] = t;
+        l = (l + 1) % e;
+        r++;
+    }, f = function() {
+        if (0 != r) {
+            var t = n[c];
+            return n[c] = null, r--, c = (c + 1) % e, t;
+        }
+    }, d = function() {
+        for(var e = []; r;)e.push(f());
+        return e;
+    };
+    return {
+        isEmpty: function() {
+            return 0 == r;
+        },
+        put: function(f) {
+            if (r < e) s(f);
+            else {
+                var p = void 0;
+                switch(t){
+                    case i:
+                        throw new Error(o);
+                    case a:
+                        n[l] = f;
+                        c = l = (l + 1) % e;
+                        break;
+                    case u:
+                        p = 2 * e;
+                        n = d();
+                        r = n.length;
+                        l = n.length;
+                        c = 0;
+                        n.length = p;
+                        e = p;
+                        s(f);
+                }
+            }
+        },
+        take: f,
+        flush: d
+    };
+}
+var s = {
+    none: function() {
+        return l;
+    },
+    fixed: function(e) {
+        return c(e, i);
+    },
+    dropping: function(e) {
+        return c(e, 2);
+    },
+    sliding: function(e) {
+        return c(e, a);
+    },
+    expanding: function(e) {
+        return c(e, u);
+    }
+};

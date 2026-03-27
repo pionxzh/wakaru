@@ -1,0 +1,13 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: !0
+});
+exports.START = "_START";
+exports.STOP = "_STOP";
+exports.RESET = "_RESET";
+exports.SUCCESS = "_SUCCESS";
+exports.ERROR = "_ERROR";

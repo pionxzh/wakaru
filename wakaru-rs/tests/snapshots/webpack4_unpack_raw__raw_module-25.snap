@@ -1,0 +1,27 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: !0
+});
+exports.fetchData = exports.fetchDataSuccess = exports.startFetchingData = void 0;
+var r = require("./module-19.js"), o = require("./module-26.js");
+require("./module-13.js");
+exports.startFetchingData = function() {
+    return {
+        type: r.FETCH_DATA + o.START
+    };
+};
+exports.fetchDataSuccess = function(e) {
+    return {
+        type: r.FETCH_DATA + o.SUCCESS,
+        payload: e
+    };
+};
+exports.fetchData = function() {
+    return {
+        type: r.FETCH_DATA
+    };
+};

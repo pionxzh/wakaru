@@ -9,16 +9,16 @@ import y from "./module-32.js";
 import b from "./module-5.js";
 import w from "./module-20.js";
 import N from "./module-11.js";
-function r(module, exports) {
-    return (r = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : (module, exports)=>{
-        module.__proto__ = exports;
-        return module;
-    })(module, exports);
+function r(e, t) {
+    return (r = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : (e, t)=>{
+        e.__proto__ = t;
+        return e;
+    })(e, t);
 }
-function o(module, exports) {
-    module.prototype = Object.create(exports.prototype);
-    module.prototype.constructor = module;
-    r(module, exports);
+function o(e, t) {
+    e.prototype = Object.create(t.prototype);
+    e.prototype.constructor = e;
+    r(e, t);
 }
 const c = u.shape({
     trySubscribe: u.func.isRequired,
@@ -32,24 +32,24 @@ const s = u.shape({
     getState: u.func.isRequired
 });
 i.forwardRef;
-export function createProvider(module = "store") {
-    let exports;
-    const require = module + "Subscription";
-    const r = ((exports)=>{
-        o(a, exports);
+export function createProvider(e = "store") {
+    let t;
+    const n = e + "Subscription";
+    const r = ((t)=>{
+        o(a, t);
         const r = a.prototype;
-        function a(require, r) {
+        function a(n, r) {
             let o;
-            o = exports.call(this, require, r) || this;
-            o[module] = require.store;
+            o = t.call(this, n, r) || this;
+            o[e] = n.store;
             return o;
         }
         r.getChildContext = function() {
-            let exports;
-            exports = {};
-            exports[module] = this[module];
-            exports[require] = null;
-            return exports;
+            let t;
+            t = {};
+            t[e] = this[e];
+            t[n] = null;
+            return t;
         };
         r.render = function() {
             return i.Children.only(this.props.children);
@@ -60,28 +60,28 @@ export function createProvider(module = "store") {
         store: s.isRequired,
         children: u.element.isRequired
     };
-    r.childContextTypes = ((exports = {})[module] = s.isRequired, exports[require] = c, exports);
+    r.childContextTypes = ((t = {})[e] = s.isRequired, t[n] = c, t);
     return r;
 }
 export const Provider = createProvider();
-function p(module) {
-    if (module === undefined) {
+function p(e) {
+    if (e === undefined) {
         throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
     }
-    return module;
+    return e;
 }
-function m(module, exports) {
-    if (module == null) {
+function m(e, t) {
+    if (e == null) {
         return {};
     }
-    let require;
+    let n;
     let r;
     const o = {};
-    const i = Object.keys(module);
+    const i = Object.keys(e);
     for(r = 0; r < i.length; r++){
-        require = i[r];
-        if (!(exports.indexOf(require) >= 0)) {
-            o[require] = module[require];
+        n = i[r];
+        if (!(t.indexOf(n) >= 0)) {
+            o[n] = e[n];
         }
     }
     return o;
@@ -91,16 +91,16 @@ const x = {
     notify () {}
 };
 class k {
-    constructor(module, exports, require){
-        this.store = module;
-        this.parentSub = exports;
-        this.onStateChange = require;
+    constructor(e, t, n){
+        this.store = e;
+        this.parentSub = t;
+        this.onStateChange = n;
         this.unsubscribe = null;
         this.listeners = x;
     }
-    addNestedSub(module) {
+    addNestedSub(e) {
         this.trySubscribe();
-        return this.listeners.subscribe(module);
+        return this.listeners.subscribe(e);
     }
     notifyNestedSubs() {
         this.listeners.notify();
@@ -112,34 +112,34 @@ class k {
         if (!this.unsubscribe) {
             this.unsubscribe = this.parentSub ? this.parentSub.addNestedSub(this.onStateChange) : this.store.subscribe(this.onStateChange);
             this.listeners = (()=>{
-                let module = [];
-                let exports = [];
+                let e = [];
+                let t = [];
                 return {
                     clear () {
-                        exports = E;
-                        module = E;
+                        t = E;
+                        e = E;
                     },
                     notify () {
-                        for(let require = module = exports, r = 0; r < require.length; r++){
-                            require[r]();
+                        for(let n = e = t, r = 0; r < n.length; r++){
+                            n[r]();
                         }
                     },
                     get () {
-                        return exports;
+                        return t;
                     },
-                    subscribe (require) {
+                    subscribe (n) {
                         let r = true;
-                        if (exports === module) {
-                            exports = module.slice();
+                        if (t === e) {
+                            t = e.slice();
                         }
-                        exports.push(require);
+                        t.push(n);
                         return ()=>{
-                            if (r && module !== E) {
+                            if (r && e !== E) {
                                 r = false;
-                                if (exports === module) {
-                                    exports = module.slice();
+                                if (t === e) {
+                                    t = e.slice();
                                 }
-                                exports.splice(exports.indexOf(require), 1);
+                                t.splice(t.indexOf(n), 1);
                             }
                         };
                     }
@@ -160,12 +160,12 @@ const T = i.forwardRef !== undefined;
 let S = 0;
 const O = {};
 function C() {}
-export function connectAdvanced(module, exports = {}) {
-    let require;
+export function connectAdvanced(e, t = {}) {
+    let n;
     let r;
-    const a = exports;
+    const a = t;
     const u = a.getDisplayName;
-    const l = u === undefined ? (module)=>"ConnectAdvanced(" + module + ")" : u;
+    const l = u === undefined ? (e)=>"ConnectAdvanced(" + e + ")" : u;
     const createProvider = a.methodName;
     const Provider = createProvider === undefined ? "connectAdvanced" : createProvider;
     const y = a.renderCountProp;
@@ -186,17 +186,17 @@ export function connectAdvanced(module, exports = {}) {
     ]);
     const M = _ + "Subscription";
     const A = S++;
-    require = {};
-    require[_] = s;
-    require[M] = c;
-    const L = require;
+    n = {};
+    n[_] = s;
+    n[M] = c;
+    const L = n;
     r = {};
     r[M] = c;
     const I = r;
-    return (exports)=>{
-        b(w.isValidElementType(exports), "You must pass a component to the function returned by " + Provider + ". Instead received " + JSON.stringify(exports));
-        const require = exports.displayName || exports.name || "Component";
-        const r = l(require);
+    return (t)=>{
+        b(w.isValidElementType(t), "You must pass a component to the function returned by " + Provider + ". Instead received " + JSON.stringify(t));
+        const n = t.displayName || t.name || "Component";
+        const r = l(n);
         const a = h.a({}, N, {
             getDisplayName: l,
             methodName: Provider,
@@ -205,32 +205,32 @@ export function connectAdvanced(module, exports = {}) {
             storeKey: _,
             withRef: R,
             displayName: r,
-            wrappedComponentName: require,
-            WrappedComponent: exports
+            wrappedComponentName: n,
+            WrappedComponent: t
         });
-        const u = ((require)=>{
-            function u(module, exports) {
+        const u = ((n)=>{
+            function u(e, t) {
                 let o;
-                o = require.call(this, module, exports) || this;
+                o = n.call(this, e, t) || this;
                 o.version = A;
                 o.state = {};
                 o.renderCount = 0;
-                o.store = module[_] || exports[_];
-                o.propsMode = Boolean(module[_]);
+                o.store = e[_] || t[_];
+                o.propsMode = Boolean(e[_]);
                 o.setWrappedInstance = o.setWrappedInstance.bind(p(p(o)));
                 b(o.store, 'Could not find "' + _ + '" in either the context or props of "' + r + '". Either wrap the root component in a <Provider>, or explicitly pass "' + _ + '" as a prop to "' + r + '".');
                 o.initSelector();
                 o.initSubscription();
                 return o;
             }
-            o(u, require);
+            o(u, n);
             const l = u.prototype;
             l.getChildContext = function() {
-                let module;
-                const exports = this.propsMode ? null : this.subscription;
-                module = {};
-                module[M] = exports || this.context[M];
-                return module;
+                let e;
+                const t = this.propsMode ? null : this.subscription;
+                e = {};
+                e[M] = t || this.context[M];
+                return e;
             };
             l.componentDidMount = function() {
                 if (x) {
@@ -241,8 +241,8 @@ export function connectAdvanced(module, exports = {}) {
                     }
                 }
             };
-            l.componentWillReceiveProps = function(module) {
-                this.selector.run(module);
+            l.componentWillReceiveProps = function(e) {
+                this.selector.run(e);
             };
             l.shouldComponentUpdate = function() {
                 return this.selector.shouldComponentUpdate;
@@ -261,35 +261,35 @@ export function connectAdvanced(module, exports = {}) {
                 b(R, "To access the wrapped instance, you need to specify { withRef: true } in the options argument of the " + Provider + "() call.");
                 return this.wrappedInstance;
             };
-            l.setWrappedInstance = function(module) {
-                this.wrappedInstance = module;
+            l.setWrappedInstance = function(e) {
+                this.wrappedInstance = e;
             };
             l.initSelector = function() {
-                const exports = module(this.store.dispatch, a);
-                this.selector = ((module, exports)=>{
-                    const require = {
+                const t = e(this.store.dispatch, a);
+                this.selector = ((e, t)=>{
+                    const n = {
                         run (r) {
                             try {
-                                const o = module(exports.getState(), r);
-                                if (o !== require.props || require.error) {
-                                    require.shouldComponentUpdate = true;
-                                    require.props = o;
-                                    require.error = null;
+                                const o = e(t.getState(), r);
+                                if (o !== n.props || n.error) {
+                                    n.shouldComponentUpdate = true;
+                                    n.props = o;
+                                    n.error = null;
                                 }
-                            } catch (module) {
-                                require.shouldComponentUpdate = true;
-                                require.error = module;
+                            } catch (e) {
+                                n.shouldComponentUpdate = true;
+                                n.error = e;
                             }
                         }
                     };
-                    return require;
-                })(exports, this.store);
+                    return n;
+                })(t, this.store);
                 this.selector.run(this.props);
             };
             l.initSubscription = function() {
                 if (x) {
-                    const module = (this.propsMode ? this.props : this.context)[M];
-                    this.subscription = new k(this.store, module, this.onStateChange.bind(this));
+                    const e = (this.propsMode ? this.props : this.context)[M];
+                    this.subscription = new k(this.store, e, this.onStateChange.bind(this));
                     this.notifyNestedSubs = this.subscription.notifyNestedSubs.bind(this.subscription);
                 }
             };
@@ -309,29 +309,29 @@ export function connectAdvanced(module, exports = {}) {
             l.isSubscribed = function() {
                 return Boolean(this.subscription) && this.subscription.isSubscribed();
             };
-            l.addExtraProps = function(module) {
+            l.addExtraProps = function(e) {
                 if (!(R || b || this.propsMode && this.subscription)) {
-                    return module;
+                    return e;
                 }
-                const exports = h.a({}, module);
+                const t = h.a({}, e);
                 if (R) {
-                    exports.ref = this.setWrappedInstance;
+                    t.ref = this.setWrappedInstance;
                 }
                 if (b) {
-                    exports[b] = this.renderCount++;
+                    t[b] = this.renderCount++;
                 }
                 if (this.propsMode && this.subscription) {
-                    exports[M] = this.subscription;
+                    t[M] = this.subscription;
                 }
-                return exports;
+                return t;
             };
             l.render = function() {
-                const module = this.selector;
-                module.shouldComponentUpdate = false;
-                if (module.error) {
-                    throw module.error;
+                const e = this.selector;
+                e.shouldComponentUpdate = false;
+                if (e.error) {
+                    throw e.error;
                 }
-                return i.createElement(exports, this.addExtraProps(module.props));
+                return i.createElement(t, this.addExtraProps(e.props));
             };
             return u;
         })(i.Component);
@@ -339,43 +339,43 @@ export function connectAdvanced(module, exports = {}) {
             u.prototype.UNSAFE_componentWillReceiveProps = u.prototype.componentWillReceiveProps;
             delete u.prototype.componentWillReceiveProps;
         }
-        u.WrappedComponent = exports;
+        u.WrappedComponent = t;
         u.displayName = r;
         u.childContextTypes = I;
         u.contextTypes = L;
         u.propTypes = L;
-        return y(u, exports);
+        return y(u, t);
     };
 }
 const _ = Object.prototype.hasOwnProperty;
-function j(module, exports) {
-    if (module === exports) {
-        return module !== 0 || exports !== 0 || 1 / module == 1 / exports;
+function j(e, t) {
+    if (e === t) {
+        return e !== 0 || t !== 0 || 1 / e == 1 / t;
     }
-    return module != module && exports != exports;
+    return e != e && t != t;
 }
-function R(module, exports) {
-    if (j(module, exports)) {
+function R(e, t) {
+    if (j(e, t)) {
         return true;
     }
-    if (typeof module != "object" || module === null || typeof exports != "object" || exports === null) {
+    if (typeof e != "object" || e === null || typeof t != "object" || t === null) {
         return false;
     }
-    const require = Object.keys(module);
-    const r = Object.keys(exports);
-    if (require.length !== r.length) {
+    const n = Object.keys(e);
+    const r = Object.keys(t);
+    if (n.length !== r.length) {
         return false;
     }
-    for(let o = 0; o < require.length; o++){
-        if (!_.call(exports, require[o]) || !j(module[require[o]], exports[require[o]])) {
+    for(let o = 0; o < n.length; o++){
+        if (!_.call(t, n[o]) || !j(e[n[o]], t[n[o]])) {
             return false;
         }
     }
     return true;
 }
-function M(module) {
-    return (exports, require)=>{
-        const r = module(exports, require);
+function M(e) {
+    return (t, n)=>{
+        const r = e(t, n);
         function o() {
             return r;
         }
@@ -383,30 +383,30 @@ function M(module) {
         return o;
     };
 }
-function A(module) {
-    if (module.dependsOnOwnProps !== null && module.dependsOnOwnProps !== undefined) {
-        return Boolean(module.dependsOnOwnProps);
+function A(e) {
+    if (e.dependsOnOwnProps !== null && e.dependsOnOwnProps !== undefined) {
+        return Boolean(e.dependsOnOwnProps);
     }
-    return module.length !== 1;
+    return e.length !== 1;
 }
-function L(module, exports) {
-    return (exports, require)=>{
-        require.displayName;
-        const r = (module, exports)=>{
+function L(e, t) {
+    return (t, n)=>{
+        n.displayName;
+        const r = (e, t)=>{
             if (r.dependsOnOwnProps) {
-                return r.mapToProps(module, exports);
+                return r.mapToProps(e, t);
             }
-            return r.mapToProps(module);
+            return r.mapToProps(e);
         };
         r.dependsOnOwnProps = true;
-        r.mapToProps = (exports, require)=>{
-            r.mapToProps = module;
-            r.dependsOnOwnProps = A(module);
-            let o = r(exports, require);
+        r.mapToProps = (t, n)=>{
+            r.mapToProps = e;
+            r.dependsOnOwnProps = A(e);
+            let o = r(t, n);
             if (typeof o == "function") {
                 r.mapToProps = o;
                 r.dependsOnOwnProps = A(o);
-                o = r(exports, require);
+                o = r(t, n);
             }
             return o;
         };
@@ -414,35 +414,35 @@ function L(module, exports) {
     };
 }
 const I = [
-    (module)=>{
-        if (typeof module == "function") {
-            return L(module);
+    (e)=>{
+        if (typeof e == "function") {
+            return L(e);
         }
     },
-    (module)=>{
-        if (module) {
+    (e)=>{
+        if (e) {
             return undefined;
         }
-        return M((module)=>{
+        return M((e)=>{
             return {
-                dispatch: module
+                dispatch: e
             };
         });
     },
-    (module)=>{
-        if (module && typeof module == "object") {
-            return M((exports)=>N.bindActionCreators(module, exports));
+    (e)=>{
+        if (e && typeof e == "object") {
+            return M((t)=>N.bindActionCreators(e, t));
         }
     }
 ];
 const D = [
-    (module)=>{
-        if (typeof module == "function") {
-            return L(module);
+    (e)=>{
+        if (typeof e == "function") {
+            return L(e);
         }
     },
-    (module)=>{
-        if (module) {
+    (e)=>{
+        if (e) {
             return undefined;
         }
         return M(()=>{
@@ -450,19 +450,19 @@ const D = [
         });
     }
 ];
-function F(module, exports, require) {
-    return h.a({}, require, module, exports);
+function F(e, t, n) {
+    return h.a({}, n, e, t);
 }
 const z = [
-    (module)=>{
-        if (typeof module == "function") {
-            return ((module)=>(exports, require)=>{
-                    require.displayName;
+    (e)=>{
+        if (typeof e == "function") {
+            return ((e)=>(t, n)=>{
+                    n.displayName;
                     let r;
-                    const { pure: o, areMergedPropsEqual: i } = require;
+                    const { pure: o, areMergedPropsEqual: i } = n;
                     let a = false;
-                    return (exports, require, u)=>{
-                        const l = module(exports, require, u);
+                    return (t, n, u)=>{
+                        const l = e(t, n, u);
                         if (a) {
                             if (!(o && i(l, r))) {
                                 r = l;
@@ -473,20 +473,20 @@ const z = [
                         }
                         return r;
                     };
-                })(module);
+                })(e);
         }
     },
-    (module)=>{
-        if (module) {
+    (e)=>{
+        if (e) {
             return undefined;
         }
         return ()=>F;
     }
 ];
-function q(module, exports, require, r) {
-    return (o, i)=>require(module(o, i), exports(r, i), i);
+function q(e, t, n, r) {
+    return (o, i)=>n(e(o, i), t(r, i), i);
 }
-function U(module, exports, require, r, o) {
+function U(e, t, n, r, o) {
     let i;
     let a;
     let u;
@@ -500,28 +500,28 @@ function U(module, exports, require, r, o) {
         i = o;
         a = p;
         if (h && m) {
-            u = module(i, a);
-            if (exports.dependsOnOwnProps) {
-                l = exports(r, a);
+            u = e(i, a);
+            if (t.dependsOnOwnProps) {
+                l = t(r, a);
             }
-            return c = require(u, l, a);
+            return c = n(u, l, a);
         }
         if (h) {
-            if (module.dependsOnOwnProps) {
-                u = module(i, a);
+            if (e.dependsOnOwnProps) {
+                u = e(i, a);
             }
-            if (exports.dependsOnOwnProps) {
-                l = exports(r, a);
+            if (t.dependsOnOwnProps) {
+                l = t(r, a);
             }
-            return c = require(u, l, a);
+            return c = n(u, l, a);
         }
         if (m) {
             return (()=>{
-                const exports = module(i, a);
-                const r = !Provider(exports, u);
-                u = exports;
+                const t = e(i, a);
+                const r = !Provider(t, u);
+                u = t;
                 if (r) {
-                    c = require(u, l, a);
+                    c = n(u, l, a);
                 }
                 return c;
             })();
@@ -533,53 +533,53 @@ function U(module, exports, require, r, o) {
             return h(o, s);
         }
         return ((o, s)=>{
-            u = module(i = o, a = s);
-            l = exports(r, a);
-            c = require(u, l, a);
+            u = e(i = o, a = s);
+            l = t(r, a);
+            c = n(u, l, a);
             p = true;
             return c;
         })(o, s);
     };
 }
-function H(module, exports) {
-    const { initMapStateToProps: require, initMapDispatchToProps: r, initMergeProps: o } = exports;
-    const i = m(exports, [
+function H(e, t) {
+    const { initMapStateToProps: n, initMapDispatchToProps: r, initMergeProps: o } = t;
+    const i = m(t, [
         "initMapStateToProps",
         "initMapDispatchToProps",
         "initMergeProps"
     ]);
-    const a = require(module, i);
-    const u = r(module, i);
-    const l = o(module, i);
-    return (i.pure ? U : q)(a, u, l, module, i);
+    const a = n(e, i);
+    const u = r(e, i);
+    const l = o(e, i);
+    return (i.pure ? U : q)(a, u, l, e, i);
 }
-function W(module, exports, require) {
-    for(let r = exports.length - 1; r >= 0; r--){
-        const o = exports[r](module);
+function W(e, t, n) {
+    for(let r = t.length - 1; r >= 0; r--){
+        const o = t[r](e);
         if (o) {
             return o;
         }
     }
-    return (exports, r)=>{
-        throw new Error("Invalid value of type " + typeof module + " for " + require + " argument when connecting component " + r.wrappedComponentName + ".");
+    return (t, r)=>{
+        throw new Error("Invalid value of type " + typeof e + " for " + n + " argument when connecting component " + r.wrappedComponentName + ".");
     };
 }
-function $(module, exports) {
-    return module === exports;
+function $(e, t) {
+    return e === t;
 }
-export const connect = ((module)=>{
-    const exports = module === undefined ? {} : module;
-    const require = exports.connectHOC;
-    const r = require === undefined ? connectAdvanced : require;
-    const o = exports.mapStateToPropsFactories;
+export const connect = ((e)=>{
+    const t = e === undefined ? {} : e;
+    const n = t.connectHOC;
+    const r = n === undefined ? connectAdvanced : n;
+    const o = t.mapStateToPropsFactories;
     const i = o === undefined ? D : o;
-    const a = exports.mapDispatchToPropsFactories;
+    const a = t.mapDispatchToPropsFactories;
     const u = a === undefined ? I : a;
-    const l = exports.mergePropsFactories;
+    const l = t.mergePropsFactories;
     const c = l === undefined ? z : l;
-    const s = exports.selectorFactory;
+    const s = t.selectorFactory;
     const createProvider = s === undefined ? H : s;
-    return (module, exports, require, o = {})=>{
+    return (e, t, n, o = {})=>{
         const a = o;
         const l = a.pure;
         const s = l === undefined || l;
@@ -598,15 +598,15 @@ export const connect = ((module)=>{
             "areStatePropsEqual",
             "areMergedPropsEqual"
         ]);
-        const k = W(module, i, "mapStateToProps");
-        const T = W(exports, u, "mapDispatchToProps");
-        const S = W(require, c, "mergeProps");
+        const k = W(e, i, "mapStateToProps");
+        const T = W(t, u, "mapDispatchToProps");
+        const S = W(n, c, "mergeProps");
         return r(createProvider, h.a({
             methodName: "connect",
-            getDisplayName (module) {
-                return "Connect(" + module + ")";
+            getDisplayName (e) {
+                return "Connect(" + e + ")";
             },
-            shouldHandleStateChanges: Boolean(module),
+            shouldHandleStateChanges: Boolean(e),
             initMapStateToProps: k,
             initMapDispatchToProps: T,
             initMergeProps: S,

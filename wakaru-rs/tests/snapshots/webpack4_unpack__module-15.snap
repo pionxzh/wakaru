@@ -5,14 +5,14 @@ expression: code
 import r from "./module-14.js";
 const i = {};
 let a = 0;
-export const a = function(module, exports = {}) {
-    const require = arguments[2];
-    if (typeof exports == "string") {
-        exports = {
-            path: exports
+export const a = function(e, t = {}) {
+    const n = arguments[2];
+    if (typeof t == "string") {
+        t = {
+            path: t
         };
     }
-    const r = exports;
+    const r = t;
     const { path: u, exact: l } = r;
     const c = l !== undefined && l;
     const s = r.strict;
@@ -20,21 +20,21 @@ export const a = function(module, exports = {}) {
     const d = r.sensitive;
     const p = d !== undefined && d;
     if (u == null) {
-        return require;
+        return n;
     }
-    const h = ((module, exports)=>{
-        const require = "" + exports.end + exports.strict + exports.sensitive;
-        const r = i[require] || (i[require] = {});
-        if (r[module]) {
-            return r[module];
+    const h = ((e, t)=>{
+        const n = "" + t.end + t.strict + t.sensitive;
+        const r = i[n] || (i[n] = {});
+        if (r[e]) {
+            return r[e];
         }
         const u = [];
         const l = {
-            re: r(module, u, exports),
+            re: r(e, u, t),
             keys: u
         };
         if (a < 10000) {
-            r[module] = l;
+            r[e] = l;
             a++;
         }
         return l;
@@ -44,13 +44,13 @@ export const a = function(module, exports = {}) {
         sensitive: p
     });
     const { re: m, keys: y } = h;
-    const v = m.exec(module);
+    const v = m.exec(e);
     if (!v) {
         return null;
     }
     const b = v[0];
     const g = v.slice(1);
-    const w = module === b;
+    const w = e === b;
     if (c && !w) {
         return null;
     }
@@ -58,9 +58,9 @@ export const a = function(module, exports = {}) {
         path: u,
         url: u === "/" && b === "" ? "/" : b,
         isExact: w,
-        params: y.reduce((module, exports, require)=>{
-            module[exports.name] = g[require];
-            return module;
+        params: y.reduce((e, t, n)=>{
+            e[t.name] = g[n];
+            return e;
         }, {})
     };
 };

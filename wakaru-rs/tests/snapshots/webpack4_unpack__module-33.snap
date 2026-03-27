@@ -9,40 +9,40 @@ import i from "./module-19.js";
 const a = regeneratorRuntime.mark(l);
 const u = regeneratorRuntime.mark(c);
 function l() {
-    return regeneratorRuntime.wrap((module)=>{
+    return regeneratorRuntime.wrap((e)=>{
         while(true){
-            switch(module.prev = module.next){
+            switch(e.prev = e.next){
                 case 0:
-                    module.next = 3;
+                    e.next = 3;
                     return r.take(i.FETCH_DATA);
                 case 3:
-                    module.next = 5;
+                    e.next = 5;
                     return r.put(o.startFetchingData());
                 case 5:
-                    module.next = 7;
+                    e.next = 7;
                     return r.put(o.fetchDataSuccess([]));
                 case 7:
-                    module.next = 0;
+                    e.next = 0;
                     break;
                 case 9:
                 case "end":
-                    return module.stop();
+                    return e.stop();
             }
         }
     }, a, this);
 }
 function c() {
-    return regeneratorRuntime.wrap((module)=>{
+    return regeneratorRuntime.wrap((e)=>{
         while(true){
-            switch(module.prev = module.next){
+            switch(e.prev = e.next){
                 case 0:
-                    module.next = 2;
+                    e.next = 2;
                     return r.all([
                         l()
                     ]);
                 case 2:
                 case "end":
-                    return module.stop();
+                    return e.stop();
             }
         }
     }, u, this);

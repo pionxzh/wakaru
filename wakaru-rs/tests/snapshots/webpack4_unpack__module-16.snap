@@ -6,61 +6,61 @@ import r from "./module-4.js";
 import i from "./module-5.js";
 import u from "./module-3.js";
 import c from "./module-1.js";
-const f = Object.assign || function(module) {
-    for(let exports = 1; exports < arguments.length; exports++){
-        const require = arguments[exports];
-        for(let r in require){
-            if (Object.prototype.hasOwnProperty.call(require, r)) {
-                module[r] = require[r];
+const f = Object.assign || function(e) {
+    for(let t = 1; t < arguments.length; t++){
+        const n = arguments[t];
+        for(let r in n){
+            if (Object.prototype.hasOwnProperty.call(n, r)) {
+                e[r] = n[r];
             }
         }
     }
-    return module;
+    return e;
 };
-function d(module, exports) {
-    if (!module) {
+function d(e, t) {
+    if (!e) {
         throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
     }
-    if (!exports || typeof exports != "object" && typeof exports != "function") {
-        return module;
+    if (!t || typeof t != "object" && typeof t != "function") {
+        return e;
     }
-    return exports;
+    return t;
 }
-export const a = ((module)=>{
-    function exports() {
-        let require;
+export const a = ((e)=>{
+    function t() {
+        let n;
         let r;
-        !((module, exports)=>{
-            if (!(module instanceof exports)) {
+        !((e, t)=>{
+            if (!(e instanceof t)) {
                 throw new TypeError("Cannot call a class as a function");
             }
-        })(this, exports);
+        })(this, t);
         for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
             i[a] = arguments[a];
         }
-        require = r = d(this, module.call(...[
+        n = r = d(this, e.call(...[
             this
         ].concat(i)));
         r.state = {
             match: r.computeMatch(r.props.history.location.pathname)
         };
-        return d(r, require);
+        return d(r, n);
     }
-    ((module, exports)=>{
-        if (typeof exports != "function" && exports !== null) {
-            throw new TypeError("Super expression must either be null or a function, not " + typeof exports);
+    ((e, t)=>{
+        if (typeof t != "function" && t !== null) {
+            throw new TypeError("Super expression must either be null or a function, not " + typeof t);
         }
-        module.prototype = Object.create(exports && exports.prototype, {
+        e.prototype = Object.create(t && t.prototype, {
             constructor: {
-                value: module,
+                value: e,
                 enumerable: false,
                 writable: true,
                 configurable: true
             }
         });
-        exports && (Object.setPrototypeOf ? Object.setPrototypeOf(module, exports) : module.__proto__ = exports);
-    })(exports, module);
-    exports.prototype.getChildContext = function() {
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    })(t, e);
+    t.prototype.getChildContext = function() {
         return {
             router: f({}, this.context.router, {
                 history: this.props.history,
@@ -71,39 +71,39 @@ export const a = ((module)=>{
             })
         };
     };
-    exports.prototype.computeMatch = (module)=>{
+    t.prototype.computeMatch = (e)=>{
         return {
             path: "/",
             url: "/",
             params: {},
-            isExact: module === "/"
+            isExact: e === "/"
         };
     };
-    exports.prototype.componentWillMount = function() {
-        const module = this;
-        const exports = this.props;
-        const { children: require, history: r } = exports;
-        i(require == null || u.Children.count(require) === 1, "A <Router> may have only one child element");
+    t.prototype.componentWillMount = function() {
+        const e = this;
+        const t = this.props;
+        const { children: n, history: r } = t;
+        i(n == null || u.Children.count(n) === 1, "A <Router> may have only one child element");
         this.unlisten = r.listen(()=>{
-            module.setState({
-                match: module.computeMatch(r.location.pathname)
+            e.setState({
+                match: e.computeMatch(r.location.pathname)
             });
         });
     };
-    exports.prototype.componentWillReceiveProps = function(module) {
-        r(this.props.history === module.history, "You cannot change <Router history>");
+    t.prototype.componentWillReceiveProps = function(e) {
+        r(this.props.history === e.history, "You cannot change <Router history>");
     };
-    exports.prototype.componentWillUnmount = function() {
+    t.prototype.componentWillUnmount = function() {
         this.unlisten();
     };
-    exports.prototype.render = function() {
-        const module = this.props.children;
-        if (module) {
-            return u.Children.only(module);
+    t.prototype.render = function() {
+        const e = this.props.children;
+        if (e) {
+            return u.Children.only(e);
         }
         return null;
     };
-    return exports;
+    return t;
 })(u.Component);
 a.propTypes = {
     history: c.object.isRequired,

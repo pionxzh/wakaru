@@ -1,0 +1,465 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+var r = {};
+exports.TASK = o.e;
+exports.SAGA_ACTION = o.c;
+exports.noop = o.u;
+exports.is = o.q;
+exports.deferred = o.l;
+exports.arrayOfDeffered = o.g;
+exports.createMockTask = o.j;
+exports.cloneableGenerator = o.i;
+exports.asEffect = u.d;
+exports.CHANNEL_END = d;
+var o = require("./module-0.js"), i = require("./module-6.js"), a = require("./module-12.js"), u = require("./module-2.js"), l = require("./module-9.js"), c = Object.assign || function(e) {
+    for(var t = 1; t < arguments.length; t++){
+        var n = arguments[t];
+        for(var r in n)Object.prototype.hasOwnProperty.call(n, r) && (e[r] = n[r]);
+    }
+    return e;
+}, s = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(e) {
+    return typeof e;
+} : function(e) {
+    return e && "function" == typeof Symbol && e.constructor === Symbol && e !== Symbol.prototype ? "symbol" : typeof e;
+};
+var f = "proc first argument (Saga function result) must be an iterator", d = {
+    toString: function() {
+        return "@@redux-saga/CHANNEL_END";
+    }
+}, p = {
+    toString: function() {
+        return "@@redux-saga/TASK_CANCEL";
+    }
+}, h = {
+    wildcard: function() {
+        return o.r;
+    },
+    default: function(e) {
+        return "symbol" === (void 0 === e ? "undefined" : s(e)) ? function(t) {
+            return t.type === e;
+        } : function(t) {
+            return t.type === String(e);
+        };
+    },
+    array: function(e) {
+        return function(t) {
+            return e.some(function(e) {
+                return m(e)(t);
+            });
+        };
+    },
+    predicate: function(e) {
+        return function(t) {
+            return e(t);
+        };
+    }
+};
+function m(e) {
+    return ("*" === e ? h.wildcard : o.q.array(e) ? h.array : o.q.stringableFunc(e) ? h.default : o.q.func(e) ? h.predicate : h.default)(e);
+}
+var y = function(e) {
+    return {
+        fn: e
+    };
+};
+function v(e) {
+    var t = arguments.length > 1 && void 0 !== arguments[1] ? arguments[1] : function() {
+        return o.u;
+    }, n = arguments.length > 2 && void 0 !== arguments[2] ? arguments[2] : o.u, r = arguments.length > 3 && void 0 !== arguments[3] ? arguments[3] : o.u, s = arguments.length > 4 && void 0 !== arguments[4] ? arguments[4] : {}, h = arguments.length > 5 && void 0 !== arguments[5] ? arguments[5] : {}, b = arguments.length > 6 && void 0 !== arguments[6] ? arguments[6] : 0, g = arguments.length > 7 && void 0 !== arguments[7] ? arguments[7] : "anonymous", w = arguments[8];
+    Object(o.h)(e, o.q.iterator, f);
+    var E = Object(o.n)(z, Object(o.z)("[...effects]", "all([...effects])")), x = h.sagaMonitor, k = h.logger, T = h.onError, S = k || o.s, O = function(e) {
+        var t = e.sagaStack;
+        !t && e.stack && (t = -1 !== e.stack.split("\n")[0].indexOf(e.message) ? e.stack : "Error: " + e.message + "\n" + e.stack);
+        S("error", "uncaught at " + g, t || e.message || e);
+    }, C = Object(i.f)(t), P = Object.create(s);
+    M.cancel = o.u;
+    var _ = function(e, t, n, r) {
+        var i, a;
+        return n._deferredEnd = null, (i = {})[o.e] = !0, i.id = e, i.name = t, (a = {}).done = a.done || {}, a.done.get = function() {
+            if (n._deferredEnd) return n._deferredEnd.promise;
+            var e = Object(o.l)();
+            return n._deferredEnd = e, n._isRunning || (n._error ? e.reject(n._error) : e.resolve(n._result)), e.promise;
+        }, i.cont = r, i.joiners = [], i.cancel = N, i.isRunning = function() {
+            return n._isRunning;
+        }, i.isCancelled = function() {
+            return n._isCancelled;
+        }, i.isAborted = function() {
+            return n._isAborted;
+        }, i.result = function() {
+            return n._result;
+        }, i.error = function() {
+            return n._error;
+        }, i.setContext = function(e) {
+            Object(o.h)(e, o.q.object, Object(o.k)("task", e));
+            o.v.assign(P, e);
+        }, function(e, t) {
+            for(var n in t){
+                var r = t[n];
+                r.configurable = r.enumerable = !0;
+                "value" in r && (r.writable = !0);
+                Object.defineProperty(e, n, r);
+            }
+        }(i, a), i;
+    }(b, g, e, w), j = {
+        name: g,
+        cancel: function() {
+            j.isRunning && !j.isCancelled && (j.isCancelled = !0, M(p));
+        },
+        isRunning: !0
+    }, R = function(e, t, n) {
+        var r = [], i = void 0, a = !1;
+        function u(e) {
+            c();
+            n(e, !0);
+        }
+        function l(e) {
+            r.push(e);
+            e.cont = function(l, c) {
+                a || (Object(o.w)(r, e), e.cont = o.u, c ? u(l) : (e === t && (i = l), r.length || (a = !0, n(i))));
+            };
+        }
+        function c() {
+            a || (a = !0, r.forEach(function(e) {
+                e.cont = o.u;
+                e.cancel();
+            }), r = []);
+        }
+        return l(t), {
+            addTask: l,
+            cancelAll: c,
+            abort: u,
+            getTasks: function() {
+                return r;
+            },
+            taskNames: function() {
+                return r.map(function(e) {
+                    return e.name;
+                });
+            }
+        };
+    }(0, j, A);
+    function N() {
+        e._isRunning && !e._isCancelled && (e._isCancelled = !0, R.cancelAll(), A(p));
+    }
+    return w && (w.cancel = N), e._isRunning = !0, M(), _;
+    function M(t, n) {
+        if (!j.isRunning) throw new Error("Trying to resume an already finished generator");
+        try {
+            var r = void 0;
+            n ? r = e.throw(t) : t === p ? (j.isCancelled = !0, M.cancel(), r = o.q.func(e.return) ? e.return(p) : {
+                done: !0,
+                value: p
+            }) : r = t === d ? o.q.func(e.return) ? e.return() : {
+                done: !0
+            } : e.next(t);
+            r.done ? (j.isMainRunning = !1, j.cont && j.cont(r.value)) : L(r.value, b, "", M);
+        } catch (e) {
+            j.isCancelled && O(e);
+            j.isMainRunning = !1;
+            j.cont(e, !0);
+        }
+    }
+    function A(t, n) {
+        e._isRunning = !1;
+        C.close();
+        n ? (t instanceof Error && Object.defineProperty(t, "sagaStack", {
+            value: "at " + g + " \n " + (t.sagaStack || t.stack),
+            configurable: !0
+        }), _.cont || (t instanceof Error && T ? T(t) : O(t)), e._error = t, e._isAborted = !0, e._deferredEnd && e._deferredEnd.reject(t)) : (e._result = t, e._deferredEnd && e._deferredEnd.resolve(t));
+        _.cont && _.cont(t, n);
+        _.joiners.forEach(function(e) {
+            return e.cb(t, n);
+        });
+        _.joiners = null;
+    }
+    function L(e, s) {
+        var f = arguments.length > 2 && void 0 !== arguments[2] ? arguments[2] : "", h = arguments[3], v = Object(o.y)();
+        x && x.effectTriggered({
+            effectId: v,
+            parentEffectId: s,
+            label: f,
+            effect: e
+        });
+        var b = void 0;
+        function w(e, t) {
+            b || (b = !0, h.cancel = o.u, x && (t ? x.effectRejected(v, e) : x.effectResolved(v, e)), h(e, t));
+        }
+        w.cancel = o.u;
+        h.cancel = function() {
+            if (!b) {
+                b = !0;
+                try {
+                    w.cancel();
+                } catch (e) {
+                    O(e);
+                }
+                w.cancel = o.u;
+                x && x.effectCancelled(v);
+            }
+        };
+        var k = void 0;
+        return o.q.promise(e) ? I(e, w) : o.q.helper(e) ? F(y(e), v, w) : o.q.iterator(e) ? D(e, v, g, w) : o.q.array(e) ? E(e, v, w) : (k = u.d.take(e)) ? function(e, t) {
+            var n = e.channel, r = e.pattern, o = e.maybe;
+            n = n || C;
+            var a = function(e) {
+                return e instanceof Error ? t(e, !0) : Object(i.e)(e) && !o ? t(d) : t(e);
+            };
+            try {
+                n.take(a, m(r));
+            } catch (e) {
+                return t(e, !0);
+            }
+            t.cancel = a.cancel;
+        }(k, w) : (k = u.d.put(e)) ? function(e, t) {
+            var r = e.channel, i = e.action, u = e.resolve;
+            Object(a.a)(function() {
+                var e = void 0;
+                try {
+                    e = (r ? r.put : n)(i);
+                } catch (e) {
+                    if (r || u) return t(e, !0);
+                    O(e);
+                }
+                if (!u || !o.q.promise(e)) return t(e);
+                I(e, t);
+            });
+        }(k, w) : (k = u.d.all(e)) ? z(k, v, w) : (k = u.d.race(e)) ? function(e, t, n) {
+            var r = void 0, a = Object.keys(e), u = {};
+            a.forEach(function(t) {
+                var l = function(u, l) {
+                    if (!r) {
+                        if (l) n.cancel(), n(u, !0);
+                        else if (!Object(i.e)(u) && u !== d && u !== p) {
+                            var s;
+                            n.cancel();
+                            r = !0;
+                            var f = ((s = {})[t] = u, s);
+                            n(o.q.array(e) ? [].slice.call(c({}, f, {
+                                length: a.length
+                            })) : f);
+                        }
+                    }
+                };
+                l.cancel = o.u;
+                u[t] = l;
+            });
+            n.cancel = function() {
+                r || (r = !0, a.forEach(function(e) {
+                    return u[e].cancel();
+                }));
+            };
+            a.forEach(function(n) {
+                r || L(e[n], t, n, u[n]);
+            });
+        }(k, v, w) : (k = u.d.call(e)) ? function(e, t, n) {
+            var r = e.context, i = e.fn, a = e.args, u = void 0;
+            try {
+                u = i.apply(r, a);
+            } catch (e) {
+                return n(e, !0);
+            }
+            return o.q.promise(u) ? I(u, n) : o.q.iterator(u) ? D(u, t, i.name, n) : n(u);
+        }(k, v, w) : (k = u.d.cps(e)) ? function(e, t) {
+            var n = e.context, r = e.fn, i = e.args;
+            try {
+                var a = function(e, n) {
+                    return o.q.undef(e) ? t(n) : t(e, !0);
+                };
+                r.apply(n, i.concat(a));
+                a.cancel && (t.cancel = function() {
+                    return a.cancel();
+                });
+            } catch (e) {
+                return t(e, !0);
+            }
+        }(k, w) : (k = u.d.fork(e)) ? F(k, v, w) : (k = u.d.join(e)) ? function(e, t) {
+            if (e.isRunning()) {
+                var n = {
+                    task: _,
+                    cb: t
+                };
+                t.cancel = function() {
+                    return Object(o.w)(e.joiners, n);
+                };
+                e.joiners.push(n);
+            } else e.isAborted() ? t(e.error(), !0) : t(e.result());
+        }(k, w) : (k = u.d.cancel(e)) ? function(e, t) {
+            e === o.d && (e = _);
+            e.isRunning() && e.cancel();
+            t();
+        }(k, w) : (k = u.d.select(e)) ? function(e, t) {
+            var n = e.selector, o = e.args;
+            try {
+                var i = n.apply(void 0, [
+                    r()
+                ].concat(o));
+                t(i);
+            } catch (e) {
+                t(e, !0);
+            }
+        }(k, w) : (k = u.d.actionChannel(e)) ? function(e, n) {
+            var r = e.pattern, o = e.buffer, a = m(r);
+            a.pattern = r;
+            n(Object(i.d)(t, o || l.a.fixed(), a));
+        }(k, w) : (k = u.d.flush(e)) ? function(e, t) {
+            e.flush(t);
+        }(k, w) : (k = u.d.cancelled(e)) ? function(e, t) {
+            t(!!j.isCancelled);
+        }(0, w) : (k = u.d.getContext(e)) ? function(e, t) {
+            t(P[e]);
+        }(k, w) : (k = u.d.setContext(e)) ? function(e, t) {
+            o.v.assign(P, e);
+            t();
+        }(k, w) : w(e);
+    }
+    function I(e, t) {
+        var n = e[o.a];
+        o.q.func(n) ? t.cancel = n : o.q.func(e.abort) && (t.cancel = function() {
+            return e.abort();
+        });
+        e.then(t, function(e) {
+            return t(e, !0);
+        });
+    }
+    function D(e, o, i, a) {
+        v(e, t, n, r, P, h, o, i, a);
+    }
+    function F(e, i, u) {
+        var l = e.context, c = e.fn, s = e.args, f = e.detached, d = function(e) {
+            var t = e.context, n = e.fn, r = e.args;
+            if (o.q.iterator(n)) return n;
+            var i = void 0, a = void 0;
+            try {
+                i = n.apply(t, r);
+            } catch (e) {
+                a = e;
+            }
+            return o.q.iterator(i) ? i : a ? Object(o.t)(function() {
+                throw a;
+            }) : Object(o.t)(function() {
+                var e = void 0, t = {
+                    done: !1,
+                    value: i
+                };
+                return function(n) {
+                    return e ? function(e) {
+                        return {
+                            done: !0,
+                            value: e
+                        };
+                    }(n) : (e = !0, t);
+                };
+            }());
+        }({
+            context: l,
+            fn: c,
+            args: s
+        });
+        try {
+            Object(a.c)();
+            var p = v(d, t, n, r, P, h, i, c.name, f ? null : o.u);
+            f ? u(p) : d._isRunning ? (R.addTask(p), u(p)) : d._error ? R.abort(d._error) : u(p);
+        } finally{
+            Object(a.b)();
+        }
+    }
+    function z(e, t, n) {
+        var r = Object.keys(e);
+        if (!r.length) return n(o.q.array(e) ? [] : {});
+        var a = 0, u = void 0, l = {}, s = {};
+        r.forEach(function(t) {
+            var f = function(s, f) {
+                u || (f || Object(i.e)(s) || s === d || s === p ? (n.cancel(), n(s, f)) : (l[t] = s, ++a === r.length && (u = !0, n(o.q.array(e) ? o.f.from(c({}, l, {
+                    length: r.length
+                })) : l))));
+            };
+            f.cancel = o.u;
+            s[t] = f;
+        });
+        n.cancel = function() {
+            u || (u = !0, r.forEach(function(e) {
+                return s[e].cancel();
+            }));
+        };
+        r.forEach(function(n) {
+            return L(e[n], t, n, s[n]);
+        });
+    }
+}
+var b = "runSaga(storeInterface, saga, ...args): saga argument must be a Generator function!";
+function g(e, t) {
+    for(var n = arguments.length, r = Array(n > 2 ? n - 2 : 0), i = 2; i < n; i++)r[i - 2] = arguments[i];
+    var a = void 0;
+    o.q.iterator(e) ? (a = e, e = t) : (Object(o.h)(t, o.q.func, b), a = t.apply(void 0, r), Object(o.h)(a, o.q.iterator, b));
+    var u = e, l = u.subscribe, c = u.dispatch, s = u.getState, f = u.context, d = u.sagaMonitor, p = u.logger, h = u.onError, m = Object(o.y)();
+    d && (d.effectTriggered = d.effectTriggered || o.u, d.effectResolved = d.effectResolved || o.u, d.effectRejected = d.effectRejected || o.u, d.effectCancelled = d.effectCancelled || o.u, d.actionDispatched = d.actionDispatched || o.u, d.effectTriggered({
+        effectId: m,
+        root: !0,
+        parentEffectId: 0,
+        effect: {
+            root: !0,
+            saga: t,
+            args: r
+        }
+    }));
+    var y = v(a, l, Object(o.A)(c), s, f, {
+        sagaMonitor: d,
+        logger: p,
+        onError: h
+    }, m, t.name);
+    return d && d.effectResolved(m, y), y;
+}
+var w = require("./module-10.js"), E = require("./module-17.js");
+exports.runSaga = g;
+exports.END = i.a;
+exports.eventChannel = i.d;
+exports.channel = i.b;
+exports.buffers = l.a;
+exports.takeEvery = w.a;
+exports.takeLatest = w.c;
+exports.throttle = w.e;
+exports.delay = o.m;
+exports.CANCEL = o.a;
+exports.detach = u.i;
+exports.effects = E;
+exports.utils = r;
+exports.default = function() {
+    var e = arguments.length > 0 && void 0 !== arguments[0] ? arguments[0] : {}, t = e.context, n = void 0 === t ? {} : t, r = function(e, t) {
+        var n = {};
+        for(var r in e)t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+        return n;
+    }(e, [
+        "context"
+    ]), a = r.sagaMonitor, u = r.logger, l = r.onError;
+    if (o.q.func(r)) throw new Error("Saga middleware no longer accept Generator functions. Use sagaMiddleware.run instead");
+    if (u && !o.q.func(u)) throw new Error("`options.logger` passed to the Saga middleware is not a function!");
+    if (l && !o.q.func(l)) throw new Error("`options.onError` passed to the Saga middleware is not a function!");
+    if (r.emitter && !o.q.func(r.emitter)) throw new Error("`options.emitter` passed to the Saga middleware is not a function!");
+    function c(e) {
+        var t = e.getState, s = e.dispatch, f = Object(i.c)();
+        return f.emit = (r.emitter || o.o)(f.emit), c.run = g.bind(null, {
+            context: n,
+            subscribe: f.subscribe,
+            dispatch: s,
+            getState: t,
+            sagaMonitor: a,
+            logger: u,
+            onError: l
+        }), function(e) {
+            return function(t) {
+                a && a.actionDispatched && a.actionDispatched(t);
+                var n = e(t);
+                return f.emit(t), n;
+            };
+        };
+    }
+    return c.run = function() {
+        throw new Error("Before running a Saga, you must mount the Saga middleware on the Store using applyMiddleware");
+    }, c.setContext = function(e) {
+        Object(o.h)(e, o.q.object, Object(o.k)("sagaMiddleware", e));
+        o.v.assign(n, e);
+    }, c;
+};

@@ -11,30 +11,30 @@ const o = {
     value: undefined
 };
 const i = {};
-function a(module) {
-    if (r.q.channel(module)) {
+function a(e) {
+    if (r.q.channel(e)) {
         return "channel";
     }
-    if (Array.isArray(module)) {
-        return String(module.map((module)=>String(module)));
+    if (Array.isArray(e)) {
+        return String(e.map((e)=>String(e)));
     }
-    return String(module);
+    return String(e);
 }
-function u(module, exports, require = "iterator") {
+function u(e, t, n = "iterator") {
     let a = undefined;
-    let u = exports;
-    function l(exports, require) {
+    let u = t;
+    function l(t, n) {
         if (u === i) {
             return o;
         }
-        if (require) {
+        if (n) {
             u = i;
-            throw require;
+            throw n;
         }
         if (a) {
-            a(exports);
+            a(t);
         }
-        const r = module[u]();
+        const r = e[u]();
         const [l, c, b] = r;
         a = b;
         if ((u = l) === i) {
@@ -42,18 +42,18 @@ function u(module, exports, require = "iterator") {
         }
         return c;
     }
-    return r.t(l, (module)=>l(null, module), require, true);
+    return r.t(l, (e)=>l(null, e), n, true);
 }
-export function b(module, exports) {
-    for(let require = arguments.length, r = Array(require > 2 ? require - 2 : 0), o = 2; o < require; o++){
+export function b(e, t) {
+    for(let n = arguments.length, r = Array(n > 2 ? n - 2 : 0), o = 2; o < n; o++){
         r[o - 2] = arguments[o];
     }
     const b = {
         done: false,
-        value: l.s(module)
+        value: l.s(e)
     };
     let f = undefined;
-    const d = (module)=>f = module;
+    const d = (e)=>f = e;
     return u({
         q1 () {
             return [
@@ -70,42 +70,42 @@ export function b(module, exports) {
             }
             return [
                 "q1",
-                ((module)=>{
+                ((e)=>{
                     return {
                         done: false,
                         value: l.k.apply(undefined, [
-                            exports
+                            t
                         ].concat(r, [
-                            module
+                            e
                         ]))
                     };
                 })(f)
             ];
         }
-    }, "q1", "takeEvery(" + a(module) + ", " + exports.name + ")");
+    }, "q1", "takeEvery(" + a(e) + ", " + t.name + ")");
 }
-function f(module, exports) {
-    for(let require = arguments.length, r = Array(require > 2 ? require - 2 : 0), o = 2; o < require; o++){
+function f(e, t) {
+    for(let n = arguments.length, r = Array(n > 2 ? n - 2 : 0), o = 2; o < n; o++){
         r[o - 2] = arguments[o];
     }
     const b = {
         done: false,
-        value: l.s(module)
+        value: l.s(e)
     };
-    const f = (module)=>{
+    const f = (e)=>{
         return {
             done: false,
             value: l.k.apply(undefined, [
-                exports
+                t
             ].concat(r, [
-                module
+                e
             ]))
         };
     };
     let d = undefined;
     let p = undefined;
-    const h = (module)=>d = module;
-    const m = (module)=>p = module;
+    const h = (e)=>d = e;
+    const m = (e)=>p = e;
     return u({
         q1 () {
             return [
@@ -123,10 +123,10 @@ function f(module, exports) {
             if (d) {
                 return [
                     "q3",
-                    ((module)=>{
+                    ((e)=>{
                         return {
                             done: false,
-                            value: l.f(module)
+                            value: l.f(e)
                         };
                     })(d)
                 ];
@@ -144,9 +144,9 @@ function f(module, exports) {
                 h
             ];
         }
-    }, "q1", "takeLatest(" + a(module) + ", " + exports.name + ")");
+    }, "q1", "takeLatest(" + a(e) + ", " + t.name + ")");
 }
-function p(module, exports, require) {
+function p(e, t, n) {
     for(let o = arguments.length, b = Array(o > 3 ? o - 3 : 0), f = 3; f < o; f++){
         b[f - 3] = arguments[f];
     }
@@ -154,14 +154,14 @@ function p(module, exports, require) {
     let h = undefined;
     const m = {
         done: false,
-        value: l.a(exports, d.a.sliding(1))
+        value: l.a(t, d.a.sliding(1))
     };
     const y = {
         done: false,
-        value: l.e(r.m, module)
+        value: l.e(r.m, e)
     };
-    const e = (module)=>p = module;
-    const b = (module)=>h = module;
+    const e = (e)=>p = e;
+    const b = (e)=>h = e;
     return u({
         q1 () {
             return [
@@ -188,13 +188,13 @@ function p(module, exports, require) {
             }
             return [
                 "q4",
-                ((module)=>{
+                ((e)=>{
                     return {
                         done: false,
                         value: l.k.apply(undefined, [
-                            require
+                            n
                         ].concat(b, [
-                            module
+                            e
                         ]))
                     };
                 })(p)
@@ -206,13 +206,13 @@ function p(module, exports, require) {
                 y
             ];
         }
-    }, "q1", "throttle(" + a(exports) + ", " + require.name + ")");
+    }, "q1", "throttle(" + a(t) + ", " + n.name + ")");
 }
 export { m as a };
 export { y as c };
 export { f as d };
 export { p as f };
-const h = (module)=>"import { " + module + " } from 'redux-saga' has been deprecated in favor of import { " + module + " } from 'redux-saga/effects'.\nThe latter will not work with yield*, as helper effects are wrapped automatically for you in fork effect.\nTherefore yield " + module + " will return task descriptor to your saga and execute next lines of code.";
+const h = (e)=>"import { " + e + " } from 'redux-saga' has been deprecated in favor of import { " + e + " } from 'redux-saga/effects'.\nThe latter will not work with yield*, as helper effects are wrapped automatically for you in fork effect.\nTherefore yield " + e + " will return task descriptor to your saga and execute next lines of code.";
 const m = r.n(b, h("takeEvery"));
 const y = r.n(f, h("takeLatest"));
 export const e = r.n(p, h("throttle"));

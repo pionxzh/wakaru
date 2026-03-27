@@ -1,0 +1,18 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: !0
+});
+var r = require("./module-11.js"), o = require("./module-18.js"), i = (require("./module-13.js"), function(e) {
+    return e && e.__esModule ? e : {
+        default: e
+    };
+}(require("./module-36.js")));
+var a = (0, r.combineReducers)({
+    router: o.routerReducer,
+    main: i.default
+});
+exports.default = a;

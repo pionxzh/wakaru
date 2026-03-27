@@ -1,0 +1,517 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+var r = require("./module-7.js");
+function o(e) {
+    return "/" === e.charAt(0);
+}
+function i(e, t) {
+    for(var n = t, r = n + 1, o = e.length; r < o; n += 1, r += 1)e[n] = e[r];
+    e.pop();
+}
+var a = function(e, t) {
+    void 0 === t && (t = "");
+    var n, r = e && e.split("/") || [], a = t && t.split("/") || [], u = e && o(e), l = t && o(t), c = u || l;
+    if (e && o(e) ? a = r : r.length && (a.pop(), a = a.concat(r)), !a.length) return "/";
+    if (a.length) {
+        var s = a[a.length - 1];
+        n = "." === s || ".." === s || "" === s;
+    } else n = !1;
+    for(var f = 0, d = a.length; d >= 0; d--){
+        var p = a[d];
+        "." === p ? i(a, d) : ".." === p ? (i(a, d), f++) : f && (i(a, d), f--);
+    }
+    if (!c) for(; f--; f)a.unshift("..");
+    !c || "" === a[0] || a[0] && o(a[0]) || a.unshift("");
+    var h = a.join("/");
+    return n && "/" !== h.substr(-1) && (h += "/"), h;
+};
+function u(e) {
+    return e.valueOf ? e.valueOf() : Object.prototype.valueOf.call(e);
+}
+var l = function e(t, n) {
+    if (t === n) return !0;
+    if (null == t || null == n) return !1;
+    if (Array.isArray(t)) return Array.isArray(n) && t.length === n.length && t.every(function(t, r) {
+        return e(t, n[r]);
+    });
+    if ("object" == typeof t || "object" == typeof n) {
+        var r = u(t), o = u(n);
+        return r !== t || o !== n ? e(r, o) : Object.keys(Object.assign({}, t, n)).every(function(r) {
+            return e(t[r], n[r]);
+        });
+    }
+    return !1;
+}, c = !0, s = "Invariant failed";
+function f(e, t) {
+    if (!e) {
+        if (c) throw new Error(s);
+        var n = "function" == typeof t ? t() : t, r = n ? "".concat(s, ": ").concat(n) : s;
+        throw new Error(r);
+    }
+}
+function d(e) {
+    return "/" === e.charAt(0) ? e : "/" + e;
+}
+function p(e) {
+    return "/" === e.charAt(0) ? e.substr(1) : e;
+}
+function h(e, t) {
+    return function(e, t) {
+        return 0 === e.toLowerCase().indexOf(t.toLowerCase()) && -1 !== "/?#".indexOf(e.charAt(t.length));
+    }(e, t) ? e.substr(t.length) : e;
+}
+function m(e) {
+    return "/" === e.charAt(e.length - 1) ? e.slice(0, -1) : e;
+}
+function y(e) {
+    var t = e || "/", n = "", r = "", o = t.indexOf("#");
+    -1 !== o && (r = t.substr(o), t = t.substr(0, o));
+    var i = t.indexOf("?");
+    return -1 !== i && (n = t.substr(i), t = t.substr(0, i)), {
+        pathname: t,
+        search: "?" === n ? "" : n,
+        hash: "#" === r ? "" : r
+    };
+}
+function v(e) {
+    var t = e.pathname, n = e.search, r = e.hash, o = t || "/";
+    return n && "?" !== n && (o += "?" === n.charAt(0) ? n : "?" + n), r && "#" !== r && (o += "#" === r.charAt(0) ? r : "#" + r), o;
+}
+function b(e, t, n, o) {
+    var i;
+    "string" == typeof e ? (i = y(e)).state = t : (void 0 === (i = Object(r.a)({}, e)).pathname && (i.pathname = ""), i.search ? "?" !== i.search.charAt(0) && (i.search = "?" + i.search) : i.search = "", i.hash ? "#" !== i.hash.charAt(0) && (i.hash = "#" + i.hash) : i.hash = "", void 0 !== t && void 0 === i.state && (i.state = t));
+    try {
+        i.pathname = decodeURI(i.pathname);
+    } catch (e) {
+        throw e instanceof URIError ? new URIError('Pathname "' + i.pathname + '" could not be decoded. This is likely caused by an invalid percent-encoding.') : e;
+    }
+    return n && (i.key = n), o ? i.pathname ? "/" !== i.pathname.charAt(0) && (i.pathname = a(i.pathname, o.pathname)) : i.pathname = o.pathname : i.pathname || (i.pathname = "/"), i;
+}
+function g(e, t) {
+    return e.pathname === t.pathname && e.search === t.search && e.hash === t.hash && e.key === t.key && l(e.state, t.state);
+}
+function w() {
+    var e = null;
+    var t = [];
+    return {
+        setPrompt: function(t) {
+            return e = t, function() {
+                e === t && (e = null);
+            };
+        },
+        confirmTransitionTo: function(t, n, r, o) {
+            if (null != e) {
+                var i = "function" == typeof e ? e(t, n) : e;
+                "string" == typeof i ? "function" == typeof r ? r(i, o) : o(!0) : o(!1 !== i);
+            } else o(!0);
+        },
+        appendListener: function(e) {
+            var n = !0;
+            function r() {
+                n && e.apply(void 0, arguments);
+            }
+            return t.push(r), function() {
+                n = !1;
+                t = t.filter(function(e) {
+                    return e !== r;
+                });
+            };
+        },
+        notifyListeners: function() {
+            for(var e = arguments.length, n = new Array(e), r = 0; r < e; r++)n[r] = arguments[r];
+            t.forEach(function(e) {
+                return e.apply(void 0, n);
+            });
+        }
+    };
+}
+exports.createBrowserHistory = O;
+exports.createHashHistory = N;
+exports.createMemoryHistory = A;
+exports.createLocation = b;
+exports.locationsAreEqual = g;
+exports.parsePath = y;
+exports.createPath = v;
+var E = !("undefined" == typeof window || !window.document || !window.document.createElement);
+function x(e, t) {
+    t(window.confirm(e));
+}
+var k = "popstate", T = "hashchange";
+function S() {
+    try {
+        return window.history.state || {};
+    } catch (e) {
+        return {};
+    }
+}
+function O(e) {
+    void 0 === e && (e = {});
+    E || f(!1);
+    var t = window.history, n = function() {
+        var e = window.navigator.userAgent;
+        return (-1 === e.indexOf("Android 2.") && -1 === e.indexOf("Android 4.0") || -1 === e.indexOf("Mobile Safari") || -1 !== e.indexOf("Chrome") || -1 !== e.indexOf("Windows Phone")) && window.history && "pushState" in window.history;
+    }(), o = !(-1 === window.navigator.userAgent.indexOf("Trident")), i = e, a = i.forceRefresh, u = void 0 !== a && a, l = i.getUserConfirmation, c = void 0 === l ? x : l, s = i.keyLength, p = void 0 === s ? 6 : s, y = e.basename ? m(d(e.basename)) : "";
+    function g(e) {
+        var t = e || {}, n = t.key, r = t.state, o = window.location, i = o.pathname + o.search + o.hash;
+        return y && (i = h(i, y)), b(i, r, n);
+    }
+    function O() {
+        return Math.random().toString(36).substr(2, p);
+    }
+    var C = w();
+    function P(e) {
+        Object(r.a)(q, e);
+        q.length = t.length;
+        C.notifyListeners(q.location, q.action);
+    }
+    function _(e) {
+        (function(e) {
+            return void 0 === e.state && -1 === navigator.userAgent.indexOf("CriOS");
+        })(e) || N(g(e.state));
+    }
+    function j() {
+        N(g(S()));
+    }
+    var R = !1;
+    function N(e) {
+        if (R) R = !1, P();
+        else {
+            C.confirmTransitionTo(e, "POP", c, function(t) {
+                t ? P({
+                    action: "POP",
+                    location: e
+                }) : function(e) {
+                    var t = q.location, n = A.indexOf(t.key);
+                    -1 === n && (n = 0);
+                    var r = A.indexOf(e.key);
+                    -1 === r && (r = 0);
+                    var o = n - r;
+                    o && (R = !0, I(o));
+                }(e);
+            });
+        }
+    }
+    var M = g(S()), A = [
+        M.key
+    ];
+    function L(e) {
+        return y + v(e);
+    }
+    function I(e) {
+        t.go(e);
+    }
+    var D = 0;
+    function F(e) {
+        1 === (D += e) && 1 === e ? (window.addEventListener(k, _), o && window.addEventListener(T, j)) : 0 === D && (window.removeEventListener(k, _), o && window.removeEventListener(T, j));
+    }
+    var z = !1;
+    var q = {
+        length: t.length,
+        action: "POP",
+        location: M,
+        createHref: L,
+        push: function(e, r) {
+            var o = b(e, r, O(), q.location);
+            C.confirmTransitionTo(o, "PUSH", c, function(e) {
+                if (e) {
+                    var r = L(o), i = o.key, a = o.state;
+                    if (n) if (t.pushState({
+                        key: i,
+                        state: a
+                    }, null, r), u) window.location.href = r;
+                    else {
+                        var l = A.indexOf(q.location.key), c = A.slice(0, l + 1);
+                        c.push(o.key);
+                        A = c;
+                        P({
+                            action: "PUSH",
+                            location: o
+                        });
+                    }
+                    else window.location.href = r;
+                }
+            });
+        },
+        replace: function(e, r) {
+            var o = b(e, r, O(), q.location);
+            C.confirmTransitionTo(o, "REPLACE", c, function(e) {
+                if (e) {
+                    var r = L(o), i = o.key, a = o.state;
+                    if (n) if (t.replaceState({
+                        key: i,
+                        state: a
+                    }, null, r), u) window.location.replace(r);
+                    else {
+                        var l = A.indexOf(q.location.key);
+                        -1 !== l && (A[l] = o.key);
+                        P({
+                            action: "REPLACE",
+                            location: o
+                        });
+                    }
+                    else window.location.replace(r);
+                }
+            });
+        },
+        go: I,
+        goBack: function() {
+            I(-1);
+        },
+        goForward: function() {
+            I(1);
+        },
+        block: function(e) {
+            void 0 === e && (e = !1);
+            var t = C.setPrompt(e);
+            return z || (F(1), z = !0), function() {
+                return z && (z = !1, F(-1)), t();
+            };
+        },
+        listen: function(e) {
+            var t = C.appendListener(e);
+            return F(1), function() {
+                F(-1);
+                t();
+            };
+        }
+    };
+    return q;
+}
+var C = "hashchange", P = {
+    hashbang: {
+        encodePath: function(e) {
+            return "!" === e.charAt(0) ? e : "!/" + p(e);
+        },
+        decodePath: function(e) {
+            return "!" === e.charAt(0) ? e.substr(1) : e;
+        }
+    },
+    noslash: {
+        encodePath: p,
+        decodePath: d
+    },
+    slash: {
+        encodePath: d,
+        decodePath: d
+    }
+};
+function _(e) {
+    var t = e.indexOf("#");
+    return -1 === t ? e : e.slice(0, t);
+}
+function j() {
+    var e = window.location.href, t = e.indexOf("#");
+    return -1 === t ? "" : e.substring(t + 1);
+}
+function R(e) {
+    window.location.replace(_(window.location.href) + "#" + e);
+}
+function N(e) {
+    void 0 === e && (e = {});
+    E || f(!1);
+    var t = window.history, n = (window.navigator.userAgent.indexOf("Firefox"), e), o = n.getUserConfirmation, i = void 0 === o ? x : o, a = n.hashType, u = void 0 === a ? "slash" : a, l = e.basename ? m(d(e.basename)) : "", c = P[u], s = c.encodePath, p = c.decodePath;
+    function y() {
+        var e = p(j());
+        return l && (e = h(e, l)), b(e);
+    }
+    var g = w();
+    function k(e) {
+        Object(r.a)(q, e);
+        q.length = t.length;
+        g.notifyListeners(q.location, q.action);
+    }
+    var T = !1, S = null;
+    function O() {
+        var e = j(), t = s(e);
+        if (e !== t) R(t);
+        else {
+            var n = y(), r = q.location;
+            if (!T && function(e, t) {
+                return e.pathname === t.pathname && e.search === t.search && e.hash === t.hash;
+            }(r, n)) return;
+            if (S === v(n)) return;
+            S = null;
+            (function(e) {
+                if (T) T = !1, k();
+                else {
+                    g.confirmTransitionTo(e, "POP", i, function(t) {
+                        t ? k({
+                            action: "POP",
+                            location: e
+                        }) : function(e) {
+                            var t = q.location, n = L.lastIndexOf(v(t));
+                            -1 === n && (n = 0);
+                            var r = L.lastIndexOf(v(e));
+                            -1 === r && (r = 0);
+                            var o = n - r;
+                            o && (T = !0, I(o));
+                        }(e);
+                    });
+                }
+            })(n);
+        }
+    }
+    var N = j(), M = s(N);
+    N !== M && R(M);
+    var A = y(), L = [
+        v(A)
+    ];
+    function I(e) {
+        t.go(e);
+    }
+    var D = 0;
+    function F(e) {
+        1 === (D += e) && 1 === e ? window.addEventListener(C, O) : 0 === D && window.removeEventListener(C, O);
+    }
+    var z = !1;
+    var q = {
+        length: t.length,
+        action: "POP",
+        location: A,
+        createHref: function(e) {
+            var t = document.querySelector("base"), n = "";
+            return t && t.getAttribute("href") && (n = _(window.location.href)), n + "#" + s(l + v(e));
+        },
+        push: function(e, t) {
+            var n = b(e, void 0, void 0, q.location);
+            g.confirmTransitionTo(n, "PUSH", i, function(e) {
+                if (e) {
+                    var t = v(n), r = s(l + t);
+                    if (j() !== r) {
+                        S = t;
+                        (function(e) {
+                            window.location.hash = e;
+                        })(r);
+                        var o = L.lastIndexOf(v(q.location)), i = L.slice(0, o + 1);
+                        i.push(t);
+                        L = i;
+                        k({
+                            action: "PUSH",
+                            location: n
+                        });
+                    } else k();
+                }
+            });
+        },
+        replace: function(e, t) {
+            var n = b(e, void 0, void 0, q.location);
+            g.confirmTransitionTo(n, "REPLACE", i, function(e) {
+                if (e) {
+                    var t = v(n), r = s(l + t);
+                    j() !== r && (S = t, R(r));
+                    var o = L.indexOf(v(q.location));
+                    -1 !== o && (L[o] = t);
+                    k({
+                        action: "REPLACE",
+                        location: n
+                    });
+                }
+            });
+        },
+        go: I,
+        goBack: function() {
+            I(-1);
+        },
+        goForward: function() {
+            I(1);
+        },
+        block: function(e) {
+            void 0 === e && (e = !1);
+            var t = g.setPrompt(e);
+            return z || (F(1), z = !0), function() {
+                return z && (z = !1, F(-1)), t();
+            };
+        },
+        listen: function(e) {
+            var t = g.appendListener(e);
+            return F(1), function() {
+                F(-1);
+                t();
+            };
+        }
+    };
+    return q;
+}
+function M(e, t, n) {
+    return Math.min(Math.max(e, t), n);
+}
+function A(e) {
+    void 0 === e && (e = {});
+    var t = e, n = t.getUserConfirmation, o = t.initialEntries, i = void 0 === o ? [
+        "/"
+    ] : o, a = t.initialIndex, u = void 0 === a ? 0 : a, l = t.keyLength, c = void 0 === l ? 6 : l, s = w();
+    function f(e) {
+        Object(r.a)(g, e);
+        g.length = g.entries.length;
+        s.notifyListeners(g.location, g.action);
+    }
+    function d() {
+        return Math.random().toString(36).substr(2, c);
+    }
+    var p = M(u, 0, i.length - 1), h = i.map(function(e) {
+        return b(e, void 0, "string" == typeof e ? d() : e.key || d());
+    }), m = v;
+    function y(e) {
+        var t = M(g.index + e, 0, g.entries.length - 1), r = g.entries[t];
+        s.confirmTransitionTo(r, "POP", n, function(e) {
+            e ? f({
+                action: "POP",
+                location: r,
+                index: t
+            }) : f();
+        });
+    }
+    var g = {
+        length: h.length,
+        action: "POP",
+        location: h[p],
+        index: p,
+        entries: h,
+        createHref: m,
+        push: function(e, t) {
+            var r = b(e, t, d(), g.location);
+            s.confirmTransitionTo(r, "PUSH", n, function(e) {
+                if (e) {
+                    var t = g.index + 1, n = g.entries.slice(0);
+                    n.length > t ? n.splice(t, n.length - t, r) : n.push(r);
+                    f({
+                        action: "PUSH",
+                        location: r,
+                        index: t,
+                        entries: n
+                    });
+                }
+            });
+        },
+        replace: function(e, t) {
+            var r = b(e, t, d(), g.location);
+            s.confirmTransitionTo(r, "REPLACE", n, function(e) {
+                e && (g.entries[g.index] = r, f({
+                    action: "REPLACE",
+                    location: r
+                }));
+            });
+        },
+        go: y,
+        goBack: function() {
+            y(-1);
+        },
+        goForward: function() {
+            y(1);
+        },
+        canGo: function(e) {
+            var t = g.index + e;
+            return t >= 0 && t < g.entries.length;
+        },
+        block: function(e) {
+            return void 0 === e && (e = !1), s.setPrompt(e);
+        },
+        listen: function(e) {
+            return s.appendListener(e);
+        }
+    };
+    return g;
+}

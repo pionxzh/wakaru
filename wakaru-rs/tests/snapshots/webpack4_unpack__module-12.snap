@@ -6,16 +6,16 @@ export { a };
 export { u as b };
 const r = [];
 let o = 0;
-function i(module) {
+function i(e) {
     try {
         u();
-        module();
+        e();
     } finally{
         l();
     }
 }
-function a(module) {
-    r.push(module);
+function a(e) {
+    r.push(e);
     if (!o) {
         u();
         b();
@@ -29,8 +29,8 @@ function l() {
 }
 export function b() {
     l();
-    let module = undefined;
-    while(!o && (module = r.shift()) !== undefined){
-        i(module);
+    let e = undefined;
+    while(!o && (e = r.shift()) !== undefined){
+        i(e);
     }
 }

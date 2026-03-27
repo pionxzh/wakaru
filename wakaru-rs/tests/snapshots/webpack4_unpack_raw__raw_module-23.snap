@@ -1,0 +1,361 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+function r(e, t) {
+    return (r = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function(e, t) {
+        return e.__proto__ = t, e;
+    })(e, t);
+}
+function o(e, t) {
+    e.prototype = Object.create(t.prototype);
+    e.prototype.constructor = e;
+    r(e, t);
+}
+var i = require("./module-3.js"), a = ()=>i, u = require("./module-1.js"), l = ()=>u, c = l.a.shape({
+    trySubscribe: l.a.func.isRequired,
+    tryUnsubscribe: l.a.func.isRequired,
+    notifyNestedSubs: l.a.func.isRequired,
+    isSubscribed: l.a.func.isRequired
+}), s = l.a.shape({
+    subscribe: l.a.func.isRequired,
+    dispatch: l.a.func.isRequired,
+    getState: l.a.func.isRequired
+});
+a.a.forwardRef;
+function f(e) {
+    var t;
+    void 0 === e && (e = "store");
+    var n = e + "Subscription", r = function(t) {
+        o(a, t);
+        var r = a.prototype;
+        function a(n, r) {
+            var o;
+            return (o = t.call(this, n, r) || this)[e] = n.store, o;
+        }
+        return r.getChildContext = function() {
+            var t;
+            return (t = {})[e] = this[e], t[n] = null, t;
+        }, r.render = function() {
+            return i.Children.only(this.props.children);
+        }, a;
+    }(i.Component);
+    return r.propTypes = {
+        store: s.isRequired,
+        children: l.a.element.isRequired
+    }, r.childContextTypes = ((t = {})[e] = s.isRequired, t[n] = c, t), r;
+}
+var d = f();
+function p(e) {
+    if (void 0 === e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    return e;
+}
+var h = require("./module-7.js");
+function m(e, t) {
+    if (null == e) return {};
+    var n, r, o = {}, i = Object.keys(e);
+    for(r = 0; r < i.length; r++)n = i[r], t.indexOf(n) >= 0 || (o[n] = e[n]);
+    return o;
+}
+var y = require("./module-32.js"), v = ()=>y, b = require("./module-5.js"), g = ()=>b, w = require("./module-20.js"), E = null, x = {
+    notify: function() {}
+};
+var k = function() {
+    function e(e, t, n) {
+        this.store = e;
+        this.parentSub = t;
+        this.onStateChange = n;
+        this.unsubscribe = null;
+        this.listeners = x;
+    }
+    var t = e.prototype;
+    return t.addNestedSub = function(e) {
+        return this.trySubscribe(), this.listeners.subscribe(e);
+    }, t.notifyNestedSubs = function() {
+        this.listeners.notify();
+    }, t.isSubscribed = function() {
+        return Boolean(this.unsubscribe);
+    }, t.trySubscribe = function() {
+        this.unsubscribe || (this.unsubscribe = this.parentSub ? this.parentSub.addNestedSub(this.onStateChange) : this.store.subscribe(this.onStateChange), this.listeners = function() {
+            var e = [], t = [];
+            return {
+                clear: function() {
+                    t = E;
+                    e = E;
+                },
+                notify: function() {
+                    for(var n = e = t, r = 0; r < n.length; r++)n[r]();
+                },
+                get: function() {
+                    return t;
+                },
+                subscribe: function(n) {
+                    var r = !0;
+                    return t === e && (t = e.slice()), t.push(n), function() {
+                        r && e !== E && (r = !1, t === e && (t = e.slice()), t.splice(t.indexOf(n), 1));
+                    };
+                }
+            };
+        }());
+    }, t.tryUnsubscribe = function() {
+        this.unsubscribe && (this.unsubscribe(), this.unsubscribe = null, this.listeners.clear(), this.listeners = x);
+    }, e;
+}(), T = void 0 !== a.a.forwardRef, S = 0, O = {};
+function C() {}
+function P(e, t) {
+    var n, r;
+    void 0 === t && (t = {});
+    var a = t, u = a.getDisplayName, l = void 0 === u ? function(e) {
+        return "ConnectAdvanced(" + e + ")";
+    } : u, f = a.methodName, d = void 0 === f ? "connectAdvanced" : f, y = a.renderCountProp, b = void 0 === y ? void 0 : y, E = a.shouldHandleStateChanges, x = void 0 === E || E, P = a.storeKey, _ = void 0 === P ? "store" : P, j = a.withRef, R = void 0 !== j && j, N = m(a, [
+        "getDisplayName",
+        "methodName",
+        "renderCountProp",
+        "shouldHandleStateChanges",
+        "storeKey",
+        "withRef"
+    ]), M = _ + "Subscription", A = S++, L = ((n = {})[_] = s, n[M] = c, n), I = ((r = {})[M] = c, r);
+    return function(t) {
+        g()(Object(w.isValidElementType)(t), "You must pass a component to the function returned by " + d + ". Instead received " + JSON.stringify(t));
+        var n = t.displayName || t.name || "Component", r = l(n), a = Object(h.a)({}, N, {
+            getDisplayName: l,
+            methodName: d,
+            renderCountProp: b,
+            shouldHandleStateChanges: x,
+            storeKey: _,
+            withRef: R,
+            displayName: r,
+            wrappedComponentName: n,
+            WrappedComponent: t
+        }), u = function(n) {
+            function u(e, t) {
+                var o;
+                return (o = n.call(this, e, t) || this).version = A, o.state = {}, o.renderCount = 0, o.store = e[_] || t[_], o.propsMode = Boolean(e[_]), o.setWrappedInstance = o.setWrappedInstance.bind(p(p(o))), g()(o.store, 'Could not find "' + _ + '" in either the context or props of "' + r + '". Either wrap the root component in a <Provider>, or explicitly pass "' + _ + '" as a prop to "' + r + '".'), o.initSelector(), o.initSubscription(), o;
+            }
+            o(u, n);
+            var l = u.prototype;
+            return l.getChildContext = function() {
+                var e, t = this.propsMode ? null : this.subscription;
+                return (e = {})[M] = t || this.context[M], e;
+            }, l.componentDidMount = function() {
+                x && (this.subscription.trySubscribe(), this.selector.run(this.props), this.selector.shouldComponentUpdate && this.forceUpdate());
+            }, l.componentWillReceiveProps = function(e) {
+                this.selector.run(e);
+            }, l.shouldComponentUpdate = function() {
+                return this.selector.shouldComponentUpdate;
+            }, l.componentWillUnmount = function() {
+                this.subscription && this.subscription.tryUnsubscribe();
+                this.subscription = null;
+                this.notifyNestedSubs = C;
+                this.store = null;
+                this.selector.run = C;
+                this.selector.shouldComponentUpdate = !1;
+            }, l.getWrappedInstance = function() {
+                return g()(R, "To access the wrapped instance, you need to specify { withRef: true } in the options argument of the " + d + "() call."), this.wrappedInstance;
+            }, l.setWrappedInstance = function(e) {
+                this.wrappedInstance = e;
+            }, l.initSelector = function() {
+                var t = e(this.store.dispatch, a);
+                this.selector = function(e, t) {
+                    var n = {
+                        run: function(r) {
+                            try {
+                                var o = e(t.getState(), r);
+                                (o !== n.props || n.error) && (n.shouldComponentUpdate = !0, n.props = o, n.error = null);
+                            } catch (e) {
+                                n.shouldComponentUpdate = !0;
+                                n.error = e;
+                            }
+                        }
+                    };
+                    return n;
+                }(t, this.store);
+                this.selector.run(this.props);
+            }, l.initSubscription = function() {
+                if (x) {
+                    var e = (this.propsMode ? this.props : this.context)[M];
+                    this.subscription = new k(this.store, e, this.onStateChange.bind(this));
+                    this.notifyNestedSubs = this.subscription.notifyNestedSubs.bind(this.subscription);
+                }
+            }, l.onStateChange = function() {
+                this.selector.run(this.props);
+                this.selector.shouldComponentUpdate ? (this.componentDidUpdate = this.notifyNestedSubsOnComponentDidUpdate, this.setState(O)) : this.notifyNestedSubs();
+            }, l.notifyNestedSubsOnComponentDidUpdate = function() {
+                this.componentDidUpdate = void 0;
+                this.notifyNestedSubs();
+            }, l.isSubscribed = function() {
+                return Boolean(this.subscription) && this.subscription.isSubscribed();
+            }, l.addExtraProps = function(e) {
+                if (!(R || b || this.propsMode && this.subscription)) return e;
+                var t = Object(h.a)({}, e);
+                return R && (t.ref = this.setWrappedInstance), b && (t[b] = this.renderCount++), this.propsMode && this.subscription && (t[M] = this.subscription), t;
+            }, l.render = function() {
+                var e = this.selector;
+                if (e.shouldComponentUpdate = !1, e.error) throw e.error;
+                return Object(i.createElement)(t, this.addExtraProps(e.props));
+            }, u;
+        }(i.Component);
+        return T && (u.prototype.UNSAFE_componentWillReceiveProps = u.prototype.componentWillReceiveProps, delete u.prototype.componentWillReceiveProps), u.WrappedComponent = t, u.displayName = r, u.childContextTypes = I, u.contextTypes = L, u.propTypes = L, v()(u, t);
+    };
+}
+var _ = Object.prototype.hasOwnProperty;
+function j(e, t) {
+    return e === t ? 0 !== e || 0 !== t || 1 / e == 1 / t : e != e && t != t;
+}
+function R(e, t) {
+    if (j(e, t)) return !0;
+    if ("object" != typeof e || null === e || "object" != typeof t || null === t) return !1;
+    var n = Object.keys(e), r = Object.keys(t);
+    if (n.length !== r.length) return !1;
+    for(var o = 0; o < n.length; o++)if (!_.call(t, n[o]) || !j(e[n[o]], t[n[o]])) return !1;
+    return !0;
+}
+var N = require("./module-11.js");
+function M(e) {
+    return function(t, n) {
+        var r = e(t, n);
+        function o() {
+            return r;
+        }
+        return o.dependsOnOwnProps = !1, o;
+    };
+}
+function A(e) {
+    return null !== e.dependsOnOwnProps && void 0 !== e.dependsOnOwnProps ? Boolean(e.dependsOnOwnProps) : 1 !== e.length;
+}
+function L(e, t) {
+    return function(t, n) {
+        n.displayName;
+        var r = function(e, t) {
+            return r.dependsOnOwnProps ? r.mapToProps(e, t) : r.mapToProps(e);
+        };
+        return r.dependsOnOwnProps = !0, r.mapToProps = function(t, n) {
+            r.mapToProps = e;
+            r.dependsOnOwnProps = A(e);
+            var o = r(t, n);
+            return "function" == typeof o && (r.mapToProps = o, r.dependsOnOwnProps = A(o), o = r(t, n)), o;
+        }, r;
+    };
+}
+var I = [
+    function(e) {
+        return "function" == typeof e ? L(e) : void 0;
+    },
+    function(e) {
+        return e ? void 0 : M(function(e) {
+            return {
+                dispatch: e
+            };
+        });
+    },
+    function(e) {
+        return e && "object" == typeof e ? M(function(t) {
+            return Object(N.bindActionCreators)(e, t);
+        }) : void 0;
+    }
+];
+var D = [
+    function(e) {
+        return "function" == typeof e ? L(e) : void 0;
+    },
+    function(e) {
+        return e ? void 0 : M(function() {
+            return {};
+        });
+    }
+];
+function F(e, t, n) {
+    return Object(h.a)({}, n, e, t);
+}
+var z = [
+    function(e) {
+        return "function" == typeof e ? function(e) {
+            return function(t, n) {
+                n.displayName;
+                var r, o = n.pure, i = n.areMergedPropsEqual, a = !1;
+                return function(t, n, u) {
+                    var l = e(t, n, u);
+                    return a ? o && i(l, r) || (r = l) : (a = !0, r = l), r;
+                };
+            };
+        }(e) : void 0;
+    },
+    function(e) {
+        return e ? void 0 : function() {
+            return F;
+        };
+    }
+];
+function q(e, t, n, r) {
+    return function(o, i) {
+        return n(e(o, i), t(r, i), i);
+    };
+}
+function U(e, t, n, r, o) {
+    var i, a, u, l, c, s = o.areStatesEqual, f = o.areOwnPropsEqual, d = o.areStatePropsEqual, p = !1;
+    function h(o, p) {
+        var h = !f(p, a), m = !s(o, i);
+        return i = o, a = p, h && m ? (u = e(i, a), t.dependsOnOwnProps && (l = t(r, a)), c = n(u, l, a)) : h ? (e.dependsOnOwnProps && (u = e(i, a)), t.dependsOnOwnProps && (l = t(r, a)), c = n(u, l, a)) : m ? function() {
+            var t = e(i, a), r = !d(t, u);
+            return u = t, r && (c = n(u, l, a)), c;
+        }() : c;
+    }
+    return function(o, s) {
+        return p ? h(o, s) : function(o, s) {
+            return u = e(i = o, a = s), l = t(r, a), c = n(u, l, a), p = !0, c;
+        }(o, s);
+    };
+}
+function H(e, t) {
+    var n = t.initMapStateToProps, r = t.initMapDispatchToProps, o = t.initMergeProps, i = m(t, [
+        "initMapStateToProps",
+        "initMapDispatchToProps",
+        "initMergeProps"
+    ]), a = n(e, i), u = r(e, i), l = o(e, i);
+    return (i.pure ? U : q)(a, u, l, e, i);
+}
+function W(e, t, n) {
+    for(var r = t.length - 1; r >= 0; r--){
+        var o = t[r](e);
+        if (o) return o;
+    }
+    return function(t, r) {
+        throw new Error("Invalid value of type " + typeof e + " for " + n + " argument when connecting component " + r.wrappedComponentName + ".");
+    };
+}
+function $(e, t) {
+    return e === t;
+}
+var B = function(e) {
+    var t = void 0 === e ? {} : e, n = t.connectHOC, r = void 0 === n ? P : n, o = t.mapStateToPropsFactories, i = void 0 === o ? D : o, a = t.mapDispatchToPropsFactories, u = void 0 === a ? I : a, l = t.mergePropsFactories, c = void 0 === l ? z : l, s = t.selectorFactory, f = void 0 === s ? H : s;
+    return function(e, t, n, o) {
+        void 0 === o && (o = {});
+        var a = o, l = a.pure, s = void 0 === l || l, d = a.areStatesEqual, p = void 0 === d ? $ : d, y = a.areOwnPropsEqual, v = void 0 === y ? R : y, b = a.areStatePropsEqual, g = void 0 === b ? R : b, w = a.areMergedPropsEqual, E = void 0 === w ? R : w, x = m(a, [
+            "pure",
+            "areStatesEqual",
+            "areOwnPropsEqual",
+            "areStatePropsEqual",
+            "areMergedPropsEqual"
+        ]), k = W(e, i, "mapStateToProps"), T = W(t, u, "mapDispatchToProps"), S = W(n, c, "mergeProps");
+        return r(f, Object(h.a)({
+            methodName: "connect",
+            getDisplayName: function(e) {
+                return "Connect(" + e + ")";
+            },
+            shouldHandleStateChanges: Boolean(e),
+            initMapStateToProps: k,
+            initMapDispatchToProps: T,
+            initMergeProps: S,
+            pure: s,
+            areStatesEqual: p,
+            areOwnPropsEqual: v,
+            areStatePropsEqual: g,
+            areMergedPropsEqual: E
+        }, x));
+    };
+}();
+exports.Provider = d;
+exports.createProvider = f;
+exports.connectAdvanced = P;
+exports.connect = B;

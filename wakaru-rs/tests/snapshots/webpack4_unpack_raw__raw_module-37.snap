@@ -1,0 +1,16 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: !0
+});
+var r = function(e) {
+    return e && e.__esModule ? e : {
+        default: e
+    };
+}(require("./module-28.js"));
+exports.default = {
+    FrontPage: r.default
+};

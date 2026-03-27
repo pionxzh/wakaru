@@ -10,10 +10,10 @@ export const startFetchingData = ()=>{
         type: r.FETCH_DATA + o.START
     };
 };
-export const fetchDataSuccess = (module)=>{
+export const fetchDataSuccess = (e)=>{
     return {
         type: r.FETCH_DATA + o.SUCCESS,
-        payload: module
+        payload: e
     };
 };
 export const fetchData = ()=>{

@@ -1,0 +1,25 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+module.exports = function(e, t, n, r, o, i, a, u) {
+    if (!e) {
+        var l;
+        if (void 0 === t) l = new Error("Minified exception occurred; use the non-minified dev environment for the full error message and additional helpful warnings.");
+        else {
+            var c = [
+                n,
+                r,
+                o,
+                i,
+                a,
+                u
+            ], s = 0;
+            (l = new Error(t.replace(/%s/g, function() {
+                return c[s++];
+            }))).name = "Invariant Violation";
+        }
+        throw l.framesToPop = 1, l;
+    }
+};

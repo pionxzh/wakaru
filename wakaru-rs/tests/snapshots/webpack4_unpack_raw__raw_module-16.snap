@@ -1,0 +1,85 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+var r = require("./module-4.js"), o = ()=>r, i = require("./module-5.js"), a = ()=>i, u = require("./module-3.js"), l = ()=>u, c = require("./module-1.js"), s = ()=>c, f = Object.assign || function(e) {
+    for(var t = 1; t < arguments.length; t++){
+        var n = arguments[t];
+        for(var r in n)Object.prototype.hasOwnProperty.call(n, r) && (e[r] = n[r]);
+    }
+    return e;
+};
+function d(e, t) {
+    if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    return !t || "object" != typeof t && "function" != typeof t ? e : t;
+}
+var p = function(e) {
+    function t() {
+        var n, r;
+        !function(e, t) {
+            if (!(e instanceof t)) throw new TypeError("Cannot call a class as a function");
+        }(this, t);
+        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++)i[a] = arguments[a];
+        return n = r = d(this, e.call.apply(e, [
+            this
+        ].concat(i))), r.state = {
+            match: r.computeMatch(r.props.history.location.pathname)
+        }, d(r, n);
+    }
+    return function(e, t) {
+        if ("function" != typeof t && null !== t) throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: !1,
+                writable: !0,
+                configurable: !0
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    }(t, e), t.prototype.getChildContext = function() {
+        return {
+            router: f({}, this.context.router, {
+                history: this.props.history,
+                route: {
+                    location: this.props.history.location,
+                    match: this.state.match
+                }
+            })
+        };
+    }, t.prototype.computeMatch = function(e) {
+        return {
+            path: "/",
+            url: "/",
+            params: {},
+            isExact: "/" === e
+        };
+    }, t.prototype.componentWillMount = function() {
+        var e = this, t = this.props, n = t.children, r = t.history;
+        a()(null == n || 1 === l.a.Children.count(n), "A <Router> may have only one child element");
+        this.unlisten = r.listen(function() {
+            e.setState({
+                match: e.computeMatch(r.location.pathname)
+            });
+        });
+    }, t.prototype.componentWillReceiveProps = function(e) {
+        o()(this.props.history === e.history, "You cannot change <Router history>");
+    }, t.prototype.componentWillUnmount = function() {
+        this.unlisten();
+    }, t.prototype.render = function() {
+        var e = this.props.children;
+        return e ? l.a.Children.only(e) : null;
+    }, t;
+}(l.a.Component);
+p.propTypes = {
+    history: s.a.object.isRequired,
+    children: s.a.node
+};
+p.contextTypes = {
+    router: s.a.object
+};
+p.childContextTypes = {
+    router: s.a.object.isRequired
+};
+exports.a = p;

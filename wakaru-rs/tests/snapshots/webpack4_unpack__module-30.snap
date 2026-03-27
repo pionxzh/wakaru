@@ -24,28 +24,28 @@ const o = {
 };
 const { defineProperty, getOwnPropertyNames, getOwnPropertySymbols, getOwnPropertyDescriptor, getPrototypeOf } = Object;
 const s = getPrototypeOf && getPrototypeOf(Object);
-export default (function module(exports, require, f) {
-    if (typeof require != "string") {
+export default (function e(t, n, f) {
+    if (typeof n != "string") {
         if (s) {
-            const d = getPrototypeOf(require);
+            const d = getPrototypeOf(n);
             if (d && d !== s) {
-                module(exports, d, f);
+                e(t, d, f);
             }
         }
-        let p = getOwnPropertyNames(require);
+        let p = getOwnPropertyNames(n);
         if (getOwnPropertySymbols) {
-            p = p.concat(getOwnPropertySymbols(require));
+            p = p.concat(getOwnPropertySymbols(n));
         }
         for(let h = 0; h < p.length; ++h){
             const m = p[h];
             if (!(r[m] || o[m] || f && f[m])) {
-                const y = getOwnPropertyDescriptor(require, m);
+                const y = getOwnPropertyDescriptor(n, m);
                 try {
-                    defineProperty(exports, m, y);
-                } catch (module) {}
+                    defineProperty(t, m, y);
+                } catch (e) {}
             }
         }
-        return exports;
+        return t;
     }
-    return exports;
+    return t;
 });

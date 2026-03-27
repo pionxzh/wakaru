@@ -1,0 +1,742 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+var r = require("./module-4.js"), o = ()=>r, i = require("./module-3.js"), a = ()=>i, u = require("./module-1.js"), l = ()=>u, c = require("./module-8.js"), s = require("./module-16.js"), f = s.a;
+function d(e, t) {
+    if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    return !t || "object" != typeof t && "function" != typeof t ? e : t;
+}
+var p = function(e) {
+    function t() {
+        var n, r;
+        !function(e, t) {
+            if (!(e instanceof t)) throw new TypeError("Cannot call a class as a function");
+        }(this, t);
+        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++)i[a] = arguments[a];
+        return n = r = d(this, e.call.apply(e, [
+            this
+        ].concat(i))), r.history = Object(c.createBrowserHistory)(r.props), d(r, n);
+    }
+    return function(e, t) {
+        if ("function" != typeof t && null !== t) throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: !1,
+                writable: !0,
+                configurable: !0
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    }(t, e), t.prototype.componentWillMount = function() {
+        o()(!this.props.history, "<BrowserRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { BrowserRouter as Router }`.");
+    }, t.prototype.render = function() {
+        return a.a.createElement(f, {
+            history: this.history,
+            children: this.props.children
+        });
+    }, t;
+}(a.a.Component);
+p.propTypes = {
+    basename: l.a.string,
+    forceRefresh: l.a.bool,
+    getUserConfirmation: l.a.func,
+    keyLength: l.a.number,
+    children: l.a.node
+};
+var h = p;
+function m(e, t) {
+    if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    return !t || "object" != typeof t && "function" != typeof t ? e : t;
+}
+var y = function(e) {
+    function t() {
+        var n, r;
+        !function(e, t) {
+            if (!(e instanceof t)) throw new TypeError("Cannot call a class as a function");
+        }(this, t);
+        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++)i[a] = arguments[a];
+        return n = r = m(this, e.call.apply(e, [
+            this
+        ].concat(i))), r.history = Object(c.createHashHistory)(r.props), m(r, n);
+    }
+    return function(e, t) {
+        if ("function" != typeof t && null !== t) throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: !1,
+                writable: !0,
+                configurable: !0
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    }(t, e), t.prototype.componentWillMount = function() {
+        o()(!this.props.history, "<HashRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { HashRouter as Router }`.");
+    }, t.prototype.render = function() {
+        return a.a.createElement(f, {
+            history: this.history,
+            children: this.props.children
+        });
+    }, t;
+}(a.a.Component);
+y.propTypes = {
+    basename: l.a.string,
+    getUserConfirmation: l.a.func,
+    hashType: l.a.oneOf([
+        "hashbang",
+        "noslash",
+        "slash"
+    ]),
+    children: l.a.node
+};
+var v = y, b = require("./module-5.js"), g = ()=>b, w = Object.assign || function(e) {
+    for(var t = 1; t < arguments.length; t++){
+        var n = arguments[t];
+        for(var r in n)Object.prototype.hasOwnProperty.call(n, r) && (e[r] = n[r]);
+    }
+    return e;
+};
+function E(e, t) {
+    if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    return !t || "object" != typeof t && "function" != typeof t ? e : t;
+}
+var x = function(e) {
+    return !!(e.metaKey || e.altKey || e.ctrlKey || e.shiftKey);
+}, k = function(e) {
+    function t() {
+        var n, r;
+        !function(e, t) {
+            if (!(e instanceof t)) throw new TypeError("Cannot call a class as a function");
+        }(this, t);
+        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++)i[a] = arguments[a];
+        return n = r = E(this, e.call.apply(e, [
+            this
+        ].concat(i))), r.handleClick = function(e) {
+            if (r.props.onClick && r.props.onClick(e), !e.defaultPrevented && 0 === e.button && !r.props.target && !x(e)) {
+                e.preventDefault();
+                var t = r.context.router.history, n = r.props, o = n.replace, i = n.to;
+                o ? t.replace(i) : t.push(i);
+            }
+        }, E(r, n);
+    }
+    return function(e, t) {
+        if ("function" != typeof t && null !== t) throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: !1,
+                writable: !0,
+                configurable: !0
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    }(t, e), t.prototype.render = function() {
+        var e = this.props, t = (e.replace, e.to), n = e.innerRef, r = function(e, t) {
+            var n = {};
+            for(var r in e)t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+            return n;
+        }(e, [
+            "replace",
+            "to",
+            "innerRef"
+        ]);
+        g()(this.context.router, "You should not use <Link> outside a <Router>");
+        g()(void 0 !== t, 'You must specify the "to" property');
+        var o = this.context.router.history, i = "string" == typeof t ? Object(c.createLocation)(t, null, null, o.location) : t, u = o.createHref(i);
+        return a.a.createElement("a", w({}, r, {
+            onClick: this.handleClick,
+            href: u,
+            ref: n
+        }));
+    }, t;
+}(a.a.Component);
+k.propTypes = {
+    onClick: l.a.func,
+    target: l.a.string,
+    replace: l.a.bool,
+    to: l.a.oneOfType([
+        l.a.string,
+        l.a.object
+    ]).isRequired,
+    innerRef: l.a.oneOfType([
+        l.a.string,
+        l.a.func
+    ])
+};
+k.defaultProps = {
+    replace: !1
+};
+k.contextTypes = {
+    router: l.a.shape({
+        history: l.a.shape({
+            push: l.a.func.isRequired,
+            replace: l.a.func.isRequired,
+            createHref: l.a.func.isRequired
+        }).isRequired
+    }).isRequired
+};
+var T = k;
+function S(e, t) {
+    if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    return !t || "object" != typeof t && "function" != typeof t ? e : t;
+}
+var O = function(e) {
+    function t() {
+        var n, r;
+        !function(e, t) {
+            if (!(e instanceof t)) throw new TypeError("Cannot call a class as a function");
+        }(this, t);
+        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++)i[a] = arguments[a];
+        return n = r = S(this, e.call.apply(e, [
+            this
+        ].concat(i))), r.history = Object(c.createMemoryHistory)(r.props), S(r, n);
+    }
+    return function(e, t) {
+        if ("function" != typeof t && null !== t) throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: !1,
+                writable: !0,
+                configurable: !0
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    }(t, e), t.prototype.componentWillMount = function() {
+        o()(!this.props.history, "<MemoryRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { MemoryRouter as Router }`.");
+    }, t.prototype.render = function() {
+        return a.a.createElement(s.a, {
+            history: this.history,
+            children: this.props.children
+        });
+    }, t;
+}(a.a.Component);
+O.propTypes = {
+    initialEntries: l.a.array,
+    initialIndex: l.a.number,
+    getUserConfirmation: l.a.func,
+    keyLength: l.a.number,
+    children: l.a.node
+};
+var C = O, P = require("./module-15.js"), _ = Object.assign || function(e) {
+    for(var t = 1; t < arguments.length; t++){
+        var n = arguments[t];
+        for(var r in n)Object.prototype.hasOwnProperty.call(n, r) && (e[r] = n[r]);
+    }
+    return e;
+};
+function j(e, t) {
+    if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    return !t || "object" != typeof t && "function" != typeof t ? e : t;
+}
+var R = function(e) {
+    return 0 === a.a.Children.count(e);
+}, N = function(e) {
+    function t() {
+        var n, r;
+        !function(e, t) {
+            if (!(e instanceof t)) throw new TypeError("Cannot call a class as a function");
+        }(this, t);
+        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++)i[a] = arguments[a];
+        return n = r = j(this, e.call.apply(e, [
+            this
+        ].concat(i))), r.state = {
+            match: r.computeMatch(r.props, r.context.router)
+        }, j(r, n);
+    }
+    return function(e, t) {
+        if ("function" != typeof t && null !== t) throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: !1,
+                writable: !0,
+                configurable: !0
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    }(t, e), t.prototype.getChildContext = function() {
+        return {
+            router: _({}, this.context.router, {
+                route: {
+                    location: this.props.location || this.context.router.route.location,
+                    match: this.state.match
+                }
+            })
+        };
+    }, t.prototype.computeMatch = function(e, t) {
+        var n = e.computedMatch, r = e.location, o = e.path, i = e.strict, a = e.exact, u = e.sensitive;
+        if (n) return n;
+        g()(t, "You should not use <Route> or withRouter() outside a <Router>");
+        var l = t.route, c = (r || l.location).pathname;
+        return Object(P.a)(c, {
+            path: o,
+            strict: i,
+            exact: a,
+            sensitive: u
+        }, l.match);
+    }, t.prototype.componentWillMount = function() {
+        o()(!(this.props.component && this.props.render), "You should not use <Route component> and <Route render> in the same route; <Route render> will be ignored");
+        o()(!(this.props.component && this.props.children && !R(this.props.children)), "You should not use <Route component> and <Route children> in the same route; <Route children> will be ignored");
+        o()(!(this.props.render && this.props.children && !R(this.props.children)), "You should not use <Route render> and <Route children> in the same route; <Route children> will be ignored");
+    }, t.prototype.componentWillReceiveProps = function(e, t) {
+        o()(!(e.location && !this.props.location), '<Route> elements should not change from uncontrolled to controlled (or vice versa). You initially used no "location" prop and then provided one on a subsequent render.');
+        o()(!(!e.location && this.props.location), '<Route> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
+        this.setState({
+            match: this.computeMatch(e, t.router)
+        });
+    }, t.prototype.render = function() {
+        var e = this.state.match, t = this.props, n = t.children, r = t.component, o = t.render, i = this.context.router, u = i.history, l = i.route, c = i.staticContext, s = {
+            match: e,
+            location: this.props.location || l.location,
+            history: u,
+            staticContext: c
+        };
+        return r ? e ? a.a.createElement(r, s) : null : o ? e ? o(s) : null : "function" == typeof n ? n(s) : n && !R(n) ? a.a.Children.only(n) : null;
+    }, t;
+}(a.a.Component);
+N.propTypes = {
+    computedMatch: l.a.object,
+    path: l.a.string,
+    exact: l.a.bool,
+    strict: l.a.bool,
+    sensitive: l.a.bool,
+    component: l.a.func,
+    render: l.a.func,
+    children: l.a.oneOfType([
+        l.a.func,
+        l.a.node
+    ]),
+    location: l.a.object
+};
+N.contextTypes = {
+    router: l.a.shape({
+        history: l.a.object.isRequired,
+        route: l.a.object.isRequired,
+        staticContext: l.a.object
+    })
+};
+N.childContextTypes = {
+    router: l.a.object.isRequired
+};
+var M = N, A = M, L = Object.assign || function(e) {
+    for(var t = 1; t < arguments.length; t++){
+        var n = arguments[t];
+        for(var r in n)Object.prototype.hasOwnProperty.call(n, r) && (e[r] = n[r]);
+    }
+    return e;
+}, I = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function(e) {
+    return typeof e;
+} : function(e) {
+    return e && "function" == typeof Symbol && e.constructor === Symbol && e !== Symbol.prototype ? "symbol" : typeof e;
+};
+var D = function(e) {
+    var t = e.to, n = e.exact, r = e.strict, o = e.location, i = e.activeClassName, u = e.className, l = e.activeStyle, c = e.style, s = e.isActive, f = e["aria-current"], d = function(e, t) {
+        var n = {};
+        for(var r in e)t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+        return n;
+    }(e, [
+        "to",
+        "exact",
+        "strict",
+        "location",
+        "activeClassName",
+        "className",
+        "activeStyle",
+        "style",
+        "isActive",
+        "aria-current"
+    ]), p = "object" === (void 0 === t ? "undefined" : I(t)) ? t.pathname : t, h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
+    return a.a.createElement(A, {
+        path: h,
+        exact: n,
+        strict: r,
+        location: o,
+        children: function(e) {
+            var n = e.location, r = e.match, o = !!(s ? s(r, n) : r);
+            return a.a.createElement(T, L({
+                to: t,
+                className: o ? [
+                    u,
+                    i
+                ].filter(function(e) {
+                    return e;
+                }).join(" ") : u,
+                style: o ? L({}, c, l) : c,
+                "aria-current": o && f || null
+            }, d));
+        }
+    });
+};
+D.propTypes = {
+    to: T.propTypes.to,
+    exact: l.a.bool,
+    strict: l.a.bool,
+    location: l.a.object,
+    activeClassName: l.a.string,
+    className: l.a.string,
+    activeStyle: l.a.object,
+    style: l.a.object,
+    isActive: l.a.func,
+    "aria-current": l.a.oneOf([
+        "page",
+        "step",
+        "location",
+        "date",
+        "time",
+        "true"
+    ])
+};
+D.defaultProps = {
+    activeClassName: "active",
+    "aria-current": "page"
+};
+var F = D;
+var z = function(e) {
+    function t() {
+        return function(e, t) {
+            if (!(e instanceof t)) throw new TypeError("Cannot call a class as a function");
+        }(this, t), function(e, t) {
+            if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+            return !t || "object" != typeof t && "function" != typeof t ? e : t;
+        }(this, e.apply(this, arguments));
+    }
+    return function(e, t) {
+        if ("function" != typeof t && null !== t) throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: !1,
+                writable: !0,
+                configurable: !0
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    }(t, e), t.prototype.enable = function(e) {
+        this.unblock && this.unblock();
+        this.unblock = this.context.router.history.block(e);
+    }, t.prototype.disable = function() {
+        this.unblock && (this.unblock(), this.unblock = null);
+    }, t.prototype.componentWillMount = function() {
+        g()(this.context.router, "You should not use <Prompt> outside a <Router>");
+        this.props.when && this.enable(this.props.message);
+    }, t.prototype.componentWillReceiveProps = function(e) {
+        e.when ? this.props.when && this.props.message === e.message || this.enable(e.message) : this.disable();
+    }, t.prototype.componentWillUnmount = function() {
+        this.disable();
+    }, t.prototype.render = function() {
+        return null;
+    }, t;
+}(a.a.Component);
+z.propTypes = {
+    when: l.a.bool,
+    message: l.a.oneOfType([
+        l.a.func,
+        l.a.string
+    ]).isRequired
+};
+z.defaultProps = {
+    when: !0
+};
+z.contextTypes = {
+    router: l.a.shape({
+        history: l.a.shape({
+            block: l.a.func.isRequired
+        }).isRequired
+    }).isRequired
+};
+var q = z, U = require("./module-14.js"), H = ()=>U, W = {}, $ = 0, B = function() {
+    var e = arguments.length > 0 && void 0 !== arguments[0] ? arguments[0] : "/", t = arguments.length > 1 && void 0 !== arguments[1] ? arguments[1] : {};
+    return "/" === e ? e : (function(e) {
+        var t = e, n = W[t] || (W[t] = {});
+        if (n[e]) return n[e];
+        var r = H.a.compile(e);
+        return $ < 1e4 && (n[e] = r, $++), r;
+    })(e)(t, {
+        pretty: !0
+    });
+}, V = Object.assign || function(e) {
+    for(var t = 1; t < arguments.length; t++){
+        var n = arguments[t];
+        for(var r in n)Object.prototype.hasOwnProperty.call(n, r) && (e[r] = n[r]);
+    }
+    return e;
+};
+var Q = function(e) {
+    function t() {
+        return function(e, t) {
+            if (!(e instanceof t)) throw new TypeError("Cannot call a class as a function");
+        }(this, t), function(e, t) {
+            if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+            return !t || "object" != typeof t && "function" != typeof t ? e : t;
+        }(this, e.apply(this, arguments));
+    }
+    return function(e, t) {
+        if ("function" != typeof t && null !== t) throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: !1,
+                writable: !0,
+                configurable: !0
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    }(t, e), t.prototype.isStatic = function() {
+        return this.context.router && this.context.router.staticContext;
+    }, t.prototype.componentWillMount = function() {
+        g()(this.context.router, "You should not use <Redirect> outside a <Router>");
+        this.isStatic() && this.perform();
+    }, t.prototype.componentDidMount = function() {
+        this.isStatic() || this.perform();
+    }, t.prototype.componentDidUpdate = function(e) {
+        var t = Object(c.createLocation)(e.to), n = Object(c.createLocation)(this.props.to);
+        Object(c.locationsAreEqual)(t, n) ? o()(!1, "You tried to redirect to the same route you're currently on: \"" + n.pathname + n.search + '"') : this.perform();
+    }, t.prototype.computeTo = function(e) {
+        var t = e.computedMatch, n = e.to;
+        return t ? "string" == typeof n ? B(n, t.params) : V({}, n, {
+            pathname: B(n.pathname, t.params)
+        }) : n;
+    }, t.prototype.perform = function() {
+        var e = this.context.router.history, t = this.props.push, n = this.computeTo(this.props);
+        t ? e.push(n) : e.replace(n);
+    }, t.prototype.render = function() {
+        return null;
+    }, t;
+}(a.a.Component);
+Q.propTypes = {
+    computedMatch: l.a.object,
+    push: l.a.bool,
+    from: l.a.string,
+    to: l.a.oneOfType([
+        l.a.string,
+        l.a.object
+    ]).isRequired
+};
+Q.defaultProps = {
+    push: !1
+};
+Q.contextTypes = {
+    router: l.a.shape({
+        history: l.a.shape({
+            push: l.a.func.isRequired,
+            replace: l.a.func.isRequired
+        }).isRequired,
+        staticContext: l.a.object
+    }).isRequired
+};
+var K = Q, Y = Object.assign || function(e) {
+    for(var t = 1; t < arguments.length; t++){
+        var n = arguments[t];
+        for(var r in n)Object.prototype.hasOwnProperty.call(n, r) && (e[r] = n[r]);
+    }
+    return e;
+};
+function G(e, t) {
+    if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    return !t || "object" != typeof t && "function" != typeof t ? e : t;
+}
+var X = function(e) {
+    return "/" === e.charAt(0) ? e : "/" + e;
+}, J = function(e, t) {
+    return e ? Y({}, t, {
+        pathname: X(e) + t.pathname
+    }) : t;
+}, Z = function(e) {
+    return "string" == typeof e ? e : Object(c.createPath)(e);
+}, ee = function(e) {
+    return function() {
+        g()(!1, "You cannot %s with <StaticRouter>", e);
+    };
+}, te = function() {}, ne = function(e) {
+    function t() {
+        var n, r;
+        !function(e, t) {
+            if (!(e instanceof t)) throw new TypeError("Cannot call a class as a function");
+        }(this, t);
+        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++)i[a] = arguments[a];
+        return n = r = G(this, e.call.apply(e, [
+            this
+        ].concat(i))), r.createHref = function(e) {
+            return X(r.props.basename + Z(e));
+        }, r.handlePush = function(e) {
+            var t = r.props, n = t.basename, o = t.context;
+            o.action = "PUSH";
+            o.location = J(n, Object(c.createLocation)(e));
+            o.url = Z(o.location);
+        }, r.handleReplace = function(e) {
+            var t = r.props, n = t.basename, o = t.context;
+            o.action = "REPLACE";
+            o.location = J(n, Object(c.createLocation)(e));
+            o.url = Z(o.location);
+        }, r.handleListen = function() {
+            return te;
+        }, r.handleBlock = function() {
+            return te;
+        }, G(r, n);
+    }
+    return function(e, t) {
+        if ("function" != typeof t && null !== t) throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: !1,
+                writable: !0,
+                configurable: !0
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    }(t, e), t.prototype.getChildContext = function() {
+        return {
+            router: {
+                staticContext: this.props.context
+            }
+        };
+    }, t.prototype.componentWillMount = function() {
+        o()(!this.props.history, "<StaticRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { StaticRouter as Router }`.");
+    }, t.prototype.render = function() {
+        var e = this.props, t = e.basename, n = (e.context, e.location), r = function(e, t) {
+            var n = {};
+            for(var r in e)t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+            return n;
+        }(e, [
+            "basename",
+            "context",
+            "location"
+        ]), o = {
+            createHref: this.createHref,
+            action: "POP",
+            location: function(e, t) {
+                if (!e) return t;
+                var n = X(e);
+                return 0 !== t.pathname.indexOf(n) ? t : Y({}, t, {
+                    pathname: t.pathname.substr(n.length)
+                });
+            }(t, Object(c.createLocation)(n)),
+            push: this.handlePush,
+            replace: this.handleReplace,
+            go: ee("go"),
+            goBack: ee("goBack"),
+            goForward: ee("goForward"),
+            listen: this.handleListen,
+            block: this.handleBlock
+        };
+        return a.a.createElement(s.a, Y({}, r, {
+            history: o
+        }));
+    }, t;
+}(a.a.Component);
+ne.propTypes = {
+    basename: l.a.string,
+    context: l.a.object.isRequired,
+    location: l.a.oneOfType([
+        l.a.string,
+        l.a.object
+    ])
+};
+ne.defaultProps = {
+    basename: "",
+    location: "/"
+};
+ne.childContextTypes = {
+    router: l.a.object.isRequired
+};
+var re = ne;
+var oe = function(e) {
+    function t() {
+        return function(e, t) {
+            if (!(e instanceof t)) throw new TypeError("Cannot call a class as a function");
+        }(this, t), function(e, t) {
+            if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+            return !t || "object" != typeof t && "function" != typeof t ? e : t;
+        }(this, e.apply(this, arguments));
+    }
+    return function(e, t) {
+        if ("function" != typeof t && null !== t) throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: !1,
+                writable: !0,
+                configurable: !0
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    }(t, e), t.prototype.componentWillMount = function() {
+        g()(this.context.router, "You should not use <Switch> outside a <Router>");
+    }, t.prototype.componentWillReceiveProps = function(e) {
+        o()(!(e.location && !this.props.location), '<Switch> elements should not change from uncontrolled to controlled (or vice versa). You initially used no "location" prop and then provided one on a subsequent render.');
+        o()(!(!e.location && this.props.location), '<Switch> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
+    }, t.prototype.render = function() {
+        var e = this.context.router.route, t = this.props.children, n = this.props.location || e.location, r = void 0, o = void 0;
+        return a.a.Children.forEach(t, function(t) {
+            if (null == r && a.a.isValidElement(t)) {
+                var i = t.props, u = i.path, l = i.exact, c = i.strict, s = i.sensitive, f = i.from, d = u || f;
+                o = t;
+                r = Object(P.a)(n.pathname, {
+                    path: d,
+                    exact: l,
+                    strict: c,
+                    sensitive: s
+                }, e.match);
+            }
+        }), r ? a.a.cloneElement(o, {
+            location: n,
+            computedMatch: r
+        }) : null;
+    }, t;
+}(a.a.Component);
+oe.contextTypes = {
+    router: l.a.shape({
+        route: l.a.object.isRequired
+    }).isRequired
+};
+oe.propTypes = {
+    children: l.a.node,
+    location: l.a.object
+};
+var ie = oe, ae = B, ue = P.a, le = require("./module-30.js"), ce = ()=>le, se = Object.assign || function(e) {
+    for(var t = 1; t < arguments.length; t++){
+        var n = arguments[t];
+        for(var r in n)Object.prototype.hasOwnProperty.call(n, r) && (e[r] = n[r]);
+    }
+    return e;
+};
+var fe = function(e) {
+    var t = function(t) {
+        var n = t.wrappedComponentRef, r = function(e, t) {
+            var n = {};
+            for(var r in e)t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+            return n;
+        }(t, [
+            "wrappedComponentRef"
+        ]);
+        return a.a.createElement(M, {
+            children: function(t) {
+                return a.a.createElement(e, se({}, r, t, {
+                    ref: n
+                }));
+            }
+        });
+    };
+    return t.displayName = "withRouter(" + (e.displayName || e.name) + ")", t.WrappedComponent = e, t.propTypes = {
+        wrappedComponentRef: l.a.func
+    }, ce()(t, e);
+};
+exports.BrowserRouter = h;
+exports.HashRouter = v;
+exports.Link = T;
+exports.MemoryRouter = C;
+exports.NavLink = F;
+exports.Prompt = q;
+exports.Redirect = K;
+exports.Route = A;
+exports.Router = f;
+exports.StaticRouter = re;
+exports.Switch = ie;
+exports.generatePath = ae;
+exports.matchPath = ue;
+exports.withRouter = fe;

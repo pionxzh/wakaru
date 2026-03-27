@@ -15,12 +15,22 @@ use crate::unpacker::{UnpackResult, UnpackedModule};
 
 /// Renames param identifiers in a function body to standard names.
 /// This visitor avoids renaming property keys in MemberExpr and object property names.
+/// Only identifiers that are unresolved free-variable references (marked with
+/// `unresolved_mark` by `resolver()`) are renamed, so inner-scope bindings that
+/// happen to share the same symbol are left untouched.
 struct ParamRenamer {
     renames: Vec<(Atom, Atom)>,
+    unresolved_mark: Mark,
 }
 
 impl VisitMut for ParamRenamer {
     fn visit_mut_ident(&mut self, id: &mut Ident) {
+        // Only rename identifiers that resolver() marked as free/unresolved references.
+        // Bound identifiers (inner function params, local `var`s, etc.) carry a different
+        // SyntaxContext and must not be touched.
+        if id.ctxt.outer() != self.unresolved_mark {
+            return;
+        }
         for (old, new) in &self.renames {
             if &id.sym == old {
                 id.sym = new.clone();
@@ -317,6 +327,27 @@ fn build_member_assign(obj_ident: Ident, prop_name: Atom, val: Box<Expr>, span: 
     })
 }
 
+/// Detects whether the parsed module is a webpack4 bundle and extracts modules,
+/// skipping `apply_default_rules`. Returns the intermediate state after webpack
+/// normalization (param renaming, require.d / require.r conversion, require(N)
+/// rewriting, require.n rewriting) but before SimplifySequence, UnEsm, etc.
+pub fn detect_and_extract_raw(source: &str) -> Option<UnpackResult> {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let module = parse_es_module(source, cm.clone()).ok()?;
+
+        for item in &module.body {
+            let ModuleItem::Stmt(stmt) = item else {
+                continue;
+            };
+            if let Some(result) = try_extract_from_stmt_raw(stmt, cm.clone()) {
+                return Some(result);
+            }
+        }
+        None
+    })
+}
+
 /// Detects whether the parsed module is a webpack4 bundle and extracts modules.
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
@@ -336,6 +367,21 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
     })
 }
 
+/// Try to extract from a top-level statement that might be a webpack4 IIFE (raw, no default rules).
+fn try_extract_from_stmt_raw(stmt: &Stmt, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+    let call = match stmt {
+        Stmt::Expr(ExprStmt { expr, .. }) => match &**expr {
+            Expr::Unary(u) if u.op == UnaryOp::Bang => {
+                extract_call_from_expr(&u.arg)?
+            }
+            other => extract_call_from_expr(other)?,
+        },
+        _ => return None,
+    };
+
+    extract_webpack4_modules(call, cm, false)
+}
+
 /// Try to extract from a top-level statement that might be a webpack4 IIFE.
 fn try_extract_from_stmt(stmt: &Stmt, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
     let call = match stmt {
@@ -349,7 +395,7 @@ fn try_extract_from_stmt(stmt: &Stmt, cm: Lrc<SourceMap>) -> Option<UnpackResult
         _ => return None,
     };
 
-    extract_webpack4_modules(call, cm)
+    extract_webpack4_modules(call, cm, true)
 }
 
 fn extract_call_from_expr(expr: &Expr) -> Option<&CallExpr> {
@@ -360,7 +406,8 @@ fn extract_call_from_expr(expr: &Expr) -> Option<&CallExpr> {
 }
 
 /// Given a CallExpr that should be `bootstrapFn([module0, module1, ...])`, extract the modules.
-fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+/// When `apply_rules` is false, `apply_default_rules` is skipped (raw output).
+fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bool) -> Option<UnpackResult> {
     // Callee must be a FnExpr (the bootstrap function)
     let Callee::Expr(callee_expr) = &call.callee else {
         return None;
@@ -495,9 +542,17 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>) -> Option<Unpac
         // Build a synthetic Module wrapping the body statements
         let mut synthetic_module = build_module_from_stmts(body_stmts);
 
-        // Step 1: rename params to standard names
+        // Step 0: run resolver() first so every identifier gets a unique SyntaxContext.
+        // Unresolved free-variable references (the factory params like `e`, `t`, `n`)
+        // receive `unresolved_mark` as their outer mark; bound identifiers (inner params,
+        // locals) get a different mark — allowing ParamRenamer to skip them safely.
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        synthetic_module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        // Step 1: rename params to standard names (scope-aware via unresolved_mark)
         if !renames.is_empty() {
-            let mut renamer = ParamRenamer { renames };
+            let mut renamer = ParamRenamer { renames, unresolved_mark };
             synthetic_module.visit_mut_with(&mut renamer);
         }
 
@@ -539,11 +594,10 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>) -> Option<Unpac
         };
         synthetic_module.visit_mut_with(&mut normalizer);
 
-        // Step 3: apply resolver + default rules
-        let unresolved_mark = Mark::new();
-        let top_level_mark = Mark::new();
-        synthetic_module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-        apply_default_rules(&mut synthetic_module);
+        // Step 3: optionally apply default rules
+        if apply_rules {
+            apply_default_rules(&mut synthetic_module);
+        }
         synthetic_module.visit_mut_with(&mut fixer(None));
 
         // Step 4: emit to code

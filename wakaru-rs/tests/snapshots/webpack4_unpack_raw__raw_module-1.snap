@@ -1,0 +1,5 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+module.exports = require("./module-45.js")();

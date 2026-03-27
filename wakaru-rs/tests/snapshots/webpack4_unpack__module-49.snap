@@ -2,12 +2,12 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-!function module() {
+!function e() {
     if (typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ != "undefined" && typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE == "function") {
         try {
-            __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE(module);
-        } catch (module) {
-            console.error(module);
+            __REACT_DEVTOOLS_GLOBAL_HOOK__.checkDCE(e);
+        } catch (e) {
+            console.error(e);
         }
     }
 }();

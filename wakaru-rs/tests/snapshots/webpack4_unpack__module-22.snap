@@ -19,22 +19,22 @@ export const arrayOfDeffered = o.g;
 export const createMockTask = o.j;
 export const cloneableGenerator = o.i;
 export const asEffect = u.d;
-const c = Object.assign || function(module) {
-    for(let exports = 1; exports < arguments.length; exports++){
-        const require = arguments[exports];
-        for(let utils in require){
-            if (Object.prototype.hasOwnProperty.call(require, utils)) {
-                module[utils] = require[utils];
+const c = Object.assign || function(e) {
+    for(let t = 1; t < arguments.length; t++){
+        const n = arguments[t];
+        for(let utils in n){
+            if (Object.prototype.hasOwnProperty.call(n, utils)) {
+                e[utils] = n[utils];
             }
         }
     }
-    return module;
+    return e;
 };
-const s = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (module)=>typeof module : (module)=>{
-    if (module && typeof Symbol == "function" && module.constructor === Symbol && module !== Symbol.prototype) {
+const s = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (e)=>typeof e : (e)=>{
+    if (e && typeof Symbol == "function" && e.constructor === Symbol && e !== Symbol.prototype) {
         return "symbol";
     }
-    return typeof module;
+    return typeof e;
 };
 const f = "proc first argument (Saga function result) must be an iterator";
 export const CHANNEL_END = {
@@ -51,88 +51,88 @@ const h = {
     wildcard () {
         return o.r;
     },
-    default (module) {
-        if ((module === undefined ? "undefined" : s(module)) === "symbol") {
-            return (exports)=>exports.type === module;
+    default (e) {
+        if ((e === undefined ? "undefined" : s(e)) === "symbol") {
+            return (t)=>t.type === e;
         }
-        return (exports)=>exports.type === String(module);
+        return (t)=>t.type === String(e);
     },
-    array (module) {
-        return (exports)=>module.some((module)=>m(module)(exports));
+    array (e) {
+        return (t)=>e.some((e)=>m(e)(t));
     },
-    predicate (module) {
-        return (exports)=>module(exports);
+    predicate (e) {
+        return (t)=>e(t);
     }
 };
-function m(module) {
-    return (module === "*" ? h.wildcard : o.q.array(module) ? h.array : o.q.stringableFunc(module) ? h.default : o.q.func(module) ? h.predicate : h.default)(module);
+function m(e) {
+    return (e === "*" ? h.wildcard : o.q.array(e) ? h.array : o.q.stringableFunc(e) ? h.default : o.q.func(e) ? h.predicate : h.default)(e);
 }
-const y = (module)=>{
+const y = (e)=>{
     return {
-        fn: module
+        fn: e
     };
 };
-function v(module, exports = ()=>o.u, require = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga = "anonymous") {
+function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga = "anonymous") {
     const w = arguments[8];
-    o.h(module, o.q.iterator, f);
+    o.h(e, o.q.iterator, f);
     const effects = o.n(z, o.z("[...effects]", "all([...effects])"));
     const { sagaMonitor: x, logger: k, onError: T } = h;
     const S = k || o.s;
-    const O = (module)=>{
-        let exports = module.sagaStack;
-        if (!exports && module.stack) {
-            exports = -1 !== module.stack.split("\n")[0].indexOf(module.message) ? module.stack : "Error: " + module.message + "\n" + module.stack;
+    const O = (e)=>{
+        let t = e.sagaStack;
+        if (!t && e.stack) {
+            t = -1 !== e.stack.split("\n")[0].indexOf(e.message) ? e.stack : "Error: " + e.message + "\n" + e.stack;
         }
-        S("error", "uncaught at " + runSaga, exports || module.message || module);
+        S("error", "uncaught at " + runSaga, t || e.message || e);
     };
-    const C = i.f(exports);
+    const C = i.f(t);
     const P = Object.create(s);
     M.cancel = o.u;
-    const _ = ((module, exports, require, utils)=>{
+    const _ = ((e, runSaga, n, utils)=>{
         let i;
         let a;
-        require._deferredEnd = null;
+        n._deferredEnd = null;
         i = {};
         i[o.e] = true;
-        i.id = module;
-        i.name = exports;
+        i.id = e;
+        i.name = runSaga;
         "done";
         a = {};
         a.done = a.done || {};
         a.done.get = ()=>{
-            if (require._deferredEnd) {
-                return require._deferredEnd.promise;
+            if (n._deferredEnd) {
+                return n._deferredEnd.promise;
             }
-            const module = o.l();
-            require._deferredEnd = module;
-            require._isRunning || (require._error ? module.reject(require._error) : module.resolve(require._result));
-            return module.promise;
+            const e = o.l();
+            n._deferredEnd = e;
+            n._isRunning || (n._error ? e.reject(n._error) : e.resolve(n._result));
+            return e.promise;
         };
         i.cont = utils;
         i.joiners = [];
         i.cancel = N;
-        i.isRunning = ()=>require._isRunning;
-        i.isCancelled = ()=>require._isCancelled;
-        i.isAborted = ()=>require._isAborted;
-        i.result = ()=>require._result;
-        i.error = ()=>require._error;
-        i.setContext = (module)=>{
-            o.h(module, o.q.object, o.k("task", module));
-            o.v.assign(P, module);
+        i.isRunning = ()=>n._isRunning;
+        i.isCancelled = ()=>n._isCancelled;
+        i.isAborted = ()=>n._isAborted;
+        i.result = ()=>n._result;
+        i.error = ()=>n._error;
+        i.setContext = (e)=>{
+            o.h(e, o.q.object, o.k("task", e));
+            o.v.assign(P, e);
         };
-        ((module, exports)=>{
-            for(let require in exports){
-                const utils = exports[require];
+        ((e, runSaga)=>{
+            for(let n in runSaga){
+                const utils = runSaga[n];
                 utils.configurable = true;
                 utils.enumerable = true;
                 if ("value" in utils) {
                     utils.writable = true;
                 }
-                Object.defineProperty(module, require, utils);
+                Object.defineProperty(e, n, utils);
             }
         })(i, a);
         return i;
-    })(b, runSaga, module, w);
+    })(b, runSaga, e, w);
     const j = {
         name: runSaga,
         cancel () {
@@ -143,25 +143,26 @@ function v(module, exports = ()=>o.u, require = o.u, utils = o.u, s = {}, h = {}
         },
         isRunning: true
     };
-    const R = ((module, exports, require)=>{
+    const R = ((t, n)=>{
+        const e = 0;
         let utils = [];
         let i = undefined;
         let a = false;
-        function u(module) {
+        function u(e) {
             c();
-            require(module, true);
+            n(e, true);
         }
-        function l(module) {
-            utils.push(module);
-            module.cont = (l, c)=>{
+        function l(e) {
+            utils.push(e);
+            e.cont = (l, c)=>{
                 if (!a) {
-                    o.w(utils, module);
-                    module.cont = o.u;
+                    o.w(utils, e);
+                    e.cont = o.u;
                     if (c) {
                         u(l);
                     } else {
-                        module === exports && (i = l);
-                        utils.length || (a = true, require(i));
+                        e === t && (i = l);
+                        utils.length || (a = true, n(i));
                     }
                 }
             };
@@ -169,14 +170,14 @@ function v(module, exports = ()=>o.u, require = o.u, utils = o.u, s = {}, h = {}
         function c() {
             if (!a) {
                 a = true;
-                utils.forEach((module)=>{
-                    module.cont = o.u;
-                    module.cancel();
+                utils.forEach((e)=>{
+                    e.cont = o.u;
+                    e.cancel();
                 });
                 utils = [];
             }
         }
-        l(exports);
+        l(t);
         return {
             addTask: l,
             cancelAll: c,
@@ -185,13 +186,13 @@ function v(module, exports = ()=>o.u, require = o.u, utils = o.u, s = {}, h = {}
                 return utils;
             },
             taskNames () {
-                return utils.map((module)=>module.name);
+                return utils.map((e)=>e.name);
             }
         };
-    })(0, j, A);
+    })(j, A);
     function N() {
-        if (module._isRunning && !module._isCancelled) {
-            module._isCancelled = true;
+        if (e._isRunning && !e._isCancelled) {
+            e._isCancelled = true;
             R.cancelAll();
             A(p);
         }
@@ -199,28 +200,28 @@ function v(module, exports = ()=>o.u, require = o.u, utils = o.u, s = {}, h = {}
     if (w) {
         w.cancel = N;
     }
-    module._isRunning = true;
+    e._isRunning = true;
     M();
     return _;
-    function M(exports, require) {
+    function M(t, n) {
         if (!j.isRunning) {
             throw new Error("Trying to resume an already finished generator");
         }
         try {
             let utils = undefined;
-            if (require) {
-                utils = module.throw(exports);
-            } else if (exports === p) {
+            if (n) {
+                utils = e.throw(t);
+            } else if (t === p) {
                 j.isCancelled = true;
                 M.cancel();
-                utils = o.q.func(module.return) ? module.return(p) : {
+                utils = o.q.func(e.return) ? e.return(p) : {
                     done: true,
                     value: p
                 };
             } else {
-                utils = exports === CHANNEL_END ? o.q.func(module.return) ? module.return() : {
+                utils = t === CHANNEL_END ? o.q.func(e.return) ? e.return() : {
                     done: true
-                } : module.next(exports);
+                } : e.next(t);
             }
             if (utils.done) {
                 j.isMainRunning = false;
@@ -230,43 +231,43 @@ function v(module, exports = ()=>o.u, require = o.u, utils = o.u, s = {}, h = {}
             } else {
                 L(utils.value, b, "", M);
             }
-        } catch (module) {
+        } catch (e) {
             if (j.isCancelled) {
-                O(module);
+                O(e);
             }
             j.isMainRunning = false;
-            j.cont(module, true);
+            j.cont(e, true);
         }
     }
-    function A(exports, require) {
-        module._isRunning = false;
+    function A(t, n) {
+        e._isRunning = false;
         C.close();
-        if (require) {
-            if (exports instanceof Error) {
-                Object.defineProperty(exports, "sagaStack", {
-                    value: "at " + runSaga + " \n " + (exports.sagaStack || exports.stack),
+        if (n) {
+            if (t instanceof Error) {
+                Object.defineProperty(t, "sagaStack", {
+                    value: "at " + runSaga + " \n " + (t.sagaStack || t.stack),
                     configurable: true
                 });
             }
-            _.cont || (exports instanceof Error && T ? T(exports) : O(exports));
-            module._error = exports;
-            module._isAborted = true;
-            if (module._deferredEnd) {
-                module._deferredEnd.reject(exports);
+            _.cont || (t instanceof Error && T ? T(t) : O(t));
+            e._error = t;
+            e._isAborted = true;
+            if (e._deferredEnd) {
+                e._deferredEnd.reject(t);
             }
         } else {
-            module._result = exports;
-            if (module._deferredEnd) {
-                module._deferredEnd.resolve(exports);
+            e._result = t;
+            if (e._deferredEnd) {
+                e._deferredEnd.resolve(t);
             }
         }
         if (_.cont) {
-            _.cont(exports, require);
+            _.cont(t, n);
         }
-        _.joiners.forEach((module)=>module.cb(exports, require));
+        _.joiners.forEach((e)=>e.cb(t, n));
         _.joiners = null;
     }
-    function L(module, s, f = "") {
+    function L(e, s, f = "") {
         const h = arguments[3];
         const v = o.y();
         if (x) {
@@ -274,16 +275,16 @@ function v(module, exports = ()=>o.u, require = o.u, utils = o.u, s = {}, h = {}
                 effectId: v,
                 parentEffectId: s,
                 label: f,
-                effect: module
+                effect: e
             });
         }
         let b = undefined;
-        function w(module, exports) {
+        function w(e, t) {
             if (!b) {
                 b = true;
                 h.cancel = o.u;
-                x && (exports ? x.effectRejected(v, module) : x.effectResolved(v, module));
-                h(module, exports);
+                x && (t ? x.effectRejected(v, e) : x.effectResolved(v, e));
+                h(e, t);
             }
         }
         w.cancel = o.u;
@@ -292,8 +293,8 @@ function v(module, exports = ()=>o.u, require = o.u, utils = o.u, s = {}, h = {}
                 b = true;
                 try {
                     w.cancel();
-                } catch (module) {
-                    O(module);
+                } catch (e) {
+                    O(e);
                 }
                 w.cancel = o.u;
                 if (x) {
@@ -302,241 +303,242 @@ function v(module, exports = ()=>o.u, require = o.u, utils = o.u, s = {}, h = {}
             }
         };
         let k = undefined;
-        if (o.q.promise(module)) {
-            return I(module, w);
+        if (o.q.promise(e)) {
+            return I(e, w);
         }
-        if (o.q.helper(module)) {
-            return F(y(module), v, w);
+        if (o.q.helper(e)) {
+            return F(y(e), v, w);
         }
-        if (o.q.iterator(module)) {
-            return D(module, v, runSaga, w);
+        if (o.q.iterator(e)) {
+            return D(e, v, runSaga, w);
         }
-        if (o.q.array(module)) {
-            return effects(module, v, w);
+        if (o.q.array(e)) {
+            return effects(e, v, w);
         }
-        if (k = u.d.take(module)) {
-            return ((module, exports)=>{
-                let require = module.channel;
-                const { pattern: utils, maybe: o } = module;
-                require = require || C;
-                const a = (module)=>{
-                    if (module instanceof Error) {
-                        return exports(module, true);
+        if (k = u.d.take(e)) {
+            return ((e, t)=>{
+                let n = e.channel;
+                const { pattern: utils, maybe: o } = e;
+                n = n || C;
+                const a = (e)=>{
+                    if (e instanceof Error) {
+                        return t(e, true);
                     }
-                    if (i.e(module) && !o) {
-                        return exports(CHANNEL_END);
+                    if (i.e(e) && !o) {
+                        return t(CHANNEL_END);
                     }
-                    return exports(module);
+                    return t(e);
                 };
                 try {
-                    require.take(a, m(utils));
-                } catch (module) {
-                    return exports(module, true);
+                    n.take(a, m(utils));
+                } catch (e) {
+                    return t(e, true);
                 }
-                exports.cancel = a.cancel;
+                t.cancel = a.cancel;
             })(k, w);
         }
-        if (k = u.d.put(module)) {
-            return ((module, exports)=>{
-                const { channel: utils, action: i, resolve: u } = module;
+        if (k = u.d.put(e)) {
+            return ((e, t)=>{
+                const { channel: utils, action: i, resolve: u } = e;
                 a.a(()=>{
-                    let module = undefined;
+                    let e = undefined;
                     try {
-                        module = (utils ? utils.put : require)(i);
-                    } catch (module) {
+                        e = (utils ? utils.put : n)(i);
+                    } catch (e) {
                         if (utils || u) {
-                            return exports(module, true);
+                            return t(e, true);
                         }
-                        O(module);
+                        O(e);
                     }
-                    if (!u || !o.q.promise(module)) {
-                        return exports(module);
+                    if (!u || !o.q.promise(e)) {
+                        return t(e);
                     }
-                    I(module, exports);
+                    I(e, t);
                 });
             })(k, w);
         }
-        if (k = u.d.all(module)) {
+        if (k = u.d.all(e)) {
             return z(k, v, w);
         }
-        if (k = u.d.race(module)) {
-            return ((module, exports, require)=>{
+        if (k = u.d.race(e)) {
+            return ((e, t, n)=>{
                 let utils = undefined;
-                const a = Object.keys(module);
+                const a = Object.keys(e);
                 const u = {};
-                a.forEach((exports)=>{
+                a.forEach((t)=>{
                     const l = (u, l)=>{
                         if (!utils) {
                             if (l) {
-                                require.cancel();
-                                require(u, true);
+                                n.cancel();
+                                n(u, true);
                             } else if (!i.e(u) && u !== CHANNEL_END && u !== p) {
                                 let s;
-                                require.cancel();
+                                n.cancel();
                                 utils = true;
                                 s = {};
-                                s[exports] = u;
+                                s[t] = u;
                                 const f = s;
-                                require(o.q.array(module) ? Array.prototype.slice.call(c({}, f, {
+                                n(o.q.array(e) ? Array.prototype.slice.call(c({}, f, {
                                     length: a.length
                                 })) : f);
                             }
                         }
                     };
                     l.cancel = o.u;
-                    u[exports] = l;
+                    u[t] = l;
                 });
-                require.cancel = ()=>{
+                n.cancel = ()=>{
                     if (!utils) {
                         utils = true;
-                        a.forEach((module)=>u[module].cancel());
+                        a.forEach((e)=>u[e].cancel());
                     }
                 };
-                a.forEach((require)=>{
+                a.forEach((n)=>{
                     if (!utils) {
-                        L(module[require], exports, require, u[require]);
+                        L(e[n], t, n, u[n]);
                     }
                 });
             })(k, v, w);
         }
-        if (k = u.d.call(module)) {
-            return ((module, exports, require)=>{
-                const { context: utils, fn: i, args: a } = module;
+        if (k = u.d.call(e)) {
+            return ((e, t, n)=>{
+                const { context: utils, fn: i, args: a } = e;
                 let u = undefined;
                 try {
                     u = i.apply(utils, a);
-                } catch (module) {
-                    return require(module, true);
+                } catch (e) {
+                    return n(e, true);
                 }
                 if (o.q.promise(u)) {
-                    return I(u, require);
+                    return I(u, n);
                 }
                 if (o.q.iterator(u)) {
-                    return D(u, exports, i.name, require);
+                    return D(u, t, i.name, n);
                 }
-                return require(u);
+                return n(u);
             })(k, v, w);
         }
-        if (k = u.d.cps(module)) {
-            return ((module, exports)=>{
-                const { context: require, fn: utils, args: i } = module;
+        if (k = u.d.cps(e)) {
+            return ((e, t)=>{
+                const { context: n, fn: utils, args: i } = e;
                 try {
-                    const a = (module, require)=>{
-                        if (o.q.undef(module)) {
-                            return exports(require);
+                    const a = (e, n)=>{
+                        if (o.q.undef(e)) {
+                            return t(n);
                         }
-                        return exports(module, true);
+                        return t(e, true);
                     };
-                    utils.apply(require, i.concat(a));
+                    utils.apply(n, i.concat(a));
                     if (a.cancel) {
-                        exports.cancel = ()=>a.cancel();
+                        t.cancel = ()=>a.cancel();
                     }
-                } catch (module) {
-                    return exports(module, true);
+                } catch (e) {
+                    return t(e, true);
                 }
             })(k, w);
         }
-        if (k = u.d.fork(module)) {
+        if (k = u.d.fork(e)) {
             return F(k, v, w);
         }
-        if (k = u.d.join(module)) {
-            return ((module, exports)=>{
-                if (module.isRunning()) {
-                    const require = {
+        if (k = u.d.join(e)) {
+            return ((e, t)=>{
+                if (e.isRunning()) {
+                    const n = {
                         task: _,
-                        cb: exports
+                        cb: t
                     };
-                    exports.cancel = ()=>o.w(module.joiners, require);
-                    module.joiners.push(require);
+                    t.cancel = ()=>o.w(e.joiners, n);
+                    e.joiners.push(n);
                 } else {
-                    if (module.isAborted()) {
-                        exports(module.error(), true);
+                    if (e.isAborted()) {
+                        t(e.error(), true);
                     } else {
-                        exports(module.result());
+                        t(e.result());
                     }
                 }
             })(k, w);
         }
-        if (k = u.d.cancel(module)) {
-            return ((module, exports)=>{
-                if (module === o.d) {
-                    module = _;
+        if (k = u.d.cancel(e)) {
+            return ((e, t)=>{
+                if (e === o.d) {
+                    e = _;
                 }
-                if (module.isRunning()) {
-                    module.cancel();
+                if (e.isRunning()) {
+                    e.cancel();
                 }
-                exports();
+                t();
             })(k, w);
         }
-        if (k = u.d.select(module)) {
-            return ((module, exports)=>{
-                const { selector: require, args: o } = module;
+        if (k = u.d.select(e)) {
+            return ((e, t)=>{
+                const { selector: n, args: o } = e;
                 try {
-                    const i = require(...[
+                    const i = n(...[
                         utils()
                     ].concat(o));
-                    exports(i);
-                } catch (module) {
-                    exports(module, true);
+                    t(i);
+                } catch (e) {
+                    t(e, true);
                 }
             })(k, w);
         }
-        if (k = u.d.actionChannel(module)) {
-            return ((module, require)=>{
-                const { pattern: utils, buffer: o } = module;
+        if (k = u.d.actionChannel(e)) {
+            return ((e, n)=>{
+                const { pattern: utils, buffer: o } = e;
                 const a = m(utils);
                 a.pattern = utils;
-                require(i.d(exports, o || l.a.fixed(), a));
+                n(i.d(t, o || l.a.fixed(), a));
             })(k, w);
         }
-        if (k = u.d.flush(module)) {
-            return ((module, exports)=>{
-                module.flush(exports);
+        if (k = u.d.flush(e)) {
+            return ((e, t)=>{
+                e.flush(t);
             })(k, w);
         }
-        if (k = u.d.cancelled(module)) {
-            return ((module, exports)=>{
-                exports(!!j.isCancelled);
-            })(0, w);
+        if (k = u.d.cancelled(e)) {
+            return ((t)=>{
+                const e = 0;
+                t(!!j.isCancelled);
+            })(w);
         }
-        if (k = u.d.getContext(module)) {
-            return ((module, exports)=>{
-                exports(P[module]);
+        if (k = u.d.getContext(e)) {
+            return ((e, t)=>{
+                t(P[e]);
             })(k, w);
         }
-        if (k = u.d.setContext(module)) {
-            return ((module, exports)=>{
-                o.v.assign(P, module);
-                exports();
+        if (k = u.d.setContext(e)) {
+            return ((e, t)=>{
+                o.v.assign(P, e);
+                t();
             })(k, w);
         }
-        return w(module);
+        return w(e);
     }
-    function I(module, exports) {
-        const require = module[o.a];
-        if (o.q.func(require)) {
-            exports.cancel = require;
-        } else if (o.q.func(module.abort)) {
-            exports.cancel = ()=>module.abort();
+    function I(e, t) {
+        const n = e[o.a];
+        if (o.q.func(n)) {
+            t.cancel = n;
+        } else if (o.q.func(e.abort)) {
+            t.cancel = ()=>e.abort();
         }
-        module.then(exports, (module)=>exports(module, true));
+        e.then(t, (e)=>t(e, true));
     }
-    function D(module, o, i, a) {
-        v(module, exports, require, utils, P, h, o, i, a);
+    function D(e, o, i, a) {
+        v(e, t, n, utils, P, h, o, i, a);
     }
-    function F(module, i, u) {
-        const { context: l, fn: c, args: s, detached: f } = module;
-        const CHANNEL_END = ((module)=>{
-            const { context: exports, fn: require, args: utils } = module;
-            if (o.q.iterator(require)) {
-                return require;
+    function F(e, i, u) {
+        const { context: l, fn: c, args: s, detached: f } = e;
+        const CHANNEL_END = ((e)=>{
+            const { context: t, fn: n, args: utils } = e;
+            if (o.q.iterator(n)) {
+                return n;
             }
             let i = undefined;
             let a = undefined;
             try {
-                i = require.apply(exports, utils);
-            } catch (module) {
-                a = module;
+                i = n.apply(t, utils);
+            } catch (e) {
+                a = e;
             }
             if (o.q.iterator(i)) {
                 return i;
@@ -547,22 +549,22 @@ function v(module, exports = ()=>o.u, require = o.u, utils = o.u, s = {}, h = {}
                 });
             }
             return o.t((()=>{
-                let module = undefined;
-                const exports = {
+                let e = undefined;
+                const t = {
                     done: false,
                     value: i
                 };
-                return (require)=>{
-                    if (module) {
-                        return ((module)=>{
+                return (n)=>{
+                    if (e) {
+                        return ((e)=>{
                             return {
                                 done: true,
-                                value: module
+                                value: e
                             };
-                        })(require);
+                        })(n);
                     }
-                    module = true;
-                    return exports;
+                    e = true;
+                    return t;
                 };
             })());
         })({
@@ -572,7 +574,7 @@ function v(module, exports = ()=>o.u, require = o.u, utils = o.u, s = {}, h = {}
         });
         try {
             a.c();
-            const p = v(CHANNEL_END, exports, require, utils, P, h, i, c.name, f ? null : o.u);
+            const p = v(CHANNEL_END, t, n, utils, P, h, i, c.name, f ? null : o.u);
             if (f) {
                 u(p);
             } else if (CHANNEL_END._isRunning) {
@@ -587,48 +589,48 @@ function v(module, exports = ()=>o.u, require = o.u, utils = o.u, s = {}, h = {}
             a.b();
         }
     }
-    function z(module, exports, require) {
-        const utils = Object.keys(module);
+    function z(e, t, n) {
+        const utils = Object.keys(e);
         if (!utils.length) {
-            return require(o.q.array(module) ? [] : {});
+            return n(o.q.array(e) ? [] : {});
         }
         let a = 0;
         let u = undefined;
         const l = {};
         const s = {};
-        utils.forEach((exports)=>{
+        utils.forEach((t)=>{
             const f = (s, f)=>{
-                u || (f || i.e(s) || s === CHANNEL_END || s === p ? (require.cancel(), require(s, f)) : (l[exports] = s, ++a === utils.length && (u = true, require(o.q.array(module) ? o.f.from(c({}, l, {
+                u || (f || i.e(s) || s === CHANNEL_END || s === p ? (n.cancel(), n(s, f)) : (l[t] = s, ++a === utils.length && (u = true, n(o.q.array(e) ? o.f.from(c({}, l, {
                     length: utils.length
                 })) : l))));
             };
             f.cancel = o.u;
-            s[exports] = f;
+            s[t] = f;
         });
-        require.cancel = ()=>{
+        n.cancel = ()=>{
             if (!u) {
                 u = true;
-                utils.forEach((module)=>s[module].cancel());
+                utils.forEach((e)=>s[e].cancel());
             }
         };
-        utils.forEach((require)=>L(module[require], exports, require, s[require]));
+        utils.forEach((n)=>L(e[n], t, n, s[n]));
     }
 }
 const b = "runSaga(storeInterface, saga, ...args): saga argument must be a Generator function!";
-export function runSaga(module, exports) {
-    for(let require = arguments.length, utils = Array(require > 2 ? require - 2 : 0), i = 2; i < require; i++){
+export function runSaga(e, t) {
+    for(let n = arguments.length, utils = Array(n > 2 ? n - 2 : 0), i = 2; i < n; i++){
         utils[i - 2] = arguments[i];
     }
     let a = undefined;
-    if (o.q.iterator(module)) {
-        a = module;
-        module = exports;
+    if (o.q.iterator(e)) {
+        a = e;
+        e = t;
     } else {
-        o.h(exports, o.q.func, b);
-        a = exports(...utils);
+        o.h(t, o.q.func, b);
+        a = t(...utils);
         o.h(a, o.q.iterator, b);
     }
-    const { subscribe: l, dispatch: c, getState: s, context: f, sagaMonitor: CHANNEL_END, logger: p, onError: h } = module;
+    const { subscribe: l, dispatch: c, getState: s, context: f, sagaMonitor: CHANNEL_END, logger: p, onError: h } = e;
     const m = o.y();
     if (CHANNEL_END) {
         CHANNEL_END.effectTriggered = CHANNEL_END.effectTriggered || o.u;
@@ -642,7 +644,7 @@ export function runSaga(module, exports) {
             parentEffectId: 0,
             effect: {
                 root: true,
-                saga: exports,
+                saga: t,
                 args: utils
             }
         });
@@ -651,7 +653,7 @@ export function runSaga(module, exports) {
         sagaMonitor: CHANNEL_END,
         logger: p,
         onError: h
-    }, m, exports.name);
+    }, m, t.name);
     if (CHANNEL_END) {
         CHANNEL_END.effectResolved(m, y);
     }
@@ -667,16 +669,16 @@ export const throttle = w.e;
 export const delay = o.m;
 export const CANCEL = o.a;
 export const detach = u.i;
-export default ((module = {})=>{
-    const exports = module.context;
-    const require = exports === undefined ? {} : exports;
-    const utils = ((module, exports)=>{
-        const require = {};
-        for(let utils in module){
-            exports.indexOf(utils) >= 0 || Object.prototype.hasOwnProperty.call(module, utils) && (require[utils] = module[utils]);
+export default ((e = {})=>{
+    const t = e.context;
+    const n = t === undefined ? {} : t;
+    const utils = ((e, t)=>{
+        const n = {};
+        for(let utils in e){
+            t.indexOf(utils) >= 0 || Object.prototype.hasOwnProperty.call(e, utils) && (n[utils] = e[utils]);
         }
-        return require;
-    })(module, [
+        return n;
+    })(e, [
         "context"
     ]);
     const { sagaMonitor: a, logger: u, onError: l } = utils;
@@ -692,34 +694,34 @@ export default ((module = {})=>{
     if (utils.emitter && !o.q.func(utils.emitter)) {
         throw new Error("`options.emitter` passed to the Saga middleware is not a function!");
     }
-    function c(module) {
-        const { getState: exports, dispatch: s } = module;
+    function c(e) {
+        const { getState: t, dispatch: s } = e;
         const f = i.c();
         f.emit = (utils.emitter || o.o)(f.emit);
         c.run = runSaga.bind(null, {
-            context: require,
+            context: n,
             subscribe: f.subscribe,
             dispatch: s,
-            getState: exports,
+            getState: t,
             sagaMonitor: a,
             logger: u,
             onError: l
         });
-        return (module)=>(exports)=>{
+        return (e)=>(t)=>{
                 if (a && a.actionDispatched) {
-                    a.actionDispatched(exports);
+                    a.actionDispatched(t);
                 }
-                const require = module(exports);
-                f.emit(exports);
-                return require;
+                const n = e(t);
+                f.emit(t);
+                return n;
             };
     }
     c.run = ()=>{
         throw new Error("Before running a Saga, you must mount the Saga middleware on the Store using applyMiddleware");
     };
-    c.setContext = (module)=>{
-        o.h(module, o.q.object, o.k("sagaMiddleware", module));
-        o.v.assign(require, module);
+    c.setContext = (e)=>{
+        o.h(e, o.q.object, o.k("sagaMiddleware", e));
+        o.v.assign(n, e);
     };
     return c;
 });

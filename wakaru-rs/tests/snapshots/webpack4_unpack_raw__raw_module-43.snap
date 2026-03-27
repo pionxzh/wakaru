@@ -1,0 +1,93 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+var r = "function" == typeof Symbol && Symbol.for, o = r ? Symbol.for("react.element") : 60103, i = r ? Symbol.for("react.portal") : 60106, a = r ? Symbol.for("react.fragment") : 60107, u = r ? Symbol.for("react.strict_mode") : 60108, l = r ? Symbol.for("react.profiler") : 60114, c = r ? Symbol.for("react.provider") : 60109, s = r ? Symbol.for("react.context") : 60110, f = r ? Symbol.for("react.async_mode") : 60111, d = r ? Symbol.for("react.concurrent_mode") : 60111, p = r ? Symbol.for("react.forward_ref") : 60112, h = r ? Symbol.for("react.suspense") : 60113, m = r ? Symbol.for("react.suspense_list") : 60120, y = r ? Symbol.for("react.memo") : 60115, v = r ? Symbol.for("react.lazy") : 60116, b = r ? Symbol.for("react.block") : 60121, g = r ? Symbol.for("react.fundamental") : 60117, w = r ? Symbol.for("react.responder") : 60118, E = r ? Symbol.for("react.scope") : 60119;
+function x(e) {
+    if ("object" == typeof e && null !== e) {
+        var t = e.$$typeof;
+        switch(t){
+            case o:
+                switch(e = e.type){
+                    case f:
+                    case d:
+                    case a:
+                    case l:
+                    case u:
+                    case h:
+                        return e;
+                    default:
+                        switch(e = e && e.$$typeof){
+                            case s:
+                            case p:
+                            case v:
+                            case y:
+                            case c:
+                                return e;
+                            default:
+                                return t;
+                        }
+                }
+            case i:
+                return t;
+        }
+    }
+}
+function k(e) {
+    return x(e) === d;
+}
+exports.AsyncMode = f;
+exports.ConcurrentMode = d;
+exports.ContextConsumer = s;
+exports.ContextProvider = c;
+exports.Element = o;
+exports.ForwardRef = p;
+exports.Fragment = a;
+exports.Lazy = v;
+exports.Memo = y;
+exports.Portal = i;
+exports.Profiler = l;
+exports.StrictMode = u;
+exports.Suspense = h;
+exports.isAsyncMode = function(e) {
+    return k(e) || x(e) === f;
+};
+exports.isConcurrentMode = k;
+exports.isContextConsumer = function(e) {
+    return x(e) === s;
+};
+exports.isContextProvider = function(e) {
+    return x(e) === c;
+};
+exports.isElement = function(e) {
+    return "object" == typeof e && null !== e && e.$$typeof === o;
+};
+exports.isForwardRef = function(e) {
+    return x(e) === p;
+};
+exports.isFragment = function(e) {
+    return x(e) === a;
+};
+exports.isLazy = function(e) {
+    return x(e) === v;
+};
+exports.isMemo = function(e) {
+    return x(e) === y;
+};
+exports.isPortal = function(e) {
+    return x(e) === i;
+};
+exports.isProfiler = function(e) {
+    return x(e) === l;
+};
+exports.isStrictMode = function(e) {
+    return x(e) === u;
+};
+exports.isSuspense = function(e) {
+    return x(e) === h;
+};
+exports.isValidElementType = function(e) {
+    return "string" == typeof e || "function" == typeof e || e === a || e === d || e === l || e === u || e === h || e === m || "object" == typeof e && null !== e && (e.$$typeof === v || e.$$typeof === y || e.$$typeof === c || e.$$typeof === s || e.$$typeof === p || e.$$typeof === g || e.$$typeof === w || e.$$typeof === E || e.$$typeof === b);
+};
+exports.typeOf = x;

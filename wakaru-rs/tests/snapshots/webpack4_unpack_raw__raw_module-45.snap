@@ -1,0 +1,45 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+var r = require("./module-44.js");
+function o() {}
+function i() {}
+i.resetWarningCache = o;
+module.exports = function() {
+    function e(e, t, n, o, i, a) {
+        if (a !== r) {
+            var u = new Error("Calling PropTypes validators directly is not supported by the `prop-types` package. Use PropTypes.checkPropTypes() to call them. Read more at http://fb.me/use-check-prop-types");
+            throw u.name = "Invariant Violation", u;
+        }
+    }
+    function t() {
+        return e;
+    }
+    e.isRequired = e;
+    var n = {
+        array: e,
+        bigint: e,
+        bool: e,
+        func: e,
+        number: e,
+        object: e,
+        string: e,
+        symbol: e,
+        any: e,
+        arrayOf: t,
+        element: e,
+        elementType: e,
+        instanceOf: t,
+        node: e,
+        objectOf: t,
+        oneOf: t,
+        oneOfType: t,
+        shape: t,
+        exact: t,
+        checkPropTypes: i,
+        resetWarningCache: o
+    };
+    return n.PropTypes = n, n;
+};

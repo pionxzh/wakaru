@@ -9,112 +9,112 @@ export { u as a };
 export { c };
 export { p as b };
 export { h as f };
-const a = Object.assign || function(module) {
-    for(let exports = 1; exports < arguments.length; exports++){
-        const require = arguments[exports];
-        for(let r in require){
-            if (Object.prototype.hasOwnProperty.call(require, r)) {
-                module[r] = require[r];
+const a = Object.assign || function(e) {
+    for(let t = 1; t < arguments.length; t++){
+        const n = arguments[t];
+        for(let r in n){
+            if (Object.prototype.hasOwnProperty.call(n, r)) {
+                e[r] = n[r];
             }
         }
     }
-    return module;
+    return e;
 };
 const u = {
     type: "@@redux-saga/CHANNEL_END"
 };
-export const e = (module)=>module && module.type === "@@redux-saga/CHANNEL_END";
+export const e = (e)=>e && e.type === "@@redux-saga/CHANNEL_END";
 function c() {
-    const module = [];
+    const e = [];
     return {
-        subscribe (exports) {
-            module.push(exports);
-            return ()=>r.w(module, exports);
+        subscribe (t) {
+            e.push(t);
+            return ()=>r.w(e, t);
         },
-        emit (exports) {
-            const require = module.slice();
-            for(let r = 0, o = require.length; r < o; r++){
-                require[r](exports);
+        emit (t) {
+            const n = e.slice();
+            for(let r = 0, o = n.length; r < o; r++){
+                n[r](t);
             }
         }
     };
 }
 const s = "invalid buffer passed to channel factory function";
 const f = "Saga was provided with an undefined action";
-export function b(module = o.a.fixed()) {
-    let exports = false;
-    let require = [];
+export function b(e = o.a.fixed()) {
+    let t = false;
+    let n = [];
     function i() {
-        if (exports && require.length) {
+        if (t && n.length) {
             throw r.p("Cannot have a closed channel with pending takers");
         }
-        if (require.length && !module.isEmpty()) {
+        if (n.length && !e.isEmpty()) {
             throw r.p("Cannot have pending takers with non empty buffer");
         }
     }
-    r.h(module, r.q.buffer, s);
+    r.h(e, r.q.buffer, s);
     return {
         take (o) {
             i();
             r.h(o, r.q.func, "channel.take's callback must be a function");
-            if (exports && module.isEmpty()) {
+            if (t && e.isEmpty()) {
                 o(u);
-            } else if (module.isEmpty()) {
-                require.push(o);
-                o.cancel = ()=>r.w(require, o);
+            } else if (e.isEmpty()) {
+                n.push(o);
+                o.cancel = ()=>r.w(n, o);
             } else {
-                o(module.take());
+                o(e.take());
             }
         },
         put (o) {
             i();
             r.h(o, r.q.notUndef, f);
-            if (!exports) {
-                if (!require.length) {
-                    return module.put(o);
+            if (!t) {
+                if (!n.length) {
+                    return e.put(o);
                 }
-                for(let a = 0; a < require.length; a++){
-                    const u = require[a];
+                for(let a = 0; a < n.length; a++){
+                    const u = n[a];
                     if (!u[r.b] || u[r.b](o)) {
-                        require.splice(a, 1);
+                        n.splice(a, 1);
                         return u(o);
                     }
                 }
             }
         },
-        flush (require) {
+        flush (n) {
             i();
-            r.h(require, r.q.func, "channel.flush' callback must be a function");
-            if (exports && module.isEmpty()) {
-                require(u);
+            r.h(n, r.q.func, "channel.flush' callback must be a function");
+            if (t && e.isEmpty()) {
+                n(u);
             } else {
-                require(module.flush());
+                n(e.flush());
             }
         },
         close () {
             i();
-            if (!exports && (exports = true, require.length)) {
-                const module = require;
-                require = [];
-                for(let r = 0, o = module.length; r < o; r++){
-                    module[r](u);
+            if (!t && (t = true, n.length)) {
+                const e = n;
+                n = [];
+                for(let r = 0, o = e.length; r < o; r++){
+                    e[r](u);
                 }
             }
         },
         get __takers__ () {
-            return require;
+            return n;
         },
         get __closed__ () {
-            return exports;
+            return t;
         }
     };
 }
-function p(module, exports = o.a.none()) {
-    const require = arguments[2];
+function p(e, t = o.a.none()) {
+    const n = arguments[2];
     if (arguments.length > 2) {
-        r.h(require, r.q.func, "Invalid match function passed to eventChannel");
+        r.h(n, r.q.func, "Invalid match function passed to eventChannel");
     }
-    const i = b(exports);
+    const i = b(t);
     const a = ()=>{
         if (!i.__closed__) {
             if (u) {
@@ -123,11 +123,11 @@ function p(module, exports = o.a.none()) {
             i.close();
         }
     };
-    const u = module((module)=>{
-        if (e(module)) {
+    const u = e((e)=>{
+        if (e(e)) {
             a();
-        } else if (!(require && !require(module))) {
-            i.put(module);
+        } else if (!(n && !n(e))) {
+            i.put(e);
         }
     });
     if (i.__closed__) {
@@ -142,21 +142,21 @@ function p(module, exports = o.a.none()) {
         close: a
     };
 }
-function h(module) {
-    const exports = p((exports)=>module((module)=>{
-            if (module[r.c]) {
-                exports(module);
+function h(e) {
+    const t = p((t)=>e((e)=>{
+            if (e[r.c]) {
+                t(e);
             } else {
-                i.a(()=>exports(module));
+                i.a(()=>t(e));
             }
         }));
-    return a({}, exports, {
-        take (module, require) {
+    return a({}, t, {
+        take (e, n) {
             if (arguments.length > 1) {
-                r.h(require, r.q.func, "channel.take's matcher argument must be a function");
-                module[r.b] = require;
+                r.h(n, r.q.func, "channel.take's matcher argument must be a function");
+                e[r.b] = n;
             }
-            exports.take(module);
+            t.take(e);
         }
     });
 }

@@ -1,0 +1,126 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+var r = require("./module-3.js"), o = ()=>r, i = require("./module-1.js"), a = ()=>i, u = require("./module-16.js"), l = Object.assign || function(e) {
+    for(var t = 1; t < arguments.length; t++){
+        var n = arguments[t];
+        for(var r in n)Object.prototype.hasOwnProperty.call(n, r) && (e[r] = n[r]);
+    }
+    return e;
+}, c = "@@router/LOCATION_CHANGE", s = {
+    location: null
+};
+function f() {
+    var e = arguments.length > 0 && void 0 !== arguments[0] ? arguments[0] : s, t = arguments.length > 1 && void 0 !== arguments[1] ? arguments[1] : {}, n = t.type, r = t.payload;
+    return n === c ? l({}, e, {
+        location: r
+    }) : e;
+}
+function d(e, t) {
+    if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    return !t || "object" != typeof t && "function" != typeof t ? e : t;
+}
+var p = function(e) {
+    function t() {
+        var n, r;
+        !function(e, t) {
+            if (!(e instanceof t)) throw new TypeError("Cannot call a class as a function");
+        }(this, t);
+        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++)i[a] = arguments[a];
+        return n = r = d(this, e.call.apply(e, [
+            this
+        ].concat(i))), r.handleLocationChange = function(e) {
+            r.store.dispatch({
+                type: c,
+                payload: e
+            });
+        }, d(r, n);
+    }
+    return function(e, t) {
+        if ("function" != typeof t && null !== t) throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: {
+                value: e,
+                enumerable: !1,
+                writable: !0,
+                configurable: !0
+            }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    }(t, e), t.prototype.componentWillMount = function() {
+        var e = this.props, t = e.store, n = e.history, r = e.isSSR;
+        this.store = t || this.context.store;
+        this.handleLocationChange(n.location);
+        r || (this.unsubscribeFromHistory = n.listen(this.handleLocationChange));
+    }, t.prototype.componentWillUnmount = function() {
+        this.unsubscribeFromHistory && this.unsubscribeFromHistory();
+    }, t.prototype.render = function() {
+        return o.a.createElement(u.a, this.props);
+    }, t;
+}(r.Component);
+p.propTypes = {
+    store: a.a.object,
+    history: a.a.object.isRequired,
+    children: a.a.node,
+    isSSR: a.a.bool
+};
+p.contextTypes = {
+    store: a.a.object
+};
+var h = p, m = require("./module-15.js"), y = function(e) {
+    return e.router.location;
+}, v = function(e) {
+    var t = null, n = null;
+    return function(r) {
+        var o = (y(r) || {}).pathname;
+        if (o === t) return n;
+        t = o;
+        var i = Object(m.a)(o, e);
+        return i && n && i.url === n.url || (n = i), n;
+    };
+}, b = "@@router/CALL_HISTORY_METHOD";
+function g(e) {
+    return function() {
+        for(var t = arguments.length, n = Array(t), r = 0; r < t; r++)n[r] = arguments[r];
+        return {
+            type: b,
+            payload: {
+                method: e,
+                args: n
+            }
+        };
+    };
+}
+var w = g("push"), E = g("replace"), x = g("go"), k = g("goBack"), T = g("goForward"), S = {
+    push: w,
+    replace: E,
+    go: x,
+    goBack: k,
+    goForward: T
+};
+function O(e) {
+    return function() {
+        return function(t) {
+            return function(n) {
+                if (n.type !== b) return t(n);
+                var r = n.payload, o = r.method, i = r.args;
+                e[o].apply(e, i);
+            };
+        };
+    };
+}
+exports.ConnectedRouter = h;
+exports.getLocation = y;
+exports.createMatchSelector = v;
+exports.LOCATION_CHANGE = c;
+exports.routerReducer = f;
+exports.CALL_HISTORY_METHOD = b;
+exports.push = w;
+exports.replace = E;
+exports.go = x;
+exports.goBack = k;
+exports.goForward = T;
+exports.routerActions = S;
+exports.routerMiddleware = O;

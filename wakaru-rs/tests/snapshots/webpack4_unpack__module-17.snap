@@ -4,35 +4,35 @@ expression: code
 ---
 import r from "./module-2.js";
 import o from "./module-10.js";
-export function takeEvery(module, exports) {
-    for(let require = arguments.length, takeEvery = Array(require > 2 ? require - 2 : 0), takeLatest = 2; takeLatest < require; takeLatest++){
+export function takeEvery(e, t) {
+    for(let n = arguments.length, takeEvery = Array(n > 2 ? n - 2 : 0), takeLatest = 2; takeLatest < n; takeLatest++){
         takeEvery[takeLatest - 2] = arguments[takeLatest];
     }
     return r.k.apply(undefined, [
         o.b,
-        module,
-        exports
+        e,
+        t
     ].concat(takeEvery));
 }
-export function takeLatest(module, exports) {
-    for(let require = arguments.length, takeEvery = Array(require > 2 ? require - 2 : 0), takeLatest = 2; takeLatest < require; takeLatest++){
+export function takeLatest(e, t) {
+    for(let n = arguments.length, takeEvery = Array(n > 2 ? n - 2 : 0), takeLatest = 2; takeLatest < n; takeLatest++){
         takeEvery[takeLatest - 2] = arguments[takeLatest];
     }
     return r.k.apply(undefined, [
         o.d,
-        module,
-        exports
+        e,
+        t
     ].concat(takeEvery));
 }
-export function throttle(module, exports, require) {
+export function throttle(e, t, n) {
     for(let takeEvery = arguments.length, takeLatest = Array(takeEvery > 3 ? takeEvery - 3 : 0), throttle = 3; throttle < takeEvery; throttle++){
         takeLatest[throttle - 3] = arguments[throttle];
     }
     return r.k.apply(undefined, [
         o.f,
-        module,
-        exports,
-        require
+        e,
+        t,
+        n
     ].concat(takeLatest));
 }
 export const take = r.s;

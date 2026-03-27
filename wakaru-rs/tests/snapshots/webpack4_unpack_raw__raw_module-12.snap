@@ -1,0 +1,31 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+exports.a = a;
+exports.c = u;
+exports.b = c;
+var r = [], o = 0;
+function i(e) {
+    try {
+        u();
+        e();
+    } finally{
+        l();
+    }
+}
+function a(e) {
+    r.push(e);
+    o || (u(), c());
+}
+function u() {
+    o++;
+}
+function l() {
+    o--;
+}
+function c() {
+    l();
+    for(var e = void 0; !o && void 0 !== (e = r.shift());)i(e);
+}

@@ -1,0 +1,21 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: !0
+});
+var r = require("./module-23.js"), o = require("./module-11.js"), i = (require("./module-27.js"), require("./module-13.js"), require("./module-25.js")), a = function(e) {
+    return e && e.__esModule ? e : {
+        default: e
+    };
+}(require("./module-35.js"));
+var u = {
+    fetchData: i.fetchData
+};
+exports.default = (0, o.compose)((0, r.connect)(function(e) {
+    return {
+        data: e.main.data
+    };
+}, u))(a.default);

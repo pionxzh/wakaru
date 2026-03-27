@@ -4,29 +4,29 @@ expression: code
 ---
 import r from "./module-40.js";
 export default h;
-export const compile = (module, exports)=>tokensToFunction(parse(module, exports), exports);
+export const compile = (e, t)=>tokensToFunction(parse(e, t), t);
 const o = new RegExp([
     "(\\\\.)",
     "([\\/.])?(?:(?:\\:(\\w+)(?:\\(((?:\\\\.|[^\\\\()])+)\\))?|\\(((?:\\\\.|[^\\\\()])+)\\))([+*?])?|(\\*))"
 ].join("|"), "g");
-export function parse(module, exports) {
-    let require;
+export function parse(e, t) {
+    let n;
     const r = [];
     let parse = 0;
     let a = 0;
     let u = "";
-    const tokensToFunction = exports && exports.delimiter || "/";
-    while((require = o.exec(module)) != null){
-        const f = require[0];
-        const d = require[1];
-        const tokensToRegExp = require.index;
-        u += module.slice(a, tokensToRegExp);
+    const tokensToFunction = t && t.delimiter || "/";
+    while((n = o.exec(e)) != null){
+        const f = n[0];
+        const d = n[1];
+        const tokensToRegExp = n.index;
+        u += e.slice(a, tokensToRegExp);
         a = tokensToRegExp + f.length;
         if (d) {
             u += d[1];
         } else {
-            const h = module[a];
-            const [, , m, y, v, b, g, w] = require;
+            const h = e[a];
+            const [, , m, y, v, b, g, w] = n;
             if (u) {
                 r.push(u);
                 u = "";
@@ -34,7 +34,7 @@ export function parse(module, exports) {
             const E = m != null && h != null && h !== m;
             const x = g === "+" || g === "*";
             const k = g === "?" || g === "*";
-            const T = require[2] || tokensToFunction;
+            const T = n[2] || tokensToFunction;
             const S = v || b;
             r.push({
                 name: y || parse++,
@@ -48,33 +48,33 @@ export function parse(module, exports) {
             });
         }
     }
-    if (a < module.length) {
-        u += module.substr(a);
+    if (a < e.length) {
+        u += e.substr(a);
     }
     if (u) {
         r.push(u);
     }
     return r;
 }
-function a(module) {
-    return encodeURI(module).replace(/[\/?#]/g, (module)=>"%" + module.charCodeAt(0).toString(16).toUpperCase());
+function a(e) {
+    return encodeURI(e).replace(/[\/?#]/g, (e)=>"%" + e.charCodeAt(0).toString(16).toUpperCase());
 }
-function u(module) {
-    return encodeURI(module).replace(/[?#]/g, (module)=>"%" + module.charCodeAt(0).toString(16).toUpperCase());
+function u(e) {
+    return encodeURI(e).replace(/[?#]/g, (e)=>"%" + e.charCodeAt(0).toString(16).toUpperCase());
 }
-export function tokensToFunction(module, exports) {
-    const require = new Array(module.length);
-    for(let o = 0; o < module.length; o++){
-        if (typeof module[o] == "object") {
-            require[o] = new RegExp("^(?:" + module[o].pattern + ")$", d(exports));
+export function tokensToFunction(e, t) {
+    const n = new Array(e.length);
+    for(let o = 0; o < e.length; o++){
+        if (typeof e[o] == "object") {
+            n[o] = new RegExp("^(?:" + e[o].pattern + ")$", d(t));
         }
     }
-    return (exports, o)=>{
+    return (t, o)=>{
         let parse = "";
-        const tokensToFunction = exports || {};
+        const tokensToFunction = t || {};
         const c = (o || {}).pretty ? a : encodeURIComponent;
-        for(let s = 0; s < module.length; s++){
-            const f = module[s];
+        for(let s = 0; s < e.length; s++){
+            const f = e[s];
             if (typeof f != "string") {
                 let d;
                 const tokensToRegExp = tokensToFunction[f.name];
@@ -99,14 +99,14 @@ export function tokensToFunction(module, exports) {
                     }
                     for(let h = 0; h < tokensToRegExp.length; h++){
                         d = c(tokensToRegExp[h]);
-                        if (!require[s].test(d)) {
+                        if (!n[s].test(d)) {
                             throw new TypeError('Expected all "' + f.name + '" to match "' + f.pattern + '", but received `' + JSON.stringify(d) + "`");
                         }
                         parse += (h === 0 ? f.prefix : f.delimiter) + d;
                     }
                 } else {
                     d = f.asterisk ? u(tokensToRegExp) : c(tokensToRegExp);
-                    if (!require[s].test(d)) {
+                    if (!n[s].test(d)) {
                         throw new TypeError('Expected "' + f.name + '" to match "' + f.pattern + '", but received "' + d + '"');
                     }
                     parse += f.prefix + d;
@@ -118,64 +118,64 @@ export function tokensToFunction(module, exports) {
         return parse;
     };
 }
-function c(module) {
-    return module.replace(/([.+*?=^!:${}()[\]|\/\\])/g, "\\$1");
+function c(e) {
+    return e.replace(/([.+*?=^!:${}()[\]|\/\\])/g, "\\$1");
 }
-function s(module) {
-    return module.replace(/([=!:$\/()])/g, "\\$1");
+function s(e) {
+    return e.replace(/([=!:$\/()])/g, "\\$1");
 }
-function f(module, exports) {
-    module.keys = exports;
-    return module;
+function f(e, t) {
+    e.keys = t;
+    return e;
 }
-function d(module) {
-    if (module && module.sensitive) {
+function d(e) {
+    if (e && e.sensitive) {
         return "";
     }
     return "i";
 }
-export function tokensToRegExp(module, exports, require) {
-    if (!r(exports)) {
-        require = exports || require;
-        exports = [];
+export function tokensToRegExp(e, t, n) {
+    if (!r(t)) {
+        n = t || n;
+        t = [];
     }
-    const o = (require = require || {}).strict;
-    const parse = require.end !== false;
+    const o = (n = n || {}).strict;
+    const parse = n.end !== false;
     let a = "";
-    for(let u = 0; u < module.length; u++){
-        const tokensToFunction = module[u];
+    for(let u = 0; u < e.length; u++){
+        const tokensToFunction = e[u];
         if (typeof tokensToFunction == "string") {
             a += c(tokensToFunction);
         } else {
             const s = c(tokensToFunction.prefix);
             let tokensToRegExp = "(?:" + tokensToFunction.pattern + ")";
-            exports.push(tokensToFunction);
+            t.push(tokensToFunction);
             if (tokensToFunction.repeat) {
                 tokensToRegExp += "(?:" + s + tokensToRegExp + ")*";
             }
             a += tokensToRegExp = tokensToFunction.optional ? tokensToFunction.partial ? s + "(" + tokensToRegExp + ")?" : "(?:" + s + "(" + tokensToRegExp + "))?" : s + "(" + tokensToRegExp + ")";
         }
     }
-    const h = c(require.delimiter || "/");
+    const h = c(n.delimiter || "/");
     const m = a.slice(-h.length) === h;
     if (!o) {
         a = (m ? a.slice(0, -h.length) : a) + "(?:" + h + "(?=$))?";
     }
     a += parse ? "$" : o && m ? "" : "(?=" + h + "|$)";
-    return f(new RegExp("^" + a, d(require)), exports);
+    return f(new RegExp("^" + a, d(n)), t);
 }
-function h(module, exports, require) {
-    if (!r(exports)) {
-        require = exports || require;
-        exports = [];
+function h(e, t, n) {
+    if (!r(t)) {
+        n = t || n;
+        t = [];
     }
-    require = require || {};
-    if (module instanceof RegExp) {
-        return ((module, exports)=>{
-            const require = module.source.match(/\((?!\?)/g);
-            if (require) {
-                for(let r = 0; r < require.length; r++){
-                    exports.push({
+    n = n || {};
+    if (e instanceof RegExp) {
+        return ((e, t)=>{
+            const n = e.source.match(/\((?!\?)/g);
+            if (n) {
+                for(let r = 0; r < n.length; r++){
+                    t.push({
                         name: r,
                         prefix: null,
                         delimiter: null,
@@ -187,17 +187,17 @@ function h(module, exports, require) {
                     });
                 }
             }
-            return f(module, exports);
-        })(module, exports);
+            return f(e, t);
+        })(e, t);
     }
-    if (r(module)) {
-        return ((module, exports, require)=>{
+    if (r(e)) {
+        return ((e, t, n)=>{
             const r = [];
-            for(let o = 0; o < module.length; o++){
-                r.push(h(module[o], exports, require).source);
+            for(let o = 0; o < e.length; o++){
+                r.push(h(e[o], t, n).source);
             }
-            return f(new RegExp("(?:" + r.join("|") + ")", d(require)), exports);
-        })(module, exports, require);
+            return f(new RegExp("(?:" + r.join("|") + ")", d(n)), t);
+        })(e, t, n);
     }
-    return ((module, exports, require)=>tokensToRegExp(parse(module, require), exports, require))(module, exports, require);
+    return ((e, t, n)=>tokensToRegExp(parse(e, n), t, n))(e, t, n);
 }

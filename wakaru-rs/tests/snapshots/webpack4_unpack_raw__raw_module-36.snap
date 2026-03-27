@@ -1,0 +1,42 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+var r;
+Object.defineProperty(exports, "__esModule", {
+    value: !0
+});
+require("./module-13.js");
+var o = require("./module-26.js"), i = require("./module-19.js");
+function a(e, t, n) {
+    return t in e ? Object.defineProperty(e, t, {
+        value: n,
+        enumerable: !0,
+        configurable: !0,
+        writable: !0
+    }) : e[t] = n, e;
+}
+var u = {
+    isLoading: !1,
+    data: [],
+    error: ""
+}, l = (a(r = {}, i.FETCH_DATA + o.START, function(e) {
+    return Object.assign({}, e, {
+        isLoading: !0
+    });
+}), a(r, i.FETCH_DATA + o.SUCCESS, function(e, t) {
+    return Object.assign({}, e, {
+        isLoading: !1,
+        data: t
+    });
+}), a(r, i.FETCH_DATA + o.ERROR, function(e, t) {
+    return Object.assign({}, e, {
+        isLoading: !1,
+        error: t
+    });
+}), r);
+exports.default = function() {
+    var e = arguments.length > 0 && void 0 !== arguments[0] ? arguments[0] : u, t = arguments[1], n = l[t.type];
+    return n ? n(e, t.payload) : e;
+};

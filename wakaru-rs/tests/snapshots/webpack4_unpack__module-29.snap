@@ -10,46 +10,46 @@ export default (()=>{
         if (!Object.assign) {
             return false;
         }
-        const module = new String("abc");
-        module[5] = "de";
-        if (Object.getOwnPropertyNames(module)[0] === "5") {
+        const e = new String("abc");
+        e[5] = "de";
+        if (Object.getOwnPropertyNames(e)[0] === "5") {
             return false;
         }
-        const exports = {};
-        for(let require = 0; require < 10; require++){
-            exports["_" + String.fromCharCode(require)] = require;
+        const t = {};
+        for(let n = 0; n < 10; n++){
+            t["_" + String.fromCharCode(n)] = n;
         }
-        if (Object.getOwnPropertyNames(exports).map((module)=>exports[module]).join("") !== "0123456789") {
+        if (Object.getOwnPropertyNames(t).map((e)=>t[e]).join("") !== "0123456789") {
             return false;
         }
         const r = {};
-        "abcdefghijklmnopqrst".split("").forEach((module)=>{
-            r[module] = module;
+        "abcdefghijklmnopqrst".split("").forEach((e)=>{
+            r[e] = e;
         });
         return Object.keys(Object.assign({}, r)).join("") === "abcdefghijklmnopqrst";
-    } catch (module) {
+    } catch (e) {
         return false;
     }
-})() ? Object.assign : function(module, exports) {
-    let require;
+})() ? Object.assign : function(e, t) {
+    let n;
     let a;
-    const u = ((module)=>{
-        if (module === null || module === undefined) {
+    const u = ((e)=>{
+        if (e === null || e === undefined) {
             throw new TypeError("Object.assign cannot be called with null or undefined");
         }
-        return Object(module);
-    })(module);
+        return Object(e);
+    })(e);
     for(let l = 1; l < arguments.length; l++){
-        for(let c in require = Object(arguments[l])){
-            if (o.call(require, c)) {
-                u[c] = require[c];
+        for(let c in n = Object(arguments[l])){
+            if (o.call(n, c)) {
+                u[c] = n[c];
             }
         }
         if (r) {
-            a = r(require);
+            a = r(n);
             for(let s = 0; s < a.length; s++){
-                if (i.call(require, a[s])) {
-                    u[a[s]] = require[a[s]];
+                if (i.call(n, a[s])) {
+                    u[a[s]] = n[a[s]];
                 }
             }
         }

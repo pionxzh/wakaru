@@ -8,12 +8,12 @@ import a from "./module-8.js";
 const o = c(require("./module-22.js"));
 const u = c(require("./module-27.js"));
 const l = c(require("./module-33.js"));
-function c(module) {
-    if (module && module.__esModule) {
-        return module;
+function c(e) {
+    if (e && e.__esModule) {
+        return e;
     }
     return {
-        default: module
+        default: e
     };
 }
 const s = exports.history = a.createBrowserHistory();

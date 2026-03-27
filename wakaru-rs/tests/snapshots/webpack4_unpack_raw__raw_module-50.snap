@@ -1,0 +1,311 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+var r = require("./module-29.js"), o = "function" == typeof Symbol && Symbol.for, i = o ? Symbol.for("react.element") : 60103, a = o ? Symbol.for("react.portal") : 60106, u = o ? Symbol.for("react.fragment") : 60107, l = o ? Symbol.for("react.strict_mode") : 60108, c = o ? Symbol.for("react.profiler") : 60114, s = o ? Symbol.for("react.provider") : 60109, f = o ? Symbol.for("react.context") : 60110, d = o ? Symbol.for("react.forward_ref") : 60112, p = o ? Symbol.for("react.suspense") : 60113, h = o ? Symbol.for("react.memo") : 60115, m = o ? Symbol.for("react.lazy") : 60116, y = "function" == typeof Symbol && Symbol.iterator;
+function v(e) {
+    for(var t = "https://reactjs.org/docs/error-decoder.html?invariant=" + e, n = 1; n < arguments.length; n++)t += "&args[]=" + encodeURIComponent(arguments[n]);
+    return "Minified React error #" + e + "; visit " + t + " for the full message or use the non-minified dev environment for full errors and additional helpful warnings.";
+}
+var b = {
+    isMounted: function() {
+        return !1;
+    },
+    enqueueForceUpdate: function() {},
+    enqueueReplaceState: function() {},
+    enqueueSetState: function() {}
+}, g = {};
+function w(e, t, n) {
+    this.props = e;
+    this.context = t;
+    this.refs = g;
+    this.updater = n || b;
+}
+function E() {}
+function x(e, t, n) {
+    this.props = e;
+    this.context = t;
+    this.refs = g;
+    this.updater = n || b;
+}
+w.prototype.isReactComponent = {};
+w.prototype.setState = function(e, t) {
+    if ("object" != typeof e && "function" != typeof e && null != e) throw Error(v(85));
+    this.updater.enqueueSetState(this, e, t, "setState");
+};
+w.prototype.forceUpdate = function(e) {
+    this.updater.enqueueForceUpdate(this, e, "forceUpdate");
+};
+E.prototype = w.prototype;
+var k = x.prototype = new E;
+k.constructor = x;
+r(k, w.prototype);
+k.isPureReactComponent = !0;
+var T = {
+    current: null
+}, S = Object.prototype.hasOwnProperty, O = {
+    key: !0,
+    ref: !0,
+    __self: !0,
+    __source: !0
+};
+function C(e, t, n) {
+    var r, o = {}, a = null, u = null;
+    if (null != t) for(r in void 0 !== t.ref && (u = t.ref), void 0 !== t.key && (a = "" + t.key), t)S.call(t, r) && !O.hasOwnProperty(r) && (o[r] = t[r]);
+    var l = arguments.length - 2;
+    if (1 === l) o.children = n;
+    else if (1 < l) {
+        for(var c = Array(l), s = 0; s < l; s++)c[s] = arguments[s + 2];
+        o.children = c;
+    }
+    if (e && e.defaultProps) for(r in l = e.defaultProps)void 0 === o[r] && (o[r] = l[r]);
+    return {
+        $$typeof: i,
+        type: e,
+        key: a,
+        ref: u,
+        props: o,
+        _owner: T.current
+    };
+}
+function P(e) {
+    return "object" == typeof e && null !== e && e.$$typeof === i;
+}
+var _ = /\/+/g, j = [];
+function R(e, t, n, r) {
+    if (j.length) {
+        var o = j.pop();
+        return o.result = e, o.keyPrefix = t, o.func = n, o.context = r, o.count = 0, o;
+    }
+    return {
+        result: e,
+        keyPrefix: t,
+        func: n,
+        context: r,
+        count: 0
+    };
+}
+function N(e) {
+    e.result = null;
+    e.keyPrefix = null;
+    e.func = null;
+    e.context = null;
+    e.count = 0;
+    10 > j.length && j.push(e);
+}
+function M(e, t, n) {
+    return null == e ? 0 : function e(t, n, r, o) {
+        var u = typeof t;
+        "undefined" !== u && "boolean" !== u || (t = null);
+        var l = !1;
+        if (null === t) l = !0;
+        else switch(u){
+            case "string":
+            case "number":
+                l = !0;
+                break;
+            case "object":
+                switch(t.$$typeof){
+                    case i:
+                    case a:
+                        l = !0;
+                }
+        }
+        if (l) return r(o, t, "" === n ? "." + A(t, 0) : n), 1;
+        if (l = 0, n = "" === n ? "." : n + ":", Array.isArray(t)) for(var c = 0; c < t.length; c++){
+            var s = n + A(u = t[c], c);
+            l += e(u, s, r, o);
+        }
+        else if (s = null === t || "object" != typeof t ? null : "function" == typeof (s = y && t[y] || t["@@iterator"]) ? s : null, "function" == typeof s) for(t = s.call(t), c = 0; !(u = t.next()).done;)l += e(u = u.value, s = n + A(u, c++), r, o);
+        else if ("object" === u) throw r = "" + t, Error(v(31, "[object Object]" === r ? "object with keys {" + Object.keys(t).join(", ") + "}" : r, ""));
+        return l;
+    }(e, "", t, n);
+}
+function A(e, t) {
+    return "object" == typeof e && null !== e && null != e.key ? function(e) {
+        var t = {
+            "=": "=0",
+            ":": "=2"
+        };
+        return "$" + ("" + e).replace(/[=:]/g, function(e) {
+            return t[e];
+        });
+    }(e.key) : t.toString(36);
+}
+function L(e, t) {
+    e.func.call(e.context, t, e.count++);
+}
+function I(e, t, n) {
+    var r = e.result, o = e.keyPrefix;
+    e = e.func.call(e.context, t, e.count++);
+    Array.isArray(e) ? D(e, r, n, function(e) {
+        return e;
+    }) : null != e && (P(e) && (e = function(e, t) {
+        return {
+            $$typeof: i,
+            type: e.type,
+            key: t,
+            ref: e.ref,
+            props: e.props,
+            _owner: e._owner
+        };
+    }(e, o + (!e.key || t && t.key === e.key ? "" : ("" + e.key).replace(_, "$&/") + "/") + n)), r.push(e));
+}
+function D(e, t, n, r, o) {
+    var i = "";
+    null != n && (i = ("" + n).replace(_, "$&/") + "/");
+    M(e, I, t = R(t, i, r, o));
+    N(t);
+}
+var F = {
+    current: null
+};
+function z() {
+    var e = F.current;
+    if (null === e) throw Error(v(321));
+    return e;
+}
+var q = {
+    ReactCurrentDispatcher: F,
+    ReactCurrentBatchConfig: {
+        suspense: null
+    },
+    ReactCurrentOwner: T,
+    IsSomeRendererActing: {
+        current: !1
+    },
+    assign: r
+};
+exports.Children = {
+    map: function(e, t, n) {
+        if (null == e) return e;
+        var r = [];
+        return D(e, r, null, t, n), r;
+    },
+    forEach: function(e, t, n) {
+        if (null == e) return e;
+        M(e, L, t = R(null, null, t, n));
+        N(t);
+    },
+    count: function(e) {
+        return M(e, function() {
+            return null;
+        }, null);
+    },
+    toArray: function(e) {
+        var t = [];
+        return D(e, t, null, function(e) {
+            return e;
+        }), t;
+    },
+    only: function(e) {
+        if (!P(e)) throw Error(v(143));
+        return e;
+    }
+};
+exports.Component = w;
+exports.Fragment = u;
+exports.Profiler = c;
+exports.PureComponent = x;
+exports.StrictMode = l;
+exports.Suspense = p;
+exports.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = q;
+exports.cloneElement = function(e, t, n) {
+    if (null === e || void 0 === e) throw Error(v(267, e));
+    var o = r({}, e.props), a = e.key, u = e.ref, l = e._owner;
+    if (null != t) {
+        if (void 0 !== t.ref && (u = t.ref, l = T.current), void 0 !== t.key && (a = "" + t.key), e.type && e.type.defaultProps) var c = e.type.defaultProps;
+        for(s in t)S.call(t, s) && !O.hasOwnProperty(s) && (o[s] = void 0 === t[s] && void 0 !== c ? c[s] : t[s]);
+    }
+    var s = arguments.length - 2;
+    if (1 === s) o.children = n;
+    else if (1 < s) {
+        c = Array(s);
+        for(var f = 0; f < s; f++)c[f] = arguments[f + 2];
+        o.children = c;
+    }
+    return {
+        $$typeof: i,
+        type: e.type,
+        key: a,
+        ref: u,
+        props: o,
+        _owner: l
+    };
+};
+exports.createContext = function(e, t) {
+    return void 0 === t && (t = null), (e = {
+        $$typeof: f,
+        _calculateChangedBits: t,
+        _currentValue: e,
+        _currentValue2: e,
+        _threadCount: 0,
+        Provider: null,
+        Consumer: null
+    }).Provider = {
+        $$typeof: s,
+        _context: e
+    }, e.Consumer = e;
+};
+exports.createElement = C;
+exports.createFactory = function(e) {
+    var t = C.bind(null, e);
+    return t.type = e, t;
+};
+exports.createRef = function() {
+    return {
+        current: null
+    };
+};
+exports.forwardRef = function(e) {
+    return {
+        $$typeof: d,
+        render: e
+    };
+};
+exports.isValidElement = P;
+exports.lazy = function(e) {
+    return {
+        $$typeof: m,
+        _ctor: e,
+        _status: -1,
+        _result: null
+    };
+};
+exports.memo = function(e, t) {
+    return {
+        $$typeof: h,
+        type: e,
+        compare: void 0 === t ? null : t
+    };
+};
+exports.useCallback = function(e, t) {
+    return z().useCallback(e, t);
+};
+exports.useContext = function(e, t) {
+    return z().useContext(e, t);
+};
+exports.useDebugValue = function() {};
+exports.useEffect = function(e, t) {
+    return z().useEffect(e, t);
+};
+exports.useImperativeHandle = function(e, t, n) {
+    return z().useImperativeHandle(e, t, n);
+};
+exports.useLayoutEffect = function(e, t) {
+    return z().useLayoutEffect(e, t);
+};
+exports.useMemo = function(e, t) {
+    return z().useMemo(e, t);
+};
+exports.useReducer = function(e, t, n) {
+    return z().useReducer(e, t, n);
+};
+exports.useRef = function(e) {
+    return z().useRef(e);
+};
+exports.useState = function(e) {
+    return z().useState(e);
+};
+exports.version = "16.14.0";

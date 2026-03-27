@@ -6,42 +6,42 @@ import "./module-13.js";
 import o from "./module-26.js";
 import i from "./module-19.js";
 let r;
-function a(module, exports, require) {
-    if (exports in module) {
-        Object.defineProperty(module, exports, {
-            value: require,
+function a(e, t, n) {
+    if (t in e) {
+        Object.defineProperty(e, t, {
+            value: n,
             enumerable: true,
             configurable: true,
             writable: true
         });
     } else {
-        module[exports] = require;
+        e[t] = n;
     }
-    return module;
+    return e;
 }
 const u = {
     isLoading: false,
     data: [],
     error: ""
 };
-a(r = {}, i.FETCH_DATA + o.START, (module)=>Object.assign({}, module, {
+a(r = {}, i.FETCH_DATA + o.START, (e)=>Object.assign({}, e, {
         isLoading: true
     }));
-a(r, i.FETCH_DATA + o.SUCCESS, (module, exports)=>Object.assign({}, module, {
+a(r, i.FETCH_DATA + o.SUCCESS, (e, t)=>Object.assign({}, e, {
         isLoading: false,
-        data: exports
+        data: t
     }));
-a(r, i.FETCH_DATA + o.ERROR, (module, exports)=>Object.assign({}, module, {
+a(r, i.FETCH_DATA + o.ERROR, (e, t)=>Object.assign({}, e, {
         isLoading: false,
-        error: exports
+        error: t
     }));
 const l = r;
-export default function(module = u) {
-    const exports = arguments[1];
-    const require = l[exports.type];
-    if (require) {
-        return require(module, exports.payload);
+export default function(e = u) {
+    const t = arguments[1];
+    const n = l[t.type];
+    if (n) {
+        return n(e, t.payload);
     }
-    return module;
+    return e;
 }
 ;

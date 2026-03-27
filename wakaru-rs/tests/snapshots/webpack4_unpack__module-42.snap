@@ -8,7 +8,7 @@ n = function() {
 }();
 try {
     n = n || Function("return this")() || eval("this");
-} catch (module) {
+} catch (e) {
     if (typeof window == "object") {
         n = window;
     }

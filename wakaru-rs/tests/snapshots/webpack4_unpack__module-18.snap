@@ -6,94 +6,94 @@ import r from "./module-3.js";
 import i from "./module-1.js";
 import u from "./module-16.js";
 import m from "./module-15.js";
-const l = Object.assign || function(module) {
-    for(let exports = 1; exports < arguments.length; exports++){
-        const require = arguments[exports];
-        for(let r in require){
-            if (Object.prototype.hasOwnProperty.call(require, r)) {
-                module[r] = require[r];
+const l = Object.assign || function(e) {
+    for(let t = 1; t < arguments.length; t++){
+        const n = arguments[t];
+        for(let r in n){
+            if (Object.prototype.hasOwnProperty.call(n, r)) {
+                e[r] = n[r];
             }
         }
     }
-    return module;
+    return e;
 };
 export const LOCATION_CHANGE = "@@router/LOCATION_CHANGE";
 const s = {
     location: null
 };
-export function routerReducer(module = s, exports = {}) {
-    const { type: require, payload: r } = exports;
-    if (require === LOCATION_CHANGE) {
-        return l({}, module, {
+export function routerReducer(e = s, t = {}) {
+    const { type: n, payload: r } = t;
+    if (n === LOCATION_CHANGE) {
+        return l({}, e, {
             location: r
         });
     }
-    return module;
+    return e;
 }
-function d(module, exports) {
-    if (!module) {
+function d(e, t) {
+    if (!e) {
         throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
     }
-    if (!exports || typeof exports != "object" && typeof exports != "function") {
-        return module;
+    if (!t || typeof t != "object" && typeof t != "function") {
+        return e;
     }
-    return exports;
+    return t;
 }
-export const ConnectedRouter = ((module)=>{
-    function exports() {
-        let require;
+export const ConnectedRouter = ((e)=>{
+    function t() {
+        let n;
         let r;
-        !((module, exports)=>{
-            if (!(module instanceof exports)) {
+        !((e, t)=>{
+            if (!(e instanceof t)) {
                 throw new TypeError("Cannot call a class as a function");
             }
-        })(this, exports);
+        })(this, t);
         for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
             i[a] = arguments[a];
         }
-        require = r = d(this, module.call(...[
+        n = r = d(this, e.call(...[
             this
         ].concat(i)));
-        r.handleLocationChange = (module)=>{
+        r.handleLocationChange = (e)=>{
             r.store.dispatch({
                 type: LOCATION_CHANGE,
-                payload: module
+                payload: e
             });
         };
-        return d(r, require);
+        return d(r, n);
     }
-    ((module, exports)=>{
-        if (typeof exports != "function" && exports !== null) {
-            throw new TypeError("Super expression must either be null or a function, not " + typeof exports);
+    ((e, t)=>{
+        if (typeof t != "function" && t !== null) {
+            throw new TypeError("Super expression must either be null or a function, not " + typeof t);
         }
-        module.prototype = Object.create(exports && exports.prototype, {
+        e.prototype = Object.create(t && t.prototype, {
             constructor: {
-                value: module,
+                value: e,
                 enumerable: false,
                 writable: true,
                 configurable: true
             }
         });
-        exports && (Object.setPrototypeOf ? Object.setPrototypeOf(module, exports) : module.__proto__ = exports);
-    })(exports, module);
-    exports.prototype.componentWillMount = function() {
-        const module = this.props;
-        const { store: exports, history: require, isSSR: r } = module;
-        this.store = exports || this.context.store;
-        this.handleLocationChange(require.location);
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    })(t, e);
+    t.prototype.componentWillMount = function() {
+        const e = this.props;
+        const { store: t, history: n, isSSR: r } = e;
+        this.store = t || this.context.store;
+        this.handleLocationChange(n.location);
         if (!r) {
-            this.unsubscribeFromHistory = require.listen(this.handleLocationChange);
+            this.unsubscribeFromHistory = n.listen(this.handleLocationChange);
         }
     };
-    exports.prototype.componentWillUnmount = function() {
+    t.prototype.componentWillUnmount = function() {
         if (this.unsubscribeFromHistory) {
             this.unsubscribeFromHistory();
         }
     };
-    exports.prototype.render = function() {
+    t.prototype.render = function() {
         return r.createElement(u.a, this.props);
     };
-    return exports;
+    return t;
 })(r.Component);
 ConnectedRouter.propTypes = {
     store: i.object,
@@ -104,34 +104,34 @@ ConnectedRouter.propTypes = {
 ConnectedRouter.contextTypes = {
     store: i.object
 };
-export const getLocation = (module)=>module.router.location;
-export const createMatchSelector = (module)=>{
-    let exports = null;
-    let require = null;
+export const getLocation = (e)=>e.router.location;
+export const createMatchSelector = (e)=>{
+    let t = null;
+    let n = null;
     return (r)=>{
         const o = (getLocation(r) || {}).pathname;
-        if (o === exports) {
-            return require;
+        if (o === t) {
+            return n;
         }
-        exports = o;
-        const i = m.a(o, module);
-        if (!(i && require && i.url === require.url)) {
-            require = i;
+        t = o;
+        const i = m.a(o, e);
+        if (!(i && n && i.url === n.url)) {
+            n = i;
         }
-        return require;
+        return n;
     };
 };
 export const CALL_HISTORY_METHOD = "@@router/CALL_HISTORY_METHOD";
-function g(module) {
+function g(e) {
     return function() {
-        for(let exports = arguments.length, require = Array(exports), r = 0; r < exports; r++){
-            require[r] = arguments[r];
+        for(let t = arguments.length, n = Array(t), r = 0; r < t; r++){
+            n[r] = arguments[r];
         }
         return {
             type: CALL_HISTORY_METHOD,
             payload: {
-                method: module,
-                args: require
+                method: e,
+                args: n
             }
         };
     };
@@ -148,13 +148,13 @@ export const routerActions = {
     goBack: goBack,
     goForward: goForward
 };
-export function routerMiddleware(module) {
-    return ()=>(exports)=>(require)=>{
-                if (require.type !== CALL_HISTORY_METHOD) {
-                    return exports(require);
+export function routerMiddleware(e) {
+    return ()=>(t)=>(n)=>{
+                if (n.type !== CALL_HISTORY_METHOD) {
+                    return t(n);
                 }
-                const r = require.payload;
+                const r = n.payload;
                 const { method: o, args: i } = r;
-                module[o](...i);
+                e[o](...i);
             };
 }

@@ -1,0 +1,37 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+var r = require("./module-14.js"), o = ()=>r, i = {}, a = 0;
+exports.a = function(e) {
+    var t = arguments.length > 1 && void 0 !== arguments[1] ? arguments[1] : {}, n = arguments[2];
+    "string" == typeof t && (t = {
+        path: t
+    });
+    var r = t, u = r.path, l = r.exact, c = void 0 !== l && l, s = r.strict, f = void 0 !== s && s, d = r.sensitive, p = void 0 !== d && d;
+    if (null == u) return n;
+    var h = function(e, t) {
+        var n = "" + t.end + t.strict + t.sensitive, r = i[n] || (i[n] = {});
+        if (r[e]) return r[e];
+        var u = [], l = {
+            re: o()(e, u, t),
+            keys: u
+        };
+        return a < 1e4 && (r[e] = l, a++), l;
+    }(u, {
+        end: c,
+        strict: f,
+        sensitive: p
+    }), m = h.re, y = h.keys, v = m.exec(e);
+    if (!v) return null;
+    var b = v[0], g = v.slice(1), w = e === b;
+    return c && !w ? null : {
+        path: u,
+        url: "/" === u && "" === b ? "/" : b,
+        isExact: w,
+        params: y.reduce(function(e, t, n) {
+            return e[t.name] = g[n], e;
+        }, {})
+    };
+};

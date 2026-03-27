@@ -1,0 +1,42 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: !0
+});
+require("./module-22.js");
+var r = require("./module-17.js"), o = require("./module-25.js"), i = require("./module-19.js"), a = regeneratorRuntime.mark(l), u = regeneratorRuntime.mark(c);
+function l() {
+    return regeneratorRuntime.wrap(function(e) {
+        for(;;)switch(e.prev = e.next){
+            case 0:
+                return e.next = 3, (0, r.take)(i.FETCH_DATA);
+            case 3:
+                return e.next = 5, (0, r.put)((0, o.startFetchingData)());
+            case 5:
+                return e.next = 7, (0, r.put)((0, o.fetchDataSuccess)([]));
+            case 7:
+                e.next = 0;
+                break;
+            case 9:
+            case "end":
+                return e.stop();
+        }
+    }, a, this);
+}
+function c() {
+    return regeneratorRuntime.wrap(function(e) {
+        for(;;)switch(e.prev = e.next){
+            case 0:
+                return e.next = 2, (0, r.all)([
+                    l()
+                ]);
+            case 2:
+            case "end":
+                return e.stop();
+        }
+    }, u, this);
+}
+exports.default = c;

@@ -1,0 +1,24 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: !0
+});
+var r = function(e) {
+    if (e && e.__esModule) return e;
+    var t = {};
+    if (null != e) for(var n in e)Object.prototype.hasOwnProperty.call(e, n) && (t[n] = e[n]);
+    return t.default = e, t;
+}(require("./module-3.js")), o = require("./module-24.js"), i = function(e) {
+    return e && e.__esModule ? e : {
+        default: e
+    };
+}(require("./module-37.js"));
+var a = r.createElement(o.Switch, null, r.createElement(o.Route, {
+    exact: !0,
+    path: "/",
+    component: i.default.FrontPage
+}));
+exports.default = a;

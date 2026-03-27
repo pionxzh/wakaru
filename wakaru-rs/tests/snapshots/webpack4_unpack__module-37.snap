@@ -2,12 +2,12 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-const r = ((module)=>{
-    if (module && module.__esModule) {
-        return module;
+const r = ((e)=>{
+    if (e && e.__esModule) {
+        return e;
     }
     return {
-        default: module
+        default: e
     };
 })(require("./module-28.js"));
 export default {

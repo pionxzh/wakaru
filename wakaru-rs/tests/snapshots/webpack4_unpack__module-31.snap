@@ -2,18 +2,18 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-export function a(module) {
-    let exports;
-    const require = module.Symbol;
-    if (typeof require == "function") {
-        if (require.observable) {
-            exports = require.observable;
+export function a(e) {
+    let t;
+    const n = e.Symbol;
+    if (typeof n == "function") {
+        if (n.observable) {
+            t = n.observable;
         } else {
-            exports = require("observable");
-            require.observable = exports;
+            t = n("observable");
+            n.observable = t;
         }
     } else {
-        exports = "@@observable";
+        t = "@@observable";
     }
-    return exports;
+    return t;
 }

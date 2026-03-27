@@ -14,3 +14,7 @@ pub struct UnpackResult {
 pub fn unpack_webpack4(source: &str) -> Option<UnpackResult> {
     webpack4::detect_and_extract(source)
 }
+
+pub fn unpack_webpack4_raw(source: &str) -> Option<UnpackResult> {
+    webpack4::detect_and_extract_raw(source)
+}

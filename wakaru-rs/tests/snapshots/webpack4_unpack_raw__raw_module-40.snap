@@ -1,0 +1,7 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+module.exports = Array.isArray || function(e) {
+    return "[object Array]" == Object.prototype.toString.call(e);
+};

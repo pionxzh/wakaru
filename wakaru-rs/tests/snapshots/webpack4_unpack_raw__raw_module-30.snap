@@ -1,0 +1,45 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+var r = {
+    childContextTypes: !0,
+    contextTypes: !0,
+    defaultProps: !0,
+    displayName: !0,
+    getDefaultProps: !0,
+    getDerivedStateFromProps: !0,
+    mixins: !0,
+    propTypes: !0,
+    type: !0
+}, o = {
+    name: !0,
+    length: !0,
+    prototype: !0,
+    caller: !0,
+    callee: !0,
+    arguments: !0,
+    arity: !0
+}, i = Object.defineProperty, a = Object.getOwnPropertyNames, u = Object.getOwnPropertySymbols, l = Object.getOwnPropertyDescriptor, c = Object.getPrototypeOf, s = c && c(Object);
+module.exports = function e(t, n, f) {
+    if ("string" != typeof n) {
+        if (s) {
+            var d = c(n);
+            d && d !== s && e(t, d, f);
+        }
+        var p = a(n);
+        u && (p = p.concat(u(n)));
+        for(var h = 0; h < p.length; ++h){
+            var m = p[h];
+            if (!(r[m] || o[m] || f && f[m])) {
+                var y = l(n, m);
+                try {
+                    i(t, m, y);
+                } catch (e) {}
+            }
+        }
+        return t;
+    }
+    return t;
+};

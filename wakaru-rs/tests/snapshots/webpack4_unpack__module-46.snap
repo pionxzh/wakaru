@@ -13,27 +13,27 @@ if (typeof window == "undefined" || typeof MessageChannel != "function") {
     const s = ()=>{
         if (l !== null) {
             try {
-                const module = exports.unstable_now();
-                l(true, module);
+                const e = exports.unstable_now();
+                l(true, e);
                 l = null;
-            } catch (module) {
+            } catch (e) {
                 setTimeout(s, 0);
-                throw module;
+                throw e;
             }
         }
     };
     const f = Date.now();
     exports.unstable_now = ()=>Date.now() - f;
-    r = (module)=>{
+    r = (e)=>{
         if (l !== null) {
-            setTimeout(r, 0, module);
+            setTimeout(r, 0, e);
         } else {
-            l = module;
+            l = e;
             setTimeout(s, 0);
         }
     };
-    o = (module, exports)=>{
-        c = setTimeout(module, exports);
+    o = (e, t)=>{
+        c = setTimeout(e, t);
     };
     i = ()=>{
         clearTimeout(c);
@@ -64,112 +64,112 @@ if (typeof window == "undefined" || typeof MessageChannel != "function") {
     let x = 0;
     a = ()=>exports.unstable_now() >= x;
     unstable_requestPaint = ()=>{};
-    exports.unstable_forceFrameRate = (module)=>{
-        if (module < 0 || module > 125) {
+    exports.unstable_forceFrameRate = (e)=>{
+        if (e < 0 || e > 125) {
             console.error("forceFrameRate takes a positive int between 0 and 125, forcing framerates higher than 125 fps is not unsupported");
         } else {
-            E = module > 0 ? Math.floor(1000 / module) : 5;
+            E = e > 0 ? Math.floor(1000 / e) : 5;
         }
     };
     const k = new MessageChannel;
     const T = k.port2;
     k.port1.onmessage = ()=>{
         if (g !== null) {
-            const module = exports.unstable_now();
-            x = module + E;
+            const e = exports.unstable_now();
+            x = e + E;
             try {
-                if (g(true, module)) {
+                if (g(true, e)) {
                     T.postMessage(null);
                 } else {
                     b = false;
                     g = null;
                 }
-            } catch (module) {
+            } catch (e) {
                 T.postMessage(null);
-                throw module;
+                throw e;
             }
         } else {
             b = false;
         }
     };
-    r = (module)=>{
-        g = module;
+    r = (e)=>{
+        g = e;
         if (!b) {
             b = true;
             T.postMessage(null);
         }
     };
-    o = (module, require)=>{
+    o = (e, n)=>{
         w = h(()=>{
-            module(exports.unstable_now());
-        }, require);
+            e(exports.unstable_now());
+        }, n);
     };
     i = ()=>{
         m(w);
         w = -1;
     };
 }
-function S(module, exports) {
-    let require = module.length;
-    module.push(exports);
-    module: while(true){
-        const r = require - 1 >>> 1;
-        const o = module[r];
-        if (!(o !== undefined && P(o, exports) > 0)) {
-            break module;
+function S(e, t) {
+    let n = e.length;
+    e.push(t);
+    e: while(true){
+        const r = n - 1 >>> 1;
+        const o = e[r];
+        if (!(o !== undefined && P(o, t) > 0)) {
+            break e;
         }
-        module[r] = exports;
-        module[require] = o;
-        require = r;
+        e[r] = t;
+        e[n] = o;
+        n = r;
     }
 }
-function O(module) {
-    if ((module = module[0]) === undefined) {
+function O(e) {
+    if ((e = e[0]) === undefined) {
         return null;
     }
-    return module;
+    return e;
 }
-function C(module) {
-    const exports = module[0];
-    if (exports !== undefined) {
-        const require = module.pop();
-        if (require !== exports) {
-            module[0] = require;
-            module: for(let r = 0, o = module.length; r < o;){
+function C(e) {
+    const t = e[0];
+    if (t !== undefined) {
+        const n = e.pop();
+        if (n !== t) {
+            e[0] = n;
+            e: for(let r = 0, o = e.length; r < o;){
                 const i = 2 * (r + 1) - 1;
-                const a = module[i];
+                const a = e[i];
                 const unstable_requestPaint = i + 1;
-                const l = module[unstable_requestPaint];
-                if (a !== undefined && P(a, require) < 0) {
+                const l = e[unstable_requestPaint];
+                if (a !== undefined && P(a, n) < 0) {
                     if (l !== undefined && P(l, a) < 0) {
-                        module[r] = l;
-                        module[unstable_requestPaint] = require;
+                        e[r] = l;
+                        e[unstable_requestPaint] = n;
                         r = unstable_requestPaint;
                     } else {
-                        module[r] = a;
-                        module[i] = require;
+                        e[r] = a;
+                        e[i] = n;
                         r = i;
                     }
                 } else {
-                    if (!(l !== undefined && P(l, require) < 0)) {
-                        break module;
+                    if (!(l !== undefined && P(l, n) < 0)) {
+                        break e;
                     }
-                    module[r] = l;
-                    module[unstable_requestPaint] = require;
+                    e[r] = l;
+                    e[unstable_requestPaint] = n;
                     r = unstable_requestPaint;
                 }
             }
         }
-        return exports;
+        return t;
     }
     return null;
 }
-function P(module, exports) {
-    const require = module.sortIndex - exports.sortIndex;
-    if (require !== 0) {
-        return require;
+function P(e, t) {
+    const n = e.sortIndex - t.sortIndex;
+    if (n !== 0) {
+        return n;
     }
-    return module.id - exports.id;
+    return e.id - t.id;
 }
 const _ = [];
 const j = [];
@@ -179,37 +179,37 @@ let M = 3;
 let A = false;
 let L = false;
 let I = false;
-function D(module) {
-    for(let exports = O(j); exports !== null;){
-        if (exports.callback === null) {
+function D(e) {
+    for(let t = O(j); t !== null;){
+        if (t.callback === null) {
             C(j);
         } else {
-            if (!(exports.startTime <= module)) {
+            if (!(t.startTime <= e)) {
                 break;
             }
             C(j);
-            exports.sortIndex = exports.expirationTime;
-            S(_, exports);
+            t.sortIndex = t.expirationTime;
+            S(_, t);
         }
-        exports = O(j);
+        t = O(j);
     }
 }
-function F(module) {
+function F(e) {
     I = false;
-    D(module);
+    D(e);
     if (!L) {
         if (O(_) !== null) {
             L = true;
             r(z);
         } else {
-            const exports = O(j);
-            if (exports !== null) {
-                o(F, exports.startTime - module);
+            const t = O(j);
+            if (t !== null) {
+                o(F, t.startTime - e);
             }
         }
     }
 }
-function z(module, require) {
+function z(e, n) {
     L = false;
     if (I) {
         I = false;
@@ -217,20 +217,20 @@ function z(module, require) {
     }
     A = true;
     try {
-        D(require);
-        for(N = O(_); N !== null && (!(N.expirationTime > require) || module && !a());){
+        D(n);
+        for(N = O(_); N !== null && (!(N.expirationTime > n) || e && !a());){
             const unstable_requestPaint = N.callback;
             if (unstable_requestPaint !== null) {
                 N.callback = null;
                 M = N.priorityLevel;
-                const l = unstable_requestPaint(N.expirationTime <= require);
-                require = exports.unstable_now();
+                const l = unstable_requestPaint(N.expirationTime <= n);
+                n = exports.unstable_now();
                 if (typeof l == "function") {
                     N.callback = l;
                 } else if (N === O(_)) {
                     C(_);
                 }
-                D(require);
+                D(n);
             } else {
                 C(_);
             }
@@ -240,7 +240,7 @@ function z(module, require) {
         else {
             const s = O(j);
             if (s !== null) {
-                o(F, s.startTime - require);
+                o(F, s.startTime - n);
             }
             c = false;
         }
@@ -251,8 +251,8 @@ function z(module, require) {
         A = false;
     }
 }
-function q(module) {
-    switch(module){
+function q(e) {
+    switch(e){
         case 1:
             return -1;
         case 2:
@@ -271,8 +271,8 @@ export const unstable_LowPriority = 4;
 export const unstable_NormalPriority = 3;
 export const unstable_Profiling = null;
 export const unstable_UserBlockingPriority = 2;
-export const unstable_cancelCallback = (module)=>{
-    module.callback = null;
+export const unstable_cancelCallback = (e)=>{
+    e.callback = null;
 };
 export const unstable_continueExecution = ()=>{
     if (!(L || A)) {
@@ -282,26 +282,26 @@ export const unstable_continueExecution = ()=>{
 };
 export const unstable_getCurrentPriorityLevel = ()=>M;
 export const unstable_getFirstCallbackNode = ()=>O(_);
-export const unstable_next = (module)=>{
+export const unstable_next = (e)=>{
     switch(M){
         case 1:
         case 2:
         case 3:
-            let exports = 3;
+            let t = 3;
             break;
         default:
-            exports = M;
+            t = M;
     }
-    M = exports;
+    M = t;
     try {
-        return module();
+        return e();
     } finally{
         M = M;
     }
 };
 export const unstable_pauseExecution = ()=>{};
-export const unstable_runWithPriority = (module, exports)=>{
-    switch(module){
+export const unstable_runWithPriority = (e, t)=>{
+    switch(e){
         case 1:
         case 2:
         case 3:
@@ -309,62 +309,62 @@ export const unstable_runWithPriority = (module, exports)=>{
         case 5:
             break;
         default:
-            module = 3;
+            e = 3;
     }
-    M = module;
+    M = e;
     try {
-        return exports();
+        return t();
     } finally{
         M = M;
     }
 };
-export const unstable_scheduleCallback = (module, require, a)=>{
+export const unstable_scheduleCallback = (e, n, a)=>{
     const unstable_requestPaint = exports.unstable_now();
     if (typeof a == "object" && a !== null) {
         let l = a.delay;
         l = typeof l == "number" && l > 0 ? unstable_requestPaint + l : unstable_requestPaint;
-        a = typeof a.timeout == "number" ? a.timeout : q(module);
+        a = typeof a.timeout == "number" ? a.timeout : q(e);
     } else {
-        a = q(module);
+        a = q(e);
         l = unstable_requestPaint;
     }
-    module = {
+    e = {
         id: R++,
-        callback: require,
-        priorityLevel: module,
+        callback: n,
+        priorityLevel: e,
         startTime: l,
         expirationTime: a = l + a,
         sortIndex: -1
     };
     if (l > unstable_requestPaint) {
-        module.sortIndex = l;
-        S(j, module);
-        if (O(_) === null && module === O(j)) {
+        e.sortIndex = l;
+        S(j, e);
+        if (O(_) === null && e === O(j)) {
             I ? i() : I = true;
             o(F, l - unstable_requestPaint);
         }
     } else {
-        module.sortIndex = a;
-        S(_, module);
+        e.sortIndex = a;
+        S(_, e);
         if (!(L || A)) {
             L = true;
             r(z);
         }
     }
-    return module;
+    return e;
 };
 export const unstable_shouldYield = ()=>{
-    const module = exports.unstable_now();
-    D(module);
-    const require = O(_);
-    return require !== N && N !== null && require !== null && require.callback !== null && require.startTime <= module && require.expirationTime < N.expirationTime || a();
+    const e = exports.unstable_now();
+    D(e);
+    const n = O(_);
+    return n !== N && N !== null && n !== null && n.callback !== null && n.startTime <= e && n.expirationTime < N.expirationTime || a();
 };
-export const unstable_wrapCallback = (module)=>{
-    const exports = M;
+export const unstable_wrapCallback = (e)=>{
+    const t = M;
     return function() {
-        M = exports;
+        M = t;
         try {
-            return module.apply(this, arguments);
+            return e.apply(this, arguments);
         } finally{
             M = M;
         }

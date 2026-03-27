@@ -1,0 +1,11 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+(function(e, r) {
+    var o, i = require("./module-31.js");
+    o = "undefined" != typeof self ? self : "undefined" != typeof window ? window : void 0 !== e ? e : r;
+    var a = Object(i.a)(o);
+    exports.a = a;
+}).call(this, require("./module-42.js"), require("./module-41.js")(module));

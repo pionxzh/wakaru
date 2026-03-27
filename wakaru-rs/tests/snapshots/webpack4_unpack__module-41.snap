@@ -2,28 +2,28 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-export default ((module)=>{
-    if (!module.webpackPolyfill) {
-        const exports = Object.create(module);
-        if (!exports.children) {
-            exports.children = [];
+export default ((e)=>{
+    if (!e.webpackPolyfill) {
+        const t = Object.create(e);
+        if (!t.children) {
+            t.children = [];
         }
-        Object.defineProperty(exports, "loaded", {
+        Object.defineProperty(t, "loaded", {
             enumerable: true,
             get () {
-                return exports.l;
+                return t.l;
             }
         });
-        Object.defineProperty(exports, "id", {
+        Object.defineProperty(t, "id", {
             enumerable: true,
             get () {
-                return exports.i;
+                return t.i;
             }
         });
-        Object.defineProperty(exports, "exports", {
+        Object.defineProperty(t, "exports", {
             enumerable: true
         });
-        exports.webpackPolyfill = 1;
+        t.webpackPolyfill = 1;
     }
-    return exports;
+    return t;
 });

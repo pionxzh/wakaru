@@ -3,15 +3,15 @@ source: tests/webpack4_unpack.rs
 expression: code
 ---
 export function a() {
-    return (a = Object.assign ? Object.assign.bind() : function(module) {
-        for(let exports = 1; exports < arguments.length; exports++){
-            const require = arguments[exports];
-            for(let a in require){
-                if (Object.prototype.hasOwnProperty.call(require, a)) {
-                    module[a] = require[a];
+    return (a = Object.assign ? Object.assign.bind() : function(e) {
+        for(let t = 1; t < arguments.length; t++){
+            const n = arguments[t];
+            for(let a in n){
+                if (Object.prototype.hasOwnProperty.call(n, a)) {
+                    e[a] = n[a];
                 }
             }
         }
-        return module;
+        return e;
     }).apply(this, arguments);
 }

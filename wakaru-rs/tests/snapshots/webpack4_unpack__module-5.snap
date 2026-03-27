@@ -2,14 +2,14 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-export default ((module, exports, require, r, o, i, a, u)=>{
-    if (!module) {
+export default ((e, t, n, r, o, i, a, u)=>{
+    if (!e) {
         let l;
-        if (exports === undefined) {
+        if (t === undefined) {
             l = new Error("Minified exception occurred; use the non-minified dev environment for the full error message and additional helpful warnings.");
         } else {
             const c = [
-                require,
+                n,
                 r,
                 o,
                 i,
@@ -17,7 +17,7 @@ export default ((module, exports, require, r, o, i, a, u)=>{
                 u
             ];
             let s = 0;
-            l = new Error(exports.replace(/%s/g, ()=>c[s++]));
+            l = new Error(t.replace(/%s/g, ()=>c[s++]));
             l.name = "Invariant Violation";
         }
         l.framesToPop = 1;

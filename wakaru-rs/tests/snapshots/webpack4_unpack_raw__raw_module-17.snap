@@ -1,0 +1,52 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+"use strict";
+var r = require("./module-2.js"), o = require("./module-10.js");
+function i(e, t) {
+    for(var n = arguments.length, i = Array(n > 2 ? n - 2 : 0), a = 2; a < n; a++)i[a - 2] = arguments[a];
+    return r.k.apply(void 0, [
+        o.b,
+        e,
+        t
+    ].concat(i));
+}
+function a(e, t) {
+    for(var n = arguments.length, i = Array(n > 2 ? n - 2 : 0), a = 2; a < n; a++)i[a - 2] = arguments[a];
+    return r.k.apply(void 0, [
+        o.d,
+        e,
+        t
+    ].concat(i));
+}
+function u(e, t, n) {
+    for(var i = arguments.length, a = Array(i > 3 ? i - 3 : 0), u = 3; u < i; u++)a[u - 3] = arguments[u];
+    return r.k.apply(void 0, [
+        o.f,
+        e,
+        t,
+        n
+    ].concat(a));
+}
+exports.take = r.s;
+exports.takem = r.t;
+exports.put = r.n;
+exports.all = r.b;
+exports.race = r.o;
+exports.call = r.e;
+exports.apply = r.c;
+exports.cps = r.h;
+exports.fork = r.k;
+exports.spawn = r.r;
+exports.join = r.m;
+exports.cancel = r.f;
+exports.select = r.p;
+exports.actionChannel = r.a;
+exports.cancelled = r.g;
+exports.flush = r.j;
+exports.getContext = r.l;
+exports.setContext = r.q;
+exports.takeEvery = i;
+exports.takeLatest = a;
+exports.throttle = u;

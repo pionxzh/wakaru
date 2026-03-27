@@ -1,0 +1,14 @@
+---
+source: tests/webpack4_unpack_raw.rs
+expression: code
+---
+var n;
+n = function() {
+    return this;
+}();
+try {
+    n = n || Function("return this")() || (0, eval)("this");
+} catch (e) {
+    "object" == typeof window && (n = window);
+}
+module.exports = n;
