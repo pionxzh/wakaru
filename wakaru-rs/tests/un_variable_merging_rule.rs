@@ -64,9 +64,9 @@ fn splits_export_var_declaration() {
 export var a = 1, b = true, c = "hello";
 "#;
     let expected = r#"
-export var a = 1;
-export var b = true;
-export var c = "hello";
+export const a = 1;
+export const b = true;
+export const c = "hello";
 "#;
     let output = render(input);
     assert_eq_normalized(&output, expected);

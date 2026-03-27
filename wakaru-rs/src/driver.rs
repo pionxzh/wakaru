@@ -9,6 +9,7 @@ use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::visit::VisitMutWith;
 
 use crate::rules::apply_default_rules;
+use crate::unpacker::unpack_webpack4;
 
 #[derive(Debug, Clone)]
 pub struct DecompileOptions {
@@ -38,6 +39,30 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<String> {
 
         print_js(&module, cm)
     })
+}
+
+pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, String)>> {
+    match unpack_webpack4(source) {
+        Some(result) => {
+            let mut pairs = Vec::new();
+            for module in result.modules {
+                let code = decompile(
+                    &module.code,
+                    DecompileOptions {
+                        filename: module.filename.clone(),
+                    },
+                )
+                .unwrap_or(module.code);
+                pairs.push((module.filename, code));
+            }
+            Ok(pairs)
+        }
+        None => {
+            // Not a recognized bundle — treat as a single module
+            let code = decompile(source, options)?;
+            Ok(vec![("module.js".to_string(), code)])
+        }
+    }
 }
 
 fn parse_js(source: &str, filename: &str, cm: Lrc<SourceMap>) -> Result<Module> {
