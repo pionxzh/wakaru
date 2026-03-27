@@ -158,7 +158,6 @@ export function combineReducers(module) {
     const require = {};
     for(let exports = Object.keys(module), r = 0; r < exports.length; r++){
         const i = exports[r];
-        0;
         if (typeof module[i] == "function") {
             require[i] = module[i];
         }

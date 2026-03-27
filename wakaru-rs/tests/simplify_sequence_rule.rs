@@ -193,6 +193,25 @@ for (let x in c()) {
 }
 
 #[test]
+fn drops_pure_literal_no_op_statements() {
+    // Numeric, boolean, and null literals as statements are dead code
+    let input = r#"
+a(), 0, b();
+0;
+false;
+null;
+"use strict";
+"#;
+    let expected = r#"
+a();
+b();
+"use strict";
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn splits_assignment_member_pattern() {
     let input = r#"
 (a = b())['c'] = d;

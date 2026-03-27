@@ -1,7 +1,7 @@
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BlockStmt, Decl, Expr, ExprStmt, ForInStmt, ForOfStmt, ForStmt,
-    IfStmt, Invalid, MemberExpr, ModuleItem, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt,
+    IfStmt, Invalid, Lit, MemberExpr, ModuleItem, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt,
     SwitchStmt, ThrowStmt, VarDecl, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -19,7 +19,9 @@ impl VisitMut for SimplifySequence {
             match item {
                 ModuleItem::Stmt(stmt) => {
                     for stmt in split_stmt(stmt) {
-                        new_items.push(ModuleItem::Stmt(stmt));
+                        if !is_pure_no_op_stmt(&stmt) {
+                            new_items.push(ModuleItem::Stmt(stmt));
+                        }
                     }
                 }
                 ModuleItem::ModuleDecl(decl) => new_items.push(ModuleItem::ModuleDecl(decl)),
@@ -36,10 +38,29 @@ impl VisitMut for SimplifySequence {
         let mut new_stmts = Vec::with_capacity(old_stmts.len());
 
         for stmt in old_stmts {
-            new_stmts.extend(split_stmt(stmt));
+            for s in split_stmt(stmt) {
+                if !is_pure_no_op_stmt(&s) {
+                    new_stmts.push(s);
+                }
+            }
         }
 
         *stmts = new_stmts;
+    }
+}
+
+/// Returns true for expression statements whose expression is a numeric, boolean, or null
+/// literal — these are always side-effect-free and serve no purpose as statements.
+/// String literals are intentionally excluded because they may be directive prologues
+/// (e.g., "use strict") handled by a later pass.
+fn is_pure_no_op_stmt(stmt: &Stmt) -> bool {
+    if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
+        matches!(
+            expr.as_ref(),
+            Expr::Lit(Lit::Num(_)) | Expr::Lit(Lit::Bool(_)) | Expr::Lit(Lit::Null(_))
+        )
+    } else {
+        false
     }
 }
 
