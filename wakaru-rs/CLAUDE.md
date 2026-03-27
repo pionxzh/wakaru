@@ -87,6 +87,13 @@ gets renamed — including ones in completely unrelated inner functions.
 **Pattern to follow when adding new visitors:** always take `unresolved_mark: Mark` and
 gate identifier matches on `id.ctxt.outer() == self.unresolved_mark`.
 
+> **Why not use SWC's built-in `rename()`?**
+> `swc_ecma_transforms_base::rename::rename(map: &FxHashMap<Id, Atom>)` exists and is
+> battle-tested, but requires pre-building a map of `(Atom, SyntaxContext)` keys — which
+> is the same information our `unresolved_mark` guard checks. For the narrow
+> webpack factory-param use case our approach is simpler and equally correct.
+> If a more general rename feature is ever needed, migrate to `rename_with_config()`.
+
 ---
 
 ## Testing Workflow
