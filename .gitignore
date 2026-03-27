@@ -29,5 +29,3 @@ tsconfig.tsbuildinfo
 .turbo
 
 !testcases/**/dist
-wakaru-rs/unpacked_output
-wakaru-rs/unpacked
