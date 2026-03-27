@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { TransitionRoot } from '@headlessui/vue'
 import { watchDebounced } from '@vueuse/core'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai-vue'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useRoute } from 'vue-router'
 import { getModuleAtom, moduleMappingAtom, moduleMetaAtom, unminifyModuleAtom } from '../atoms/module'
 import { disabledRuleIdsAtom, enabledRuleIdsAtom } from '../atoms/rule'

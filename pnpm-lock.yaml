@@ -319,9 +319,6 @@ importers:
       jotai:
         specifier: ^2.7.1
         version: 2.8.0(@types/react@18.2.79)(react@18.2.0)
-      jotai-vue:
-        specifier: ^0.1.0
-        version: 0.1.0(jotai@2.8.0)(vue@3.4.21)
       sortablejs:
         specifier: ^1.15.2
         version: 1.15.2
@@ -6600,16 +6597,6 @@ packages:
       jotai: '>=2.5.0'
     dependencies:
       jotai: 2.8.0(@types/react@18.2.79)(react@18.2.0)
-    dev: false
-
-  /jotai-vue@0.1.0(jotai@2.8.0)(vue@3.4.21):
-    resolution: {integrity: sha512-+6X0Yr185eTjAYoepIba+md7Z28kk6rumyaHbQtqTzsKm/0nmvAP5J50CNy52Q9Zpv9Mq9bJfSBBW0zC8kTq1w==}
-    peerDependencies:
-      jotai: '>=1.11.1'
-      vue: '>=3.2.0'
-    dependencies:
-      jotai: 2.8.0(@types/react@18.2.79)(react@18.2.0)
-      vue: 3.4.21(typescript@5.4.5)
     dev: false
 
   /jotai@2.8.0(@types/react@18.2.79)(react@18.2.0):

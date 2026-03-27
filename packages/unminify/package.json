@@ -6,7 +6,16 @@
   "author": "Pionxzh",
   "license": "MIT",
   "sideEffects": false,
-  "main": "src/index.ts",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.cjs",
+      "import": "./dist/index.js"
+    }
+  },
   "bin": "dist/cli.cjs",
   "files": [
     "dist",

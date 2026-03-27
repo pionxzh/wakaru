@@ -7,7 +7,7 @@ import {
     TransitionRoot,
 } from '@headlessui/vue'
 import { refThrottled } from '@vueuse/core'
-import { useAtom, useSetAtom } from 'jotai-vue'
+import { useAtom, useSetAtom } from 'jotai'
 import { useRoute, useRouter } from 'vue-router'
 import { moduleMappingAtom, moduleMetaOverrideAtom, modulesAtom, prettifyAllModulesAtom, resetModulesAtom } from '../atoms/module'
 import { disabledRuleIdsAtom } from '../atoms/rule'

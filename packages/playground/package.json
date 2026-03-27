@@ -51,7 +51,6 @@
     "fflate": "^0.8.2",
     "idb-keyval": "^6.2.1",
     "jotai": "^2.7.1",
-    "jotai-vue": "^0.1.0",
     "sortablejs": "^1.15.2",
     "splitpanes": "^3.1.5",
     "threads-es": "^1.0.0",

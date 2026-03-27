@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useAtom, useAtomValue } from 'jotai-vue'
+import { useAtom, useAtomValue } from 'jotai'
 import { moduleMappingAtom, modulesAtom } from '../atoms/module'
 import useState from '../composables/shared/useState'
 import InputBox from './InputBox.vue'

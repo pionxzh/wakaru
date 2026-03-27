@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { moveArrayElement, useSortable } from '@vueuse/integrations/useSortable'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai-vue'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { nextTick, ref, shallowRef } from 'vue'
 import { allRulesAtom, enabledRulesAtom, resetRulesAtom, ruleOrderAtom, toggleRuleAtom } from '../atoms/rule'
 import Card from '../components/Card.vue'

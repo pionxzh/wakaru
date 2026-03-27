@@ -30,3 +30,4 @@ tsconfig.tsbuildinfo
 
 !testcases/**/dist
 wakaru-rs/unpacked_output
+wakaru-rs/unpacked

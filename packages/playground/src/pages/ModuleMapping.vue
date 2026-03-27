@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useAtom } from 'jotai-vue'
+import { useAtom } from 'jotai'
 import { ref, watch } from 'vue'
 import { moduleMappingAtom } from '../atoms/module'
 import Card from '../components/Card.vue'
