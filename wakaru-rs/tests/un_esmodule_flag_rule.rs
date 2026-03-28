@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::UnEsmoduleFlag;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::UnEsmoduleFlag;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnEsmoduleFlag)
@@ -76,4 +76,3 @@ exports.__esModule = false;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
-

@@ -220,7 +220,12 @@ fn extract_fn_expr(expr: &Expr) -> Option<&FnExpr> {
 }
 
 fn strip_unary_bang(expr: &Expr) -> &Expr {
-    if let Expr::Unary(UnaryExpr { op: UnaryOp::Bang, arg, .. }) = expr {
+    if let Expr::Unary(UnaryExpr {
+        op: UnaryOp::Bang,
+        arg,
+        ..
+    }) = expr
+    {
         return arg.as_ref();
     }
     expr
@@ -231,7 +236,12 @@ fn extract_enum_name_from_arg(args: &[swc_core::ecma::ast::ExprOrSpread]) -> Opt
         return None;
     }
     let expr = strip_parens(&args[0].expr);
-    let Expr::Bin(BinExpr { op: BinaryOp::LogicalOr, left, .. }) = expr else {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalOr,
+        left,
+        ..
+    }) = expr
+    else {
         return None;
     };
     let Expr::Ident(id) = left.as_ref() else {
@@ -252,19 +262,31 @@ fn is_enum_iife_arg(expr: &Expr, name: &Atom) -> bool {
     let expr = strip_parens(expr);
     match expr {
         // Standard: Name || (Name = {})
-        Expr::Bin(BinExpr { op: BinaryOp::LogicalOr, left, right, .. }) => {
+        Expr::Bin(BinExpr {
+            op: BinaryOp::LogicalOr,
+            left,
+            right,
+            ..
+        }) => {
             if !matches!(left.as_ref(), Expr::Ident(i) if &i.sym == name) {
                 return false;
             }
             let right = strip_parens(right);
-            is_assign_empty_obj(right, name) || matches!(right, Expr::Object(o) if o.props.is_empty())
+            is_assign_empty_obj(right, name)
+                || matches!(right, Expr::Object(o) if o.props.is_empty())
         }
         _ => false,
     }
 }
 
 fn is_assign_empty_obj(expr: &Expr, name: &Atom) -> bool {
-    let Expr::Assign(AssignExpr { op: AssignOp::Assign, left, right, .. }) = expr else {
+    let Expr::Assign(AssignExpr {
+        op: AssignOp::Assign,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
         return false;
     };
     let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = left else {
@@ -309,7 +331,13 @@ fn parse_enum_body(stmts: &[Stmt], enum_param: &Atom) -> Option<Vec<EnumMember>>
 /// Parse a single enum member expression.
 /// Returns None if unrecognized.
 fn parse_enum_member_expr(expr: &Expr, enum_param: &Atom) -> Option<EnumMember> {
-    let Expr::Assign(AssignExpr { op: AssignOp::Assign, left, right, .. }) = expr else {
+    let Expr::Assign(AssignExpr {
+        op: AssignOp::Assign,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
         return None;
     };
 
@@ -323,15 +351,20 @@ fn parse_enum_member_expr(expr: &Expr, enum_param: &Atom) -> Option<EnumMember> 
                 MemberProp::Computed(outer_computed) => {
                     // Check if inner is `Enum["Key"] = numVal`
                     let inner_expr = strip_parens(&outer_computed.expr);
-                    if let Some((key, num_val)) = parse_numeric_forward_assign(inner_expr, enum_param) {
+                    if let Some((key, num_val)) =
+                        parse_numeric_forward_assign(inner_expr, enum_param)
+                    {
                         // right should be "Key"
                         let reverse_key_str = extract_string_value(right)?;
                         // Build reverse mapping
-                        let reverse = Some((num_val.clone(), Box::new(Expr::Lit(Lit::Str(Str {
-                            span: DUMMY_SP,
-                            value: reverse_key_str.clone(),
-                            raw: None,
-                        })))));
+                        let reverse = Some((
+                            num_val.clone(),
+                            Box::new(Expr::Lit(Lit::Str(Str {
+                                span: DUMMY_SP,
+                                value: reverse_key_str.clone(),
+                                raw: None,
+                            }))),
+                        ));
                         return Some(EnumMember {
                             key,
                             value: num_val,
@@ -365,7 +398,13 @@ fn parse_enum_member_expr(expr: &Expr, enum_param: &Atom) -> Option<EnumMember> 
 /// Parse `Enum["Key"] = numVal` (forward assignment in numeric member pattern)
 /// Returns `(EnumKey, Box<Expr> for num_val)` if matched.
 fn parse_numeric_forward_assign(expr: &Expr, enum_param: &Atom) -> Option<(EnumKey, Box<Expr>)> {
-    let Expr::Assign(AssignExpr { op: AssignOp::Assign, left, right, .. }) = expr else {
+    let Expr::Assign(AssignExpr {
+        op: AssignOp::Assign,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
         return None;
     };
     let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = left else {
@@ -524,9 +563,11 @@ fn make_forward_prop_name(key: &EnumKey) -> PropName {
 fn make_reverse_prop_name(num_key_expr: &Expr) -> PropName {
     match num_key_expr {
         // Positive numeric literal → use Num prop name
-        Expr::Lit(Lit::Num(n)) => {
-            PropName::Num(Number { span: DUMMY_SP, value: n.value, raw: None })
-        }
+        Expr::Lit(Lit::Num(n)) => PropName::Num(Number {
+            span: DUMMY_SP,
+            value: n.value,
+            raw: None,
+        }),
         // Negative number or any other expression → computed
         _ => PropName::Computed(ComputedPropName {
             span: DUMMY_SP,

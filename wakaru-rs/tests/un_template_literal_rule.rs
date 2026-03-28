@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::UnTemplateLiteral;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::UnTemplateLiteral;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnTemplateLiteral)
@@ -45,5 +45,3 @@ fn keeps_non_consecutive_concat_calls() {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
-
-

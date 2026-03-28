@@ -2,9 +2,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     BindingIdent, BlockStmt, CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod,
-    ComputedPropName, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function,
-    IdentName, MemberExpr, MemberProp, MethodKind, ModuleItem, Param, ParamOrTsParamProp,
-    Pat, PropName, Stmt, VarDecl,
+    ComputedPropName, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, IdentName,
+    MemberExpr, MemberProp, MethodKind, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, Stmt,
+    VarDecl,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -385,9 +385,9 @@ fn try_parse_method_assignment(
         return false;
     }
 
-    let swc_core::ecma::ast::AssignTarget::Simple(
-        swc_core::ecma::ast::SimpleAssignTarget::Member(lhs_member),
-    ) = &assign.left
+    let swc_core::ecma::ast::AssignTarget::Simple(swc_core::ecma::ast::SimpleAssignTarget::Member(
+        lhs_member,
+    )) = &assign.left
     else {
         return false;
     };
@@ -398,16 +398,17 @@ fn try_parse_method_assignment(
     // Prototype: `t.prototype.methodName = function() {}`
     // Loose:     `proto.methodName = function() {}` (proto_alias set)
 
-    let (is_static, method_name) =
-        if let Some(name) = extract_static_method_name(&lhs_member.obj, &lhs_member.prop, ctor_name) {
-            (true, name)
-        } else if let Some(name) =
-            extract_proto_method_name(&lhs_member.obj, &lhs_member.prop, ctor_name, proto_alias)
-        {
-            (false, name)
-        } else {
-            return false;
-        };
+    let (is_static, method_name) = if let Some(name) =
+        extract_static_method_name(&lhs_member.obj, &lhs_member.prop, ctor_name)
+    {
+        (true, name)
+    } else if let Some(name) =
+        extract_proto_method_name(&lhs_member.obj, &lhs_member.prop, ctor_name, proto_alias)
+    {
+        (false, name)
+    } else {
+        return false;
+    };
 
     // The RHS must be a function expression (named or anonymous)
     let rhs = strip_parens(&assign.right);
@@ -572,8 +573,7 @@ fn parse_create_class_array(
             };
             match k.as_ref() {
                 "key" => {
-                    let Expr::Lit(swc_core::ecma::ast::Lit::Str(s)) =
-                        strip_parens(&kv.value)
+                    let Expr::Lit(swc_core::ecma::ast::Lit::Str(s)) = strip_parens(&kv.value)
                     else {
                         return false;
                     };
@@ -660,18 +660,21 @@ fn is_prototype_object_create(expr: &Expr, ctor_name: &str) -> bool {
     if assign.op != swc_core::ecma::ast::AssignOp::Assign {
         return false;
     }
-    let swc_core::ecma::ast::AssignTarget::Simple(
-        swc_core::ecma::ast::SimpleAssignTarget::Member(lhs),
-    ) = &assign.left
+    let swc_core::ecma::ast::AssignTarget::Simple(swc_core::ecma::ast::SimpleAssignTarget::Member(
+        lhs,
+    )) = &assign.left
     else {
         return false;
     };
     // LHS: `t.prototype`
-    if !is_prototype_member_expr(&Expr::Member(MemberExpr {
-        span: DUMMY_SP,
-        obj: lhs.obj.clone(),
-        prop: lhs.prop.clone(),
-    }), ctor_name) {
+    if !is_prototype_member_expr(
+        &Expr::Member(MemberExpr {
+            span: DUMMY_SP,
+            obj: lhs.obj.clone(),
+            prop: lhs.prop.clone(),
+        }),
+        ctor_name,
+    ) {
         return false;
     }
     // RHS: `Object.create(...)`
@@ -693,9 +696,9 @@ fn is_prototype_constructor_assign(expr: &Expr, ctor_name: &str) -> bool {
     if assign.op != swc_core::ecma::ast::AssignOp::Assign {
         return false;
     }
-    let swc_core::ecma::ast::AssignTarget::Simple(
-        swc_core::ecma::ast::SimpleAssignTarget::Member(lhs),
-    ) = &assign.left
+    let swc_core::ecma::ast::AssignTarget::Simple(swc_core::ecma::ast::SimpleAssignTarget::Member(
+        lhs,
+    )) = &assign.left
     else {
         return false;
     };
@@ -723,11 +726,7 @@ fn is_prototype_constructor_assign(expr: &Expr, ctor_name: &str) -> bool {
 /// Extract the property name for a **static** assignment `t.prop = ...`.
 /// Returns `Some(PropName)` if `obj` is the constructor ident and `prop` is a static method name
 /// (not `prototype`).
-fn extract_static_method_name(
-    obj: &Expr,
-    prop: &MemberProp,
-    ctor_name: &str,
-) -> Option<PropName> {
+fn extract_static_method_name(obj: &Expr, prop: &MemberProp, ctor_name: &str) -> Option<PropName> {
     let Expr::Ident(obj_id) = obj else {
         return None;
     };
@@ -771,8 +770,8 @@ fn extract_proto_method_name(
     ctor_name: &str,
     proto_alias: &Option<Atom>,
 ) -> Option<PropName> {
-    let obj_is_proto = is_prototype_member_expr(obj, ctor_name)
-        || is_proto_alias_expr(obj, proto_alias);
+    let obj_is_proto =
+        is_prototype_member_expr(obj, ctor_name) || is_proto_alias_expr(obj, proto_alias);
     if !obj_is_proto {
         return None;
     }
@@ -834,7 +833,9 @@ fn is_object_create_callee(expr: &Expr) -> bool {
 /// Check `_super && (Object.setPrototypeOf ? Object.setPrototypeOf(t, _super) : t.__proto__ = _super)`.
 /// This is the inlined static prototype chain setup emitted by webpack4 instead of `_inherits`.
 fn is_set_prototype_of_chain_expr(expr: &Expr, super_param: &str) -> bool {
-    let Expr::Bin(bin) = expr else { return false; };
+    let Expr::Bin(bin) = expr else {
+        return false;
+    };
     if bin.op != swc_core::ecma::ast::BinaryOp::LogicalAnd {
         return false;
     }
@@ -843,17 +844,27 @@ fn is_set_prototype_of_chain_expr(expr: &Expr, super_param: &str) -> bool {
         return false;
     }
     // Right must be a conditional whose test is `Object.setPrototypeOf`
-    let Expr::Cond(cond) = strip_parens(&bin.right) else { return false; };
-    let Expr::Member(m) = strip_parens(&cond.test) else { return false; };
-    let Expr::Ident(obj_id) = m.obj.as_ref() else { return false; };
+    let Expr::Cond(cond) = strip_parens(&bin.right) else {
+        return false;
+    };
+    let Expr::Member(m) = strip_parens(&cond.test) else {
+        return false;
+    };
+    let Expr::Ident(obj_id) = m.obj.as_ref() else {
+        return false;
+    };
     obj_id.sym.as_ref() == "Object"
         && matches!(&m.prop, MemberProp::Ident(n) if n.sym.as_ref() == "setPrototypeOf")
 }
 
 /// Check `if (typeof _super !== "function" && _super !== null) { throw ... }`.
 fn is_super_typecheck_if_stmt(stmt: &Stmt, super_param: &str) -> bool {
-    let Stmt::If(if_stmt) = stmt else { return false; };
-    let Expr::Bin(bin) = strip_parens(&if_stmt.test) else { return false; };
+    let Stmt::If(if_stmt) = stmt else {
+        return false;
+    };
+    let Expr::Bin(bin) = strip_parens(&if_stmt.test) else {
+        return false;
+    };
     if bin.op != swc_core::ecma::ast::BinaryOp::LogicalAnd {
         return false;
     }
@@ -863,11 +874,15 @@ fn is_super_typecheck_if_stmt(stmt: &Stmt, super_param: &str) -> bool {
 
 /// Return true if `expr` is `typeof name !== "function"`.
 fn is_typeof_not_function(expr: &Expr, name: &str) -> bool {
-    let Expr::Bin(bin) = expr else { return false; };
+    let Expr::Bin(bin) = expr else {
+        return false;
+    };
     if bin.op != swc_core::ecma::ast::BinaryOp::NotEqEq {
         return false;
     }
-    let Expr::Unary(u) = strip_parens(&bin.left) else { return false; };
+    let Expr::Unary(u) = strip_parens(&bin.left) else {
+        return false;
+    };
     if u.op != swc_core::ecma::ast::UnaryOp::TypeOf {
         return false;
     }
@@ -882,7 +897,9 @@ fn is_typeof_not_function(expr: &Expr, name: &str) -> bool {
 
 /// Return true if `expr` is `name !== null`.
 fn is_not_null_check(expr: &Expr, name: &str) -> bool {
-    let Expr::Bin(bin) = expr else { return false; };
+    let Expr::Bin(bin) = expr else {
+        return false;
+    };
     if bin.op != swc_core::ecma::ast::BinaryOp::NotEqEq {
         return false;
     }
@@ -949,4 +966,3 @@ fn build_class_method(
         is_override: false,
     }
 }
-

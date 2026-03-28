@@ -17,7 +17,10 @@ fn apply(input: &str) -> String {
             input.to_string(),
         );
         let lexer = Lexer::new(
-            Syntax::Es(EsSyntax { jsx: true, ..Default::default() }),
+            Syntax::Es(EsSyntax {
+                jsx: true,
+                ..Default::default()
+            }),
             Default::default(),
             StringInput::from(&*fm),
             None,

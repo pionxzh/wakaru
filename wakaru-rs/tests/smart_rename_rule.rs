@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::SmartRename;
 use common::{assert_eq_normalized, normalize, render_rule};
+use wakaru_rs::rules::SmartRename;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| SmartRename)
@@ -222,4 +222,3 @@ use(l);
         "outer use site was not renamed:\n{output}"
     );
 }
-

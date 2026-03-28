@@ -116,7 +116,12 @@ fn is_loose_true(expr: &Expr) -> bool {
         return true;
     }
     // !0
-    if let Expr::Unary(UnaryExpr { op: UnaryOp::Bang, arg, .. }) = expr {
+    if let Expr::Unary(UnaryExpr {
+        op: UnaryOp::Bang,
+        arg,
+        ..
+    }) = expr
+    {
         if matches!(&**arg, Expr::Lit(Lit::Num(n)) if n.value == 0.0) {
             return true;
         }

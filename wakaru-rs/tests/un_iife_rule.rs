@@ -110,4 +110,3 @@ fn iife_arg_with_shorter_name_not_renamed() {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
-

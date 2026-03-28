@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::UnNumericLiteral;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::UnNumericLiteral;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnNumericLiteral)
@@ -33,5 +33,3 @@ const g = -20000;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
-
-

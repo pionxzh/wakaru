@@ -8,11 +8,9 @@ use wakaru_rs::unpack_webpack4_raw;
 #[test]
 fn webpack4_raw_snapshots() {
     let source_path = "../testcases/webpack4/dist/index.js";
-    let source = fs::read_to_string(source_path)
-        .expect("failed to read webpack4 testcase");
+    let source = fs::read_to_string(source_path).expect("failed to read webpack4 testcase");
 
-    let mut pairs = unpack_webpack4_raw(&source)
-        .expect("raw unpack should succeed");
+    let mut pairs = unpack_webpack4_raw(&source).expect("raw unpack should succeed");
 
     pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
 

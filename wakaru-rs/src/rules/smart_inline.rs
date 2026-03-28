@@ -85,7 +85,9 @@ fn process_stmts(stmts: Vec<Stmt>) -> Vec<Stmt> {
 // ============================================================
 
 fn try_extract_zero_param_arrow_ident(expr: &Expr) -> Option<Box<Expr>> {
-    let Expr::Arrow(arrow) = expr else { return None };
+    let Expr::Arrow(arrow) = expr else {
+        return None;
+    };
     if !arrow.params.is_empty() {
         return None;
     }
@@ -111,7 +113,9 @@ fn inline_module_arrow_wrappers(module: &mut Module) {
     // Use (sym, ctxt) keys so inner-scope variables with the same name are NOT replaced.
     let mut candidates: HashMap<BindingKey, Box<Expr>> = HashMap::new();
     for item in &module.body {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else { continue };
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
         if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
             continue;
         }
@@ -145,7 +149,9 @@ fn inline_module_arrow_wrappers(module: &mut Module) {
                 }
             }
         }
-        let mut counter = GlobalIdentCounter { counts: &mut usage_count };
+        let mut counter = GlobalIdentCounter {
+            counts: &mut usage_count,
+        };
         item.visit_with(&mut counter);
     }
 
@@ -414,9 +420,15 @@ impl VisitMut for IdentInliner<'_> {
 #[derive(Debug, Clone)]
 enum AccessKind {
     /// obj.prop or obj["prop"] — maps to (binding_name, prop_key_string)
-    Property { binding: Option<BindingIdent>, prop_key: PropKey },
+    Property {
+        binding: Option<BindingIdent>,
+        prop_key: PropKey,
+    },
     /// obj[n] — maps to (binding_name, index)
-    Index { binding: Option<BindingIdent>, index: usize },
+    Index {
+        binding: Option<BindingIdent>,
+        index: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -439,7 +451,15 @@ fn group_destructuring(stmts: Vec<Stmt>) -> Vec<Stmt> {
         let stmt = &stmts[i];
 
         let next_access = try_extract_prop_access(stmt)
-            .map(|(obj, key, binding)| (obj, AccessKind::Property { binding, prop_key: key }))
+            .map(|(obj, key, binding)| {
+                (
+                    obj,
+                    AccessKind::Property {
+                        binding,
+                        prop_key: key,
+                    },
+                )
+            })
             .or_else(|| {
                 try_extract_index_access(stmt)
                     .map(|(obj, index, binding)| (obj, AccessKind::Index { binding, index }))
@@ -481,12 +501,16 @@ fn group_destructuring(stmts: Vec<Stmt>) -> Vec<Stmt> {
 /// Try to extract `const t = obj.prop`
 /// Returns `(obj_ident, prop_key, binding_name)`
 fn try_extract_prop_access(stmt: &Stmt) -> Option<(Ident, PropKey, Option<BindingIdent>)> {
-    let Stmt::Decl(Decl::Var(var)) = stmt else { return None };
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
     if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
         return None;
     }
     let decl = &var.decls[0];
-    let Pat::Ident(bi) = &decl.name else { return None };
+    let Pat::Ident(bi) = &decl.name else {
+        return None;
+    };
     let init = decl.init.as_ref()?;
     let (obj_name, prop_key) = extract_obj_prop(init)?;
     Some((obj_name, prop_key, Some(bi.clone())))
@@ -517,19 +541,27 @@ fn extract_obj_prop(expr: &Expr) -> Option<(Ident, PropKey)> {
 
 /// Try to extract `const t = obj[n]` where n is a numeric literal ≤10
 fn try_extract_index_access(stmt: &Stmt) -> Option<(Ident, usize, Option<BindingIdent>)> {
-    let Stmt::Decl(Decl::Var(var)) = stmt else { return None };
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
     if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
         return None;
     }
     let decl = &var.decls[0];
-    let Pat::Ident(bi) = &decl.name else { return None };
+    let Pat::Ident(bi) = &decl.name else {
+        return None;
+    };
     let init = decl.init.as_ref()?;
 
     let Expr::Member(MemberExpr { obj, prop, .. }) = init.as_ref() else {
         return None;
     };
-    let Expr::Ident(obj_id) = obj.as_ref() else { return None };
-    let MemberProp::Computed(computed) = prop else { return None };
+    let Expr::Ident(obj_id) = obj.as_ref() else {
+        return None;
+    };
+    let MemberProp::Computed(computed) = prop else {
+        return None;
+    };
     let Expr::Lit(Lit::Num(Number { value, .. })) = computed.expr.as_ref() else {
         return None;
     };
@@ -550,8 +582,12 @@ fn flush_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<AccessKind>) {
         return;
     }
     // Check consistency: all property or all index
-    let all_prop = accesses.iter().all(|a| matches!(a, AccessKind::Property { .. }));
-    let all_idx = accesses.iter().all(|a| matches!(a, AccessKind::Index { .. }));
+    let all_prop = accesses
+        .iter()
+        .all(|a| matches!(a, AccessKind::Property { .. }));
+    let all_idx = accesses
+        .iter()
+        .all(|a| matches!(a, AccessKind::Index { .. }));
 
     if all_prop {
         flush_property_group(result, obj, accesses);
@@ -576,9 +612,13 @@ fn flush_property_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<Access
     let mut props: Vec<ObjectPatProp> = Vec::new();
 
     for acc in &accesses {
-        let AccessKind::Property { binding, prop_key } = acc else { continue };
+        let AccessKind::Property { binding, prop_key } = acc else {
+            continue;
+        };
         let prop_name: PropName = match prop_key {
-            PropKey::Ident(sym) => PropName::Ident(swc_core::ecma::ast::IdentName::new(sym.clone(), DUMMY_SP)),
+            PropKey::Ident(sym) => {
+                PropName::Ident(swc_core::ecma::ast::IdentName::new(sym.clone(), DUMMY_SP))
+            }
             PropKey::Str(sym) => PropName::Str(swc_core::ecma::ast::Str {
                 span: DUMMY_SP,
                 value: sym.as_str().into(),
@@ -651,7 +691,13 @@ fn flush_index_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<AccessKin
     // Find max index
     let max_idx = accesses
         .iter()
-        .filter_map(|a| if let AccessKind::Index { index, .. } = a { Some(*index) } else { None })
+        .filter_map(|a| {
+            if let AccessKind::Index { index, .. } = a {
+                Some(*index)
+            } else {
+                None
+            }
+        })
         .max()
         .unwrap_or(0);
 
@@ -660,7 +706,9 @@ fn flush_index_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<AccessKin
     let non_inlined: Vec<Stmt> = Vec::new();
 
     for acc in &accesses {
-        let AccessKind::Index { binding, index } = acc else { continue };
+        let AccessKind::Index { binding, index } = acc else {
+            continue;
+        };
         if let Some(alias) = binding {
             elems[*index] = Some(Pat::Ident(alias.clone()));
         }
@@ -691,7 +739,9 @@ fn acc_to_stmt(obj: &Ident, acc: AccessKind) -> Stmt {
     match acc {
         AccessKind::Property { binding, prop_key } => {
             let prop = match &prop_key {
-                PropKey::Ident(s) => MemberProp::Ident(swc_core::ecma::ast::IdentName::new(s.clone(), DUMMY_SP)),
+                PropKey::Ident(s) => {
+                    MemberProp::Ident(swc_core::ecma::ast::IdentName::new(s.clone(), DUMMY_SP))
+                }
                 PropKey::Str(s) => MemberProp::Computed(ComputedPropName {
                     span: DUMMY_SP,
                     expr: Box::new(Expr::Lit(Lit::Str(swc_core::ecma::ast::Str {
@@ -707,7 +757,10 @@ fn acc_to_stmt(obj: &Ident, acc: AccessKind) -> Stmt {
                 prop,
             });
             match binding {
-                None => Stmt::Expr(ExprStmt { span: DUMMY_SP, expr: Box::new(member_expr) }),
+                None => Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(member_expr),
+                }),
                 Some(alias) => Stmt::Decl(Decl::Var(Box::new(VarDecl {
                     span: DUMMY_SP,
                     ctxt: Default::default(),
@@ -736,7 +789,10 @@ fn acc_to_stmt(obj: &Ident, acc: AccessKind) -> Stmt {
                 }),
             });
             match binding {
-                None => Stmt::Expr(ExprStmt { span: DUMMY_SP, expr: Box::new(member_expr) }),
+                None => Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(member_expr),
+                }),
                 Some(alias) => Stmt::Decl(Decl::Var(Box::new(VarDecl {
                     span: DUMMY_SP,
                     ctxt: Default::default(),

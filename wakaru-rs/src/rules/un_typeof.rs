@@ -51,7 +51,13 @@ impl VisitMut for UnTypeof {
 }
 
 fn is_typeof(expr: &Expr) -> bool {
-    matches!(expr, Expr::Unary(UnaryExpr { op: UnaryOp::TypeOf, .. }))
+    matches!(
+        expr,
+        Expr::Unary(UnaryExpr {
+            op: UnaryOp::TypeOf,
+            ..
+        })
+    )
 }
 
 fn is_u_string(expr: &Expr) -> bool {

@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BindingIdent, CallExpr, Callee, Decl, Expr, ExportDecl,
-    ExportDefaultExpr, ExportNamedSpecifier, ExportSpecifier, Ident, IdentName, ImportDecl,
+    AssignOp, AssignTarget, BindingIdent, CallExpr, Callee, Decl, ExportDecl, ExportDefaultExpr,
+    ExportNamedSpecifier, ExportSpecifier, Expr, Ident, IdentName, ImportDecl,
     ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, Lit, MemberExpr, MemberProp,
     ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, Pat, SimpleAssignTarget,
     Stmt, Str, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
@@ -24,11 +24,18 @@ enum CjsRequireKind {
     /// var foo = require('foo') → import foo from 'foo'
     Default { local: Ident, source: String },
     /// var { a, b: c } = require('foo') → import { a, b as c } from 'foo'
-    Named { specifiers: Vec<(Atom, Ident)>, source: String },
+    Named {
+        specifiers: Vec<(Atom, Ident)>,
+        source: String,
+    },
     /// var foo = require('foo').default → import foo from 'foo'
     DefaultProp { local: Ident, source: String },
     /// var foo = require('foo').bar → import { bar as foo } from 'foo'
-    NamedProp { prop: Atom, local: Ident, source: String },
+    NamedProp {
+        prop: Atom,
+        local: Ident,
+        source: String,
+    },
 }
 
 /// Classified CJS export kinds
@@ -128,7 +135,11 @@ impl VisitMut for UnEsm {
                         continue;
                     }
                 };
-                export_entries.push(ExportEntry { classified_idx: idx, name, is_void });
+                export_entries.push(ExportEntry {
+                    classified_idx: idx,
+                    name,
+                    is_void,
+                });
             }
         }
 
@@ -163,7 +174,9 @@ impl VisitMut for UnEsm {
                 Classified::CjsRequire(CjsRequireKind::Bare { source }) => source.clone(),
                 Classified::CjsRequire(CjsRequireKind::Default { source, .. }) => source.clone(),
                 Classified::CjsRequire(CjsRequireKind::Named { source, .. }) => source.clone(),
-                Classified::CjsRequire(CjsRequireKind::DefaultProp { source, .. }) => source.clone(),
+                Classified::CjsRequire(CjsRequireKind::DefaultProp { source, .. }) => {
+                    source.clone()
+                }
                 Classified::CjsRequire(CjsRequireKind::NamedProp { source, .. }) => source.clone(),
                 _ => continue,
             };
@@ -177,15 +190,24 @@ impl VisitMut for UnEsm {
 
                     if cjs_sources.contains(&src) {
                         // Source has CJS requires → absorb non-namespace specifiers into source_map
-                        let has_ns = import.specifiers.iter().any(|s| matches!(s, ImportSpecifier::Namespace(_)));
-                        let has_non_ns = import.specifiers.iter().any(|s| !matches!(s, ImportSpecifier::Namespace(_)));
+                        let has_ns = import
+                            .specifiers
+                            .iter()
+                            .any(|s| matches!(s, ImportSpecifier::Namespace(_)));
+                        let has_non_ns = import
+                            .specifiers
+                            .iter()
+                            .any(|s| !matches!(s, ImportSpecifier::Namespace(_)));
 
                         if has_non_ns {
-                            let entry = get_or_insert(&mut source_order, &mut source_map, src.clone());
+                            let entry =
+                                get_or_insert(&mut source_order, &mut source_map, src.clone());
                             entry.has_cjs = true;
                             for spec in &import.specifiers {
                                 match spec {
-                                    ImportSpecifier::Default(d) => entry.add_default(d.local.clone()),
+                                    ImportSpecifier::Default(d) => {
+                                        entry.add_default(d.local.clone())
+                                    }
                                     ImportSpecifier::Named(n) => {
                                         let imported: Atom = match &n.imported {
                                             Some(ModuleExportName::Ident(i)) => i.sym.clone(),
@@ -198,7 +220,8 @@ impl VisitMut for UnEsm {
                                 }
                             }
                         } else if !has_ns && import.specifiers.is_empty() {
-                            let entry = get_or_insert(&mut source_order, &mut source_map, src.clone());
+                            let entry =
+                                get_or_insert(&mut source_order, &mut source_map, src.clone());
                             entry.has_cjs = true;
                             entry.set_bare();
                         }
@@ -206,7 +229,9 @@ impl VisitMut for UnEsm {
                         // Namespace specifiers in a source-with-CJS: keep as original pass-through
                         if has_ns {
                             // Build a namespace-only import to pass through
-                            let ns_specs: Vec<ImportSpecifier> = import.specifiers.iter()
+                            let ns_specs: Vec<ImportSpecifier> = import
+                                .specifiers
+                                .iter()
                                 .filter(|s| matches!(s, ImportSpecifier::Namespace(_)))
                                 .cloned()
                                 .collect();
@@ -217,7 +242,8 @@ impl VisitMut for UnEsm {
                                 };
                                 // Use a unique key to preserve ordering in source_order
                                 let ns_key = format!("__ns__:{}", src);
-                                let entry = get_or_insert(&mut source_order, &mut source_map, ns_key);
+                                let entry =
+                                    get_or_insert(&mut source_order, &mut source_map, ns_key);
                                 entry.original_imports.push(ns_import);
                             }
                         }
@@ -227,37 +253,44 @@ impl VisitMut for UnEsm {
                         entry.original_imports.push(import.clone());
                     }
                 }
-                Classified::CjsRequire(kind) => {
-                    match kind {
-                        CjsRequireKind::Bare { source } => {
-                            let entry = get_or_insert(&mut source_order, &mut source_map, source.clone());
-                            entry.has_cjs = true;
-                            entry.set_bare();
-                        }
-                        CjsRequireKind::Default { local, source } => {
-                            let entry = get_or_insert(&mut source_order, &mut source_map, source.clone());
-                            entry.has_cjs = true;
-                            entry.add_default(local.clone());
-                        }
-                        CjsRequireKind::Named { specifiers, source } => {
-                            let entry = get_or_insert(&mut source_order, &mut source_map, source.clone());
-                            entry.has_cjs = true;
-                            for (imported, local) in specifiers {
-                                entry.add_named(imported.clone(), local.clone());
-                            }
-                        }
-                        CjsRequireKind::DefaultProp { local, source } => {
-                            let entry = get_or_insert(&mut source_order, &mut source_map, source.clone());
-                            entry.has_cjs = true;
-                            entry.add_default(local.clone());
-                        }
-                        CjsRequireKind::NamedProp { prop, local, source } => {
-                            let entry = get_or_insert(&mut source_order, &mut source_map, source.clone());
-                            entry.has_cjs = true;
-                            entry.add_named(prop.clone(), local.clone());
+                Classified::CjsRequire(kind) => match kind {
+                    CjsRequireKind::Bare { source } => {
+                        let entry =
+                            get_or_insert(&mut source_order, &mut source_map, source.clone());
+                        entry.has_cjs = true;
+                        entry.set_bare();
+                    }
+                    CjsRequireKind::Default { local, source } => {
+                        let entry =
+                            get_or_insert(&mut source_order, &mut source_map, source.clone());
+                        entry.has_cjs = true;
+                        entry.add_default(local.clone());
+                    }
+                    CjsRequireKind::Named { specifiers, source } => {
+                        let entry =
+                            get_or_insert(&mut source_order, &mut source_map, source.clone());
+                        entry.has_cjs = true;
+                        for (imported, local) in specifiers {
+                            entry.add_named(imported.clone(), local.clone());
                         }
                     }
-                }
+                    CjsRequireKind::DefaultProp { local, source } => {
+                        let entry =
+                            get_or_insert(&mut source_order, &mut source_map, source.clone());
+                        entry.has_cjs = true;
+                        entry.add_default(local.clone());
+                    }
+                    CjsRequireKind::NamedProp {
+                        prop,
+                        local,
+                        source,
+                    } => {
+                        let entry =
+                            get_or_insert(&mut source_order, &mut source_map, source.clone());
+                        entry.has_cjs = true;
+                        entry.add_named(prop.clone(), local.clone());
+                    }
+                },
                 _ => {}
             }
         }
@@ -285,7 +318,7 @@ impl VisitMut for UnEsm {
         for (idx, c) in classified.into_iter().enumerate() {
             match c {
                 Classified::ExistingImport(_) => {} // skip, already absorbed
-                Classified::CjsRequire(_) => {}      // skip, replaced by import
+                Classified::CjsRequire(_) => {}     // skip, replaced by import
                 Classified::CjsExport { kind } => {
                     if drop_set.contains(&idx) {
                         // drop
@@ -317,8 +350,14 @@ fn get_or_insert<'a>(
 
 fn build_import_decls(src: &str, entry: &SourceEntry, out: &mut Vec<ModuleItem>) {
     // Case: bare-only import (no bindings at all)
-    if entry.bare && entry.first_default.is_none() && entry.named.is_empty() && entry.extra_defaults.is_empty() {
-        out.push(ModuleItem::ModuleDecl(ModuleDecl::Import(make_import_decl(src, vec![]))));
+    if entry.bare
+        && entry.first_default.is_none()
+        && entry.named.is_empty()
+        && entry.extra_defaults.is_empty()
+    {
+        out.push(ModuleItem::ModuleDecl(ModuleDecl::Import(
+            make_import_decl(src, vec![]),
+        )));
         return;
     }
 
@@ -349,18 +388,22 @@ fn build_import_decls(src: &str, entry: &SourceEntry, out: &mut Vec<ModuleItem>)
     }
 
     if !specifiers.is_empty() {
-        out.push(ModuleItem::ModuleDecl(ModuleDecl::Import(make_import_decl(src, specifiers))));
+        out.push(ModuleItem::ModuleDecl(ModuleDecl::Import(
+            make_import_decl(src, specifiers),
+        )));
     }
 
     // Extra defaults → separate import statements
     for extra in &entry.extra_defaults {
-        out.push(ModuleItem::ModuleDecl(ModuleDecl::Import(make_import_decl(
-            src,
-            vec![ImportSpecifier::Default(ImportDefaultSpecifier {
-                span: DUMMY_SP,
-                local: extra.clone(),
-            })],
-        ))));
+        out.push(ModuleItem::ModuleDecl(ModuleDecl::Import(
+            make_import_decl(
+                src,
+                vec![ImportSpecifier::Default(ImportDefaultSpecifier {
+                    span: DUMMY_SP,
+                    local: extra.clone(),
+                })],
+            ),
+        )));
     }
 }
 
@@ -377,48 +420,56 @@ fn make_import_decl(src: &str, specifiers: Vec<ImportSpecifier>) -> ImportDecl {
 
 fn build_export_item(kind: CjsExportKind) -> Option<ModuleItem> {
     match kind {
-        CjsExportKind::ModuleExportsDefault { expr } => {
-            Some(ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(ExportDefaultExpr {
+        CjsExportKind::ModuleExportsDefault { expr } => Some(ModuleItem::ModuleDecl(
+            ModuleDecl::ExportDefaultExpr(ExportDefaultExpr {
                 span: DUMMY_SP,
                 expr,
-            })))
-        }
-        CjsExportKind::NamedDefault { expr } => {
-            Some(ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(ExportDefaultExpr {
+            }),
+        )),
+        CjsExportKind::NamedDefault { expr } => Some(ModuleItem::ModuleDecl(
+            ModuleDecl::ExportDefaultExpr(ExportDefaultExpr {
                 span: DUMMY_SP,
                 expr,
-            })))
-        }
-        CjsExportKind::Named { name, expr, is_void: false } => {
+            }),
+        )),
+        CjsExportKind::Named {
+            name,
+            expr,
+            is_void: false,
+        } => {
             if let Expr::Ident(id) = *expr {
                 if id.sym == name {
                     // export { foo }
-                    Some(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
-                        span: DUMMY_SP,
-                        specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+                    Some(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
+                        NamedExport {
                             span: DUMMY_SP,
-                            orig: ModuleExportName::Ident(id),
-                            exported: None,
-                            is_type_only: false,
-                        })],
-                        src: None,
-                        type_only: false,
-                        with: None,
-                    })))
+                            specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+                                span: DUMMY_SP,
+                                orig: ModuleExportName::Ident(id),
+                                exported: None,
+                                is_type_only: false,
+                            })],
+                            src: None,
+                            type_only: false,
+                            with: None,
+                        },
+                    )))
                 } else {
                     // export { id as name }
-                    Some(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
-                        span: DUMMY_SP,
-                        specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+                    Some(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
+                        NamedExport {
                             span: DUMMY_SP,
-                            orig: ModuleExportName::Ident(id),
-                            exported: Some(ModuleExportName::Ident(make_ident(name))),
-                            is_type_only: false,
-                        })],
-                        src: None,
-                        type_only: false,
-                        with: None,
-                    })))
+                            specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+                                span: DUMMY_SP,
+                                orig: ModuleExportName::Ident(id),
+                                exported: Some(ModuleExportName::Ident(make_ident(name))),
+                                is_type_only: false,
+                            })],
+                            src: None,
+                            type_only: false,
+                            with: None,
+                        },
+                    )))
                 }
             } else {
                 // export const name = expr
@@ -453,9 +504,7 @@ fn build_export_item(kind: CjsExportKind) -> Option<ModuleItem> {
 
 fn classify_item(item: ModuleItem) -> Classified {
     match item {
-        ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
-            Classified::ExistingImport(import)
-        }
+        ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => Classified::ExistingImport(import),
         ModuleItem::Stmt(ref stmt) => {
             if let Some(kind) = try_classify_cjs_export(stmt) {
                 return Classified::CjsExport { kind };
@@ -471,8 +520,12 @@ fn classify_item(item: ModuleItem) -> Classified {
 
 /// Try to classify as a CJS export statement
 fn try_classify_cjs_export(stmt: &Stmt) -> Option<CjsExportKind> {
-    let Stmt::Expr(expr_stmt) = stmt else { return None };
-    let Expr::Assign(assign) = expr_stmt.expr.as_ref() else { return None };
+    let Stmt::Expr(expr_stmt) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr_stmt.expr.as_ref() else {
+        return None;
+    };
 
     // Must be simple `=` assignment (not +=, etc.)
     if assign.op != AssignOp::Assign {
@@ -492,7 +545,9 @@ fn try_classify_cjs_export(stmt: &Stmt) -> Option<CjsExportKind> {
                 if is_module_exports_expr(&assign.right) {
                     return Some(CjsExportKind::SelfRef);
                 }
-                return Some(CjsExportKind::NamedDefault { expr: assign.right.clone() });
+                return Some(CjsExportKind::NamedDefault {
+                    expr: assign.right.clone(),
+                });
             }
             let is_void = is_void_or_undefined(&assign.right);
             return Some(CjsExportKind::Named {
@@ -526,7 +581,9 @@ fn try_classify_cjs_export(stmt: &Stmt) -> Option<CjsExportKind> {
         if obj_id.sym.as_ref() == "exports" {
             if let Some(prop) = is_ident_prop(&member.prop) {
                 if prop.as_ref() == "default" {
-                    return Some(CjsExportKind::NamedDefault { expr: assign.right.clone() });
+                    return Some(CjsExportKind::NamedDefault {
+                        expr: assign.right.clone(),
+                    });
                 }
                 let is_void = is_void_or_undefined(&assign.right);
                 return Some(CjsExportKind::Named {
@@ -579,7 +636,11 @@ fn try_classify_cjs_require(stmt: &Stmt) -> Option<CjsRequireKind> {
                                     if prop.as_ref() == "default" {
                                         return Some(CjsRequireKind::DefaultProp { local, source });
                                     } else {
-                                        return Some(CjsRequireKind::NamedProp { prop, local, source });
+                                        return Some(CjsRequireKind::NamedProp {
+                                            prop,
+                                            local,
+                                            source,
+                                        });
                                     }
                                 }
                                 // Invalid ident prop or bracket notation → skip
@@ -599,7 +660,9 @@ fn try_classify_cjs_require(stmt: &Stmt) -> Option<CjsRequireKind> {
                                     ObjectPatProp::KeyValue(kv) => {
                                         // { b: c } → import { b as c }
                                         let imported = match &kv.key {
-                                            swc_core::ecma::ast::PropName::Ident(i) => i.sym.clone(),
+                                            swc_core::ecma::ast::PropName::Ident(i) => {
+                                                i.sym.clone()
+                                            }
                                             swc_core::ecma::ast::PropName::Str(s) => {
                                                 Atom::from(s.value.as_str().unwrap_or(""))
                                             }
@@ -647,8 +710,12 @@ fn extract_binding_ident(pat: &Pat) -> Option<Ident> {
 
 /// Check if call is `require('...')` and return the source string
 fn is_require_call(call: &CallExpr) -> Option<String> {
-    let Callee::Expr(callee) = &call.callee else { return None };
-    let Expr::Ident(id) = callee.as_ref() else { return None };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(id) = callee.as_ref() else {
+        return None;
+    };
     if id.sym.as_ref() != "require" {
         return None;
     }

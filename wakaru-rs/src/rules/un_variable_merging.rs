@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use swc_core::ecma::ast::{
-    Decl, ExportDecl, Expr, ForStmt, MemberExpr, ModuleDecl, ModuleItem, Pat, Stmt,
-    VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
+    Decl, ExportDecl, Expr, ForStmt, MemberExpr, ModuleDecl, ModuleItem, Pat, Stmt, VarDecl,
+    VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -25,7 +25,11 @@ impl VisitMut for UnVariableMerging {
                 // Plain var/let/const declaration with multiple declarators
                 Stmt::Decl(Decl::Var(ref var_decl)) if var_decl.decls.len() > 1 => {
                     let split = split_var_decl(var_decl);
-                    new_stmts.extend(split.into_iter().map(|v| Stmt::Decl(Decl::Var(Box::new(v)))));
+                    new_stmts.extend(
+                        split
+                            .into_iter()
+                            .map(|v| Stmt::Decl(Decl::Var(Box::new(v)))),
+                    );
                 }
                 other => new_stmts.push(other),
             }
@@ -49,10 +53,12 @@ impl VisitMut for UnVariableMerging {
                 })) if var_decl.decls.len() > 1 => {
                     let split = split_var_decl(var_decl);
                     for v in split {
-                        new_items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-                            span,
-                            decl: Decl::Var(Box::new(v)),
-                        })));
+                        new_items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(
+                            ExportDecl {
+                                span,
+                                decl: Decl::Var(Box::new(v)),
+                            },
+                        )));
                     }
                 }
                 // Plain statement with multiple var declarators
@@ -129,7 +135,13 @@ fn extract_for_init_stmts(mut for_stmt: ForStmt) -> Vec<Stmt> {
         }
     };
 
-    let VarDecl { span, ctxt, kind, declare, decls } = *init_var;
+    let VarDecl {
+        span,
+        ctxt,
+        kind,
+        declare,
+        decls,
+    } = *init_var;
 
     // Phase 1: determine which declarator indices must stay in the for init.
     // Start with those whose bound names appear in test/update.

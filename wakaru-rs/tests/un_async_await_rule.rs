@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::UnAsyncAwait;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::UnAsyncAwait;
 
 // ── __generator only ────────────────────────────────────────────────────────
 
@@ -375,4 +375,3 @@ async function func(x) {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
-

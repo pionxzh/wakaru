@@ -92,7 +92,13 @@ fn try_convert_apply(call: CallExpr) -> Result<Expr, CallExpr> {
 /// Build `fn(...secondArg)` from the original `.apply(thisArg, secondArg)` call.
 fn make_spread_call(call: CallExpr) -> Expr {
     // Consume the call
-    let CallExpr { span, ctxt, callee, mut args, type_args } = call;
+    let CallExpr {
+        span,
+        ctxt,
+        callee,
+        mut args,
+        type_args,
+    } = call;
 
     // callee is `fn.apply` – we want just `fn`
     let Callee::Expr(callee_box) = callee else {
@@ -153,9 +159,7 @@ fn exprs_equal(a: &Expr, b: &Expr) -> bool {
 fn member_props_equal(a: &MemberProp, b: &MemberProp) -> bool {
     match (a, b) {
         (MemberProp::Ident(ai), MemberProp::Ident(bi)) => ai.sym == bi.sym,
-        (MemberProp::Computed(ac), MemberProp::Computed(bc)) => {
-            exprs_equal(&ac.expr, &bc.expr)
-        }
+        (MemberProp::Computed(ac), MemberProp::Computed(bc)) => exprs_equal(&ac.expr, &bc.expr),
         _ => false,
     }
 }

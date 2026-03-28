@@ -169,7 +169,10 @@ fn extract_null_check(expr: &Expr) -> Option<NullCheckResult> {
 
 /// Match `x !== null` or `null !== x` — return x.
 fn extract_not_null_single(expr: &Expr) -> Option<Box<Expr>> {
-    let Expr::Bin(BinExpr { op, left, right, .. }) = expr else {
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = expr
+    else {
         return None;
     };
     if !matches!(op, BinaryOp::NotEqEq | BinaryOp::NotEq) {
@@ -186,7 +189,10 @@ fn extract_not_null_single(expr: &Expr) -> Option<Box<Expr>> {
 
 /// Match `x !== void 0` or `x !== undefined` or flipped — return x.
 fn extract_not_undefined_single(expr: &Expr) -> Option<Box<Expr>> {
-    let Expr::Bin(BinExpr { op, left, right, .. }) = expr else {
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = expr
+    else {
         return None;
     };
     if !matches!(op, BinaryOp::NotEqEq | BinaryOp::NotEq) {
@@ -203,7 +209,10 @@ fn extract_not_undefined_single(expr: &Expr) -> Option<Box<Expr>> {
 
 /// Match `x === null` or `null === x` — return x.
 fn extract_null_single(expr: &Expr) -> Option<Box<Expr>> {
-    let Expr::Bin(BinExpr { op, left, right, .. }) = expr else {
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = expr
+    else {
         return None;
     };
     if !matches!(op, BinaryOp::EqEqEq | BinaryOp::EqEq) {
@@ -220,7 +229,10 @@ fn extract_null_single(expr: &Expr) -> Option<Box<Expr>> {
 
 /// Match `x === void 0` or `x === undefined` or flipped — return x.
 fn extract_undefined_single(expr: &Expr) -> Option<Box<Expr>> {
-    let Expr::Bin(BinExpr { op, left, right, .. }) = expr else {
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = expr
+    else {
         return None;
     };
     if !matches!(op, BinaryOp::EqEqEq | BinaryOp::EqEq) {

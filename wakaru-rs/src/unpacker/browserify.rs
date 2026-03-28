@@ -172,7 +172,11 @@ fn extract_factory(module_parts: &ArrayLit) -> Option<(Function, Vec<Stmt>)> {
     }
 }
 
-fn emit_browserify_module(factory: &Function, body_stmts: Vec<Stmt>, cm: Lrc<SourceMap>) -> Option<String> {
+fn emit_browserify_module(
+    factory: &Function,
+    body_stmts: Vec<Stmt>,
+    cm: Lrc<SourceMap>,
+) -> Option<String> {
     let mut synthetic_module = build_module_from_stmts(body_stmts);
 
     let param_syms: Vec<Atom> = factory

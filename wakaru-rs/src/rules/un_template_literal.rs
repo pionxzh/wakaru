@@ -95,7 +95,11 @@ fn parts_to_template(parts: Vec<Part>, span: swc_core::common::Span) -> Tpl {
         raw: escape_template_raw(&current).into(),
     });
 
-    Tpl { span, exprs, quasis }
+    Tpl {
+        span,
+        exprs,
+        quasis,
+    }
 }
 
 fn escape_template_raw(input: &str) -> String {

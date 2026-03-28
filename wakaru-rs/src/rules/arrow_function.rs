@@ -62,7 +62,10 @@ fn try_convert_to_arrow(fn_expr: &mut FnExpr) -> Option<ArrowExpr> {
 
     // Check if the function name is used inside (self-referential)
     if let Some(ident) = &fn_expr.ident {
-        let mut name_checker = HasIdentRef { sym: ident.sym.clone(), found: false };
+        let mut name_checker = HasIdentRef {
+            sym: ident.sym.clone(),
+            found: false,
+        };
         body.visit_with(&mut name_checker);
         if name_checker.found {
             return None;
@@ -70,7 +73,10 @@ fn try_convert_to_arrow(fn_expr: &mut FnExpr) -> Option<ArrowExpr> {
     }
 
     // Convert params: Vec<Param> -> Vec<Pat>
-    let params: Vec<Pat> = fn_expr.function.params.iter()
+    let params: Vec<Pat> = fn_expr
+        .function
+        .params
+        .iter()
         .map(|p| p.pat.clone())
         .collect();
 
@@ -107,9 +113,15 @@ fn build_arrow_body(func: &Function) -> BlockStmtOrExpr {
 /// Still rejects: named functions, generators, functions using `arguments`.
 fn try_convert_bind_this(call: &CallExpr) -> Option<ArrowExpr> {
     // Callee must be `expr.bind`
-    let Callee::Expr(callee_expr) = &call.callee else { return None; };
-    let Expr::Member(member) = callee_expr.as_ref() else { return None; };
-    let MemberProp::Ident(prop) = &member.prop else { return None; };
+    let Callee::Expr(callee_expr) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = callee_expr.as_ref() else {
+        return None;
+    };
+    let MemberProp::Ident(prop) = &member.prop else {
+        return None;
+    };
     if prop.sym != "bind" {
         return None;
     }
@@ -123,7 +135,9 @@ fn try_convert_bind_this(call: &CallExpr) -> Option<ArrowExpr> {
     }
 
     // The bound expression must be a function expression
-    let Expr::Fn(fn_expr) = member.obj.as_ref() else { return None; };
+    let Expr::Fn(fn_expr) = member.obj.as_ref() else {
+        return None;
+    };
     let func = &fn_expr.function;
 
     // Reject generators and named function expressions

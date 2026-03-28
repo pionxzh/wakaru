@@ -67,7 +67,10 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, St
 
 fn parse_js(source: &str, filename: &str, cm: Lrc<SourceMap>) -> Result<Module> {
     let syntax = detect_syntax(filename);
-    let fm = cm.new_source_file(FileName::Custom(filename.to_string()).into(), source.to_string());
+    let fm = cm.new_source_file(
+        FileName::Custom(filename.to_string()).into(),
+        source.to_string(),
+    );
 
     let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
     let mut parser = Parser::new_from(lexer);
@@ -103,7 +106,8 @@ fn print_js(module: &Module, cm: Lrc<SourceMap>) -> Result<String> {
             .map_err(|error| anyhow!("failed to print module: {error:?}"))?;
     }
 
-    String::from_utf8(output).map_err(|error| anyhow!("generated output is not valid UTF-8: {error}"))
+    String::from_utf8(output)
+        .map_err(|error| anyhow!("generated output is not valid UTF-8: {error}"))
 }
 
 fn detect_syntax(filename: &str) -> Syntax {

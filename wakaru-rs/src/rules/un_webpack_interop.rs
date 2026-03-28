@@ -60,7 +60,8 @@ impl VisitMut for UnWebpackInterop {
         let to_inline: HashMap<BindingKey, Ident> = candidates
             .into_iter()
             .filter(|(key, _)| {
-                usage.get(key)
+                usage
+                    .get(key)
                     .map(|stats| stats.supported >= 1 && !stats.unsupported)
                     .unwrap_or(false)
             })
@@ -74,11 +75,12 @@ impl VisitMut for UnWebpackInterop {
         for item in module.body.drain(..) {
             match item {
                 ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(mut var))) => {
-                    var.decls.retain(|decl| !should_remove_decl(decl, &to_inline));
+                    var.decls
+                        .retain(|decl| !should_remove_decl(decl, &to_inline));
                     if !var.decls.is_empty() {
-                        new_body.push(ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(
-                            var,
-                        ))));
+                        new_body.push(ModuleItem::Stmt(Stmt::Decl(
+                            swc_core::ecma::ast::Decl::Var(var),
+                        )));
                     }
                 }
                 other => new_body.push(other),
@@ -121,7 +123,9 @@ fn is_require_call(expr: &Expr) -> bool {
 }
 
 fn match_interop_getter(expr: &Expr, require_bindings: &HashSet<BindingKey>) -> Option<Ident> {
-    let Expr::Arrow(arrow) = expr else { return None };
+    let Expr::Arrow(arrow) = expr else {
+        return None;
+    };
     if !arrow.params.is_empty() {
         return None;
     }
@@ -175,7 +179,10 @@ fn match_interop_block(
         return None;
     }
 
-    let Stmt::If(IfStmt { test, cons, alt, .. }) = &block.stmts[0] else {
+    let Stmt::If(IfStmt {
+        test, cons, alt, ..
+    }) = &block.stmts[0]
+    else {
         return None;
     };
     if alt.is_some() {
@@ -204,14 +211,21 @@ fn match_interop_block(
     if cons_block.stmts.len() != 1 {
         return None;
     }
-    let Stmt::Return(ReturnStmt { arg: Some(cons_arg), .. }) = &cons_block.stmts[0] else {
+    let Stmt::Return(ReturnStmt {
+        arg: Some(cons_arg),
+        ..
+    }) = &cons_block.stmts[0]
+    else {
         return None;
     };
     if !matches_default_member(cons_arg.as_ref(), base) {
         return None;
     }
 
-    let Stmt::Return(ReturnStmt { arg: Some(alt_arg), .. }) = &block.stmts[1] else {
+    let Stmt::Return(ReturnStmt {
+        arg: Some(alt_arg), ..
+    }) = &block.stmts[1]
+    else {
         return None;
     };
     let Expr::Ident(alt_ident) = alt_arg.as_ref() else {

@@ -31,7 +31,10 @@ impl VisitMut for VarDeclToLetConst {
         // Because resolver() has already run, each identifier has a unique SyntaxContext,
         // so we can distinguish bindings with the same name in different scopes.
         let mut collector = AssignedIdsCollector::default();
-        module.body.iter().for_each(|item| item.visit_with(&mut collector));
+        module
+            .body
+            .iter()
+            .for_each(|item| item.visit_with(&mut collector));
         let assigned = collector.assigned;
 
         // Detect vars declared inside inner blocks that are referenced outside — those
@@ -39,7 +42,11 @@ impl VisitMut for VarDeclToLetConst {
         let must_stay_var = collect_block_escaping_vars_module(&module.body);
 
         // Convert all var decls in module (recursively through blocks, stopping at function boundaries)
-        let mut converter = VarConverter { assigned: &assigned, must_stay_var: &must_stay_var, in_block_context: true };
+        let mut converter = VarConverter {
+            assigned: &assigned,
+            must_stay_var: &must_stay_var,
+            in_block_context: true,
+        };
         module.visit_mut_with(&mut converter);
     }
 
@@ -64,7 +71,11 @@ impl VisitMut for VarDeclToLetConst {
 
         let must_stay_var = collect_block_escaping_vars_stmts(&body.stmts);
 
-        let mut converter = VarConverter { assigned: &assigned, must_stay_var: &must_stay_var, in_block_context: true };
+        let mut converter = VarConverter {
+            assigned: &assigned,
+            must_stay_var: &must_stay_var,
+            in_block_context: true,
+        };
         body.visit_mut_with(&mut converter);
     }
 }
@@ -215,13 +226,17 @@ fn collect_block_escaping_vars_stmts(stmts: &[Stmt]) -> HashSet<BindingId> {
 /// Collect vars declared INSIDE inner blocks (depth > 0), keyed by their declaring block id.
 fn collect_block_declared_var_ids_module(items: &[ModuleItem]) -> HashMap<BindingId, usize> {
     let mut c = BlockDeclaredVarCollector::default();
-    for item in items { item.visit_with(&mut c); }
+    for item in items {
+        item.visit_with(&mut c);
+    }
     c.ids_by_block
 }
 
 fn collect_block_declared_var_ids_stmts(stmts: &[Stmt]) -> HashMap<BindingId, usize> {
     let mut c = BlockDeclaredVarCollector::default();
-    for stmt in stmts { stmt.visit_with(&mut c); }
+    for stmt in stmts {
+        stmt.visit_with(&mut c);
+    }
     c.ids_by_block
 }
 
@@ -267,7 +282,9 @@ fn collect_outside_decl_block_refs_module(
     decl_blocks: &HashMap<BindingId, usize>,
 ) -> HashSet<BindingId> {
     let mut c = RefOutsideDeclBlockCollector::new(decl_blocks);
-    for item in items { item.visit_with(&mut c); }
+    for item in items {
+        item.visit_with(&mut c);
+    }
     c.refs_outside
 }
 
@@ -276,7 +293,9 @@ fn collect_outside_decl_block_refs_stmts(
     decl_blocks: &HashMap<BindingId, usize>,
 ) -> HashSet<BindingId> {
     let mut c = RefOutsideDeclBlockCollector::new(decl_blocks);
-    for stmt in stmts { stmt.visit_with(&mut c); }
+    for stmt in stmts {
+        stmt.visit_with(&mut c);
+    }
     c.refs_outside
 }
 
@@ -536,7 +555,11 @@ fn convert_for_iter_var_decl(var: &mut VarDecl, assigned: &HashSet<BindingId>) {
         collect_binding_ids_from_pat(&d.name, &mut ids);
         ids.iter().any(|id| assigned.contains(id))
     });
-    var.kind = if any_assigned { VarDeclKind::Let } else { VarDeclKind::Const };
+    var.kind = if any_assigned {
+        VarDeclKind::Let
+    } else {
+        VarDeclKind::Const
+    };
 }
 
 fn convert_single_var_decl(var: &mut VarDecl, assigned: &HashSet<BindingId>) {

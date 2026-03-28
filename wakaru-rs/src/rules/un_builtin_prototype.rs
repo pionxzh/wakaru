@@ -1,7 +1,6 @@
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, CallExpr, Callee, Expr, FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp,
-    Regex,
+    ArrowExpr, CallExpr, Callee, Expr, FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp, Regex,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -88,7 +87,10 @@ fn try_replace_builtin(call: CallExpr) -> Result<Expr, CallExpr> {
     // Build `BuiltIn.prototype`
     let builtin_prototype = Expr::Member(MemberExpr {
         span: DUMMY_SP,
-        obj: Box::new(Expr::Ident(Ident::new_no_ctxt(builtin_name.into(), DUMMY_SP))),
+        obj: Box::new(Expr::Ident(Ident::new_no_ctxt(
+            builtin_name.into(),
+            DUMMY_SP,
+        ))),
         prop: MemberProp::Ident(IdentName::new("prototype".into(), DUMMY_SP)),
     });
 

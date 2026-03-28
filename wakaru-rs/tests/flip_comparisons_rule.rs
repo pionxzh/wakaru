@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::FlipComparisons;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::FlipComparisons;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| FlipComparisons)
@@ -83,5 +83,3 @@ bar < 1.2;
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
-
-

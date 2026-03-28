@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::UnRestArrayCopy;
 use common::{assert_eq_normalized, render_pipeline, render_rule};
+use wakaru_rs::rules::UnRestArrayCopy;
 
 // ── nested / name-collision cases ────────────────────────────────────────────
 //
@@ -125,4 +125,3 @@ function outer() {
 "#;
     assert_eq_normalized(&apply_pipeline(input), expected);
 }
-

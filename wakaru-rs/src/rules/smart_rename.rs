@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::common::{DUMMY_SP, SyntaxContext};
+use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrayPat, AssignPatProp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr,
+    ArrayPat, ArrowExpr, AssignPatProp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr,
     Function, Ident, KeyValuePatProp, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat,
     ObjectPatProp, Param, Pat, PropName, Stmt, VarDecl, VarDeclKind,
 };
@@ -226,7 +226,11 @@ fn get_single_react_hook_call(expr: &Expr) -> Option<String> {
         _ => false,
     };
 
-    if valid { Some(fn_name) } else { None }
+    if valid {
+        Some(fn_name)
+    } else {
+        None
+    }
 }
 
 fn get_array_elem_name(array_pat: &ArrayPat, idx: usize) -> Option<String> {
@@ -272,14 +276,18 @@ fn destructuring_rename_function(func: &mut Function) {
         return;
     }
     let mut renamer = ScopedRenamer::new(renames);
-    func.params.iter_mut().for_each(|p| p.visit_mut_with(&mut renamer));
+    func.params
+        .iter_mut()
+        .for_each(|p| p.visit_mut_with(&mut renamer));
     if let Some(body) = &mut func.body {
         body.stmts
             .iter_mut()
             .for_each(|stmt| stmt.visit_mut_with(&mut renamer));
     }
     let mut shorthand = ObjectPatShorthandConverter;
-    func.params.iter_mut().for_each(|p| p.visit_mut_with(&mut shorthand));
+    func.params
+        .iter_mut()
+        .for_each(|p| p.visit_mut_with(&mut shorthand));
 }
 
 fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
@@ -296,7 +304,10 @@ fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
         return;
     }
     let mut renamer = ScopedRenamer::new(renames);
-    arrow.params.iter_mut().for_each(|p| p.visit_mut_with(&mut renamer));
+    arrow
+        .params
+        .iter_mut()
+        .for_each(|p| p.visit_mut_with(&mut renamer));
     match arrow.body.as_mut() {
         BlockStmtOrExpr::BlockStmt(block) => block
             .stmts
@@ -305,7 +316,10 @@ fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
         BlockStmtOrExpr::Expr(expr) => expr.visit_mut_with(&mut renamer),
     }
     let mut shorthand = ObjectPatShorthandConverter;
-    arrow.params.iter_mut().for_each(|p| p.visit_mut_with(&mut shorthand));
+    arrow
+        .params
+        .iter_mut()
+        .for_each(|p| p.visit_mut_with(&mut shorthand));
 }
 
 fn collect_obj_pat_renames_from_module(
@@ -426,13 +440,52 @@ fn find_non_conflicting_name(base: &str, used_names: &HashSet<String>) -> String
 fn is_reserved_keyword(name: &str) -> bool {
     matches!(
         name,
-        "break" | "case" | "catch" | "class" | "const" | "continue" | "debugger"
-            | "default" | "delete" | "do" | "else" | "export" | "extends" | "false"
-            | "finally" | "for" | "function" | "if" | "import" | "in" | "instanceof"
-            | "let" | "new" | "null" | "return" | "static" | "super" | "switch"
-            | "this" | "throw" | "true" | "try" | "typeof" | "var" | "void"
-            | "while" | "with" | "yield" | "enum" | "await" | "implements"
-            | "interface" | "package" | "private" | "protected" | "public"
+        "break"
+            | "case"
+            | "catch"
+            | "class"
+            | "const"
+            | "continue"
+            | "debugger"
+            | "default"
+            | "delete"
+            | "do"
+            | "else"
+            | "export"
+            | "extends"
+            | "false"
+            | "finally"
+            | "for"
+            | "function"
+            | "if"
+            | "import"
+            | "in"
+            | "instanceof"
+            | "let"
+            | "new"
+            | "null"
+            | "return"
+            | "static"
+            | "super"
+            | "switch"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typeof"
+            | "var"
+            | "void"
+            | "while"
+            | "with"
+            | "yield"
+            | "enum"
+            | "await"
+            | "implements"
+            | "interface"
+            | "package"
+            | "private"
+            | "protected"
+            | "public"
     )
 }
 
@@ -504,7 +557,8 @@ impl VisitMut for ScopedRenamer {
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         let shadowed = collect_arrow_shadow_names(arrow);
         self.with_shadowed_scope(shadowed, |this| {
-            arrow.params
+            arrow
+                .params
                 .iter_mut()
                 .for_each(|param| param.visit_mut_with(this));
             match arrow.body.as_mut() {

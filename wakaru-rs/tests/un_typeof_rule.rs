@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::UnTypeof;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::UnTypeof;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnTypeof)
@@ -46,5 +46,3 @@ typeof x === "undefined";
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
-
-

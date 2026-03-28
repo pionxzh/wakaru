@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::ObjShorthand;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::ObjShorthand;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| ObjShorthand)
@@ -57,4 +57,3 @@ fn non_ident_value_not_converted() {
     let input = r#"const obj = {foo: foo.bar};"#;
     assert_eq_normalized(&apply(input), input);
 }
-

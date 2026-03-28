@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::ArrowReturn;
 use common::{assert_eq_normalized, render_pipeline, render_rule};
+use wakaru_rs::rules::ArrowReturn;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| ArrowReturn)

@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::ArrowFunction;
 use common::{assert_eq_normalized, render_pipeline, render_rule};
+use wakaru_rs::rules::ArrowFunction;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| ArrowFunction)
@@ -131,7 +131,10 @@ fn object_method_value_not_converted_to_arrow() {
 ({foo: function() {}});
 "#;
     let output = apply(input);
-    assert!(!output.contains("=>"), "object method became arrow: {output}");
+    assert!(
+        !output.contains("=>"),
+        "object method became arrow: {output}"
+    );
 }
 
 #[test]
@@ -165,5 +168,3 @@ f = async () => {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
-
-

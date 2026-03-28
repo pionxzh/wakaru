@@ -2,9 +2,9 @@ use anyhow::anyhow;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprStmt, FnExpr, Function,
-    Ident, IdentName, MemberExpr, MemberProp, Module, ModuleItem, ObjectLit, Pat,
-    SimpleAssignTarget, Stmt, VarDecl, VarDeclarator,
+    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprStmt, FnExpr, Function, Ident,
+    IdentName, MemberExpr, MemberProp, Module, ModuleItem, ObjectLit, Pat, SimpleAssignTarget,
+    Stmt, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
@@ -222,7 +222,10 @@ fn extract_webpack_modules_object(var_decl: &VarDecl) -> Option<&ObjectLit> {
     if var_decl.decls.len() != 1 {
         return None;
     }
-    let VarDeclarator { init: Some(init), .. } = &var_decl.decls[0] else {
+    let VarDeclarator {
+        init: Some(init), ..
+    } = &var_decl.decls[0]
+    else {
         return None;
     };
     let Expr::Object(object_lit) = strip_parens(init) else {
@@ -294,7 +297,11 @@ fn strip_parens<'a>(expr: &'a Expr) -> &'a Expr {
     }
 }
 
-fn emit_webpack5_module(factory: &Function, body_stmts: Vec<Stmt>, cm: Lrc<SourceMap>) -> Option<String> {
+fn emit_webpack5_module(
+    factory: &Function,
+    body_stmts: Vec<Stmt>,
+    cm: Lrc<SourceMap>,
+) -> Option<String> {
     let mut synthetic_module = build_module_from_stmts(body_stmts);
 
     let param_syms: Vec<Atom> = factory

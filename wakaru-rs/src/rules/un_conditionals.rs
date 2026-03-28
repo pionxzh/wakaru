@@ -1,7 +1,7 @@
 use swc_core::common::{Span, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BinExpr, BinaryOp, BlockStmt, Expr, ExprStmt, IfStmt, ModuleItem, ReturnStmt, Stmt,
-    UnaryExpr, UnaryOp,
+    BinExpr, BinaryOp, BlockStmt, Expr, ExprStmt, IfStmt, ModuleItem, ReturnStmt, Stmt, UnaryExpr,
+    UnaryOp,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -37,13 +37,18 @@ impl VisitMut for UnConditionals {
 fn convert_stmt(stmt: Stmt) -> Vec<Stmt> {
     match stmt {
         Stmt::Expr(ExprStmt { expr, span }) => try_convert_expr_stmt_to_if(span, *expr),
-        Stmt::Return(ReturnStmt { span, arg: Some(arg) }) => {
+        Stmt::Return(ReturnStmt {
+            span,
+            arg: Some(arg),
+        }) => {
             let is_cond = matches!(*arg, Expr::Cond(_));
             if is_cond {
-                try_split_return_ternary(*arg, span)
-                    .expect("checked it is Cond above")
+                try_split_return_ternary(*arg, span).expect("checked it is Cond above")
             } else {
-                vec![Stmt::Return(ReturnStmt { span, arg: Some(arg) })]
+                vec![Stmt::Return(ReturnStmt {
+                    span,
+                    arg: Some(arg),
+                })]
             }
         }
         other => vec![other],
@@ -63,7 +68,11 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
                     expr: Box::new(Expr::Cond(cond_expr)),
                 })];
             }
-            vec![convert_cond_to_if(*cond_expr.test, cond_expr.cons, cond_expr.alt)]
+            vec![convert_cond_to_if(
+                *cond_expr.test,
+                cond_expr.cons,
+                cond_expr.alt,
+            )]
         }
         Expr::Bin(BinExpr {
             op: BinaryOp::LogicalAnd,
@@ -171,37 +180,31 @@ fn convert_cons_branch_to_stmt(expr: Expr) -> Stmt {
 fn convert_alt_branch_to_stmt(expr: Expr) -> Stmt {
     match expr {
         // Another ternary → becomes else-if chain
-        Expr::Cond(inner) => {
-            convert_cond_to_if(*inner.test, inner.cons, inner.alt)
-        }
+        Expr::Cond(inner) => convert_cond_to_if(*inner.test, inner.cons, inner.alt),
         // Logical AND in alt → convert to if statement (not wrapped in block)
         Expr::Bin(BinExpr {
             op: BinaryOp::LogicalAnd,
             left,
             right,
             ..
-        }) if is_action_expr(&right) => {
-            Stmt::If(IfStmt {
-                span: DUMMY_SP,
-                test: left,
-                cons: Box::new(expr_to_block_stmt(*right)),
-                alt: None,
-            })
-        }
+        }) if is_action_expr(&right) => Stmt::If(IfStmt {
+            span: DUMMY_SP,
+            test: left,
+            cons: Box::new(expr_to_block_stmt(*right)),
+            alt: None,
+        }),
         // Logical OR in alt → convert to if statement
         Expr::Bin(BinExpr {
             op: BinaryOp::LogicalOr,
             left,
             right,
             ..
-        }) if is_action_expr(&right) => {
-            Stmt::If(IfStmt {
-                span: DUMMY_SP,
-                test: negate_expr(*left),
-                cons: Box::new(expr_to_block_stmt(*right)),
-                alt: None,
-            })
-        }
+        }) if is_action_expr(&right) => Stmt::If(IfStmt {
+            span: DUMMY_SP,
+            test: negate_expr(*left),
+            cons: Box::new(expr_to_block_stmt(*right)),
+            alt: None,
+        }),
         // Wrap in block
         other => expr_to_block_stmt(other),
     }
@@ -218,7 +221,12 @@ fn expr_to_block_stmt(expr: Expr) -> Stmt {
         Expr::Seq(seq) => seq
             .exprs
             .into_iter()
-            .map(|e| Stmt::Expr(ExprStmt { span: DUMMY_SP, expr: e }))
+            .map(|e| {
+                Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: e,
+                })
+            })
             .collect(),
         other => vec![Stmt::Expr(ExprStmt {
             span: DUMMY_SP,

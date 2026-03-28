@@ -31,7 +31,10 @@ fn try_optional_chaining(expr: &Expr) -> Option<Expr> {
 /// Handle: `(obj === null || obj === void 0) ? void 0 : obj.access`  →  `obj?.access`
 /// Also handles assignment form: `(tmp = expr) === null || tmp === void 0 ? void 0 : tmp.access`
 fn try_ternary_optional_chain(expr: &Expr) -> Option<Expr> {
-    let Expr::Cond(CondExpr { test, cons, alt, .. }) = expr else {
+    let Expr::Cond(CondExpr {
+        test, cons, alt, ..
+    }) = expr
+    else {
         return None;
     };
 
@@ -41,7 +44,10 @@ fn try_ternary_optional_chain(expr: &Expr) -> Option<Expr> {
     }
 
     // test must be `x === null || x === void 0`
-    let NullCheckResult { value: checked, real_value } = extract_null_check(test)?;
+    let NullCheckResult {
+        value: checked,
+        real_value,
+    } = extract_null_check(test)?;
 
     if let Some(real_rhs) = real_value {
         // Assignment form: `checked` is `tmp`, `real_rhs` is the original expr
@@ -58,9 +64,7 @@ fn try_ternary_optional_chain(expr: &Expr) -> Option<Expr> {
 fn make_optional_chain(base: Expr, access: &Expr) -> Option<Expr> {
     match access {
         // x.prop → x?.prop
-        Expr::Member(MemberExpr { obj, prop, .. })
-            if exprs_structurally_equal(obj, &base) =>
-        {
+        Expr::Member(MemberExpr { obj, prop, .. }) if exprs_structurally_equal(obj, &base) => {
             Some(Expr::OptChain(OptChainExpr {
                 span: DUMMY_SP,
                 optional: true,
@@ -114,11 +118,7 @@ fn make_optional_chain(base: Expr, access: &Expr) -> Option<Expr> {
 /// Build an optional chain for the assignment temp-var case.
 /// `tmp` is the temp variable expr, `real_rhs` is what it was assigned from.
 /// `access` should use `tmp` as its object; we replace `tmp` with `real_rhs` in the output.
-fn make_optional_chain_replacing(
-    tmp: &Expr,
-    real_rhs: &Expr,
-    access: &Expr,
-) -> Option<Expr> {
+fn make_optional_chain_replacing(tmp: &Expr, real_rhs: &Expr, access: &Expr) -> Option<Expr> {
     match access {
         Expr::Member(MemberExpr { obj, prop, .. }) if exprs_structurally_equal(obj, tmp) => {
             Some(Expr::OptChain(OptChainExpr {
@@ -219,7 +219,10 @@ fn extract_null_check(expr: &Expr) -> Option<NullCheckResult> {
 
 /// Extract from `x !== null && x !== void 0`.
 fn extract_null_single(expr: &Expr) -> Option<Box<Expr>> {
-    let Expr::Bin(BinExpr { op, left, right, .. }) = expr else {
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = expr
+    else {
         return None;
     };
     if !matches!(op, BinaryOp::EqEqEq | BinaryOp::EqEq) {
@@ -235,7 +238,10 @@ fn extract_null_single(expr: &Expr) -> Option<Box<Expr>> {
 }
 
 fn extract_undefined_single(expr: &Expr) -> Option<Box<Expr>> {
-    let Expr::Bin(BinExpr { op, left, right, .. }) = expr else {
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = expr
+    else {
         return None;
     };
     if !matches!(op, BinaryOp::EqEqEq | BinaryOp::EqEq) {

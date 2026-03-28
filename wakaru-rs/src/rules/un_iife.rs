@@ -2,7 +2,7 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr,
-    ExprOrSpread, Function, Ident, Lit, Pat, Param, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ExprOrSpread, Function, Ident, Lit, Param, Pat, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -54,28 +54,24 @@ fn try_simplify_arrow_expr_iife(call: &CallExpr) -> Option<Box<Expr>> {
 
 fn process_iife(call: &mut CallExpr) {
     match &mut call.callee {
-        Callee::Expr(callee_expr) => {
-            match callee_expr.as_mut() {
+        Callee::Expr(callee_expr) => match callee_expr.as_mut() {
+            Expr::Fn(fn_expr) => {
+                process_fn_iife(&mut fn_expr.function, &mut call.args);
+            }
+            Expr::Arrow(arrow_expr) => {
+                process_arrow_iife(arrow_expr, &mut call.args);
+            }
+            Expr::Paren(paren) => match paren.expr.as_mut() {
                 Expr::Fn(fn_expr) => {
                     process_fn_iife(&mut fn_expr.function, &mut call.args);
                 }
                 Expr::Arrow(arrow_expr) => {
                     process_arrow_iife(arrow_expr, &mut call.args);
                 }
-                Expr::Paren(paren) => {
-                    match paren.expr.as_mut() {
-                        Expr::Fn(fn_expr) => {
-                            process_fn_iife(&mut fn_expr.function, &mut call.args);
-                        }
-                        Expr::Arrow(arrow_expr) => {
-                            process_arrow_iife(arrow_expr, &mut call.args);
-                        }
-                        _ => {}
-                    }
-                }
                 _ => {}
-            }
-        }
+            },
+            _ => {}
+        },
         _ => {}
     }
 }
@@ -271,7 +267,6 @@ fn pat_ident(pat: &Pat) -> Option<&Ident> {
         None
     }
 }
-
 
 fn make_const_decl(name: Atom, binding_ctxt: SyntaxContext, lit: Lit) -> Stmt {
     Stmt::Decl(Decl::Var(Box::new(VarDecl {

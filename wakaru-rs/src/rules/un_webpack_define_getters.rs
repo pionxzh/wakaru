@@ -4,8 +4,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     Bool, CallExpr, Callee, Decl, Expr, ExprOrSpread, ExprStmt, Ident, IdentName, KeyValueProp,
-    Lit, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, Stmt,
-    Str, VarDeclarator,
+    Lit, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, Stmt, Str,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -137,7 +137,8 @@ fn collect_require_d_descriptors_module(
         let ModuleItem::Stmt(stmt) = &items[index] else {
             break;
         };
-        let Some((name, getter)) = extract_require_d_descriptor(stmt, target, unresolved_mark) else {
+        let Some((name, getter)) = extract_require_d_descriptor(stmt, target, unresolved_mark)
+        else {
             break;
         };
         if !seen.insert(name.clone()) {
@@ -161,7 +162,8 @@ fn collect_require_d_descriptors_stmt(
     let mut index = start;
 
     while index < stmts.len() {
-        let Some((name, getter)) = extract_require_d_descriptor(&stmts[index], target, unresolved_mark)
+        let Some((name, getter)) =
+            extract_require_d_descriptor(&stmts[index], target, unresolved_mark)
         else {
             break;
         };
@@ -232,9 +234,7 @@ fn extract_require_d_descriptor(
     let Expr::Ident(require_ident) = member.obj.as_ref() else {
         return None;
     };
-    if require_ident.sym.as_ref() != "require"
-        || require_ident.ctxt.outer() != unresolved_mark
-    {
+    if require_ident.sym.as_ref() != "require" || require_ident.ctxt.outer() != unresolved_mark {
         return None;
     }
     let swc_core::ecma::ast::MemberProp::Ident(prop) = &member.prop else {

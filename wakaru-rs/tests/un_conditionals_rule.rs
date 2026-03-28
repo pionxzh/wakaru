@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::UnConditionals;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::UnConditionals;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnConditionals)
@@ -173,4 +173,3 @@ if (arguments.length > 1) {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
-

@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::UnInfinity;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::UnInfinity;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnInfinity)
@@ -31,5 +31,3 @@ const g = [0 / 0, Infinity];
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
-
-

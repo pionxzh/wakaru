@@ -1,7 +1,5 @@
 use swc_core::common::DUMMY_SP;
-use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, Expr, ExprStmt, ModuleItem, Stmt,
-};
+use swc_core::ecma::ast::{AssignExpr, AssignOp, AssignTarget, Expr, ExprStmt, ModuleItem, Stmt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 pub struct UnAssignmentMerging;

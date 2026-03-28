@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::UnCurlyBraces;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::UnCurlyBraces;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnCurlyBraces)
@@ -144,4 +144,3 @@ if (a) {
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
-

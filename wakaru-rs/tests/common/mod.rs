@@ -68,7 +68,10 @@ pub fn assert_eq_normalized(actual: &str, expected: &str) {
 }
 
 fn parse_module_with_filename(code: &str, filename: &str, cm: Lrc<SourceMap>) -> Module {
-    let fm = cm.new_source_file(FileName::Custom(filename.to_string()).into(), code.to_string());
+    let fm = cm.new_source_file(
+        FileName::Custom(filename.to_string()).into(),
+        code.to_string(),
+    );
     let lexer = Lexer::new(
         Syntax::Es(EsSyntax {
             jsx: true,
@@ -107,4 +110,3 @@ fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> String {
     }
     String::from_utf8(output).expect("normalization output is not utf-8")
 }
-

@@ -1,6 +1,5 @@
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmtOrExpr, Expr, ExprStmt, Function, Lit, ReturnStmt, Stmt, UnaryExpr,
-    UnaryOp,
+    ArrowExpr, BlockStmtOrExpr, Expr, ExprStmt, Function, Lit, ReturnStmt, Stmt, UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 

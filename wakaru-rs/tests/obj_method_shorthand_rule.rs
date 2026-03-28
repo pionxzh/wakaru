@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::ObjMethodShorthand;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::ObjMethodShorthand;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| ObjMethodShorthand)
@@ -128,4 +128,3 @@ const x = {123: function() {}};
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
-

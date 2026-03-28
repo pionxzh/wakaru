@@ -15,7 +15,8 @@ fn decompile_handles_existing_bundled_fixtures() {
             .unwrap_or("index.js")
             .to_string();
 
-        let output = decompile(&input, DecompileOptions { filename }).expect("decompile should succeed");
+        let output =
+            decompile(&input, DecompileOptions { filename }).expect("decompile should succeed");
         assert!(
             !output.trim().is_empty(),
             "output should not be empty for {}",
@@ -66,7 +67,9 @@ fn decompile_parses_jsx_in_js_files() {
 }
 
 fn bundled_fixture_paths() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("testcases");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("testcases");
     let mut paths = Vec::new();
 
     for entry in fs::read_dir(root).expect("testcases should exist") {
@@ -80,4 +83,3 @@ fn bundled_fixture_paths() -> Vec<PathBuf> {
     paths.sort();
     paths
 }
-

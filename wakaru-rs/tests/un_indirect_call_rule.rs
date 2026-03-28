@@ -57,5 +57,3 @@ r.validate(x);
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
-
-

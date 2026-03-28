@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::SmartInline;
 use common::{assert_eq_normalized, render_pipeline, render_rule};
+use wakaru_rs::rules::SmartInline;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| SmartInline)
@@ -232,4 +232,3 @@ defineProperty(target, key, desc);
     let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
-

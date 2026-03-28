@@ -236,4 +236,3 @@ fn bracket_notation_module_not_transformed() {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
-

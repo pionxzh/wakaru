@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    Decl, DefaultDecl, Ident, ImportSpecifier, MemberProp, Module, ModuleDecl,
-    ModuleExportName, ModuleItem, ObjectPatProp, Pat, PropName, Stmt,
+    Decl, DefaultDecl, Ident, ImportSpecifier, MemberProp, Module, ModuleDecl, ModuleExportName,
+    ModuleItem, ObjectPatProp, Pat, PropName, Stmt,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -20,15 +20,21 @@ impl VisitMut for UnImportRename {
         let mut renames: Vec<(BindingId, Atom)> = Vec::new();
 
         for item in &module.body {
-            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else { continue };
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+                continue;
+            };
             for spec in &import.specifiers {
-                let ImportSpecifier::Named(named) = spec else { continue };
+                let ImportSpecifier::Named(named) = spec else {
+                    continue;
+                };
                 let local = named.local.sym.clone();
                 let imported: Atom = match &named.imported {
                     Some(ModuleExportName::Ident(i)) => i.sym.clone(),
                     _ => continue, // skip Str exports and shorthand
                 };
-                if imported == local { continue; }
+                if imported == local {
+                    continue;
+                }
 
                 let target = generate_unique_name(imported, &all_names);
                 all_names.insert(target.clone());
@@ -43,9 +49,13 @@ impl VisitMut for UnImportRename {
 
         // Clean up import { foo as foo } → import { foo }
         for item in &mut module.body {
-            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else { continue };
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+                continue;
+            };
             for spec in &mut import.specifiers {
-                let ImportSpecifier::Named(named) = spec else { continue };
+                let ImportSpecifier::Named(named) = spec else {
+                    continue;
+                };
                 let is_same = match &named.imported {
                     Some(ModuleExportName::Ident(i)) => i.sym == named.local.sym,
                     Some(ModuleExportName::Str(_)) => false, // keep Str exports as-is
@@ -80,9 +90,15 @@ fn collect_module_names(module: &Module) -> HashSet<Atom> {
             ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
                 for spec in &import.specifiers {
                     match spec {
-                        ImportSpecifier::Named(n) => { names.insert(n.local.sym.clone()); }
-                        ImportSpecifier::Default(d) => { names.insert(d.local.sym.clone()); }
-                        ImportSpecifier::Namespace(n) => { names.insert(n.local.sym.clone()); }
+                        ImportSpecifier::Named(n) => {
+                            names.insert(n.local.sym.clone());
+                        }
+                        ImportSpecifier::Default(d) => {
+                            names.insert(d.local.sym.clone());
+                        }
+                        ImportSpecifier::Namespace(n) => {
+                            names.insert(n.local.sym.clone());
+                        }
                     }
                 }
             }
@@ -92,17 +108,19 @@ fn collect_module_names(module: &Module) -> HashSet<Atom> {
             ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(e)) => {
                 collect_decl_names(&e.decl, &mut names);
             }
-            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(e)) => {
-                match &e.decl {
-                    DefaultDecl::Fn(f) => {
-                        if let Some(id) = &f.ident { names.insert(id.sym.clone()); }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(e)) => match &e.decl {
+                DefaultDecl::Fn(f) => {
+                    if let Some(id) = &f.ident {
+                        names.insert(id.sym.clone());
                     }
-                    DefaultDecl::Class(c) => {
-                        if let Some(id) = &c.ident { names.insert(id.sym.clone()); }
-                    }
-                    _ => {}
                 }
-            }
+                DefaultDecl::Class(c) => {
+                    if let Some(id) = &c.ident {
+                        names.insert(id.sym.clone());
+                    }
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -112,25 +130,37 @@ fn collect_module_names(module: &Module) -> HashSet<Atom> {
 fn collect_decl_names(decl: &Decl, names: &mut HashSet<Atom>) {
     match decl {
         Decl::Var(var) => {
-            for d in &var.decls { collect_pat_names(&d.name, names); }
+            for d in &var.decls {
+                collect_pat_names(&d.name, names);
+            }
         }
-        Decl::Fn(f) => { names.insert(f.ident.sym.clone()); }
-        Decl::Class(c) => { names.insert(c.ident.sym.clone()); }
+        Decl::Fn(f) => {
+            names.insert(f.ident.sym.clone());
+        }
+        Decl::Class(c) => {
+            names.insert(c.ident.sym.clone());
+        }
         _ => {}
     }
 }
 
 fn collect_pat_names(pat: &Pat, names: &mut HashSet<Atom>) {
     match pat {
-        Pat::Ident(bi) => { names.insert(bi.id.sym.clone()); }
+        Pat::Ident(bi) => {
+            names.insert(bi.id.sym.clone());
+        }
         Pat::Array(arr) => {
-            for elem in arr.elems.iter().flatten() { collect_pat_names(elem, names); }
+            for elem in arr.elems.iter().flatten() {
+                collect_pat_names(elem, names);
+            }
         }
         Pat::Object(obj) => {
             for prop in &obj.props {
                 match prop {
                     ObjectPatProp::KeyValue(kv) => collect_pat_names(&kv.value, names),
-                    ObjectPatProp::Assign(a) => { names.insert(a.key.id.sym.clone()); }
+                    ObjectPatProp::Assign(a) => {
+                        names.insert(a.key.id.sym.clone());
+                    }
                     ObjectPatProp::Rest(r) => collect_pat_names(&r.arg, names),
                 }
             }

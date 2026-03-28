@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::UnNullishCoalescing;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::UnNullishCoalescing;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnNullishCoalescing)
@@ -52,4 +52,3 @@ fn does_not_transform_mismatched_variable() {
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
-

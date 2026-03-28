@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::UnAssignmentMerging;
 use common::{assert_eq_normalized, render_pipeline, render_rule};
+use wakaru_rs::rules::UnAssignmentMerging;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnAssignmentMerging)
@@ -71,4 +71,3 @@ a = b = fn();
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
-

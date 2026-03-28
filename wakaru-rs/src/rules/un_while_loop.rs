@@ -17,9 +17,8 @@ impl VisitMut for UnWhileLoop {
                 update: None,
                 body,
             }) => {
-                let test_expr = test.unwrap_or_else(|| {
-                    Box::new(Expr::Lit(Lit::Bool(Bool { span, value: true })))
-                });
+                let test_expr = test
+                    .unwrap_or_else(|| Box::new(Expr::Lit(Lit::Bool(Bool { span, value: true }))));
                 Stmt::While(WhileStmt {
                     span,
                     test: test_expr,

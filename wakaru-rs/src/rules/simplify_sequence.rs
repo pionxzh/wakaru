@@ -97,7 +97,10 @@ fn split_stmt(stmt: Stmt) -> Vec<Stmt> {
                 })],
             }
         }
-        Stmt::Return(ReturnStmt { span, arg: Some(arg) }) => split_return(span, arg),
+        Stmt::Return(ReturnStmt {
+            span,
+            arg: Some(arg),
+        }) => split_return(span, arg),
         Stmt::Throw(ThrowStmt { span, arg }) => split_throw(span, arg),
         Stmt::If(if_stmt) => split_if(if_stmt),
         Stmt::Switch(switch_stmt) => split_switch(switch_stmt),
@@ -113,10 +116,7 @@ fn split_stmt(stmt: Stmt) -> Vec<Stmt> {
 // Assignment-member pattern: (a = expr)[prop] = val  →  a = expr; a[prop] = val
 // ---------------------------------------------------------------------------
 
-fn try_split_assign_member(
-    expr: &Expr,
-    span: swc_core::common::Span,
-) -> Option<Vec<Stmt>> {
+fn try_split_assign_member(expr: &Expr, span: swc_core::common::Span) -> Option<Vec<Stmt>> {
     let Expr::Assign(outer) = expr else {
         return None;
     };
@@ -226,13 +226,19 @@ fn split_for_stmt(mut for_stmt: ForStmt) -> Vec<Stmt> {
                     for_stmt.init = Some(VarDeclOrExpr::Expr(last));
                 } else {
                     for p in pre {
-                        prefix.push(Stmt::Expr(ExprStmt { span: for_stmt.span, expr: p }));
+                        prefix.push(Stmt::Expr(ExprStmt {
+                            span: for_stmt.span,
+                            expr: p,
+                        }));
                     }
                     // Keep last as init only if it's an assignment expression
                     if is_assign_expr(&last) {
                         for_stmt.init = Some(VarDeclOrExpr::Expr(last));
                     } else {
-                        prefix.push(Stmt::Expr(ExprStmt { span: for_stmt.span, expr: last }));
+                        prefix.push(Stmt::Expr(ExprStmt {
+                            span: for_stmt.span,
+                            expr: last,
+                        }));
                         // for_stmt.init stays None
                     }
                 }
@@ -311,7 +317,12 @@ fn split_for_in_stmt(mut stmt: ForInStmt) -> Vec<Stmt> {
     }
     let mut result: Vec<Stmt> = pre
         .into_iter()
-        .map(|e| Stmt::Expr(ExprStmt { span: stmt.span, expr: e }))
+        .map(|e| {
+            Stmt::Expr(ExprStmt {
+                span: stmt.span,
+                expr: e,
+            })
+        })
         .collect();
     result.push(Stmt::ForIn(stmt));
     result
@@ -327,7 +338,12 @@ fn split_for_of_stmt(mut stmt: ForOfStmt) -> Vec<Stmt> {
     }
     let mut result: Vec<Stmt> = pre
         .into_iter()
-        .map(|e| Stmt::Expr(ExprStmt { span: stmt.span, expr: e }))
+        .map(|e| {
+            Stmt::Expr(ExprStmt {
+                span: stmt.span,
+                expr: e,
+            })
+        })
         .collect();
     result.push(Stmt::ForOf(stmt));
     result
@@ -340,10 +356,16 @@ fn split_for_of_stmt(mut stmt: ForOfStmt) -> Vec<Stmt> {
 fn split_return(span: swc_core::common::Span, arg: Box<Expr>) -> Vec<Stmt> {
     let (prefix, last) = split_expr_seq(arg);
     if prefix.is_empty() {
-        return vec![Stmt::Return(ReturnStmt { span, arg: Some(last) })];
+        return vec![Stmt::Return(ReturnStmt {
+            span,
+            arg: Some(last),
+        })];
     }
     let mut stmts = expr_stmts(span, prefix);
-    stmts.push(Stmt::Return(ReturnStmt { span, arg: Some(last) }));
+    stmts.push(Stmt::Return(ReturnStmt {
+        span,
+        arg: Some(last),
+    }));
     stmts
 }
 
@@ -406,7 +428,9 @@ fn split_expr_seq(expr: Box<Expr>) -> (Vec<Box<Expr>>, Box<Expr>) {
         Expr::Paren(paren) => split_expr_seq(paren.expr),
         Expr::Seq(SeqExpr { mut exprs, .. }) => {
             if exprs.len() <= 1 {
-                let only = exprs.pop().expect("sequence expressions should be non-empty");
+                let only = exprs
+                    .pop()
+                    .expect("sequence expressions should be non-empty");
                 (Vec::new(), only)
             } else {
                 let last = exprs.pop().expect("sequence length checked");

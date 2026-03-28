@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::Exponent;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::Exponent;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| Exponent)
@@ -65,4 +65,3 @@ fn non_math_pow_not_converted() {
     let input = r#"const x = foo.pow(2, 3);"#;
     assert_eq_normalized(&apply(input), input);
 }
-

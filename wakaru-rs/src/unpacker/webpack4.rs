@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
+use swc_core::common::SyntaxContext;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, GLOBALS};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, CondExpr, Expr,
@@ -10,13 +11,11 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
-use swc_core::common::SyntaxContext;
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use crate::rules::apply_default_rules;
 use crate::unpacker::{UnpackResult, UnpackedModule};
-
 
 /// Removes `require.r(exports)` calls and converts `require.d(exports, "name", getter)` to
 /// `exports.name = val`. This normalizes webpack runtime helpers before applying rules.
@@ -76,12 +75,16 @@ impl WebpackRuntimeNormalizer {
     fn expand_stmt(&self, stmt: Stmt) -> Vec<Stmt> {
         if let Stmt::Expr(ExprStmt { expr, span }) = &stmt {
             if let Expr::Seq(seq) = &**expr {
-                return seq.exprs.iter().map(|e| {
-                    Stmt::Expr(ExprStmt {
-                        span: *span,
-                        expr: e.clone(),
+                return seq
+                    .exprs
+                    .iter()
+                    .map(|e| {
+                        Stmt::Expr(ExprStmt {
+                            span: *span,
+                            expr: e.clone(),
+                        })
                     })
-                }).collect();
+                    .collect();
             }
         }
         vec![stmt]
@@ -153,9 +156,10 @@ impl WebpackRuntimeNormalizer {
                     return None;
                 };
                 // name_str.value is Wtf8Atom; convert to Atom via &str
-                let export_name: Atom = name_str.value.as_str()
-                    .map(Atom::from)
-                    .unwrap_or_else(|| Atom::from(name_str.value.to_string_lossy().into_owned().as_str()));
+                let export_name: Atom =
+                    name_str.value.as_str().map(Atom::from).unwrap_or_else(|| {
+                        Atom::from(name_str.value.to_string_lossy().into_owned().as_str())
+                    });
 
                 // Third arg must be a getter function: function() { return val; } or () => val
                 let val_expr = extract_getter_value(&getter_arg.expr)?;
@@ -191,7 +195,8 @@ impl VisitMut for RequireIdRewriter<'_> {
         let Expr::Ident(callee_ident) = &**callee_expr else {
             return;
         };
-        if callee_ident.sym != self.require_sym || callee_ident.ctxt.outer() != self.unresolved_mark {
+        if callee_ident.sym != self.require_sym || callee_ident.ctxt.outer() != self.unresolved_mark
+        {
             return;
         }
         if call.args.len() != 1 || call.args[0].spread.is_some() {
@@ -262,13 +267,21 @@ impl RequireNRewriter {
         if call.args.len() != 1 || call.args[0].spread.is_some() {
             return None;
         }
-        let Callee::Expr(callee_expr) = &call.callee else { return None };
-        let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else { return None };
-        let Expr::Ident(obj_ident) = &**obj else { return None };
+        let Callee::Expr(callee_expr) = &call.callee else {
+            return None;
+        };
+        let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else {
+            return None;
+        };
+        let Expr::Ident(obj_ident) = &**obj else {
+            return None;
+        };
         if obj_ident.sym != self.require_sym || obj_ident.ctxt.outer() != self.unresolved_mark {
             return None;
         }
-        let MemberProp::Ident(prop_ident) = prop else { return None };
+        let MemberProp::Ident(prop_ident) = prop else {
+            return None;
+        };
         if prop_ident.sym.as_ref() != "n" {
             return None;
         }
@@ -452,9 +465,7 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
 fn try_extract_from_stmt_raw(stmt: &Stmt, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
     let call = match stmt {
         Stmt::Expr(ExprStmt { expr, .. }) => match &**expr {
-            Expr::Unary(u) if u.op == UnaryOp::Bang => {
-                extract_call_from_expr(&u.arg)?
-            }
+            Expr::Unary(u) if u.op == UnaryOp::Bang => extract_call_from_expr(&u.arg)?,
             other => extract_call_from_expr(other)?,
         },
         _ => return None,
@@ -468,9 +479,7 @@ fn try_extract_from_stmt(stmt: &Stmt, cm: Lrc<SourceMap>) -> Option<UnpackResult
     let call = match stmt {
         // `!function(...){...}([...])` — UnaryExpr with !
         Stmt::Expr(ExprStmt { expr, .. }) => match &**expr {
-            Expr::Unary(u) if u.op == UnaryOp::Bang => {
-                extract_call_from_expr(&u.arg)?
-            }
+            Expr::Unary(u) if u.op == UnaryOp::Bang => extract_call_from_expr(&u.arg)?,
             other => extract_call_from_expr(other)?,
         },
         _ => return None,
@@ -488,7 +497,11 @@ fn extract_call_from_expr(expr: &Expr) -> Option<&CallExpr> {
 
 /// Given a CallExpr that should be `bootstrapFn([module0, module1, ...])`, extract the modules.
 /// When `apply_rules` is false, `apply_default_rules` is skipped (raw output).
-fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bool) -> Option<UnpackResult> {
+fn extract_webpack4_modules(
+    call: &CallExpr,
+    cm: Lrc<SourceMap>,
+    apply_rules: bool,
+) -> Option<UnpackResult> {
     // Callee must be a FnExpr (the bootstrap function)
     let Callee::Expr(callee_expr) = &call.callee else {
         return None;
@@ -512,22 +525,27 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bo
     }
 
     // Each element should be a FnExpr (or null for holes)
-    let module_fns: Vec<Option<&FnExpr>> = array_lit.elems.iter().map(|elem| {
-        match elem {
-            Some(ExprOrSpread { expr, .. }) => {
-                if let Expr::Fn(fn_expr) = &**expr {
-                    Some(fn_expr)
-                } else {
-                    None
+    let module_fns: Vec<Option<&FnExpr>> = array_lit
+        .elems
+        .iter()
+        .map(|elem| {
+            match elem {
+                Some(ExprOrSpread { expr, .. }) => {
+                    if let Expr::Fn(fn_expr) = &**expr {
+                        Some(fn_expr)
+                    } else {
+                        None
+                    }
                 }
+                None => None, // array hole
             }
-            None => None, // array hole
-        }
-    }).collect();
+        })
+        .collect();
 
     // Validate: at least one function with at least 1 param
     let has_module_fn = module_fns.iter().any(|f| {
-        f.map(|fn_expr| !fn_expr.function.params.is_empty()).unwrap_or(false)
+        f.map(|fn_expr| !fn_expr.function.params.is_empty())
+            .unwrap_or(false)
     });
     if !has_module_fn {
         return None;
@@ -574,17 +592,22 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bo
 
         // Extract param names (up to 3: module, exports, require)
         let params = &fn_expr.function.params;
-        let param_syms: Vec<Atom> = params.iter().filter_map(|p| {
-            if let Pat::Ident(bi) = &p.pat {
-                Some(bi.sym.clone())
-            } else {
-                None
-            }
-        }).collect();
+        let param_syms: Vec<Atom> = params
+            .iter()
+            .filter_map(|p| {
+                if let Pat::Ident(bi) = &p.pat {
+                    Some(bi.sym.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         // Build renaming map: param[0] -> "module", param[1] -> "exports", param[2] -> "require"
         let standard_names = ["module", "exports", "require"];
-        let renames: Vec<(Atom, Atom)> = param_syms.iter().enumerate()
+        let renames: Vec<(Atom, Atom)> = param_syms
+            .iter()
+            .enumerate()
             .filter_map(|(i, sym)| {
                 let target = *standard_names.get(i)?;
                 if sym.as_ref() == target {
@@ -603,7 +626,10 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bo
 
         // Determine the (possibly renamed) exports/require symbols for normalizer
         let exports_sym = {
-            let orig = param_syms.get(1).cloned().unwrap_or_else(|| Atom::from("exports"));
+            let orig = param_syms
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| Atom::from("exports"));
             // After renaming, it will be "exports" if there's a rename, else whatever it was
             if renames.iter().any(|(old, _)| old == &orig) {
                 Atom::from("exports")
@@ -612,7 +638,10 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bo
             }
         };
         let require_sym = {
-            let orig = param_syms.get(2).cloned().unwrap_or_else(|| Atom::from("require"));
+            let orig = param_syms
+                .get(2)
+                .cloned()
+                .unwrap_or_else(|| Atom::from("require"));
             if renames.iter().any(|(old, _)| old == &orig) {
                 Atom::from("require")
             } else {
@@ -649,7 +678,10 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bo
         let post_rename_require_sym = if param_syms.get(2).map(|s| s.as_ref()) != Some("require") {
             Atom::from("require")
         } else {
-            param_syms.get(2).cloned().unwrap_or_else(|| Atom::from("require"))
+            param_syms
+                .get(2)
+                .cloned()
+                .unwrap_or_else(|| Atom::from("require"))
         };
         {
             let mut id_rewriter = RequireIdRewriter {

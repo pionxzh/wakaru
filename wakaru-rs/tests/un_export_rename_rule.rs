@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::UnExportRename;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::UnExportRename;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnExportRename)
@@ -126,4 +126,3 @@ console.log(StrictMode);
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
-

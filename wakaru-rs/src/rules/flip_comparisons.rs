@@ -7,7 +7,10 @@ impl VisitMut for FlipComparisons {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
-        if let Expr::Bin(BinExpr { op, left, right, .. }) = expr {
+        if let Expr::Bin(BinExpr {
+            op, left, right, ..
+        }) = expr
+        {
             if is_equality(*op) {
                 if is_flippable_literal_like(left) && !is_flippable_literal_like(right) {
                     std::mem::swap(left, right);
@@ -15,7 +18,10 @@ impl VisitMut for FlipComparisons {
                 return;
             }
 
-            if is_relational(*op) && is_flippable_literal_like(left) && !is_flippable_literal_like(right) {
+            if is_relational(*op)
+                && is_flippable_literal_like(left)
+                && !is_flippable_literal_like(right)
+            {
                 std::mem::swap(left, right);
                 *op = flipped_relational(*op);
             }
@@ -31,7 +37,10 @@ fn is_equality(op: BinaryOp) -> bool {
 }
 
 fn is_relational(op: BinaryOp) -> bool {
-    matches!(op, BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq)
+    matches!(
+        op,
+        BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq
+    )
 }
 
 fn flipped_relational(op: BinaryOp) -> BinaryOp {
@@ -52,8 +61,14 @@ fn is_flippable_literal_like(expr: &Expr) -> bool {
         | Expr::Lit(Lit::Str(_))
         | Expr::Lit(Lit::BigInt(_)) => true,
         Expr::Tpl(tpl) => tpl.exprs.is_empty(),
-        Expr::Ident(ident) => ident.sym == "undefined" || ident.sym == "NaN" || ident.sym == "Infinity",
-        Expr::Unary(UnaryExpr { op: UnaryOp::Void, arg, .. }) => {
+        Expr::Ident(ident) => {
+            ident.sym == "undefined" || ident.sym == "NaN" || ident.sym == "Infinity"
+        }
+        Expr::Unary(UnaryExpr {
+            op: UnaryOp::Void,
+            arg,
+            ..
+        }) => {
             matches!(&**arg, Expr::Lit(Lit::Num(_)))
         }
         Expr::Unary(UnaryExpr {

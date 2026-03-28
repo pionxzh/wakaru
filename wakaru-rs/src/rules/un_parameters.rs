@@ -3,7 +3,7 @@ use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignTarget, BinExpr, BinaryOp, BindingIdent,
     BlockStmt, BlockStmtOrExpr, Bool, Decl, Expr, Function, Ident, IfStmt, Lit, MemberExpr,
-    MemberProp, Number, Pat, Param, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, VarDeclKind,
+    MemberProp, Number, Param, Pat, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, VarDeclKind,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -55,10 +55,8 @@ fn process_pattern_a_params(params: &mut Vec<Param>, body: &mut BlockStmt) {
             // Find the matching parameter
             if let Some(param_idx) = find_plain_param_idx(params, &param_name) {
                 // Replace the param with an assignment pattern
-                let original_pat = std::mem::replace(
-                    &mut params[param_idx].pat,
-                    Pat::Invalid(Default::default()),
-                );
+                let original_pat =
+                    std::mem::replace(&mut params[param_idx].pat, Pat::Invalid(Default::default()));
                 params[param_idx].pat = Pat::Assign(AssignPat {
                     span: DUMMY_SP,
                     left: Box::new(original_pat),
@@ -85,10 +83,8 @@ fn process_pattern_a_arrow_params(params: &mut Vec<Pat>, body: &mut BlockStmt) {
 
         if let Some((param_name, default_val)) = extracted {
             if let Some(param_idx) = find_plain_pat_idx(params, &param_name) {
-                let original_pat = std::mem::replace(
-                    &mut params[param_idx],
-                    Pat::Invalid(Default::default()),
-                );
+                let original_pat =
+                    std::mem::replace(&mut params[param_idx], Pat::Invalid(Default::default()));
                 params[param_idx] = Pat::Assign(AssignPat {
                     span: DUMMY_SP,
                     left: Box::new(original_pat),
@@ -109,7 +105,10 @@ fn process_pattern_a_arrow_params(params: &mut Vec<Pat>, body: &mut BlockStmt) {
 /// - `if (a === void 0) { a = 1; }`
 /// - `if (void 0 === a) a = 1;`  (also handles `undefined`)
 fn extract_default_param_from_if(stmt: &Stmt) -> Option<(Atom, Box<Expr>)> {
-    let Stmt::If(IfStmt { test, cons, alt, .. }) = stmt else {
+    let Stmt::If(IfStmt {
+        test, cons, alt, ..
+    }) = stmt
+    else {
         return None;
     };
     if alt.is_some() {
@@ -126,7 +125,10 @@ fn extract_default_param_from_if(stmt: &Stmt) -> Option<(Atom, Box<Expr>)> {
 /// or `ident === undefined` or `undefined === ident`.
 /// Returns the identifier name if matched.
 fn extract_void0_check(expr: &Expr) -> Option<Atom> {
-    let Expr::Bin(BinExpr { op, left, right, .. }) = expr else {
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = expr
+    else {
         return None;
     };
     if *op != BinaryOp::EqEqEq {
@@ -151,7 +153,12 @@ fn extract_void0_check(expr: &Expr) -> Option<Atom> {
 
 fn is_void0_or_undefined(expr: &Expr) -> bool {
     // void 0 (or void <num>)
-    if let Expr::Unary(UnaryExpr { op: UnaryOp::Void, arg, .. }) = expr {
+    if let Expr::Unary(UnaryExpr {
+        op: UnaryOp::Void,
+        arg,
+        ..
+    }) = expr
+    {
         if matches!(arg.as_ref(), Expr::Lit(_)) {
             return true;
         }
@@ -186,7 +193,13 @@ fn extract_assign_from_cons(cons: &Stmt, param_name: &Atom) -> Option<Box<Expr>>
 }
 
 fn extract_assign_expr(expr: &Expr, param_name: &Atom) -> Option<Box<Expr>> {
-    let Expr::Assign(AssignExpr { op: AssignOp::Assign, left, right, .. }) = expr else {
+    let Expr::Assign(AssignExpr {
+        op: AssignOp::Assign,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
         return None;
     };
     let AssignTarget::Simple(SimpleAssignTarget::Ident(ident)) = left else {
@@ -268,7 +281,10 @@ fn extract_simple_arguments_optional(expr: &Expr) -> Option<usize> {
 /// Extract index N from `arguments.length > N && arguments[N] !== undefined`
 fn extract_arguments_cond_index(expr: &Expr) -> Option<usize> {
     let expr = strip_parens(expr);
-    let Expr::Bin(BinExpr { op, left, right, .. }) = expr else {
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = expr
+    else {
         return None;
     };
 
@@ -277,7 +293,13 @@ fn extract_arguments_cond_index(expr: &Expr) -> Option<usize> {
         let n = extract_arguments_length_threshold(left.as_ref())?;
 
         // Right side: `arguments[N] !== undefined` or `undefined !== arguments[N]`
-        let Expr::Bin(BinExpr { op: neq_op, left: rl, right: rr, .. }) = right.as_ref() else {
+        let Expr::Bin(BinExpr {
+            op: neq_op,
+            left: rl,
+            right: rr,
+            ..
+        }) = right.as_ref()
+        else {
             return None;
         };
         if *neq_op != BinaryOp::NotEqEq {
@@ -302,7 +324,10 @@ fn extract_arguments_cond_index(expr: &Expr) -> Option<usize> {
 
 fn extract_arguments_length_threshold(expr: &Expr) -> Option<usize> {
     let expr = strip_parens(expr);
-    let Expr::Bin(BinExpr { op, left, right, .. }) = expr else {
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = expr
+    else {
         return None;
     };
     match *op {
@@ -330,8 +355,18 @@ fn extract_arguments_default_expr(expr: &Expr) -> Option<(usize, Box<Expr>)> {
             }
             Some((param_idx, cond.alt.clone()))
         }
-        Expr::Bin(BinExpr { op: BinaryOp::LogicalOr, left, right, .. }) => {
-            let Expr::Unary(UnaryExpr { op: UnaryOp::Bang, arg, .. }) = left.as_ref() else {
+        Expr::Bin(BinExpr {
+            op: BinaryOp::LogicalOr,
+            left,
+            right,
+            ..
+        }) => {
+            let Expr::Unary(UnaryExpr {
+                op: UnaryOp::Bang,
+                arg,
+                ..
+            }) = left.as_ref()
+            else {
                 return None;
             };
             let param_idx = extract_arguments_cond_index(arg.as_ref())?;

@@ -25,10 +25,7 @@ fn webpack4_unpack_extracts_modules() {
 
     // Each module must have non-empty code
     for (filename, code) in &pairs {
-        assert!(
-            !code.trim().is_empty(),
-            "module {filename} has empty code"
-        );
+        assert!(!code.trim().is_empty(), "module {filename} has empty code");
     }
 
     // The entry module must exist

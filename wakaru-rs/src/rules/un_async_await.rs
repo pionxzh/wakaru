@@ -61,27 +61,46 @@ fn try_transform_generator(body: &mut BlockStmt) -> bool {
 }
 
 fn is_generator_return(stmt: &Stmt) -> bool {
-    let Stmt::Return(ret) = stmt else { return false };
+    let Stmt::Return(ret) = stmt else {
+        return false;
+    };
     let Some(arg) = &ret.arg else { return false };
-    let Expr::Call(call) = arg.as_ref() else { return false };
+    let Expr::Call(call) = arg.as_ref() else {
+        return false;
+    };
     callee_name(call) == Some("__generator".into())
 }
 
 fn extract_generator_args(stmt: Stmt) -> Option<(Atom, Vec<SwitchCase>)> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = *ret.arg?;
-    let Expr::Call(mut call) = arg else { return None };
-    if callee_name(&call) != Some("__generator".into()) { return None; }
-    if call.args.len() < 2 { return None; }
+    let Expr::Call(mut call) = arg else {
+        return None;
+    };
+    if callee_name(&call) != Some("__generator".into()) {
+        return None;
+    }
+    if call.args.len() < 2 {
+        return None;
+    }
 
     let fn_arg = *call.args.remove(1).expr;
-    let Expr::Fn(fn_expr) = fn_arg else { return None };
-    let state_name: Atom = fn_expr.function.params.first()
-        .and_then(|p| if let Pat::Ident(bi) = &p.pat { Some(bi.id.sym.clone()) } else { None })?;
+    let Expr::Fn(fn_expr) = fn_arg else {
+        return None;
+    };
+    let state_name: Atom = fn_expr.function.params.first().and_then(|p| {
+        if let Pat::Ident(bi) = &p.pat {
+            Some(bi.id.sym.clone())
+        } else {
+            None
+        }
+    })?;
     let body = fn_expr.function.body?;
     // First stmt should be a switch
     let switch = body.stmts.into_iter().next()?;
-    let Stmt::Switch(sw) = switch else { return None };
+    let Stmt::Switch(sw) = switch else {
+        return None;
+    };
     Some((state_name, sw.cases))
 }
 
@@ -108,10 +127,14 @@ fn decode_state_machine(state_name: Atom, cases: Vec<SwitchCase>) -> Vec<Stmt> {
                 trys.push(region);
                 continue;
             }
-            if is_state_label_assign(&state_name, stmt) { continue; }
+            if is_state_label_assign(&state_name, stmt) {
+                continue;
+            }
 
             if let Some(decoded) = decode_return_opcode(stmt) {
-                if let Some(s) = decoded { flat.push((idx, s)); }
+                if let Some(s) = decoded {
+                    flat.push((idx, s));
+                }
                 continue;
             }
 
@@ -130,7 +153,10 @@ fn decode_state_machine(state_name: Atom, cases: Vec<SwitchCase>) -> Vec<Stmt> {
             if is_catch_label(idx, &trys) {
                 let mut replacer = SentReplacer {
                     state_name: state_name.clone(),
-                    replacement: Box::new(Expr::Ident(Ident::new_no_ctxt("error".into(), DUMMY_SP))),
+                    replacement: Box::new(Expr::Ident(Ident::new_no_ctxt(
+                        "error".into(),
+                        DUMMY_SP,
+                    ))),
                 };
                 let mut s = stmt;
                 s.visit_mut_with(&mut replacer);
@@ -163,7 +189,10 @@ fn decode_state_machine(state_name: Atom, cases: Vec<SwitchCase>) -> Vec<Stmt> {
                 // No previous yield — replace sent with undefined
                 let mut replacer = SentReplacer {
                     state_name: state_name.clone(),
-                    replacement: Box::new(Expr::Ident(Ident::new_no_ctxt("undefined".into(), DUMMY_SP))),
+                    replacement: Box::new(Expr::Ident(Ident::new_no_ctxt(
+                        "undefined".into(),
+                        DUMMY_SP,
+                    ))),
                 };
                 let mut s = stmt;
                 s.visit_mut_with(&mut replacer);
@@ -193,7 +222,10 @@ fn extract_yield_from_stmt(stmt: &Stmt) -> Option<(Box<Expr>, bool)> {
     if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
         if let Expr::Yield(y) = expr.as_ref() {
             let arg = y.arg.clone().unwrap_or_else(|| {
-                Box::new(Expr::Ident(Ident::new_no_ctxt("undefined".into(), DUMMY_SP)))
+                Box::new(Expr::Ident(Ident::new_no_ctxt(
+                    "undefined".into(),
+                    DUMMY_SP,
+                )))
             });
             return Some((arg, y.delegate));
         }
@@ -227,17 +259,39 @@ fn numeric_case_test(case: &SwitchCase) -> Option<f64> {
 
 fn extract_trys_push(state_name: &Atom, stmt: &Stmt) -> Option<[Option<usize>; 4]> {
     // _a.trys.push([s, c, f, n])
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return None };
-    let Expr::Call(call) = expr.as_ref() else { return None };
-    let Expr::Member(callee_mem) = &**call.callee.as_expr()? else { return None };
-    let Expr::Member(outer_mem) = callee_mem.obj.as_ref() else { return None };
-    let Expr::Ident(obj_id) = outer_mem.obj.as_ref() else { return None };
-    if obj_id.sym != *state_name { return None; }
-    if !is_ident_prop(&outer_mem.prop, "trys") { return None; }
-    if !is_ident_prop(&callee_mem.prop, "push") { return None; }
-    if call.args.len() != 1 { return None; }
-    let Expr::Array(arr) = call.args[0].expr.as_ref() else { return None };
-    if arr.elems.len() != 4 { return None; }
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return None;
+    };
+    let Expr::Member(callee_mem) = &**call.callee.as_expr()? else {
+        return None;
+    };
+    let Expr::Member(outer_mem) = callee_mem.obj.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(obj_id) = outer_mem.obj.as_ref() else {
+        return None;
+    };
+    if obj_id.sym != *state_name {
+        return None;
+    }
+    if !is_ident_prop(&outer_mem.prop, "trys") {
+        return None;
+    }
+    if !is_ident_prop(&callee_mem.prop, "push") {
+        return None;
+    }
+    if call.args.len() != 1 {
+        return None;
+    }
+    let Expr::Array(arr) = call.args[0].expr.as_ref() else {
+        return None;
+    };
+    if arr.elems.len() != 4 {
+        return None;
+    }
     let region: [Option<usize>; 4] = std::array::from_fn(|i| {
         arr.elems[i].as_ref().and_then(|e| {
             if let Expr::Lit(swc_core::ecma::ast::Lit::Num(n)) = e.expr.as_ref() {
@@ -251,10 +305,18 @@ fn extract_trys_push(state_name: &Atom, stmt: &Stmt) -> Option<[Option<usize>; 4
 }
 
 fn is_state_label_assign(state_name: &Atom, stmt: &Stmt) -> bool {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return false };
-    let Expr::Assign(assign) = expr.as_ref() else { return false };
-    let Some(left_expr) = assign.left.as_simple().and_then(|s| s.as_member()) else { return false };
-    let Expr::Ident(id) = left_expr.obj.as_ref() else { return false };
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return false;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return false;
+    };
+    let Some(left_expr) = assign.left.as_simple().and_then(|s| s.as_member()) else {
+        return false;
+    };
+    let Expr::Ident(id) = left_expr.obj.as_ref() else {
+        return false;
+    };
     id.sym == *state_name && is_ident_prop(&left_expr.prop, "label")
 }
 
@@ -263,26 +325,41 @@ fn is_state_label_assign(state_name: &Atom, stmt: &Stmt) -> bool {
 fn decode_return_opcode(stmt: &Stmt) -> Option<Option<Stmt>> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = ret.arg.as_ref()?;
-    let Expr::Array(arr) = arg.as_ref() else { return None };
-    if arr.elems.is_empty() { return None; }
+    let Expr::Array(arr) = arg.as_ref() else {
+        return None;
+    };
+    if arr.elems.is_empty() {
+        return None;
+    }
     let opcode = match arr.elems[0].as_ref()?.expr.as_ref() {
         Expr::Lit(swc_core::ecma::ast::Lit::Num(n)) => n.value as u32,
         _ => return None,
     };
-    let argument = arr.elems.get(1).and_then(|e| e.as_ref()).map(|e| e.expr.clone());
+    let argument = arr
+        .elems
+        .get(1)
+        .and_then(|e| e.as_ref())
+        .map(|e| e.expr.clone());
 
     match opcode {
         2 => {
             // return(value?)
-            let s = argument.map(|a| Stmt::Return(swc_core::ecma::ast::ReturnStmt {
-                span: DUMMY_SP,
-                arg: Some(a),
-            }));
+            let s = argument.map(|a| {
+                Stmt::Return(swc_core::ecma::ast::ReturnStmt {
+                    span: DUMMY_SP,
+                    arg: Some(a),
+                })
+            });
             Some(s)
         }
         4 => {
             // yield(value)
-            let expr = argument.unwrap_or_else(|| Box::new(Expr::Ident(Ident::new_no_ctxt("undefined".into(), DUMMY_SP))));
+            let expr = argument.unwrap_or_else(|| {
+                Box::new(Expr::Ident(Ident::new_no_ctxt(
+                    "undefined".into(),
+                    DUMMY_SP,
+                )))
+            });
             Some(Some(Stmt::Expr(ExprStmt {
                 span: DUMMY_SP,
                 expr: Box::new(Expr::Yield(YieldExpr {
@@ -294,7 +371,12 @@ fn decode_return_opcode(stmt: &Stmt) -> Option<Option<Stmt>> {
         }
         5 => {
             // yield*(value)
-            let expr = argument.unwrap_or_else(|| Box::new(Expr::Ident(Ident::new_no_ctxt("undefined".into(), DUMMY_SP))));
+            let expr = argument.unwrap_or_else(|| {
+                Box::new(Expr::Ident(Ident::new_no_ctxt(
+                    "undefined".into(),
+                    DUMMY_SP,
+                )))
+            });
             Some(Some(Stmt::Expr(ExprStmt {
                 span: DUMMY_SP,
                 expr: Box::new(Expr::Yield(YieldExpr {
@@ -310,7 +392,10 @@ fn decode_return_opcode(stmt: &Stmt) -> Option<Option<Stmt>> {
 }
 
 fn stmt_uses_sent(state_name: &Atom, stmt: &Stmt) -> bool {
-    struct Finder { state_name: Atom, found: bool }
+    struct Finder {
+        state_name: Atom,
+        found: bool,
+    }
     impl swc_core::ecma::visit::Visit for Finder {
         fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
             if let Some(mem) = call.callee.as_expr().and_then(|e| e.as_member()) {
@@ -324,7 +409,10 @@ fn stmt_uses_sent(state_name: &Atom, stmt: &Stmt) -> bool {
             call.visit_children_with(self);
         }
     }
-    let mut f = Finder { state_name: state_name.clone(), found: false };
+    let mut f = Finder {
+        state_name: state_name.clone(),
+        found: false,
+    };
     swc_core::ecma::visit::VisitWith::visit_with(stmt, &mut f);
     f.found
 }
@@ -366,19 +454,31 @@ fn reconstruct_with_regions(label_stmts: Vec<Vec<Stmt>>, trys: &[[Option<usize>;
             let [_try_start, catch_start, finally_start, next] = *region;
 
             let try_end = catch_start.or(finally_start).unwrap_or(n);
-            let try_stmts: Vec<Stmt> = label_stmts[i..try_end.min(n)].iter().flatten().cloned().collect();
+            let try_stmts: Vec<Stmt> = label_stmts[i..try_end.min(n)]
+                .iter()
+                .flatten()
+                .cloned()
+                .collect();
 
             let catch_clause = if let Some(cs) = catch_start {
                 let catch_end = finally_start.or(next).unwrap_or(n);
                 let cs = cs.min(n);
-                let catch_stmts: Vec<Stmt> = label_stmts[cs..catch_end.min(n)].iter().flatten().cloned().collect();
+                let catch_stmts: Vec<Stmt> = label_stmts[cs..catch_end.min(n)]
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .collect();
                 Some(CatchClause {
                     span: DUMMY_SP,
                     param: Some(Pat::Ident(swc_core::ecma::ast::BindingIdent {
                         id: Ident::new_no_ctxt("error".into(), DUMMY_SP),
                         type_ann: None,
                     })),
-                    body: BlockStmt { span: DUMMY_SP, ctxt: Default::default(), stmts: catch_stmts },
+                    body: BlockStmt {
+                        span: DUMMY_SP,
+                        ctxt: Default::default(),
+                        stmts: catch_stmts,
+                    },
                 })
             } else {
                 None
@@ -387,15 +487,27 @@ fn reconstruct_with_regions(label_stmts: Vec<Vec<Stmt>>, trys: &[[Option<usize>;
             let finally_block = if let Some(fs) = finally_start {
                 let finally_end = next.unwrap_or(n);
                 let fs = fs.min(n);
-                let finally_stmts: Vec<Stmt> = label_stmts[fs..finally_end.min(n)].iter().flatten().cloned().collect();
-                Some(BlockStmt { span: DUMMY_SP, ctxt: Default::default(), stmts: finally_stmts })
+                let finally_stmts: Vec<Stmt> = label_stmts[fs..finally_end.min(n)]
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .collect();
+                Some(BlockStmt {
+                    span: DUMMY_SP,
+                    ctxt: Default::default(),
+                    stmts: finally_stmts,
+                })
             } else {
                 None
             };
 
             result.push(Stmt::Try(Box::new(TryStmt {
                 span: DUMMY_SP,
-                block: BlockStmt { span: DUMMY_SP, ctxt: Default::default(), stmts: try_stmts },
+                block: BlockStmt {
+                    span: DUMMY_SP,
+                    ctxt: Default::default(),
+                    stmts: try_stmts,
+                },
                 handler: catch_clause,
                 finalizer: finally_block,
             })));
@@ -447,21 +559,33 @@ fn try_transform_awaiter(body: &mut BlockStmt) -> bool {
 }
 
 fn is_awaiter_return(stmt: &Stmt) -> bool {
-    let Stmt::Return(ret) = stmt else { return false };
+    let Stmt::Return(ret) = stmt else {
+        return false;
+    };
     let Some(arg) = &ret.arg else { return false };
-    let Expr::Call(call) = arg.as_ref() else { return false };
+    let Expr::Call(call) = arg.as_ref() else {
+        return false;
+    };
     callee_name(call) == Some("__awaiter".into())
 }
 
 fn extract_awaiter_body(stmt: Stmt) -> Option<Vec<Stmt>> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = *ret.arg?;
-    let Expr::Call(mut call) = arg else { return None };
-    if callee_name(&call) != Some("__awaiter".into()) { return None; }
-    if call.args.len() < 4 { return None; }
+    let Expr::Call(mut call) = arg else {
+        return None;
+    };
+    if callee_name(&call) != Some("__awaiter".into()) {
+        return None;
+    }
+    if call.args.len() < 4 {
+        return None;
+    }
 
     let gen_fn_arg = *call.args.remove(3).expr;
-    let Expr::Fn(fn_expr) = gen_fn_arg else { return None };
+    let Expr::Fn(fn_expr) = gen_fn_arg else {
+        return None;
+    };
     let body = fn_expr.function.body?;
     Some(body.stmts)
 }
@@ -471,8 +595,16 @@ fn replace_yield_with_await(stmts: &mut Vec<Stmt>) {
     impl VisitMut for YieldToAwait {
         fn visit_mut_expr(&mut self, expr: &mut Expr) {
             if let Expr::Yield(y) = expr {
-                let arg = y.arg.take().unwrap_or_else(|| Box::new(Expr::Ident(Ident::new_no_ctxt("undefined".into(), DUMMY_SP))));
-                *expr = Expr::Await(AwaitExpr { span: DUMMY_SP, arg });
+                let arg = y.arg.take().unwrap_or_else(|| {
+                    Box::new(Expr::Ident(Ident::new_no_ctxt(
+                        "undefined".into(),
+                        DUMMY_SP,
+                    )))
+                });
+                *expr = Expr::Await(AwaitExpr {
+                    span: DUMMY_SP,
+                    arg,
+                });
                 return;
             }
             expr.visit_mut_children_with(self);

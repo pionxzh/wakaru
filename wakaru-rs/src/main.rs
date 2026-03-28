@@ -42,8 +42,9 @@ fn main() -> Result<()> {
         for (filename, code) in &pairs {
             let out_path = out_dir.join(filename);
             if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create output directory {}", parent.display()))?;
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create output directory {}", parent.display())
+                })?;
             }
             fs::write(&out_path, code)
                 .with_context(|| format!("failed to write {}", out_path.display()))?;

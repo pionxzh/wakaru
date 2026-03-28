@@ -1,14 +1,14 @@
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, BindingIdent, BlockStmt, Callee, Expr, Function, Ident, Lit, MemberExpr,
-    MemberProp, Number, Param, Pat, RestPat, Stmt, VarDeclOrExpr,
+    ArrowExpr, BindingIdent, BlockStmt, Callee, Expr, Function, Ident, Lit, MemberExpr, MemberProp,
+    Number, Param, Pat, RestPat, Stmt, VarDeclOrExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 /// Replaces `arguments[N]` / `arguments.length` patterns with a rest parameter
 /// `...args` and rewrites safe accesses to use `args`.
-/// 
+///
 /// Only fires when:
 /// - The function does not already have a rest parameter
 /// - All `arguments` usages are via subscript (`arguments[expr]`) or `.length`
@@ -61,17 +61,27 @@ impl VisitMut for ArgRest {
 /// ```
 fn detect_copy_var_name(body: &BlockStmt) -> Option<Atom> {
     body.stmts.iter().find_map(|stmt| {
-        let Stmt::For(for_stmt) = stmt else { return None };
-        let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else { return None };
+        let Stmt::For(for_stmt) = stmt else {
+            return None;
+        };
+        let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else {
+            return None;
+        };
         if init.decls.len() != 3 {
             return None;
         }
 
         // Decl 0: len = arguments.length
         let d0 = &init.decls[0];
-        let Pat::Ident(BindingIdent { id: len_id, .. }) = &d0.name else { return None };
-        let Expr::Member(m) = d0.init.as_deref()? else { return None };
-        let Expr::Ident(src) = m.obj.as_ref() else { return None };
+        let Pat::Ident(BindingIdent { id: len_id, .. }) = &d0.name else {
+            return None;
+        };
+        let Expr::Member(m) = d0.init.as_deref()? else {
+            return None;
+        };
+        let Expr::Ident(src) = m.obj.as_ref() else {
+            return None;
+        };
         if src.sym != "arguments" {
             return None;
         }
@@ -82,7 +92,9 @@ fn detect_copy_var_name(body: &BlockStmt) -> Option<Atom> {
 
         // Decl 1: copy = Array(len) or new Array(len)
         let d1 = &init.decls[1];
-        let Pat::Ident(BindingIdent { id: copy_id, .. }) = &d1.name else { return None };
+        let Pat::Ident(BindingIdent { id: copy_id, .. }) = &d1.name else {
+            return None;
+        };
 
         let is_array_ctor = |sym: &Atom| sym == "Array";
         let one_len_arg = |args: &[swc_core::ecma::ast::ExprOrSpread]| -> bool {
@@ -93,14 +105,20 @@ fn detect_copy_var_name(body: &BlockStmt) -> Option<Atom> {
 
         match d1.init.as_deref()? {
             Expr::Call(call) => {
-                let Callee::Expr(callee) = &call.callee else { return None };
-                let Expr::Ident(id) = callee.as_ref() else { return None };
+                let Callee::Expr(callee) = &call.callee else {
+                    return None;
+                };
+                let Expr::Ident(id) = callee.as_ref() else {
+                    return None;
+                };
                 if !is_array_ctor(&id.sym) || !one_len_arg(&call.args) {
                     return None;
                 }
             }
             Expr::New(new_expr) => {
-                let Expr::Ident(id) = new_expr.callee.as_ref() else { return None };
+                let Expr::Ident(id) = new_expr.callee.as_ref() else {
+                    return None;
+                };
                 if !is_array_ctor(&id.sym) {
                     return None;
                 }

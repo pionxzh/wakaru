@@ -101,16 +101,14 @@ impl VisitMut for UnCurlyBraces {
         );
 
         *arrow.body = match taken {
-            BlockStmtOrExpr::Expr(expr) => {
-                BlockStmtOrExpr::BlockStmt(BlockStmt {
+            BlockStmtOrExpr::Expr(expr) => BlockStmtOrExpr::BlockStmt(BlockStmt {
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                stmts: vec![Stmt::Return(ReturnStmt {
                     span: DUMMY_SP,
-                    ctxt: Default::default(),
-                    stmts: vec![Stmt::Return(ReturnStmt {
-                        span: DUMMY_SP,
-                        arg: Some(expr),
-                    })],
-                })
-            }
+                    arg: Some(expr),
+                })],
+            }),
             other => other,
         };
     }

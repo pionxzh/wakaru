@@ -1,7 +1,7 @@
 mod common;
 
-use wakaru_rs::rules::UnminifyBooleans;
 use common::{assert_eq_normalized, render_rule};
+use wakaru_rs::rules::UnminifyBooleans;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnminifyBooleans)
@@ -30,5 +30,3 @@ var obj = {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
-
-

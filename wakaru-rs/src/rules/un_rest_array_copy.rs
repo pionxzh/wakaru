@@ -46,12 +46,16 @@ impl VisitMut for UnRestArrayCopy {
         // Bottom-up: handle nested functions first
         func.visit_mut_children_with(self);
 
-        let Some(rest) = get_rest_param(func) else { return };
+        let Some(rest) = get_rest_param(func) else {
+            return;
+        };
         let Some(body) = &mut func.body else { return };
 
         // There may be multiple copy loops (unlikely but possible)
         loop {
-            let Some((loop_idx, copy)) = find_copy_loop(body, &rest) else { break };
+            let Some((loop_idx, copy)) = find_copy_loop(body, &rest) else {
+                break;
+            };
 
             // Safety: if the copy var is referenced inside a nested scope that
             // rebinds the rest name, replacing it there would pick up the wrong
@@ -61,7 +65,10 @@ impl VisitMut for UnRestArrayCopy {
             }
 
             body.stmts.remove(loop_idx);
-            let mut replacer = IdentReplacer { from: copy, to: rest.clone() };
+            let mut replacer = IdentReplacer {
+                from: copy,
+                to: rest.clone(),
+            };
             body.visit_mut_with(&mut replacer);
         }
     }
@@ -84,9 +91,10 @@ fn get_rest_param(func: &Function) -> Option<BindingId> {
 /// Scan `body` for the Babel rest-args copy pattern whose source matches `rest`.
 /// Returns `(statement_index, copy_binding_id)` on the first match.
 fn find_copy_loop(body: &BlockStmt, rest: &BindingId) -> Option<(usize, BindingId)> {
-    body.stmts.iter().enumerate().find_map(|(i, stmt)| {
-        match_copy_loop(stmt, rest).map(|copy| (i, copy))
-    })
+    body.stmts
+        .iter()
+        .enumerate()
+        .find_map(|(i, stmt)| match_copy_loop(stmt, rest).map(|copy| (i, copy)))
 }
 
 /// Match:
@@ -97,10 +105,14 @@ fn find_copy_loop(body: &BlockStmt, rest: &BindingId) -> Option<(usize, BindingI
 /// ```
 /// where `REST` has the given `BindingId`. Returns the `BindingId` of `copy`.
 fn match_copy_loop(stmt: &Stmt, rest: &BindingId) -> Option<BindingId> {
-    let Stmt::For(for_stmt) = stmt else { return None };
+    let Stmt::For(for_stmt) = stmt else {
+        return None;
+    };
 
     // Init: var/let/const declaration with exactly 3 declarators
-    let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else { return None };
+    let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else {
+        return None;
+    };
     if init.decls.len() != 3 {
         return None;
     }
@@ -139,9 +151,15 @@ fn match_copy_loop(stmt: &Stmt, rest: &BindingId) -> Option<BindingId> {
 
 /// `len = src.length`  →  `(len_sym, src_binding_id)`
 fn extract_len_decl(decl: &VarDeclarator) -> Option<(Atom, BindingId)> {
-    let Pat::Ident(BindingIdent { id: len_id, .. }) = &decl.name else { return None };
-    let Expr::Member(member) = decl.init.as_deref()? else { return None };
-    let Expr::Ident(src_id) = member.obj.as_ref() else { return None };
+    let Pat::Ident(BindingIdent { id: len_id, .. }) = &decl.name else {
+        return None;
+    };
+    let Expr::Member(member) = decl.init.as_deref()? else {
+        return None;
+    };
+    let Expr::Ident(src_id) = member.obj.as_ref() else {
+        return None;
+    };
     if !matches!(&member.prop, MemberProp::Ident(p) if p.sym == "length") {
         return None;
     }
@@ -150,7 +168,9 @@ fn extract_len_decl(decl: &VarDeclarator) -> Option<(Atom, BindingId)> {
 
 /// `copy = Array(len)` or `copy = new Array(len)`  →  `copy_binding_id`
 fn extract_array_copy_decl(decl: &VarDeclarator, len_sym: &Atom) -> Option<BindingId> {
-    let Pat::Ident(BindingIdent { id: copy_id, .. }) = &decl.name else { return None };
+    let Pat::Ident(BindingIdent { id: copy_id, .. }) = &decl.name else {
+        return None;
+    };
 
     let is_array_ctor = |sym: &Atom| sym == "Array";
     let one_len_arg = |args: &[swc_core::ecma::ast::ExprOrSpread]| -> bool {
@@ -161,14 +181,20 @@ fn extract_array_copy_decl(decl: &VarDeclarator, len_sym: &Atom) -> Option<Bindi
 
     match decl.init.as_deref()? {
         Expr::Call(call) => {
-            let Callee::Expr(callee) = &call.callee else { return None };
-            let Expr::Ident(id) = callee.as_ref() else { return None };
+            let Callee::Expr(callee) = &call.callee else {
+                return None;
+            };
+            let Expr::Ident(id) = callee.as_ref() else {
+                return None;
+            };
             if !is_array_ctor(&id.sym) || !one_len_arg(&call.args) {
                 return None;
             }
         }
         Expr::New(new_expr) => {
-            let Expr::Ident(id) = new_expr.callee.as_ref() else { return None };
+            let Expr::Ident(id) = new_expr.callee.as_ref() else {
+                return None;
+            };
             if !is_array_ctor(&id.sym) {
                 return None;
             }
@@ -185,7 +211,9 @@ fn extract_array_copy_decl(decl: &VarDeclarator, len_sym: &Atom) -> Option<Bindi
 
 /// `idx = 0`  →  `idx_sym`
 fn extract_zero_init_decl(decl: &VarDeclarator) -> Option<Atom> {
-    let Pat::Ident(BindingIdent { id, .. }) = &decl.name else { return None };
+    let Pat::Ident(BindingIdent { id, .. }) = &decl.name else {
+        return None;
+    };
     match decl.init.as_deref()? {
         Expr::Lit(swc_core::ecma::ast::Lit::Num(n)) if n.value == 0.0 => {}
         _ => return None,
@@ -196,14 +224,18 @@ fn extract_zero_init_decl(decl: &VarDeclarator) -> Option<Atom> {
 // ── condition / update / body matchers ──────────────────────────────────────
 
 fn matches_lt_test(test: Option<&Expr>, idx_sym: &Atom, len_sym: &Atom) -> bool {
-    let Some(Expr::Bin(bin)) = test else { return false };
+    let Some(Expr::Bin(bin)) = test else {
+        return false;
+    };
     bin.op == swc_core::ecma::ast::BinaryOp::Lt
         && matches!(bin.left.as_ref(), Expr::Ident(id) if &id.sym == idx_sym)
         && matches!(bin.right.as_ref(), Expr::Ident(id) if &id.sym == len_sym)
 }
 
 fn matches_increment(update: Option<&Expr>, idx_sym: &Atom) -> bool {
-    let Some(Expr::Update(upd)) = update else { return false };
+    let Some(Expr::Update(upd)) = update else {
+        return false;
+    };
     upd.op == UpdateOp::PlusPlus
         && matches!(upd.arg.as_ref(), Expr::Ident(id) if &id.sym == idx_sym)
 }
@@ -216,33 +248,45 @@ fn matches_copy_body(body: &Stmt, copy_sym: &Atom, idx_sym: &Atom, src_sym: &Ato
             if block.stmts.len() != 1 {
                 return false;
             }
-            let Stmt::Expr(e) = &block.stmts[0] else { return false };
+            let Stmt::Expr(e) = &block.stmts[0] else {
+                return false;
+            };
             e.expr.as_ref()
         }
         _ => return false,
     };
 
-    let Expr::Assign(assign) = expr else { return false };
+    let Expr::Assign(assign) = expr else {
+        return false;
+    };
     if assign.op != AssignOp::Assign {
         return false;
     }
 
     // left: copy[idx]
-    let AssignTarget::Simple(SimpleAssignTarget::Member(lm)) = &assign.left else { return false };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(lm)) = &assign.left else {
+        return false;
+    };
     if !matches!(lm.obj.as_ref(), Expr::Ident(id) if &id.sym == copy_sym) {
         return false;
     }
-    let MemberProp::Computed(lp) = &lm.prop else { return false };
+    let MemberProp::Computed(lp) = &lm.prop else {
+        return false;
+    };
     if !matches!(lp.expr.as_ref(), Expr::Ident(id) if &id.sym == idx_sym) {
         return false;
     }
 
     // right: src[idx]
-    let Expr::Member(rm) = assign.right.as_ref() else { return false };
+    let Expr::Member(rm) = assign.right.as_ref() else {
+        return false;
+    };
     if !matches!(rm.obj.as_ref(), Expr::Ident(id) if &id.sym == src_sym) {
         return false;
     }
-    let MemberProp::Computed(rp) = &rm.prop else { return false };
+    let MemberProp::Computed(rp) = &rm.prop else {
+        return false;
+    };
     matches!(rp.expr.as_ref(), Expr::Ident(id) if &id.sym == idx_sym)
 }
 
@@ -290,7 +334,10 @@ impl Visit for EscapeChecker {
     }
 
     fn visit_function(&mut self, func: &Function) {
-        let rebinds = func.params.iter().any(|p| pat_binds_sym(&p.pat, &self.to_sym));
+        let rebinds = func
+            .params
+            .iter()
+            .any(|p| pat_binds_sym(&p.pat, &self.to_sym));
         self.with_scope(rebinds, |s| func.visit_children_with(s));
     }
 
@@ -335,7 +382,11 @@ impl VisitMut for IdentReplacer {
     }
 
     fn visit_mut_function(&mut self, func: &mut Function) {
-        if func.params.iter().any(|p| pat_binds_sym(&p.pat, &self.to.0)) {
+        if func
+            .params
+            .iter()
+            .any(|p| pat_binds_sym(&p.pat, &self.to.0))
+        {
             return; // to is rebound — inner references resolve to a different binding
         }
         func.visit_mut_children_with(self);
