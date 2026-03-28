@@ -10,16 +10,48 @@ import l from "./module-9.js";
 import w from "./module-10.js";
 import effects from "./module-17.js";
 export const utils = {};
-require.d(utils, "TASK", ()=>o.e);
-require.d(utils, "SAGA_ACTION", ()=>o.c);
-require.d(utils, "noop", ()=>o.u);
-require.d(utils, "is", ()=>o.q);
-require.d(utils, "deferred", ()=>o.l);
-require.d(utils, "arrayOfDeffered", ()=>o.g);
-require.d(utils, "createMockTask", ()=>o.j);
-require.d(utils, "cloneableGenerator", ()=>o.i);
-require.d(utils, "asEffect", ()=>u.d);
-require.d(utils, "CHANNEL_END", ()=>d);
+Object.defineProperties(utils, {
+    TASK: {
+        enumerable: true,
+        get: ()=>o.e
+    },
+    SAGA_ACTION: {
+        enumerable: true,
+        get: ()=>o.c
+    },
+    noop: {
+        enumerable: true,
+        get: ()=>o.u
+    },
+    is: {
+        enumerable: true,
+        get: ()=>o.q
+    },
+    deferred: {
+        enumerable: true,
+        get: ()=>o.l
+    },
+    arrayOfDeffered: {
+        enumerable: true,
+        get: ()=>o.g
+    },
+    createMockTask: {
+        enumerable: true,
+        get: ()=>o.j
+    },
+    cloneableGenerator: {
+        enumerable: true,
+        get: ()=>o.i
+    },
+    asEffect: {
+        enumerable: true,
+        get: ()=>u.d
+    },
+    CHANNEL_END: {
+        enumerable: true,
+        get: ()=>d
+    }
+});
 const c = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
