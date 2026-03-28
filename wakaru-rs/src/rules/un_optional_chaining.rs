@@ -25,11 +25,6 @@ fn try_optional_chaining(expr: &Expr) -> Option<Expr> {
         return Some(result);
     }
 
-    // Pattern: `x !== null && x !== void 0 && x.access`
-    if let Some(result) = try_logical_and_optional_chain(expr) {
-        return Some(result);
-    }
-
     None
 }
 
@@ -57,25 +52,6 @@ fn try_ternary_optional_chain(expr: &Expr) -> Option<Expr> {
 
     // Plain form
     make_optional_chain(*checked, alt)
-}
-
-/// Handle: `x !== null && x !== void 0 && x.access`  →  `x?.access`
-fn try_logical_and_optional_chain(expr: &Expr) -> Option<Expr> {
-    let Expr::Bin(BinExpr {
-        op: BinaryOp::LogicalAnd,
-        left,
-        right,
-        ..
-    }) = expr
-    else {
-        return None;
-    };
-
-    // left must be `x !== null && x !== void 0`
-    let checked = extract_not_null_check(left)?;
-
-    // right is the access expression
-    make_optional_chain(*checked, right)
 }
 
 /// Build `base?.prop` or `base?.method(...)` where `access` uses `base` as its object.
@@ -242,27 +218,6 @@ fn extract_null_check(expr: &Expr) -> Option<NullCheckResult> {
 }
 
 /// Extract from `x !== null && x !== void 0`.
-fn extract_not_null_check(expr: &Expr) -> Option<Box<Expr>> {
-    let Expr::Bin(BinExpr {
-        op: BinaryOp::LogicalAnd,
-        left,
-        right,
-        ..
-    }) = expr
-    else {
-        return None;
-    };
-
-    let left_val = extract_not_null_single(left)?;
-    let right_val = extract_not_undefined_single(right)?;
-
-    if !exprs_structurally_equal(&left_val, &right_val) {
-        return None;
-    }
-
-    Some(left_val)
-}
-
 fn extract_null_single(expr: &Expr) -> Option<Box<Expr>> {
     let Expr::Bin(BinExpr { op, left, right, .. }) = expr else {
         return None;
@@ -284,38 +239,6 @@ fn extract_undefined_single(expr: &Expr) -> Option<Box<Expr>> {
         return None;
     };
     if !matches!(op, BinaryOp::EqEqEq | BinaryOp::EqEq) {
-        return None;
-    }
-    if is_undefined(right) {
-        return Some(left.clone());
-    }
-    if is_undefined(left) {
-        return Some(right.clone());
-    }
-    None
-}
-
-fn extract_not_null_single(expr: &Expr) -> Option<Box<Expr>> {
-    let Expr::Bin(BinExpr { op, left, right, .. }) = expr else {
-        return None;
-    };
-    if !matches!(op, BinaryOp::NotEqEq | BinaryOp::NotEq) {
-        return None;
-    }
-    if matches!(&**right, Expr::Lit(Lit::Null(_))) {
-        return Some(left.clone());
-    }
-    if matches!(&**left, Expr::Lit(Lit::Null(_))) {
-        return Some(right.clone());
-    }
-    None
-}
-
-fn extract_not_undefined_single(expr: &Expr) -> Option<Box<Expr>> {
-    let Expr::Bin(BinExpr { op, left, right, .. }) = expr else {
-        return None;
-    };
-    if !matches!(op, BinaryOp::NotEqEq | BinaryOp::NotEq) {
         return None;
     }
     if is_undefined(right) {

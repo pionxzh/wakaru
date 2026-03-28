@@ -35,11 +35,10 @@ fn transforms_temp_variable_assignment_form() {
 }
 
 #[test]
-fn transforms_logical_and_form() {
+fn logical_and_form_stays_as_is() {
     let input = r#"x !== null && x !== void 0 && x.foo"#;
-    let expected = r#"x?.foo"#;
     let output = render(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, r#"x !== null && x !== undefined && x.foo"#);
 }
 
 #[test]

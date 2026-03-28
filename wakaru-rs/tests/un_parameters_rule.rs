@@ -108,24 +108,20 @@ const test = (a = 1, b = 2) => {};
     assert_eq_normalized(&apply(input), expected);
 }
 
-// --- or-assignment pattern ---
+// --- falsy-coalescing patterns are intentionally not rewritten ---
 
 #[test]
-fn or_assignment_becomes_default_param() {
-    // `a = a || fallback` is a classic pre-ES6 default parameter idiom
+fn or_assignment_stays_as_is() {
     let input = r#"
 function foo(a) {
     a = a || 2;
 }
 "#;
-    let expected = r#"
-function foo(a = 2) {}
-"#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]
-fn or_assignment_multiple_params() {
+fn or_assignment_multiple_params_stay_as_is() {
     let input = r#"
 function foo(a, b, c) {
     a = a || "hello";
@@ -133,26 +129,19 @@ function foo(a, b, c) {
     c = c || [];
 }
 "#;
-    let expected = r#"
-function foo(a = "hello", b = {}, c = []) {}
-"#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&apply(input), input);
 }
 
 // --- ternary-assignment pattern ---
 
 #[test]
-fn ternary_self_check_becomes_default_param() {
-    // `a = a ? a : fallback` is equivalent to `a = a || fallback` for default params
+fn ternary_self_check_stays_as_is() {
     let input = r#"
 function foo(a) {
     a = a ? a : 4;
 }
 "#;
-    let expected = r#"
-function foo(a = 4) {}
-"#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&apply(input), input);
 }
 
 // --- known-broken semantic regressions ---

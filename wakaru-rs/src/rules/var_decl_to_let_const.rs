@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
@@ -201,8 +201,7 @@ fn collect_block_escaping_vars_module(items: &[ModuleItem]) -> HashSet<BindingId
     if block_declared.is_empty() {
         return HashSet::new();
     }
-    let outer_refs = collect_outer_refs_module(items);
-    block_declared.intersection(&outer_refs).cloned().collect()
+    collect_outside_decl_block_refs_module(items, &block_declared)
 }
 
 fn collect_block_escaping_vars_stmts(stmts: &[Stmt]) -> HashSet<BindingId> {
@@ -210,42 +209,52 @@ fn collect_block_escaping_vars_stmts(stmts: &[Stmt]) -> HashSet<BindingId> {
     if block_declared.is_empty() {
         return HashSet::new();
     }
-    let outer_refs = collect_outer_refs_stmts(stmts);
-    block_declared.intersection(&outer_refs).cloned().collect()
+    collect_outside_decl_block_refs_stmts(stmts, &block_declared)
 }
 
-/// Collect vars declared INSIDE inner blocks (depth > 0), stopping at function boundaries.
-fn collect_block_declared_var_ids_module(items: &[ModuleItem]) -> HashSet<BindingId> {
-    let mut c = BlockDeclaredVarCollector { ids: HashSet::new(), depth: 0 };
+/// Collect vars declared INSIDE inner blocks (depth > 0), keyed by their declaring block id.
+fn collect_block_declared_var_ids_module(items: &[ModuleItem]) -> HashMap<BindingId, usize> {
+    let mut c = BlockDeclaredVarCollector::default();
     for item in items { item.visit_with(&mut c); }
-    c.ids
+    c.ids_by_block
 }
 
-fn collect_block_declared_var_ids_stmts(stmts: &[Stmt]) -> HashSet<BindingId> {
-    let mut c = BlockDeclaredVarCollector { ids: HashSet::new(), depth: 0 };
+fn collect_block_declared_var_ids_stmts(stmts: &[Stmt]) -> HashMap<BindingId, usize> {
+    let mut c = BlockDeclaredVarCollector::default();
     for stmt in stmts { stmt.visit_with(&mut c); }
-    c.ids
+    c.ids_by_block
 }
 
+#[derive(Default)]
 struct BlockDeclaredVarCollector {
-    ids: HashSet<BindingId>,
-    depth: usize,
+    ids_by_block: HashMap<BindingId, usize>,
+    block_stack: Vec<usize>,
+    next_block_id: usize,
 }
 
 impl Visit for BlockDeclaredVarCollector {
     fn visit_var_decl(&mut self, var: &VarDecl) {
-        if var.kind == VarDeclKind::Var && self.depth > 0 {
+        if var.kind == VarDeclKind::Var {
+            let Some(&block_id) = self.block_stack.last() else {
+                return;
+            };
             for decl in &var.decls {
-                collect_binding_ids_from_pat(&decl.name, &mut self.ids);
+                let mut ids = HashSet::new();
+                collect_binding_ids_from_pat(&decl.name, &mut ids);
+                for id in ids {
+                    self.ids_by_block.insert(id, block_id);
+                }
             }
         }
         // Don't recurse into var decl children
     }
 
     fn visit_block_stmt(&mut self, block: &BlockStmt) {
-        self.depth += 1;
+        let block_id = self.next_block_id;
+        self.next_block_id += 1;
+        self.block_stack.push(block_id);
         block.visit_children_with(self);
-        self.depth -= 1;
+        self.block_stack.pop();
     }
 
     fn visit_function(&mut self, _: &Function) {}
@@ -253,36 +262,58 @@ impl Visit for BlockDeclaredVarCollector {
     fn visit_class(&mut self, _: &Class) {}
 }
 
-/// Collect identifier references that appear at the OUTER scope level (depth == 0),
-/// i.e. in top-level statements but NOT inside any nested block.
-fn collect_outer_refs_module(items: &[ModuleItem]) -> HashSet<BindingId> {
-    let mut c = OuterRefCollector { refs: HashSet::new(), depth: 0 };
+fn collect_outside_decl_block_refs_module(
+    items: &[ModuleItem],
+    decl_blocks: &HashMap<BindingId, usize>,
+) -> HashSet<BindingId> {
+    let mut c = RefOutsideDeclBlockCollector::new(decl_blocks);
     for item in items { item.visit_with(&mut c); }
-    c.refs
+    c.refs_outside
 }
 
-fn collect_outer_refs_stmts(stmts: &[Stmt]) -> HashSet<BindingId> {
-    let mut c = OuterRefCollector { refs: HashSet::new(), depth: 0 };
+fn collect_outside_decl_block_refs_stmts(
+    stmts: &[Stmt],
+    decl_blocks: &HashMap<BindingId, usize>,
+) -> HashSet<BindingId> {
+    let mut c = RefOutsideDeclBlockCollector::new(decl_blocks);
     for stmt in stmts { stmt.visit_with(&mut c); }
-    c.refs
+    c.refs_outside
 }
 
-struct OuterRefCollector {
-    refs: HashSet<BindingId>,
-    depth: usize,
+struct RefOutsideDeclBlockCollector<'a> {
+    decl_blocks: &'a HashMap<BindingId, usize>,
+    refs_outside: HashSet<BindingId>,
+    block_stack: Vec<usize>,
+    next_block_id: usize,
 }
 
-impl Visit for OuterRefCollector {
+impl<'a> RefOutsideDeclBlockCollector<'a> {
+    fn new(decl_blocks: &'a HashMap<BindingId, usize>) -> Self {
+        Self {
+            decl_blocks,
+            refs_outside: HashSet::new(),
+            block_stack: Vec::new(),
+            next_block_id: 0,
+        }
+    }
+}
+
+impl Visit for RefOutsideDeclBlockCollector<'_> {
     fn visit_ident(&mut self, id: &Ident) {
-        if self.depth == 0 {
-            self.refs.insert((id.sym.clone(), id.ctxt));
+        let binding = (id.sym.clone(), id.ctxt);
+        if let Some(&decl_block_id) = self.decl_blocks.get(&binding) {
+            if !self.block_stack.contains(&decl_block_id) {
+                self.refs_outside.insert(binding);
+            }
         }
     }
 
     fn visit_block_stmt(&mut self, block: &BlockStmt) {
-        self.depth += 1;
+        let block_id = self.next_block_id;
+        self.next_block_id += 1;
+        self.block_stack.push(block_id);
         block.visit_children_with(self);
-        self.depth -= 1;
+        self.block_stack.pop();
     }
 
     fn visit_function(&mut self, _: &Function) {}

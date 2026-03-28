@@ -636,7 +636,7 @@ function Pe(e, t, n, r) {
     e = e.options;
     if (t) {
         t = {};
-        for(let o = 0; o < n.length; o++){
+        for(var o = 0; o < n.length; o++){
             t["$" + n[o]] = true;
         }
         for(n = 0; n < e.length; n++){
@@ -1099,7 +1099,7 @@ function dt(e) {
             e.ancestors.push(n);
             break;
         }
-        let r = n;
+        var r = n;
         if (r.tag === 3) {
             r = r.stateNode.containerInfo;
         } else {
@@ -1305,7 +1305,7 @@ function Lt(e) {
     if (bt.length > 0) {
         At(bt[0], e);
         for(var n = 1; n < bt.length; n++){
-            let r = bt[n];
+            var r = bt[n];
             if (r.blockedOn === e) {
                 r.blockedOn = null;
             }
@@ -1724,7 +1724,7 @@ function cn(e, t) {
 function sn() {
     for(let e = window, t = un(); t instanceof e.HTMLIFrameElement;){
         try {
-            let n = typeof t.contentWindow.location.href == "string";
+            var n = typeof t.contentWindow.location.href == "string";
         } catch (e) {
             n = false;
         }
@@ -3296,7 +3296,7 @@ function di(e, t, n, r) {
     let u = i.shared.pending;
     if (u !== null) {
         if (a !== null) {
-            let l = a.next;
+            var l = a.next;
             a.next = u.next;
             u.next = l;
         }
@@ -3317,7 +3317,7 @@ function di(e, t, n, r) {
             let h = l;
             while(true){
                 if ((u = h.expirationTime) < r) {
-                    let m = {
+                    var m = {
                         expirationTime: h.expirationTime,
                         suspenseConfig: h.suspenseConfig,
                         tag: h.tag,
@@ -3563,7 +3563,7 @@ function ki(e, t, n) {
                 if (n.tag !== 1) {
                     throw Error(a(309));
                 }
-                const r = n.stateNode;
+                var r = n.stateNode;
             }
             if (!r) {
                 throw Error(a(147, e));
@@ -4190,7 +4190,7 @@ function Gi() {
 }
 function Xi() {
     if ($i === null) {
-        let e = Wi.alternate;
+        var e = Wi.alternate;
         e = e !== null ? e.memoizedState : null;
     } else {
         e = $i.next;
@@ -4238,7 +4238,7 @@ function Zi(e) {
     let i = n.pending;
     if (i !== null) {
         if (o !== null) {
-            let u = o.next;
+            var u = o.next;
             o.next = i.next;
             i.next = u;
         }
@@ -4910,21 +4910,21 @@ function Fa(e, t, n, r, o) {
         Ei(t, n, r, o);
         r = true;
     } else if (e === null) {
-        let a = t.stateNode;
-        let u = t.memoizedProps;
+        var a = t.stateNode;
+        var u = t.memoizedProps;
         a.props = u;
-        let l = a.context;
-        let c = n.contextType;
+        var l = a.context;
+        var c = n.contextType;
         if (typeof c == "object" && c !== null) {
             c = ii(c);
         } else {
             c = yo(t, c = vo(n) ? mo : po.current);
         }
-        let s = n.getDerivedStateFromProps;
-        let f = typeof s == "function" || typeof a.getSnapshotBeforeUpdate == "function";
+        var s = n.getDerivedStateFromProps;
+        var f = typeof s == "function" || typeof a.getSnapshotBeforeUpdate == "function";
         f || typeof a.UNSAFE_componentWillReceiveProps != "function" && typeof a.componentWillReceiveProps != "function" || (u !== r || l !== c) && wi(t, a, r, c);
         ai = false;
-        let d = t.memoizedState;
+        var d = t.memoizedState;
         a.state = d;
         di(t, r, a, o);
         l = t.memoizedState;
@@ -5416,9 +5416,9 @@ function Ja(e, t, n) {
                     }
                     tn(i, u);
                     e = null;
-                    for(let l in u){
+                    for(var l in u){
                         if (u.hasOwnProperty(l)) {
-                            let c = u[l];
+                            var c = u[l];
                             l === "children" ? typeof c == "string" ? r.textContent !== c && (e = [
                                 "children",
                                 c
@@ -6374,10 +6374,10 @@ function pu(e, t) {
         case 5:
             let n = t.stateNode;
             if (n != null) {
-                let r = t.memoizedProps;
-                let o = e !== null ? e.memoizedProps : r;
+                var r = t.memoizedProps;
+                var o = e !== null ? e.memoizedProps : r;
                 e = t.type;
-                let i = t.updateQueue;
+                var i = t.updateQueue;
                 t.updateQueue = null;
                 if (i !== null) {
                     n[On] = r;
@@ -6821,7 +6821,7 @@ function ul(e) {
                                     }
                                     if (Fu === 1073741823 && (i = Wu + $u - Uo()) > 10) {
                                         if (Hu) {
-                                            let u = t.lastPingedTime;
+                                            var u = t.lastPingedTime;
                                             if (u === 0 || u >= r) {
                                                 t.lastPingedTime = r;
                                                 fl(t, r);
@@ -7054,7 +7054,7 @@ function dl(e, t) {
                 a.firstEffect = null;
                 a.lastEffect = null;
                 if (u !== null && typeof u == "object" && typeof u.then == "function") {
-                    let l = u;
+                    var l = u;
                     if ((2 & a.mode) == 0) {
                         const c = a.alternate;
                         if (c) {
@@ -7067,7 +7067,7 @@ function dl(e, t) {
                         }
                     }
                     const s = (1 & Di.current) != 0;
-                    let f = i;
+                    var f = i;
                     do {
                         let d;
                         if (d = f.tag === 13) {
@@ -7322,8 +7322,8 @@ function El(e) {
                         let c = (l = (l = u.ownerDocument) && l.defaultView || window).getSelection && l.getSelection();
                         if (c && c.rangeCount !== 0) {
                             l = c.anchorNode;
-                            let s = c.anchorOffset;
-                            let f = c.focusNode;
+                            var s = c.anchorOffset;
+                            var f = c.focusNode;
                             c = c.focusOffset;
                             try {
                                 l.nodeType;
@@ -7401,14 +7401,14 @@ function El(e) {
                 try {
                     u = e;
                     for(l = t; Bu !== null;){
-                        let w = Bu.effectTag;
+                        var w = Bu.effectTag;
                         if (16 & w) {
                             ze(Bu.stateNode, "");
                         }
                         if (128 & w) {
-                            let E = Bu.alternate;
+                            var E = Bu.alternate;
                             if (E !== null) {
-                                let x = E.ref;
+                                var x = E.ref;
                                 x !== null && (typeof x == "function" ? x(null) : x.current = null);
                             }
                         }
@@ -7625,7 +7625,7 @@ function Tl() {
     Nu |= Su;
     for(e = e.current.firstEffect; e !== null;){
         try {
-            let n = e;
+            var n = e;
             if ((512 & n.effectTag) != 0) {
                 switch(n.tag){
                     case 0:
@@ -8268,7 +8268,7 @@ function Ul(e, t, n, r) {
             if (Je(n) !== n || n.tag !== 1) {
                 throw Error(a(170));
             }
-            let l = n;
+            var l = n;
             do {
                 switch(l.tag){
                     case 3:

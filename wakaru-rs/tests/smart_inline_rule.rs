@@ -186,22 +186,15 @@ function bar() { return r; }
 }
 
 #[test]
-fn inline_arrow_wrapper_dot_a_accessor() {
-    // webpack4 require.n pattern: `X.a` where `X = () => r` inlines to `r` directly
-    // (avoids the broken `(()=>r).a` which would be undefined at runtime).
+fn arrow_wrapper_dot_a_accessor_stays_as_is() {
     let input = r#"
 const o = () => r;
 function foo() {
     return o.a;
 }
 "#;
-    let expected = r#"
-function foo() {
-    return r;
-}
-"#;
     let output = render(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -212,4 +205,21 @@ console.log(o.a);
 "#;
     let output = render(input);
     assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn grouped_object_access_preserves_binding_context_for_followup_renames() {
+    let input = r#"
+const i = Object.defineProperty;
+const c = Object.getPrototypeOf;
+const s = c && c(Object);
+i(target, key, desc);
+"#;
+    let expected = r#"
+const { defineProperty, getPrototypeOf } = Object;
+const s = getPrototypeOf && getPrototypeOf(Object);
+defineProperty(target, key, desc);
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
 }

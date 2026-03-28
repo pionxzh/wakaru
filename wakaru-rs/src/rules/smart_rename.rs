@@ -1,32 +1,31 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{DUMMY_SP, SyntaxContext};
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrayPat, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee,
-    Decl, Expr, Function, Ident, KeyValuePatProp, MemberProp,
-    Module, ModuleDecl, ModuleItem, ObjectPat, ObjectPatProp, Param, Pat, PropName, Stmt,
-    VarDecl,
+    ArrowExpr, ArrayPat, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, Function,
+    Ident, KeyValuePatProp, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat, ObjectPatProp,
+    Param, Pat, PropName, Stmt, VarDecl,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 pub struct SmartRename;
 
+type BindingId = (Atom, SyntaxContext);
+
+#[derive(Clone)]
+struct ScopedRename {
+    old: BindingId,
+    new: Atom,
+}
+
 impl VisitMut for SmartRename {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        // 1) React hook renames (rename return values of hook calls)
         react_rename_module(module);
-        // 2) Destructuring shorthand renames
         destructuring_rename_module(module);
-        // 3) Recurse into nested scopes (functions, etc.)
         module.visit_mut_children_with(self);
     }
 
-    // Prevent double-processing nested scopes: visit_mut_module handles
-    // the top level and recurse, but inner Function/ArrowExpr are handled
-    // by visit_mut_children_with above, not by fresh calls to the outer logic.
-    // So we override visit_mut_function and visit_mut_arrow_expr to
-    // process their own scopes before recursing.
     fn visit_mut_function(&mut self, func: &mut Function) {
         react_rename_function_body(func);
         destructuring_rename_function(func);
@@ -47,61 +46,101 @@ const REACT_MINIFIED_THRESHOLD: usize = 2;
 
 fn react_rename_module(module: &mut Module) {
     let all_names = collect_names_in_module(&module.body);
-    for item in &mut module.body {
-        if let ModuleItem::Stmt(stmt) = item {
-            react_rename_stmt_with_names(stmt, &all_names);
-        }
+    let renames = collect_react_renames_from_module_items(&module.body, &all_names);
+    if renames.is_empty() {
+        return;
     }
+    let mut renamer = ScopedRenamer { renames };
+    module.visit_mut_with(&mut renamer);
 }
 
 fn react_rename_function_body(func: &mut Function) {
-    if let Some(body) = &mut func.body {
-        let all_names = collect_names_in_stmts(&body.stmts);
-        for stmt in &mut body.stmts {
-            react_rename_stmt_with_names(stmt, &all_names);
+    let Some(body) = &mut func.body else { return };
+    let all_names = collect_names_in_stmts(&body.stmts);
+    let renames = collect_react_renames_from_stmts(&body.stmts, &all_names);
+    if renames.is_empty() {
+        return;
+    }
+    let mut renamer = ScopedRenamer { renames };
+    body.visit_mut_with(&mut renamer);
+}
+
+fn collect_react_renames_from_module_items(
+    body: &[ModuleItem],
+    all_names: &HashSet<String>,
+) -> Vec<ScopedRename> {
+    let mut renames = Vec::new();
+    let mut used_names = all_names.clone();
+
+    for item in body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
+                collect_react_var_decl_renames(var_decl, &mut renames, &mut used_names);
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export_decl)) => {
+                if let Decl::Var(var_decl) = &export_decl.decl {
+                    collect_react_var_decl_renames(var_decl, &mut renames, &mut used_names);
+                }
+            }
+            _ => {}
         }
     }
+
+    renames
 }
 
-fn react_rename_stmt_with_names(stmt: &mut Stmt, all_names: &HashSet<String>) {
-    let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
-        return;
-    };
-    process_react_var_decl(var_decl, all_names);
+fn collect_react_renames_from_stmts(
+    stmts: &[Stmt],
+    all_names: &HashSet<String>,
+) -> Vec<ScopedRename> {
+    let mut renames = Vec::new();
+    let mut used_names = all_names.clone();
+
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
+            continue;
+        };
+        collect_react_var_decl_renames(var_decl, &mut renames, &mut used_names);
+    }
+
+    renames
 }
 
-fn process_react_var_decl(var_decl: &mut VarDecl, all_names: &HashSet<String>) {
-    for decl in &mut var_decl.decls {
-        match &mut decl.name {
+fn collect_react_var_decl_renames(
+    var_decl: &VarDecl,
+    renames: &mut Vec<ScopedRename>,
+    used_names: &mut HashSet<String>,
+) {
+    for decl in &var_decl.decls {
+        match &decl.name {
             Pat::Ident(binding) => {
-                // useRef / createContext: const x = useRef()/createContext()
                 if let Some(init) = &decl.init {
                     if let Some(hook_name) = get_single_react_hook_call(init) {
-                        let old = binding.id.sym.as_str().to_string();
-                        if old.chars().count() <= REACT_MINIFIED_THRESHOLD {
-                            let new_name = match hook_name.as_str() {
-                                "useRef" => format!("{}Ref", old),
-                                "createContext" => pascal_case_first(&old) + "Context",
-                                _ => continue,
-                            };
-                            if !all_names.contains(&new_name) || new_name == old {
-                                let old_atom: Atom = old.as_str().into();
-                                let new_atom: Atom = new_name.as_str().into();
-                                rename_ident_in_var_decl(var_decl, &old_atom, &new_atom);
-                                // We modified var_decl — need to stop iterating (borrow check)
-                                // rename_ident_in_var_decl handles the decl.name update too
-                                return;
-                            }
+                        let old_name = binding.id.sym.to_string();
+                        if old_name.chars().count() > REACT_MINIFIED_THRESHOLD {
+                            continue;
+                        }
+
+                        let new_name = match hook_name.as_str() {
+                            "useRef" => format!("{}Ref", old_name),
+                            "createContext" => pascal_case_first(&old_name) + "Context",
+                            _ => continue,
+                        };
+
+                        if !used_names.contains(&new_name) || new_name == old_name {
+                            used_names.insert(new_name.clone());
+                            renames.push(ScopedRename {
+                                old: (binding.id.sym.clone(), binding.id.ctxt),
+                                new: new_name.as_str().into(),
+                            });
                         }
                     }
                 }
             }
             Pat::Array(array_pat) => {
-                // useState: const [state, setter] = useState(...)
-                // useReducer: const [state, dispatch] = useReducer(...)
                 if let Some(init) = &decl.init {
                     if let Some(hook_name) = get_single_react_hook_call(init) {
-                        process_array_pat_react(array_pat, &hook_name, all_names);
+                        collect_array_pat_react_renames(array_pat, &hook_name, renames, used_names);
                     }
                 }
             }
@@ -110,43 +149,46 @@ fn process_react_var_decl(var_decl: &mut VarDecl, all_names: &HashSet<String>) {
     }
 }
 
-fn rename_ident_in_var_decl(var_decl: &mut VarDecl, old: &Atom, new: &Atom) {
-    let mut renamer = IdentSymRenamer { old: old.clone(), new: new.clone() };
-    var_decl.visit_mut_with(&mut renamer);
-}
-
-fn process_array_pat_react(array_pat: &mut ArrayPat, hook_name: &str, all_names: &HashSet<String>) {
+fn collect_array_pat_react_renames(
+    array_pat: &ArrayPat,
+    hook_name: &str,
+    renames: &mut Vec<ScopedRename>,
+    used_names: &mut HashSet<String>,
+) {
     match hook_name {
         "useState" => {
-            // [state, setter] — rename setter to setX
-            // X = pascalCase(state) if state present, else pascalCase(setter)
             let state_name = get_array_elem_name(array_pat, 0);
-            if let Some(setter_name) = get_array_elem_name_if_short(array_pat, 1) {
+            if let Some((setter_name, setter_id)) = get_array_elem_if_short(array_pat, 1) {
                 let base = state_name.unwrap_or_else(|| setter_name.clone());
                 let new_setter = format!("set{}", pascal_case_first(&base));
-                if !all_names.contains(&new_setter) || new_setter == setter_name {
-                    if let Some(Some(Pat::Ident(bi))) = array_pat.elems.get_mut(1) {
-                        bi.id.sym = new_setter.as_str().into();
-                    }
+                if !used_names.contains(&new_setter) || new_setter == setter_name {
+                    used_names.insert(new_setter.clone());
+                    renames.push(ScopedRename {
+                        old: setter_id,
+                        new: new_setter.as_str().into(),
+                    });
                 }
             }
         }
         "useReducer" => {
-            // [state, dispatch] — rename to [stateState, dispatchDispatch]
-            if let Some(state_name) = get_array_elem_name_if_short(array_pat, 0) {
+            if let Some((state_name, state_id)) = get_array_elem_if_short(array_pat, 0) {
                 let new_state = format!("{}State", state_name);
-                if !all_names.contains(&new_state) || new_state == state_name {
-                    if let Some(Some(Pat::Ident(bi))) = array_pat.elems.get_mut(0) {
-                        bi.id.sym = new_state.as_str().into();
-                    }
+                if !used_names.contains(&new_state) || new_state == state_name {
+                    used_names.insert(new_state.clone());
+                    renames.push(ScopedRename {
+                        old: state_id,
+                        new: new_state.as_str().into(),
+                    });
                 }
             }
-            if let Some(dispatch_name) = get_array_elem_name_if_short(array_pat, 1) {
+            if let Some((dispatch_name, dispatch_id)) = get_array_elem_if_short(array_pat, 1) {
                 let new_dispatch = format!("{}Dispatch", dispatch_name);
-                if !all_names.contains(&new_dispatch) || new_dispatch == dispatch_name {
-                    if let Some(Some(Pat::Ident(bi))) = array_pat.elems.get_mut(1) {
-                        bi.id.sym = new_dispatch.as_str().into();
-                    }
+                if !used_names.contains(&new_dispatch) || new_dispatch == dispatch_name {
+                    used_names.insert(new_dispatch.clone());
+                    renames.push(ScopedRename {
+                        old: dispatch_id,
+                        new: new_dispatch.as_str().into(),
+                    });
                 }
             }
         }
@@ -154,7 +196,7 @@ fn process_array_pat_react(array_pat: &mut ArrayPat, hook_name: &str, all_names:
     }
 }
 
-/// Returns the hook name if `expr` is a call to a known React hook (with ≤1 arg for useRef/createContext, ≤3 for useState/useReducer).
+/// Returns the hook name if `expr` is a call to a known React hook.
 fn get_single_react_hook_call(expr: &Expr) -> Option<String> {
     let Expr::Call(CallExpr { callee, args, .. }) = expr else {
         return None;
@@ -186,17 +228,19 @@ fn get_single_react_hook_call(expr: &Expr) -> Option<String> {
 }
 
 fn get_array_elem_name(array_pat: &ArrayPat, idx: usize) -> Option<String> {
-    if let Some(Some(Pat::Ident(bi))) = array_pat.elems.get(idx) {
-        Some(bi.id.sym.to_string())
-    } else {
-        None
-    }
+    let Some(Some(Pat::Ident(bi))) = array_pat.elems.get(idx) else {
+        return None;
+    };
+    Some(bi.id.sym.to_string())
 }
 
-fn get_array_elem_name_if_short(array_pat: &ArrayPat, idx: usize) -> Option<String> {
-    let name = get_array_elem_name(array_pat, idx)?;
+fn get_array_elem_if_short(array_pat: &ArrayPat, idx: usize) -> Option<(String, BindingId)> {
+    let Some(Some(Pat::Ident(bi))) = array_pat.elems.get(idx) else {
+        return None;
+    };
+    let name = bi.id.sym.to_string();
     if name.chars().count() <= REACT_MINIFIED_THRESHOLD {
-        Some(name)
+        Some((name, (bi.id.sym.clone(), bi.id.ctxt)))
     } else {
         None
     }
@@ -225,12 +269,11 @@ fn destructuring_rename_function(func: &mut Function) {
     if renames.is_empty() {
         return;
     }
-    let mut renamer = MultiRenamer { renames };
+    let mut renamer = ScopedRenamer { renames };
     func.params.iter_mut().for_each(|p| p.visit_mut_with(&mut renamer));
     if let Some(body) = &mut func.body {
         body.visit_mut_with(&mut renamer);
     }
-    // Convert { key: key } → { key } shorthand
     let mut shorthand = ObjectPatShorthandConverter;
     func.params.iter_mut().for_each(|p| p.visit_mut_with(&mut shorthand));
 }
@@ -248,20 +291,19 @@ fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
     if renames.is_empty() {
         return;
     }
-    let mut renamer = MultiRenamer { renames };
+    let mut renamer = ScopedRenamer { renames };
     arrow.params.iter_mut().for_each(|p| p.visit_mut_with(&mut renamer));
     arrow.body.visit_mut_with(&mut renamer);
     let mut shorthand = ObjectPatShorthandConverter;
     arrow.params.iter_mut().for_each(|p| p.visit_mut_with(&mut shorthand));
 }
 
-/// Returns renames from ObjectPat properties in var decls and function params at module level.
 fn collect_obj_pat_renames_from_module(
     body: &[ModuleItem],
     all_names: &HashSet<String>,
-) -> Vec<(Atom, Atom)> {
+) -> Vec<ScopedRename> {
     let mut renames = Vec::new();
-    let mut used_names: HashSet<String> = all_names.clone();
+    let mut used_names = all_names.clone();
 
     for item in body {
         match item {
@@ -287,7 +329,7 @@ fn collect_obj_pat_renames_from_module(
 fn collect_obj_pat_renames_from_params(
     params: &[Param],
     all_names: &HashSet<String>,
-) -> Vec<(Atom, Atom)> {
+) -> Vec<ScopedRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
     for p in params {
@@ -299,7 +341,7 @@ fn collect_obj_pat_renames_from_params(
 fn collect_obj_pat_renames_from_pats(
     params: &[Pat],
     all_names: &HashSet<String>,
-) -> Vec<(Atom, Atom)> {
+) -> Vec<ScopedRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
     for p in params {
@@ -310,14 +352,13 @@ fn collect_obj_pat_renames_from_pats(
 
 fn collect_obj_pat_renames_from_pat(
     pat: &Pat,
-    renames: &mut Vec<(Atom, Atom)>,
+    renames: &mut Vec<ScopedRename>,
     used_names: &mut HashSet<String>,
 ) {
     let Pat::Object(obj_pat) = pat else { return };
     for prop in &obj_pat.props {
         match prop {
             ObjectPatProp::KeyValue(kv) => {
-                // { key: alias } or { key: alias = default }
                 let key_str = match &kv.key {
                     PropName::Ident(i) => i.sym.to_string(),
                     PropName::Str(s) => s.value.as_str().map(|s| s.to_string()).unwrap_or_default(),
@@ -327,40 +368,33 @@ fn collect_obj_pat_renames_from_pat(
                     Some(id) => id,
                     None => continue,
                 };
-                if alias.chars().count() > REACT_MINIFIED_THRESHOLD {
+                if alias.0.as_ref().chars().count() > REACT_MINIFIED_THRESHOLD {
                     continue;
                 }
-                // Check for same-name: { x: x } → shorthand { x } (no sym rename needed)
-                if alias == key_str {
-                    // Will be converted to shorthand by the pattern update, no sym rename
+                if alias.0.as_ref() == key_str {
                     continue;
                 }
-                // Determine a non-conflicting new name
                 let new_name = find_non_conflicting_name(&key_str, used_names);
                 used_names.insert(new_name.clone());
-                let old_atom: Atom = alias.as_str().into();
-                let new_atom: Atom = new_name.as_str().into();
-                renames.push((old_atom, new_atom));
+                renames.push(ScopedRename {
+                    old: alias,
+                    new: new_name.as_str().into(),
+                });
             }
-            ObjectPatProp::Assign(AssignPatProp { key, .. }) => {
-                // { key } or { key = default } — already shorthand, no rename needed
-                let _ = key;
-            }
-            ObjectPatProp::Rest(_) => {}
+            ObjectPatProp::Assign(_) | ObjectPatProp::Rest(_) => {}
         }
     }
 }
 
-fn extract_binding_from_pat(pat: &Pat) -> Option<String> {
+fn extract_binding_from_pat(pat: &Pat) -> Option<BindingId> {
     match pat {
-        Pat::Ident(bi) => Some(bi.id.sym.to_string()),
+        Pat::Ident(bi) => Some((bi.id.sym.clone(), bi.id.ctxt)),
         Pat::Assign(assign_pat) => extract_binding_from_pat(&assign_pat.left),
         _ => None,
     }
 }
 
 fn find_non_conflicting_name(base: &str, used_names: &HashSet<String>) -> String {
-    // Handle reserved keywords
     let base = if is_reserved_keyword(base) {
         format!("_{}", base)
     } else {
@@ -383,21 +417,20 @@ fn is_reserved_keyword(name: &str) -> bool {
     matches!(
         name,
         "break" | "case" | "catch" | "class" | "const" | "continue" | "debugger"
-        | "default" | "delete" | "do" | "else" | "export" | "extends" | "false"
-        | "finally" | "for" | "function" | "if" | "import" | "in" | "instanceof"
-        | "let" | "new" | "null" | "return" | "static" | "super" | "switch"
-        | "this" | "throw" | "true" | "try" | "typeof" | "var" | "void"
-        | "while" | "with" | "yield" | "enum" | "await" | "implements"
-        | "interface" | "package" | "private" | "protected" | "public"
+            | "default" | "delete" | "do" | "else" | "export" | "extends" | "false"
+            | "finally" | "for" | "function" | "if" | "import" | "in" | "instanceof"
+            | "let" | "new" | "null" | "return" | "static" | "super" | "switch"
+            | "this" | "throw" | "true" | "try" | "typeof" | "var" | "void"
+            | "while" | "with" | "yield" | "enum" | "await" | "implements"
+            | "interface" | "package" | "private" | "protected" | "public"
     )
 }
 
-/// Apply the collected renames AND convert ObjectPat to shorthand wherever possible.
-fn apply_renames_to_module(module: &mut Module, renames: &[(Atom, Atom)]) {
-    // First rename all ident usages
-    let mut renamer = MultiRenamer { renames: renames.to_vec() };
+fn apply_renames_to_module(module: &mut Module, renames: &[ScopedRename]) {
+    let mut renamer = ScopedRenamer {
+        renames: renames.to_vec(),
+    };
     module.visit_mut_with(&mut renamer);
-    // Then convert ObjectPat KeyValue → shorthand where key == new_name
     let mut shorthand = ObjectPatShorthandConverter;
     module.visit_mut_with(&mut shorthand);
 }
@@ -406,41 +439,22 @@ fn apply_renames_to_module(module: &mut Module, renames: &[(Atom, Atom)]) {
 // Helper structs
 // ============================================================
 
-struct IdentSymRenamer {
-    old: Atom,
-    new: Atom,
+struct ScopedRenamer {
+    renames: Vec<ScopedRename>,
 }
 
-impl VisitMut for IdentSymRenamer {
+impl VisitMut for ScopedRenamer {
     fn visit_mut_ident(&mut self, id: &mut Ident) {
-        if id.sym == self.old {
-            id.sym = self.new.clone();
-        }
-    }
-    // Don't rename property identifier keys (dot notation): obj.foo
-    fn visit_mut_prop_name(&mut self, _: &mut PropName) {}
-    // For member props: only recurse into computed (bracket notation), skip dot notation
-    fn visit_mut_member_prop(&mut self, prop: &mut MemberProp) {
-        if let MemberProp::Computed(c) = prop {
-            c.visit_mut_with(self);
-        }
-    }
-}
-
-struct MultiRenamer {
-    renames: Vec<(Atom, Atom)>,
-}
-
-impl VisitMut for MultiRenamer {
-    fn visit_mut_ident(&mut self, id: &mut Ident) {
-        for (old, new) in &self.renames {
-            if &id.sym == old {
-                id.sym = new.clone();
+        for rename in &self.renames {
+            if id.sym == rename.old.0 && id.ctxt == rename.old.1 {
+                id.sym = rename.new.clone();
                 break;
             }
         }
     }
+
     fn visit_mut_prop_name(&mut self, _: &mut PropName) {}
+
     fn visit_mut_member_prop(&mut self, prop: &mut MemberProp) {
         if let MemberProp::Computed(c) = prop {
             c.visit_mut_with(self);
@@ -448,7 +462,6 @@ impl VisitMut for MultiRenamer {
     }
 }
 
-/// Convert `{ key: alias }` → `{ key }` (shorthand) where alias == key (post-rename).
 struct ObjectPatShorthandConverter;
 
 impl VisitMut for ObjectPatShorthandConverter {
@@ -474,7 +487,6 @@ impl VisitMut for ObjectPatShorthandConverter {
                     };
                     if let (Some(k), Some(a)) = (key_str, alias) {
                         if k == a {
-                            // Convert to shorthand
                             match *kv.value {
                                 Pat::Ident(bi) => {
                                     return ObjectPatProp::Assign(AssignPatProp {
@@ -484,7 +496,6 @@ impl VisitMut for ObjectPatShorthandConverter {
                                     });
                                 }
                                 Pat::Assign(ap) => {
-                                    // { key: alias = default } → { key = default }
                                     if let Pat::Ident(bi) = *ap.left {
                                         return ObjectPatProp::Assign(AssignPatProp {
                                             span: bi.id.span,
@@ -493,13 +504,17 @@ impl VisitMut for ObjectPatShorthandConverter {
                                         });
                                     }
                                     return ObjectPatProp::KeyValue(KeyValuePatProp {
-                                        key: PropName::Ident(swc_core::ecma::ast::IdentName::new(k, DUMMY_SP)),
+                                        key: PropName::Ident(swc_core::ecma::ast::IdentName::new(
+                                            k, DUMMY_SP,
+                                        )),
                                         value: Box::new(Pat::Assign(ap)),
                                     });
                                 }
                                 other => {
                                     return ObjectPatProp::KeyValue(KeyValuePatProp {
-                                        key: PropName::Ident(swc_core::ecma::ast::IdentName::new(k, DUMMY_SP)),
+                                        key: PropName::Ident(swc_core::ecma::ast::IdentName::new(
+                                            k, DUMMY_SP,
+                                        )),
                                         value: Box::new(other),
                                     });
                                 }

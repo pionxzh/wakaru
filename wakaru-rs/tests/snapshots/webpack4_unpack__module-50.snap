@@ -181,8 +181,8 @@ function M(e, t, n) {
         StrictMode = 0;
         n = n === "" ? "." : n + ":";
         if (Array.isArray(t)) {
-            for(let Profiler = 0; Profiler < t.length; Profiler++){
-                let s = n + A(Fragment = t[Profiler], Profiler);
+            for(var Profiler = 0; Profiler < t.length; Profiler++){
+                var s = n + A(Fragment = t[Profiler], Profiler);
                 StrictMode += e(Fragment, s, r, o);
             }
         } else {

@@ -100,6 +100,12 @@ fn try_extract_zero_param_arrow_ident(expr: &Expr) -> Option<Box<Expr>> {
 /// Scope-aware key for arrow wrapper candidates: (symbol, SyntaxContext from resolver).
 type BindingKey = (Atom, SyntaxContext);
 
+#[derive(Default)]
+struct GlobalUsageStats {
+    callable_uses: usize,
+    blocked_uses: usize,
+}
+
 fn inline_module_arrow_wrappers(module: &mut Module) {
     // Collect candidates: const X = () => identY at module level (Stmt items only).
     // Use (sym, ctxt) keys so inner-scope variables with the same name are NOT replaced.
@@ -123,8 +129,10 @@ fn inline_module_arrow_wrappers(module: &mut Module) {
 
     // Count usages globally (including inside nested functions), excluding the definition stmts.
     // Keyed by (sym, ctxt) so only the exact binding is counted.
-    let mut usage_count: HashMap<BindingKey, usize> =
-        candidates.keys().map(|k| (k.clone(), 0)).collect();
+    let mut usage_count: HashMap<BindingKey, GlobalUsageStats> = candidates
+        .keys()
+        .map(|k| (k.clone(), GlobalUsageStats::default()))
+        .collect();
 
     for item in &module.body {
         // Skip the definition stmt itself
@@ -144,7 +152,12 @@ fn inline_module_arrow_wrappers(module: &mut Module) {
     // Keep only those with at least one usage elsewhere
     let to_inline: HashMap<BindingKey, Box<Expr>> = candidates
         .into_iter()
-        .filter(|(key, _)| usage_count.get(key).copied().unwrap_or(0) >= 1)
+        .filter(|(key, _)| {
+            usage_count
+                .get(key)
+                .map(|stats| stats.callable_uses >= 1)
+                .unwrap_or(false)
+        })
         .collect();
 
     if to_inline.is_empty() {
@@ -156,7 +169,13 @@ fn inline_module_arrow_wrappers(module: &mut Module) {
         if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item {
             if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
                 if let Pat::Ident(bi) = &var.decls[0].name {
-                    if to_inline.contains_key(&(bi.id.sym.clone(), bi.id.ctxt)) {
+                    let key = (bi.id.sym.clone(), bi.id.ctxt);
+                    if to_inline.contains_key(&key)
+                        && usage_count
+                            .get(&key)
+                            .map(|stats| stats.blocked_uses == 0)
+                            .unwrap_or(false)
+                    {
                         return false;
                     }
                 }
@@ -171,16 +190,30 @@ fn inline_module_arrow_wrappers(module: &mut Module) {
 }
 
 /// Counts ident usages everywhere, including inside nested functions/arrows.
-/// Uses (sym, ctxt) keys for scope-aware matching.
+/// Only direct call callee positions are safe to inline for wrapper aliases.
 struct GlobalIdentCounter<'a> {
-    counts: &'a mut HashMap<BindingKey, usize>,
+    counts: &'a mut HashMap<BindingKey, GlobalUsageStats>,
 }
 
 impl Visit for GlobalIdentCounter<'_> {
     fn visit_ident(&mut self, id: &Ident) {
-        if let Some(c) = self.counts.get_mut(&(id.sym.clone(), id.ctxt)) {
-            *c += 1;
+        if let Some(stats) = self.counts.get_mut(&(id.sym.clone(), id.ctxt)) {
+            stats.blocked_uses += 1;
         }
+    }
+    fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+        if let swc_core::ecma::ast::Callee::Expr(callee) = &call.callee {
+            if let Expr::Ident(id) = callee.as_ref() {
+                if let Some(stats) = self.counts.get_mut(&(id.sym.clone(), id.ctxt)) {
+                    stats.callable_uses += 1;
+                } else {
+                    callee.visit_with(self);
+                }
+            } else {
+                callee.visit_with(self);
+            }
+        }
+        call.args.visit_with(self);
     }
     // Skip non-computed member props and prop names (not value positions)
     fn visit_member_prop(&mut self, prop: &MemberProp) {
@@ -191,62 +224,22 @@ impl Visit for GlobalIdentCounter<'_> {
     fn visit_prop_name(&mut self, _: &PropName) {}
 }
 
-/// Replaces ident usages everywhere, including inside nested functions/arrows.
-/// Uses (sym, ctxt) keys for scope-aware matching.
+/// Replaces direct call callee usages everywhere, including inside nested functions/arrows.
 struct GlobalIdentInliner<'a> {
     map: &'a HashMap<BindingKey, Box<Expr>>,
 }
 
-impl GlobalIdentInliner<'_> {
-    /// If `replacement` is `() => ident`, return the inner ident expr.
-    fn inner_ident(replacement: &Expr) -> Option<&Expr> {
-        let Expr::Arrow(arrow) = replacement else { return None };
-        if !arrow.params.is_empty() { return None; }
-        if let BlockStmtOrExpr::Expr(body) = arrow.body.as_ref() {
-            if matches!(body.as_ref(), Expr::Ident(_)) {
-                return Some(body.as_ref());
-            }
-        }
-        None
-    }
-}
-
 impl VisitMut for GlobalIdentInliner<'_> {
-    fn visit_mut_expr(&mut self, expr: &mut Expr) {
-        // Handle `X.a` where X is a zero-param arrow wrapper candidate.
-        // In webpack4, `require.n(m).a` is a property getter that returns the module,
-        // equivalent to calling the getter directly. Replace `X.a` with the inner ident.
-        if let Expr::Member(member) = expr {
-            let is_dot_a = match &member.prop {
-                MemberProp::Ident(p) => p.sym.as_ref() == "a",
-                MemberProp::Computed(c) => matches!(
-                    c.expr.as_ref(),
-                    Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("a")
-                ),
-                _ => false,
-            };
-            if is_dot_a {
-                if let Expr::Ident(id) = member.obj.as_ref() {
-                    let key = (id.sym.clone(), id.ctxt);
-                    if let Some(replacement) = self.map.get(&key) {
-                        if let Some(inner) = Self::inner_ident(replacement) {
-                            *expr = inner.clone();
-                            return;
-                        }
-                    }
+    fn visit_mut_call_expr(&mut self, call: &mut swc_core::ecma::ast::CallExpr) {
+        if let swc_core::ecma::ast::Callee::Expr(callee) = &mut call.callee {
+            if let Expr::Ident(id) = callee.as_ref() {
+                let key = (id.sym.clone(), id.ctxt);
+                if let Some(replacement) = self.map.get(&key) {
+                    *callee = replacement.clone();
                 }
             }
         }
-
-        // Regular ident replacement: X → () => Y (call sites become (() => Y)() → Y via UnIife)
-        if let Expr::Ident(id) = expr {
-            let key = (id.sym.clone(), id.ctxt);
-            if let Some(replacement) = self.map.get(&key) {
-                *expr = *replacement.clone();
-                return;
-            }
-        }
-        expr.visit_mut_children_with(self);
+        call.visit_mut_children_with(self);
     }
     fn visit_mut_member_prop(&mut self, prop: &mut MemberProp) {
         if let MemberProp::Computed(c) = prop {
@@ -421,9 +414,9 @@ impl VisitMut for IdentInliner<'_> {
 #[derive(Debug, Clone)]
 enum AccessKind {
     /// obj.prop or obj["prop"] — maps to (binding_name, prop_key_string)
-    Property { binding: Option<Atom>, prop_key: PropKey },
+    Property { binding: Option<BindingIdent>, prop_key: PropKey },
     /// obj[n] — maps to (binding_name, index)
-    Index { binding: Option<Atom>, index: usize },
+    Index { binding: Option<BindingIdent>, index: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -438,7 +431,7 @@ fn group_destructuring(stmts: Vec<Stmt>) -> Vec<Stmt> {
     // Group by the obj name, emit destructuring when group is "flushed".
 
     let mut result: Vec<Stmt> = Vec::new();
-    let mut current_obj: Option<(Atom, Vec<AccessKind>)> = None;
+    let mut current_obj: Option<(Ident, Vec<AccessKind>)> = None;
     let mut i = 0;
     let stmts_count = stmts.len();
 
@@ -454,7 +447,9 @@ fn group_destructuring(stmts: Vec<Stmt>) -> Vec<Stmt> {
 
         if let Some((obj_name, access)) = next_access {
             match &mut current_obj {
-                Some((cur_obj, accesses)) if cur_obj == &obj_name => {
+                Some((cur_obj, accesses))
+                    if cur_obj.sym == obj_name.sym && cur_obj.ctxt == obj_name.ctxt =>
+                {
                     accesses.push(access);
                 }
                 _ => {
@@ -485,7 +480,7 @@ fn group_destructuring(stmts: Vec<Stmt>) -> Vec<Stmt> {
 
 /// Try to extract `const t = obj.prop`
 /// Returns `(obj_ident, prop_key, binding_name)`
-fn try_extract_prop_access(stmt: &Stmt) -> Option<(Atom, PropKey, Option<Atom>)> {
+fn try_extract_prop_access(stmt: &Stmt) -> Option<(Ident, PropKey, Option<BindingIdent>)> {
     let Stmt::Decl(Decl::Var(var)) = stmt else { return None };
     if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
         return None;
@@ -494,10 +489,10 @@ fn try_extract_prop_access(stmt: &Stmt) -> Option<(Atom, PropKey, Option<Atom>)>
     let Pat::Ident(bi) = &decl.name else { return None };
     let init = decl.init.as_ref()?;
     let (obj_name, prop_key) = extract_obj_prop(init)?;
-    Some((obj_name, prop_key, Some(bi.id.sym.clone())))
+    Some((obj_name, prop_key, Some(bi.clone())))
 }
 
-fn extract_obj_prop(expr: &Expr) -> Option<(Atom, PropKey)> {
+fn extract_obj_prop(expr: &Expr) -> Option<(Ident, PropKey)> {
     let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
         return None;
     };
@@ -517,11 +512,11 @@ fn extract_obj_prop(expr: &Expr) -> Option<(Atom, PropKey)> {
         }
         _ => return None,
     };
-    Some((obj_id.sym.clone(), key))
+    Some((obj_id.clone(), key))
 }
 
 /// Try to extract `const t = obj[n]` where n is a numeric literal ≤10
-fn try_extract_index_access(stmt: &Stmt) -> Option<(Atom, usize, Option<Atom>)> {
+fn try_extract_index_access(stmt: &Stmt) -> Option<(Ident, usize, Option<BindingIdent>)> {
     let Stmt::Decl(Decl::Var(var)) = stmt else { return None };
     if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
         return None;
@@ -542,11 +537,11 @@ fn try_extract_index_access(stmt: &Stmt) -> Option<(Atom, usize, Option<Atom>)> 
     if idx > 10 || *value < 0.0 || value.fract() != 0.0 {
         return None;
     }
-    Some((obj_id.sym.clone(), idx, Some(bi.id.sym.clone())))
+    Some((obj_id.clone(), idx, Some(bi.clone())))
 }
 
 /// Determine if accesses are all Property or all Index type
-fn flush_group(result: &mut Vec<Stmt>, obj: Atom, accesses: Vec<AccessKind>) {
+fn flush_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<AccessKind>) {
     if accesses.len() < 2 {
         // Not worth destructuring — emit individually
         for acc in accesses {
@@ -570,7 +565,7 @@ fn flush_group(result: &mut Vec<Stmt>, obj: Atom, accesses: Vec<AccessKind>) {
     }
 }
 
-fn flush_property_group(result: &mut Vec<Stmt>, obj: Atom, accesses: Vec<AccessKind>) {
+fn flush_property_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<AccessKind>) {
     if accesses.len() < 2 {
         for acc in accesses {
             result.push(acc_to_stmt(&obj, acc));
@@ -602,31 +597,25 @@ fn flush_property_group(result: &mut Vec<Stmt>, obj: Atom, accesses: Vec<AccessK
                 props.push(ObjectPatProp::Assign(swc_core::ecma::ast::AssignPatProp {
                     span: DUMMY_SP,
                     key: BindingIdent {
-                        id: Ident::new_no_ctxt(prop_sym, DUMMY_SP),
+                        id: Ident::new(prop_sym, DUMMY_SP, SyntaxContext::empty()),
                         type_ann: None,
                     },
                     value: None,
                 }));
             }
             Some(alias) => {
-                if alias == &prop_sym {
+                if alias.id.sym == prop_sym {
                     // Same name: shorthand
                     props.push(ObjectPatProp::Assign(swc_core::ecma::ast::AssignPatProp {
                         span: DUMMY_SP,
-                        key: BindingIdent {
-                            id: Ident::new_no_ctxt(alias.clone(), DUMMY_SP),
-                            type_ann: None,
-                        },
+                        key: alias.clone(),
                         value: None,
                     }));
                 } else {
                     // Different name: { key: alias }
                     props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
                         key: prop_name,
-                        value: Box::new(Pat::Ident(BindingIdent {
-                            id: Ident::new_no_ctxt(alias.clone(), DUMMY_SP),
-                            type_ann: None,
-                        })),
+                        value: Box::new(Pat::Ident(alias.clone())),
                     }));
                 }
             }
@@ -646,13 +635,13 @@ fn flush_property_group(result: &mut Vec<Stmt>, obj: Atom, accesses: Vec<AccessK
                 optional: false,
                 type_ann: None,
             }),
-            init: Some(Box::new(Expr::Ident(Ident::new_no_ctxt(obj, DUMMY_SP)))),
+            init: Some(Box::new(Expr::Ident(obj))),
             definite: false,
         }],
     }))));
 }
 
-fn flush_index_group(result: &mut Vec<Stmt>, obj: Atom, accesses: Vec<AccessKind>) {
+fn flush_index_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<AccessKind>) {
     if accesses.len() < 2 {
         for acc in accesses {
             result.push(acc_to_stmt(&obj, acc));
@@ -673,10 +662,7 @@ fn flush_index_group(result: &mut Vec<Stmt>, obj: Atom, accesses: Vec<AccessKind
     for acc in &accesses {
         let AccessKind::Index { binding, index } = acc else { continue };
         if let Some(alias) = binding {
-            elems[*index] = Some(Pat::Ident(BindingIdent {
-                id: Ident::new_no_ctxt(alias.clone(), DUMMY_SP),
-                type_ann: None,
-            }));
+            elems[*index] = Some(Pat::Ident(alias.clone()));
         }
     }
 
@@ -693,7 +679,7 @@ fn flush_index_group(result: &mut Vec<Stmt>, obj: Atom, accesses: Vec<AccessKind
                 optional: false,
                 type_ann: None,
             }),
-            init: Some(Box::new(Expr::Ident(Ident::new_no_ctxt(obj, DUMMY_SP)))),
+            init: Some(Box::new(Expr::Ident(obj))),
             definite: false,
         }],
     }))));
@@ -701,7 +687,7 @@ fn flush_index_group(result: &mut Vec<Stmt>, obj: Atom, accesses: Vec<AccessKind
     result.extend(non_inlined);
 }
 
-fn acc_to_stmt(obj: &Atom, acc: AccessKind) -> Stmt {
+fn acc_to_stmt(obj: &Ident, acc: AccessKind) -> Stmt {
     match acc {
         AccessKind::Property { binding, prop_key } => {
             let prop = match &prop_key {
@@ -717,7 +703,7 @@ fn acc_to_stmt(obj: &Atom, acc: AccessKind) -> Stmt {
             };
             let member_expr = Expr::Member(MemberExpr {
                 span: DUMMY_SP,
-                obj: Box::new(Expr::Ident(Ident::new_no_ctxt(obj.clone(), DUMMY_SP))),
+                obj: Box::new(Expr::Ident(obj.clone())),
                 prop,
             });
             match binding {
@@ -729,10 +715,7 @@ fn acc_to_stmt(obj: &Atom, acc: AccessKind) -> Stmt {
                     declare: false,
                     decls: vec![VarDeclarator {
                         span: DUMMY_SP,
-                        name: Pat::Ident(BindingIdent {
-                            id: Ident::new_no_ctxt(alias, DUMMY_SP),
-                            type_ann: None,
-                        }),
+                        name: Pat::Ident(alias),
                         init: Some(Box::new(member_expr)),
                         definite: false,
                     }],
@@ -742,7 +725,7 @@ fn acc_to_stmt(obj: &Atom, acc: AccessKind) -> Stmt {
         AccessKind::Index { binding, index } => {
             let member_expr = Expr::Member(MemberExpr {
                 span: DUMMY_SP,
-                obj: Box::new(Expr::Ident(Ident::new_no_ctxt(obj.clone(), DUMMY_SP))),
+                obj: Box::new(Expr::Ident(obj.clone())),
                 prop: MemberProp::Computed(ComputedPropName {
                     span: DUMMY_SP,
                     expr: Box::new(Expr::Lit(Lit::Num(Number {
@@ -761,10 +744,7 @@ fn acc_to_stmt(obj: &Atom, acc: AccessKind) -> Stmt {
                     declare: false,
                     decls: vec![VarDeclarator {
                         span: DUMMY_SP,
-                        name: Pat::Ident(BindingIdent {
-                            id: Ident::new_no_ctxt(alias, DUMMY_SP),
-                            type_ann: None,
-                        }),
+                        name: Pat::Ident(alias),
                         init: Some(Box::new(member_expr)),
                         definite: false,
                     }],
