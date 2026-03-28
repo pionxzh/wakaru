@@ -215,6 +215,47 @@ async function func() {
 }
 
 #[test]
+#[ignore = "known stack overflow on advanced async/await fixture"]
+fn async_with_advanced_intermediate_awaits() {
+    // Ported from the JS suite's advanced async/await fixture.
+    let input = r#"
+function func() {
+  return __awaiter(this, void 0, void 0, function () {
+    var result, json;
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          console.log('Before sleep');
+          return [4 /*yield*/, sleep(1000)];
+        case 1:
+          _a.sent();
+          return [4 /*yield*/, fetch('')];
+        case 2:
+          result = _a.sent();
+          return [4 /*yield*/, result.json()];
+        case 3:
+          json = _a.sent();
+          return [2 /*return*/, json];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+async function func() {
+  var result, json;
+  console.log('Before sleep');
+  await sleep(1000);
+  result = await fetch('');
+  json = await result.json();
+  return json;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn async_with_try_catch_finally() {
     // Full __awaiter + __generator with try/catch/finally regions
     let input = r#"
@@ -248,6 +289,89 @@ async function func() {
     await 1;
   } catch (error) {}
   finally {}
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+#[ignore = "known stack overflow on advanced async/await fixture"]
+fn restore_complete_async_await_complex_try_regions() {
+    // Ported from the JS suite's full async/await restoration fixture.
+    let input = r#"
+function func(x) {
+  return __awaiter(this, void 0, void 0, function () {
+    var e_1, e_2;
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0: return [4 /*yield*/, 2];
+        case 1:
+          _a.sent();
+          _a.label = 2;
+        case 2:
+          _a.trys.push([2, 5, 6, 7]);
+          return [4 /*yield*/, 1];
+        case 3:
+          _a.sent();
+          console.log(1);
+          return [4 /*yield*/, x];
+        case 4:
+          _a.sent();
+          return [3 /*break*/, 7];
+        case 5:
+          e_1 = _a.sent();
+          console.error(e_1, 2);
+          return [3 /*break*/, 7];
+        case 6:
+          console.log("finally");
+          return [7 /*endfinally*/];
+        case 7:
+          console.log(3);
+          return [4 /*yield*/, 7];
+        case 8:
+          _a.sent();
+          _a.label = 9;
+        case 9:
+          _a.trys.push([9, 11, , 12]);
+          console.log(4);
+          return [4 /*yield*/, x];
+        case 10:
+          _a.sent();
+          return [3 /*break*/, 12];
+        case 11:
+          e_2 = _a.sent();
+          console.error(e_2, 5);
+          return [3 /*break*/, 12];
+        case 12: return [2 /*return*/];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+async function func(x) {
+  var e_1, e_2;
+  await 2;
+  try {
+    await 1;
+    console.log(1);
+    await x;
+  } catch (error) {
+    e_1 = error;
+    console.error(e_1, 2);
+  } finally {
+    console.log("finally");
+  }
+  console.log(3);
+  await 7;
+  try {
+    console.log(4);
+    await x;
+  } catch (error) {
+    e_2 = error;
+    console.error(e_2, 5);
+  }
 }
 "#;
     let output = apply(input);
