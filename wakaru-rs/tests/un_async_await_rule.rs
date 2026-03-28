@@ -215,7 +215,6 @@ async function func() {
 }
 
 #[test]
-#[ignore = "known stack overflow on advanced async/await fixture"]
 fn async_with_advanced_intermediate_awaits() {
     // Ported from the JS suite's advanced async/await fixture.
     let input = r#"
@@ -296,7 +295,6 @@ async function func() {
 }
 
 #[test]
-#[ignore = "known stack overflow on advanced async/await fixture"]
 fn restore_complete_async_await_complex_try_regions() {
     // Ported from the JS suite's full async/await restoration fixture.
     let input = r#"

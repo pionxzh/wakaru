@@ -4,7 +4,7 @@ use swc_core::ecma::ast::{
     AwaitExpr, BlockStmt, CatchClause, Expr, ExprStmt, Function, Ident, Pat, Stmt, SwitchCase,
     TryStmt, YieldExpr,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{VisitMut, VisitMutWith, VisitWith};
 
 pub struct UnAsyncAwait;
 
@@ -127,6 +127,16 @@ fn decode_state_machine(state_name: Atom, cases: Vec<SwitchCase>) -> Vec<Stmt> {
             continue;
         }
         if stmt_uses_sent(&state_name, &stmt) {
+            if is_catch_label(idx, &trys) {
+                let mut replacer = SentReplacer {
+                    state_name: state_name.clone(),
+                    replacement: Box::new(Expr::Ident(Ident::new_no_ctxt("error".into(), DUMMY_SP))),
+                };
+                let mut s = stmt;
+                s.visit_mut_with(&mut replacer);
+                output.push((idx, s));
+                continue;
+            }
             // Pop the previous yield and embed it into this assignment/expression.
             let merged = if let Some((_, prev)) = output.last() {
                 extract_yield_from_stmt(prev).map(|(arg, delegate)| {
@@ -172,6 +182,10 @@ fn decode_state_machine(state_name: Atom, cases: Vec<SwitchCase>) -> Vec<Stmt> {
     }
 
     reconstruct_with_regions(label_stmts, &trys)
+}
+
+fn is_catch_label(label_idx: usize, trys: &[[Option<usize>; 4]]) -> bool {
+    trys.iter().any(|region| region[1] == Some(label_idx))
 }
 
 /// If `stmt` is `ExprStmt(yield X)`, return `(X, delegate)`.
@@ -307,7 +321,7 @@ fn stmt_uses_sent(state_name: &Atom, stmt: &Stmt) -> bool {
                     }
                 }
             }
-            swc_core::ecma::visit::VisitWith::visit_with(call, self);
+            call.visit_children_with(self);
         }
     }
     let mut f = Finder { state_name: state_name.clone(), found: false };
