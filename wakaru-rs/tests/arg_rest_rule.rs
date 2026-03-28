@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::ArgRest;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| ArgRest)
+}
 
 #[test]
 fn arguments_index_becomes_rest_args() {
@@ -14,7 +19,7 @@ function foo(...args) {
     return args[0] + args[1];
 }
 "#;
-    assert_eq_normalized(&render(input), expected);
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -29,7 +34,7 @@ function foo(...args) {
     return args.length;
 }
 "#;
-    assert_eq_normalized(&render(input), expected);
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -45,14 +50,14 @@ function sum() {
 "#;
     let expected = r#"
 function sum(...args) {
-    let total = 0;
-    for (let i = 0; i < args.length; i++) {
+    var total = 0;
+    for (var i = 0; i < args.length; i++) {
         total += args[i];
     }
     return total;
 }
 "#;
-    assert_eq_normalized(&render(input), expected);
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -63,7 +68,7 @@ function get(i) {
 }
 "#;
     // Function has a formal param — should not transform
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -75,7 +80,7 @@ function foo(a, b) {
     return arguments[0];
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -86,7 +91,7 @@ function foo(...rest) {
     return rest[0];
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -98,7 +103,7 @@ function foo() {
     return bar(arguments);
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -109,7 +114,7 @@ function foo() {
     return bar(...arguments);
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -133,7 +138,7 @@ function outer() {
     return inner;
 }
 "#;
-    assert_eq_normalized(&render(input), expected);
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -143,6 +148,7 @@ function foo() {
     return 42;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+

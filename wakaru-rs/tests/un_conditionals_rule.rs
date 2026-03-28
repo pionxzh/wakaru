@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnConditionals;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnConditionals)
+}
 
 #[test]
 fn simple_ternary_to_if_else() {
@@ -14,7 +19,7 @@ if (x) {
   b();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -33,7 +38,7 @@ if (cond) {
   obj[bar] = 20;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -69,7 +74,7 @@ if (x) {
 
 !x ?? c();
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -93,7 +98,7 @@ if (a) {
   j();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -106,22 +111,22 @@ function fn() {
 "#;
     let expected = r#"
 function fn() {
-  if (e == 2) {
+  if (2 == e) {
     return foo();
   }
 
-  if (f == 3) {
+  if (3 == f) {
     return bar();
   }
 
-  if (g == 4) {
+  if (4 == g) {
     return baz();
   }
 
   return fail(e);
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -145,7 +150,7 @@ function fn() {
   return e();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -165,6 +170,7 @@ if (arguments.length > 1) {
     x = 0;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+

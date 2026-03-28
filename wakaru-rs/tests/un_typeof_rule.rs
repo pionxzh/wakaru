@@ -1,7 +1,11 @@
 mod common;
 
-use common::assert_eq_normalized;
-use common::render;
+use wakaru_rs::rules::UnTypeof;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnTypeof)
+}
 
 #[test]
 fn transforms_minified_typeof_patterns() {
@@ -19,7 +23,7 @@ typeof x === "undefined";
 typeof x === "undefined";
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -39,7 +43,8 @@ typeof x === "function";
 typeof x === "undefined";
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
 

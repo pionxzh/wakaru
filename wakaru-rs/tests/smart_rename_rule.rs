@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, normalize, render};
+use wakaru_rs::rules::SmartRename;
+use common::{assert_eq_normalized, normalize, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| SmartRename)
+}
 
 #[test]
 fn object_destructuring_rename_shorthand() {
@@ -23,7 +28,7 @@ const {
 } = n;
 dispatchers.delete(gql, listener);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -43,7 +48,7 @@ const {
 } = n;
 _default.delete(_static);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -67,7 +72,7 @@ function foo({
   dispatchers.delete(gql, listener);
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -91,7 +96,7 @@ const foo2 = ({
   gql[dispatchers].delete(listener);
 };
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -107,7 +112,7 @@ const DContext = createContext(null);
 const EfContext = o.createContext('light');
 const ThemeContext = o.createContext('light');
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -121,7 +126,7 @@ const [, g] = o.useState(0);
 const [e, setE] = useState();
 const [, setG] = o.useState(0);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -135,7 +140,7 @@ const [g, h] = o.useReducer(r, i, init);
 const [eState, fDispatch] = useReducer(r, i);
 const [gState, hDispatch] = o.useReducer(r, i, init);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -151,7 +156,7 @@ const dRef = useRef();
 const efRef = o.useRef(null);
 const buttonRef = o.useRef(null);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -163,7 +168,7 @@ fn known_bug_react_rename_should_not_leave_stale_use_site() {
 const d = useRef();
 use(d);
 "#;
-    let output = normalize(&render(input));
+    let output = normalize(&apply(input));
     assert!(
         !output.contains("const dRef = useRef();\nuse(d);"),
         "partial rename left stale use site:\n{output}"
@@ -179,9 +184,10 @@ function inner(t) {
 }
 use(t);
 "#;
-    let output = normalize(&render(input));
+    let output = normalize(&apply(input));
     assert!(
         output.contains("function inner(t)"),
         "shadowed parameter was renamed across scope:\n{output}"
     );
 }
+

@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnExportRename;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnExportRename)
+}
 
 #[test]
 fn export_const_inlines_var_declaration() {
@@ -11,7 +16,7 @@ export const App = a;
     let expected = r#"
 export const App = 1;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -24,7 +29,7 @@ export const App = a;
     let expected = r#"
 export function App() {}
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -37,7 +42,7 @@ export const App = o;
     let expected = r#"
 export class App {}
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -50,7 +55,7 @@ export { o as Game };
     let expected = r#"
 export const Game = { a: 1 };
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -63,7 +68,7 @@ export { o as compute };
     let expected = r#"
 export function compute() { return 1; }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -80,7 +85,7 @@ const o = 1;
 const App = 2;
 export { o as App };
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -95,6 +100,7 @@ console.log(a);
 export const Counter = 1;
 console.log(Counter);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+

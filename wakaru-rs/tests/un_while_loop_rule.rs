@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnWhileLoop;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnWhileLoop)
+}
 
 #[test]
 fn transforms_infinite_for_to_while_true() {
@@ -15,7 +20,7 @@ while (true) {
     doSomething();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -32,7 +37,7 @@ while (i < 10) {
     i++;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -44,7 +49,7 @@ for (let i = 0;;) {
     doSomething();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -56,6 +61,7 @@ for (;; i++) {
     doSomething();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+

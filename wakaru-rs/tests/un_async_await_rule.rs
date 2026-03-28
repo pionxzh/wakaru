@@ -1,8 +1,13 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnAsyncAwait;
+use common::{assert_eq_normalized, render_rule};
 
 // ── __generator only ────────────────────────────────────────────────────────
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnAsyncAwait)
+}
 
 #[test]
 fn simple_generator_yields() {
@@ -32,7 +37,7 @@ function* func() {
   yield 3;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -59,14 +64,13 @@ function func() {
 "#;
     let expected = r#"
 function* func() {
-  let x;
-  let y;
+  var x, y;
   x = yield foo;
   y = yield bar;
   return y;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -121,7 +125,7 @@ async function func(x) {
   }
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -142,7 +146,7 @@ function f() {
     let expected = r#"
 async function f() {}
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -172,7 +176,7 @@ async function func() {
   await 2;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -200,14 +204,13 @@ function func() {
 "#;
     let expected = r#"
 async function func() {
-  let x;
-  let y;
+  var x, y;
   x = await foo;
   y = await bar;
   return y;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -247,6 +250,7 @@ async function func() {
   finally {}
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+

@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnInfinity;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnInfinity)
+}
 
 #[test]
 fn transforms_one_div_zero_to_infinity() {
@@ -23,7 +28,8 @@ const e = '1' / 0;
 const f = x / 0;
 const g = [0 / 0, Infinity];
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
 

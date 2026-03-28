@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnEsmoduleFlag;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnEsmoduleFlag)
+}
 
 #[test]
 fn removes_object_define_property_exports() {
@@ -10,7 +15,7 @@ Object.defineProperty(exports, '__esModule', { value: true });
 "#;
     let expected = r#""#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -22,7 +27,7 @@ Object.defineProperty(module.exports, '__esModule', { value: true });
 "#;
     let expected = r#""#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -35,7 +40,7 @@ exports.__esModule = true;
 "#;
     let expected = r#""#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -47,7 +52,7 @@ module.exports.__esModule = true;
 "#;
     let expected = r#""#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -63,11 +68,12 @@ Object.defineProperty(exports, 'foo', { value: 1 });
 exports.__esModule = false;
 "#;
     let expected = r#"
-export const foo = 1;
+exports.foo = 1;
 Object.defineProperty(exports, 'foo', { value: 1 });
-export const __esModule = false;
+exports.__esModule = false;
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+

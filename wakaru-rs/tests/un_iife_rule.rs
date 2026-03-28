@@ -1,6 +1,10 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use common::{assert_eq_normalized, render_pipeline};
+
+fn apply(input: &str) -> String {
+    render_pipeline(input)
+}
 
 #[test]
 fn iife_single_char_params_renamed_to_longer_ident_args() {
@@ -30,7 +34,7 @@ fn iife_single_char_params_renamed_to_longer_ident_args() {
   m.parentNode.insertBefore(a, m);
 })(window, document, 'script', 'https://www.google-analytics.com/analytics.js', 'ga');
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -62,7 +66,7 @@ fn iife_literal_args_extracted_to_const_when_no_arguments_usage() {
   m.parentNode.insertBefore(a, m);
 })(window, document);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -82,7 +86,7 @@ fn iife_param_with_longer_name_not_renamed() {
   a.src = 'url';
 })(window, document);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -103,6 +107,7 @@ fn iife_arg_with_shorter_name_not_renamed() {
   a.src = 'url';
 })(w, document);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+

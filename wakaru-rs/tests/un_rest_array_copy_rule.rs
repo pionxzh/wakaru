@@ -1,6 +1,7 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnRestArrayCopy;
+use common::{assert_eq_normalized, render_pipeline, render_rule};
 
 // ── nested / name-collision cases ────────────────────────────────────────────
 //
@@ -9,6 +10,14 @@ use common::{assert_eq_normalized, render};
 // If the outer's copy variable is referenced inside the inner function (closure
 // capture), replacing it with `args` would silently pick up the inner binding.
 // The rule detects this and skips the outer transformation to preserve semantics.
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnRestArrayCopy)
+}
+
+fn apply_pipeline(input: &str) -> String {
+    render_pipeline(input)
+}
 
 #[test]
 fn removes_babel_rest_copy_loop() {
@@ -24,7 +33,7 @@ function t(...i) {
     return i[0] + i[1];
 }
 "#;
-    assert_eq_normalized(&render(input), expected);
+    assert_eq_normalized(&apply_pipeline(input), expected);
 }
 
 #[test]
@@ -43,7 +52,7 @@ function t(...i) {
     return i.join(", ");
 }
 "#;
-    assert_eq_normalized(&render(input), expected);
+    assert_eq_normalized(&apply_pipeline(input), expected);
 }
 
 #[test]
@@ -62,7 +71,7 @@ function t(...r) {
     foo(r);
 }
 "#;
-    assert_eq_normalized(&render(input), expected);
+    assert_eq_normalized(&apply_pipeline(input), expected);
 }
 
 #[test]
@@ -76,7 +85,7 @@ function t(...args) {
     return i;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     // `other` is not a rest param — loop should remain
     assert!(output.contains("for"), "loop was wrongly removed: {output}");
 }
@@ -89,7 +98,7 @@ function t(a, b) {
     return a + b;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -114,5 +123,6 @@ function outer() {
     return inner;
 }
 "#;
-    assert_eq_normalized(&render(input), expected);
+    assert_eq_normalized(&apply_pipeline(input), expected);
 }
+

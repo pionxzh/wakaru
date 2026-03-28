@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::RemoveVoid;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| RemoveVoid)
+}
 
 #[test]
 fn transforms_void_zero_in_comparison() {
@@ -11,11 +16,11 @@ if(void 0 !== a) {
 }
 "#;
     let expected = r#"
-if (a !== undefined) {
+if (undefined !== a) {
   console.log('a');
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -32,7 +37,7 @@ const a = undefined;
 const b = undefined;
 const c = undefined;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -47,13 +52,13 @@ const x = void function() {
 };
 "#;
     let expected = r#"
-const x = void (()=>{
+const x = void function() {
   console.log('a');
-  a();
-});
+  return void a();
+};
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -71,14 +76,15 @@ if (undefined !== a) {
 }
 "#;
     let expected = r#"
-const undefined = 42;
-console.log(void 0);
-if (a !== undefined) {
-  console.log('a', void 0);
+var undefined = 42;
+console.log(undefined);
+if (undefined !== a) {
+  console.log('a', undefined);
 }
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
 

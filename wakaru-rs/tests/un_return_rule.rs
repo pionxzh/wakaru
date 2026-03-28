@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnReturn;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnReturn)
+}
 
 #[test]
 fn transforms_return_void_expr_to_expression_statement() {
@@ -15,7 +20,7 @@ function foo() {
   a();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -41,13 +46,11 @@ function foo() {
 
 const bar = ()=>{
   const a = 1;
-  if (a) {
-    return undefined;
-  }
+  if (a) return void 0;
 };
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -70,7 +73,7 @@ function foo() {
 function foo() {
   const count = 5;
   while (count--) {
-    return undefined;
+    return void 0;
   }
 
   for(let i = 0; i < 10; i++){
@@ -78,7 +81,8 @@ function foo() {
   }
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
 

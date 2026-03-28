@@ -1,19 +1,23 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnVariableMerging;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnVariableMerging)
+}
 
 #[test]
 fn splits_var_declaration_into_individual_statements() {
-    // VarDeclToLetConst converts var to const since these vars are never reassigned.
     let input = r#"
 var a = 1, b = true, c = "hello";
 "#;
     let expected = r#"
-const a = 1;
-const b = true;
-const c = "hello";
+var a = 1;
+var b = true;
+var c = "hello";
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -27,7 +31,7 @@ let d = 1;
 let e = 2;
 let f = 3;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -41,20 +45,19 @@ const g = 1;
 const h = 2;
 const i = 3;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
 fn does_not_split_single_declarator() {
-    // VarDeclToLetConst converts var to const since x is never reassigned.
     let input = r#"
 var x = 1;
 "#;
     let expected = r#"
-const x = 1;
+var x = 1;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -64,32 +67,28 @@ fn splits_export_var_declaration() {
 export var a = 1, b = true, c = "hello";
 "#;
     let expected = r#"
-export const a = 1;
-export const b = true;
-export const c = "hello";
+export var a = 1;
+export var b = true;
+export var c = "hello";
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
 fn extracts_unused_for_init_vars_before_loop() {
-    // `i` is not used in test (j < 10) or update (k++), so it gets extracted.
-    // VarDeclToLetConst converts:
-    //   - `i` → const (never reassigned)
-    //   - `j, k` → let (k is incremented via k++)
     let input = r#"
 for (var i = 0, j = 0, k = 0; j < 10; k++) {
   console.log(k);
 }
 "#;
     let expected = r#"
-const i = 0;
-for (let j = 0, k = 0; j < 10; k++) {
+var i = 0;
+for (var j = 0, k = 0; j < 10; k++) {
   console.log(k);
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -104,40 +103,36 @@ for (const i = 0, j = 0, k = 0; j < 10; k++) {}
 for (let i = 0, j = 0, k = 0; j < 10; k++) {}
 for (const i = 0, j = 0, k = 0; j < 10; k++) {}
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
 fn does_not_extract_for_init_var_when_init_depends_on_loop_var() {
-    // `a` references `n` which stays in the for init (used in test `a < n`).
-    // Extracting `a` before the loop would create a TDZ with let/const.
-    // So `a` must remain in the for init alongside `n`.
     let input = r#"
 for (var n = 10, a = new Array(n), i = 0; i < n; i++) {
   a[i] = i;
 }
 "#;
     let expected = r#"
-for (let n = 10, a = new Array(n), i = 0; i < n; i++) {
+for (var n = 10, a = new Array(n), i = 0; i < n; i++) {
   a[i] = i;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
 fn prunes_empty_var_decl_in_for_init_when_all_extracted() {
-    // All declarators are extracted, so the for init becomes None.
-    // VarDeclToLetConst converts i → const (never reassigned).
     let input = r#"
 for (var i = 0; j < 10; k++) {}
 "#;
     let expected = r#"
-const i = 0;
+var i = 0;
 for (; j < 10; k++) {}
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+

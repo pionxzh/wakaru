@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnTypeConstructor;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnTypeConstructor)
+}
 
 #[test]
 fn transforms_unary_plus_ident_to_number_call() {
@@ -13,7 +18,7 @@ fn transforms_unary_plus_ident_to_number_call() {
 Number(x);
 Number(numStr);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -26,7 +31,7 @@ x + "";
     let expected = r#"
 String(x);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -39,7 +44,7 @@ const x = 'str' + '';
     let expected = r#"
 const x = 'str';
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -54,7 +59,7 @@ const b = [,];
 const a = Array(3);
 const b = Array(1);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -64,7 +69,7 @@ fn does_not_transform_empty_array() {
     let input = r#"
 const x = [];
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -75,6 +80,7 @@ fn does_not_transform_unary_plus_on_non_ident() {
 const a = +"42";
 const b = +42;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+

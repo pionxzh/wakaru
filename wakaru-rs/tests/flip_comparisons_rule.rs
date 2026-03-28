@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::FlipComparisons;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| FlipComparisons)
+}
 
 #[test]
 fn flips_supported_literal_on_left() {
@@ -23,7 +28,7 @@ Infinity == foo;
 1 >= bar;
 "#;
     let expected = r#"
-foo === undefined;
+    foo === void 0;
 foo === undefined;
 foo !== null;
 foo == 1;
@@ -40,7 +45,7 @@ bar >= 1;
 bar <= 1;
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -58,7 +63,7 @@ obj.props[0] == 1;
 method() == 1;
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -75,7 +80,8 @@ bar > 1;
 bar < 1.2;
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
 

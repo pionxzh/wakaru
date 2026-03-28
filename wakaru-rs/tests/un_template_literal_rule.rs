@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnTemplateLiteral;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnTemplateLiteral)
+}
 
 #[test]
 fn restores_template_literal_from_concat_chain() {
@@ -15,15 +20,15 @@ var example6 = "test ".concat(foo, " ").concat(bar);
 "#;
     // VarDeclToLetConst converts var to const since these vars are never reassigned.
     let expected = r#"
-const example1 = `the simple ${form}`;
-const example2 = `${1}`;
-const example3 = 1 + `${foo}${bar}${baz}`;
-const example4 = 1 + `${foo}bar${baz}`;
-const example5 = `${1}${f}oo${true}${b}ar${0}${baz}`;
-const example6 = `test ${foo} ${bar}`;
+var example1 = `the simple ${form}`;
+var example2 = `${1}`;
+var example3 = 1 + `${foo}${bar}${baz}`;
+var example4 = 1 + `${foo}bar${baz}`;
+var example5 = `${1}${f}oo${true}${b}ar${0}${baz}`;
+var example6 = `test ${foo} ${bar}`;
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -37,7 +42,8 @@ fn keeps_non_consecutive_concat_calls() {
 `the${first} take the ${second} and `.split(' ').concat(third);
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
 

@@ -1,7 +1,11 @@
 mod common;
 
-use common::assert_eq_normalized;
-use common::render;
+use wakaru_rs::rules::UnNumericLiteral;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnNumericLiteral)
+}
 
 #[test]
 fn transforms_numeric_literals_with_different_notation() {
@@ -26,7 +30,8 @@ const f = 420;
 const g = -20000;
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
 

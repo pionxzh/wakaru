@@ -1,6 +1,15 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::ArrowFunction;
+use common::{assert_eq_normalized, render_pipeline, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| ArrowFunction)
+}
+
+fn apply_pipeline(input: &str) -> String {
+    render_pipeline(input)
+}
 
 #[test]
 fn single_return_becomes_arrow_expression() {
@@ -10,7 +19,7 @@ const double = [1, 2, 3].map(function(x) { return x * 2; });
     let expected = r#"
 const double = [1, 2, 3].map(x => x * 2);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -28,7 +37,7 @@ arr.forEach(x => {
     doSomething(x);
 });
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -40,7 +49,7 @@ const fn = function() { return 42; };
     let expected = r#"
 const fn = () => 42;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -52,7 +61,7 @@ const add = function(a, b) { return a + b; };
     let expected = r#"
 const add = (a, b) => a + b;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -63,9 +72,9 @@ fn function_with_this_not_converted() {
 const obj = { fn: function() { return this.x; } };
 "#;
     let expected = r#"
-const obj = { fn() { return this.x; } };
+const obj = { fn: function() { return this.x; } };
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -80,7 +89,7 @@ const fn = function() { return arguments[0]; };
     let expected = r#"
 const fn = (...args) => args[0];
 "#;
-    let output = render(input);
+    let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -93,7 +102,7 @@ const gen = function* () { yield 1; };
     let expected = r#"
 const gen = function* () { yield 1; };
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -104,7 +113,7 @@ fn named_function_expr_not_converted() {
     let input = r#"
 f = function fact(n) { return n * fact(n - 1); };
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -115,7 +124,7 @@ fn object_method_value_not_converted_to_arrow() {
     let input = r#"
 ({foo: function() {}});
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert!(!output.contains("=>"), "object method became arrow: {output}");
 }
 
@@ -129,7 +138,7 @@ a(function(x) { this.x = x; }.bind(this));
     let expected = r#"
 a(x => { this.x = x; });
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -143,6 +152,8 @@ f = async function() { return 1; };
     let expected = r#"
 f = async () => 1;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+

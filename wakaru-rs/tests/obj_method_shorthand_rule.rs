@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::ObjMethodShorthand;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| ObjMethodShorthand)
+}
 
 #[test]
 fn function_value_becomes_method_shorthand() {
@@ -18,7 +23,7 @@ const obj = {
     }
 };
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -36,7 +41,7 @@ const obj = {
     b(x) { return x * 2; }
 };
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -57,7 +62,7 @@ const obj = {
     }
 };
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -79,7 +84,7 @@ const obj = {
     }
 };
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -90,7 +95,7 @@ fn named_function_expr_not_converted() {
     let input = r#"
 const x = {foo: function foo() { return foo(); }};
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -100,7 +105,7 @@ fn computed_key_not_converted() {
     let input = r#"
 const x = {[foo]: function() {}};
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -110,7 +115,7 @@ fn string_key_not_converted() {
     let input = r#"
 const x = {"foo": function() {}};
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -120,6 +125,7 @@ fn numeric_key_not_converted() {
     let input = r#"
 const x = {123: function() {}};
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+

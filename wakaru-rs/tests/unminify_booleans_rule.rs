@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnminifyBooleans;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnminifyBooleans)
+}
 
 #[test]
 fn transforms_bang_zero_and_bang_one() {
@@ -13,17 +18,17 @@ var obj = {
   value: !0
 };
 "#;
-    // VarDeclToLetConst converts var obj to const since obj is never reassigned.
     let expected = r#"
 let a = false;
 const b = true;
 
-const obj = {
+var obj = {
   value: true
 };
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
 

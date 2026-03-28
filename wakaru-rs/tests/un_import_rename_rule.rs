@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnImportRename;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnImportRename)
+}
 
 #[test]
 fn renames_short_import_alias_to_original() {
@@ -12,7 +17,7 @@ ab();
 import { foo } from 'bar';
 foo();
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -28,7 +33,7 @@ import { alpha, beta } from 'mod';
 alpha();
 beta();
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -42,7 +47,7 @@ foo();
 import { foo } from 'bar';
 foo();
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -59,7 +64,7 @@ import { foo as foo_1 } from 'bar';
 const foo = 42;
 foo_1();
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -77,6 +82,7 @@ import * as ns from 'mod';
 defaultExport();
 ns.foo();
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+

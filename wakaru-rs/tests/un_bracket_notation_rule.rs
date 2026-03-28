@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnBracketNotation;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnBracketNotation)
+}
 
 #[test]
 fn transforms_bracket_notation_to_dot_or_numeric() {
@@ -28,7 +33,7 @@ obj['00'];
 obj[3.14];
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -58,7 +63,8 @@ obj['1var'];
 obj['prop-with-dash'];
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
 

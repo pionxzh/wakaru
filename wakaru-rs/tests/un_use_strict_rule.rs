@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnUseStrict;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnUseStrict)
+}
 
 #[test]
 fn removes_use_strict_directive() {
@@ -10,7 +15,7 @@ fn removes_use_strict_directive() {
 "#;
     let expected = r#""#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -32,7 +37,7 @@ function foo(str) {
 }
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -53,7 +58,8 @@ function foo() {
 }
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
 

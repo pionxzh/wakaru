@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnArgumentSpread;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnArgumentSpread)
+}
 
 #[test]
 fn converts_apply_with_undefined_to_spread() {
@@ -10,7 +15,7 @@ fn.apply(undefined, args);
     let expected = r#"
 fn(...args);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -22,7 +27,7 @@ fn.apply(null, args);
     let expected = r#"
 fn(...args);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -34,7 +39,7 @@ obj.fn.apply(obj, someArray);
     let expected = r#"
 obj.fn(...someArray);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -47,7 +52,7 @@ fn.apply(obj, someArray);
     let expected = r#"
 fn.apply(obj, someArray);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -60,7 +65,7 @@ obj.fn.apply(null, someArray);
     let expected = r#"
 obj.fn.apply(null, someArray);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -76,7 +81,7 @@ function foo() {
   this.fn(...someArray);
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -88,6 +93,7 @@ obj.fn.apply(obj, [1, 2, 3]);
     let expected = r#"
 obj.fn(...[1, 2, 3]);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+

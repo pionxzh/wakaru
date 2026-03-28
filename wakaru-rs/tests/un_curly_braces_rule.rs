@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnCurlyBraces;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnCurlyBraces)
+}
 
 #[test]
 fn wraps_if_body_in_block() {
@@ -13,7 +18,7 @@ if (a) {
     b();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -31,7 +36,7 @@ if (a) {
     c();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -52,7 +57,7 @@ if (a) {
     e();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -67,7 +72,7 @@ for (let i = 0; i < 10; i++) {
     doSomething(i);
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -82,7 +87,7 @@ while (x) {
     doSomething();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -97,7 +102,7 @@ do {
     doSomething();
 } while (x);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -110,9 +115,11 @@ fn wraps_arrow_function_expr_body_in_block_with_return() {
 const fn = () => b();
 "#;
     let expected = r#"
-const fn = () => b();
+const fn = () => {
+    return b();
+};
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -122,7 +129,7 @@ fn does_not_wrap_var_declaration_in_if_body() {
     let input = r#"
 if (a) var b = 1;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -134,6 +141,7 @@ if (a) {
     b();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+

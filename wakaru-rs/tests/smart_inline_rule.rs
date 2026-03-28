@@ -1,6 +1,15 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::SmartInline;
+use common::{assert_eq_normalized, render_pipeline, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| SmartInline)
+}
+
+fn apply_pipeline(input: &str) -> String {
+    render_pipeline(input)
+}
 
 #[test]
 fn inline_single_use_temp_var() {
@@ -11,7 +20,7 @@ bar(t);
     let expected = r#"
 bar(foo);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -28,7 +37,7 @@ const t = foo;
 bar(t);
 baz(t);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -43,7 +52,7 @@ process(n);
 const n = 42;
 process(n);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -59,7 +68,7 @@ const fn2 = function() { return t; };
 const t = foo;
 const fn2 = () => t;
 "#;
-    let output = render(input);
+    let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -74,7 +83,7 @@ const c = obj.z;
     let expected = r#"
 const { x, y, z } = obj;
 "#;
-    let output = render(input);
+    let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -88,7 +97,7 @@ const c = arr[2];
     let expected = r#"
 const [a, b, c] = arr;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -101,7 +110,7 @@ const c = arr[2];
     let expected = r#"
 const [a, , c] = arr;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -114,7 +123,7 @@ const a = obj.x;
     let expected = r#"
 const a = obj.x;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -126,7 +135,7 @@ const a = arr[0];
     let expected = r#"
 const a = arr[0];
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -140,7 +149,7 @@ const y = obj.y;
     let expected = r#"
 const { x, y } = obj;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -164,7 +173,7 @@ function foo() {
     return r;
 }
 "#;
-    let output = render(input);
+    let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -181,7 +190,7 @@ function bar() { return o(); }
 function foo() { return r; }
 function bar() { return r; }
 "#;
-    let output = render(input);
+    let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -193,7 +202,7 @@ function foo() {
     return o.a;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -203,7 +212,7 @@ fn known_bug_arrow_wrapper_dot_a_non_webpack_shape_not_inlined() {
 const o = () => r;
 console.log(o.a);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -220,6 +229,7 @@ const { defineProperty, getPrototypeOf } = Object;
 const s = getPrototypeOf && getPrototypeOf(Object);
 defineProperty(target, key, desc);
 "#;
-    let output = render(input);
+    let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
+

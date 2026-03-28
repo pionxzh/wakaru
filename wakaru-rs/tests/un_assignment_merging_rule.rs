@@ -1,6 +1,15 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::UnAssignmentMerging;
+use common::{assert_eq_normalized, render_pipeline, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, |_| UnAssignmentMerging)
+}
+
+fn apply_pipeline(input: &str) -> String {
+    render_pipeline(input)
+}
 
 #[test]
 fn splits_two_level_chained_assignment() {
@@ -15,7 +24,7 @@ export const foo = 1;
 export const bar = 1;
 "#;
 
-    let output = render(input);
+    let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -31,7 +40,7 @@ b = undefined;
 c = undefined;
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -45,7 +54,7 @@ a = b = foo.bar;
 a = b = foo.bar;
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -59,6 +68,7 @@ a = b = fn();
 a = b = fn();
 "#;
 
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+

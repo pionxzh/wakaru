@@ -1,6 +1,10 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use common::{assert_eq_normalized, render_pipeline};
+
+fn apply(input: &str) -> String {
+    render_pipeline(input)
+}
 
 #[test]
 fn transforms_indirect_call_to_direct_member_call() {
@@ -15,7 +19,7 @@ var countRef = (0, s.useRef)(0);
 import s from "react";
 const countRef = s.useRef(0);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -34,7 +38,7 @@ import s from "react";
 const countRef = s.useRef(0);
 const secondRef = s.useMemo(()=>{}, []);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -50,7 +54,8 @@ Object(r.validate)(x);
 r.h(e, "msg");
 r.validate(x);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
 

@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use wakaru_rs::rules::SimplifySequence;
+use common::{assert_eq_normalized, render_rule};
+
+fn apply(input: &str) -> String {
+    render_rule(input, SimplifySequence::new)
+}
 
 #[test]
 fn splits_top_level_sequence_expression_statement() {
@@ -12,7 +17,7 @@ a();
 b();
 c();
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -29,7 +34,7 @@ while (a(), b(), c()) {
   e();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -49,7 +54,7 @@ if (a) {
   return f = 3;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -70,7 +75,7 @@ switch (c()) {
     e();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -85,7 +90,7 @@ if (e !== null) {
   throw e;
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -101,7 +106,7 @@ a();
 b();
 const x = c();
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -118,7 +123,7 @@ const y = 3;
 d();
 const z = e();
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -137,7 +142,7 @@ for (; c(); d(), e()) {
   g();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -151,7 +156,7 @@ foo();
 bar();
 for (x = 5; false;);
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -170,7 +175,7 @@ for (let x = c(), y = 1; x < 10; x++) {
   e();
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -188,7 +193,7 @@ for (let x in c()) {
   console.log(x);
 }
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -207,7 +212,7 @@ a();
 b();
 "use strict";
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -223,6 +228,7 @@ a['c'] = d;
 a = v;
 a.b = c;
 "#;
-    let output = render(input);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
