@@ -180,3 +180,7 @@ Some rules must see the AST in a specific state:
   rule may look different than expected after earlier passes.
 - **`cargo test` hangs:** Usually a panic in a rule causing infinite recursion. Run with
   `RUST_BACKTRACE=1 cargo test -- --nocapture`.
+
+# Review
+
+OpenAI Codex will review your changes.
