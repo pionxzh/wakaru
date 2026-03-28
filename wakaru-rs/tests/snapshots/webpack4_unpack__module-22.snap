@@ -1,5 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 66
 expression: code
 ---
 import o from "./module-0.js";
@@ -9,49 +10,38 @@ import u from "./module-2.js";
 import l from "./module-9.js";
 import w from "./module-10.js";
 import effects from "./module-17.js";
-export const utils = {};
-Object.defineProperties(utils, {
-    TASK: {
-        enumerable: true,
-        get: ()=>o.e
+export const utils = {
+    get TASK () {
+        return o.e;
     },
-    SAGA_ACTION: {
-        enumerable: true,
-        get: ()=>o.c
+    get SAGA_ACTION () {
+        return o.c;
     },
-    noop: {
-        enumerable: true,
-        get: ()=>o.u
+    get noop () {
+        return o.u;
     },
-    is: {
-        enumerable: true,
-        get: ()=>o.q
+    get is () {
+        return o.q;
     },
-    deferred: {
-        enumerable: true,
-        get: ()=>o.l
+    get deferred () {
+        return o.l;
     },
-    arrayOfDeffered: {
-        enumerable: true,
-        get: ()=>o.g
+    get arrayOfDeffered () {
+        return o.g;
     },
-    createMockTask: {
-        enumerable: true,
-        get: ()=>o.j
+    get createMockTask () {
+        return o.j;
     },
-    cloneableGenerator: {
-        enumerable: true,
-        get: ()=>o.i
+    get cloneableGenerator () {
+        return o.i;
     },
-    asEffect: {
-        enumerable: true,
-        get: ()=>u.d
+    get asEffect () {
+        return u.d;
     },
-    CHANNEL_END: {
-        enumerable: true,
-        get: ()=>d
+    get CHANNEL_END () {
+        return d;
     }
-});
+};
 const c = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
