@@ -3,7 +3,7 @@ source: tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
-var r = require("./module-4.js"), o = ()=>r, i = require("./module-3.js"), a = ()=>i, u = require("./module-1.js"), l = ()=>u, c = require("./module-8.js"), s = require("./module-16.js"), f = s.a;
+var r = require("./module-4.js"), o = ()=>r && r.__esModule ? r.default : r, i = require("./module-3.js"), a = ()=>i && i.__esModule ? i.default : i, u = require("./module-1.js"), l = ()=>u && u.__esModule ? u.default : u, c = require("./module-8.js"), s = require("./module-16.js"), f = s.a;
 function d(e, t) {
     if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
     return !t || "object" != typeof t && "function" != typeof t ? e : t;
@@ -33,18 +33,18 @@ var p = function(e) {
     }(t, e), t.prototype.componentWillMount = function() {
         o()(!this.props.history, "<BrowserRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { BrowserRouter as Router }`.");
     }, t.prototype.render = function() {
-        return a.a.createElement(f, {
+        return a().createElement(f, {
             history: this.history,
             children: this.props.children
         });
     }, t;
-}(a.a.Component);
+}(a().Component);
 p.propTypes = {
-    basename: l.a.string,
-    forceRefresh: l.a.bool,
-    getUserConfirmation: l.a.func,
-    keyLength: l.a.number,
-    children: l.a.node
+    basename: l().string,
+    forceRefresh: l().bool,
+    getUserConfirmation: l().func,
+    keyLength: l().number,
+    children: l().node
 };
 var h = p;
 function m(e, t) {
@@ -76,23 +76,23 @@ var y = function(e) {
     }(t, e), t.prototype.componentWillMount = function() {
         o()(!this.props.history, "<HashRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { HashRouter as Router }`.");
     }, t.prototype.render = function() {
-        return a.a.createElement(f, {
+        return a().createElement(f, {
             history: this.history,
             children: this.props.children
         });
     }, t;
-}(a.a.Component);
+}(a().Component);
 y.propTypes = {
-    basename: l.a.string,
-    getUserConfirmation: l.a.func,
-    hashType: l.a.oneOf([
+    basename: l().string,
+    getUserConfirmation: l().func,
+    hashType: l().oneOf([
         "hashbang",
         "noslash",
         "slash"
     ]),
-    children: l.a.node
+    children: l().node
 };
-var v = y, b = require("./module-5.js"), g = ()=>b, w = Object.assign || function(e) {
+var v = y, b = require("./module-5.js"), g = ()=>b && b.__esModule ? b.default : b, w = Object.assign || function(e) {
     for(var t = 1; t < arguments.length; t++){
         var n = arguments[t];
         for(var r in n)Object.prototype.hasOwnProperty.call(n, r) && (e[r] = n[r]);
@@ -146,35 +146,35 @@ var x = function(e) {
         g()(this.context.router, "You should not use <Link> outside a <Router>");
         g()(void 0 !== t, 'You must specify the "to" property');
         var o = this.context.router.history, i = "string" == typeof t ? Object(c.createLocation)(t, null, null, o.location) : t, u = o.createHref(i);
-        return a.a.createElement("a", w({}, r, {
+        return a().createElement("a", w({}, r, {
             onClick: this.handleClick,
             href: u,
             ref: n
         }));
     }, t;
-}(a.a.Component);
+}(a().Component);
 k.propTypes = {
-    onClick: l.a.func,
-    target: l.a.string,
-    replace: l.a.bool,
-    to: l.a.oneOfType([
-        l.a.string,
-        l.a.object
+    onClick: l().func,
+    target: l().string,
+    replace: l().bool,
+    to: l().oneOfType([
+        l().string,
+        l().object
     ]).isRequired,
-    innerRef: l.a.oneOfType([
-        l.a.string,
-        l.a.func
+    innerRef: l().oneOfType([
+        l().string,
+        l().func
     ])
 };
 k.defaultProps = {
     replace: !1
 };
 k.contextTypes = {
-    router: l.a.shape({
-        history: l.a.shape({
-            push: l.a.func.isRequired,
-            replace: l.a.func.isRequired,
-            createHref: l.a.func.isRequired
+    router: l().shape({
+        history: l().shape({
+            push: l().func.isRequired,
+            replace: l().func.isRequired,
+            createHref: l().func.isRequired
         }).isRequired
     }).isRequired
 };
@@ -208,18 +208,18 @@ var O = function(e) {
     }(t, e), t.prototype.componentWillMount = function() {
         o()(!this.props.history, "<MemoryRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { MemoryRouter as Router }`.");
     }, t.prototype.render = function() {
-        return a.a.createElement(s.a, {
+        return a().createElement(s.a, {
             history: this.history,
             children: this.props.children
         });
     }, t;
-}(a.a.Component);
+}(a().Component);
 O.propTypes = {
-    initialEntries: l.a.array,
-    initialIndex: l.a.number,
-    getUserConfirmation: l.a.func,
-    keyLength: l.a.number,
-    children: l.a.node
+    initialEntries: l().array,
+    initialIndex: l().number,
+    getUserConfirmation: l().func,
+    keyLength: l().number,
+    children: l().node
 };
 var C = O, P = require("./module-15.js"), _ = Object.assign || function(e) {
     for(var t = 1; t < arguments.length; t++){
@@ -233,7 +233,7 @@ function j(e, t) {
     return !t || "object" != typeof t && "function" != typeof t ? e : t;
 }
 var R = function(e) {
-    return 0 === a.a.Children.count(e);
+    return 0 === a().Children.count(e);
 }, N = function(e) {
     function t() {
         var n, r;
@@ -295,32 +295,32 @@ var R = function(e) {
             history: u,
             staticContext: c
         };
-        return r ? e ? a.a.createElement(r, s) : null : o ? e ? o(s) : null : "function" == typeof n ? n(s) : n && !R(n) ? a.a.Children.only(n) : null;
+        return r ? e ? a().createElement(r, s) : null : o ? e ? o(s) : null : "function" == typeof n ? n(s) : n && !R(n) ? a().Children.only(n) : null;
     }, t;
-}(a.a.Component);
+}(a().Component);
 N.propTypes = {
-    computedMatch: l.a.object,
-    path: l.a.string,
-    exact: l.a.bool,
-    strict: l.a.bool,
-    sensitive: l.a.bool,
-    component: l.a.func,
-    render: l.a.func,
-    children: l.a.oneOfType([
-        l.a.func,
-        l.a.node
+    computedMatch: l().object,
+    path: l().string,
+    exact: l().bool,
+    strict: l().bool,
+    sensitive: l().bool,
+    component: l().func,
+    render: l().func,
+    children: l().oneOfType([
+        l().func,
+        l().node
     ]),
-    location: l.a.object
+    location: l().object
 };
 N.contextTypes = {
-    router: l.a.shape({
-        history: l.a.object.isRequired,
-        route: l.a.object.isRequired,
-        staticContext: l.a.object
+    router: l().shape({
+        history: l().object.isRequired,
+        route: l().object.isRequired,
+        staticContext: l().object
     })
 };
 N.childContextTypes = {
-    router: l.a.object.isRequired
+    router: l().object.isRequired
 };
 var M = N, A = M, L = Object.assign || function(e) {
     for(var t = 1; t < arguments.length; t++){
@@ -350,14 +350,14 @@ var D = function(e) {
         "isActive",
         "aria-current"
     ]), p = "object" === (void 0 === t ? "undefined" : I(t)) ? t.pathname : t, h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
-    return a.a.createElement(A, {
+    return a().createElement(A, {
         path: h,
         exact: n,
         strict: r,
         location: o,
         children: function(e) {
             var n = e.location, r = e.match, o = !!(s ? s(r, n) : r);
-            return a.a.createElement(T, L({
+            return a().createElement(T, L({
                 to: t,
                 className: o ? [
                     u,
@@ -373,15 +373,15 @@ var D = function(e) {
 };
 D.propTypes = {
     to: T.propTypes.to,
-    exact: l.a.bool,
-    strict: l.a.bool,
-    location: l.a.object,
-    activeClassName: l.a.string,
-    className: l.a.string,
-    activeStyle: l.a.object,
-    style: l.a.object,
-    isActive: l.a.func,
-    "aria-current": l.a.oneOf([
+    exact: l().bool,
+    strict: l().bool,
+    location: l().object,
+    activeClassName: l().string,
+    className: l().string,
+    activeStyle: l().object,
+    style: l().object,
+    isActive: l().func,
+    "aria-current": l().oneOf([
         "page",
         "step",
         "location",
@@ -430,30 +430,30 @@ var z = function(e) {
     }, t.prototype.render = function() {
         return null;
     }, t;
-}(a.a.Component);
+}(a().Component);
 z.propTypes = {
-    when: l.a.bool,
-    message: l.a.oneOfType([
-        l.a.func,
-        l.a.string
+    when: l().bool,
+    message: l().oneOfType([
+        l().func,
+        l().string
     ]).isRequired
 };
 z.defaultProps = {
     when: !0
 };
 z.contextTypes = {
-    router: l.a.shape({
-        history: l.a.shape({
-            block: l.a.func.isRequired
+    router: l().shape({
+        history: l().shape({
+            block: l().func.isRequired
         }).isRequired
     }).isRequired
 };
-var q = z, U = require("./module-14.js"), H = ()=>U, W = {}, $ = 0, B = function() {
+var q = z, U = require("./module-14.js"), H = ()=>U && U.__esModule ? U.default : U, W = {}, $ = 0, B = function() {
     var e = arguments.length > 0 && void 0 !== arguments[0] ? arguments[0] : "/", t = arguments.length > 1 && void 0 !== arguments[1] ? arguments[1] : {};
     return "/" === e ? e : (function(e) {
         var t = e, n = W[t] || (W[t] = {});
         if (n[e]) return n[e];
-        var r = H.a.compile(e);
+        var r = H().compile(e);
         return $ < 1e4 && (n[e] = r, $++), r;
     })(e)(t, {
         pretty: !0
@@ -506,26 +506,26 @@ var Q = function(e) {
     }, t.prototype.render = function() {
         return null;
     }, t;
-}(a.a.Component);
+}(a().Component);
 Q.propTypes = {
-    computedMatch: l.a.object,
-    push: l.a.bool,
-    from: l.a.string,
-    to: l.a.oneOfType([
-        l.a.string,
-        l.a.object
+    computedMatch: l().object,
+    push: l().bool,
+    from: l().string,
+    to: l().oneOfType([
+        l().string,
+        l().object
     ]).isRequired
 };
 Q.defaultProps = {
     push: !1
 };
 Q.contextTypes = {
-    router: l.a.shape({
-        history: l.a.shape({
-            push: l.a.func.isRequired,
-            replace: l.a.func.isRequired
+    router: l().shape({
+        history: l().shape({
+            push: l().func.isRequired,
+            replace: l().func.isRequired
         }).isRequired,
-        staticContext: l.a.object
+        staticContext: l().object
     }).isRequired
 };
 var K = Q, Y = Object.assign || function(e) {
@@ -624,17 +624,17 @@ var X = function(e) {
             listen: this.handleListen,
             block: this.handleBlock
         };
-        return a.a.createElement(s.a, Y({}, r, {
+        return a().createElement(s.a, Y({}, r, {
             history: o
         }));
     }, t;
-}(a.a.Component);
+}(a().Component);
 ne.propTypes = {
-    basename: l.a.string,
-    context: l.a.object.isRequired,
-    location: l.a.oneOfType([
-        l.a.string,
-        l.a.object
+    basename: l().string,
+    context: l().object.isRequired,
+    location: l().oneOfType([
+        l().string,
+        l().object
     ])
 };
 ne.defaultProps = {
@@ -642,7 +642,7 @@ ne.defaultProps = {
     location: "/"
 };
 ne.childContextTypes = {
-    router: l.a.object.isRequired
+    router: l().object.isRequired
 };
 var re = ne;
 var oe = function(e) {
@@ -672,8 +672,8 @@ var oe = function(e) {
         o()(!(!e.location && this.props.location), '<Switch> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
     }, t.prototype.render = function() {
         var e = this.context.router.route, t = this.props.children, n = this.props.location || e.location, r = void 0, o = void 0;
-        return a.a.Children.forEach(t, function(t) {
-            if (null == r && a.a.isValidElement(t)) {
+        return a().Children.forEach(t, function(t) {
+            if (null == r && a().isValidElement(t)) {
                 var i = t.props, u = i.path, l = i.exact, c = i.strict, s = i.sensitive, f = i.from, d = u || f;
                 o = t;
                 r = Object(P.a)(n.pathname, {
@@ -683,22 +683,22 @@ var oe = function(e) {
                     sensitive: s
                 }, e.match);
             }
-        }), r ? a.a.cloneElement(o, {
+        }), r ? a().cloneElement(o, {
             location: n,
             computedMatch: r
         }) : null;
     }, t;
-}(a.a.Component);
+}(a().Component);
 oe.contextTypes = {
-    router: l.a.shape({
-        route: l.a.object.isRequired
+    router: l().shape({
+        route: l().object.isRequired
     }).isRequired
 };
 oe.propTypes = {
-    children: l.a.node,
-    location: l.a.object
+    children: l().node,
+    location: l().object
 };
-var ie = oe, ae = B, ue = P.a, le = require("./module-30.js"), ce = ()=>le, se = Object.assign || function(e) {
+var ie = oe, ae = B, ue = P.a, le = require("./module-30.js"), ce = ()=>le && le.__esModule ? le.default : le, se = Object.assign || function(e) {
     for(var t = 1; t < arguments.length; t++){
         var n = arguments[t];
         for(var r in n)Object.prototype.hasOwnProperty.call(n, r) && (e[r] = n[r]);
@@ -714,16 +714,16 @@ var fe = function(e) {
         }(t, [
             "wrappedComponentRef"
         ]);
-        return a.a.createElement(M, {
+        return a().createElement(M, {
             children: function(t) {
-                return a.a.createElement(e, se({}, r, t, {
+                return a().createElement(e, se({}, r, t, {
                     ref: n
                 }));
             }
         });
     };
     return t.displayName = "withRouter(" + (e.displayName || e.name) + ")", t.WrappedComponent = e, t.propTypes = {
-        wrappedComponentRef: l.a.func
+        wrappedComponentRef: l().func
     }, ce()(t, e);
 };
 exports.BrowserRouter = h;

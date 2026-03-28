@@ -52,6 +52,19 @@ fn decompile_output_is_stable_for_noop_pipeline() {
     assert_eq!(common::normalize(&once), common::normalize(&twice));
 }
 
+#[test]
+fn decompile_parses_jsx_in_js_files() {
+    let output = decompile(
+        "const view = <div className=\"ok\" />;",
+        DecompileOptions {
+            filename: "view.js".to_string(),
+        },
+    )
+    .expect("jsx in .js should parse");
+
+    assert!(output.contains("<div"));
+}
+
 fn bundled_fixture_paths() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("testcases");
     let mut paths = Vec::new();

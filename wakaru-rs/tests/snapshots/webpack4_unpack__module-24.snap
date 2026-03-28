@@ -11,6 +11,24 @@ import b from "./module-5.js";
 import P from "./module-15.js";
 import U from "./module-14.js";
 import le from "./module-30.js";
+const o = ()=>{
+    if (r && r.__esModule) {
+        return r.default;
+    }
+    return r;
+};
+const a = ()=>{
+    if (i && i.__esModule) {
+        return i.default;
+    }
+    return i;
+};
+const l = ()=>{
+    if (u && u.__esModule) {
+        return u.default;
+    }
+    return u;
+};
 export const Router = s.a;
 function d(e, t) {
     if (!e) {
@@ -51,22 +69,22 @@ export const BrowserRouter = ((e)=>{
         t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
     })(t, e);
     t.prototype.componentWillMount = function() {
-        r(!this.props.history, "<BrowserRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { BrowserRouter as Router }`.");
+        o()(!this.props.history, "<BrowserRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { BrowserRouter as Router }`.");
     };
     t.prototype.render = function() {
-        return i.createElement(Router, {
+        return a().createElement(Router, {
             history: this.history,
             children: this.props.children
         });
     };
     return t;
-})(i.Component);
+})(a().Component);
 BrowserRouter.propTypes = {
-    basename: u.string,
-    forceRefresh: u.bool,
-    getUserConfirmation: u.func,
-    keyLength: u.number,
-    children: u.node
+    basename: l().string,
+    forceRefresh: l().bool,
+    getUserConfirmation: l().func,
+    keyLength: l().number,
+    children: l().node
 };
 function m(e, t) {
     if (!e) {
@@ -107,25 +125,31 @@ export const HashRouter = ((e)=>{
         t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
     })(t, e);
     t.prototype.componentWillMount = function() {
-        r(!this.props.history, "<HashRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { HashRouter as Router }`.");
+        o()(!this.props.history, "<HashRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { HashRouter as Router }`.");
     };
     t.prototype.render = function() {
-        return i.createElement(Router, {
+        return a().createElement(Router, {
             history: this.history,
             children: this.props.children
         });
     };
     return t;
-})(i.Component);
+})(a().Component);
 HashRouter.propTypes = {
-    basename: u.string,
-    getUserConfirmation: u.func,
-    hashType: u.oneOf([
+    basename: l().string,
+    getUserConfirmation: l().func,
+    hashType: l().oneOf([
         "hashbang",
         "noslash",
         "slash"
     ]),
-    children: u.node
+    children: l().node
+};
+const g = ()=>{
+    if (b && b.__esModule) {
+        return b.default;
+    }
+    return b;
 };
 const w = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
@@ -207,41 +231,41 @@ export const Link = ((e)=>{
             "to",
             "innerRef"
         ]);
-        b(this.context.router, "You should not use <Link> outside a <Router>");
-        b(t !== undefined, 'You must specify the "to" property');
+        g()(this.context.router, "You should not use <Link> outside a <Router>");
+        g()(t !== undefined, 'You must specify the "to" property');
         const o = this.context.router.history;
         const i = typeof t == "string" ? c.createLocation(t, null, null, o.location) : t;
         const u = o.createHref(i);
-        return i.createElement("a", w({}, r, {
+        return a().createElement("a", w({}, r, {
             onClick: this.handleClick,
             href: u,
             ref: n
         }));
     };
     return t;
-})(i.Component);
+})(a().Component);
 Link.propTypes = {
-    onClick: u.func,
-    target: u.string,
-    replace: u.bool,
-    to: u.oneOfType([
-        u.string,
-        u.object
+    onClick: l().func,
+    target: l().string,
+    replace: l().bool,
+    to: l().oneOfType([
+        l().string,
+        l().object
     ]).isRequired,
-    innerRef: u.oneOfType([
-        u.string,
-        u.func
+    innerRef: l().oneOfType([
+        l().string,
+        l().func
     ])
 };
 Link.defaultProps = {
     replace: false
 };
 Link.contextTypes = {
-    router: u.shape({
-        history: u.shape({
-            push: u.func.isRequired,
-            replace: u.func.isRequired,
-            createHref: u.func.isRequired
+    router: l().shape({
+        history: l().shape({
+            push: l().func.isRequired,
+            replace: l().func.isRequired,
+            createHref: l().func.isRequired
         }).isRequired
     }).isRequired
 };
@@ -284,22 +308,22 @@ export const MemoryRouter = ((e)=>{
         t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
     })(t, e);
     t.prototype.componentWillMount = function() {
-        r(!this.props.history, "<MemoryRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { MemoryRouter as Router }`.");
+        o()(!this.props.history, "<MemoryRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { MemoryRouter as Router }`.");
     };
     t.prototype.render = function() {
-        return i.createElement(s.a, {
+        return a().createElement(s.a, {
             history: this.history,
             children: this.props.children
         });
     };
     return t;
-})(i.Component);
+})(a().Component);
 MemoryRouter.propTypes = {
-    initialEntries: u.array,
-    initialIndex: u.number,
-    getUserConfirmation: u.func,
-    keyLength: u.number,
-    children: u.node
+    initialEntries: l().array,
+    initialIndex: l().number,
+    getUserConfirmation: l().func,
+    keyLength: l().number,
+    children: l().node
 };
 const _ = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
@@ -321,7 +345,7 @@ function j(e, t) {
     }
     return t;
 }
-const R = (e)=>i.Children.count(e) === 0;
+const R = (e)=>a().Children.count(e) === 0;
 const N = ((e)=>{
     function t(...i) {
         let n;
@@ -368,7 +392,7 @@ const N = ((e)=>{
         if (n) {
             return n;
         }
-        b(t, "You should not use <Route> or withRouter() outside a <Router>");
+        g()(t, "You should not use <Route> or withRouter() outside a <Router>");
         const l = t.route;
         const c = (r || l.location).pathname;
         return P.a(c, {
@@ -379,13 +403,13 @@ const N = ((e)=>{
         }, l.match);
     };
     t.prototype.componentWillMount = function() {
-        r(!(this.props.component && this.props.render), "You should not use <Route component> and <Route render> in the same route; <Route render> will be ignored");
-        r(!(this.props.component && this.props.children && !R(this.props.children)), "You should not use <Route component> and <Route children> in the same route; <Route children> will be ignored");
-        r(!(this.props.render && this.props.children && !R(this.props.children)), "You should not use <Route render> and <Route children> in the same route; <Route children> will be ignored");
+        o()(!(this.props.component && this.props.render), "You should not use <Route component> and <Route render> in the same route; <Route render> will be ignored");
+        o()(!(this.props.component && this.props.children && !R(this.props.children)), "You should not use <Route component> and <Route children> in the same route; <Route children> will be ignored");
+        o()(!(this.props.render && this.props.children && !R(this.props.children)), "You should not use <Route render> and <Route children> in the same route; <Route children> will be ignored");
     };
     t.prototype.componentWillReceiveProps = function(e, t) {
-        r(!(e.location && !this.props.location), '<Route> elements should not change from uncontrolled to controlled (or vice versa). You initially used no "location" prop and then provided one on a subsequent render.');
-        r(!(!e.location && this.props.location), '<Route> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
+        o()(!(e.location && !this.props.location), '<Route> elements should not change from uncontrolled to controlled (or vice versa). You initially used no "location" prop and then provided one on a subsequent render.');
+        o()(!(!e.location && this.props.location), '<Route> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
         this.setState({
             match: this.computeMatch(e, t.router)
         });
@@ -404,7 +428,7 @@ const N = ((e)=>{
         };
         if (r) {
             if (e) {
-                return i.createElement(r, s);
+                return a().createElement(r, s);
             }
             return null;
         }
@@ -418,35 +442,35 @@ const N = ((e)=>{
             return n(s);
         }
         if (n && !R(n)) {
-            return i.Children.only(n);
+            return a().Children.only(n);
         }
         return null;
     };
     return t;
-})(i.Component);
+})(a().Component);
 N.propTypes = {
-    computedMatch: u.object,
-    path: u.string,
-    exact: u.bool,
-    strict: u.bool,
-    sensitive: u.bool,
-    component: u.func,
-    render: u.func,
-    children: u.oneOfType([
-        u.func,
-        u.node
+    computedMatch: l().object,
+    path: l().string,
+    exact: l().bool,
+    strict: l().bool,
+    sensitive: l().bool,
+    component: l().func,
+    render: l().func,
+    children: l().oneOfType([
+        l().func,
+        l().node
     ]),
-    location: u.object
+    location: l().object
 };
 N.contextTypes = {
-    router: u.shape({
-        history: u.object.isRequired,
-        route: u.object.isRequired,
-        staticContext: u.object
+    router: l().shape({
+        history: l().object.isRequired,
+        route: l().object.isRequired,
+        staticContext: l().object
     })
 };
 N.childContextTypes = {
-    router: u.object.isRequired
+    router: l().object.isRequired
 };
 export const Route = N;
 const L = Object.assign || function(e) {
@@ -488,7 +512,7 @@ export const NavLink = (e)=>{
     ]);
     const BrowserRouter = (t === undefined ? "undefined" : I(t)) === "object" ? t.pathname : t;
     const BrowserRouter = BrowserRouter && BrowserRouter.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
-    return i.createElement(Route, {
+    return a().createElement(Route, {
         path: BrowserRouter,
         exact: n,
         strict: r,
@@ -496,7 +520,7 @@ export const NavLink = (e)=>{
         children (e) {
             const { location: n, match: r } = e;
             const o = !!(s ? s(r, n) : r);
-            return i.createElement(Link, L({
+            return a().createElement(Link, L({
                 to: t,
                 className: o ? [
                     u,
@@ -510,15 +534,15 @@ export const NavLink = (e)=>{
 };
 NavLink.propTypes = {
     to: Link.propTypes.to,
-    exact: u.bool,
-    strict: u.bool,
-    location: u.object,
-    activeClassName: u.string,
-    className: u.string,
-    activeStyle: u.object,
-    style: u.object,
-    isActive: u.func,
-    "aria-current": u.oneOf([
+    exact: l().bool,
+    strict: l().bool,
+    location: l().object,
+    activeClassName: l().string,
+    className: l().string,
+    activeStyle: l().object,
+    style: l().object,
+    isActive: l().func,
+    "aria-current": l().oneOf([
         "page",
         "step",
         "location",
@@ -575,7 +599,7 @@ export const Prompt = ((e)=>{
         }
     };
     t.prototype.componentWillMount = function() {
-        b(this.context.router, "You should not use <Prompt> outside a <Router>");
+        g()(this.context.router, "You should not use <Prompt> outside a <Router>");
         if (this.props.when) {
             this.enable(this.props.message);
         }
@@ -594,23 +618,29 @@ export const Prompt = ((e)=>{
     };
     t.prototype.render = ()=>null;
     return t;
-})(i.Component);
+})(a().Component);
 Prompt.propTypes = {
-    when: u.bool,
-    message: u.oneOfType([
-        u.func,
-        u.string
+    when: l().bool,
+    message: l().oneOfType([
+        l().func,
+        l().string
     ]).isRequired
 };
 Prompt.defaultProps = {
     when: true
 };
 Prompt.contextTypes = {
-    router: u.shape({
-        history: u.shape({
-            block: u.func.isRequired
+    router: l().shape({
+        history: l().shape({
+            block: l().func.isRequired
         }).isRequired
     }).isRequired
+};
+const H = ()=>{
+    if (U && U.__esModule) {
+        return U.default;
+    }
+    return U;
 };
 const W = {};
 let $ = 0;
@@ -624,7 +654,7 @@ export const generatePath = (e = "/", t = {})=>{
         if (n[e]) {
             return n[e];
         }
-        const r = U.compile(e);
+        const r = H().compile(e);
         if ($ < 10000) {
             n[e] = r;
             $++;
@@ -680,7 +710,7 @@ export const Redirect = ((e)=>{
         return this.context.router && this.context.router.staticContext;
     };
     t.prototype.componentWillMount = function() {
-        b(this.context.router, "You should not use <Redirect> outside a <Router>");
+        g()(this.context.router, "You should not use <Redirect> outside a <Router>");
         if (this.isStatic()) {
             this.perform();
         }
@@ -694,7 +724,7 @@ export const Redirect = ((e)=>{
         const t = c.createLocation(e.to);
         const n = c.createLocation(this.props.to);
         if (c.locationsAreEqual(t, n)) {
-            r(false, "You tried to redirect to the same route you're currently on: \"" + n.pathname + n.search + '"');
+            o()(false, "You tried to redirect to the same route you're currently on: \"" + n.pathname + n.search + '"');
         } else {
             this.perform();
         }
@@ -723,26 +753,26 @@ export const Redirect = ((e)=>{
     };
     t.prototype.render = ()=>null;
     return t;
-})(i.Component);
+})(a().Component);
 Redirect.propTypes = {
-    computedMatch: u.object,
-    push: u.bool,
-    from: u.string,
-    to: u.oneOfType([
-        u.string,
-        u.object
+    computedMatch: l().object,
+    push: l().bool,
+    from: l().string,
+    to: l().oneOfType([
+        l().string,
+        l().object
     ]).isRequired
 };
 Redirect.defaultProps = {
     push: false
 };
 Redirect.contextTypes = {
-    router: u.shape({
-        history: u.shape({
-            push: u.func.isRequired,
-            replace: u.func.isRequired
+    router: l().shape({
+        history: l().shape({
+            push: l().func.isRequired,
+            replace: l().func.isRequired
         }).isRequired,
-        staticContext: u.object
+        staticContext: l().object
     }).isRequired
 };
 const Y = Object.assign || function(e) {
@@ -786,7 +816,7 @@ const Z = (e)=>{
     return c.createPath(e);
 };
 const ee = (e)=>()=>{
-        b(false, "You cannot %s with <StaticRouter>", e);
+        g()(false, "You cannot %s with <StaticRouter>", e);
     };
 const te = ()=>{};
 export const StaticRouter = ((e)=>{
@@ -842,7 +872,7 @@ export const StaticRouter = ((e)=>{
         };
     };
     t.prototype.componentWillMount = function() {
-        r(!this.props.history, "<StaticRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { StaticRouter as Router }`.");
+        o()(!this.props.history, "<StaticRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { StaticRouter as Router }`.");
     };
     t.prototype.render = function() {
         const e = this.props;
@@ -883,18 +913,18 @@ export const StaticRouter = ((e)=>{
             listen: this.handleListen,
             block: this.handleBlock
         };
-        return i.createElement(s.a, Y({}, r, {
+        return a().createElement(s.a, Y({}, r, {
             history: o
         }));
     };
     return t;
-})(i.Component);
+})(a().Component);
 StaticRouter.propTypes = {
-    basename: u.string,
-    context: u.object.isRequired,
-    location: u.oneOfType([
-        u.string,
-        u.object
+    basename: l().string,
+    context: l().object.isRequired,
+    location: l().oneOfType([
+        l().string,
+        l().object
     ])
 };
 StaticRouter.defaultProps = {
@@ -902,7 +932,7 @@ StaticRouter.defaultProps = {
     location: "/"
 };
 StaticRouter.childContextTypes = {
-    router: u.object.isRequired
+    router: l().object.isRequired
 };
 export const Switch = ((e)=>{
     function t() {
@@ -936,11 +966,11 @@ export const Switch = ((e)=>{
         t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
     })(t, e);
     t.prototype.componentWillMount = function() {
-        b(this.context.router, "You should not use <Switch> outside a <Router>");
+        g()(this.context.router, "You should not use <Switch> outside a <Router>");
     };
     t.prototype.componentWillReceiveProps = function(e) {
-        r(!(e.location && !this.props.location), '<Switch> elements should not change from uncontrolled to controlled (or vice versa). You initially used no "location" prop and then provided one on a subsequent render.');
-        r(!(!e.location && this.props.location), '<Switch> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
+        o()(!(e.location && !this.props.location), '<Switch> elements should not change from uncontrolled to controlled (or vice versa). You initially used no "location" prop and then provided one on a subsequent render.');
+        o()(!(!e.location && this.props.location), '<Switch> elements should not change from controlled to uncontrolled (or vice versa). You provided a "location" prop initially but omitted it on a subsequent render.');
     };
     t.prototype.render = function() {
         const e = this.context.router.route;
@@ -948,8 +978,8 @@ export const Switch = ((e)=>{
         const n = this.props.location || e.location;
         let r = undefined;
         let o = undefined;
-        i.Children.forEach(t, (t)=>{
-            if (r == null && i.isValidElement(t)) {
+        a().Children.forEach(t, (t)=>{
+            if (r == null && a().isValidElement(t)) {
                 const i = t.props;
                 const { path: u, exact: l, strict: c, sensitive: s, from: Router } = i;
                 const d = u || Router;
@@ -963,7 +993,7 @@ export const Switch = ((e)=>{
             }
         });
         if (r) {
-            return i.cloneElement(o, {
+            return a().cloneElement(o, {
                 location: n,
                 computedMatch: r
             });
@@ -971,17 +1001,23 @@ export const Switch = ((e)=>{
         return null;
     };
     return t;
-})(i.Component);
+})(a().Component);
 Switch.contextTypes = {
-    router: u.shape({
-        route: u.object.isRequired
+    router: l().shape({
+        route: l().object.isRequired
     }).isRequired
 };
 Switch.propTypes = {
-    children: u.node,
-    location: u.object
+    children: l().node,
+    location: l().object
 };
 export const matchPath = P.a;
+const ce = ()=>{
+    if (le && le.__esModule) {
+        return le.default;
+    }
+    return le;
+};
 const se = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
@@ -1005,9 +1041,9 @@ export const withRouter = (e)=>{
         })(t, [
             "wrappedComponentRef"
         ]);
-        return i.createElement(Route, {
+        return a().createElement(Route, {
             children (t) {
-                return i.createElement(e, se({}, r, t, {
+                return a().createElement(e, se({}, r, t, {
                     ref: n
                 }));
             }
@@ -1016,7 +1052,7 @@ export const withRouter = (e)=>{
     t.displayName = "withRouter(" + (e.displayName || e.name) + ")";
     t.WrappedComponent = e;
     t.propTypes = {
-        wrappedComponentRef: u.func
+        wrappedComponentRef: l().func
     };
-    return le(t, e);
+    return ce()(t, e);
 };

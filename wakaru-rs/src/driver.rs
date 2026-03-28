@@ -9,7 +9,7 @@ use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::visit::VisitMutWith;
 
 use crate::rules::apply_default_rules;
-use crate::unpacker::unpack_webpack4;
+use crate::unpacker::unpack_bundle;
 
 #[derive(Debug, Clone)]
 pub struct DecompileOptions {
@@ -42,7 +42,7 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<String> {
 }
 
 pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, String)>> {
-    match unpack_webpack4(source) {
+    match unpack_bundle(source) {
         Some(result) => {
             let mut pairs = Vec::new();
             for module in result.modules {
@@ -121,6 +121,9 @@ fn detect_syntax(filename: &str) -> Syntax {
             jsx: true,
             ..Default::default()
         }),
-        _ => Syntax::Es(EsSyntax::default()),
+        _ => Syntax::Es(EsSyntax {
+            jsx: true,
+            ..Default::default()
+        }),
     }
 }

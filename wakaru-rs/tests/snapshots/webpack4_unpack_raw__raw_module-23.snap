@@ -13,17 +13,17 @@ function o(e, t) {
     e.prototype.constructor = e;
     r(e, t);
 }
-var i = require("./module-3.js"), a = ()=>i, u = require("./module-1.js"), l = ()=>u, c = l.a.shape({
-    trySubscribe: l.a.func.isRequired,
-    tryUnsubscribe: l.a.func.isRequired,
-    notifyNestedSubs: l.a.func.isRequired,
-    isSubscribed: l.a.func.isRequired
-}), s = l.a.shape({
-    subscribe: l.a.func.isRequired,
-    dispatch: l.a.func.isRequired,
-    getState: l.a.func.isRequired
+var i = require("./module-3.js"), a = ()=>i && i.__esModule ? i.default : i, u = require("./module-1.js"), l = ()=>u && u.__esModule ? u.default : u, c = l().shape({
+    trySubscribe: l().func.isRequired,
+    tryUnsubscribe: l().func.isRequired,
+    notifyNestedSubs: l().func.isRequired,
+    isSubscribed: l().func.isRequired
+}), s = l().shape({
+    subscribe: l().func.isRequired,
+    dispatch: l().func.isRequired,
+    getState: l().func.isRequired
 });
-a.a.forwardRef;
+a().forwardRef;
 function f(e) {
     var t;
     void 0 === e && (e = "store");
@@ -43,7 +43,7 @@ function f(e) {
     }(i.Component);
     return r.propTypes = {
         store: s.isRequired,
-        children: l.a.element.isRequired
+        children: l().element.isRequired
     }, r.childContextTypes = ((t = {})[e] = s.isRequired, t[n] = c, t), r;
 }
 var d = f();
@@ -58,7 +58,7 @@ function m(e, t) {
     for(r = 0; r < i.length; r++)n = i[r], t.indexOf(n) >= 0 || (o[n] = e[n]);
     return o;
 }
-var y = require("./module-32.js"), v = ()=>y, b = require("./module-5.js"), g = ()=>b, w = require("./module-20.js"), E = null, x = {
+var y = require("./module-32.js"), v = ()=>y && y.__esModule ? y.default : y, b = require("./module-5.js"), g = ()=>b && b.__esModule ? b.default : b, w = require("./module-20.js"), E = null, x = {
     notify: function() {}
 };
 var k = function() {
@@ -101,7 +101,7 @@ var k = function() {
     }, t.tryUnsubscribe = function() {
         this.unsubscribe && (this.unsubscribe(), this.unsubscribe = null, this.listeners.clear(), this.listeners = x);
     }, e;
-}(), T = void 0 !== a.a.forwardRef, S = 0, O = {};
+}(), T = void 0 !== a().forwardRef, S = 0, O = {};
 function C() {}
 function P(e, t) {
     var n, r;

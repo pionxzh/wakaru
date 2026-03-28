@@ -3,7 +3,7 @@ source: tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
-var r = require("./module-14.js"), o = ()=>r, i = {}, a = 0;
+var r = require("./module-14.js"), o = ()=>r && r.__esModule ? r.default : r, i = {}, a = 0;
 exports.a = function(e) {
     var t = arguments.length > 1 && void 0 !== arguments[1] ? arguments[1] : {}, n = arguments[2];
     "string" == typeof t && (t = {

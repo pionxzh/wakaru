@@ -32,8 +32,12 @@ fn webpack4_unpack_extracts_modules() {
     }
 
     // The entry module must exist
-    let has_entry = pairs.iter().any(|(name, _)| name == "entry.js" || name.starts_with("entry-"));
-    assert!(has_entry, "no entry module found; filenames: {:?}", pairs.iter().map(|(n, _)| n).collect::<Vec<_>>());
+    let has_entry = pairs.iter().any(|(name, _)| name == "entry.js");
+    assert!(
+        has_entry,
+        "no entry.js module found; filenames: {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
 }
 
 /// Snapshot test: every extracted module's decompiled output is pinned.

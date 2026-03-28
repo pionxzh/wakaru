@@ -1,7 +1,9 @@
+pub mod browserify;
 pub mod webpack4;
+pub mod webpack5;
 
 pub struct UnpackedModule {
-    pub id: usize,
+    pub id: String,
     pub is_entry: bool,
     pub code: String,
     pub filename: String,
@@ -9,6 +11,12 @@ pub struct UnpackedModule {
 
 pub struct UnpackResult {
     pub modules: Vec<UnpackedModule>,
+}
+
+pub fn unpack_bundle(source: &str) -> Option<UnpackResult> {
+    webpack5::detect_and_extract(source)
+        .or_else(|| webpack4::detect_and_extract(source))
+        .or_else(|| browserify::detect_and_extract(source))
 }
 
 pub fn unpack_webpack4(source: &str) -> Option<UnpackResult> {

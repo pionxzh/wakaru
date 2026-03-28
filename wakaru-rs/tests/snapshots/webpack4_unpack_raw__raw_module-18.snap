@@ -3,7 +3,7 @@ source: tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
-var r = require("./module-3.js"), o = ()=>r, i = require("./module-1.js"), a = ()=>i, u = require("./module-16.js"), l = Object.assign || function(e) {
+var r = require("./module-3.js"), o = ()=>r && r.__esModule ? r.default : r, i = require("./module-1.js"), a = ()=>i && i.__esModule ? i.default : i, u = require("./module-16.js"), l = Object.assign || function(e) {
     for(var t = 1; t < arguments.length; t++){
         var n = arguments[t];
         for(var r in n)Object.prototype.hasOwnProperty.call(n, r) && (e[r] = n[r]);
@@ -57,17 +57,17 @@ var p = function(e) {
     }, t.prototype.componentWillUnmount = function() {
         this.unsubscribeFromHistory && this.unsubscribeFromHistory();
     }, t.prototype.render = function() {
-        return o.a.createElement(u.a, this.props);
+        return o().createElement(u.a, this.props);
     }, t;
 }(r.Component);
 p.propTypes = {
-    store: a.a.object,
-    history: a.a.object.isRequired,
-    children: a.a.node,
-    isSSR: a.a.bool
+    store: a().object,
+    history: a().object.isRequired,
+    children: a().node,
+    isSSR: a().bool
 };
 p.contextTypes = {
-    store: a.a.object
+    store: a().object
 };
 var h = p, m = require("./module-15.js"), y = function(e) {
     return e.router.location;

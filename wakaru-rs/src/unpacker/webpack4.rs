@@ -1,9 +1,9 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, GLOBALS};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprOrSpread, ExprStmt,
-    FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, Pat,
-    SimpleAssignTarget, Stmt, Str, UnaryOp,
+    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, CondExpr, Expr,
+    ExprOrSpread, ExprStmt, FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp, Module,
+    ModuleItem, Number, Pat, SimpleAssignTarget, Stmt, Str, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
@@ -204,39 +204,131 @@ impl VisitMut for RequireIdRewriter<'_> {
 struct RequireNRewriter {
     require_sym: Atom,
     unresolved_mark: Mark,
+    getter_ids: std::collections::HashSet<(Atom, SyntaxContext)>,
 }
 
 impl VisitMut for RequireNRewriter {
+    fn visit_mut_var_declarator(&mut self, decl: &mut VarDeclarator) {
+        let Some(init) = &mut decl.init else {
+            return;
+        };
+
+        if let Some(rewritten) = self.rewrite_require_n_expr(init.as_ref()) {
+            if let Pat::Ident(binding) = &decl.name {
+                self.getter_ids
+                    .insert((binding.id.sym.clone(), binding.id.ctxt));
+            }
+            *init = Box::new(rewritten);
+            return;
+        }
+
+        init.visit_mut_with(self);
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
+        if let Some(rewritten) = self.rewrite_require_n_expr(expr) {
+            *expr = rewritten;
+        }
+    }
+}
+
+impl RequireNRewriter {
+    fn rewrite_require_n_expr(&self, expr: &Expr) -> Option<Expr> {
         // Match: require.n(single_arg)
-        let Expr::Call(call) = expr else { return };
+        let Expr::Call(call) = expr else { return None };
         if call.args.len() != 1 || call.args[0].spread.is_some() {
-            return;
+            return None;
         }
-        let Callee::Expr(callee_expr) = &call.callee else { return };
-        let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else { return };
-        let Expr::Ident(obj_ident) = &**obj else { return };
+        let Callee::Expr(callee_expr) = &call.callee else { return None };
+        let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else { return None };
+        let Expr::Ident(obj_ident) = &**obj else { return None };
         if obj_ident.sym != self.require_sym || obj_ident.ctxt.outer() != self.unresolved_mark {
-            return;
+            return None;
         }
-        let MemberProp::Ident(prop_ident) = prop else { return };
+        let MemberProp::Ident(prop_ident) = prop else { return None };
         if prop_ident.sym.as_ref() != "n" {
-            return;
+            return None;
         }
 
-        // Replace `require.n(arg)` with `() => arg`
         let arg = call.args[0].expr.clone();
-        *expr = Expr::Arrow(swc_core::ecma::ast::ArrowExpr {
+        let esmodule_check = Expr::Bin(BinExpr {
+            span: Default::default(),
+            op: BinaryOp::LogicalAnd,
+            left: arg.clone(),
+            right: Box::new(Expr::Member(MemberExpr {
+                span: Default::default(),
+                obj: arg.clone(),
+                prop: MemberProp::Ident(IdentName::new("__esModule".into(), Default::default())),
+            })),
+        });
+        let default_value = Expr::Member(MemberExpr {
+            span: Default::default(),
+            obj: arg.clone(),
+            prop: MemberProp::Ident(IdentName::new("default".into(), Default::default())),
+        });
+
+        Some(Expr::Arrow(swc_core::ecma::ast::ArrowExpr {
             span: Default::default(),
             ctxt: Default::default(),
             params: vec![],
-            body: Box::new(swc_core::ecma::ast::BlockStmtOrExpr::Expr(arg)),
+            body: Box::new(swc_core::ecma::ast::BlockStmtOrExpr::Expr(Box::new(
+                Expr::Cond(CondExpr {
+                    span: Default::default(),
+                    test: Box::new(esmodule_check),
+                    cons: Box::new(default_value),
+                    alt: arg,
+                }),
+            ))),
             is_async: false,
             is_generator: false,
             type_params: None,
             return_type: None,
+        }))
+    }
+}
+
+/// Rewrites accesses like `getter.a` to `getter()`, where `getter` came from `require.n(...)`.
+struct RequireNAccessRewriter {
+    getter_ids: std::collections::HashSet<(Atom, SyntaxContext)>,
+}
+
+impl VisitMut for RequireNAccessRewriter {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        let Expr::Member(member) = expr else {
+            return;
+        };
+        let Expr::Ident(obj_ident) = &*member.obj else {
+            return;
+        };
+        if !self
+            .getter_ids
+            .contains(&(obj_ident.sym.clone(), obj_ident.ctxt))
+        {
+            return;
+        }
+
+        let is_accessor = match &member.prop {
+            MemberProp::Ident(prop) => prop.sym.as_ref() == "a",
+            MemberProp::Computed(prop) => matches!(
+                &*prop.expr,
+                Expr::Lit(Lit::Str(value)) if value.value.as_str() == Some("a")
+            ),
+            _ => false,
+        };
+        if !is_accessor {
+            return;
+        }
+
+        *expr = Expr::Call(CallExpr {
+            span: Default::default(),
+            ctxt: Default::default(),
+            callee: Callee::Expr(Box::new(Expr::Ident(obj_ident.clone()))),
+            args: vec![],
+            type_args: None,
         });
     }
 }
@@ -547,13 +639,20 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bo
             synthetic_module.visit_mut_with(&mut id_rewriter);
         }
 
-        // Step 1c: rewrite require.n(expr) → () => expr (webpack default-export getter)
+        // Step 1c: rewrite require.n(expr) to an explicit getter and normalize `.a` accesses.
         {
             let mut n_rewriter = RequireNRewriter {
                 require_sym: post_rename_require_sym.clone(),
                 unresolved_mark,
+                getter_ids: std::collections::HashSet::new(),
             };
             synthetic_module.visit_mut_with(&mut n_rewriter);
+            if !n_rewriter.getter_ids.is_empty() {
+                let mut access_rewriter = RequireNAccessRewriter {
+                    getter_ids: n_rewriter.getter_ids,
+                };
+                synthetic_module.visit_mut_with(&mut access_rewriter);
+            }
         }
 
         // Step 2: normalize webpack runtime helpers (require.r / require.d)
@@ -595,7 +694,7 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bo
         };
 
         modules.push(UnpackedModule {
-            id: idx,
+            id: idx.to_string(),
             is_entry,
             code,
             filename,
@@ -636,9 +735,6 @@ fn collect_entry_ids_from_expr(expr: &Expr, entries: &mut Vec<usize>) {
         // `n(n.s = 51)` — call where arg is assignment to <fn>.s
         Expr::Call(call) => {
             for arg in &call.args {
-                if let Some(id) = extract_entry_id_from_expr(&arg.expr) {
-                    entries.push(id);
-                }
                 collect_entry_ids_from_expr(&arg.expr, entries);
             }
         }
@@ -656,13 +752,6 @@ fn collect_entry_ids_from_expr(expr: &Expr, entries: &mut Vec<usize>) {
         }
         _ => {}
     }
-}
-
-fn extract_entry_id_from_expr(expr: &Expr) -> Option<usize> {
-    if let Expr::Assign(assign) = expr {
-        return extract_entry_id_from_assign(assign);
-    }
-    None
 }
 
 fn extract_entry_id_from_assign(assign: &AssignExpr) -> Option<usize> {
