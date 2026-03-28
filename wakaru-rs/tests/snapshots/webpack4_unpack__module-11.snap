@@ -183,8 +183,7 @@ export function combineReducers(e) {
     } catch (e) {
         u = e;
     }
-    return function(e = {}) {
-        const t = arguments[1];
+    return (e = {}, t)=>{
         if (u) {
             throw u;
         }

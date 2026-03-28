@@ -165,6 +165,53 @@ function foo(a, b) {
   if (c === void 0) c = 1;
   return a + b;
 }
+    "#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn arguments_boolean_presence_default_becomes_param_default() {
+    let input = r#"
+function foo(a) {
+  var b = !(arguments.length > 1 && arguments[1] !== undefined) || arguments[1];
+  return b;
+}
+"#;
+    let expected = r#"
+function foo(a, b = true) {
+  return b;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn arguments_inline_default_expression_becomes_param_default() {
+    let input = r#"
+function foo(a, b) {
+  return bar(a, b, arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null);
+}
+"#;
+    let expected = r#"
+function foo(a, b, _param_2 = null) {
+  return bar(a, b, _param_2);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn arguments_alias_becomes_plain_param() {
+    let input = r#"
+function foo(a) {
+  const b = arguments[1];
+  return b;
+}
+"#;
+    let expected = r#"
+function foo(a, b) {
+  return b;
+}
 "#;
     assert_eq_normalized(&apply(input), expected);
 }

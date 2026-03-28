@@ -109,8 +109,7 @@ export function b(e = o.a.fixed()) {
         }
     };
 }
-function p(e, t = o.a.none()) {
-    const n = arguments[2];
+function p(e, t = o.a.none(), n) {
     if (arguments.length > 2) {
         r.h(n, r.q.func, "Invalid match function passed to eventChannel");
     }

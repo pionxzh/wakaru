@@ -13,8 +13,7 @@ const l = {
     put: r.u,
     take: r.u
 };
-function c(e = 10) {
-    const t = arguments[1];
+function c(e = 10, t) {
     let n = new Array(e);
     let r = 0;
     let l = 0;

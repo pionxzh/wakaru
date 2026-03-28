@@ -36,12 +36,10 @@ a(r, i.FETCH_DATA + o.ERROR, (e, t)=>Object.assign({}, e, {
         error: t
     }));
 const l = r;
-export default function(e = u) {
-    const t = arguments[1];
+export default ((e = u, t)=>{
     const n = l[t.type];
     if (n) {
         return n(e, t.payload);
     }
     return e;
-}
-;
+});

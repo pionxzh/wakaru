@@ -158,8 +158,7 @@ function T(e) {
     }
     return t;
 }
-function S(e) {
-    const t = !(arguments.length > 1 && arguments[1] !== undefined) || arguments[1];
+function S(e, t = true) {
     let n = undefined;
     const r = new Promise((r)=>{
         n = setTimeout(()=>r(t), e);
@@ -192,8 +191,7 @@ const _ = (e)=>{
         done: true
     };
 };
-export function t(e, t = P, n = "") {
-    const r = arguments[3];
+export function t(e, t = P, n = "", r) {
     const o = {
         name: n,
         next: e,

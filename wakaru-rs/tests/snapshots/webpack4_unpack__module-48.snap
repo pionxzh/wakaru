@@ -8655,9 +8655,7 @@ export const unmountComponentAtNode = (e)=>{
         });
     }), true);
 };
-export const unstable_createPortal = function(e, t) {
-    return createPortal(e, t, arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null);
-};
+export const unstable_createPortal = (e, t, _param_2 = null)=>createPortal(e, t, _param_2);
 export const unstable_renderSubtreeIntoContainer = (e, t, n, r)=>{
     if (!Vl(n)) {
         throw Error(a(200));
