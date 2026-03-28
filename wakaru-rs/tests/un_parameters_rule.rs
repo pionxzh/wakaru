@@ -155,6 +155,32 @@ function foo(a = 4) {}
     assert_eq_normalized(&apply(input), expected);
 }
 
+// --- known-broken semantic regressions ---
+
+#[test]
+#[ignore = "known semantic bug: falsy-coalescing rewrite is not default-parameter-safe"]
+fn known_bug_or_assignment_with_zero_not_converted() {
+    let input = r#"
+function foo(a) {
+    a = a || 2;
+    return a;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+#[ignore = "known semantic bug: ternary self-check rewrite changes falsy behavior"]
+fn known_bug_ternary_self_check_with_empty_string_not_converted() {
+    let input = r#"
+function foo(a) {
+    a = a ? a : "fallback";
+    return a;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
 // --- no-op cases ---
 
 #[test]

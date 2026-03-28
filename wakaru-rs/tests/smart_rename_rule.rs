@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use common::{assert_eq_normalized, normalize, render};
 
 #[test]
 fn object_destructuring_rename_shorthand() {
@@ -153,4 +153,37 @@ const buttonRef = o.useRef(null);
 "#;
     let output = render(input);
     assert_eq_normalized(&output, expected);
+}
+
+// --- known-broken semantic regressions ---
+
+#[test]
+#[ignore = "known semantic bug: react rename updates declaration without all use sites"]
+fn known_bug_react_rename_should_not_leave_stale_use_site() {
+    let input = r#"
+const d = useRef();
+use(d);
+"#;
+    let output = normalize(&render(input));
+    assert!(
+        !output.contains("const dRef = useRef();\nuse(d);"),
+        "partial rename left stale use site:\n{output}"
+    );
+}
+
+#[test]
+#[ignore = "known semantic bug: destructuring rename is not scope-aware"]
+fn known_bug_destructuring_rename_should_not_touch_shadowed_param() {
+    let input = r#"
+const { gql: t } = n;
+function inner(t) {
+  return t;
+}
+use(t);
+"#;
+    let output = normalize(&render(input));
+    assert!(
+        output.contains("function inner(t)"),
+        "shadowed parameter was renamed across scope:\n{output}"
+    );
 }

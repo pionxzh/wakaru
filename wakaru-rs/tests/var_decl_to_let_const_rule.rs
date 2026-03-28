@@ -236,3 +236,20 @@ if (true) {
     let output = render(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+#[ignore = "known semantic bug: sibling-block var use is missed by escape analysis"]
+fn known_bug_var_inside_block_used_in_sibling_block_stays_var() {
+    let input = r#"
+function foo(x, y) {
+    if (x) {
+        var a = 1;
+    }
+    if (y) {
+        use(a);
+    }
+}
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, input);
+}

@@ -203,3 +203,14 @@ function foo() {
     let output = render(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+#[ignore = "known semantic bug: .a rewrite is only valid for specific webpack helper shapes"]
+fn known_bug_arrow_wrapper_dot_a_non_webpack_shape_not_inlined() {
+    let input = r#"
+const o = () => r;
+console.log(o.a);
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, input);
+}

@@ -60,3 +60,13 @@ fn does_not_transform_when_cons_is_not_void() {
     let output = render(input);
     assert_eq_normalized(&output, r#"obj === null || obj === undefined ? "fallback" : obj.prop"#);
 }
+
+// --- known-broken semantic regressions ---
+
+#[test]
+#[ignore = "known semantic bug: && guard form is not expression-equivalent to optional chaining"]
+fn known_bug_logical_and_expression_value_not_converted() {
+    let input = r#"x !== null && x !== undefined && x.foo"#;
+    let output = render(input);
+    assert_eq_normalized(&output, input);
+}
