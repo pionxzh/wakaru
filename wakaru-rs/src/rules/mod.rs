@@ -41,6 +41,7 @@ mod exponent;
 mod arg_rest;
 mod un_rest_array_copy;
 mod arrow_function;
+mod arrow_return;
 
 use swc_core::common::Mark;
 use swc_core::ecma::ast::Module;
@@ -89,6 +90,7 @@ pub use exponent::Exponent;
 pub use arg_rest::ArgRest;
 pub use un_rest_array_copy::UnRestArrayCopy;
 pub use arrow_function::ArrowFunction;
+pub use arrow_return::ArrowReturn;
 
 pub trait Rule: VisitMut {
     fn name(&self) -> &'static str;
@@ -147,6 +149,7 @@ pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
     module.visit_mut_with(&mut ArgRest);
     module.visit_mut_with(&mut UnRestArrayCopy);
     module.visit_mut_with(&mut ArrowFunction);
+    module.visit_mut_with(&mut ArrowReturn);
     module.visit_mut_with(&mut UnWebpackDefineGetters::new(unresolved_mark));
     module.visit_mut_with(&mut UnWebpackObjectGetters);
     module.visit_mut_with(&mut UnImportRename);

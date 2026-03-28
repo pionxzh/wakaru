@@ -1,7 +1,7 @@
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, BlockStmtOrExpr, CallExpr, Callee, Expr, FnExpr, Function, Ident, KeyValueProp,
-    MemberProp, Pat, ReturnStmt, Stmt, ThisExpr,
+    MemberProp, Pat, ThisExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -40,40 +40,6 @@ impl VisitMut for ArrowFunction {
             prop.value.visit_mut_with(self);
         }
     }
-
-    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
-        arrow.visit_mut_children_with(self);
-
-        // Simplify block body `{ return expr; }` to expression body `expr`
-        // This makes the rule idempotent with UnCurlyBraces which expands
-        // expression bodies to block bodies.
-        simplify_arrow_body(arrow);
-    }
-}
-
-/// If the arrow has body `{ return expr; }`, simplify to expression body `expr`.
-/// Does not simplify if the return value is an object literal (ambiguous with block).
-fn simplify_arrow_body(arrow: &mut ArrowExpr) {
-    let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
-        return;
-    };
-
-    if block.stmts.len() != 1 {
-        return;
-    }
-
-    let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = &block.stmts[0] else {
-        return;
-    };
-
-    // Don't simplify if the return value is an object literal
-    // (would be ambiguous with block statement)
-    if matches!(arg.as_ref(), Expr::Object(_)) {
-        return;
-    }
-
-    let expr = arg.clone();
-    *arrow.body = BlockStmtOrExpr::Expr(expr);
 }
 
 fn try_convert_to_arrow(fn_expr: &mut FnExpr) -> Option<ArrowExpr> {
@@ -124,24 +90,13 @@ fn try_convert_to_arrow(fn_expr: &mut FnExpr) -> Option<ArrowExpr> {
 }
 
 /// Build the arrow body:
-/// - If body is `{ return expr; }` → `expr` (expression body)
-/// - Otherwise → keep as block body
+/// - Always keep the original block body.
+/// - ArrowReturn is responsible for `{ return expr; }` → `expr`.
 fn build_arrow_body(func: &Function) -> BlockStmtOrExpr {
     let body = match func.body.as_ref() {
         Some(b) => b,
         None => return BlockStmtOrExpr::BlockStmt(Default::default()),
     };
-
-    // Single statement that is `return expr;`
-    if body.stmts.len() == 1 {
-        if let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = &body.stmts[0] {
-            // Don't simplify if the return value is an object literal
-            // (would be ambiguous with block statement)
-            if !matches!(arg.as_ref(), Expr::Object(_)) {
-                return BlockStmtOrExpr::Expr(arg.clone());
-            }
-        }
-    }
 
     BlockStmtOrExpr::BlockStmt(body.clone())
 }

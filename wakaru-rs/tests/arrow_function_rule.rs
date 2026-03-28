@@ -17,7 +17,9 @@ fn single_return_becomes_arrow_expression() {
 const double = [1, 2, 3].map(function(x) { return x * 2; });
 "#;
     let expected = r#"
-const double = [1, 2, 3].map(x => x * 2);
+const double = [1, 2, 3].map(x => {
+    return x * 2;
+});
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -47,7 +49,9 @@ fn zero_params_arrow() {
 const fn = function() { return 42; };
 "#;
     let expected = r#"
-const fn = () => 42;
+const fn = () => {
+    return 42;
+};
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -59,7 +63,9 @@ fn multi_params_arrow() {
 const add = function(a, b) { return a + b; };
 "#;
     let expected = r#"
-const add = (a, b) => a + b;
+const add = (a, b) => {
+    return a + b;
+};
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -136,7 +142,9 @@ fn bind_this_converted_to_arrow() {
 a(function(x) { this.x = x; }.bind(this));
 "#;
     let expected = r#"
-a(x => { this.x = x; });
+a((x) => {
+    this.x = x;
+});
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -150,7 +158,9 @@ fn async_anonymous_function_converted() {
 f = async function() { return 1; };
 "#;
     let expected = r#"
-f = async () => 1;
+f = async () => {
+    return 1;
+};
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
