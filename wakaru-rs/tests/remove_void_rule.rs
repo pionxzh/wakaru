@@ -23,14 +23,14 @@ if (a !== undefined) {
 fn transforms_void_numeric_literals() {
     // Reused from packages/unminify/src/transformations/__tests__/un-undefined.spec.ts
     let input = r#"
-void 0
-void 99
-void(0)
+const a = void 0;
+const b = void 99;
+const c = void(0);
 "#;
     let expected = r#"
-undefined;
-undefined;
-undefined;
+const a = undefined;
+const b = undefined;
+const c = undefined;
 "#;
     let output = render(input);
     assert_eq_normalized(&output, expected);
@@ -41,13 +41,13 @@ fn does_not_transform_void_function_call() {
     // Reused from packages/unminify/src/transformations/__tests__/un-undefined.spec.ts
     // ArrowFunction rule converts the function expression to an arrow function.
     let input = r#"
-void function() {
-  console.log('a')
-  return void a()
-}
+const x = void function() {
+  console.log('a');
+  return void a();
+};
 "#;
     let expected = r#"
-void (()=>{
+const x = void (()=>{
   console.log('a');
   a();
 });

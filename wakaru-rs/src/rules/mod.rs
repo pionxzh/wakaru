@@ -35,6 +35,7 @@ mod var_decl_to_let_const;
 mod obj_method_shorthand;
 mod arrow_function;
 
+use swc_core::common::Mark;
 use swc_core::ecma::ast::Module;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -90,8 +91,8 @@ impl Rule for NoopRule {
     }
 }
 
-pub fn apply_default_rules(module: &mut Module) {
-    module.visit_mut_with(&mut SimplifySequence);
+pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
+    module.visit_mut_with(&mut SimplifySequence::new(unresolved_mark));
     module.visit_mut_with(&mut FlipComparisons);
     if RemoveVoid::should_run(module) {
         module.visit_mut_with(&mut RemoveVoid);

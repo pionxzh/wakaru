@@ -33,7 +33,7 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<String> {
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-        apply_default_rules(&mut module);
+        apply_default_rules(&mut module, unresolved_mark);
 
         module.visit_mut_with(&mut fixer(None));
 

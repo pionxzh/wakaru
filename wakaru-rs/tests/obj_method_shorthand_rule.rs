@@ -88,7 +88,7 @@ fn named_function_expr_not_converted() {
     // A named function expression may reference itself by name inside the body.
     // Converting to shorthand would drop that internal name, breaking recursion.
     let input = r#"
-({foo: function foo() { return foo(); }});
+const x = {foo: function foo() { return foo(); }};
 "#;
     let output = render(input);
     assert_eq_normalized(&output, input);
@@ -98,7 +98,7 @@ fn named_function_expr_not_converted() {
 fn computed_key_not_converted() {
     // Computed property keys are dynamic — shorthand syntax does not support them
     let input = r#"
-({["foo"]: function() {}});
+const x = {[foo]: function() {}};
 "#;
     let output = render(input);
     assert_eq_normalized(&output, input);
@@ -108,7 +108,7 @@ fn computed_key_not_converted() {
 fn string_key_not_converted() {
     // String-keyed properties cannot use method shorthand syntax
     let input = r#"
-({"foo": function() {}});
+const x = {"foo": function() {}};
 "#;
     let output = render(input);
     assert_eq_normalized(&output, input);
@@ -118,7 +118,7 @@ fn string_key_not_converted() {
 fn numeric_key_not_converted() {
     // Numeric-keyed properties cannot use method shorthand syntax
     let input = r#"
-({123: function() {}});
+const x = {123: function() {}};
 "#;
     let output = render(input);
     assert_eq_normalized(&output, input);

@@ -1,4 +1,4 @@
-use swc_core::ecma::ast::{Expr, FnExpr, MethodProp, Prop, PropName};
+use swc_core::ecma::ast::{Expr, MethodProp, Prop, PropName};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 pub struct ObjMethodShorthand;

@@ -3,54 +3,18 @@ use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, GLOBALS};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprOrSpread, ExprStmt,
     FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, Pat,
-    PropName, SimpleAssignTarget, Stmt, Str, UnaryOp,
+    SimpleAssignTarget, Stmt, Str, UnaryOp,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
+use swc_core::common::SyntaxContext;
+use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use crate::rules::apply_default_rules;
 use crate::unpacker::{UnpackResult, UnpackedModule};
 
-/// Renames param identifiers in a function body to standard names.
-/// This visitor avoids renaming property keys in MemberExpr and object property names.
-/// Only identifiers that are unresolved free-variable references (marked with
-/// `unresolved_mark` by `resolver()`) are renamed, so inner-scope bindings that
-/// happen to share the same symbol are left untouched.
-struct ParamRenamer {
-    renames: Vec<(Atom, Atom)>,
-    unresolved_mark: Mark,
-}
-
-impl VisitMut for ParamRenamer {
-    fn visit_mut_ident(&mut self, id: &mut Ident) {
-        // Only rename identifiers that resolver() marked as free/unresolved references.
-        // Bound identifiers (inner function params, local `var`s, etc.) carry a different
-        // SyntaxContext and must not be touched.
-        if id.ctxt.outer() != self.unresolved_mark {
-            return;
-        }
-        for (old, new) in &self.renames {
-            if &id.sym == old {
-                id.sym = new.clone();
-                break;
-            }
-        }
-    }
-
-    // Don't rename computed property keys — only visit the expression inside
-    fn visit_mut_member_prop(&mut self, prop: &mut MemberProp) {
-        if let MemberProp::Computed(c) = prop {
-            c.visit_mut_with(self);
-        }
-        // Static member props (Ident/PrivateName) are NOT identifiers referencing variables
-        // so we must not rename them.
-    }
-
-    // Don't rename object literal property names
-    fn visit_mut_prop_name(&mut self, _: &mut PropName) {}
-}
 
 /// Removes `require.r(exports)` calls and converts `require.d(exports, "name", getter)` to
 /// `exports.name = val`. This normalizes webpack runtime helpers before applying rules.
@@ -549,15 +513,22 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bo
         // Step 0: run resolver() first so every identifier gets a unique SyntaxContext.
         // Unresolved free-variable references (the factory params like `e`, `t`, `n`)
         // receive `unresolved_mark` as their outer mark; bound identifiers (inner params,
-        // locals) get a different mark — allowing ParamRenamer to skip them safely.
+        // locals) get a different mark.
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
         synthetic_module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-        // Step 1: rename params to standard names (scope-aware via unresolved_mark)
-        if !renames.is_empty() {
-            let mut renamer = ParamRenamer { renames, unresolved_mark };
-            synthetic_module.visit_mut_with(&mut renamer);
+        // Step 1: rename factory params to standard names using swc_ecma_utils::replace_ident.
+        // replace_ident matches on Id = (Atom, SyntaxContext), so it is inherently scope-aware:
+        // only the specific unresolved free-variable references are renamed, not any inner
+        // bindings that happen to share the same symbol.
+        let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
+        for (old_sym, new_sym) in &renames {
+            let from_id = (old_sym.clone(), unresolved_ctxt);
+            // Preserve unresolved_ctxt so downstream visitors (RequireIdRewriter, etc.)
+            // can still match on `id.ctxt.outer() == unresolved_mark`.
+            let to_ident = Ident::new(new_sym.clone(), Default::default(), unresolved_ctxt);
+            replace_ident(&mut synthetic_module, from_id, &to_ident);
         }
 
         // Step 1b: rewrite require(N) → require("./module-N.js") so un-esm can convert them
@@ -603,7 +574,7 @@ fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>, apply_rules: bo
 
         // Step 3: optionally apply default rules
         if apply_rules {
-            apply_default_rules(&mut synthetic_module);
+            apply_default_rules(&mut synthetic_module, unresolved_mark);
         }
         synthetic_module.visit_mut_with(&mut fixer(None));
 

@@ -1,12 +1,21 @@
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BlockStmt, Decl, Expr, ExprStmt, ForInStmt, ForOfStmt, ForStmt,
     IfStmt, Invalid, Lit, MemberExpr, ModuleItem, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt,
     SwitchStmt, ThrowStmt, VarDecl, VarDeclOrExpr, VarDeclarator,
 };
+use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-pub struct SimplifySequence;
+pub struct SimplifySequence {
+    unresolved_mark: Mark,
+}
+
+impl SimplifySequence {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
 
 impl VisitMut for SimplifySequence {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
@@ -19,7 +28,7 @@ impl VisitMut for SimplifySequence {
             match item {
                 ModuleItem::Stmt(stmt) => {
                     for stmt in split_stmt(stmt) {
-                        if !is_pure_no_op_stmt(&stmt) {
+                        if !is_pure_no_op_stmt(&stmt, self.unresolved_mark) {
                             new_items.push(ModuleItem::Stmt(stmt));
                         }
                     }
@@ -39,7 +48,7 @@ impl VisitMut for SimplifySequence {
 
         for stmt in old_stmts {
             for s in split_stmt(stmt) {
-                if !is_pure_no_op_stmt(&s) {
+                if !is_pure_no_op_stmt(&s, self.unresolved_mark) {
                     new_stmts.push(s);
                 }
             }
@@ -49,19 +58,25 @@ impl VisitMut for SimplifySequence {
     }
 }
 
-/// Returns true for expression statements whose expression is a numeric, boolean, or null
-/// literal — these are always side-effect-free and serve no purpose as statements.
+/// Returns true for expression statements that are provably side-effect-free.
 /// String literals are intentionally excluded because they may be directive prologues
 /// (e.g., "use strict") handled by a later pass.
-fn is_pure_no_op_stmt(stmt: &Stmt) -> bool {
-    if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
-        matches!(
-            expr.as_ref(),
-            Expr::Lit(Lit::Num(_)) | Expr::Lit(Lit::Bool(_)) | Expr::Lit(Lit::Null(_))
-        )
-    } else {
-        false
+fn is_pure_no_op_stmt(stmt: &Stmt, unresolved_mark: Mark) -> bool {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return false;
+    };
+    // Never drop string literals — may be "use strict" directives
+    if matches!(expr.as_ref(), Expr::Lit(Lit::Str(_))) {
+        return false;
     }
+    let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
+    let ctx = ExprCtx {
+        unresolved_ctxt,
+        is_unresolved_ref_safe: false,
+        in_strict: false,
+        remaining_depth: 4,
+    };
+    !expr.may_have_side_effects(ctx)
 }
 
 fn split_stmt(stmt: Stmt) -> Vec<Stmt> {
