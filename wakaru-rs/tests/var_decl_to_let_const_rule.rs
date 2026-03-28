@@ -1,6 +1,11 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use common::{assert_eq_normalized, render_pipeline, render_rule};
+use wakaru_rs::rules::VarDeclToLetConst;
+
+fn apply_rule(input: &str) -> String {
+    render_rule(input, |_| VarDeclToLetConst)
+}
 
 #[test]
 fn var_never_reassigned_becomes_const() {
@@ -10,7 +15,7 @@ var x = 1;
     let expected = r#"
 const x = 1;
 "#;
-    let output = render(input);
+    let output = apply_rule(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -24,7 +29,7 @@ x = 2;
 let x = 1;
 x = 2;
 "#;
-    let output = render(input);
+    let output = apply_rule(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -38,7 +43,7 @@ i++;
 let i = 0;
 i++;
 "#;
-    let output = render(input);
+    let output = apply_rule(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -52,7 +57,7 @@ x = 10;
 let x;
 x = 10;
 "#;
-    let output = render(input);
+    let output = apply_rule(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -74,7 +79,7 @@ function foo() {
     return a + b;
 }
 "#;
-    let output = render(input);
+    let output = apply_rule(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -92,7 +97,7 @@ function inc() {
     counter++;
 }
 "#;
-    let output = render(input);
+    let output = apply_rule(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -117,7 +122,7 @@ function factory() {
     return r;
 }
 "#;
-    let output = render(input);
+    let output = apply_rule(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -134,7 +139,7 @@ var x = 1, y = 2;
 const x = 1;
 const y = 2;
 "#;
-    let output = render(input);
+    let output = render_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -153,7 +158,7 @@ let y = 2;
 x = 3;
 y = 4;
 "#;
-    let output = render(input);
+    let output = render_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -169,7 +174,7 @@ const x = 1;
 let y = 2;
 y = 4;
 "#;
-    let output = render(input);
+    let output = render_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -184,7 +189,7 @@ for (var i = 0; i < 10; i++) { foo(i); }
     let expected = r#"
 for (let i = 0; i < 10; i++) { foo(i); }
 "#;
-    let output = render(input);
+    let output = apply_rule(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -198,7 +203,7 @@ for (var key in obj) { foo(key); }
     let expected = r#"
 for (const key in obj) { foo(key); }
 "#;
-    let output = render(input);
+    let output = apply_rule(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -214,7 +219,7 @@ if (true) {
 }
 foo(a);
 "#;
-    let output = render(input);
+    let output = apply_rule(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -233,7 +238,7 @@ if (true) {
     foo(a);
 }
 "#;
-    let output = render(input);
+    let output = apply_rule(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -249,6 +254,6 @@ function foo(x, y) {
     }
 }
 "#;
-    let output = render(input);
+    let output = apply_rule(input);
     assert_eq_normalized(&output, input);
 }
