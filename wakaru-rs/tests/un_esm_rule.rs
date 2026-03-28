@@ -49,6 +49,25 @@ fn default_property_require() {
 }
 
 #[test]
+fn webpack_default_getter_collapses_to_import() {
+    let input = r#"
+var r = require('foo');
+var o = () => r && r.__esModule ? r.default : r;
+function load() {
+  return o();
+}
+"#;
+    let expected = r#"
+import r from "foo";
+function load() {
+  return r;
+}
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn merge_same_source_imports() {
     let input = r#"
 var foo = require('foo');

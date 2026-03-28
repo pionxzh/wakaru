@@ -20,30 +20,18 @@ function o(e, t) {
     e.prototype.constructor = e;
     r(e, t);
 }
-const a = ()=>{
-    if (i && i.__esModule) {
-        return i.default;
-    }
-    return i;
-};
-const l = ()=>{
-    if (u && u.__esModule) {
-        return u.default;
-    }
-    return u;
-};
-const c = l().shape({
-    trySubscribe: l().func.isRequired,
-    tryUnsubscribe: l().func.isRequired,
-    notifyNestedSubs: l().func.isRequired,
-    isSubscribed: l().func.isRequired
+const c = u.shape({
+    trySubscribe: u.func.isRequired,
+    tryUnsubscribe: u.func.isRequired,
+    notifyNestedSubs: u.func.isRequired,
+    isSubscribed: u.func.isRequired
 });
-const s = l().shape({
-    subscribe: l().func.isRequired,
-    dispatch: l().func.isRequired,
-    getState: l().func.isRequired
+const s = u.shape({
+    subscribe: u.func.isRequired,
+    dispatch: u.func.isRequired,
+    getState: u.func.isRequired
 });
-a().forwardRef;
+i.forwardRef;
 export function createProvider(e = "store") {
     let t;
     const n = e + "Subscription";
@@ -70,7 +58,7 @@ export function createProvider(e = "store") {
     })(i.Component);
     r.propTypes = {
         store: s.isRequired,
-        children: l().element.isRequired
+        children: u.element.isRequired
     };
     r.childContextTypes = ((t = {})[e] = s.isRequired, t[n] = c, t);
     return r;
@@ -98,18 +86,6 @@ function m(e, t) {
     }
     return o;
 }
-const v = ()=>{
-    if (y && y.__esModule) {
-        return y.default;
-    }
-    return y;
-};
-const g = ()=>{
-    if (b && b.__esModule) {
-        return b.default;
-    }
-    return b;
-};
 const E = null;
 const x = {
     notify () {}
@@ -180,7 +156,7 @@ class k {
         }
     }
 }
-const T = a().forwardRef !== undefined;
+const T = i.forwardRef !== undefined;
 let S = 0;
 const O = {};
 function C() {}
@@ -218,7 +194,7 @@ export function connectAdvanced(e, t = {}) {
     r[M] = c;
     const I = r;
     return (t)=>{
-        g()(w.isValidElementType(t), "You must pass a component to the function returned by " + Provider + ". Instead received " + JSON.stringify(t));
+        b(w.isValidElementType(t), "You must pass a component to the function returned by " + Provider + ". Instead received " + JSON.stringify(t));
         const n = t.displayName || t.name || "Component";
         const r = l(n);
         const a = h.a({}, N, {
@@ -242,7 +218,7 @@ export function connectAdvanced(e, t = {}) {
                 o.store = e[_] || t[_];
                 o.propsMode = Boolean(e[_]);
                 o.setWrappedInstance = o.setWrappedInstance.bind(p(p(o)));
-                g()(o.store, 'Could not find "' + _ + '" in either the context or props of "' + r + '". Either wrap the root component in a <Provider>, or explicitly pass "' + _ + '" as a prop to "' + r + '".');
+                b(o.store, 'Could not find "' + _ + '" in either the context or props of "' + r + '". Either wrap the root component in a <Provider>, or explicitly pass "' + _ + '" as a prop to "' + r + '".');
                 o.initSelector();
                 o.initSubscription();
                 return o;
@@ -282,7 +258,7 @@ export function connectAdvanced(e, t = {}) {
                 this.selector.shouldComponentUpdate = false;
             };
             l.getWrappedInstance = function() {
-                g()(R, "To access the wrapped instance, you need to specify { withRef: true } in the options argument of the " + Provider + "() call.");
+                b(R, "To access the wrapped instance, you need to specify { withRef: true } in the options argument of the " + Provider + "() call.");
                 return this.wrappedInstance;
             };
             l.setWrappedInstance = function(e) {
@@ -368,7 +344,7 @@ export function connectAdvanced(e, t = {}) {
         u.childContextTypes = I;
         u.contextTypes = L;
         u.propTypes = L;
-        return v()(u, t);
+        return y(u, t);
     };
 }
 const _ = Object.prototype.hasOwnProperty;

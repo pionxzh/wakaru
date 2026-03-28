@@ -6,30 +6,6 @@ import r from "./module-4.js";
 import i from "./module-5.js";
 import u from "./module-3.js";
 import c from "./module-1.js";
-const o = ()=>{
-    if (r && r.__esModule) {
-        return r.default;
-    }
-    return r;
-};
-const a = ()=>{
-    if (i && i.__esModule) {
-        return i.default;
-    }
-    return i;
-};
-const l = ()=>{
-    if (u && u.__esModule) {
-        return u.default;
-    }
-    return u;
-};
-const s = ()=>{
-    if (c && c.__esModule) {
-        return c.default;
-    }
-    return c;
-};
 const f = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
@@ -50,7 +26,7 @@ function d(e, t) {
     }
     return t;
 }
-const p = ((e)=>{
+export const a = ((e)=>{
     function t(...i) {
         let n;
         let r;
@@ -104,7 +80,7 @@ const p = ((e)=>{
         const e = this;
         const t = this.props;
         const { children: n, history: r } = t;
-        a()(n == null || l().Children.count(n) === 1, "A <Router> may have only one child element");
+        i(n == null || u.Children.count(n) === 1, "A <Router> may have only one child element");
         this.unlisten = r.listen(()=>{
             e.setState({
                 match: e.computeMatch(r.location.pathname)
@@ -112,7 +88,7 @@ const p = ((e)=>{
         });
     };
     t.prototype.componentWillReceiveProps = function(e) {
-        o()(this.props.history === e.history, "You cannot change <Router history>");
+        r(this.props.history === e.history, "You cannot change <Router history>");
     };
     t.prototype.componentWillUnmount = function() {
         this.unlisten();
@@ -120,20 +96,19 @@ const p = ((e)=>{
     t.prototype.render = function() {
         const e = this.props.children;
         if (e) {
-            return l().Children.only(e);
+            return u.Children.only(e);
         }
         return null;
     };
     return t;
-})(l().Component);
-p.propTypes = {
-    history: s().object.isRequired,
-    children: s().node
+})(u.Component);
+a.propTypes = {
+    history: c.object.isRequired,
+    children: c.node
 };
-p.contextTypes = {
-    router: s().object
+a.contextTypes = {
+    router: c.object
 };
-p.childContextTypes = {
-    router: s().object.isRequired
+a.childContextTypes = {
+    router: c.object.isRequired
 };
-export { p as a };
