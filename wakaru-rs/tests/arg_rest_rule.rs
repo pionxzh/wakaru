@@ -74,7 +74,7 @@ function get(i) {
 
 #[test]
 fn function_with_params_not_converted() {
-    // Formal params are present — cannot safely add ...args
+    // Accessing the fixed-parameter prefix through `arguments` is still unsafe.
     let input = r#"
 function foo(a, b) {
     return arguments[0];
@@ -82,6 +82,21 @@ function foo(a, b) {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn function_with_fixed_params_tail_indices_becomes_rest_args() {
+    let input = r#"
+function foo(a, b) {
+    return arguments[2] + arguments[3];
+}
+"#;
+    let expected = r#"
+function foo(a, b, ...args) {
+    return args[0] + args[1];
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]

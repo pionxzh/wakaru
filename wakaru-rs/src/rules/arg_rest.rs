@@ -1,18 +1,18 @@
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, BindingIdent, BlockStmt, Callee, Expr, Function, Ident, MemberExpr, MemberProp,
-    Param, Pat, RestPat, Stmt, VarDeclOrExpr,
+    ArrowExpr, BindingIdent, BlockStmt, Callee, Expr, Function, Ident, Lit, MemberExpr,
+    MemberProp, Number, Param, Pat, RestPat, Stmt, VarDeclOrExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-/// Replaces `arguments[N]` / `arguments.length` patterns in parameter-less functions
-/// with a rest parameter `...args` and rewrites all accesses to use `args`.
-///
+/// Replaces `arguments[N]` / `arguments.length` patterns with a rest parameter
+/// `...args` and rewrites safe accesses to use `args`.
+/// 
 /// Only fires when:
-/// - The function has no formal parameters (empty param list)
 /// - The function does not already have a rest parameter
 /// - All `arguments` usages are via subscript (`arguments[expr]`) or `.length`
+/// - In functions with fixed params, the accessed indices are provably in the tail
 pub struct ArgRest;
 
 impl VisitMut for ArgRest {
@@ -25,15 +25,10 @@ impl VisitMut for ArgRest {
             return;
         }
 
-        // Only handle parameter-less functions: when formal params exist, arguments[i]
-        // for i < params.len() refers to the named param, not the rest array.
-        if !func.params.is_empty() {
-            return;
-        }
-
         let Some(body) = &func.body else { return };
+        let fixed_param_count = func.params.len();
 
-        let mut checker = ArgumentsChecker::default();
+        let mut checker = ArgumentsChecker::new(fixed_param_count);
         body.visit_with(&mut checker);
 
         if !checker.has_any || checker.has_unsafe {
@@ -47,7 +42,10 @@ impl VisitMut for ArgRest {
 
         // Rewrite `arguments` → `args` in the body
         if let Some(body) = &mut func.body {
-            body.visit_mut_with(&mut ArgumentsRewriter { name: rest_name });
+            body.visit_mut_with(&mut ArgumentsRewriter {
+                name: rest_name,
+                fixed_param_count,
+            });
         }
     }
 }
@@ -142,6 +140,17 @@ fn make_rest_param(name: Atom) -> Param {
 struct ArgumentsChecker {
     has_any: bool,
     has_unsafe: bool,
+    fixed_param_count: usize,
+}
+
+impl ArgumentsChecker {
+    fn new(fixed_param_count: usize) -> Self {
+        Self {
+            has_any: false,
+            has_unsafe: false,
+            fixed_param_count,
+        }
+    }
 }
 
 impl Visit for ArgumentsChecker {
@@ -150,10 +159,12 @@ impl Visit for ArgumentsChecker {
             self.has_any = true;
             match &expr.prop {
                 // arguments[expr] — any subscript access is safe; the rest array
-                // supports arbitrary indexing the same way.
-                MemberProp::Computed(_) => {}
-                // arguments.length — safe; rest array has .length
-                MemberProp::Ident(i) if i.sym == "length" => {}
+                // supports arbitrary indexing the same way when there are no
+                // fixed params. With fixed params, only proven tail indexes are safe.
+                MemberProp::Computed(computed)
+                    if is_safe_arguments_index(computed.expr.as_ref(), self.fixed_param_count) => {}
+                // arguments.length — safe only in parameter-less functions
+                MemberProp::Ident(i) if i.sym == "length" && self.fixed_param_count == 0 => {}
                 // arguments.callee, arguments.anything_else — unsafe
                 _ => {
                     self.has_unsafe = true;
@@ -190,14 +201,38 @@ fn is_arguments_ident(expr: &Expr) -> bool {
 
 struct ArgumentsRewriter {
     name: Atom,
+    fixed_param_count: usize,
 }
 
 impl VisitMut for ArgumentsRewriter {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         if let Expr::Member(member) = expr {
             if is_arguments_ident(&member.obj) {
-                *member.obj = Expr::Ident(Ident::new_no_ctxt(self.name.clone(), DUMMY_SP));
-                // Don't recurse — we've already rewritten this node
+                if self.fixed_param_count == 0 {
+                    *member.obj = Expr::Ident(Ident::new_no_ctxt(self.name.clone(), DUMMY_SP));
+                    return;
+                }
+
+                if let MemberProp::Computed(computed) = &mut member.prop {
+                    if let Some(rewritten_index) =
+                        rewrite_arguments_index(computed.expr.as_ref(), self.fixed_param_count)
+                    {
+                        *expr = Expr::Member(MemberExpr {
+                            span: member.span,
+                            obj: Box::new(Expr::Ident(Ident::new_no_ctxt(
+                                self.name.clone(),
+                                DUMMY_SP,
+                            ))),
+                            prop: MemberProp::Computed(swc_core::ecma::ast::ComputedPropName {
+                                span: computed.span,
+                                expr: Box::new(rewritten_index),
+                            }),
+                        });
+                        return;
+                    }
+                }
+
+                // Don't recurse — we've already handled or intentionally left this node
                 return;
             }
         }
@@ -207,4 +242,45 @@ impl VisitMut for ArgumentsRewriter {
     // Don't descend into nested functions
     fn visit_mut_function(&mut self, _: &mut Function) {}
     fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
+}
+
+fn is_safe_arguments_index(expr: &Expr, fixed_param_count: usize) -> bool {
+    if fixed_param_count == 0 {
+        return true;
+    }
+
+    let Some(index) = extract_numeric_index(expr) else {
+        return false;
+    };
+    index >= fixed_param_count
+}
+
+fn rewrite_arguments_index(expr: &Expr, fixed_param_count: usize) -> Option<Expr> {
+    if fixed_param_count == 0 {
+        return Some(expr.clone());
+    }
+
+    let index = extract_numeric_index(expr)?;
+    if index < fixed_param_count {
+        return None;
+    }
+
+    Some(Expr::Lit(Lit::Num(Number {
+        span: DUMMY_SP,
+        value: (index - fixed_param_count) as f64,
+        raw: None,
+    })))
+}
+
+fn extract_numeric_index(expr: &Expr) -> Option<usize> {
+    let Expr::Lit(Lit::Num(number)) = expr else {
+        return None;
+    };
+
+    let value = number.value;
+    if value.fract() != 0.0 || value.is_sign_negative() {
+        return None;
+    }
+
+    Some(value as usize)
 }
