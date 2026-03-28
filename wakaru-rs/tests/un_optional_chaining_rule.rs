@@ -64,7 +64,6 @@ fn does_not_transform_when_cons_is_not_void() {
 // --- known-broken semantic regressions ---
 
 #[test]
-#[ignore = "known semantic bug: && guard form is not expression-equivalent to optional chaining"]
 fn known_bug_logical_and_expression_value_not_converted() {
     let input = r#"x !== null && x !== undefined && x.foo"#;
     let output = render(input);

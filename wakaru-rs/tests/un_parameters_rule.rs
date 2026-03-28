@@ -158,7 +158,6 @@ function foo(a = 4) {}
 // --- known-broken semantic regressions ---
 
 #[test]
-#[ignore = "known semantic bug: falsy-coalescing rewrite is not default-parameter-safe"]
 fn known_bug_or_assignment_with_zero_not_converted() {
     let input = r#"
 function foo(a) {
@@ -170,7 +169,6 @@ function foo(a) {
 }
 
 #[test]
-#[ignore = "known semantic bug: ternary self-check rewrite changes falsy behavior"]
 fn known_bug_ternary_self_check_with_empty_string_not_converted() {
     let input = r#"
 function foo(a) {

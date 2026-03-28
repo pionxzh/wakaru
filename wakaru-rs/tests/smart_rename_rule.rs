@@ -158,7 +158,6 @@ const buttonRef = o.useRef(null);
 // --- known-broken semantic regressions ---
 
 #[test]
-#[ignore = "known semantic bug: react rename updates declaration without all use sites"]
 fn known_bug_react_rename_should_not_leave_stale_use_site() {
     let input = r#"
 const d = useRef();
@@ -172,7 +171,6 @@ use(d);
 }
 
 #[test]
-#[ignore = "known semantic bug: destructuring rename is not scope-aware"]
 fn known_bug_destructuring_rename_should_not_touch_shadowed_param() {
     let input = r#"
 const { gql: t } = n;
