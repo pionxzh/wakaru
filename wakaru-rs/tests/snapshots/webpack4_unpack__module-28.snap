@@ -18,8 +18,6 @@ const a = ((e)=>{
 const u = {
     fetchData: i.fetchData
 };
-export default o.compose(r.connect((e)=>{
-    return {
+export default o.compose(r.connect((e)=>({
         data: e.main.data
-    };
-}, u))(a.default);
+    }), u))(a.default);

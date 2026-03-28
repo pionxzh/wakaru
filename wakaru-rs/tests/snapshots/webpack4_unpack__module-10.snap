@@ -70,16 +70,14 @@ export function b(e, t) {
             }
             return [
                 "q1",
-                ((e)=>{
-                    return {
+                ((e)=>({
                         done: false,
                         value: l.k.apply(undefined, [
                             t
                         ].concat(r, [
                             e
                         ]))
-                    };
-                })(f)
+                    }))(f)
             ];
         }
     }, "q1", "takeEvery(" + a(e) + ", " + t.name + ")");
@@ -92,16 +90,14 @@ function f(e, t) {
         done: false,
         value: l.s(e)
     };
-    const f = (e)=>{
-        return {
+    const f = (e)=>({
             done: false,
             value: l.k.apply(undefined, [
                 t
             ].concat(r, [
                 e
             ]))
-        };
-    };
+        });
     let d = undefined;
     let p = undefined;
     const h = (e)=>d = e;
@@ -123,12 +119,10 @@ function f(e, t) {
             if (d) {
                 return [
                     "q3",
-                    ((e)=>{
-                        return {
+                    ((e)=>({
                             done: false,
                             value: l.f(e)
-                        };
-                    })(d)
+                        }))(d)
                 ];
             }
             return [
@@ -188,16 +182,14 @@ function p(e, t, n) {
             }
             return [
                 "q4",
-                ((e)=>{
-                    return {
+                ((e)=>({
                         done: false,
                         value: l.k.apply(undefined, [
                             n
                         ].concat(s, [
                             e
                         ]))
-                    };
-                })(p)
+                    }))(p)
             ];
         },
         q4 () {

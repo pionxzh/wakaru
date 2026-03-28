@@ -68,14 +68,12 @@ export const a = ((e)=>{
             })
         };
     };
-    t.prototype.computeMatch = (e)=>{
-        return {
+    t.prototype.computeMatch = (e)=>({
             path: "/",
             url: "/",
             params: {},
             isExact: e === "/"
-        };
-    };
+        });
     t.prototype.componentWillMount = function() {
         const e = this;
         const t = this.props;

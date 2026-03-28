@@ -120,15 +120,13 @@ export const createMatchSelector = (e)=>{
 };
 export const CALL_HISTORY_METHOD = "@@router/CALL_HISTORY_METHOD";
 function g(e) {
-    return (...n)=>{
-        return {
+    return (...n)=>({
             type: CALL_HISTORY_METHOD,
             payload: {
                 method: e,
                 args: n
             }
-        };
-    };
+        });
 }
 export const push = g("push");
 export const replace = g("replace");

@@ -222,16 +222,14 @@ function I(e, t, n) {
         D(e, r, n, (e)=>e);
     } else if (e != null) {
         if (isValidElement(e)) {
-            e = ((e, t)=>{
-                return {
+            e = ((e, t)=>({
                     $$typeof: i,
                     type: e.type,
                     key: t,
                     ref: e.ref,
                     props: e.props,
                     _owner: e._owner
-                };
-            })(e, o + (!e.key || t && t.key === e.key ? "" : ("" + e.key).replace(_, "$&/") + "/") + n);
+                }))(e, o + (!e.key || t && t.key === e.key ? "" : ("" + e.key).replace(_, "$&/") + "/") + n);
         }
         r.push(e);
     }
@@ -359,32 +357,24 @@ export const createFactory = (e)=>{
     t.type = e;
     return t;
 };
-export const createRef = ()=>{
-    return {
+export const createRef = ()=>({
         current: null
-    };
-};
-export const forwardRef = (e)=>{
-    return {
+    });
+export const forwardRef = (e)=>({
         $$typeof: d,
         render: e
-    };
-};
-export const lazy = (e)=>{
-    return {
+    });
+export const lazy = (e)=>({
         $$typeof: m,
         _ctor: e,
         _status: -1,
         _result: null
-    };
-};
-export const memo = (e, t)=>{
-    return {
+    });
+export const memo = (e, t)=>({
         $$typeof: h,
         type: e,
         compare: t === undefined ? null : t
-    };
-};
+    });
 export const useCallback = (e, t)=>z().useCallback(e, t);
 export const useContext = (e, t)=>z().useContext(e, t);
 export const useDebugValue = ()=>{};

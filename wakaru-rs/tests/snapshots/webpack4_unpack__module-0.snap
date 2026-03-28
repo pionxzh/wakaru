@@ -182,12 +182,10 @@ const C = ((e = 0)=>()=>++e)();
 const P = (e)=>{
     throw e;
 };
-const _ = (e)=>{
-    return {
+const _ = (e)=>({
         value: e,
         done: true
-    };
-};
+    });
 export function t(e, t = P, n = "", r) {
     const o = {
         name: n,

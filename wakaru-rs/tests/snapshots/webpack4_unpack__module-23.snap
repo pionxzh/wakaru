@@ -423,11 +423,9 @@ const I = [
         if (e) {
             return undefined;
         }
-        return M((e)=>{
-            return {
+        return M((e)=>({
                 dispatch: e
-            };
-        });
+            }));
     },
     (e)=>{
         if (e && typeof e == "object") {
@@ -445,9 +443,7 @@ const D = [
         if (e) {
             return undefined;
         }
-        return M(()=>{
-            return {};
-        });
+        return M(()=>({}));
     }
 ];
 function F(e, t, n) {

@@ -89,11 +89,9 @@ const h = {
 function m(e) {
     return (e === "*" ? h.wildcard : o.q.array(e) ? h.array : o.q.stringableFunc(e) ? h.default : o.q.func(e) ? h.predicate : h.default)(e);
 }
-const y = (e)=>{
-    return {
+const y = (e)=>({
         fn: e
-    };
-};
+    });
 function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymous", w) {
     o.h(e, o.q.iterator, f);
     const E = o.n(z, o.z("[...effects]", "all([...effects])"));
@@ -576,12 +574,10 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                 };
                 return (n)=>{
                     if (e) {
-                        return ((e)=>{
-                            return {
+                        return ((e)=>({
                                 done: true,
                                 value: e
-                            };
-                        })(n);
+                            }))(n);
                     }
                     e = true;
                     return t;
