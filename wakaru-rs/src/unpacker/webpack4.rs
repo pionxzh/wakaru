@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, GLOBALS};
 use swc_core::ecma::ast::{
@@ -116,12 +118,31 @@ impl WebpackRuntimeNormalizer {
 
         match prop_name.sym.as_ref() {
             "r" => {
+                if call.args.len() != 1 {
+                    return None;
+                }
+                let Expr::Ident(exports_arg) = &*call.args[0].expr else {
+                    return None;
+                };
+                if exports_arg.sym != self.exports_sym
+                    || exports_arg.ctxt.outer() != self.unresolved_mark
+                {
+                    return None;
+                }
                 // Remove `require.r(exports)` entirely
                 Some(vec![])
             }
             "d" => {
                 // Convert `require.d(exports, "name", function() { return val; })` to `exports.name = val;`
                 if call.args.len() != 3 {
+                    return None;
+                }
+                let Expr::Ident(exports_arg) = &*call.args[0].expr else {
+                    return None;
+                };
+                if exports_arg.sym != self.exports_sym
+                    || exports_arg.ctxt.outer() != self.unresolved_mark
+                {
                     return None;
                 }
                 let name_arg = &call.args[1];
@@ -716,50 +737,74 @@ fn find_entry_ids(bootstrap_fn: &FnExpr) -> Vec<usize> {
         None => return vec![],
     };
 
+    let declared_idents = collect_declared_idents(&body.stmts);
+    let called_idents = collect_called_idents(&body.stmts);
+    let allowed_entry_objects: HashSet<Atom> = declared_idents
+        .intersection(&called_idents)
+        .cloned()
+        .collect();
+
     let mut entries = Vec::new();
     for stmt in &body.stmts {
-        collect_entry_ids_from_stmt(stmt, &mut entries);
+        collect_entry_ids_from_stmt(stmt, &allowed_entry_objects, &mut entries);
     }
     entries
 }
 
-fn collect_entry_ids_from_stmt(stmt: &Stmt, entries: &mut Vec<usize>) {
+fn collect_entry_ids_from_stmt(
+    stmt: &Stmt,
+    allowed_entry_objects: &HashSet<Atom>,
+    entries: &mut Vec<usize>,
+) {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return;
     };
-    collect_entry_ids_from_expr(expr, entries);
+    collect_entry_ids_from_expr(expr, allowed_entry_objects, entries);
 }
 
-fn collect_entry_ids_from_expr(expr: &Expr, entries: &mut Vec<usize>) {
+fn collect_entry_ids_from_expr(
+    expr: &Expr,
+    allowed_entry_objects: &HashSet<Atom>,
+    entries: &mut Vec<usize>,
+) {
     match expr {
         // `n(n.s = 51)` — call where arg is assignment to <fn>.s
         Expr::Call(call) => {
             for arg in &call.args {
-                collect_entry_ids_from_expr(&arg.expr, entries);
+                collect_entry_ids_from_expr(&arg.expr, allowed_entry_objects, entries);
             }
         }
         // `n.s = 51` at statement level
         Expr::Assign(assign) => {
-            if let Some(id) = extract_entry_id_from_assign(assign) {
+            if let Some(id) = extract_entry_id_from_assign(assign, allowed_entry_objects) {
                 entries.push(id);
             }
         }
         // Sequences like `n.m=e, n.c=t, ..., n(n.s=51)`
         Expr::Seq(seq) => {
             for e in &seq.exprs {
-                collect_entry_ids_from_expr(e, entries);
+                collect_entry_ids_from_expr(e, allowed_entry_objects, entries);
             }
         }
         _ => {}
     }
 }
 
-fn extract_entry_id_from_assign(assign: &AssignExpr) -> Option<usize> {
+fn extract_entry_id_from_assign(
+    assign: &AssignExpr,
+    allowed_entry_objects: &HashSet<Atom>,
+) -> Option<usize> {
     if assign.op != AssignOp::Assign {
         return None;
     }
     // Left must be MemberExpr with prop "s"
     let AssignTarget::Simple(SimpleAssignTarget::Member(m)) = &assign.left else {
+        return None;
+    };
+    let Expr::Ident(obj_ident) = &*m.obj else {
+        return None;
+    };
+    if !allowed_entry_objects.contains(&obj_ident.sym) {
         return None;
     };
     let MemberProp::Ident(prop) = &m.prop else {
@@ -774,6 +819,62 @@ fn extract_entry_id_from_assign(assign: &AssignExpr) -> Option<usize> {
         return Some(id);
     }
     None
+}
+
+fn collect_declared_idents(stmts: &[Stmt]) -> HashSet<Atom> {
+    let mut names = HashSet::new();
+    for stmt in stmts {
+        match stmt {
+            Stmt::Decl(swc_core::ecma::ast::Decl::Fn(fn_decl)) => {
+                names.insert(fn_decl.ident.sym.clone());
+            }
+            Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) => {
+                for decl in &var_decl.decls {
+                    if let Pat::Ident(binding) = &decl.name {
+                        names.insert(binding.id.sym.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn collect_called_idents(stmts: &[Stmt]) -> HashSet<Atom> {
+    let mut names = HashSet::new();
+    for stmt in stmts {
+        collect_called_idents_from_stmt(stmt, &mut names);
+    }
+    names
+}
+
+fn collect_called_idents_from_stmt(stmt: &Stmt, names: &mut HashSet<Atom>) {
+    if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
+        collect_called_idents_from_expr(expr, names);
+    }
+}
+
+fn collect_called_idents_from_expr(expr: &Expr, names: &mut HashSet<Atom>) {
+    match expr {
+        Expr::Call(call) => {
+            if let Callee::Expr(callee_expr) = &call.callee {
+                if let Expr::Ident(id) = &**callee_expr {
+                    names.insert(id.sym.clone());
+                }
+            }
+            for arg in &call.args {
+                collect_called_idents_from_expr(&arg.expr, names);
+            }
+        }
+        Expr::Assign(assign) => collect_called_idents_from_expr(&assign.right, names),
+        Expr::Seq(seq) => {
+            for expr in &seq.exprs {
+                collect_called_idents_from_expr(expr, names);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Build a synthetic Module from a list of statements.

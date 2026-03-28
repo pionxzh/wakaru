@@ -10,15 +10,16 @@ import l from "./module-9.js";
 import w from "./module-10.js";
 import effects from "./module-17.js";
 export const utils = {};
-export const TASK = o.e;
-export const SAGA_ACTION = o.c;
-export const noop = o.u;
-export const is = o.q;
-export const deferred = o.l;
-export const arrayOfDeffered = o.g;
-export const createMockTask = o.j;
-export const cloneableGenerator = o.i;
-export const asEffect = u.d;
+require.d(utils, "TASK", ()=>o.e);
+require.d(utils, "SAGA_ACTION", ()=>o.c);
+require.d(utils, "noop", ()=>o.u);
+require.d(utils, "is", ()=>o.q);
+require.d(utils, "deferred", ()=>o.l);
+require.d(utils, "arrayOfDeffered", ()=>o.g);
+require.d(utils, "createMockTask", ()=>o.j);
+require.d(utils, "cloneableGenerator", ()=>o.i);
+require.d(utils, "asEffect", ()=>u.d);
+require.d(utils, "CHANNEL_END", ()=>d);
 const c = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
@@ -37,7 +38,7 @@ const s = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (e
     return typeof e;
 };
 const f = "proc first argument (Saga function result) must be an iterator";
-export const CHANNEL_END = {
+const d = {
     toString () {
         return "@@redux-saga/CHANNEL_END";
     }
@@ -219,7 +220,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
                     value: p
                 };
             } else {
-                utils = t === CHANNEL_END ? o.q.func(e.return) ? e.return() : {
+                utils = t === d ? o.q.func(e.return) ? e.return() : {
                     done: true
                 } : e.next(t);
             }
@@ -325,7 +326,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
                         return t(e, true);
                     }
                     if (i.e(e) && !o) {
-                        return t(CHANNEL_END);
+                        return t(d);
                     }
                     return t(e);
                 };
@@ -371,7 +372,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
                             if (l) {
                                 n.cancel();
                                 n(u, true);
-                            } else if (!i.e(u) && u !== CHANNEL_END && u !== p) {
+                            } else if (!i.e(u) && u !== d && u !== p) {
                                 let s;
                                 n.cancel();
                                 utils = true;
@@ -528,7 +529,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
     }
     function F(e, i, u) {
         const { context: l, fn: c, args: s, detached: f } = e;
-        const CHANNEL_END = ((e)=>{
+        const d = ((e)=>{
             const { context: t, fn: n, args: utils } = e;
             if (o.q.iterator(n)) {
                 return n;
@@ -574,14 +575,14 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         });
         try {
             a.c();
-            const p = v(CHANNEL_END, t, n, utils, P, h, i, c.name, f ? null : o.u);
+            const p = v(d, t, n, utils, P, h, i, c.name, f ? null : o.u);
             if (f) {
                 u(p);
-            } else if (CHANNEL_END._isRunning) {
+            } else if (d._isRunning) {
                 R.addTask(p);
                 u(p);
-            } else if (CHANNEL_END._error) {
-                R.abort(CHANNEL_END._error);
+            } else if (d._error) {
+                R.abort(d._error);
             } else {
                 u(p);
             }
@@ -600,7 +601,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         const s = {};
         utils.forEach((t)=>{
             const f = (s, f)=>{
-                u || (f || i.e(s) || s === CHANNEL_END || s === p ? (n.cancel(), n(s, f)) : (l[t] = s, ++a === utils.length && (u = true, n(o.q.array(e) ? o.f.from(c({}, l, {
+                u || (f || i.e(s) || s === d || s === p ? (n.cancel(), n(s, f)) : (l[t] = s, ++a === utils.length && (u = true, n(o.q.array(e) ? o.f.from(c({}, l, {
                     length: utils.length
                 })) : l))));
             };
@@ -630,15 +631,15 @@ export function runSaga(e, t) {
         a = t(...utils);
         o.h(a, o.q.iterator, b);
     }
-    const { subscribe: l, dispatch: c, getState: s, context: f, sagaMonitor: CHANNEL_END, logger: p, onError: h } = e;
+    const { subscribe: l, dispatch: c, getState: s, context: f, sagaMonitor: d, logger: p, onError: h } = e;
     const m = o.y();
-    if (CHANNEL_END) {
-        CHANNEL_END.effectTriggered = CHANNEL_END.effectTriggered || o.u;
-        CHANNEL_END.effectResolved = CHANNEL_END.effectResolved || o.u;
-        CHANNEL_END.effectRejected = CHANNEL_END.effectRejected || o.u;
-        CHANNEL_END.effectCancelled = CHANNEL_END.effectCancelled || o.u;
-        CHANNEL_END.actionDispatched = CHANNEL_END.actionDispatched || o.u;
-        CHANNEL_END.effectTriggered({
+    if (d) {
+        d.effectTriggered = d.effectTriggered || o.u;
+        d.effectResolved = d.effectResolved || o.u;
+        d.effectRejected = d.effectRejected || o.u;
+        d.effectCancelled = d.effectCancelled || o.u;
+        d.actionDispatched = d.actionDispatched || o.u;
+        d.effectTriggered({
             effectId: m,
             root: true,
             parentEffectId: 0,
@@ -650,12 +651,12 @@ export function runSaga(e, t) {
         });
     }
     const y = v(a, l, o.A(c), s, f, {
-        sagaMonitor: CHANNEL_END,
+        sagaMonitor: d,
         logger: p,
         onError: h
     }, m, t.name);
-    if (CHANNEL_END) {
-        CHANNEL_END.effectResolved(m, y);
+    if (d) {
+        d.effectResolved(m, y);
     }
     return y;
 }

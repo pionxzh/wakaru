@@ -4,16 +4,36 @@ expression: code
 ---
 "use strict";
 var r = {};
-exports.TASK = o.e;
-exports.SAGA_ACTION = o.c;
-exports.noop = o.u;
-exports.is = o.q;
-exports.deferred = o.l;
-exports.arrayOfDeffered = o.g;
-exports.createMockTask = o.j;
-exports.cloneableGenerator = o.i;
-exports.asEffect = u.d;
-exports.CHANNEL_END = d;
+require.d(r, "TASK", function() {
+    return o.e;
+});
+require.d(r, "SAGA_ACTION", function() {
+    return o.c;
+});
+require.d(r, "noop", function() {
+    return o.u;
+});
+require.d(r, "is", function() {
+    return o.q;
+});
+require.d(r, "deferred", function() {
+    return o.l;
+});
+require.d(r, "arrayOfDeffered", function() {
+    return o.g;
+});
+require.d(r, "createMockTask", function() {
+    return o.j;
+});
+require.d(r, "cloneableGenerator", function() {
+    return o.i;
+});
+require.d(r, "asEffect", function() {
+    return u.d;
+});
+require.d(r, "CHANNEL_END", function() {
+    return d;
+});
 var o = require("./module-0.js"), i = require("./module-6.js"), a = require("./module-12.js"), u = require("./module-2.js"), l = require("./module-9.js"), c = Object.assign || function(e) {
     for(var t = 1; t < arguments.length; t++){
         var n = arguments[t];
