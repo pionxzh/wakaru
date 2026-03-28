@@ -22,7 +22,7 @@ export const asEffect = u.d;
 const c = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
-        for(let utils in n){
+        for(const utils in n){
             if (Object.prototype.hasOwnProperty.call(n, utils)) {
                 e[utils] = n[utils];
             }
@@ -121,7 +121,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
             o.v.assign(P, e);
         };
         ((e, runSaga)=>{
-            for(let n in runSaga){
+            for(const n in runSaga){
                 const utils = runSaga[n];
                 utils.configurable = true;
                 utils.enumerable = true;
@@ -674,7 +674,7 @@ export default ((e = {})=>{
     const n = t === undefined ? {} : t;
     const utils = ((e, t)=>{
         const n = {};
-        for(let utils in e){
+        for(const utils in e){
             t.indexOf(utils) >= 0 || Object.prototype.hasOwnProperty.call(e, utils) && (n[utils] = e[utils]);
         }
         return n;

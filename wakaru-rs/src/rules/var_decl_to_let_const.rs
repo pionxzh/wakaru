@@ -3,8 +3,9 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, Class, Expr, ForHead, ForInStmt, ForOfStmt, ForStmt,
-    Function, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt, UpdateExpr, VarDecl, VarDeclKind,
+    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, Class, Expr, ForHead, ForInStmt, ForOfStmt,
+    ForStmt, Function, Ident, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt, UpdateExpr,
+    VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -33,8 +34,12 @@ impl VisitMut for VarDeclToLetConst {
         module.body.iter().for_each(|item| item.visit_with(&mut collector));
         let assigned = collector.assigned;
 
+        // Detect vars declared inside inner blocks that are referenced outside — those
+        // must stay as `var` to preserve the hoisting-based access.
+        let must_stay_var = collect_block_escaping_vars_module(&module.body);
+
         // Convert all var decls in module (recursively through blocks, stopping at function boundaries)
-        let mut converter = VarConverter { assigned: &assigned, in_block_context: true };
+        let mut converter = VarConverter { assigned: &assigned, must_stay_var: &must_stay_var, in_block_context: true };
         module.visit_mut_with(&mut converter);
     }
 
@@ -57,7 +62,9 @@ impl VisitMut for VarDeclToLetConst {
         body.stmts.iter().for_each(|s| s.visit_with(&mut collector));
         let assigned = collector.assigned;
 
-        let mut converter = VarConverter { assigned: &assigned, in_block_context: true };
+        let must_stay_var = collect_block_escaping_vars_stmts(&body.stmts);
+
+        let mut converter = VarConverter { assigned: &assigned, must_stay_var: &must_stay_var, in_block_context: true };
         body.visit_mut_with(&mut converter);
     }
 }
@@ -165,32 +172,122 @@ impl Visit for AssignedIdsCollector {
         expr.visit_children_with(self);
     }
 
-    // For-in/for-of loop variables are implicitly reassigned each iteration
+    // Note: for-in/for-of loop variables are NOT treated as "assigned" here.
+    // The loop variable gets a fresh binding each iteration (like a function parameter),
+    // so `for (var key in obj)` can safely become `for (const key in obj)` when `key`
+    // is not mutated inside the body. The body is still visited so any assignments
+    // inside are captured normally.
     fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
-        if let ForHead::VarDecl(var) = &stmt.left {
-            if var.kind == VarDeclKind::Var {
-                for decl in &var.decls {
-                    collect_binding_ids_from_pat(&decl.name, &mut self.assigned);
-                }
-            }
-        }
         stmt.visit_children_with(self);
     }
 
     fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
-        if let ForHead::VarDecl(var) = &stmt.left {
-            if var.kind == VarDeclKind::Var {
-                for decl in &var.decls {
-                    collect_binding_ids_from_pat(&decl.name, &mut self.assigned);
-                }
-            }
-        }
         stmt.visit_children_with(self);
     }
 
     fn visit_for_stmt(&mut self, stmt: &ForStmt) {
         stmt.visit_children_with(self);
     }
+}
+
+// ============================================================
+// Block-escape analysis: find vars declared inside an inner block
+// that are referenced at the outer (top-level) scope. Those vars
+// must stay as `var` to preserve JavaScript's hoisting semantics.
+// ============================================================
+
+fn collect_block_escaping_vars_module(items: &[ModuleItem]) -> HashSet<BindingId> {
+    let block_declared = collect_block_declared_var_ids_module(items);
+    if block_declared.is_empty() {
+        return HashSet::new();
+    }
+    let outer_refs = collect_outer_refs_module(items);
+    block_declared.intersection(&outer_refs).cloned().collect()
+}
+
+fn collect_block_escaping_vars_stmts(stmts: &[Stmt]) -> HashSet<BindingId> {
+    let block_declared = collect_block_declared_var_ids_stmts(stmts);
+    if block_declared.is_empty() {
+        return HashSet::new();
+    }
+    let outer_refs = collect_outer_refs_stmts(stmts);
+    block_declared.intersection(&outer_refs).cloned().collect()
+}
+
+/// Collect vars declared INSIDE inner blocks (depth > 0), stopping at function boundaries.
+fn collect_block_declared_var_ids_module(items: &[ModuleItem]) -> HashSet<BindingId> {
+    let mut c = BlockDeclaredVarCollector { ids: HashSet::new(), depth: 0 };
+    for item in items { item.visit_with(&mut c); }
+    c.ids
+}
+
+fn collect_block_declared_var_ids_stmts(stmts: &[Stmt]) -> HashSet<BindingId> {
+    let mut c = BlockDeclaredVarCollector { ids: HashSet::new(), depth: 0 };
+    for stmt in stmts { stmt.visit_with(&mut c); }
+    c.ids
+}
+
+struct BlockDeclaredVarCollector {
+    ids: HashSet<BindingId>,
+    depth: usize,
+}
+
+impl Visit for BlockDeclaredVarCollector {
+    fn visit_var_decl(&mut self, var: &VarDecl) {
+        if var.kind == VarDeclKind::Var && self.depth > 0 {
+            for decl in &var.decls {
+                collect_binding_ids_from_pat(&decl.name, &mut self.ids);
+            }
+        }
+        // Don't recurse into var decl children
+    }
+
+    fn visit_block_stmt(&mut self, block: &BlockStmt) {
+        self.depth += 1;
+        block.visit_children_with(self);
+        self.depth -= 1;
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    fn visit_class(&mut self, _: &Class) {}
+}
+
+/// Collect identifier references that appear at the OUTER scope level (depth == 0),
+/// i.e. in top-level statements but NOT inside any nested block.
+fn collect_outer_refs_module(items: &[ModuleItem]) -> HashSet<BindingId> {
+    let mut c = OuterRefCollector { refs: HashSet::new(), depth: 0 };
+    for item in items { item.visit_with(&mut c); }
+    c.refs
+}
+
+fn collect_outer_refs_stmts(stmts: &[Stmt]) -> HashSet<BindingId> {
+    let mut c = OuterRefCollector { refs: HashSet::new(), depth: 0 };
+    for stmt in stmts { stmt.visit_with(&mut c); }
+    c.refs
+}
+
+struct OuterRefCollector {
+    refs: HashSet<BindingId>,
+    depth: usize,
+}
+
+impl Visit for OuterRefCollector {
+    fn visit_ident(&mut self, id: &Ident) {
+        if self.depth == 0 {
+            self.refs.insert((id.sym.clone(), id.ctxt));
+        }
+    }
+
+    fn visit_block_stmt(&mut self, block: &BlockStmt) {
+        self.depth += 1;
+        block.visit_children_with(self);
+        self.depth -= 1;
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    fn visit_class(&mut self, _: &Class) {}
 }
 
 fn collect_assign_target_ids(target: &AssignTarget, out: &mut HashSet<BindingId>) {
@@ -245,6 +342,8 @@ fn collect_assign_pat_target_ids(
 
 struct VarConverter<'a> {
     assigned: &'a HashSet<BindingId>,
+    /// Vars that must remain as `var` because they escape their declaring block
+    must_stay_var: &'a HashSet<BindingId>,
     /// true when we're inside a block or at module/function top level —
     /// i.e. `let`/`const` is syntactically valid here.
     in_block_context: bool,
@@ -253,7 +352,15 @@ struct VarConverter<'a> {
 impl VisitMut for VarConverter<'_> {
     fn visit_mut_var_decl(&mut self, var: &mut VarDecl) {
         if self.in_block_context {
-            convert_single_var_decl(var, self.assigned);
+            // Skip conversion if any declarator must remain as `var` due to block escape
+            let any_must_stay = var.decls.iter().any(|d| {
+                let mut ids = HashSet::new();
+                collect_binding_ids_from_pat(&d.name, &mut ids);
+                ids.iter().any(|id| self.must_stay_var.contains(id))
+            });
+            if !any_must_stay {
+                convert_single_var_decl(var, self.assigned);
+            }
         }
         // Don't recurse — VarDecl children are patterns/inits, not nested stmts
     }
@@ -320,9 +427,21 @@ impl VisitMut for VarConverter<'_> {
 
     fn visit_mut_for_in_stmt(&mut self, stmt: &mut swc_core::ecma::ast::ForInStmt) {
         let old = self.in_block_context;
-        // `for (var/let x in y)` left is always a valid let context
-        self.in_block_context = true;
-        stmt.left.visit_mut_with(self);
+        // For for-in heads, the loop variable has an implicit initializer (the
+        // iteration value), so the "no init → let" rule does not apply.
+        // Use const if not reassigned inside the body, let otherwise.
+        if let ForHead::VarDecl(var) = &mut stmt.left {
+            if var.kind == VarDeclKind::Var {
+                let any_must_stay = var.decls.iter().any(|d| {
+                    let mut ids = HashSet::new();
+                    collect_binding_ids_from_pat(&d.name, &mut ids);
+                    ids.iter().any(|id| self.must_stay_var.contains(id))
+                });
+                if !any_must_stay {
+                    convert_for_iter_var_decl(var, self.assigned);
+                }
+            }
+        }
         stmt.right.visit_mut_with(self);
         self.in_block_context = matches!(*stmt.body, swc_core::ecma::ast::Stmt::Block(_));
         stmt.body.visit_mut_with(self);
@@ -331,9 +450,18 @@ impl VisitMut for VarConverter<'_> {
 
     fn visit_mut_for_of_stmt(&mut self, stmt: &mut swc_core::ecma::ast::ForOfStmt) {
         let old = self.in_block_context;
-        // `for (var/let x of y)` left is always a valid let context
-        self.in_block_context = true;
-        stmt.left.visit_mut_with(self);
+        if let ForHead::VarDecl(var) = &mut stmt.left {
+            if var.kind == VarDeclKind::Var {
+                let any_must_stay = var.decls.iter().any(|d| {
+                    let mut ids = HashSet::new();
+                    collect_binding_ids_from_pat(&d.name, &mut ids);
+                    ids.iter().any(|id| self.must_stay_var.contains(id))
+                });
+                if !any_must_stay {
+                    convert_for_iter_var_decl(var, self.assigned);
+                }
+            }
+        }
         stmt.right.visit_mut_with(self);
         self.in_block_context = matches!(*stmt.body, swc_core::ecma::ast::Stmt::Block(_));
         stmt.body.visit_mut_with(self);
@@ -362,6 +490,22 @@ impl VisitMut for VarConverter<'_> {
     fn visit_mut_function(&mut self, _: &mut Function) {}
     fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
     fn visit_mut_class(&mut self, _: &mut Class) {}
+}
+
+/// For `for-in` / `for-of` loop variables: the variable is always "initialized"
+/// by the iteration, so we skip the `all_have_init` check and go straight to
+/// the assigned-set check. Use `const` if the binding is never reassigned,
+/// `let` otherwise.
+fn convert_for_iter_var_decl(var: &mut VarDecl, assigned: &HashSet<BindingId>) {
+    if var.kind != VarDeclKind::Var {
+        return;
+    }
+    let any_assigned = var.decls.iter().any(|d| {
+        let mut ids = HashSet::new();
+        collect_binding_ids_from_pat(&d.name, &mut ids);
+        ids.iter().any(|id| assigned.contains(id))
+    });
+    var.kind = if any_assigned { VarDeclKind::Let } else { VarDeclKind::Const };
 }
 
 fn convert_single_var_decl(var: &mut VarDecl, assigned: &HashSet<BindingId>) {

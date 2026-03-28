@@ -9,7 +9,7 @@ const r = ((e)=>{
     }
     const t = {};
     if (e != null) {
-        for(let n in e){
+        for(const n in e){
             if (Object.prototype.hasOwnProperty.call(e, n)) {
                 t[n] = e[n];
             }

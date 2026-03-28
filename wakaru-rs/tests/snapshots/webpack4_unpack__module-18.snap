@@ -9,7 +9,7 @@ import m from "./module-15.js";
 const l = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
-        for(let r in n){
+        for(const r in n){
             if (Object.prototype.hasOwnProperty.call(n, r)) {
                 e[r] = n[r];
             }

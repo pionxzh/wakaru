@@ -27,7 +27,7 @@ export { D as i };
 const r = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
-        for(let r in n){
+        for(const r in n){
             if (Object.prototype.hasOwnProperty.call(n, r)) {
                 e[r] = n[r];
             }
@@ -118,7 +118,7 @@ export const q = {
 };
 const w = {
     assign (e, t) {
-        for(let n in t){
+        for(const n in t){
             if (b(t, n)) {
                 e[n] = t[n];
             }
@@ -134,7 +134,7 @@ function E(e, t) {
 const x = {
     from (e) {
         const t = Array(e.length);
-        for(let n in e){
+        for(const n in e){
             if (b(e, n)) {
                 t[n] = e[n];
             }

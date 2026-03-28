@@ -321,7 +321,7 @@ export const unstable_runWithPriority = (e, t)=>{
 export const unstable_scheduleCallback = (e, n, a)=>{
     const unstable_requestPaint = exports.unstable_now();
     if (typeof a == "object" && a !== null) {
-        let l = a.delay;
+        var l = a.delay;
         l = typeof l == "number" && l > 0 ? unstable_requestPaint + l : unstable_requestPaint;
         a = typeof a.timeout == "number" ? a.timeout : q(e);
     } else {

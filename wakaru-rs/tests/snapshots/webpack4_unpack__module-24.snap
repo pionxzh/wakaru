@@ -136,7 +136,7 @@ HashRouter.propTypes = {
 const w = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
-        for(let r in n){
+        for(const r in n){
             if (Object.prototype.hasOwnProperty.call(n, r)) {
                 e[r] = n[r];
             }
@@ -207,7 +207,7 @@ export const Link = ((e)=>{
         const { to: t, innerRef: n } = e;
         const r = ((e, t)=>{
             const n = {};
-            for(let r in e){
+            for(const r in e){
                 t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
             }
             return n;
@@ -316,7 +316,7 @@ MemoryRouter.propTypes = {
 const _ = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
-        for(let r in n){
+        for(const r in n){
             if (Object.prototype.hasOwnProperty.call(n, r)) {
                 e[r] = n[r];
             }
@@ -467,7 +467,7 @@ export const Route = N;
 const L = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
-        for(let r in n){
+        for(const r in n){
             if (Object.prototype.hasOwnProperty.call(n, r)) {
                 e[r] = n[r];
             }
@@ -485,7 +485,7 @@ export const NavLink = (e)=>{
     const { to: t, exact: n, strict: r, location: o, activeClassName: i, className: u, activeStyle: l, style: c, isActive: s, "aria-current": Router } = e;
     const d = ((e, t)=>{
         const n = {};
-        for(let r in e){
+        for(const r in e){
             t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
         }
         return n;
@@ -652,7 +652,7 @@ export const generatePath = (e = "/", t = {})=>{
 const V = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
-        for(let r in n){
+        for(const r in n){
             if (Object.prototype.hasOwnProperty.call(n, r)) {
                 e[r] = n[r];
             }
@@ -763,7 +763,7 @@ Redirect.contextTypes = {
 const Y = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
-        for(let r in n){
+        for(const r in n){
             if (Object.prototype.hasOwnProperty.call(n, r)) {
                 e[r] = n[r];
             }
@@ -869,7 +869,7 @@ export const StaticRouter = ((e)=>{
         const n = e.location;
         const r = ((e, t)=>{
             const n = {};
-            for(let r in e){
+            for(const r in e){
                 t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
             }
             return n;
@@ -1003,7 +1003,7 @@ export const matchPath = P.a;
 const se = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
-        for(let r in n){
+        for(const r in n){
             if (Object.prototype.hasOwnProperty.call(n, r)) {
                 e[r] = n[r];
             }
@@ -1016,7 +1016,7 @@ export const withRouter = (e)=>{
         const n = t.wrappedComponentRef;
         const r = ((e, t)=>{
             const n = {};
-            for(let r in e){
+            for(const r in e){
                 t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
             }
             return n;

@@ -6,7 +6,7 @@ export function a() {
     return (a = Object.assign ? Object.assign.bind() : function(e) {
         for(let t = 1; t < arguments.length; t++){
             const n = arguments[t];
-            for(let a in n){
+            for(const a in n){
                 if (Object.prototype.hasOwnProperty.call(n, a)) {
                     e[a] = n[a];
                 }

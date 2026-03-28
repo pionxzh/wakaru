@@ -1,7 +1,7 @@
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmtOrExpr, Expr, FnExpr, Function, Ident, Pat, ReturnStmt, Stmt,
-    ThisExpr,
+    ArrowExpr, BlockStmtOrExpr, CallExpr, Callee, Expr, FnExpr, Function, Ident, KeyValueProp,
+    MemberProp, Pat, ReturnStmt, Stmt, ThisExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -15,6 +15,29 @@ impl VisitMut for ArrowFunction {
             if let Some(arrow) = try_convert_to_arrow(fn_expr) {
                 *expr = Expr::Arrow(arrow);
             }
+            return;
+        }
+
+        // Handle `function(...) { ... }.bind(this)` → arrow function
+        if let Expr::Call(call_expr) = expr {
+            if let Some(arrow) = try_convert_bind_this(call_expr) {
+                *expr = Expr::Arrow(arrow);
+            }
+        }
+    }
+
+    fn visit_mut_key_value_prop(&mut self, prop: &mut KeyValueProp) {
+        // Object property function values are handled by ObjMethodShorthand.
+        // ArrowFunction must not convert them to arrows — that would produce
+        // `{"foo": () => {}}` which is not method syntax.
+        // We still recurse into the function body so inner expressions are processed.
+        prop.key.visit_mut_with(self);
+        if let Expr::Fn(fn_expr) = prop.value.as_mut() {
+            if let Some(body) = &mut fn_expr.function.body {
+                body.visit_mut_with(self);
+            }
+        } else {
+            prop.value.visit_mut_with(self);
         }
     }
 
@@ -123,6 +146,60 @@ fn build_arrow_body(func: &Function) -> BlockStmtOrExpr {
     BlockStmtOrExpr::BlockStmt(body.clone())
 }
 
+/// Try to convert `fn.bind(this)` to an arrow function.
+/// Only fires when args is exactly `[this]` (no partial application).
+/// The function may use `this` — that's the whole point of `.bind(this)`.
+/// Still rejects: named functions, generators, functions using `arguments`.
+fn try_convert_bind_this(call: &CallExpr) -> Option<ArrowExpr> {
+    // Callee must be `expr.bind`
+    let Callee::Expr(callee_expr) = &call.callee else { return None; };
+    let Expr::Member(member) = callee_expr.as_ref() else { return None; };
+    let MemberProp::Ident(prop) = &member.prop else { return None; };
+    if prop.sym != "bind" {
+        return None;
+    }
+
+    // Must have exactly one argument and it must be `this` (no partial application)
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return None;
+    }
+    if !matches!(call.args[0].expr.as_ref(), Expr::This(_)) {
+        return None;
+    }
+
+    // The bound expression must be a function expression
+    let Expr::Fn(fn_expr) = member.obj.as_ref() else { return None; };
+    let func = &fn_expr.function;
+
+    // Reject generators and named function expressions
+    if func.is_generator || fn_expr.ident.is_some() {
+        return None;
+    }
+
+    // Reject functions that use `arguments` (arrows have no own `arguments`)
+    let mut has_args = HasArguments(false);
+    if let Some(body) = &func.body {
+        body.visit_with(&mut has_args);
+    }
+    if has_args.0 {
+        return None;
+    }
+
+    let params: Vec<Pat> = func.params.iter().map(|p| p.pat.clone()).collect();
+    let arrow_body = build_arrow_body(func);
+
+    Some(ArrowExpr {
+        span: DUMMY_SP,
+        ctxt: SyntaxContext::empty(),
+        params,
+        body: Box::new(arrow_body),
+        is_async: func.is_async,
+        is_generator: false,
+        type_params: func.type_params.clone(),
+        return_type: func.return_type.clone(),
+    })
+}
+
 // ============================================================
 // Visitor: check for `this` or `arguments` (not in nested fns)
 // ============================================================
@@ -145,6 +222,23 @@ impl Visit for HasThisOrArguments {
 
     // Don't recurse into arrow expressions either (they capture this from outer,
     // but they don't have their own `arguments`)
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+}
+
+// ============================================================
+// Visitor: check for `arguments` only (not `this`)
+// ============================================================
+
+struct HasArguments(bool);
+
+impl Visit for HasArguments {
+    fn visit_ident(&mut self, id: &Ident) {
+        if id.sym == "arguments" {
+            self.0 = true;
+        }
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
     fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
 }
 

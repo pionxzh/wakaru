@@ -2,8 +2,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignTarget, BinExpr, BinaryOp, BindingIdent,
-    BlockStmt, BlockStmtOrExpr, Decl, Expr, Function, Ident, IfStmt, MemberExpr, MemberProp, Number,
-    Pat, Param, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, VarDeclKind,
+    BlockStmt, BlockStmtOrExpr, CondExpr, Decl, Expr, Function, Ident, IfStmt, MemberExpr,
+    MemberProp, Number, Pat, Param, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, VarDeclKind,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -48,7 +48,11 @@ fn process_pattern_a_params(params: &mut Vec<Param>, body: &mut BlockStmt) {
     let scan_limit = body.stmts.len().min(15);
 
     for (stmt_idx, stmt) in body.stmts[..scan_limit].iter().enumerate() {
-        if let Some((param_name, default_val)) = extract_default_param_from_if(stmt) {
+        let extracted = extract_default_param_from_if(stmt)
+            .or_else(|| extract_default_param_from_or(stmt))
+            .or_else(|| extract_default_param_from_ternary(stmt));
+
+        if let Some((param_name, default_val)) = extracted {
             // Find the matching parameter
             if let Some(param_idx) = find_plain_param_idx(params, &param_name) {
                 // Replace the param with an assignment pattern
@@ -78,7 +82,11 @@ fn process_pattern_a_arrow_params(params: &mut Vec<Pat>, body: &mut BlockStmt) {
     let scan_limit = body.stmts.len().min(15);
 
     for (stmt_idx, stmt) in body.stmts[..scan_limit].iter().enumerate() {
-        if let Some((param_name, default_val)) = extract_default_param_from_if(stmt) {
+        let extracted = extract_default_param_from_if(stmt)
+            .or_else(|| extract_default_param_from_or(stmt))
+            .or_else(|| extract_default_param_from_ternary(stmt));
+
+        if let Some((param_name, default_val)) = extracted {
             if let Some(param_idx) = find_plain_pat_idx(params, &param_name) {
                 let original_pat = std::mem::replace(
                     &mut params[param_idx],
@@ -115,6 +123,48 @@ fn extract_default_param_from_if(stmt: &Stmt) -> Option<(Atom, Box<Expr>)> {
     let default_val = extract_assign_from_cons(cons, &param_name)?;
 
     Some((param_name, default_val))
+}
+
+/// Extract `(param_name, default_value)` from `a = a || default`.
+/// This is the classic pre-ES6 default parameter idiom.
+fn extract_default_param_from_or(stmt: &Stmt) -> Option<(Atom, Box<Expr>)> {
+    let Stmt::Expr(expr_stmt) = stmt else { return None };
+    let Expr::Assign(AssignExpr { op: AssignOp::Assign, left, right, .. }) = expr_stmt.expr.as_ref() else {
+        return None;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(lhs_ident)) = left else {
+        return None;
+    };
+    let Expr::Bin(BinExpr { op: BinaryOp::LogicalOr, left: or_left, right: or_right, .. }) = right.as_ref() else {
+        return None;
+    };
+    // Left side of `||` must be the same ident as the assignment target
+    let Expr::Ident(or_ident) = or_left.as_ref() else { return None };
+    if or_ident.sym != lhs_ident.id.sym {
+        return None;
+    }
+    Some((lhs_ident.id.sym.clone(), or_right.clone()))
+}
+
+/// Extract `(param_name, default_value)` from `a = a ? a : default`.
+fn extract_default_param_from_ternary(stmt: &Stmt) -> Option<(Atom, Box<Expr>)> {
+    let Stmt::Expr(expr_stmt) = stmt else { return None };
+    let Expr::Assign(AssignExpr { op: AssignOp::Assign, left, right, .. }) = expr_stmt.expr.as_ref() else {
+        return None;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(lhs_ident)) = left else {
+        return None;
+    };
+    let Expr::Cond(CondExpr { test, cons, alt, .. }) = right.as_ref() else {
+        return None;
+    };
+    // test must be the ident, cons must be the ident, alt is the default
+    let Expr::Ident(test_ident) = test.as_ref() else { return None };
+    let Expr::Ident(cons_ident) = cons.as_ref() else { return None };
+    if test_ident.sym != lhs_ident.id.sym || cons_ident.sym != lhs_ident.id.sym {
+        return None;
+    }
+    Some((lhs_ident.id.sym.clone(), alt.clone()))
 }
 
 /// Check if `expr` is `ident === void 0` or `void 0 === ident`

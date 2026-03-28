@@ -40,7 +40,7 @@ export default (()=>{
         return Object(e);
     })(e);
     for(let l = 1; l < arguments.length; l++){
-        for(let c in n = Object(arguments[l])){
+        for(const c in n = Object(arguments[l])){
             if (o.call(n, c)) {
                 u[c] = n[c];
             }

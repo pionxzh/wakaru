@@ -23,10 +23,29 @@ const obj = {
 }
 
 #[test]
-fn named_function_expr_key_dropped() {
+fn multiple_methods_converted() {
     let input = r#"
 const obj = {
-    foo: function bar() {
+    a: function() { return 1; },
+    b: function(x) { return x * 2; }
+};
+"#;
+    let expected = r#"
+const obj = {
+    a() { return 1; },
+    b(x) { return x * 2; }
+};
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn anonymous_function_with_different_key_becomes_shorthand() {
+    // When the function has no internal name, conversion is safe regardless of key name
+    let input = r#"
+const obj = {
+    foo: function() {
         return 1;
     }
 };
@@ -43,7 +62,9 @@ const obj = {
 }
 
 #[test]
-fn generator_function_not_converted() {
+fn generator_method_not_converted() {
+    // Generator functions cannot be expressed as method shorthand without `*` —
+    // keep as key-value pair to avoid changing semantics
     let input = r#"
 const obj = {
     gen: function* () {
@@ -51,7 +72,6 @@ const obj = {
     }
 };
 "#;
-    // Generator should stay as key-value pair (not converted to shorthand)
     let expected = r#"
 const obj = {
     gen: function* () {
@@ -64,19 +84,42 @@ const obj = {
 }
 
 #[test]
-fn multiple_methods_converted() {
+fn named_function_expr_not_converted() {
+    // A named function expression may reference itself by name inside the body.
+    // Converting to shorthand would drop that internal name, breaking recursion.
     let input = r#"
-const obj = {
-    a: function() { return 1; },
-    b: function(x) { return x * 2; }
-};
-"#;
-    let expected = r#"
-const obj = {
-    a() { return 1; },
-    b(x) { return x * 2; }
-};
+({foo: function foo() { return foo(); }});
 "#;
     let output = render(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn computed_key_not_converted() {
+    // Computed property keys are dynamic — shorthand syntax does not support them
+    let input = r#"
+({["foo"]: function() {}});
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn string_key_not_converted() {
+    // String-keyed properties cannot use method shorthand syntax
+    let input = r#"
+({"foo": function() {}});
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn numeric_key_not_converted() {
+    // Numeric-keyed properties cannot use method shorthand syntax
+    let input = r#"
+({123: function() {}});
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, input);
 }

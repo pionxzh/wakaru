@@ -4,7 +4,7 @@ expression: code
 ---
 export default ((e)=>{
     if (!e.webpackPolyfill) {
-        const t = Object.create(e);
+        var t = Object.create(e);
         if (!t.children) {
             t.children = [];
         }

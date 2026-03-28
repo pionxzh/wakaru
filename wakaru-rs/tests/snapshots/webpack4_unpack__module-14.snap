@@ -164,12 +164,11 @@ export function tokensToRegExp(e, t, n) {
     a += parse ? "$" : o && m ? "" : "(?=" + h + "|$)";
     return f(new RegExp("^" + a, d(n)), t);
 }
-function h(e, t, n) {
+function h(e, t, n = {}) {
     if (!r(t)) {
         n = t || n;
         t = [];
     }
-    n = n || {};
     if (e instanceof RegExp) {
         return ((e, t)=>{
             const n = e.source.match(/\((?!\?)/g);
