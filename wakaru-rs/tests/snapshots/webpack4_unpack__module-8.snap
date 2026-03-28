@@ -268,18 +268,18 @@ export function createBrowserHistory(e = {}) {
     const c = l === undefined ? x : l;
     const s = i.keyLength;
     const p = s === undefined ? 6 : s;
-    const parsePath = e.basename ? m(d(e.basename)) : "";
-    function locationsAreEqual(e) {
+    const y = e.basename ? m(d(e.basename)) : "";
+    function g(e) {
         const t = e || {};
         const { key: n, state: r } = t;
         const o = window.location;
         let i = o.pathname + o.search + o.hash;
-        if (parsePath) {
-            i = h(i, parsePath);
+        if (y) {
+            i = h(i, y);
         }
         return createLocation(i, r, n);
     }
-    function createBrowserHistory() {
+    function O() {
         return Math.random().toString(36).substr(2, p);
     }
     const C = w();
@@ -290,14 +290,14 @@ export function createBrowserHistory(e = {}) {
     }
     function _(e) {
         if (!((e)=>e.state === undefined && -1 === navigator.userAgent.indexOf("CriOS"))(e)) {
-            createHashHistory(locationsAreEqual(e.state));
+            N(g(e.state));
         }
     }
     function j() {
-        createHashHistory(locationsAreEqual(S()));
+        N(g(S()));
     }
     let R = false;
-    function createHashHistory(e) {
+    function N(e) {
         if (R) {
             R = false;
             P();
@@ -311,11 +311,11 @@ export function createBrowserHistory(e = {}) {
                 } else {
                     ((e)=>{
                         const t = q.location;
-                        let n = createMemoryHistory.indexOf(t.key);
+                        let n = A.indexOf(t.key);
                         if (-1 === n) {
                             n = 0;
                         }
-                        let r = createMemoryHistory.indexOf(e.key);
+                        let r = A.indexOf(e.key);
                         if (-1 === r) {
                             r = 0;
                         }
@@ -329,12 +329,12 @@ export function createBrowserHistory(e = {}) {
             });
         }
     }
-    const M = locationsAreEqual(S());
-    let createMemoryHistory = [
+    const M = g(S());
+    let A = [
         M.key
     ];
     function L(e) {
-        return parsePath + createPath(e);
+        return y + createPath(e);
     }
     function I(e) {
         t.go(e);
@@ -360,7 +360,7 @@ export function createBrowserHistory(e = {}) {
         location: M,
         createHref: L,
         push (e, r) {
-            const o = createLocation(e, r, createBrowserHistory(), q.location);
+            const o = createLocation(e, r, O(), q.location);
             C.confirmTransitionTo(o, "PUSH", c, (e)=>{
                 if (e) {
                     const r = L(o);
@@ -373,10 +373,10 @@ export function createBrowserHistory(e = {}) {
                         if (u) {
                             window.location.href = r;
                         } else {
-                            const l = createMemoryHistory.indexOf(q.location.key);
-                            const c = createMemoryHistory.slice(0, l + 1);
+                            const l = A.indexOf(q.location.key);
+                            const c = A.slice(0, l + 1);
                             c.push(o.key);
-                            createMemoryHistory = c;
+                            A = c;
                             P({
                                 action: "PUSH",
                                 location: o
@@ -389,7 +389,7 @@ export function createBrowserHistory(e = {}) {
             });
         },
         replace (e, r) {
-            const o = createLocation(e, r, createBrowserHistory(), q.location);
+            const o = createLocation(e, r, O(), q.location);
             C.confirmTransitionTo(o, "REPLACE", c, (e)=>{
                 if (e) {
                     const r = L(o);
@@ -402,9 +402,9 @@ export function createBrowserHistory(e = {}) {
                         if (u) {
                             window.location.replace(r);
                         } else {
-                            const l = createMemoryHistory.indexOf(q.location.key);
+                            const l = A.indexOf(q.location.key);
                             if (-1 !== l) {
-                                createMemoryHistory[l] = o.key;
+                                A[l] = o.key;
                             }
                             P({
                                 action: "REPLACE",
@@ -506,28 +506,28 @@ export function createHashHistory(e = {}) {
     const l = e.basename ? m(d(e.basename)) : "";
     const c = P[u];
     const { encodePath: s, decodePath: p } = c;
-    function parsePath() {
+    function y() {
         let e = p(j());
         if (l) {
             e = h(e, l);
         }
         return createLocation(e);
     }
-    const locationsAreEqual = w();
+    const g = w();
     function k(e) {
         r.a(q, e);
         q.length = t.length;
-        locationsAreEqual.notifyListeners(q.location, q.action);
+        g.notifyListeners(q.location, q.action);
     }
     let T = false;
     let S = null;
-    function createBrowserHistory() {
+    function O() {
         const e = j();
         const t = s(e);
         if (e !== t) {
             R(t);
         } else {
-            const n = parsePath();
+            const n = y();
             const r = q.location;
             if (!T && ((e, t)=>e.pathname === t.pathname && e.search === t.search && e.hash === t.hash)(r, n)) {
                 return;
@@ -541,7 +541,7 @@ export function createHashHistory(e = {}) {
                     T = false;
                     k();
                 } else {
-                    locationsAreEqual.confirmTransitionTo(e, "POP", i, (t)=>{
+                    g.confirmTransitionTo(e, "POP", i, (t)=>{
                         if (t) {
                             k({
                                 action: "POP",
@@ -570,14 +570,14 @@ export function createHashHistory(e = {}) {
             })(n);
         }
     }
-    const createHashHistory = j();
-    const M = s(createHashHistory);
-    if (createHashHistory !== M) {
+    const N = j();
+    const M = s(N);
+    if (N !== M) {
         R(M);
     }
-    const createMemoryHistory = parsePath();
+    const A = y();
     let L = [
-        createPath(createMemoryHistory)
+        createPath(A)
     ];
     function I(e) {
         t.go(e);
@@ -585,16 +585,16 @@ export function createHashHistory(e = {}) {
     let D = 0;
     function F(e) {
         if ((D += e) === 1 && e === 1) {
-            window.addEventListener(C, createBrowserHistory);
+            window.addEventListener(C, O);
         } else if (D === 0) {
-            window.removeEventListener(C, createBrowserHistory);
+            window.removeEventListener(C, O);
         }
     }
     let z = false;
     const q = {
         length: t.length,
         action: "POP",
-        location: createMemoryHistory,
+        location: A,
         createHref (e) {
             const t = document.querySelector("base");
             let n = "";
@@ -605,7 +605,7 @@ export function createHashHistory(e = {}) {
         },
         push (e, t) {
             const n = createLocation(e, undefined, undefined, q.location);
-            locationsAreEqual.confirmTransitionTo(n, "PUSH", i, (e)=>{
+            g.confirmTransitionTo(n, "PUSH", i, (e)=>{
                 if (e) {
                     const t = createPath(n);
                     const r = s(l + t);
@@ -630,7 +630,7 @@ export function createHashHistory(e = {}) {
         },
         replace (e, t) {
             const n = createLocation(e, undefined, undefined, q.location);
-            locationsAreEqual.confirmTransitionTo(n, "REPLACE", i, (e)=>{
+            g.confirmTransitionTo(n, "REPLACE", i, (e)=>{
                 if (e) {
                     const t = createPath(n);
                     const r = s(l + t);
@@ -657,7 +657,7 @@ export function createHashHistory(e = {}) {
             I(1);
         },
         block (e = false) {
-            const t = locationsAreEqual.setPrompt(e);
+            const t = g.setPrompt(e);
             if (!z) {
                 F(1);
                 z = true;
@@ -671,7 +671,7 @@ export function createHashHistory(e = {}) {
             };
         },
         listen (e) {
-            const t = locationsAreEqual.appendListener(e);
+            const t = g.appendListener(e);
             F(1);
             return ()=>{
                 F(-1);
@@ -696,18 +696,18 @@ export function createMemoryHistory(e = {}) {
     const c = l === undefined ? 6 : l;
     const s = w();
     function f(e) {
-        r.a(locationsAreEqual, e);
-        locationsAreEqual.length = locationsAreEqual.entries.length;
-        s.notifyListeners(locationsAreEqual.location, locationsAreEqual.action);
+        r.a(g, e);
+        g.length = g.entries.length;
+        s.notifyListeners(g.location, g.action);
     }
     function d() {
         return Math.random().toString(36).substr(2, c);
     }
     const p = M(u, 0, i.length - 1);
     const h = i.map((e)=>createLocation(e, undefined, typeof e == "string" ? d() : e.key || d()));
-    function parsePath(e) {
-        const t = M(locationsAreEqual.index + e, 0, locationsAreEqual.entries.length - 1);
-        const r = locationsAreEqual.entries[t];
+    function y(e) {
+        const t = M(g.index + e, 0, g.entries.length - 1);
+        const r = g.entries[t];
         s.confirmTransitionTo(r, "POP", n, (e)=>{
             if (e) {
                 f({
@@ -720,7 +720,7 @@ export function createMemoryHistory(e = {}) {
             }
         });
     }
-    const locationsAreEqual = {
+    const g = {
         length: h.length,
         action: "POP",
         location: h[p],
@@ -728,11 +728,11 @@ export function createMemoryHistory(e = {}) {
         entries: h,
         createHref: createPath,
         push (e, t) {
-            const r = createLocation(e, t, d(), locationsAreEqual.location);
+            const r = createLocation(e, t, d(), g.location);
             s.confirmTransitionTo(r, "PUSH", n, (e)=>{
                 if (e) {
-                    const t = locationsAreEqual.index + 1;
-                    const n = locationsAreEqual.entries.slice(0);
+                    const t = g.index + 1;
+                    const n = g.entries.slice(0);
                     if (n.length > t) {
                         n.splice(t, n.length - t, r);
                     } else {
@@ -748,10 +748,10 @@ export function createMemoryHistory(e = {}) {
             });
         },
         replace (e, t) {
-            const r = createLocation(e, t, d(), locationsAreEqual.location);
+            const r = createLocation(e, t, d(), g.location);
             s.confirmTransitionTo(r, "REPLACE", n, (e)=>{
                 if (e) {
-                    locationsAreEqual.entries[locationsAreEqual.index] = r;
+                    g.entries[g.index] = r;
                     f({
                         action: "REPLACE",
                         location: r
@@ -759,16 +759,16 @@ export function createMemoryHistory(e = {}) {
                 }
             });
         },
-        go: parsePath,
+        go: y,
         goBack () {
-            parsePath(-1);
+            y(-1);
         },
         goForward () {
-            parsePath(1);
+            y(1);
         },
         canGo (e) {
-            const t = locationsAreEqual.index + e;
-            return t >= 0 && t < locationsAreEqual.entries.length;
+            const t = g.index + e;
+            return t >= 0 && t < g.entries.length;
         },
         block (e = false) {
             return s.setPrompt(e);
@@ -777,5 +777,5 @@ export function createMemoryHistory(e = {}) {
             return s.appendListener(e);
         }
     };
-    return locationsAreEqual;
+    return g;
 }

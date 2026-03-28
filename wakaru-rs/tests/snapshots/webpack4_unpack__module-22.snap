@@ -8,7 +8,7 @@ import a from "./module-12.js";
 import u from "./module-2.js";
 import l from "./module-9.js";
 import w from "./module-10.js";
-import effects from "./module-17.js";
+import E from "./module-17.js";
 export const utils = {
     get TASK () {
         return o.e;
@@ -44,9 +44,9 @@ export const utils = {
 const c = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
-        for(const utils in n){
-            if (Object.prototype.hasOwnProperty.call(n, utils)) {
-                e[utils] = n[utils];
+        for(const r in n){
+            if (Object.prototype.hasOwnProperty.call(n, r)) {
+                e[r] = n[r];
             }
         }
     }
@@ -94,9 +94,9 @@ const y = (e)=>{
         fn: e
     };
 };
-function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga = "anonymous", w) {
+function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymous", w) {
     o.h(e, o.q.iterator, f);
-    const effects = o.n(z, o.z("[...effects]", "all([...effects])"));
+    const E = o.n(z, o.z("[...effects]", "all([...effects])"));
     const { sagaMonitor: x, logger: k, onError: T } = h;
     const S = k || o.s;
     const O = (e)=>{
@@ -104,19 +104,19 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         if (!t && e.stack) {
             t = -1 !== e.stack.split("\n")[0].indexOf(e.message) ? e.stack : "Error: " + e.message + "\n" + e.stack;
         }
-        S("error", "uncaught at " + runSaga, t || e.message || e);
+        S("error", "uncaught at " + g, t || e.message || e);
     };
     const C = i.f(t);
     const P = Object.create(s);
     M.cancel = o.u;
-    const _ = ((e, runSaga, n, utils)=>{
+    const _ = ((e, t, n, r)=>{
         let i;
         let a;
         n._deferredEnd = null;
         i = {};
         i[o.e] = true;
         i.id = e;
-        i.name = runSaga;
+        i.name = t;
         "done";
         a = {};
         a.done = a.done || {};
@@ -129,7 +129,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
             n._isRunning || (n._error ? e.reject(n._error) : e.resolve(n._result));
             return e.promise;
         };
-        i.cont = utils;
+        i.cont = r;
         i.joiners = [];
         i.cancel = N;
         i.isRunning = ()=>n._isRunning;
@@ -141,21 +141,21 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
             o.h(e, o.q.object, o.k("task", e));
             o.v.assign(P, e);
         };
-        ((e, runSaga)=>{
-            for(const n in runSaga){
-                const utils = runSaga[n];
-                utils.configurable = true;
-                utils.enumerable = true;
-                if ("value" in utils) {
-                    utils.writable = true;
+        ((e, t)=>{
+            for(const n in t){
+                const r = t[n];
+                r.configurable = true;
+                r.enumerable = true;
+                if ("value" in r) {
+                    r.writable = true;
                 }
-                Object.defineProperty(e, n, utils);
+                Object.defineProperty(e, n, r);
             }
         })(i, a);
         return i;
-    })(b, runSaga, e, w);
+    })(b, g, e, w);
     const j = {
-        name: runSaga,
+        name: g,
         cancel () {
             if (j.isRunning && !j.isCancelled) {
                 j.isCancelled = true;
@@ -166,7 +166,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
     };
     const R = ((t, n)=>{
         const e = 0;
-        let utils = [];
+        let r = [];
         let i = undefined;
         let a = false;
         function u(e) {
@@ -174,16 +174,16 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
             n(e, true);
         }
         function l(e) {
-            utils.push(e);
+            r.push(e);
             e.cont = (l, c)=>{
                 if (!a) {
-                    o.w(utils, e);
+                    o.w(r, e);
                     e.cont = o.u;
                     if (c) {
                         u(l);
                     } else {
                         e === t && (i = l);
-                        utils.length || (a = true, n(i));
+                        r.length || (a = true, n(i));
                     }
                 }
             };
@@ -191,11 +191,11 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         function c() {
             if (!a) {
                 a = true;
-                utils.forEach((e)=>{
+                r.forEach((e)=>{
                     e.cont = o.u;
                     e.cancel();
                 });
-                utils = [];
+                r = [];
             }
         }
         l(t);
@@ -204,10 +204,10 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
             cancelAll: c,
             abort: u,
             getTasks () {
-                return utils;
+                return r;
             },
             taskNames () {
-                return utils.map((e)=>e.name);
+                return r.map((e)=>e.name);
             }
         };
     })(j, A);
@@ -229,28 +229,28 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
             throw new Error("Trying to resume an already finished generator");
         }
         try {
-            let utils = undefined;
+            let r = undefined;
             if (n) {
-                utils = e.throw(t);
+                r = e.throw(t);
             } else if (t === p) {
                 j.isCancelled = true;
                 M.cancel();
-                utils = o.q.func(e.return) ? e.return(p) : {
+                r = o.q.func(e.return) ? e.return(p) : {
                     done: true,
                     value: p
                 };
             } else {
-                utils = t === d ? o.q.func(e.return) ? e.return() : {
+                r = t === d ? o.q.func(e.return) ? e.return() : {
                     done: true
                 } : e.next(t);
             }
-            if (utils.done) {
+            if (r.done) {
                 j.isMainRunning = false;
                 if (j.cont) {
-                    j.cont(utils.value);
+                    j.cont(r.value);
                 }
             } else {
-                L(utils.value, b, "", M);
+                L(r.value, b, "", M);
             }
         } catch (e) {
             if (j.isCancelled) {
@@ -266,7 +266,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         if (n) {
             if (t instanceof Error) {
                 Object.defineProperty(t, "sagaStack", {
-                    value: "at " + runSaga + " \n " + (t.sagaStack || t.stack),
+                    value: "at " + g + " \n " + (t.sagaStack || t.stack),
                     configurable: true
                 });
             }
@@ -330,15 +330,15 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
             return F(y(e), v, w);
         }
         if (o.q.iterator(e)) {
-            return D(e, v, runSaga, w);
+            return D(e, v, g, w);
         }
         if (o.q.array(e)) {
-            return effects(e, v, w);
+            return E(e, v, w);
         }
         if (k = u.d.take(e)) {
             return ((e, t)=>{
                 let n = e.channel;
-                const { pattern: utils, maybe: o } = e;
+                const { pattern: r, maybe: o } = e;
                 n = n || C;
                 const a = (e)=>{
                     if (e instanceof Error) {
@@ -350,7 +350,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
                     return t(e);
                 };
                 try {
-                    n.take(a, m(utils));
+                    n.take(a, m(r));
                 } catch (e) {
                     return t(e, true);
                 }
@@ -359,13 +359,13 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         }
         if (k = u.d.put(e)) {
             return ((e, t)=>{
-                const { channel: utils, action: i, resolve: u } = e;
+                const { channel: r, action: i, resolve: u } = e;
                 a.a(()=>{
                     let e = undefined;
                     try {
-                        e = (utils ? utils.put : n)(i);
+                        e = (r ? r.put : n)(i);
                     } catch (e) {
-                        if (utils || u) {
+                        if (r || u) {
                             return t(e, true);
                         }
                         O(e);
@@ -382,19 +382,19 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         }
         if (k = u.d.race(e)) {
             return ((e, t, n)=>{
-                let utils = undefined;
+                let r = undefined;
                 const a = Object.keys(e);
                 const u = {};
                 a.forEach((t)=>{
                     const l = (u, l)=>{
-                        if (!utils) {
+                        if (!r) {
                             if (l) {
                                 n.cancel();
                                 n(u, true);
                             } else if (!i.e(u) && u !== d && u !== p) {
                                 let s;
                                 n.cancel();
-                                utils = true;
+                                r = true;
                                 s = {};
                                 s[t] = u;
                                 const f = s;
@@ -408,13 +408,13 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
                     u[t] = l;
                 });
                 n.cancel = ()=>{
-                    if (!utils) {
-                        utils = true;
+                    if (!r) {
+                        r = true;
                         a.forEach((e)=>u[e].cancel());
                     }
                 };
                 a.forEach((n)=>{
-                    if (!utils) {
+                    if (!r) {
                         L(e[n], t, n, u[n]);
                     }
                 });
@@ -422,10 +422,10 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         }
         if (k = u.d.call(e)) {
             return ((e, t, n)=>{
-                const { context: utils, fn: i, args: a } = e;
+                const { context: r, fn: i, args: a } = e;
                 let u = undefined;
                 try {
-                    u = i.apply(utils, a);
+                    u = i.apply(r, a);
                 } catch (e) {
                     return n(e, true);
                 }
@@ -440,7 +440,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         }
         if (k = u.d.cps(e)) {
             return ((e, t)=>{
-                const { context: n, fn: utils, args: i } = e;
+                const { context: n, fn: r, args: i } = e;
                 try {
                     const a = (e, n)=>{
                         if (o.q.undef(e)) {
@@ -448,7 +448,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
                         }
                         return t(e, true);
                     };
-                    utils.apply(n, i.concat(a));
+                    r.apply(n, i.concat(a));
                     if (a.cancel) {
                         t.cancel = ()=>a.cancel();
                     }
@@ -494,7 +494,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
                 const { selector: n, args: o } = e;
                 try {
                     const i = n(...[
-                        utils()
+                        r()
                     ].concat(o));
                     t(i);
                 } catch (e) {
@@ -504,9 +504,9 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         }
         if (k = u.d.actionChannel(e)) {
             return ((e, n)=>{
-                const { pattern: utils, buffer: o } = e;
-                const a = m(utils);
-                a.pattern = utils;
+                const { pattern: r, buffer: o } = e;
+                const a = m(r);
+                a.pattern = r;
                 n(i.d(t, o || l.a.fixed(), a));
             })(k, w);
         }
@@ -544,19 +544,19 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         e.then(t, (e)=>t(e, true));
     }
     function D(e, o, i, a) {
-        v(e, t, n, utils, P, h, o, i, a);
+        v(e, t, n, r, P, h, o, i, a);
     }
     function F(e, i, u) {
         const { context: l, fn: c, args: s, detached: f } = e;
         const d = ((e)=>{
-            const { context: t, fn: n, args: utils } = e;
+            const { context: t, fn: n, args: r } = e;
             if (o.q.iterator(n)) {
                 return n;
             }
             let i = undefined;
             let a = undefined;
             try {
-                i = n.apply(t, utils);
+                i = n.apply(t, r);
             } catch (e) {
                 a = e;
             }
@@ -594,7 +594,7 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         });
         try {
             a.c();
-            const p = v(d, t, n, utils, P, h, i, c.name, f ? null : o.u);
+            const p = v(d, t, n, r, P, h, i, c.name, f ? null : o.u);
             if (f) {
                 u(p);
             } else if (d._isRunning) {
@@ -610,18 +610,18 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         }
     }
     function z(e, t, n) {
-        const utils = Object.keys(e);
-        if (!utils.length) {
+        const r = Object.keys(e);
+        if (!r.length) {
             return n(o.q.array(e) ? [] : {});
         }
         let a = 0;
         let u = undefined;
         const l = {};
         const s = {};
-        utils.forEach((t)=>{
+        r.forEach((t)=>{
             const f = (s, f)=>{
-                u || (f || i.e(s) || s === d || s === p ? (n.cancel(), n(s, f)) : (l[t] = s, ++a === utils.length && (u = true, n(o.q.array(e) ? o.f.from(c({}, l, {
-                    length: utils.length
+                u || (f || i.e(s) || s === d || s === p ? (n.cancel(), n(s, f)) : (l[t] = s, ++a === r.length && (u = true, n(o.q.array(e) ? o.f.from(c({}, l, {
+                    length: r.length
                 })) : l))));
             };
             f.cancel = o.u;
@@ -630,16 +630,16 @@ function v(e, t = ()=>o.u, n = o.u, utils = o.u, s = {}, h = {}, b = 0, runSaga 
         n.cancel = ()=>{
             if (!u) {
                 u = true;
-                utils.forEach((e)=>s[e].cancel());
+                r.forEach((e)=>s[e].cancel());
             }
         };
-        utils.forEach((n)=>L(e[n], t, n, s[n]));
+        r.forEach((n)=>L(e[n], t, n, s[n]));
     }
 }
 const b = "runSaga(storeInterface, saga, ...args): saga argument must be a Generator function!";
 export function runSaga(e, t) {
-    for(let n = arguments.length, utils = Array(n > 2 ? n - 2 : 0), i = 2; i < n; i++){
-        utils[i - 2] = arguments[i];
+    for(let n = arguments.length, r = Array(n > 2 ? n - 2 : 0), i = 2; i < n; i++){
+        r[i - 2] = arguments[i];
     }
     let a = undefined;
     if (o.q.iterator(e)) {
@@ -647,7 +647,7 @@ export function runSaga(e, t) {
         e = t;
     } else {
         o.h(t, o.q.func, b);
-        a = t(...utils);
+        a = t(...r);
         o.h(a, o.q.iterator, b);
     }
     const { subscribe: l, dispatch: c, getState: s, context: f, sagaMonitor: d, logger: p, onError: h } = e;
@@ -665,7 +665,7 @@ export function runSaga(e, t) {
             effect: {
                 root: true,
                 saga: t,
-                args: utils
+                args: r
             }
         });
     }
@@ -689,20 +689,21 @@ export const throttle = w.e;
 export const delay = o.m;
 export const CANCEL = o.a;
 export const detach = u.i;
+export { E as effects };
 export default ((e = {})=>{
     const t = e.context;
     const n = t === undefined ? {} : t;
-    const utils = ((e, t)=>{
+    const r = ((e, t)=>{
         const n = {};
-        for(const utils in e){
-            t.indexOf(utils) >= 0 || Object.prototype.hasOwnProperty.call(e, utils) && (n[utils] = e[utils]);
+        for(const r in e){
+            t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
         }
         return n;
     })(e, [
         "context"
     ]);
-    const { sagaMonitor: a, logger: u, onError: l } = utils;
-    if (o.q.func(utils)) {
+    const { sagaMonitor: a, logger: u, onError: l } = r;
+    if (o.q.func(r)) {
         throw new Error("Saga middleware no longer accept Generator functions. Use sagaMiddleware.run instead");
     }
     if (u && !o.q.func(u)) {
@@ -711,13 +712,13 @@ export default ((e = {})=>{
     if (l && !o.q.func(l)) {
         throw new Error("`options.onError` passed to the Saga middleware is not a function!");
     }
-    if (utils.emitter && !o.q.func(utils.emitter)) {
+    if (r.emitter && !o.q.func(r.emitter)) {
         throw new Error("`options.emitter` passed to the Saga middleware is not a function!");
     }
     function c(e) {
         const { getState: t, dispatch: s } = e;
         const f = i.c();
-        f.emit = (utils.emitter || o.o)(f.emit);
+        f.emit = (r.emitter || o.o)(f.emit);
         c.run = runSaga.bind(null, {
             context: n,
             subscribe: f.subscribe,

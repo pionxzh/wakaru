@@ -49,40 +49,40 @@ export function createStore(e, t, n) {
         throw new Error("Expected the reducer to be a function.");
     }
     let c = e;
-    let combineReducers = t;
+    let s = t;
     let f = [];
-    let bindActionCreators = f;
-    let compose = false;
-    function applyMiddleware() {
-        if (bindActionCreators === f) {
-            bindActionCreators = f.slice();
+    let d = f;
+    let p = false;
+    function h() {
+        if (d === f) {
+            d = f.slice();
         }
     }
     function m() {
-        if (compose) {
+        if (p) {
             throw new Error("You may not call store.getState() while the reducer is executing. The reducer has already received the state as an argument. Pass it down from the top reducer instead of reading it from the store.");
         }
-        return combineReducers;
+        return s;
     }
     function y(e) {
         if (typeof e != "function") {
             throw new Error("Expected the listener to be a function.");
         }
-        if (compose) {
+        if (p) {
             throw new Error("You may not call store.subscribe() while the reducer is executing. If you would like to be notified after the store has been updated, subscribe from a component and invoke store.getState() in the callback to access the latest state. See https://redux.js.org/api-reference/store#subscribe(listener) for more details.");
         }
         let t = true;
-        applyMiddleware();
-        bindActionCreators.push(e);
+        h();
+        d.push(e);
         return ()=>{
             if (t) {
-                if (compose) {
+                if (p) {
                     throw new Error("You may not unsubscribe from a store listener while the reducer is executing. See https://redux.js.org/api-reference/store#subscribe(listener) for more details.");
                 }
                 t = false;
-                applyMiddleware();
-                const n = bindActionCreators.indexOf(e);
-                bindActionCreators.splice(n, 1);
+                h();
+                const n = d.indexOf(e);
+                d.splice(n, 1);
             }
         };
     }
@@ -93,16 +93,16 @@ export function createStore(e, t, n) {
         if (e.type === undefined) {
             throw new Error('Actions may not have an undefined "type" property. Have you misspelled a constant?');
         }
-        if (compose) {
+        if (p) {
             throw new Error("Reducers may not dispatch actions.");
         }
         try {
-            compose = true;
-            combineReducers = c(combineReducers, e);
+            p = true;
+            s = c(s, e);
         } finally{
-            compose = false;
+            p = false;
         }
-        for(let t = f = bindActionCreators, n = 0; n < t.length; n++){
+        for(let t = f = d, n = 0; n < t.length; n++){
             t[n]();
         }
         return e;
@@ -188,21 +188,21 @@ export function combineReducers(e) {
             throw u;
         }
         let r = false;
-        const __DO_NOT_USE__ActionTypes = {};
+        const o = {};
         for(let i = 0; i < a.length; i++){
-            const createStore = a[i];
-            const combineReducers = n[createStore];
-            const f = e[createStore];
-            const bindActionCreators = combineReducers(f, t);
-            if (bindActionCreators === undefined) {
-                const compose = c(createStore, t);
-                throw new Error(compose);
+            const l = a[i];
+            const s = n[l];
+            const f = e[l];
+            const d = s(f, t);
+            if (d === undefined) {
+                const p = c(l, t);
+                throw new Error(p);
             }
-            __DO_NOT_USE__ActionTypes[createStore] = bindActionCreators;
-            r = r || bindActionCreators !== f;
+            o[l] = d;
+            r = r || d !== f;
         }
         if (r) {
-            return __DO_NOT_USE__ActionTypes;
+            return o;
         }
         return e;
     };
@@ -220,8 +220,8 @@ export function bindActionCreators(e, t) {
         throw new Error("bindActionCreators expected an object or a function, instead received " + (e === null ? "null" : e === undefined ? "undefined" : i(e)) + '. Did you write "import ActionCreators from" instead of "import * as ActionCreators from"?');
     }
     const r = {};
-    for(let n = Object.keys(e), __DO_NOT_USE__ActionTypes = 0; __DO_NOT_USE__ActionTypes < n.length; __DO_NOT_USE__ActionTypes++){
-        const a = n[__DO_NOT_USE__ActionTypes];
+    for(let n = Object.keys(e), o = 0; o < n.length; o++){
+        const a = n[o];
         const u = e[a];
         if (typeof u == "function") {
             r[a] = f(u, t);
@@ -246,13 +246,13 @@ export function applyMiddleware(...t) {
             let u = ()=>{
                 throw new Error("Dispatching while constructing your middleware is not allowed. Other middleware would not be applied to this dispatch.");
             };
-            const createStore = {
+            const l = {
                 getState: i.getState,
                 dispatch () {
                     return u(...arguments);
                 }
             };
-            const c = t.map((e)=>e(createStore));
+            const c = t.map((e)=>e(l));
             u = compose(...c)(i.dispatch);
             return a({}, i, {
                 dispatch: u

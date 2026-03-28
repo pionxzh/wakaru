@@ -86,3 +86,25 @@ ns.foo();
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn import_rename_does_not_touch_shadowed_local() {
+    let input = r#"
+import { foo as ab } from 'bar';
+function inner() {
+  const ab = 1;
+  return ab;
+}
+ab();
+"#;
+    let expected = r#"
+import { foo } from 'bar';
+function inner() {
+  const ab = 1;
+  return ab;
+}
+foo();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+

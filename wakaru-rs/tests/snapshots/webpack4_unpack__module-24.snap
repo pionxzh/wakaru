@@ -467,7 +467,7 @@ const I = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (e
     return typeof e;
 };
 export const NavLink = (e)=>{
-    const { to: t, exact: n, strict: r, location: o, activeClassName: i, className: u, activeStyle: l, style: c, isActive: s, "aria-current": Router } = e;
+    const { to: t, exact: n, strict: r, location: o, activeClassName: i, className: u, activeStyle: l, style: c, isActive: s, "aria-current": f } = e;
     const d = ((e, t)=>{
         const n = {};
         for(const r in e){
@@ -486,10 +486,10 @@ export const NavLink = (e)=>{
         "isActive",
         "aria-current"
     ]);
-    const BrowserRouter = (t === undefined ? "undefined" : I(t)) === "object" ? t.pathname : t;
-    const BrowserRouter = BrowserRouter && BrowserRouter.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
+    const p = (t === undefined ? "undefined" : I(t)) === "object" ? t.pathname : t;
+    const h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
     return i.createElement(Route, {
-        path: BrowserRouter,
+        path: h,
         exact: n,
         strict: r,
         location: o,
@@ -503,7 +503,7 @@ export const NavLink = (e)=>{
                     i
                 ].filter((e)=>e).join(" ") : u,
                 style: o ? L({}, c, l) : c,
-                "aria-current": o && Router || null
+                "aria-current": o && f || null
             }, d));
         }
     });
@@ -951,8 +951,8 @@ export const Switch = ((e)=>{
         i.Children.forEach(t, (t)=>{
             if (r == null && i.isValidElement(t)) {
                 const i = t.props;
-                const { path: u, exact: l, strict: c, sensitive: s, from: Router } = i;
-                const d = u || Router;
+                const { path: u, exact: l, strict: c, sensitive: s, from: f } = i;
+                const d = u || f;
                 o = t;
                 r = P.a(n.pathname, {
                     path: d,

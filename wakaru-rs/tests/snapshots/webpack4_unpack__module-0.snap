@@ -4,8 +4,7 @@ expression: code
 ---
 export { i as x };
 export { l as b };
-export { c as e };
-export { s as c };
+export { s as a };
 export { f as d };
 export { p as r };
 export { h as u };
@@ -15,9 +14,7 @@ export { w as v };
 export { E as w };
 export { x as f };
 export { k as l };
-export { T as q };
 export { S as m };
-export { O as t };
 export { C as y };
 export { R as s };
 export { A as p };
@@ -45,7 +42,7 @@ const i = (e)=>"@@redux-saga/" + e;
 export const e = i("TASK");
 const u = i("HELPER");
 const l = i("MATCH");
-const c = i("CANCEL_PROMISE");
+export const a = i("CANCEL_PROMISE");
 const s = i("SAGA_ACTION");
 const f = i("SELF_CANCELLATION");
 const d = (e)=>()=>e;
@@ -151,7 +148,7 @@ function k(e = {}) {
     t.promise = n;
     return t;
 }
-function T(e) {
+export function g(e) {
     const t = [];
     for(let n = 0; n < e; n++){
         t.push(k());
@@ -163,10 +160,10 @@ function S(e, t = true) {
     const r = new Promise((r)=>{
         n = setTimeout(()=>r(t), e);
     });
-    r[c] = ()=>clearTimeout(n);
+    r[a] = ()=>clearTimeout(n);
     return r;
 }
-function O() {
+export function j() {
     let e;
     let t = true;
     let n = undefined;
@@ -227,11 +224,11 @@ const I = (e)=>(t)=>e(Object.defineProperty(t, s, {
 const D = function e(t) {
     return (...r)=>{
         const i = [];
-        const e = t(...r);
+        const a = t(...r);
         return {
             next (e) {
                 i.push(e);
-                return e.next(e);
+                return a.next(e);
             },
             clone () {
                 const n = e(t)(...r);
@@ -239,10 +236,10 @@ const D = function e(t) {
                 return n;
             },
             return (e) {
-                return e.return(e);
+                return a.return(e);
             },
             throw (e) {
-                return e.throw(e);
+                return a.throw(e);
             }
         };
     };

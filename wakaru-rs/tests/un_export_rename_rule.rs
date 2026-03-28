@@ -104,3 +104,26 @@ console.log(Counter);
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn export_rename_does_not_touch_shadowed_local() {
+    let input = r#"
+const l = 1;
+export const StrictMode = l;
+function createElement() {
+  let l = 2;
+  return l;
+}
+console.log(l);
+"#;
+    let expected = r#"
+export const StrictMode = 1;
+function createElement() {
+  let l = 2;
+  return l;
+}
+console.log(StrictMode);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+

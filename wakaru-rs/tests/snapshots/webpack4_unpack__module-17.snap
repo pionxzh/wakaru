@@ -5,35 +5,35 @@ expression: code
 import r from "./module-2.js";
 import o from "./module-10.js";
 export function takeEvery(e, t) {
-    for(let n = arguments.length, takeEvery = Array(n > 2 ? n - 2 : 0), takeLatest = 2; takeLatest < n; takeLatest++){
-        takeEvery[takeLatest - 2] = arguments[takeLatest];
+    for(let n = arguments.length, i = Array(n > 2 ? n - 2 : 0), a = 2; a < n; a++){
+        i[a - 2] = arguments[a];
     }
     return r.k.apply(undefined, [
         o.b,
         e,
         t
-    ].concat(takeEvery));
+    ].concat(i));
 }
 export function takeLatest(e, t) {
-    for(let n = arguments.length, takeEvery = Array(n > 2 ? n - 2 : 0), takeLatest = 2; takeLatest < n; takeLatest++){
-        takeEvery[takeLatest - 2] = arguments[takeLatest];
+    for(let n = arguments.length, i = Array(n > 2 ? n - 2 : 0), a = 2; a < n; a++){
+        i[a - 2] = arguments[a];
     }
     return r.k.apply(undefined, [
         o.d,
         e,
         t
-    ].concat(takeEvery));
+    ].concat(i));
 }
 export function throttle(e, t, n) {
-    for(let takeEvery = arguments.length, takeLatest = Array(takeEvery > 3 ? takeEvery - 3 : 0), throttle = 3; throttle < takeEvery; throttle++){
-        takeLatest[throttle - 3] = arguments[throttle];
+    for(let i = arguments.length, a = Array(i > 3 ? i - 3 : 0), u = 3; u < i; u++){
+        a[u - 3] = arguments[u];
     }
     return r.k.apply(undefined, [
         o.f,
         e,
         t,
         n
-    ].concat(takeLatest));
+    ].concat(a));
 }
 export const take = r.s;
 export const takem = r.t;

@@ -12,16 +12,16 @@ const o = new RegExp([
 export function parse(e, t) {
     let n;
     const r = [];
-    let parse = 0;
+    let i = 0;
     let a = 0;
     let u = "";
-    const tokensToFunction = t && t.delimiter || "/";
+    const l = t && t.delimiter || "/";
     while((n = o.exec(e)) != null){
         const f = n[0];
         const d = n[1];
-        const tokensToRegExp = n.index;
-        u += e.slice(a, tokensToRegExp);
-        a = tokensToRegExp + f.length;
+        const p = n.index;
+        u += e.slice(a, p);
+        a = p + f.length;
         if (d) {
             u += d[1];
         } else {
@@ -34,10 +34,10 @@ export function parse(e, t) {
             const E = m != null && h != null && h !== m;
             const x = g === "+" || g === "*";
             const k = g === "?" || g === "*";
-            const T = n[2] || tokensToFunction;
+            const T = n[2] || l;
             const S = v || b;
             r.push({
-                name: y || parse++,
+                name: y || i++,
                 prefix: m || "",
                 delimiter: T,
                 optional: k,
@@ -70,52 +70,52 @@ export function tokensToFunction(e, t) {
         }
     }
     return (t, o)=>{
-        let parse = "";
-        const tokensToFunction = t || {};
+        let i = "";
+        const l = t || {};
         const c = (o || {}).pretty ? a : encodeURIComponent;
         for(let s = 0; s < e.length; s++){
             const f = e[s];
             if (typeof f != "string") {
                 let d;
-                const tokensToRegExp = tokensToFunction[f.name];
-                if (tokensToRegExp == null) {
+                const p = l[f.name];
+                if (p == null) {
                     if (f.optional) {
                         if (f.partial) {
-                            parse += f.prefix;
+                            i += f.prefix;
                         }
                         continue;
                     }
                     throw new TypeError('Expected "' + f.name + '" to be defined');
                 }
-                if (r(tokensToRegExp)) {
+                if (r(p)) {
                     if (!f.repeat) {
-                        throw new TypeError('Expected "' + f.name + '" to not repeat, but received `' + JSON.stringify(tokensToRegExp) + "`");
+                        throw new TypeError('Expected "' + f.name + '" to not repeat, but received `' + JSON.stringify(p) + "`");
                     }
-                    if (tokensToRegExp.length === 0) {
+                    if (p.length === 0) {
                         if (f.optional) {
                             continue;
                         }
                         throw new TypeError('Expected "' + f.name + '" to not be empty');
                     }
-                    for(let h = 0; h < tokensToRegExp.length; h++){
-                        d = c(tokensToRegExp[h]);
+                    for(let h = 0; h < p.length; h++){
+                        d = c(p[h]);
                         if (!n[s].test(d)) {
                             throw new TypeError('Expected all "' + f.name + '" to match "' + f.pattern + '", but received `' + JSON.stringify(d) + "`");
                         }
-                        parse += (h === 0 ? f.prefix : f.delimiter) + d;
+                        i += (h === 0 ? f.prefix : f.delimiter) + d;
                     }
                 } else {
-                    d = f.asterisk ? u(tokensToRegExp) : c(tokensToRegExp);
+                    d = f.asterisk ? u(p) : c(p);
                     if (!n[s].test(d)) {
                         throw new TypeError('Expected "' + f.name + '" to match "' + f.pattern + '", but received "' + d + '"');
                     }
-                    parse += f.prefix + d;
+                    i += f.prefix + d;
                 }
             } else {
-                parse += f;
+                i += f;
             }
         }
-        return parse;
+        return i;
     };
 }
 function c(e) {
@@ -140,20 +140,20 @@ export function tokensToRegExp(e, t, n) {
         t = [];
     }
     const o = (n = n || {}).strict;
-    const parse = n.end !== false;
+    const i = n.end !== false;
     let a = "";
     for(let u = 0; u < e.length; u++){
-        const tokensToFunction = e[u];
-        if (typeof tokensToFunction == "string") {
-            a += c(tokensToFunction);
+        const l = e[u];
+        if (typeof l == "string") {
+            a += c(l);
         } else {
-            const s = c(tokensToFunction.prefix);
-            let tokensToRegExp = "(?:" + tokensToFunction.pattern + ")";
-            t.push(tokensToFunction);
-            if (tokensToFunction.repeat) {
-                tokensToRegExp += "(?:" + s + tokensToRegExp + ")*";
+            const s = c(l.prefix);
+            let p = "(?:" + l.pattern + ")";
+            t.push(l);
+            if (l.repeat) {
+                p += "(?:" + s + p + ")*";
             }
-            a += tokensToRegExp = tokensToFunction.optional ? tokensToFunction.partial ? s + "(" + tokensToRegExp + ")?" : "(?:" + s + "(" + tokensToRegExp + "))?" : s + "(" + tokensToRegExp + ")";
+            a += p = l.optional ? l.partial ? s + "(" + p + ")?" : "(?:" + s + "(" + p + "))?" : s + "(" + p + ")";
         }
     }
     const h = c(n.delimiter || "/");
@@ -161,7 +161,7 @@ export function tokensToRegExp(e, t, n) {
     if (!o) {
         a = (m ? a.slice(0, -h.length) : a) + "(?:" + h + "(?=$))?";
     }
-    a += parse ? "$" : o && m ? "" : "(?=" + h + "|$)";
+    a += i ? "$" : o && m ? "" : "(?=" + h + "|$)";
     return f(new RegExp("^" + a, d(n)), t);
 }
 function h(e, t, n) {

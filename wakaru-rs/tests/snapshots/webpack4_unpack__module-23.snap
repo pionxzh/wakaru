@@ -166,14 +166,14 @@ export function connectAdvanced(e, t = {}) {
     const a = t;
     const u = a.getDisplayName;
     const l = u === undefined ? (e)=>"ConnectAdvanced(" + e + ")" : u;
-    const createProvider = a.methodName;
-    const Provider = createProvider === undefined ? "connectAdvanced" : createProvider;
+    const f = a.methodName;
+    const d = f === undefined ? "connectAdvanced" : f;
     const y = a.renderCountProp;
     const b = y === undefined ? undefined : y;
     const E = a.shouldHandleStateChanges;
     const x = E === undefined || E;
-    const connectAdvanced = a.storeKey;
-    const _ = connectAdvanced === undefined ? "store" : connectAdvanced;
+    const P = a.storeKey;
+    const _ = P === undefined ? "store" : P;
     const j = a.withRef;
     const R = j !== undefined && j;
     const N = m(a, [
@@ -194,12 +194,12 @@ export function connectAdvanced(e, t = {}) {
     r[M] = c;
     const I = r;
     return (t)=>{
-        b(w.isValidElementType(t), "You must pass a component to the function returned by " + Provider + ". Instead received " + JSON.stringify(t));
+        b(w.isValidElementType(t), "You must pass a component to the function returned by " + d + ". Instead received " + JSON.stringify(t));
         const n = t.displayName || t.name || "Component";
         const r = l(n);
         const a = h.a({}, N, {
             getDisplayName: l,
-            methodName: Provider,
+            methodName: d,
             renderCountProp: b,
             shouldHandleStateChanges: x,
             storeKey: _,
@@ -258,7 +258,7 @@ export function connectAdvanced(e, t = {}) {
                 this.selector.shouldComponentUpdate = false;
             };
             l.getWrappedInstance = function() {
-                b(R, "To access the wrapped instance, you need to specify { withRef: true } in the options argument of the " + Provider + "() call.");
+                b(R, "To access the wrapped instance, you need to specify { withRef: true } in the options argument of the " + d + "() call.");
                 return this.wrappedInstance;
             };
             l.setWrappedInstance = function(e) {
@@ -492,10 +492,10 @@ function U(e, t, n, r, o) {
     let u;
     let l;
     let c;
-    const { areStatesEqual: s, areOwnPropsEqual: createProvider, areStatePropsEqual: Provider } = o;
+    const { areStatesEqual: s, areOwnPropsEqual: f, areStatePropsEqual: d } = o;
     let p = false;
     function h(o, p) {
-        const h = !createProvider(p, a);
+        const h = !f(p, a);
         const m = !s(o, i);
         i = o;
         a = p;
@@ -518,7 +518,7 @@ function U(e, t, n, r, o) {
         if (m) {
             return (()=>{
                 const t = e(i, a);
-                const r = !Provider(t, u);
+                const r = !d(t, u);
                 u = t;
                 if (r) {
                     c = n(u, l, a);
@@ -578,13 +578,13 @@ export const connect = ((e)=>{
     const l = t.mergePropsFactories;
     const c = l === undefined ? z : l;
     const s = t.selectorFactory;
-    const createProvider = s === undefined ? H : s;
+    const f = s === undefined ? H : s;
     return (e, t, n, o = {})=>{
         const a = o;
         const l = a.pure;
         const s = l === undefined || l;
-        const Provider = a.areStatesEqual;
-        const p = Provider === undefined ? $ : Provider;
+        const d = a.areStatesEqual;
+        const p = d === undefined ? $ : d;
         const y = a.areOwnPropsEqual;
         const v = y === undefined ? R : y;
         const b = a.areStatePropsEqual;
@@ -601,7 +601,7 @@ export const connect = ((e)=>{
         const k = W(e, i, "mapStateToProps");
         const T = W(t, u, "mapDispatchToProps");
         const S = W(n, c, "mergeProps");
-        return r(createProvider, h.a({
+        return r(f, h.a({
             methodName: "connect",
             getDisplayName (e) {
                 return "Connect(" + e + ")";

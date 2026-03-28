@@ -35,8 +35,8 @@ function u(e, t, n = "iterator") {
             a(t);
         }
         const r = e[u]();
-        const [l, c, b] = r;
-        a = b;
+        const [l, c, s] = r;
+        a = s;
         if ((u = l) === i) {
             return o;
         }
@@ -48,7 +48,7 @@ export function b(e, t) {
     for(let n = arguments.length, r = Array(n > 2 ? n - 2 : 0), o = 2; o < n; o++){
         r[o - 2] = arguments[o];
     }
-    const b = {
+    const s = {
         done: false,
         value: l.s(e)
     };
@@ -58,7 +58,7 @@ export function b(e, t) {
         q1 () {
             return [
                 "q2",
-                b,
+                s,
                 d
             ];
         },
@@ -88,7 +88,7 @@ function f(e, t) {
     for(let n = arguments.length, r = Array(n > 2 ? n - 2 : 0), o = 2; o < n; o++){
         r[o - 2] = arguments[o];
     }
-    const b = {
+    const s = {
         done: false,
         value: l.s(e)
     };
@@ -110,7 +110,7 @@ function f(e, t) {
         q1 () {
             return [
                 "q2",
-                b,
+                s,
                 m
             ];
         },
@@ -147,8 +147,8 @@ function f(e, t) {
     }, "q1", "takeLatest(" + a(e) + ", " + t.name + ")");
 }
 function p(e, t, n) {
-    for(let o = arguments.length, b = Array(o > 3 ? o - 3 : 0), f = 3; f < o; f++){
-        b[f - 3] = arguments[f];
+    for(let o = arguments.length, s = Array(o > 3 ? o - 3 : 0), f = 3; f < o; f++){
+        s[f - 3] = arguments[f];
     }
     let p = undefined;
     let h = undefined;
@@ -160,7 +160,7 @@ function p(e, t, n) {
         done: false,
         value: l.e(r.m, e)
     };
-    const e = (e)=>p = e;
+    const v = (e)=>p = e;
     const b = (e)=>h = e;
     return u({
         q1 () {
@@ -177,7 +177,7 @@ function p(e, t, n) {
                     done: false,
                     value: l.s(h)
                 },
-                e
+                v
             ];
         },
         q3 () {
@@ -193,7 +193,7 @@ function p(e, t, n) {
                         done: false,
                         value: l.k.apply(undefined, [
                             n
-                        ].concat(b, [
+                        ].concat(s, [
                             e
                         ]))
                     };

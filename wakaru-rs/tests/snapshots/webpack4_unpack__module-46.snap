@@ -138,13 +138,13 @@ function C(e) {
             e: for(let r = 0, o = e.length; r < o;){
                 const i = 2 * (r + 1) - 1;
                 const a = e[i];
-                const unstable_requestPaint = i + 1;
-                const l = e[unstable_requestPaint];
+                const u = i + 1;
+                const l = e[u];
                 if (a !== undefined && P(a, n) < 0) {
                     if (l !== undefined && P(l, a) < 0) {
                         e[r] = l;
-                        e[unstable_requestPaint] = n;
-                        r = unstable_requestPaint;
+                        e[u] = n;
+                        r = u;
                     } else {
                         e[r] = a;
                         e[i] = n;
@@ -155,8 +155,8 @@ function C(e) {
                         break e;
                     }
                     e[r] = l;
-                    e[unstable_requestPaint] = n;
-                    r = unstable_requestPaint;
+                    e[u] = n;
+                    r = u;
                 }
             }
         }
@@ -219,11 +219,11 @@ function z(e, n) {
     try {
         D(n);
         for(N = O(_); N !== null && (!(N.expirationTime > n) || e && !a());){
-            const unstable_requestPaint = N.callback;
-            if (unstable_requestPaint !== null) {
+            const u = N.callback;
+            if (u !== null) {
                 N.callback = null;
                 M = N.priorityLevel;
-                const l = unstable_requestPaint(N.expirationTime <= n);
+                const l = u(N.expirationTime <= n);
                 n = exports.unstable_now();
                 if (typeof l == "function") {
                     N.callback = l;
@@ -319,14 +319,14 @@ export const unstable_runWithPriority = (e, t)=>{
     }
 };
 export const unstable_scheduleCallback = (e, n, a)=>{
-    const unstable_requestPaint = exports.unstable_now();
+    const u = exports.unstable_now();
     if (typeof a == "object" && a !== null) {
         var l = a.delay;
-        l = typeof l == "number" && l > 0 ? unstable_requestPaint + l : unstable_requestPaint;
+        l = typeof l == "number" && l > 0 ? u + l : u;
         a = typeof a.timeout == "number" ? a.timeout : q(e);
     } else {
         a = q(e);
-        l = unstable_requestPaint;
+        l = u;
     }
     e = {
         id: R++,
@@ -336,12 +336,12 @@ export const unstable_scheduleCallback = (e, n, a)=>{
         expirationTime: a = l + a,
         sortIndex: -1
     };
-    if (l > unstable_requestPaint) {
+    if (l > u) {
         e.sortIndex = l;
         S(j, e);
         if (O(_) === null && e === O(j)) {
             I ? i() : I = true;
-            o(F, l - unstable_requestPaint);
+            o(F, l - u);
         }
     } else {
         e.sortIndex = a;

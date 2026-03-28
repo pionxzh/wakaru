@@ -74,10 +74,10 @@ export function createElement(e, t, n) {
     let r;
     const o = {};
     let a = null;
-    let Fragment = null;
+    let u = null;
     if (t != null) {
         if (t.ref !== undefined) {
-            Fragment = t.ref;
+            u = t.ref;
         }
         if (t.key !== undefined) {
             a = "" + t.key;
@@ -88,20 +88,20 @@ export function createElement(e, t, n) {
             }
         }
     }
-    let StrictMode = arguments.length - 2;
-    if (StrictMode === 1) {
+    let l = arguments.length - 2;
+    if (l === 1) {
         o.children = n;
-    } else if (StrictMode > 1) {
-        const Profiler = Array(StrictMode);
-        for(let s = 0; s < StrictMode; s++){
-            Profiler[s] = arguments[s + 2];
+    } else if (l > 1) {
+        const c = Array(l);
+        for(let s = 0; s < l; s++){
+            c[s] = arguments[s + 2];
         }
-        o.children = Profiler;
+        o.children = c;
     }
     if (e && e.defaultProps) {
-        for(r in StrictMode = e.defaultProps){
+        for(r in l = e.defaultProps){
             if (o[r] === undefined) {
-                o[r] = StrictMode[r];
+                o[r] = l[r];
             }
         }
     }
@@ -109,7 +109,7 @@ export function createElement(e, t, n) {
         $$typeof: i,
         type: e,
         key: a,
-        ref: Fragment,
+        ref: u,
         props: o,
         _owner: T.current
     };
@@ -153,51 +153,51 @@ function M(e, t, n) {
     }
     return function e(t, r, o) {
         const n = "";
-        let Fragment = typeof t;
-        if (!(Fragment !== "undefined" && Fragment !== "boolean")) {
+        let u = typeof t;
+        if (!(u !== "undefined" && u !== "boolean")) {
             t = null;
         }
-        let StrictMode = false;
+        let l = false;
         if (t === null) {
-            StrictMode = true;
+            l = true;
         } else {
-            switch(Fragment){
+            switch(u){
                 case "string":
                 case "number":
-                    StrictMode = true;
+                    l = true;
                     break;
                 case "object":
                     switch(t.$$typeof){
                         case i:
                         case a:
-                            StrictMode = true;
+                            l = true;
                     }
             }
         }
-        if (StrictMode) {
+        if (l) {
             r(o, t, n === "" ? "." + A(t, 0) : n);
             return 1;
         }
-        StrictMode = 0;
+        l = 0;
         n = n === "" ? "." : n + ":";
         if (Array.isArray(t)) {
-            for(var Profiler = 0; Profiler < t.length; Profiler++){
-                var s = n + A(Fragment = t[Profiler], Profiler);
-                StrictMode += e(Fragment, s, r, o);
+            for(var c = 0; c < t.length; c++){
+                var s = n + A(u = t[c], c);
+                l += e(u, s, r, o);
             }
         } else {
             s = t === null || typeof t != "object" ? null : typeof (s = y && t[y] || t["@@iterator"]) == "function" ? s : null;
             if (typeof s == "function") {
                 t = s.call(t);
-                for(Profiler = 0; !(Fragment = t.next()).done;){
-                    StrictMode += e(Fragment = Fragment.value, s = n + A(Fragment, Profiler++), r, o);
+                for(c = 0; !(u = t.next()).done;){
+                    l += e(u = u.value, s = n + A(u, c++), r, o);
                 }
-            } else if (Fragment === "object") {
+            } else if (u === "object") {
                 r = "" + t;
                 throw Error(v(31, r === "[object Object]" ? "object with keys {" + Object.keys(t).join(", ") + "}" : r, ""));
             }
         }
-        return StrictMode;
+        return l;
     }(e, t, n);
 }
 function A(e, t) {
@@ -302,20 +302,20 @@ export const cloneElement = function(e, t, n) {
     }
     const o = r({}, e.props);
     let a = e.key;
-    let Fragment = e.ref;
-    let StrictMode = e._owner;
+    let u = e.ref;
+    let l = e._owner;
     if (t != null) {
         if (t.ref !== undefined) {
-            Fragment = t.ref;
-            StrictMode = T.current;
+            u = t.ref;
+            l = T.current;
         }
         if (t.key !== undefined) {
             a = "" + t.key;
         }
-        if (e.type && e.type.defaultProps) var Profiler = e.type.defaultProps;
+        if (e.type && e.type.defaultProps) var c = e.type.defaultProps;
         for(s in t){
             if (S.call(t, s) && !O.hasOwnProperty(s)) {
-                o[s] = t[s] === undefined && Profiler !== undefined ? Profiler[s] : t[s];
+                o[s] = t[s] === undefined && c !== undefined ? c[s] : t[s];
             }
         }
     }
@@ -323,19 +323,19 @@ export const cloneElement = function(e, t, n) {
     if (s === 1) {
         o.children = n;
     } else if (s > 1) {
-        Profiler = Array(s);
+        c = Array(s);
         for(let f = 0; f < s; f++){
-            Profiler[f] = arguments[f + 2];
+            c[f] = arguments[f + 2];
         }
-        o.children = Profiler;
+        o.children = c;
     }
     return {
         $$typeof: i,
         type: e.type,
         key: a,
-        ref: Fragment,
+        ref: u,
         props: o,
-        _owner: StrictMode
+        _owner: l
     };
 };
 export const createContext = (e, t = null)=>{

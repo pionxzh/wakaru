@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
+use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
     Decl, DefaultDecl, Ident, ImportSpecifier, MemberProp, Module, ModuleDecl,
     ModuleExportName, ModuleItem, ObjectPatProp, Pat, PropName, Stmt,
@@ -9,12 +10,14 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 pub struct UnImportRename;
 
+type BindingId = (Atom, SyntaxContext);
+
 impl VisitMut for UnImportRename {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let mut all_names = collect_module_names(module);
 
-        // Build rename list: (local_alias → target based on imported name)
-        let mut renames: Vec<(Atom, Atom)> = Vec::new();
+        // Build rename list: (local_alias_binding → target based on imported name)
+        let mut renames: Vec<(BindingId, Atom)> = Vec::new();
 
         for item in &module.body {
             let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else { continue };
@@ -29,7 +32,7 @@ impl VisitMut for UnImportRename {
 
                 let target = generate_unique_name(imported, &all_names);
                 all_names.insert(target.clone());
-                renames.push((local, target));
+                renames.push(((local, named.local.ctxt), target));
             }
         }
 
@@ -139,13 +142,13 @@ fn collect_pat_names(pat: &Pat, names: &mut HashSet<Atom>) {
 }
 
 struct Renamer<'a> {
-    renames: &'a [(Atom, Atom)],
+    renames: &'a [(BindingId, Atom)],
 }
 
 impl VisitMut for Renamer<'_> {
     fn visit_mut_ident(&mut self, id: &mut Ident) {
         for (old, new) in self.renames {
-            if id.sym == *old {
+            if id.sym == old.0 && id.ctxt == old.1 {
                 id.sym = new.clone();
                 return;
             }
