@@ -27,7 +27,7 @@ function d(e, t) {
     return t;
 }
 export const a = ((e)=>{
-    function t() {
+    function t(...i) {
         let n;
         let r;
         !((e, t)=>{
@@ -35,9 +35,6 @@ export const a = ((e)=>{
                 throw new TypeError("Cannot call a class as a function");
             }
         })(this, t);
-        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = d(this, e.call(...[
             this
         ].concat(i)));

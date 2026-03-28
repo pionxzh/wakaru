@@ -233,10 +233,7 @@ function w() {
                 t = t.filter((e)=>e !== r);
             };
         },
-        notifyListeners () {
-            for(let e = arguments.length, n = new Array(e), r = 0; r < e; r++){
-                n[r] = arguments[r];
-            }
+        notifyListeners (...n) {
             t.forEach((e)=>e(...n));
         }
     };

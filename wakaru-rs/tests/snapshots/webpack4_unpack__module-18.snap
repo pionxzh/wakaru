@@ -40,7 +40,7 @@ function d(e, t) {
     return t;
 }
 export const ConnectedRouter = ((e)=>{
-    function t() {
+    function t(...i) {
         let n;
         let r;
         !((e, t)=>{
@@ -48,9 +48,6 @@ export const ConnectedRouter = ((e)=>{
                 throw new TypeError("Cannot call a class as a function");
             }
         })(this, t);
-        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = d(this, e.call(...[
             this
         ].concat(i)));
@@ -123,10 +120,7 @@ export const createMatchSelector = (e)=>{
 };
 export const CALL_HISTORY_METHOD = "@@router/CALL_HISTORY_METHOD";
 function g(e) {
-    return function() {
-        for(let t = arguments.length, n = Array(t), r = 0; r < t; r++){
-            n[r] = arguments[r];
-        }
+    return (...n)=>{
         return {
             type: CALL_HISTORY_METHOD,
             payload: {
@@ -142,11 +136,11 @@ export const go = g("go");
 export const goBack = g("goBack");
 export const goForward = g("goForward");
 export const routerActions = {
-    push: push,
-    replace: replace,
-    go: go,
-    goBack: goBack,
-    goForward: goForward
+    push,
+    replace,
+    go,
+    goBack,
+    goForward
 };
 export function routerMiddleware(e) {
     return ()=>(t)=>(n)=>{

@@ -22,7 +22,7 @@ function d(e, t) {
     return t;
 }
 export const BrowserRouter = ((e)=>{
-    function t() {
+    function t(...i) {
         let n;
         let r;
         !((e, t)=>{
@@ -30,9 +30,6 @@ export const BrowserRouter = ((e)=>{
                 throw new TypeError("Cannot call a class as a function");
             }
         })(this, t);
-        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = d(this, e.call(...[
             this
         ].concat(i)));
@@ -81,7 +78,7 @@ function m(e, t) {
     return t;
 }
 export const HashRouter = ((e)=>{
-    function t() {
+    function t(...i) {
         let n;
         let r;
         !((e, t)=>{
@@ -89,9 +86,6 @@ export const HashRouter = ((e)=>{
                 throw new TypeError("Cannot call a class as a function");
             }
         })(this, t);
-        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = m(this, e.call(...[
             this
         ].concat(i)));
@@ -155,7 +149,7 @@ function E(e, t) {
 }
 const x = (e)=>!!(e.metaKey || e.altKey || e.ctrlKey || e.shiftKey);
 export const Link = ((e)=>{
-    function t() {
+    function t(...i) {
         let n;
         let r;
         !((e, t)=>{
@@ -163,9 +157,6 @@ export const Link = ((e)=>{
                 throw new TypeError("Cannot call a class as a function");
             }
         })(this, t);
-        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = E(this, e.call(...[
             this
         ].concat(i)));
@@ -264,7 +255,7 @@ function S(e, t) {
     return t;
 }
 export const MemoryRouter = ((e)=>{
-    function t() {
+    function t(...i) {
         let n;
         let r;
         !((e, t)=>{
@@ -272,9 +263,6 @@ export const MemoryRouter = ((e)=>{
                 throw new TypeError("Cannot call a class as a function");
             }
         })(this, t);
-        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = S(this, e.call(...[
             this
         ].concat(i)));
@@ -335,7 +323,7 @@ function j(e, t) {
 }
 const R = (e)=>i.Children.count(e) === 0;
 const N = ((e)=>{
-    function t() {
+    function t(...i) {
         let n;
         let r;
         !((e, t)=>{
@@ -343,9 +331,6 @@ const N = ((e)=>{
                 throw new TypeError("Cannot call a class as a function");
             }
         })(this, t);
-        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = j(this, e.call(...[
             this
         ].concat(i)));
@@ -805,7 +790,7 @@ const ee = (e)=>()=>{
     };
 const te = ()=>{};
 export const StaticRouter = ((e)=>{
-    function t() {
+    function t(...i) {
         let n;
         let r;
         !((e, t)=>{
@@ -813,9 +798,6 @@ export const StaticRouter = ((e)=>{
                 throw new TypeError("Cannot call a class as a function");
             }
         })(this, t);
-        for(let o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = G(this, e.call(...[
             this
         ].concat(i)));

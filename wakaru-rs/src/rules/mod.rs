@@ -33,6 +33,10 @@ mod un_variable_merging;
 mod un_while_loop;
 mod var_decl_to_let_const;
 mod obj_method_shorthand;
+mod obj_shorthand;
+mod exponent;
+mod arg_rest;
+mod un_rest_array_copy;
 mod arrow_function;
 
 use swc_core::common::Mark;
@@ -74,6 +78,10 @@ pub use un_variable_merging::UnVariableMerging;
 pub use un_while_loop::UnWhileLoop;
 pub use var_decl_to_let_const::VarDeclToLetConst;
 pub use obj_method_shorthand::ObjMethodShorthand;
+pub use obj_shorthand::ObjShorthand;
+pub use exponent::Exponent;
+pub use arg_rest::ArgRest;
+pub use un_rest_array_copy::UnRestArrayCopy;
 pub use arrow_function::ArrowFunction;
 
 pub trait Rule: VisitMut {
@@ -125,7 +133,11 @@ pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
     module.visit_mut_with(&mut UnEsm);
     // lebab-style modernization
     module.visit_mut_with(&mut VarDeclToLetConst);
+    module.visit_mut_with(&mut ObjShorthand);
     module.visit_mut_with(&mut ObjMethodShorthand);
+    module.visit_mut_with(&mut Exponent);
+    module.visit_mut_with(&mut ArgRest);
+    module.visit_mut_with(&mut UnRestArrayCopy);
     module.visit_mut_with(&mut ArrowFunction);
     module.visit_mut_with(&mut UnImportRename);
     module.visit_mut_with(&mut UnExportRename);

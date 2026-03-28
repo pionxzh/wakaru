@@ -146,10 +146,7 @@ function M(e) {
         e
     ].concat(n)));
 }
-function A() {
-    for(let e = arguments.length, t = Array(e), n = 0; n < e; n++){
-        t[n] = arguments[n];
-    }
+function A(...t) {
     if (t.length > 1) {
         return O(t.map((e)=>A(e)));
     }
@@ -158,10 +155,7 @@ function A() {
     r.h(o, r.q.task, "join(task): argument " + o + " is not a valid Task object " + w);
     return E(d, o);
 }
-function L() {
-    for(let e = arguments.length, t = Array(e), n = 0; n < e; n++){
-        t[n] = arguments[n];
-    }
+function L(...t) {
     if (t.length > 1) {
         return O(t.map((e)=>L(e)));
     }

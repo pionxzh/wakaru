@@ -227,10 +227,7 @@ const I = (e)=>(t)=>e(Object.defineProperty(t, s, {
             value: true
         }));
 const D = function e(t) {
-    return function() {
-        for(let n = arguments.length, r = Array(n), o = 0; o < n; o++){
-            r[o] = arguments[o];
-        }
+    return (...r)=>{
         const i = [];
         const e = t(...r);
         return {

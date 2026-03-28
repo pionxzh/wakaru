@@ -230,10 +230,7 @@ export function bindActionCreators(e, t) {
     }
     return r;
 }
-export function compose() {
-    for(let e = arguments.length, t = Array(e), n = 0; n < e; n++){
-        t[n] = arguments[n];
-    }
+export function compose(...t) {
     if (t.length === 0) {
         return (e)=>e;
     }
@@ -244,14 +241,8 @@ export function compose() {
             return e(t(...arguments));
         });
 }
-export function applyMiddleware() {
-    for(let e = arguments.length, t = Array(e), n = 0; n < e; n++){
-        t[n] = arguments[n];
-    }
-    return (e)=>function() {
-            for(let n = arguments.length, r = Array(n), __DO_NOT_USE__ActionTypes = 0; __DO_NOT_USE__ActionTypes < n; __DO_NOT_USE__ActionTypes++){
-                r[__DO_NOT_USE__ActionTypes] = arguments[__DO_NOT_USE__ActionTypes];
-            }
+export function applyMiddleware(...t) {
+    return (e)=>(...r)=>{
             const i = e(...r);
             let u = ()=>{
                 throw new Error("Dispatching while constructing your middleware is not allowed. Other middleware would not be applied to this dispatch.");

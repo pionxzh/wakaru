@@ -70,13 +70,15 @@ const obj = { fn() { return this.x; } };
 }
 
 #[test]
-fn function_with_arguments_not_converted() {
-    // Arrow functions have no own `arguments` — must not convert
+fn function_with_arguments_converted_via_arg_rest() {
+    // ArgRest rewrites arguments[N] → args[N] first, then ArrowFunction can convert.
+    // Arrow functions have no own `arguments`, but after ArgRest runs that is no
+    // longer a blocker.
     let input = r#"
 const fn = function() { return arguments[0]; };
 "#;
     let expected = r#"
-const fn = function() { return arguments[0]; };
+const fn = (...args) => args[0];
 "#;
     let output = render(input);
     assert_eq_normalized(&output, expected);
