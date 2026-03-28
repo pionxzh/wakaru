@@ -191,3 +191,35 @@ use(t);
     );
 }
 
+#[test]
+fn react_rename_should_not_leak_into_shadowed_function_local() {
+    let input = r#"
+export const l = o.createContext(null);
+function createElement() {
+  let l = arguments.length - 2;
+  if (e && e.defaultProps) {
+    l = e.defaultProps;
+  }
+  return l;
+}
+use(l);
+"#;
+    let output = normalize(&apply(input));
+    assert!(
+        output.contains("export const LContext = o.createContext(null);"),
+        "top-level React rename was not applied:\n{output}"
+    );
+    assert!(
+        output.contains("let l = arguments.length - 2;"),
+        "shadowed local was incorrectly renamed:\n{output}"
+    );
+    assert!(
+        output.contains("return l;"),
+        "shadowed local use was incorrectly renamed:\n{output}"
+    );
+    assert!(
+        output.contains("use(LContext);"),
+        "outer use site was not renamed:\n{output}"
+    );
+}
+

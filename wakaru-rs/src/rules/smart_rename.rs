@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{DUMMY_SP, SyntaxContext};
 use swc_core::ecma::ast::{
-    ArrowExpr, ArrayPat, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, Function,
-    Ident, KeyValuePatProp, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat, ObjectPatProp,
-    Param, Pat, PropName, Stmt, VarDecl,
+    ArrowExpr, ArrayPat, AssignPatProp, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr,
+    Function, Ident, KeyValuePatProp, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat,
+    ObjectPatProp, Param, Pat, PropName, Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -50,7 +50,7 @@ fn react_rename_module(module: &mut Module) {
     if renames.is_empty() {
         return;
     }
-    let mut renamer = ScopedRenamer { renames };
+    let mut renamer = ScopedRenamer::new(renames);
     module.visit_mut_with(&mut renamer);
 }
 
@@ -61,8 +61,10 @@ fn react_rename_function_body(func: &mut Function) {
     if renames.is_empty() {
         return;
     }
-    let mut renamer = ScopedRenamer { renames };
-    body.visit_mut_with(&mut renamer);
+    let mut renamer = ScopedRenamer::new(renames);
+    body.stmts
+        .iter_mut()
+        .for_each(|stmt| stmt.visit_mut_with(&mut renamer));
 }
 
 fn collect_react_renames_from_module_items(
@@ -269,10 +271,12 @@ fn destructuring_rename_function(func: &mut Function) {
     if renames.is_empty() {
         return;
     }
-    let mut renamer = ScopedRenamer { renames };
+    let mut renamer = ScopedRenamer::new(renames);
     func.params.iter_mut().for_each(|p| p.visit_mut_with(&mut renamer));
     if let Some(body) = &mut func.body {
-        body.visit_mut_with(&mut renamer);
+        body.stmts
+            .iter_mut()
+            .for_each(|stmt| stmt.visit_mut_with(&mut renamer));
     }
     let mut shorthand = ObjectPatShorthandConverter;
     func.params.iter_mut().for_each(|p| p.visit_mut_with(&mut shorthand));
@@ -291,9 +295,15 @@ fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
     if renames.is_empty() {
         return;
     }
-    let mut renamer = ScopedRenamer { renames };
+    let mut renamer = ScopedRenamer::new(renames);
     arrow.params.iter_mut().for_each(|p| p.visit_mut_with(&mut renamer));
-    arrow.body.visit_mut_with(&mut renamer);
+    match arrow.body.as_mut() {
+        BlockStmtOrExpr::BlockStmt(block) => block
+            .stmts
+            .iter_mut()
+            .for_each(|stmt| stmt.visit_mut_with(&mut renamer)),
+        BlockStmtOrExpr::Expr(expr) => expr.visit_mut_with(&mut renamer),
+    }
     let mut shorthand = ObjectPatShorthandConverter;
     arrow.params.iter_mut().for_each(|p| p.visit_mut_with(&mut shorthand));
 }
@@ -427,9 +437,7 @@ fn is_reserved_keyword(name: &str) -> bool {
 }
 
 fn apply_renames_to_module(module: &mut Module, renames: &[ScopedRename]) {
-    let mut renamer = ScopedRenamer {
-        renames: renames.to_vec(),
-    };
+    let mut renamer = ScopedRenamer::new(renames.to_vec());
     module.visit_mut_with(&mut renamer);
     let mut shorthand = ObjectPatShorthandConverter;
     module.visit_mut_with(&mut shorthand);
@@ -441,16 +449,79 @@ fn apply_renames_to_module(module: &mut Module, renames: &[ScopedRename]) {
 
 struct ScopedRenamer {
     renames: Vec<ScopedRename>,
+    shadowed: Vec<HashSet<Atom>>,
+}
+
+impl ScopedRenamer {
+    fn new(renames: Vec<ScopedRename>) -> Self {
+        Self {
+            renames,
+            shadowed: Vec::new(),
+        }
+    }
+
+    fn is_shadowed(&self, sym: &Atom) -> bool {
+        self.shadowed.iter().rev().any(|scope| scope.contains(sym))
+    }
+
+    fn with_shadowed_scope<F>(&mut self, names: HashSet<Atom>, f: F)
+    where
+        F: FnOnce(&mut Self),
+    {
+        self.shadowed.push(names);
+        f(self);
+        self.shadowed.pop();
+    }
 }
 
 impl VisitMut for ScopedRenamer {
     fn visit_mut_ident(&mut self, id: &mut Ident) {
+        if self.is_shadowed(&id.sym) {
+            return;
+        }
         for rename in &self.renames {
             if id.sym == rename.old.0 && id.ctxt == rename.old.1 {
                 id.sym = rename.new.clone();
                 break;
             }
         }
+    }
+
+    fn visit_mut_function(&mut self, func: &mut Function) {
+        let shadowed = collect_function_shadow_names(func);
+        self.with_shadowed_scope(shadowed, |this| {
+            func.params
+                .iter_mut()
+                .for_each(|param| param.visit_mut_with(this));
+            if let Some(body) = &mut func.body {
+                body.stmts
+                    .iter_mut()
+                    .for_each(|stmt| stmt.visit_mut_with(this));
+            }
+        });
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        let shadowed = collect_arrow_shadow_names(arrow);
+        self.with_shadowed_scope(shadowed, |this| {
+            arrow.params
+                .iter_mut()
+                .for_each(|param| param.visit_mut_with(this));
+            match arrow.body.as_mut() {
+                BlockStmtOrExpr::BlockStmt(block) => block
+                    .stmts
+                    .iter_mut()
+                    .for_each(|stmt| stmt.visit_mut_with(this)),
+                BlockStmtOrExpr::Expr(expr) => expr.visit_mut_with(this),
+            }
+        });
+    }
+
+    fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
+        let shadowed = collect_direct_block_shadow_names(block);
+        self.with_shadowed_scope(shadowed, |this| {
+            block.visit_mut_children_with(this);
+        });
     }
 
     fn visit_mut_prop_name(&mut self, _: &mut PropName) {}
@@ -567,6 +638,116 @@ impl Visit for NameCollector {
     fn visit_ident(&mut self, id: &Ident) {
         self.names.insert(id.sym.to_string());
     }
+}
+
+fn collect_function_shadow_names(func: &Function) -> HashSet<Atom> {
+    let mut names = HashSet::new();
+    for param in &func.params {
+        collect_bound_names_in_pat(&param.pat, &mut names);
+    }
+    if let Some(body) = &func.body {
+        names.extend(collect_direct_block_shadow_names(body));
+        let mut collector = FunctionScopeBindingCollector::default();
+        body.visit_with(&mut collector);
+        names.extend(collector.names);
+    }
+    names
+}
+
+fn collect_arrow_shadow_names(arrow: &ArrowExpr) -> HashSet<Atom> {
+    let mut names = HashSet::new();
+    for pat in &arrow.params {
+        collect_bound_names_in_pat(pat, &mut names);
+    }
+    if let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() {
+        names.extend(collect_direct_block_shadow_names(block));
+        let mut collector = FunctionScopeBindingCollector::default();
+        block.visit_with(&mut collector);
+        names.extend(collector.names);
+    }
+    names
+}
+
+fn collect_direct_block_shadow_names(block: &BlockStmt) -> HashSet<Atom> {
+    let mut names = HashSet::new();
+    for stmt in &block.stmts {
+        let Stmt::Decl(decl) = stmt else {
+            continue;
+        };
+        match decl {
+            Decl::Var(var_decl) if var_decl.kind != VarDeclKind::Var => {
+                for decl in &var_decl.decls {
+                    collect_bound_names_in_pat(&decl.name, &mut names);
+                }
+            }
+            Decl::Fn(fn_decl) => {
+                names.insert(fn_decl.ident.sym.clone());
+            }
+            Decl::Class(class_decl) => {
+                names.insert(class_decl.ident.sym.clone());
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn collect_bound_names_in_pat(pat: &Pat, names: &mut HashSet<Atom>) {
+    match pat {
+        Pat::Ident(binding) => {
+            names.insert(binding.id.sym.clone());
+        }
+        Pat::Array(array_pat) => {
+            for elem in array_pat.elems.iter().flatten() {
+                collect_bound_names_in_pat(elem, names);
+            }
+        }
+        Pat::Object(object_pat) => {
+            for prop in &object_pat.props {
+                match prop {
+                    ObjectPatProp::Assign(assign) => {
+                        names.insert(assign.key.id.sym.clone());
+                    }
+                    ObjectPatProp::KeyValue(key_value) => {
+                        collect_bound_names_in_pat(&key_value.value, names);
+                    }
+                    ObjectPatProp::Rest(rest) => {
+                        collect_bound_names_in_pat(&rest.arg, names);
+                    }
+                }
+            }
+        }
+        Pat::Assign(assign_pat) => {
+            collect_bound_names_in_pat(&assign_pat.left, names);
+        }
+        Pat::Rest(rest_pat) => {
+            collect_bound_names_in_pat(&rest_pat.arg, names);
+        }
+        Pat::Expr(_) | Pat::Invalid(_) => {}
+    }
+}
+
+#[derive(Default)]
+struct FunctionScopeBindingCollector {
+    names: HashSet<Atom>,
+}
+
+impl Visit for FunctionScopeBindingCollector {
+    fn visit_var_decl(&mut self, var_decl: &VarDecl) {
+        if var_decl.kind == VarDeclKind::Var {
+            for decl in &var_decl.decls {
+                collect_bound_names_in_pat(&decl.name, &mut self.names);
+            }
+        }
+        var_decl.visit_children_with(self);
+    }
+
+    fn visit_fn_decl(&mut self, fn_decl: &swc_core::ecma::ast::FnDecl) {
+        self.names.insert(fn_decl.ident.sym.clone());
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
 }
 
 // ============================================================
