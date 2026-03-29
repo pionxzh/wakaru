@@ -44,7 +44,7 @@ export function parse(e, t) {
                 repeat: x,
                 partial: E,
                 asterisk: !!w,
-                pattern: S ? s(S) : w ? ".*" : "[^" + c(T) + "]+?"
+                pattern: S ? s(S) : w ? ".*" : `[^${c(T)}]+?`
             });
         }
     }
@@ -57,16 +57,16 @@ export function parse(e, t) {
     return r;
 }
 function a(e) {
-    return encodeURI(e).replace(/[\/?#]/g, (e)=>"%" + e.charCodeAt(0).toString(16).toUpperCase());
+    return encodeURI(e).replace(/[\/?#]/g, (e)=>`%${e.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 function u(e) {
-    return encodeURI(e).replace(/[?#]/g, (e)=>"%" + e.charCodeAt(0).toString(16).toUpperCase());
+    return encodeURI(e).replace(/[?#]/g, (e)=>`%${e.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 export function tokensToFunction(e, t) {
     const n = new Array(e.length);
     for(let o = 0; o < e.length; o++){
         if (typeof e[o] == "object") {
-            n[o] = new RegExp("^(?:" + e[o].pattern + ")$", d(t));
+            n[o] = new RegExp(`^(?:${e[o].pattern})\$`, d(t));
         }
     }
     return (t, o)=>{
@@ -85,29 +85,29 @@ export function tokensToFunction(e, t) {
                         }
                         continue;
                     }
-                    throw new TypeError('Expected "' + f.name + '" to be defined');
+                    throw new TypeError(`Expected "${f.name}" to be defined`);
                 }
                 if (r(p)) {
                     if (!f.repeat) {
-                        throw new TypeError('Expected "' + f.name + '" to not repeat, but received `' + JSON.stringify(p) + "`");
+                        throw new TypeError(`Expected "${f.name}" to not repeat, but received \`${JSON.stringify(p)}\``);
                     }
                     if (p.length === 0) {
                         if (f.optional) {
                             continue;
                         }
-                        throw new TypeError('Expected "' + f.name + '" to not be empty');
+                        throw new TypeError(`Expected "${f.name}" to not be empty`);
                     }
                     for(let h = 0; h < p.length; h++){
                         d = c(p[h]);
                         if (!n[s].test(d)) {
-                            throw new TypeError('Expected all "' + f.name + '" to match "' + f.pattern + '", but received `' + JSON.stringify(d) + "`");
+                            throw new TypeError(`Expected all "${f.name}" to match "${f.pattern}", but received \`${JSON.stringify(d)}\``);
                         }
                         i += (h === 0 ? f.prefix : f.delimiter) + d;
                     }
                 } else {
                     d = f.asterisk ? u(p) : c(p);
                     if (!n[s].test(d)) {
-                        throw new TypeError('Expected "' + f.name + '" to match "' + f.pattern + '", but received "' + d + '"');
+                        throw new TypeError(`Expected "${f.name}" to match "${f.pattern}", but received "${d}"`);
                     }
                     i += f.prefix + d;
                 }
@@ -148,21 +148,21 @@ export function tokensToRegExp(e, t, n) {
             a += c(l);
         } else {
             const s = c(l.prefix);
-            let p = "(?:" + l.pattern + ")";
+            let p = `(?:${l.pattern})`;
             t.push(l);
             if (l.repeat) {
-                p += "(?:" + s + p + ")*";
+                p += `(?:${s}${p})*`;
             }
-            a += p = l.optional ? l.partial ? s + "(" + p + ")?" : "(?:" + s + "(" + p + "))?" : s + "(" + p + ")";
+            a += p = l.optional ? l.partial ? `${s}(${p})?` : `(?:${s}(${p}))?` : `${s}(${p})`;
         }
     }
     const h = c(n.delimiter || "/");
     const m = a.slice(-h.length) === h;
     if (!o) {
-        a = (m ? a.slice(0, -h.length) : a) + "(?:" + h + "(?=$))?";
+        a = `${m ? a.slice(0, -h.length) : a}(?:${h}(?=\$))?`;
     }
-    a += i ? "$" : o && m ? "" : "(?=" + h + "|$)";
-    return f(new RegExp("^" + a, d(n)), t);
+    a += i ? "$" : o && m ? "" : `(?=${h}|\$)`;
+    return f(new RegExp(`^${a}`, d(n)), t);
 }
 function h(e, t, n) {
     if (!r(t)) {
@@ -196,7 +196,7 @@ function h(e, t, n) {
             for(let o = 0; o < e.length; o++){
                 r.push(h(e[o], t, n).source);
             }
-            return f(new RegExp("(?:" + r.join("|") + ")", d(n)), t);
+            return f(new RegExp(`(?:${r.join("|")})`, d(n)), t);
         })(e, t, n);
     }
     return ((e, t, n)=>tokensToRegExp(parse(e, n), t, n))(e, t, n);

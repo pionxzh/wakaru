@@ -104,7 +104,7 @@ function d(e) {
     if (e.charAt(0) === "/") {
         return e;
     }
-    return "/" + e;
+    return `/${e}`;
 }
 function p(e) {
     if (e.charAt(0) === "/") {
@@ -148,10 +148,10 @@ export function createPath(e) {
     const { pathname: t, search: n, hash: r } = e;
     let o = t || "/";
     if (n && n !== "?") {
-        o += n.charAt(0) === "?" ? n : "?" + n;
+        o += n.charAt(0) === "?" ? n : `?${n}`;
     }
     if (r && r !== "#") {
-        o += r.charAt(0) === "#" ? r : "#" + r;
+        o += r.charAt(0) === "#" ? r : `#${r}`;
     }
     return o;
 }
@@ -165,12 +165,12 @@ export function createLocation(e, t, n, o) {
             i.pathname = "";
         }
         if (i.search) {
-            i.search.charAt(0) !== "?" && (i.search = "?" + i.search);
+            i.search.charAt(0) !== "?" && (i.search = `?${i.search}`);
         } else {
             i.search = "";
         }
         if (i.hash) {
-            i.hash.charAt(0) !== "#" && (i.hash = "#" + i.hash);
+            i.hash.charAt(0) !== "#" && (i.hash = `#${i.hash}`);
         } else {
             i.hash = "";
         }
@@ -181,7 +181,7 @@ export function createLocation(e, t, n, o) {
     try {
         i.pathname = decodeURI(i.pathname);
     } catch (e) {
-        throw e instanceof URIError ? new URIError('Pathname "' + i.pathname + '" could not be decoded. This is likely caused by an invalid percent-encoding.') : e;
+        throw e instanceof URIError ? new URIError(`Pathname "${i.pathname}" could not be decoded. This is likely caused by an invalid percent-encoding.`) : e;
     }
     if (n) {
         i.key = n;
@@ -456,7 +456,7 @@ const P = {
             if (e.charAt(0) === "!") {
                 return e;
             }
-            return "!/" + p(e);
+            return `!/${p(e)}`;
         },
         decodePath (e) {
             if (e.charAt(0) === "!") {
@@ -490,7 +490,7 @@ function j() {
     return e.substring(t + 1);
 }
 function R(e) {
-    window.location.replace(_(window.location.href) + "#" + e);
+    window.location.replace(`${_(window.location.href)}#${e}`);
 }
 export function createHashHistory(e = {}) {
     if (!E) {
@@ -601,7 +601,7 @@ export function createHashHistory(e = {}) {
             if (t && t.getAttribute("href")) {
                 n = _(window.location.href);
             }
-            return n + "#" + s(l + createPath(e));
+            return `${n}#${s(l + createPath(e))}`;
         },
         push (e, t) {
             const n = createLocation(e, undefined, undefined, q.location);

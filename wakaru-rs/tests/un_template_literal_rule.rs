@@ -45,3 +45,74 @@ fn keeps_non_consecutive_concat_calls() {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn plus_chain_starting_with_string_literal() {
+    let input = r#"
+var a = "prefix: " + value;
+var b = "hello, " + name + "!";
+var c = "@@redux-saga/" + key;
+"#;
+    let expected = r#"
+var a = `prefix: ${value}`;
+var b = `hello, ${name}!`;
+var c = `@@redux-saga/${key}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn plus_chain_ending_with_string_literal() {
+    let input = r#"
+var a = value + " suffix";
+var b = expr + " has been deprecated";
+"#;
+    let expected = r#"
+var a = `${value} suffix`;
+var b = `${expr} has been deprecated`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn plus_chain_groups_non_string_prefix() {
+    // `a + b + "c"` must NOT become `${a}${b}c` (breaks arithmetic for numbers).
+    // The non-string prefix `a + b` is kept as a single grouped expression.
+    let input = r#"
+var result = prefix + count + " items";
+"#;
+    let expected = r#"
+var result = `${prefix + count} items`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn plus_chain_mixed_string_positions() {
+    let input = r#"
+var msg = "redux-saga " + level + ": " + text + "\n" + extra;
+"#;
+    let expected = r#"
+var msg = `redux-saga ${level}: ${text}\n${extra}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn pure_number_addition_not_transformed() {
+    // No string literals → must not be turned into a template.
+    let input = r#"
+var x = a + b + c;
+var y = 1 + 2;
+"#;
+    let expected = r#"
+var x = a + b + c;
+var y = 1 + 2;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

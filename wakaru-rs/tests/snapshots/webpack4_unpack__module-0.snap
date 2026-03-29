@@ -38,7 +38,7 @@ const o = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (e
     }
     return typeof e;
 };
-const i = (e)=>"@@redux-saga/" + e;
+const i = (e)=>`@@redux-saga/${e}`;
 export const e = i("TASK");
 const u = i("HELPER");
 const l = i("MATCH");
@@ -203,7 +203,7 @@ export function t(e, t = P, n = "", r) {
 }
 function R(e, t, n = "") {
     if (typeof window == "undefined") {
-        console.log("redux-saga " + e + ": " + t + "\n" + (n && n.stack || n));
+        console.log(`redux-saga ${e}: ${t}\n${n && n.stack || n}`);
     } else {
         console[e](t, n);
     }
@@ -213,9 +213,9 @@ export function n(e, t) {
         return e(...arguments);
     };
 }
-export const z = (e, t)=>e + " has been deprecated in favor of " + t + ", please update your code";
-const A = (e)=>new Error("\n  redux-saga: Error checking hooks detected an inconsistent state. This is likely a bug\n  in redux-saga code and not yours. Thanks for reporting this in the project's github repo.\n  Error: " + e + "\n");
-const L = (e, t)=>(e ? e + "." : "") + "setContext(props): argument " + t + " is not a plain object";
+export const z = (e, t)=>`${e} has been deprecated in favor of ${t}, please update your code`;
+const A = (e)=>new Error(`\n  redux-saga: Error checking hooks detected an inconsistent state. This is likely a bug\n  in redux-saga code and not yours. Thanks for reporting this in the project's github repo.\n  Error: ${e}\n`);
+const L = (e, t)=>`${e ? `${e}.` : ""}setContext(props): argument ${t} is not a plain object`;
 const I = (e)=>(t)=>e(Object.defineProperty(t, s, {
             value: true
         }));

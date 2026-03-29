@@ -34,7 +34,7 @@ const s = u.shape({
 i.forwardRef;
 export function createProvider(e = "store") {
     let t;
-    const n = e + "Subscription";
+    const n = `${e}Subscription`;
     const r = ((t)=>{
         o(a, t);
         const r = a.prototype;
@@ -165,7 +165,7 @@ export function connectAdvanced(e, t = {}) {
     let r;
     const a = t;
     const u = a.getDisplayName;
-    const l = u === undefined ? (e)=>"ConnectAdvanced(" + e + ")" : u;
+    const l = u === undefined ? (e)=>`ConnectAdvanced(${e})` : u;
     const f = a.methodName;
     const d = f === undefined ? "connectAdvanced" : f;
     const y = a.renderCountProp;
@@ -184,7 +184,7 @@ export function connectAdvanced(e, t = {}) {
         "storeKey",
         "withRef"
     ]);
-    const M = _ + "Subscription";
+    const M = `${_}Subscription`;
     const A = S++;
     n = {};
     n[_] = s;
@@ -194,7 +194,7 @@ export function connectAdvanced(e, t = {}) {
     r[M] = c;
     const I = r;
     return (T1)=>{
-        b(w.isValidElementType(T1), "You must pass a component to the function returned by " + d + ". Instead received " + JSON.stringify(T1));
+        b(w.isValidElementType(T1), `You must pass a component to the function returned by ${d}. Instead received ${JSON.stringify(T1)}`);
         const n = T1.displayName || T1.name || "Component";
         const r = l(n);
         const a = h.a({}, N, {
@@ -218,7 +218,7 @@ export function connectAdvanced(e, t = {}) {
                 o.store = e[_] || t[_];
                 o.propsMode = Boolean(e[_]);
                 o.setWrappedInstance = o.setWrappedInstance.bind(p(p(o)));
-                b(o.store, 'Could not find "' + _ + '" in either the context or props of "' + r + '". Either wrap the root component in a <Provider>, or explicitly pass "' + _ + '" as a prop to "' + r + '".');
+                b(o.store, `Could not find "${_}" in either the context or props of "${r}". Either wrap the root component in a <Provider>, or explicitly pass "${_}" as a prop to "${r}".`);
                 o.initSelector();
                 o.initSubscription();
                 return o;
@@ -258,7 +258,7 @@ export function connectAdvanced(e, t = {}) {
                 this.selector.shouldComponentUpdate = false;
             };
             l.getWrappedInstance = function() {
-                b(R, "To access the wrapped instance, you need to specify { withRef: true } in the options argument of the " + d + "() call.");
+                b(R, `To access the wrapped instance, you need to specify { withRef: true } in the options argument of the ${d}() call.`);
                 return this.wrappedInstance;
             };
             l.setWrappedInstance = function(e) {
@@ -557,7 +557,7 @@ function W(e, t, n) {
         }
     }
     return (t, r)=>{
-        throw new Error("Invalid value of type " + typeof e + " for " + n + " argument when connecting component " + r.wrappedComponentName + ".");
+        throw new Error(`Invalid value of type ${typeof e} for ${n} argument when connecting component ${r.wrappedComponentName}.`);
     };
 }
 function $(e, t) {
@@ -600,7 +600,7 @@ export const connect = ((e)=>{
         return r(f, h.a({
             methodName: "connect",
             getDisplayName (e) {
-                return "Connect(" + e + ")";
+                return `Connect(${e})`;
             },
             shouldHandleStateChanges: Boolean(e),
             initMapStateToProps: k,

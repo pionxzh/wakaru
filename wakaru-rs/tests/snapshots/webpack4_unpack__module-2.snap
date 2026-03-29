@@ -63,7 +63,7 @@ function k(e = "*") {
             channel: e
         });
     }
-    throw new Error("take(patternOrChannel): argument " + String(e) + " is not valid channel or a valid pattern");
+    throw new Error(`take(patternOrChannel): argument ${String(e)} is not valid channel or a valid pattern`);
 }
 k.maybe = function() {
     const e = k(...arguments);
@@ -74,7 +74,7 @@ export const t = r.n(k.maybe, r.z("takem", "take.maybe"));
 export function n(e, t) {
     if (arguments.length > 1) {
         r.h(e, r.q.notUndef, "put(channel, action): argument channel is undefined");
-        r.h(e, r.q.channel, "put(channel, action): argument " + e + " is not a valid channel");
+        r.h(e, r.q.channel, `put(channel, action): argument ${e} is not a valid channel`);
         r.h(t, r.q.notUndef, "put(channel, action): argument action is undefined");
     } else {
         r.h(e, r.q.notUndef, "put(action): argument action is undefined");
@@ -93,7 +93,7 @@ function C(e) {
     return E(l, e);
 }
 function P(e, t, n) {
-    r.h(t, r.q.notUndef, e + ": argument fn is undefined");
+    r.h(t, r.q.notUndef, `${e}: argument fn is undefined`);
     let o = null;
     if (r.q.array(t)) {
         const i = t;
@@ -107,7 +107,7 @@ function P(e, t, n) {
     if (o && r.q.string(t) && r.q.func(o[t])) {
         t = o[t];
     }
-    r.h(t, r.q.func, e + ": argument " + t + " is not a function");
+    r.h(t, r.q.func, `${e}: argument ${t} is not a function`);
     return {
         context: o,
         fn: t,
@@ -152,7 +152,7 @@ function A(...t) {
     }
     const o = t[0];
     r.h(o, r.q.notUndef, "join(task): argument task is undefined");
-    r.h(o, r.q.task, "join(task): argument " + o + " is not a valid Task object " + w);
+    r.h(o, r.q.task, `join(task): argument ${o} is not a valid Task object ${w}`);
     return E(d, o);
 }
 function L(...t) {
@@ -162,7 +162,7 @@ function L(...t) {
     const o = t[0];
     if (t.length === 1) {
         r.h(o, r.q.notUndef, "cancel(task): argument task is undefined");
-        r.h(o, r.q.task, "cancel(task): argument " + o + " is not a valid Task object " + w);
+        r.h(o, r.q.task, `cancel(task): argument ${o} is not a valid Task object ${w}`);
     }
     return E(p, o || r.d);
 }
@@ -174,7 +174,7 @@ function I(e) {
         e = r.o;
     } else {
         r.h(e, r.q.notUndef, "select(selector,[...]): argument selector is undefined");
-        r.h(e, r.q.func, "select(selector,[...]): argument " + e + " is not a function");
+        r.h(e, r.q.func, `select(selector,[...]): argument ${e} is not a function`);
     }
     return E(h, {
         selector: e,
@@ -185,7 +185,7 @@ function D(e, t) {
     r.h(e, r.q.notUndef, "actionChannel(pattern,...): argument pattern is undefined");
     if (arguments.length > 1) {
         r.h(t, r.q.notUndef, "actionChannel(pattern, buffer): argument buffer is undefined");
-        r.h(t, r.q.buffer, "actionChannel(pattern, buffer): argument " + t + " is not a valid buffer");
+        r.h(t, r.q.buffer, `actionChannel(pattern, buffer): argument ${t} is not a valid buffer`);
     }
     return E(m, {
         pattern: e,
@@ -196,11 +196,11 @@ function F() {
     return E(y, {});
 }
 function z(e) {
-    r.h(e, r.q.channel, "flush(channel): argument " + e + " is not valid channel");
+    r.h(e, r.q.channel, `flush(channel): argument ${e} is not valid channel`);
     return E(v, e);
 }
 function q(e) {
-    r.h(e, r.q.string, "getContext(prop): argument " + e + " is not a string");
+    r.h(e, r.q.string, `getContext(prop): argument ${e} is not a string`);
     return E(b, e);
 }
 function U(e) {

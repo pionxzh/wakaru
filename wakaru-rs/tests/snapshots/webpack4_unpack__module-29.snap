@@ -17,7 +17,7 @@ export default (()=>{
         }
         const t = {};
         for(let n = 0; n < 10; n++){
-            t["_" + String.fromCharCode(n)] = n;
+            t[`_${String.fromCharCode(n)}`] = n;
         }
         if (Object.getOwnPropertyNames(t).map((e)=>t[e]).join("") !== "0123456789") {
             return false;

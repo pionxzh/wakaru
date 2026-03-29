@@ -4,8 +4,8 @@ expression: code
 ---
 import r from "./module-21.js";
 export const __DO_NOT_USE__ActionTypes = {
-    INIT: "@@redux/INIT" + Math.random().toString(36).substring(7).split("").join("."),
-    REPLACE: "@@redux/REPLACE" + Math.random().toString(36).substring(7).split("").join(".")
+    INIT: `@@redux/INIT${Math.random().toString(36).substring(7).split("").join(".")}`,
+    REPLACE: `@@redux/REPLACE${Math.random().toString(36).substring(7).split("").join(".")}`
 };
 const i = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (e)=>typeof e : (e)=>{
     if (e && typeof Symbol == "function" && e.constructor === Symbol && e !== Symbol.prototype) {
@@ -152,7 +152,7 @@ export function createStore(e, t, n) {
 }
 function c(e, t) {
     const n = t && t.type;
-    return "Given " + (n && 'action "' + String(n) + '"' || "an action") + ', reducer "' + e + '" returned undefined. To ignore an action, you must explicitly return the previous state. If you want this reducer to hold no value, you can return null instead of undefined.';
+    return `Given ${n && `action "${String(n)}"` || "an action"}, reducer "${e}" returned undefined. To ignore an action, you must explicitly return the previous state. If you want this reducer to hold no value, you can return null instead of undefined.`;
 }
 export function combineReducers(e) {
     const n = {};
@@ -171,12 +171,12 @@ export function combineReducers(e) {
                 if (n(undefined, {
                     type: __DO_NOT_USE__ActionTypes.INIT
                 }) === undefined) {
-                    throw new Error('Reducer "' + t + "\" returned undefined during initialization. If the state passed to the reducer is undefined, you must explicitly return the initial state. The initial state may not be undefined. If you don't want to set a value for this reducer, you can use null instead of undefined.");
+                    throw new Error(`Reducer "${t}" returned undefined during initialization. If the state passed to the reducer is undefined, you must explicitly return the initial state. The initial state may not be undefined. If you don't want to set a value for this reducer, you can use null instead of undefined.`);
                 }
                 if (n(undefined, {
-                    type: "@@redux/PROBE_UNKNOWN_ACTION_" + Math.random().toString(36).substring(7).split("").join(".")
+                    type: `@@redux/PROBE_UNKNOWN_ACTION_${Math.random().toString(36).substring(7).split("").join(".")}`
                 }) === undefined) {
-                    throw new Error('Reducer "' + t + "\" returned undefined when probed with a random type. Don't try to handle " + __DO_NOT_USE__ActionTypes.INIT + ' or other actions in "redux/*" namespace. They are considered private. Instead, you must return the current state for any unknown actions, unless it is undefined, in which case you must return the initial state, regardless of the action type. The initial state may not be undefined, but can be null.');
+                    throw new Error(`Reducer "${t}" returned undefined when probed with a random type. Don't try to handle ${__DO_NOT_USE__ActionTypes.INIT} or other actions in "redux/*" namespace. They are considered private. Instead, you must return the current state for any unknown actions, unless it is undefined, in which case you must return the initial state, regardless of the action type. The initial state may not be undefined, but can be null.`);
                 }
             });
         })(n);
@@ -217,7 +217,7 @@ export function bindActionCreators(e, t) {
         return f(e, t);
     }
     if ((e === undefined ? "undefined" : i(e)) !== "object" || e === null) {
-        throw new Error("bindActionCreators expected an object or a function, instead received " + (e === null ? "null" : e === undefined ? "undefined" : i(e)) + '. Did you write "import ActionCreators from" instead of "import * as ActionCreators from"?');
+        throw new Error(`bindActionCreators expected an object or a function, instead received ${e === null ? "null" : e === undefined ? "undefined" : i(e)}. Did you write "import ActionCreators from" instead of "import * as ActionCreators from"?`);
     }
     const r = {};
     for(let n = Object.keys(e), o = 0; o < n.length; o++){

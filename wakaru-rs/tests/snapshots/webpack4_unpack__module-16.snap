@@ -45,7 +45,7 @@ export const a = ((e)=>{
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
-            throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
         }
         e.prototype = Object.create(t && t.prototype, {
             constructor: {

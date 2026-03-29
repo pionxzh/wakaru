@@ -80,7 +80,7 @@ export function b(e, t) {
                     }))(f)
             ];
         }
-    }, "q1", "takeEvery(" + a(e) + ", " + t.name + ")");
+    }, "q1", `takeEvery(${a(e)}, ${t.name})`);
 }
 function f(e, t) {
     for(let n = arguments.length, r = Array(n > 2 ? n - 2 : 0), o = 2; o < n; o++){
@@ -138,7 +138,7 @@ function f(e, t) {
                 h
             ];
         }
-    }, "q1", "takeLatest(" + a(e) + ", " + t.name + ")");
+    }, "q1", `takeLatest(${a(e)}, ${t.name})`);
 }
 function p(e, t, n) {
     for(let o = arguments.length, s = Array(o > 3 ? o - 3 : 0), f = 3; f < o; f++){
@@ -198,13 +198,13 @@ function p(e, t, n) {
                 y
             ];
         }
-    }, "q1", "throttle(" + a(t) + ", " + n.name + ")");
+    }, "q1", `throttle(${a(t)}, ${n.name})`);
 }
 export { m as a };
 export { y as c };
 export { f as d };
 export { p as f };
-const h = (e)=>"import { " + e + " } from 'redux-saga' has been deprecated in favor of import { " + e + " } from 'redux-saga/effects'.\nThe latter will not work with yield*, as helper effects are wrapped automatically for you in fork effect.\nTherefore yield " + e + " will return task descriptor to your saga and execute next lines of code.";
+const h = (e)=>`import { ${e} } from 'redux-saga' has been deprecated in favor of import { ${e} } from 'redux-saga/effects'.\nThe latter will not work with yield*, as helper effects are wrapped automatically for you in fork effect.\nTherefore yield ${e} will return task descriptor to your saga and execute next lines of code.`;
 const m = r.n(b, h("takeEvery"));
 const y = r.n(f, h("takeLatest"));
 export const e = r.n(p, h("throttle"));

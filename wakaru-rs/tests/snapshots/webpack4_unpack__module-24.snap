@@ -38,7 +38,7 @@ export const BrowserRouter = ((e)=>{
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
-            throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
         }
         e.prototype = Object.create(t && t.prototype, {
             constructor: {
@@ -91,7 +91,7 @@ export const HashRouter = ((e)=>{
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
-            throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
         }
         e.prototype = Object.create(t && t.prototype, {
             constructor: {
@@ -174,7 +174,7 @@ export const Link = ((e)=>{
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
-            throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
         }
         e.prototype = Object.create(t && t.prototype, {
             constructor: {
@@ -265,7 +265,7 @@ export const MemoryRouter = ((e)=>{
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
-            throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
         }
         e.prototype = Object.create(t && t.prototype, {
             constructor: {
@@ -332,7 +332,7 @@ const N = ((e)=>{
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
-            throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
         }
         e.prototype = Object.create(t && t.prototype, {
             constructor: {
@@ -535,7 +535,7 @@ export const Prompt = ((e)=>{
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
-            throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
         }
         e.prototype = Object.create(t && t.prototype, {
             constructor: {
@@ -649,7 +649,7 @@ export const Redirect = ((e)=>{
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
-            throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
         }
         e.prototype = Object.create(t && t.prototype, {
             constructor: {
@@ -679,7 +679,7 @@ export const Redirect = ((e)=>{
         const t = c.createLocation(e.to);
         const n = c.createLocation(this.props.to);
         if (c.locationsAreEqual(t, n)) {
-            r(false, "You tried to redirect to the same route you're currently on: \"" + n.pathname + n.search + '"');
+            r(false, `You tried to redirect to the same route you're currently on: "${n.pathname}${n.search}"`);
         } else {
             this.perform();
         }
@@ -754,7 +754,7 @@ const X = (e)=>{
     if (e.charAt(0) === "/") {
         return e;
     }
-    return "/" + e;
+    return `/${e}`;
 };
 const J = (e, t)=>{
     if (e) {
@@ -807,7 +807,7 @@ export const StaticRouter = ((e)=>{
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
-            throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
         }
         e.prototype = Object.create(t && t.prototype, {
             constructor: {
@@ -908,7 +908,7 @@ export const Switch = ((e)=>{
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
-            throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
         }
         e.prototype = Object.create(t && t.prototype, {
             constructor: {
@@ -994,7 +994,7 @@ export const withRouter = (e)=>{
                 ref: n
             }))}/>;
     };
-    t.displayName = "withRouter(" + (e.displayName || e.name) + ")";
+    t.displayName = `withRouter(${e.displayName || e.name})`;
     t.WrappedComponent = e;
     t.propTypes = {
         wrappedComponentRef: u.func

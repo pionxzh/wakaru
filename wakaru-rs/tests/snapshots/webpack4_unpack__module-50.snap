@@ -17,11 +17,11 @@ const h = o ? Symbol.for("react.memo") : 60115;
 const m = o ? Symbol.for("react.lazy") : 60116;
 const y = typeof Symbol == "function" && Symbol.iterator;
 function v(e) {
-    let t = "https://reactjs.org/docs/error-decoder.html?invariant=" + e;
+    let t = `https://reactjs.org/docs/error-decoder.html?invariant=${e}`;
     for(let n = 1; n < arguments.length; n++){
-        t += "&args[]=" + encodeURIComponent(arguments[n]);
+        t += `&args[]=${encodeURIComponent(arguments[n])}`;
     }
-    return "Minified React error #" + e + "; visit " + t + " for the full message or use the non-minified dev environment for full errors and additional helpful warnings.";
+    return `Minified React error #${e}; visit ${t} for the full message or use the non-minified dev environment for full errors and additional helpful warnings.`;
 }
 const b = {
     isMounted () {
@@ -80,7 +80,7 @@ export function createElement(e, t, n) {
             u = t.ref;
         }
         if (t.key !== undefined) {
-            a = "" + t.key;
+            a = `${t.key}`;
         }
         for(r in t){
             if (S.call(t, r) && !O.hasOwnProperty(r)) {
@@ -175,11 +175,11 @@ function M(e, t, n) {
             }
         }
         if (l) {
-            r(o, t, n === "" ? "." + A(t, 0) : n);
+            r(o, t, n === "" ? `.${A(t, 0)}` : n);
             return 1;
         }
         l = 0;
-        n = n === "" ? "." : n + ":";
+        n = n === "" ? "." : `${n}:`;
         if (Array.isArray(t)) {
             for(var c = 0; c < t.length; c++){
                 var s = n + A(u = t[c], c);
@@ -193,8 +193,8 @@ function M(e, t, n) {
                     l += e(u = u.value, s = n + A(u, c++), r, o);
                 }
             } else if (u === "object") {
-                r = "" + t;
-                throw Error(v(31, r === "[object Object]" ? "object with keys {" + Object.keys(t).join(", ") + "}" : r, ""));
+                r = `${t}`;
+                throw Error(v(31, r === "[object Object]" ? `object with keys {${Object.keys(t).join(", ")}}` : r, ""));
             }
         }
         return l;
@@ -207,7 +207,7 @@ function A(e, t) {
                 "=": "=0",
                 ":": "=2"
             };
-            return "$" + ("" + e).replace(/[=:]/g, (e)=>t[e]);
+            return `\$${`${e}`.replace(/[=:]/g, (e)=>t[e])}`;
         })(e.key);
     }
     return t.toString(36);
@@ -229,7 +229,7 @@ function I(e, t, n) {
                     ref: e.ref,
                     props: e.props,
                     _owner: e._owner
-                }))(e, o + (!e.key || t && t.key === e.key ? "" : ("" + e.key).replace(_, "$&/") + "/") + n);
+                }))(e, o + (!e.key || t && t.key === e.key ? "" : `${`${e.key}`.replace(_, "$&/")}/`) + n);
         }
         r.push(e);
     }
@@ -237,7 +237,7 @@ function I(e, t, n) {
 function D(e, t, n, r, o) {
     let i = "";
     if (n != null) {
-        i = ("" + n).replace(_, "$&/") + "/";
+        i = `${`${n}`.replace(_, "$&/")}/`;
     }
     M(e, I, t = R(t, i, r, o));
     N(t);
@@ -308,7 +308,7 @@ export const cloneElement = function(e, t, n) {
             l = T.current;
         }
         if (t.key !== undefined) {
-            a = "" + t.key;
+            a = `${t.key}`;
         }
         if (e.type && e.type.defaultProps) var c = e.type.defaultProps;
         for(s in t){

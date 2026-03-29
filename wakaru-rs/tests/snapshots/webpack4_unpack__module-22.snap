@@ -100,9 +100,9 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
     const O = (e)=>{
         let t = e.sagaStack;
         if (!t && e.stack) {
-            t = -1 !== e.stack.split("\n")[0].indexOf(e.message) ? e.stack : "Error: " + e.message + "\n" + e.stack;
+            t = -1 !== e.stack.split("\n")[0].indexOf(e.message) ? e.stack : `Error: ${e.message}\n${e.stack}`;
         }
-        S("error", "uncaught at " + g, t || e.message || e);
+        S("error", `uncaught at ${g}`, t || e.message || e);
     };
     const C = i.f(t);
     const P = Object.create(s);
@@ -264,7 +264,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         if (n) {
             if (t instanceof Error) {
                 Object.defineProperty(t, "sagaStack", {
-                    value: "at " + g + " \n " + (t.sagaStack || t.stack),
+                    value: `at ${g} \n ${t.sagaStack || t.stack}`,
                     configurable: true
                 });
             }

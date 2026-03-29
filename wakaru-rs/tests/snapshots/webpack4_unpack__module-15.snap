@@ -22,7 +22,7 @@ export const a = (e, t = {}, n)=>{
         return n;
     }
     const h = ((e, t)=>{
-        const n = "" + t.end + t.strict + t.sensitive;
+        const n = `${t.end}${t.strict}${t.sensitive}`;
         const r = i[n] || (i[n] = {});
         if (r[e]) {
             return r[e];
