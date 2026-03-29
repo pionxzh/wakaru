@@ -3,8 +3,10 @@ source: tests/webpack4_unpack.rs
 expression: code
 ---
 export { i as x };
+export { a as e };
 export { l as b };
-export { s as a };
+export { c as a };
+export { s as c };
 export { f as d };
 export { p as r };
 export { h as u };
@@ -39,10 +41,10 @@ const o = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (e
     return typeof e;
 };
 const i = (e)=>`@@redux-saga/${e}`;
-export const e = i("TASK");
+const a = i("TASK");
 const u = i("HELPER");
 const l = i("MATCH");
-export const a = i("CANCEL_PROMISE");
+const c = i("CANCEL_PROMISE");
 const s = i("SAGA_ACTION");
 const f = i("SELF_CANCELLATION");
 const d = (e)=>()=>e;
@@ -92,7 +94,7 @@ export const q = {
         return q.array(e);
     },
     task (e) {
-        return e && e[e];
+        return e && e[a];
     },
     observable (e) {
         return e && q.func(e.subscribe);
@@ -160,7 +162,7 @@ function S(e, t = true) {
     const r = new Promise((r)=>{
         n = setTimeout(()=>r(t), e);
     });
-    r[a] = ()=>clearTimeout(n);
+    r[c] = ()=>clearTimeout(n);
     return r;
 }
 export function j() {
@@ -169,7 +171,7 @@ export function j() {
     let n = undefined;
     let r = undefined;
     e = {};
-    e[e] = true;
+    e[a] = true;
     e.isRunning = ()=>t;
     e.result = ()=>n;
     e.error = ()=>r;

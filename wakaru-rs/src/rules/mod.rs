@@ -6,6 +6,7 @@ mod flip_comparisons;
 mod obj_method_shorthand;
 mod obj_shorthand;
 mod object_assign_spread;
+mod rename_utils;
 mod remove_void;
 mod simplify_sequence;
 mod smart_inline;

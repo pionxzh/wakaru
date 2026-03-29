@@ -126,3 +126,105 @@ console.log(StrictMode);
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn skips_rename_when_new_name_shadows_original_in_inner_scope() {
+    // module-0 pattern: `exports.e = a` wants to rename `a → e`, but the function
+    // that uses `a` also declares a local `e`. Without the shadowing check the
+    // Renamer would produce `e[e]` — wrong — because both the module-level
+    // renamed `a` and the local `e` print as `e` after SyntaxContext is erased.
+    let input = r#"
+const a = "TASK";
+export const e = a;
+function j() {
+    let e;
+    e = {};
+    e[a] = true;
+    return e;
+}
+"#;
+    // Rename is skipped; the export alias is preserved.
+    let expected = r#"
+const a = "TASK";
+export const e = a;
+function j() {
+    let e;
+    e = {};
+    e[a] = true;
+    return e;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn rename_proceeds_when_inner_scope_declares_new_name_but_not_uses_old() {
+    // An inner function declares `e` but never uses `a`.
+    // No shadowing conflict → rename should proceed.
+    let input = r#"
+const a = "TASK";
+export const e = a;
+function unrelated() {
+    let e = 42;
+    return e;
+}
+console.log(a);
+"#;
+    let expected = r#"
+export const e = "TASK";
+function unrelated() {
+    let e = 42;
+    return e;
+}
+console.log(e);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn splits_multi_declarator_var_decl() {
+    let input = r#"
+const a = 1, b = 2;
+export { a as A };
+"#;
+    let expected = r#"
+export const A = 1;
+const b = 2;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn keeps_unrelated_named_export_specifiers() {
+    let input = r#"
+const a = 1;
+const b = 2;
+const Bee = 3;
+export { a as A, b as Bee };
+"#;
+    let expected = r#"
+export const A = 1;
+const b = 2;
+const Bee = 3;
+export { b as Bee };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_other_aliases_for_same_binding() {
+    let input = r#"
+const a = 1;
+export { a as A, a as B };
+"#;
+    let expected = r#"
+export const A = 1;
+export { A as B };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

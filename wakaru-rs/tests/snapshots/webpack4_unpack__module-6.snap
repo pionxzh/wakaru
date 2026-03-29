@@ -6,6 +6,7 @@ import r from "./module-0.js";
 import o from "./module-9.js";
 import i from "./module-12.js";
 export { u as a };
+export { l as e };
 export { c };
 export { h as f };
 const a = Object.assign || function(e) {
@@ -22,7 +23,7 @@ const a = Object.assign || function(e) {
 const u = {
     type: "@@redux-saga/CHANNEL_END"
 };
-export const e = (e)=>e && e.type === "@@redux-saga/CHANNEL_END";
+const l = (e)=>e && e.type === "@@redux-saga/CHANNEL_END";
 function c() {
     const e = [];
     return {
@@ -122,7 +123,7 @@ export function d(e, t = o.a.none(), n) {
         }
     };
     const u = e((e)=>{
-        if (e(e)) {
+        if (l(e)) {
             a();
         } else if (!(n && !n(e))) {
             i.put(e);
