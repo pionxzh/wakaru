@@ -32,8 +32,4 @@ function f(e) {
     t.default = e;
     return t;
 }
-o.render(r.createElement(i.Provider, {
-    store: c.default
-}, r.createElement(a.ConnectedRouter, {
-    history: l.history
-}, r.createElement(u.default, null))), document.getElementById("app"));
+o.render(<i.Provider store={c.default}><a.ConnectedRouter history={l.history}><u.default/></a.ConnectedRouter></i.Provider>, document.getElementById("app"));

@@ -26,9 +26,5 @@ const i = ((e)=>{
         default: e
     };
 })(require("./module-37.js"));
-const a = r.createElement(o.Switch, null, r.createElement(o.Route, {
-    exact: true,
-    path: "/",
-    component: i.default.FrontPage
-}));
+const a = <o.Switch><o.Route exact path="/" component={i.default.FrontPage}/></o.Switch>;
 export default a;

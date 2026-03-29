@@ -193,9 +193,9 @@ export function connectAdvanced(e, t = {}) {
     r = {};
     r[M] = c;
     const I = r;
-    return (t)=>{
-        b(w.isValidElementType(t), "You must pass a component to the function returned by " + d + ". Instead received " + JSON.stringify(t));
-        const n = t.displayName || t.name || "Component";
+    return (T1)=>{
+        b(w.isValidElementType(T1), "You must pass a component to the function returned by " + d + ". Instead received " + JSON.stringify(T1));
+        const n = T1.displayName || T1.name || "Component";
         const r = l(n);
         const a = h.a({}, N, {
             getDisplayName: l,
@@ -206,7 +206,7 @@ export function connectAdvanced(e, t = {}) {
             withRef: R,
             displayName: r,
             wrappedComponentName: n,
-            WrappedComponent: t
+            WrappedComponent: T1
         });
         const u = ((n)=>{
             function u(e, t) {
@@ -331,7 +331,7 @@ export function connectAdvanced(e, t = {}) {
                 if (e.error) {
                     throw e.error;
                 }
-                return i.createElement(t, this.addExtraProps(e.props));
+                return <T1 {...this.addExtraProps(e.props)}/>;
             };
             return u;
         })(i.Component);
@@ -339,12 +339,12 @@ export function connectAdvanced(e, t = {}) {
             u.prototype.UNSAFE_componentWillReceiveProps = u.prototype.componentWillReceiveProps;
             delete u.prototype.componentWillReceiveProps;
         }
-        u.WrappedComponent = t;
+        u.WrappedComponent = T1;
         u.displayName = r;
         u.childContextTypes = I;
         u.contextTypes = L;
         u.propTypes = L;
-        return y(u, t);
+        return y(u, T1);
     };
 }
 const _ = Object.prototype.hasOwnProperty;

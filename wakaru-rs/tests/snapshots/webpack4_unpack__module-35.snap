@@ -81,7 +81,7 @@ const i = ((e)=>{
         {
             key: "render",
             value () {
-                return o.createElement("div", null, o.createElement("h1", null, "Front page"));
+                return <div><h1>Front page</h1></div>;
             }
         }
     ]);

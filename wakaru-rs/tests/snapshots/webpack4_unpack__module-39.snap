@@ -85,7 +85,7 @@ const l = ((e)=>{
             key: "render",
             value () {
                 console.log(this.props);
-                return o.createElement("div", null, u.default);
+                return <div>{u.default}</div>;
             }
         }
     ]);

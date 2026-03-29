@@ -54,10 +54,7 @@ export const BrowserRouter = ((e)=>{
         r(!this.props.history, "<BrowserRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { BrowserRouter as Router }`.");
     };
     t.prototype.render = function() {
-        return i.createElement(Router, {
-            history: this.history,
-            children: this.props.children
-        });
+        return <Router history={this.history} children={this.props.children}/>;
     };
     return t;
 })(i.Component);
@@ -110,10 +107,7 @@ export const HashRouter = ((e)=>{
         r(!this.props.history, "<HashRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { HashRouter as Router }`.");
     };
     t.prototype.render = function() {
-        return i.createElement(Router, {
-            history: this.history,
-            children: this.props.children
-        });
+        return <Router history={this.history} children={this.props.children}/>;
     };
     return t;
 })(i.Component);
@@ -212,11 +206,11 @@ export const Link = ((e)=>{
         const o = this.context.router.history;
         const i = typeof t == "string" ? c.createLocation(t, null, null, o.location) : t;
         const u = o.createHref(i);
-        return i.createElement("a", w({}, r, {
+        return <a {...w({}, r, {
             onClick: this.handleClick,
             href: u,
             ref: n
-        }));
+        })}/>;
     };
     return t;
 })(i.Component);
@@ -287,10 +281,7 @@ export const MemoryRouter = ((e)=>{
         r(!this.props.history, "<MemoryRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { MemoryRouter as Router }`.");
     };
     t.prototype.render = function() {
-        return i.createElement(s.a, {
-            history: this.history,
-            children: this.props.children
-        });
+        return <s.a history={this.history} children={this.props.children}/>;
     };
     return t;
 })(i.Component);
@@ -393,7 +384,7 @@ const N = ((e)=>{
     t.prototype.render = function() {
         const e = this.state.match;
         const t = this.props;
-        const { children: n, component: r, render: o } = t;
+        const { children: n, component: R1, render: o } = t;
         const i = this.context.router;
         const { history: u, route: l, staticContext: c } = i;
         const s = {
@@ -402,9 +393,9 @@ const N = ((e)=>{
             history: u,
             staticContext: c
         };
-        if (r) {
+        if (R1) {
             if (e) {
-                return i.createElement(r, s);
+                return <R1 {...s}/>;
             }
             return null;
         }
@@ -488,25 +479,19 @@ export const NavLink = (e)=>{
     ]);
     const p = (t === undefined ? "undefined" : I(t)) === "object" ? t.pathname : t;
     const h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
-    return i.createElement(Route, {
-        path: h,
-        exact: n,
-        strict: r,
-        location: o,
-        children (e) {
-            const { location: n, match: r } = e;
-            const o = !!(s ? s(r, n) : r);
-            return i.createElement(Link, L({
-                to: t,
-                className: o ? [
-                    u,
-                    i
-                ].filter((e)=>e).join(" ") : u,
-                style: o ? L({}, c, l) : c,
-                "aria-current": o && f || null
-            }, d));
-        }
-    });
+    return <Route path={h} exact={n} strict={r} location={o} children={(e)=>{
+        const { location: n, match: r } = e;
+        const o = !!(s ? s(r, n) : r);
+        return <Link {...L({
+            to: t,
+            className: o ? [
+                u,
+                i
+            ].filter((e)=>e).join(" ") : u,
+            style: o ? L({}, c, l) : c,
+            "aria-current": o && f || null
+        }, d)}/>;
+    }}/>;
 };
 NavLink.propTypes = {
     to: Link.propTypes.to,
@@ -883,9 +868,9 @@ export const StaticRouter = ((e)=>{
             listen: this.handleListen,
             block: this.handleBlock
         };
-        return i.createElement(s.a, Y({}, r, {
+        return <s.a {...Y({}, r, {
             history: o
-        }));
+        })}/>;
     };
     return t;
 })(i.Component);
@@ -1005,13 +990,9 @@ export const withRouter = (e)=>{
         })(t, [
             "wrappedComponentRef"
         ]);
-        return i.createElement(Route, {
-            children (t) {
-                return i.createElement(e, se({}, r, t, {
-                    ref: n
-                }));
-            }
-        });
+        return <Route children={(t)=>i.createElement(e, se({}, r, t, {
+                ref: n
+            }))}/>;
     };
     t.displayName = "withRouter(" + (e.displayName || e.name) + ")";
     t.WrappedComponent = e;
