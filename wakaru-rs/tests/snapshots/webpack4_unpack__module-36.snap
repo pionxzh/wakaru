@@ -24,14 +24,17 @@ const u = {
     data: [],
     error: ""
 };
-a(r = {}, i.FETCH_DATA + o.START, (e)=>Object.assign({}, e, {
+a(r = {}, i.FETCH_DATA + o.START, (e)=>({
+        ...e,
         isLoading: true
     }));
-a(r, i.FETCH_DATA + o.SUCCESS, (e, t)=>Object.assign({}, e, {
+a(r, i.FETCH_DATA + o.SUCCESS, (e, t)=>({
+        ...e,
         isLoading: false,
         data: t
     }));
-a(r, i.FETCH_DATA + o.ERROR, (e, t)=>Object.assign({}, e, {
+a(r, i.FETCH_DATA + o.ERROR, (e, t)=>({
+        ...e,
         isLoading: false,
         error: t
     }));

@@ -84,7 +84,10 @@ const l = function e(t, n) {
         if (r !== t || o !== n) {
             return e(r, o);
         }
-        return Object.keys(Object.assign({}, t, n)).every((r)=>e(t[r], n[r]));
+        return Object.keys({
+            ...t,
+            ...n
+        }).every((r)=>e(t[r], n[r]));
     }
     return false;
 };
