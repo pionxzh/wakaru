@@ -187,6 +187,17 @@ pub fn rename_bindings_in_module(module: &mut Module, renames: &[BindingRename])
     module.visit_mut_with(&mut renamer);
 }
 
+pub fn rename_bindings<T>(node: &mut T, renames: &[BindingRename])
+where
+    for<'a> T: VisitMutWith<BindingRenamer<'a>>,
+{
+    if renames.is_empty() {
+        return;
+    }
+    let mut renamer = BindingRenamer { renames };
+    node.visit_mut_with(&mut renamer);
+}
+
 fn collect_decl_names(decl: &Decl, names: &mut HashSet<Atom>) {
     match decl {
         Decl::Var(var) => {
@@ -280,7 +291,7 @@ fn collect_decl_binding_infos(
     }
 }
 
-struct BindingRenamer<'a> {
+pub(super) struct BindingRenamer<'a> {
     renames: &'a [BindingRename],
 }
 
