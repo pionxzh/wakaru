@@ -3,7 +3,7 @@
 ## What This Is
 
 A Rust rewrite of the wakaru JavaScript unminifier, using the `swc_core` AST ecosystem.
-- **Input:** Minified/bundled JavaScript (webpack4, etc.)
+- **Input:** Minified/bundled JavaScript (webpack4 / webpack5 / browserify / plain source)
 - **Output:** Readable, modern ESNext code
 - Spec: `../RS.md` | Progress: `../TODO.md`
 
@@ -61,7 +61,7 @@ extract body stmts → build synthetic Module
   └─ resolver()                   ← MUST run first; marks free vars with unresolved_mark
        └─ ParamRenamer            ← e→module, t→exports, n→require (scope-aware)
             └─ RequireIdRewriter  ← require(N) → require("./module-N.js")
-                 └─ RequireNRewriter        ← require.n(x) → () => x
+                 └─ RequireNRewriter        ← require.n(x) → explicit interop getter
                       └─ WebpackRuntimeNormalizer  ← require.r() removed, require.d() → exports.x=
                            └─ apply_default_rules() [optional, skipped for raw mode]
                                 └─ fixer()
@@ -141,6 +141,41 @@ Don't use bare literal expression statements as test inputs (e.g. `65536;`) — 
 dead code and `SimplifySequence` drops them. Use variable declarations instead:
 `const x = 65536;`
 
+## Definition Of Done
+
+Do not consider a Rust rewrite task "done" just because a local unit test passed.
+When you finish a change, verify all of the following that apply:
+
+1. Run the focused rule tests you touched.
+2. Run the relevant pipeline tests:
+   - `cargo test --test noop_pipeline`
+   - `cargo test --test webpack4_unpack`
+   - `cargo test --test webpack4_unpack_raw`
+   - plus any bundle-specific tests such as `bundle_unpack`
+3. If a change affects rename behavior, verify both:
+   - rule-level shadowing tests
+   - webpack snapshots for real modules, especially cases with reused short names
+4. If snapshots change, inspect the diff before accepting it.
+   - "tests passed with updated snapshots" is not enough
+   - confirm the changed output is semantically better, not just different
+5. Compare raw vs final snapshots for the touched module when debugging pipeline behavior.
+6. Before committing, check `git status --short` and make sure you are not sweeping in
+   unrelated files or stale `.snap.new` artifacts.
+
+For rename-related work specifically, verify:
+
+- identifiers are matched by binding identity (`sym + SyntaxContext`), not symbol text alone
+- shadowed locals/params are not renamed by top-level export/import/readability passes
+- property keys are not accidentally renamed
+- webpack snapshots do not reintroduce leaks like `StrictMode` / `Profiler` / `Fragment`
+  replacing unrelated local bindings
+
+For unpack / interop work specifically, verify:
+
+- raw snapshots still show the intended normalization shape
+- final snapshots improve or preserve semantics
+- webpack5 and browserify coverage still passes if the change touches unpacking logic
+
 ---
 
 ## Key Rules and Gotchas
@@ -173,7 +208,8 @@ Some rules must see the AST in a specific state:
 ## Debugging Tips
 
 - **Unexpected variable names in output:** Check if a visitor is matching identifiers without
-  the `unresolved_mark` guard. Compare raw vs. decompiled snapshots.
+  the `unresolved_mark` guard, or if a rename pass is matching by `sym` instead of
+  `(sym, SyntaxContext)`. Compare raw vs. decompiled snapshots.
 - **Snapshot diff shows many modules changed:** A rule earlier in the pipeline is probably
   changing something that cascades. Check `SimplifySequence` or `FlipComparisons` first.
 - **Rule not firing:** Confirm the AST shape using the raw snapshot — the input to your
