@@ -1,4 +1,5 @@
 pub mod browserify;
+pub mod esbuild;
 pub mod webpack4;
 pub mod webpack5;
 
@@ -17,6 +18,7 @@ pub fn unpack_bundle(source: &str) -> Option<UnpackResult> {
     webpack5::detect_and_extract(source)
         .or_else(|| webpack4::detect_and_extract(source))
         .or_else(|| browserify::detect_and_extract(source))
+        .or_else(|| esbuild::detect_and_extract(source))
 }
 
 pub fn unpack_webpack4(source: &str) -> Option<UnpackResult> {
