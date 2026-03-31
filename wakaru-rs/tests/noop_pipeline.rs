@@ -16,7 +16,7 @@ fn decompile_handles_existing_bundled_fixtures() {
             .to_string();
 
         let output =
-            decompile(&input, DecompileOptions { filename }).expect("decompile should succeed");
+            decompile(&input, DecompileOptions { filename, ..Default::default() }).expect("decompile should succeed");
         assert!(
             !output.trim().is_empty(),
             "output should not be empty for {}",
@@ -39,6 +39,7 @@ fn decompile_output_is_stable_for_noop_pipeline() {
         &input,
         DecompileOptions {
             filename: "index.js".to_string(),
+            ..Default::default()
         },
     )
     .expect("first decompile should succeed");
@@ -46,6 +47,7 @@ fn decompile_output_is_stable_for_noop_pipeline() {
         &once,
         DecompileOptions {
             filename: "index.js".to_string(),
+            ..Default::default()
         },
     )
     .expect("second decompile should succeed");
@@ -59,6 +61,7 @@ fn decompile_parses_jsx_in_js_files() {
         "const view = <div className=\"ok\" />;",
         DecompileOptions {
             filename: "view.js".to_string(),
+            ..Default::default()
         },
     )
     .expect("jsx in .js should parse");

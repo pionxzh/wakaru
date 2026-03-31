@@ -20,6 +20,7 @@ insta = "1"
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 rayon = "1.11"
+sourcemap = "9"
 swc_core = { version = "56", features = [
   "common",
   "ecma_ast",

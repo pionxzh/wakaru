@@ -1,5 +1,6 @@
 pub mod driver;
 pub mod rules;
+pub mod sourcemap_rename;
 pub mod unpacker;
 pub mod utils;
 

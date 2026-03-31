@@ -12,6 +12,7 @@ pub fn render_pipeline(source: &str) -> String {
         source,
         DecompileOptions {
             filename: "fixture.js".to_string(),
+            ..Default::default()
         },
     )
     .expect("decompile should succeed")

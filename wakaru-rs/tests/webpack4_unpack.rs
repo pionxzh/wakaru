@@ -12,6 +12,7 @@ fn webpack4_unpack_extracts_modules() {
         &source,
         DecompileOptions {
             filename: source_path.to_string(),
+            ..Default::default()
         },
     )
     .expect("unpack should succeed");
@@ -50,6 +51,7 @@ fn webpack4_unpack_snapshots() {
         &source,
         DecompileOptions {
             filename: source_path.to_string(),
+            ..Default::default()
         },
     )
     .expect("unpack should succeed");

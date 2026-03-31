@@ -20,6 +20,12 @@ struct Cli {
     /// When set, --output is treated as the output directory.
     #[arg(short, long)]
     unpack: bool,
+
+    /// Optional source map file (.map) for enhanced decompilation:
+    /// - Deduplicates identical imports collapsed by the bundler
+    /// - Recovers original identifier names using source map position data
+    #[arg(short = 'm', long, value_name = "FILE")]
+    sourcemap: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -27,13 +33,13 @@ fn main() -> Result<()> {
     let input = fs::read_to_string(&cli.input)
         .with_context(|| format!("failed to read {}", cli.input.display()))?;
 
+    let options = DecompileOptions {
+        filename: cli.input.to_string_lossy().to_string(),
+        sourcemap_path: cli.sourcemap.map(|p| p.to_string_lossy().into_owned()),
+    };
+
     if cli.unpack {
-        let pairs = unpack(
-            &input,
-            DecompileOptions {
-                filename: cli.input.to_string_lossy().to_string(),
-            },
-        )?;
+        let pairs = unpack(&input, options)?;
 
         let out_dir = cli.output.unwrap_or_else(|| PathBuf::from("unpacked"));
         fs::create_dir_all(&out_dir)
@@ -52,12 +58,7 @@ fn main() -> Result<()> {
         }
         eprintln!("total: {} module(s)", pairs.len());
     } else {
-        let output = decompile(
-            &input,
-            DecompileOptions {
-                filename: cli.input.to_string_lossy().to_string(),
-            },
-        )?;
+        let output = decompile(&input, options)?;
 
         match cli.output {
             Some(path) => {

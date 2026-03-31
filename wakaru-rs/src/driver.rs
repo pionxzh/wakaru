@@ -8,23 +8,27 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::visit::VisitMutWith;
 
-use crate::rules::apply_default_rules;
+use crate::rules::{apply_default_rules, ImportDedup, UnImportRename};
+use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::unpack_bundle;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DecompileOptions {
     pub filename: String,
-}
-
-impl Default for DecompileOptions {
-    fn default() -> Self {
-        Self {
-            filename: "input.js".to_string(),
-        }
-    }
+    /// Path to a v3 source map file. When provided, enables:
+    /// - Import deduplication (merges repeated imports of the same specifier)
+    /// - Source-map-driven identifier rename (recovers original variable names)
+    pub sourcemap_path: Option<String>,
 }
 
 pub fn decompile(source: &str, options: DecompileOptions) -> Result<String> {
+    // Pre-load the source map bytes outside GLOBALS so I/O errors surface early.
+    let sourcemap_bytes: Option<Vec<u8>> = options
+        .sourcemap_path
+        .as_deref()
+        .map(std::fs::read)
+        .transpose()?;
+
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let mut module = parse_js(source, &options.filename, cm.clone())?;
@@ -34,6 +38,22 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<String> {
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
         apply_default_rules(&mut module, unresolved_mark);
+
+        // Source-map-enhanced passes (only when --sourcemap is supplied).
+        if let Some(bytes) = &sourcemap_bytes {
+            let sm = parse_sourcemap(bytes)?;
+
+            // 1. Merge duplicate imports before renaming so that only the canonical
+            //    local binding remains when the rename pass runs.
+            module.visit_mut_with(&mut ImportDedup);
+
+            // 2. Use source map positions to recover original identifier names.
+            apply_sourcemap_renames(&mut module, &sm, &cm, unresolved_mark);
+
+            // 3. Clean up `import { foo as foo }` → `import { foo }` and rename
+            //    any remaining aliased imports to their imported name.
+            module.visit_mut_with(&mut UnImportRename);
+        }
 
         module.visit_mut_with(&mut fixer(None));
 
@@ -50,6 +70,7 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, St
                     &module.code,
                     DecompileOptions {
                         filename: module.filename.clone(),
+                        sourcemap_path: options.sourcemap_path.clone(),
                     },
                 )
                 .unwrap_or(module.code);

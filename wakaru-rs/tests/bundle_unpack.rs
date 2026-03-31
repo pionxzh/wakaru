@@ -11,6 +11,7 @@ fn webpack5_unpack_extracts_multiple_modules() {
         &source,
         DecompileOptions {
             filename: source_path.to_string(),
+            ..Default::default()
         },
     )
     .expect("webpack5 unpack should succeed");
@@ -36,6 +37,7 @@ fn browserify_unpack_extracts_multiple_modules() {
         &source,
         DecompileOptions {
             filename: source_path.to_string(),
+            ..Default::default()
         },
     )
     .expect("browserify unpack should succeed");
