@@ -5,6 +5,7 @@ pub mod unpacker;
 pub mod utils;
 
 pub use driver::{decompile, unpack, DecompileOptions};
+pub use sourcemap_rename::{extract_sources, parse_sourcemap};
 pub use unpacker::{unpack_webpack4, UnpackResult, UnpackedModule};
 
 /// Unpack a webpack4 bundle and return the raw (pre-decompile-rules) module code.

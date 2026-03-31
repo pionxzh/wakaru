@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io::BufReader;
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::Result;
 use sourcemap::SourceMap;
@@ -27,6 +28,66 @@ use crate::rules::rename_utils::{BindingId, BindingRename, rename_bindings_in_mo
 pub fn parse_sourcemap(data: &[u8]) -> Result<SourceMap> {
     SourceMap::from_reader(BufReader::new(data))
         .map_err(|e| anyhow::anyhow!("failed to parse source map: {e}"))
+}
+
+/// Extract every original source file embedded in the source map's `sourcesContent`
+/// and write them under `out_dir`, preserving the original directory structure.
+///
+/// Returns the number of files written.
+pub fn extract_sources(sm: &SourceMap, out_dir: &Path) -> Result<usize> {
+    let count = sm.get_source_count();
+    let mut written = 0;
+
+    for i in 0..count {
+        let Some(source_path) = sm.get_source(i) else {
+            continue;
+        };
+        let Some(content) = sm.get_source_contents(i) else {
+            continue;
+        };
+
+        let out_path = resolve_source_path(out_dir, source_path);
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| anyhow::anyhow!("failed to create {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&out_path, content)
+            .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
+        written += 1;
+    }
+
+    Ok(written)
+}
+
+/// Map a source map entry path to an output path under `out_dir`.
+///
+/// Source map paths often start with `../` (relative to the bundle's location)
+/// or contain webpack-internal prefixes like `webpack://`.  We strip these and
+/// resolve the result under `out_dir`, never escaping it.
+fn resolve_source_path(out_dir: &Path, source: &str) -> PathBuf {
+    // Strip common prefixes used by bundlers.
+    let stripped = source
+        .trim_start_matches("webpack://")
+        .trim_start_matches("webpack:///")
+        .trim_start_matches('/');
+
+    // Normalise the path and drop any leading `..` components that would escape
+    // out_dir.  We use PathBuf component iteration so this works on all platforms.
+    let mut result = out_dir.to_path_buf();
+    for component in Path::new(stripped).components() {
+        match component {
+            Component::ParentDir => {
+                // Drop — we never let source paths escape the output root.
+            }
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => {
+                // Ignore absolute roots / drive prefixes / current-dir dots.
+            }
+            Component::Normal(seg) => {
+                result.push(seg);
+            }
+        }
+    }
+    result
 }
 
 /// Apply source-map-driven identifier renaming to `module`.

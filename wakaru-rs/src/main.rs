@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use wakaru_rs::{decompile, unpack, DecompileOptions};
+use wakaru_rs::{decompile, extract_sources, parse_sourcemap, unpack, DecompileOptions};
 
 #[derive(Debug, Parser)]
 #[command(name = "wakaru-rs")]
@@ -26,10 +26,29 @@ struct Cli {
     /// - Recovers original identifier names using source map position data
     #[arg(short = 'm', long, value_name = "FILE")]
     sourcemap: Option<PathBuf>,
+
+    /// Extract the original source files embedded in the source map's
+    /// `sourcesContent` and write them to the output directory.
+    /// Requires --sourcemap.  The input JS file is not decompiled.
+    #[arg(long, requires = "sourcemap")]
+    extract: bool,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // --extract: write original source files from sourcesContent to disk.
+    if cli.extract {
+        let map_path = cli.sourcemap.as_ref().unwrap(); // guaranteed by clap `requires`
+        let map_bytes = fs::read(map_path)
+            .with_context(|| format!("failed to read source map {}", map_path.display()))?;
+        let sm = parse_sourcemap(&map_bytes)?;
+        let out_dir = cli.output.unwrap_or_else(|| PathBuf::from("extracted"));
+        let n = extract_sources(&sm, &out_dir)?;
+        eprintln!("extracted {n} source file(s) to {}", out_dir.display());
+        return Ok(());
+    }
+
     let input = fs::read_to_string(&cli.input)
         .with_context(|| format!("failed to read {}", cli.input.display()))?;
 
