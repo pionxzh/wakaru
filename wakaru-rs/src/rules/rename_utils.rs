@@ -3,8 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    ArrowExpr, Decl, DefaultDecl, Function, Ident, ImportSpecifier, MemberProp, Module, ModuleDecl,
-    ModuleItem, ObjectPatProp, Pat, PropName, Stmt, VarDeclarator,
+    ArrowExpr, Decl, DefaultDecl, Function, Ident, ImportNamedSpecifier, ImportSpecifier,
+    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat, PropName,
+    Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -291,7 +292,7 @@ fn collect_decl_binding_infos(
     }
 }
 
-pub(super) struct BindingRenamer<'a> {
+pub(crate) struct BindingRenamer<'a> {
     renames: &'a [BindingRename],
 }
 
@@ -300,6 +301,29 @@ impl VisitMut for BindingRenamer<'_> {
         for rename in self.renames {
             if ident.sym == rename.old.0 && ident.ctxt == rename.old.1 {
                 ident.sym = rename.new.clone();
+                return;
+            }
+        }
+    }
+
+    /// Rename the local binding of a named import specifier while preserving the
+    /// external (imported) name.  Without this override, renaming a shorthand
+    /// specifier `import { createHash }` would produce `import { newName }` which
+    /// tries to import `newName` from the module — wrong.  We instead emit
+    /// `import { createHash as newName }`.
+    fn visit_mut_import_named_specifier(&mut self, spec: &mut ImportNamedSpecifier) {
+        for rename in self.renames {
+            if spec.local.sym == rename.old.0 && spec.local.ctxt == rename.old.1 {
+                // Lock in the external name before changing local.
+                if spec.imported.is_none() {
+                    spec.imported =
+                        Some(ModuleExportName::Ident(swc_core::ecma::ast::Ident::new(
+                            spec.local.sym.clone(),
+                            spec.local.span,
+                            spec.local.ctxt,
+                        )));
+                }
+                spec.local.sym = rename.new.clone();
                 return;
             }
         }
