@@ -64,8 +64,13 @@ fn main() -> Result<()> {
         fs::create_dir_all(&out_dir)
             .with_context(|| format!("failed to create output directory {}", out_dir.display()))?;
 
+        // Track seen paths in a case-folded set so we detect collisions on
+        // case-insensitive filesystems (Windows NTFS).  When a collision is
+        // found we append `_2`, `_3`, … before the extension.
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         for (filename, code) in &pairs {
-            let out_path = out_dir.join(filename);
+            let out_path = deduplicate_path(&out_dir.join(filename), &mut seen);
             if let Some(parent) = out_path.parent() {
                 fs::create_dir_all(parent).with_context(|| {
                     format!("failed to create output directory {}", parent.display())
@@ -91,4 +96,32 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Return a path that hasn't been used yet, disambiguating case collisions.
+///
+/// `seen` stores the lowercased string representation of every path already
+/// claimed.  When a collision is detected the stem gets a numeric suffix:
+/// `foo.js` → `foo_2.js` → `foo_3.js` …
+fn deduplicate_path(
+    path: &PathBuf,
+    seen: &mut std::collections::HashSet<String>,
+) -> PathBuf {
+    let key = path.to_string_lossy().to_lowercase();
+    if seen.insert(key) {
+        return path.clone();
+    }
+    // Collision — append _N before the extension.
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("module");
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("js");
+    let parent = path.parent().unwrap_or(std::path::Path::new("."));
+    let mut n = 2u32;
+    loop {
+        let candidate = parent.join(format!("{stem}_{n}.{ext}"));
+        let candidate_key = candidate.to_string_lossy().to_lowercase();
+        if seen.insert(candidate_key) {
+            return candidate;
+        }
+        n += 1;
+    }
 }
