@@ -1,17 +1,14 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, GLOBALS};
+use swc_core::common::{sync::Lrc, FileName, SourceMap, GLOBALS};
 use swc_core::ecma::ast::{
     ArrowExpr, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprStmt, Module, ModuleItem, Pat,
     Stmt, Str, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
-use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
-use swc_core::ecma::visit::VisitMutWith;
 
-use crate::rules::apply_default_rules;
 use crate::unpacker::{UnpackResult, UnpackedModule};
 
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
@@ -43,7 +40,7 @@ fn detect_inner(source: &str) -> Option<UnpackResult> {
     let mut modules: Vec<UnpackedModule> = Vec::new();
 
     for factory in factories {
-        let code = decompile_stmts(factory.body_stmts, factory.filename.clone(), cm.clone());
+        let code = emit_stmts(factory.body_stmts, factory.filename.clone(), cm.clone());
         modules.push(UnpackedModule {
             id: factory.var_name.to_string(),
             is_entry: false,
@@ -65,7 +62,7 @@ fn detect_inner(source: &str) -> Option<UnpackResult> {
             body: entry_items,
             shebang: None,
         };
-        let code = decompile_module(entry_module, "entry.js".to_string(), cm);
+        let code = emit_module(entry_module, "entry.js".to_string(), cm);
         modules.push(UnpackedModule {
             id: "entry".to_string(),
             is_entry: true,
@@ -283,36 +280,20 @@ fn is_helper_or_factory_item(
 // Code generation
 // ---------------------------------------------------------------------------
 
-fn decompile_stmts(stmts: Vec<Stmt>, filename: String, cm: Lrc<SourceMap>) -> String {
+/// Emit factory body statements as raw JavaScript — no rules, no resolver.
+/// The driver's `decompile()` will run the full pipeline on the emitted text.
+fn emit_stmts(stmts: Vec<Stmt>, filename: String, cm: Lrc<SourceMap>) -> String {
     let module = Module {
         span: Default::default(),
         body: stmts.into_iter().map(ModuleItem::Stmt).collect(),
         shebang: None,
     };
-    decompile_module(module, filename, cm)
+    emit_module(module, filename, cm)
 }
 
-fn decompile_module(module: Module, filename: String, cm: Lrc<SourceMap>) -> String {
-    let fm = cm.new_source_file(
-        FileName::Custom(filename.clone()).into(),
-        // Emit a quick source text so resolver has real byte positions.
-        emit_module_raw(&module, cm.clone()).unwrap_or_default(),
-    );
-    // Re-parse so SWC byte positions are consistent with the new SourceFile.
-    let reparsed = reparse(&fm.src, filename.clone(), cm.clone());
-    let mut module = reparsed.unwrap_or(module);
-
-    let unresolved_mark = Mark::new();
-    let top_level_mark = Mark::new();
-    module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-    apply_default_rules(&mut module, unresolved_mark);
-    module.visit_mut_with(&mut fixer(None));
-
+fn emit_module(module: Module, filename: String, cm: Lrc<SourceMap>) -> String {
+    let _fm = cm.new_source_file(FileName::Custom(filename).into(), String::new());
     emit_module_raw(&module, cm).unwrap_or_default()
-}
-
-fn reparse(source: &str, filename: String, cm: Lrc<SourceMap>) -> Option<Module> {
-    parse_es_module_named(source, filename, cm).ok()
 }
 
 fn emit_module_raw(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
