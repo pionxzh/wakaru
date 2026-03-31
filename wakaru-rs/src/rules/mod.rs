@@ -1,3 +1,4 @@
+mod import_dedup;
 mod arg_rest;
 mod arrow_function;
 mod arrow_return;
@@ -6,7 +7,7 @@ mod flip_comparisons;
 mod obj_method_shorthand;
 mod obj_shorthand;
 mod object_assign_spread;
-mod rename_utils;
+pub(crate) mod rename_utils;
 mod remove_void;
 mod simplify_sequence;
 mod smart_inline;
@@ -51,6 +52,7 @@ use swc_core::ecma::ast::Module;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 pub use arg_rest::ArgRest;
+pub use import_dedup::ImportDedup;
 pub use arrow_function::ArrowFunction;
 pub use arrow_return::ArrowReturn;
 pub use exponent::Exponent;
