@@ -1,34 +1,83 @@
 # wakaru-rs
 
-Rust rewrite of Wakaru's unminify core.
+A fast JavaScript decompiler and bundle splitter.
 
-## Status
+Takes minified or bundled JavaScript and produces readable, modern JavaScript.
 
-Implemented:
+---
 
-- Parse source into SWC AST
-- Run resolver
-- Run rule pipeline:
-  - `SimplifySequence` (`a(), b(), c()` -> `a(); b(); c();`)
-  - `FlipComparisons` (`null == x` -> `x == null`)
-  - `RemoveVoid` (`void 0` -> `undefined`)
-  - `UnminifyBooleans` (`!0`/`!1` -> `true`/`false`)
-  - `UnInfinity` (`1 / 0` -> `Infinity`, `-1 / 0` -> `-Infinity`)
-  - `UnTypeof` (`typeof x < "u"` -> `typeof x !== "undefined"`)
-  - `UnTemplateLiteral` (`"a".concat(b)` -> `` `a${b}` ``)
-  - `UnBracketNotation` (`obj['foo']` -> `obj.foo`, `obj['1']` -> `obj[1]`)
-  - `UnReturn` (remove redundant tail `return undefined` / `return;`, convert tail `return void expr`)
-  - `UnUseStrict` (remove `'use strict'` directives)
-  - `UnIndirectCall` (`(0, obj.fn)(x)` -> `obj.fn(x)`)
-- Run hygiene + fixer
-- Print readable JavaScript output
-
-## CLI
+## Install
 
 ```bash
-cargo run --bin wakaru-rs -- path/to/input.js -o path/to/output.js
+cargo build --release
+# binary at: target/release/wakaru-rs
 ```
 
-## Tests
+---
 
-Integration tests reuse bundled fixtures from `../testcases/*/dist/index.js`.
+## Usage
+
+### Decompile a single file
+
+```bash
+wakaru-rs input.js -o output.js
+```
+
+Prints to stdout when `-o` is omitted.
+
+### Unpack a bundle into individual modules
+
+```bash
+wakaru-rs input.js --unpack -o out/
+```
+
+Splits a bundle into one file per module under `out/`. Defaults to `unpacked/` when `-o` is omitted.
+
+### Recover original names with a source map
+
+```bash
+wakaru-rs input.js -o output.js -m input.js.map
+wakaru-rs input.js --unpack -o out/ -m input.js.map
+```
+
+Uses source map position data to restore original identifier names. Works with or without a `names` array — names are extracted directly from `sourcesContent` when available.
+
+### Extract original source files from a source map
+
+```bash
+wakaru-rs input.js --extract -m input.js.map -o src/
+```
+
+Writes the embedded `sourcesContent` files to disk as-is. Does not decompile. Requires `-m`.
+
+---
+
+## Supported bundle formats
+
+| Format | Detected automatically |
+|---|---|
+| webpack 4 | yes |
+| webpack 5 | yes |
+| Browserify | yes |
+| esbuild | yes |
+
+---
+
+## What it does
+
+Runs a pipeline of AST transforms to undo common minification patterns:
+
+- Sequence expressions split into statements (`a(), b()` → `a(); b();`)
+- Minified boolean/undefined literals restored (`!0` → `true`, `void 0` → `undefined`)
+- Template literals recovered (`.concat()` chains → `` `${...}` ``)
+- Bracket notation simplified (`obj["foo"]` → `obj.foo`)
+- Indirect calls cleaned up (`(0, fn)(x)` → `fn(x)`)
+- IIFEs unwrapped
+- `var` promoted to `let`/`const` where safe
+- Arrow functions and method shorthand restored
+- CommonJS `require` / `exports` patterns reconstructed as ESM `import`/`export`
+- Dead code from bundler feature flags removed
+
+Source map support adds:
+- Duplicate import deduplication (bundlers repeat imports across modules)
+- Position-based identifier rename (recovers original variable names)
