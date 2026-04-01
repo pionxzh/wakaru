@@ -2,34 +2,10 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
+import * as r from "./module-3.js";
+import * as o from "./module-49.js";
 import i from "./module-23.js";
 import a from "./module-18.js";
+import U from "./module-39.js";
 import l from "./module-34.js";
-const r = f(require("./module-3.js"));
-const o = f(require("./module-49.js"));
-const u = s(require("./module-39.js"));
-const c = s(l);
-function s(e) {
-    if (e && e.__esModule) {
-        return e;
-    }
-    return {
-        default: e
-    };
-}
-function f(e) {
-    if (e && e.__esModule) {
-        return e;
-    }
-    const t = {};
-    if (e != null) {
-        for(const n in e){
-            if (Object.prototype.hasOwnProperty.call(e, n)) {
-                t[n] = e[n];
-            }
-        }
-    }
-    t.default = e;
-    return t;
-}
-o.render(<i.Provider store={c.default}><a.ConnectedRouter history={l.history}><u.default/></a.ConnectedRouter></i.Provider>, document.getElementById("app"));
+o.render(<i.Provider store={l}><a.ConnectedRouter history={l.history}>{<U/>}</a.ConnectedRouter></i.Provider>, document.getElementById("app"));

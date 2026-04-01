@@ -1,3 +1,4 @@
+mod babel_helper_utils;
 mod import_dedup;
 mod arg_rest;
 mod arrow_function;
@@ -27,6 +28,8 @@ mod un_export_rename;
 mod un_iife;
 mod un_import_rename;
 mod un_indirect_call;
+mod un_interop_require_default;
+mod un_interop_require_wildcard;
 mod un_infinity;
 mod un_jsx;
 mod un_nullish_coalescing;
@@ -79,6 +82,8 @@ pub use un_export_rename::UnExportRename;
 pub use un_iife::UnIife;
 pub use un_import_rename::UnImportRename;
 pub use un_indirect_call::UnIndirectCall;
+pub use un_interop_require_default::UnInteropRequireDefault;
+pub use un_interop_require_wildcard::UnInteropRequireWildcard;
 pub use un_infinity::UnInfinity;
 pub use un_jsx::UnJsx;
 pub use un_nullish_coalescing::UnNullishCoalescing;
@@ -126,6 +131,10 @@ pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
     module.visit_mut_with(&mut UnTypeof);
     module.visit_mut_with(&mut UnNumericLiteral);
     module.visit_mut_with(&mut UnBracketNotation);
+    // Babel/transpiler helper unwrapping — run early so downstream rules see clean code.
+    // Needs UnIndirectCall + UnBracketNotation first (normalizes (0,x.default)() and ["default"]).
+    module.visit_mut_with(&mut UnInteropRequireDefault);
+    module.visit_mut_with(&mut UnInteropRequireWildcard);
     module.visit_mut_with(&mut UnTemplateLiteral);
     module.visit_mut_with(&mut UnReturn);
     module.visit_mut_with(&mut UnUseStrict);
