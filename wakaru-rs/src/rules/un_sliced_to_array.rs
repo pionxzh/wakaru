@@ -7,7 +7,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::VisitMut;
 
 use super::babel_helper_utils::{
-    collect_helpers, remove_helper_declarations, BabelHelperKind, BindingKey,
+    collect_helpers, helpers_with_remaining_calls, remove_helper_declarations, BabelHelperKind,
+    BindingKey,
 };
 
 /// Detects and unwraps `_slicedToArray(expr, N)` helper calls.
@@ -41,7 +42,15 @@ impl VisitMut for UnSlicedToArray {
             }
         }
 
-        remove_helper_declarations(&mut module.body, &helpers);
+        // Only remove declaration if no untransformed calls remain
+        let remaining = helpers_with_remaining_calls(module, &helpers);
+        let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = helpers
+            .into_iter()
+            .filter(|(key, _)| !remaining.contains(key))
+            .collect();
+        if !safe_to_remove.is_empty() {
+            remove_helper_declarations(&mut module.body, &safe_to_remove);
+        }
     }
 }
 

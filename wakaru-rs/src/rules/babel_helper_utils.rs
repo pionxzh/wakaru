@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
@@ -79,6 +79,42 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
         }
     }
     helpers
+}
+
+/// Check which helper bindings still have call-site references in the module.
+/// Only counts calls (not the declaration binding itself), so it's safe to
+/// use this to decide whether the declaration can be removed.
+pub(crate) fn helpers_with_remaining_calls(
+    module: &Module,
+    helpers: &HashMap<BindingKey, BabelHelperKind>,
+) -> HashSet<BindingKey> {
+    use swc_core::ecma::visit::{Visit, VisitWith};
+
+    struct CallScanner<'a> {
+        helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+        found: HashSet<BindingKey>,
+    }
+
+    impl Visit for CallScanner<'_> {
+        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Expr::Ident(id) = callee.as_ref() {
+                    let key = (id.sym.clone(), id.ctxt);
+                    if self.helpers.contains_key(&key) {
+                        self.found.insert(key);
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut scanner = CallScanner {
+        helpers,
+        found: HashSet::new(),
+    };
+    module.visit_with(&mut scanner);
+    scanner.found
 }
 
 /// Remove helper declarations from the module body.

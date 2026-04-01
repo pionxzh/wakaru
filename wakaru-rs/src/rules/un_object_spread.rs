@@ -7,16 +7,21 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
-    collect_helpers, remove_helper_declarations, BabelHelperKind, BindingKey,
+    collect_helpers, helpers_with_remaining_calls, remove_helper_declarations, BabelHelperKind,
+    BindingKey,
 };
 
 /// Detects and replaces `_extends` and `_objectSpread2` helper calls with
 /// object spread syntax.
 ///
-/// Transforms:
-///   `_extends({}, obj1, obj2)` → `{ ...obj1, ...obj2 }`
+/// `_objectSpread2` always creates a new object, so all calls are safe to transform:
+///   `_objectSpread2({}, obj1)` → `{ ...obj1 }`
 ///   `_objectSpread2({ x }, y)` → `{ x, ...y }`
-///   `_objectSpread2({ x: z }, { y: 'bar' })` → `{ x: z, y: 'bar' }`
+///
+/// `_extends` is `Object.assign` (mutates first arg), so only transform when
+/// the first arg is an empty object literal `{}`:
+///   `_extends({}, obj1, obj2)` → `{ ...obj1, ...obj2 }`
+///   `_extends(target, source)` → left as-is (mutation/identity semantics)
 pub struct UnObjectSpread;
 
 impl VisitMut for UnObjectSpread {
@@ -35,7 +40,15 @@ impl VisitMut for UnObjectSpread {
         let mut replacer = SpreadReplacer { helpers: &helpers };
         module.visit_mut_with(&mut replacer);
 
-        remove_helper_declarations(&mut module.body, &helpers);
+        // Only remove declaration if no untransformed calls remain
+        let remaining = helpers_with_remaining_calls(module, &helpers);
+        let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = helpers
+            .into_iter()
+            .filter(|(key, _)| !remaining.contains(key))
+            .collect();
+        if !safe_to_remove.is_empty() {
+            remove_helper_declarations(&mut module.body, &safe_to_remove);
+        }
     }
 }
 
@@ -51,12 +64,26 @@ impl VisitMut for SpreadReplacer<'_> {
         let Callee::Expr(callee) = &call.callee else { return };
         let Expr::Ident(id) = callee.as_ref() else { return };
 
-        if !self.helpers.contains_key(&(id.sym.clone(), id.ctxt)) {
+        let key = (id.sym.clone(), id.ctxt);
+        let Some(kind) = self.helpers.get(&key) else {
             return;
-        }
+        };
 
         if call.args.is_empty() {
             return;
+        }
+
+        // For _extends (Object.assign semantics): only transform when
+        // first arg is an empty object literal `{}`, otherwise the
+        // mutation/identity behavior is lost.
+        if *kind == BabelHelperKind::Extends {
+            let first_is_empty_obj = matches!(
+                call.args[0].expr.as_ref(),
+                Expr::Object(obj) if obj.props.is_empty()
+            );
+            if !first_is_empty_obj {
+                return;
+            }
         }
 
         // Merge all arguments into a single object expression.
@@ -66,7 +93,6 @@ impl VisitMut for SpreadReplacer<'_> {
 
         for arg in &call.args {
             if arg.spread.is_some() {
-                // Already a spread argument — keep as spread
                 properties.push(PropOrSpread::Spread(SpreadElement {
                     dot3_token: DUMMY_SP,
                     expr: arg.expr.clone(),
@@ -76,11 +102,9 @@ impl VisitMut for SpreadReplacer<'_> {
 
             match arg.expr.as_ref() {
                 Expr::Object(obj) => {
-                    // Flatten object properties directly
                     properties.extend(obj.props.iter().cloned());
                 }
                 _ => {
-                    // Wrap non-object args as spread: ...arg
                     properties.push(PropOrSpread::Spread(SpreadElement {
                         dot3_token: DUMMY_SP,
                         expr: arg.expr.clone(),

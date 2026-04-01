@@ -26,14 +26,14 @@ const x = [...arr];
 }
 
 #[test]
-fn skips_multi_arg_calls() {
+fn preserves_helper_when_untransformed_calls_remain() {
     let input = r#"
 var _toConsumableArray = require("@babel/runtime/helpers/toConsumableArray");
 var x = _toConsumableArray(a, b);
 "#;
     let output = render(input);
-    // Multi-arg call should not be transformed
-    assert!(output.contains("_toConsumableArray"), "should not transform multi-arg call");
+    // Multi-arg call is not transformed, so helper declaration must remain
+    assert!(output.contains("_toConsumableArray"), "should keep helper for untransformed calls");
 }
 
 #[test]

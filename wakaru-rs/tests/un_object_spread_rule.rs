@@ -86,6 +86,17 @@ const x = { ...y };
 }
 
 #[test]
+fn extends_preserves_non_empty_target() {
+    let input = r#"
+var _extends = require("@babel/runtime/helpers/extends");
+var x = _extends(target, source);
+"#;
+    let output = render(input);
+    // Non-empty first arg: mutation/identity semantics must be preserved
+    assert!(output.contains("_extends"), "should not transform _extends with real target");
+}
+
+#[test]
 fn removes_helper_declaration() {
     let input = r#"
 var _objectSpread2 = require("@babel/runtime/helpers/objectSpread2");
