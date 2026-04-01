@@ -81,37 +81,70 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
     helpers
 }
 
-/// Check which helper bindings still have call-site references in the module.
-/// Only counts calls (not the declaration binding itself), so it's safe to
-/// use this to decide whether the declaration can be removed.
-pub(crate) fn helpers_with_remaining_calls(
+/// Check which helper bindings still have references in the module body,
+/// excluding the declaration binding itself (VarDeclarator name / FnDecl ident).
+/// Catches both remaining calls and aliasing (`var f = helper`).
+pub(crate) fn helpers_with_remaining_refs(
     module: &Module,
     helpers: &HashMap<BindingKey, BabelHelperKind>,
 ) -> HashSet<BindingKey> {
     use swc_core::ecma::visit::{Visit, VisitWith};
 
-    struct CallScanner<'a> {
-        helpers: &'a HashMap<BindingKey, BabelHelperKind>,
-        found: HashSet<BindingKey>,
-    }
-
-    impl Visit for CallScanner<'_> {
-        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
-            if let Callee::Expr(callee) = &call.callee {
-                if let Expr::Ident(id) = callee.as_ref() {
-                    let key = (id.sym.clone(), id.ctxt);
-                    if self.helpers.contains_key(&key) {
-                        self.found.insert(key);
+    // First, collect the declaration spans/positions so we can exclude them
+    let mut decl_idents: HashSet<BindingKey> = HashSet::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
+                let key = (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt);
+                if helpers.contains_key(&key) {
+                    decl_idents.insert(key);
+                }
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    let Pat::Ident(bi) = &decl.name else { continue };
+                    let key = (bi.id.sym.clone(), bi.id.ctxt);
+                    if helpers.contains_key(&key) {
+                        decl_idents.insert(key);
                     }
                 }
             }
-            call.visit_children_with(self);
+            _ => {}
         }
     }
 
-    let mut scanner = CallScanner {
+    // Scan for references, skipping VarDeclarator names and FnDecl idents
+    struct RefScanner<'a> {
+        helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+        found: HashSet<BindingKey>,
+        in_decl_name: bool,
+    }
+
+    impl Visit for RefScanner<'_> {
+        fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+            // Skip the binding name, only scan the init
+            if let Some(init) = &decl.init {
+                init.visit_with(self);
+            }
+        }
+
+        fn visit_fn_decl(&mut self, fn_decl: &swc_core::ecma::ast::FnDecl) {
+            // Skip the function name ident, only scan the body
+            fn_decl.function.visit_with(self);
+        }
+
+        fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+            let key = (ident.sym.clone(), ident.ctxt);
+            if self.helpers.contains_key(&key) {
+                self.found.insert(key);
+            }
+        }
+    }
+
+    let mut scanner = RefScanner {
         helpers,
         found: HashSet::new(),
+        in_decl_name: false,
     };
     module.visit_with(&mut scanner);
     scanner.found

@@ -7,7 +7,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::VisitMut;
 
 use super::babel_helper_utils::{
-    collect_helpers, helpers_with_remaining_calls, remove_helper_declarations, BabelHelperKind,
+    collect_helpers, helpers_with_remaining_refs, remove_helper_declarations, BabelHelperKind,
     BindingKey,
 };
 
@@ -43,7 +43,7 @@ impl VisitMut for UnSlicedToArray {
         }
 
         // Only remove declaration if no untransformed calls remain
-        let remaining = helpers_with_remaining_calls(module, &helpers);
+        let remaining = helpers_with_remaining_refs(module, &helpers);
         let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = helpers
             .into_iter()
             .filter(|(key, _)| !remaining.contains(key))

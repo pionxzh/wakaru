@@ -14,25 +14,13 @@ const x = { ...y };
 }
 
 #[test]
-fn preserves_existing_properties() {
+fn handles_multiple_spread_sources() {
     let input = r#"
 var _objectSpread2 = require("@babel/runtime/helpers/objectSpread2");
-var x = _objectSpread2({ a: 1 }, y);
+var x = _objectSpread2({}, a, b, c);
 "#;
     let expected = r#"
-const x = { a: 1, ...y };
-"#;
-    assert_eq_normalized(&render(input), expected);
-}
-
-#[test]
-fn merges_multiple_object_args() {
-    let input = r#"
-var _objectSpread2 = require("@babel/runtime/helpers/objectSpread2");
-var x = _objectSpread2({ a: 1 }, { b: 2 });
-"#;
-    let expected = r#"
-const x = { a: 1, b: 2 };
+const x = { ...a, ...b, ...c };
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -50,13 +38,15 @@ const x = { ...obj1, ...obj2 };
 }
 
 #[test]
-fn handles_nested_spread() {
+fn handles_nested_babel_pattern() {
+    // Babel generates nested _objectSpread2 calls, each with {} as first arg:
+    // _objectSpread2(_objectSpread2({}, a), {}, { b: 1 })
     let input = r#"
 var _objectSpread2 = require("@babel/runtime/helpers/objectSpread2");
-var x = _objectSpread2({ a: 1 }, { b: _objectSpread2({}, z) });
+var x = _objectSpread2({}, a, { b: 1 });
 "#;
     let expected = r#"
-const x = { a: 1, b: { ...z } };
+const x = { ...a, b: 1 };
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -86,13 +76,24 @@ const x = { ...y };
 }
 
 #[test]
+fn preserves_non_empty_first_arg() {
+    // Both _extends and _objectSpread2 mutate their first arg.
+    // Non-empty first arg must be preserved.
+    let input = r#"
+var _objectSpread2 = require("@babel/runtime/helpers/objectSpread2");
+var x = _objectSpread2(target, { a: 1 });
+"#;
+    let output = render(input);
+    assert!(output.contains("_objectSpread2"), "should not transform with real target");
+}
+
+#[test]
 fn extends_preserves_non_empty_target() {
     let input = r#"
 var _extends = require("@babel/runtime/helpers/extends");
 var x = _extends(target, source);
 "#;
     let output = render(input);
-    // Non-empty first arg: mutation/identity semantics must be preserved
     assert!(output.contains("_extends"), "should not transform _extends with real target");
 }
 

@@ -7,21 +7,20 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
-    collect_helpers, helpers_with_remaining_calls, remove_helper_declarations, BabelHelperKind,
+    collect_helpers, helpers_with_remaining_refs, remove_helper_declarations, BabelHelperKind,
     BindingKey,
 };
 
 /// Detects and replaces `_extends` and `_objectSpread2` helper calls with
 /// object spread syntax.
 ///
-/// `_objectSpread2` always creates a new object, so all calls are safe to transform:
-///   `_objectSpread2({}, obj1)` → `{ ...obj1 }`
-///   `_objectSpread2({ x }, y)` → `{ x, ...y }`
-///
-/// `_extends` is `Object.assign` (mutates first arg), so only transform when
-/// the first arg is an empty object literal `{}`:
+/// Both `_extends` and `_objectSpread2` mutate and return their first argument
+/// (like Object.assign). Only transform when the first arg is an empty object
+/// literal `{}`, which guarantees no mutation/identity side effects:
 ///   `_extends({}, obj1, obj2)` → `{ ...obj1, ...obj2 }`
-///   `_extends(target, source)` → left as-is (mutation/identity semantics)
+///   `_objectSpread2({}, y)` → `{ ...y }`
+///   `_extends(target, source)` → left as-is (mutation semantics)
+///   `_objectSpread2(existing, {a: 1})` → left as-is (mutation semantics)
 pub struct UnObjectSpread;
 
 impl VisitMut for UnObjectSpread {
@@ -41,7 +40,7 @@ impl VisitMut for UnObjectSpread {
         module.visit_mut_with(&mut replacer);
 
         // Only remove declaration if no untransformed calls remain
-        let remaining = helpers_with_remaining_calls(module, &helpers);
+        let remaining = helpers_with_remaining_refs(module, &helpers);
         let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = helpers
             .into_iter()
             .filter(|(key, _)| !remaining.contains(key))
@@ -73,17 +72,15 @@ impl VisitMut for SpreadReplacer<'_> {
             return;
         }
 
-        // For _extends (Object.assign semantics): only transform when
-        // first arg is an empty object literal `{}`, otherwise the
-        // mutation/identity behavior is lost.
-        if *kind == BabelHelperKind::Extends {
-            let first_is_empty_obj = matches!(
-                call.args[0].expr.as_ref(),
-                Expr::Object(obj) if obj.props.is_empty()
-            );
-            if !first_is_empty_obj {
-                return;
-            }
+        // Both _extends and _objectSpread2 mutate their first argument.
+        // Only transform when the first arg is an empty object literal `{}`,
+        // otherwise mutation/identity semantics are lost.
+        let first_is_empty_obj = matches!(
+            call.args[0].expr.as_ref(),
+            Expr::Object(obj) if obj.props.is_empty()
+        );
+        if !first_is_empty_obj {
+            return;
         }
 
         // Merge all arguments into a single object expression.
