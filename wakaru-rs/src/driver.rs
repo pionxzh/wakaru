@@ -8,6 +8,8 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::visit::VisitMutWith;
 
+use rayon::prelude::*;
+
 use crate::rules::{apply_default_rules, ImportDedup, UnImportRename};
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::unpack_bundle;
@@ -64,18 +66,21 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<String> {
 pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, String)>> {
     match unpack_bundle(source) {
         Some(result) => {
-            let mut pairs = Vec::new();
-            for module in result.modules {
-                let code = decompile(
-                    &module.code,
-                    DecompileOptions {
-                        filename: module.filename.clone(),
-                        sourcemap_path: options.sourcemap_path.clone(),
-                    },
-                )
-                .unwrap_or(module.code);
-                pairs.push((module.filename, code));
-            }
+            let pairs: Vec<(String, String)> = result
+                .modules
+                .into_par_iter()
+                .map(|module| {
+                    let code = decompile(
+                        &module.code,
+                        DecompileOptions {
+                            filename: module.filename.clone(),
+                            sourcemap_path: options.sourcemap_path.clone(),
+                        },
+                    )
+                    .unwrap_or(module.code);
+                    (module.filename, code)
+                })
+                .collect();
             Ok(pairs)
         }
         None => {
