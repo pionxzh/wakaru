@@ -13,6 +13,10 @@ pub(crate) type BindingKey = (Atom, SyntaxContext);
 pub(crate) enum BabelHelperKind {
     InteropRequireDefault,
     InteropRequireWildcard,
+    ToConsumableArray,
+    Extends,
+    ObjectSpread,
+    SlicedToArray,
 }
 
 /// Known import paths for Babel runtime helpers.
@@ -24,6 +28,28 @@ const INTEROP_DEFAULT_PATHS: &[&str] = &[
 const INTEROP_WILDCARD_PATHS: &[&str] = &[
     "@babel/runtime/helpers/interopRequireWildcard",
     "@babel/runtime/helpers/esm/interopRequireWildcard",
+];
+
+const TO_CONSUMABLE_ARRAY_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/toConsumableArray",
+    "@babel/runtime/helpers/esm/toConsumableArray",
+];
+
+const EXTENDS_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/extends",
+    "@babel/runtime/helpers/esm/extends",
+];
+
+const OBJECT_SPREAD_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/objectSpread2",
+    "@babel/runtime/helpers/esm/objectSpread2",
+    "@babel/runtime/helpers/objectSpread",
+    "@babel/runtime/helpers/esm/objectSpread",
+];
+
+const SLICED_TO_ARRAY_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/slicedToArray",
+    "@babel/runtime/helpers/esm/slicedToArray",
 ];
 
 /// Scan module-level declarations for helper functions.
@@ -137,6 +163,18 @@ fn detect_helper_from_require(expr: &Expr) -> Option<BabelHelperKind> {
     }
     if INTEROP_WILDCARD_PATHS.contains(&path) {
         return Some(BabelHelperKind::InteropRequireWildcard);
+    }
+    if TO_CONSUMABLE_ARRAY_PATHS.contains(&path) {
+        return Some(BabelHelperKind::ToConsumableArray);
+    }
+    if EXTENDS_PATHS.contains(&path) {
+        return Some(BabelHelperKind::Extends);
+    }
+    if OBJECT_SPREAD_PATHS.contains(&path) {
+        return Some(BabelHelperKind::ObjectSpread);
+    }
+    if SLICED_TO_ARRAY_PATHS.contains(&path) {
+        return Some(BabelHelperKind::SlicedToArray);
     }
     None
 }
