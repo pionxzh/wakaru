@@ -145,7 +145,6 @@ pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
     module.visit_mut_with(&mut UnObjectSpread);
     module.visit_mut_with(&mut UnSlicedToArray);
     module.visit_mut_with(&mut UnTemplateLiteral);
-    module.visit_mut_with(&mut UnReturn);
     module.visit_mut_with(&mut UnUseStrict);
     module.visit_mut_with(&mut UnWhileLoop);
     module.visit_mut_with(&mut UnCurlyBraces);
@@ -185,4 +184,7 @@ pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
     // Second UnIife pass: simplify any (() => expr)() patterns created by SmartInline inlining
     module.visit_mut_with(&mut UnIife);
     module.visit_mut_with(&mut SmartRename);
+    // UnReturn runs last: no downstream rule needs tail `return undefined`, and earlier
+    // rules (UnConditionals, SmartInline, etc.) can introduce new ones during restructuring.
+    module.visit_mut_with(&mut UnReturn);
 }
