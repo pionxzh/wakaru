@@ -155,7 +155,10 @@ fn extract_wildcard_require(
     Some(source.clone())
 }
 
-/// Unwrap remaining wildcard calls in non-var-decl contexts.
+/// Unwrap remaining wildcard calls in non-var-decl contexts,
+/// but only when the argument is a `require()` call.
+/// Non-require arguments are left as-is because the helper synthesizes
+/// a namespace object that may differ from the raw expression value.
 struct WildcardCallUnwrapper<'a> {
     helpers: &'a HashMap<BindingKey, BabelHelperKind>,
 }
@@ -176,6 +179,16 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
             return;
         }
 
-        *expr = *call.args[0].expr.clone();
+        // Only unwrap when the first arg is require("...")
+        if is_require_call(&call.args[0].expr) {
+            *expr = *call.args[0].expr.clone();
+        }
     }
+}
+
+fn is_require_call(expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else { return false };
+    let Callee::Expr(callee) = &call.callee else { return false };
+    let Expr::Ident(id) = callee.as_ref() else { return false };
+    id.sym.as_ref() == "require" && call.args.len() == 1
 }

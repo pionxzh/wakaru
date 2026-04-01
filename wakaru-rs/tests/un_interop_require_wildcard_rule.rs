@@ -26,6 +26,18 @@ import * as _b from "b";
 }
 
 #[test]
+fn preserves_wildcard_for_non_require_args() {
+    let input = r#"
+var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
+var ns = _interopRequireWildcard(factory());
+console.log(ns.default);
+"#;
+    let output = render(input);
+    // Non-require arg must NOT be unwrapped — helper synthesizes namespace object
+    assert!(output.contains(".default"), "should preserve .default for non-require wrapped binding");
+}
+
+#[test]
 fn removes_wildcard_helper_declaration() {
     let input = r#"
 var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");

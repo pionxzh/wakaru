@@ -136,6 +136,21 @@ var _a = notAHelper(require("a"));
 }
 
 #[test]
+fn skips_default_rewrite_for_reassigned_binding() {
+    let input = r#"
+function _interopRequireDefault(obj) {
+    return obj && obj.__esModule ? obj : { default: obj };
+}
+var _a = _interopRequireDefault(require("a"));
+_a = other;
+console.log(_a.default);
+"#;
+    let output = render(input);
+    // _a is reassigned, so _a.default must NOT be rewritten to _a
+    assert!(output.contains(".default"), "should preserve .default for reassigned binding");
+}
+
+#[test]
 fn handles_require_default_import_path() {
     // var _ird = require("@babel/runtime/helpers/interopRequireDefault").default
     let input = r#"

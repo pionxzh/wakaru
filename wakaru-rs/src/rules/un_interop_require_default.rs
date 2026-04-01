@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::ecma::ast::{
-    Callee, Expr, Lit, MemberProp, Module, Pat, VarDeclarator,
+    AssignTarget, Callee, Expr, Lit, MemberProp, Module, Pat, SimpleAssignTarget, VarDeclarator,
 };
-use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
     collect_helpers, remove_helper_declarations, BabelHelperKind, BindingKey,
@@ -41,7 +41,19 @@ impl VisitMut for UnInteropRequireDefault {
         let mut call_unwrapper = CallUnwrapper { helpers: &helpers };
         module.visit_mut_with(&mut call_unwrapper);
 
-        // Phase 2b: Rewrite `.default` member access on affected bindings.
+        // Phase 2b: Rewrite `.default` member access on affected bindings,
+        //           but only if the binding is never reassigned.
+        if !affected_bindings.is_empty() {
+            let mut reassigned = HashSet::new();
+            let mut checker = ReassignmentChecker {
+                candidates: &affected_bindings,
+                reassigned: &mut reassigned,
+            };
+            module.visit_with(&mut checker);
+            for key in &reassigned {
+                affected_bindings.remove(key);
+            }
+        }
         if !affected_bindings.is_empty() {
             let mut ref_rewriter = DefaultRefRewriter {
                 affected: &affected_bindings,
@@ -128,6 +140,30 @@ fn extract_helper_call_arg(
         return None;
     }
     Some(*call.args[0].expr.clone())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2b (pre): Check for reassignment of affected bindings
+// ---------------------------------------------------------------------------
+
+struct ReassignmentChecker<'a> {
+    candidates: &'a HashSet<BindingKey>,
+    reassigned: &'a mut HashSet<BindingKey>,
+}
+
+impl Visit for ReassignmentChecker<'_> {
+    fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
+        match &assign.left {
+            AssignTarget::Simple(SimpleAssignTarget::Ident(id)) => {
+                let key = (id.id.sym.clone(), id.id.ctxt);
+                if self.candidates.contains(&key) {
+                    self.reassigned.insert(key);
+                }
+            }
+            _ => {}
+        }
+        assign.visit_children_with(self);
+    }
 }
 
 // ---------------------------------------------------------------------------
