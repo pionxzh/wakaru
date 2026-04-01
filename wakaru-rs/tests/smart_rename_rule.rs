@@ -160,6 +160,118 @@ const buttonRef = o.useRef(null);
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn object_destructuring_in_function_body() {
+    let input = r#"
+function f() {
+    let { line: z, col: Y } = pos;
+    console.log(z, Y);
+}
+"#;
+    let expected = r#"
+function f() {
+    let { line, col } = pos;
+    console.log(line, col);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn object_destructuring_in_class_method_body() {
+    let input = r#"
+class Foo {
+    bar() {
+        let { task: _ } = result;
+        return _.id;
+    }
+}
+"#;
+    let expected = r#"
+class Foo {
+    bar() {
+        let { task } = result;
+        return task.id;
+    }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn member_init_rename_basic() {
+    // var w = zw.NOT_APPLICABLE → rename w to zw_NOT_APPLICABLE
+    let input = r#"
+let w = zw.NOT_APPLICABLE;
+console.log(w);
+"#;
+    let expected = r#"
+let zw_NOT_APPLICABLE = zw.NOT_APPLICABLE;
+console.log(zw_NOT_APPLICABLE);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn member_init_rename_short_obj() {
+    // var z = q.length → rename z to q_length
+    let input = r#"
+const z = q.length;
+while (z > 0) {}
+"#;
+    let expected = r#"
+const q_length = q.length;
+while (q_length > 0) {}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn member_init_rename_skips_long_names() {
+    // Long variable names aren't minified, don't rename
+    let input = r#"
+const myVar = obj.prop;
+"#;
+    let output = apply(input);
+    assert!(output.contains("myVar"), "should not rename long names");
+}
+
+#[test]
+fn member_init_rename_skips_both_short() {
+    // Both obj and prop are short — combined name wouldn't help
+    let input = r#"
+const x = q.y;
+"#;
+    let output = apply(input);
+    assert!(output.contains("const x"), "should not rename when both obj and prop are short");
+}
+
+#[test]
+fn member_init_rename_in_function_body() {
+    let input = r#"
+function f() {
+    let _ = nodes.length;
+    while (_ > 0) {
+        _--;
+    }
+}
+"#;
+    let expected = r#"
+function f() {
+    let nodes_length = nodes.length;
+    while (nodes_length > 0) {
+        nodes_length--;
+    }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
 // --- known-broken semantic regressions ---
 
 #[test]

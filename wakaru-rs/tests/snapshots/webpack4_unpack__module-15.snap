@@ -12,38 +12,38 @@ export const a = (e, t = {}, n)=>{
         };
     }
     const r = t;
-    const { path: u, exact: l } = r;
-    const c = l !== undefined && l;
-    const s = r.strict;
-    const f = s !== undefined && s;
-    const d = r.sensitive;
-    const p = d !== undefined && d;
-    if (u == null) {
+    const { path, exact } = r;
+    const c = exact !== undefined && exact;
+    const r_strict = r.strict;
+    const f = r_strict !== undefined && r_strict;
+    const r_sensitive = r.sensitive;
+    const p = r_sensitive !== undefined && r_sensitive;
+    if (path == null) {
         return n;
     }
-    const h = ((e, t)=>{
+    const h = ((path, t)=>{
         const n = `${t.end}${t.strict}${t.sensitive}`;
         const r = i[n] || (i[n] = {});
-        if (r[e]) {
-            return r[e];
+        if (r[path]) {
+            return r[path];
         }
         const u = [];
         const l = {
-            re: r(e, u, t),
+            re: r(path, u, t),
             keys: u
         };
         if (a < 10000) {
-            r[e] = l;
+            r[path] = l;
             a++;
         }
         return l;
-    })(u, {
+    })(path, {
         end: c,
         strict: f,
         sensitive: p
     });
-    const { re: m, keys: y } = h;
-    const v = m.exec(e);
+    const { re, keys } = h;
+    const v = re.exec(e);
     if (!v) {
         return null;
     }
@@ -54,10 +54,10 @@ export const a = (e, t = {}, n)=>{
         return null;
     }
     return {
-        path: u,
-        url: u === "/" && b === "" ? "/" : b,
+        path,
+        url: path === "/" && b === "" ? "/" : b,
         isExact: w,
-        params: y.reduce((e, t, n)=>{
+        params: keys.reduce((e, t, n)=>{
             e[t.name] = g[n];
             return e;
         }, {})

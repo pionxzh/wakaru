@@ -16,17 +16,20 @@ impl VisitMut for SmartRename {
     fn visit_mut_module(&mut self, module: &mut Module) {
         react_rename_module(module);
         destructuring_rename_module(module);
+        member_init_rename_module(module);
         module.visit_mut_children_with(self);
     }
 
     fn visit_mut_function(&mut self, func: &mut Function) {
         react_rename_function_body(func);
         destructuring_rename_function(func);
+        member_init_rename_function(func);
         func.visit_mut_children_with(self);
     }
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         destructuring_rename_arrow(arrow);
+        member_init_rename_arrow(arrow);
         arrow.visit_mut_children_with(self);
     }
 }
@@ -262,7 +265,12 @@ fn destructuring_rename_function(func: &mut Function) {
     for p in &func.params {
         collect_names_in_pat(&p.pat, &mut all_names);
     }
-    let renames = collect_obj_pat_renames_from_params(&func.params, &all_names);
+
+    // Collect renames from both params and body VarDecls
+    let mut renames = collect_obj_pat_renames_from_params(&func.params, &all_names);
+    let body_renames = collect_obj_pat_renames_from_stmts(&body.stmts, &all_names);
+    renames.extend(body_renames);
+
     if renames.is_empty() {
         return;
     }
@@ -274,6 +282,9 @@ fn destructuring_rename_function(func: &mut Function) {
     func.params
         .iter_mut()
         .for_each(|p| p.visit_mut_with(&mut shorthand));
+    if let Some(body) = &mut func.body {
+        body.visit_mut_with(&mut shorthand);
+    }
 }
 
 fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
@@ -285,13 +296,19 @@ fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
             names
         }
     };
-    let renames = collect_obj_pat_renames_from_pats(&arrow.params, &all_names);
+    let mut renames = collect_obj_pat_renames_from_pats(&arrow.params, &all_names);
+    if let BlockStmtOrExpr::BlockStmt(b) = arrow.body.as_ref() {
+        renames.extend(collect_obj_pat_renames_from_stmts(&b.stmts, &all_names));
+    }
     if renames.is_empty() {
         return;
     }
     rename_bindings(&mut arrow.params, &renames);
     match arrow.body.as_mut() {
-        BlockStmtOrExpr::BlockStmt(block) => rename_bindings(&mut block.stmts, &renames),
+        BlockStmtOrExpr::BlockStmt(block) => {
+            rename_bindings(&mut block.stmts, &renames);
+            block.visit_mut_with(&mut ObjectPatShorthandConverter);
+        }
         BlockStmtOrExpr::Expr(expr) => rename_bindings(expr, &renames),
     }
     let mut shorthand = ObjectPatShorthandConverter;
@@ -337,6 +354,21 @@ fn collect_obj_pat_renames_from_params(
     let mut used_names = all_names.clone();
     for p in params {
         collect_obj_pat_renames_from_pat(&p.pat, &mut renames, &mut used_names);
+    }
+    renames
+}
+
+fn collect_obj_pat_renames_from_stmts(
+    stmts: &[Stmt],
+    all_names: &HashSet<String>,
+) -> Vec<BindingRename> {
+    let mut renames = Vec::new();
+    let mut used_names = all_names.clone();
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else { continue };
+        for decl in &var.decls {
+            collect_obj_pat_renames_from_pat(&decl.name, &mut renames, &mut used_names);
+        }
     }
     renames
 }
@@ -537,6 +569,122 @@ impl VisitMut for ObjectPatShorthandConverter {
             })
             .collect();
         obj.props = new_props;
+    }
+}
+
+// ============================================================
+// Member-init renames: var x = obj.prop → rename x to obj_prop
+// ============================================================
+
+fn member_init_rename_module(module: &mut Module) {
+    let all_names = collect_names_in_module(&module.body);
+    let renames = collect_member_init_renames_from_module(&module.body, &all_names);
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings_in_module(module, &renames);
+}
+
+fn member_init_rename_function(func: &mut Function) {
+    let Some(body) = &mut func.body else { return };
+    let mut all_names = collect_names_in_stmts(&body.stmts);
+    for p in &func.params {
+        collect_names_in_pat(&p.pat, &mut all_names);
+    }
+    let renames = collect_member_init_renames_from_stmts(&body.stmts, &all_names);
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings(&mut body.stmts, &renames);
+}
+
+fn member_init_rename_arrow(arrow: &mut ArrowExpr) {
+    let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_mut() else {
+        return;
+    };
+    let all_names = collect_names_in_stmts(&block.stmts);
+    let renames = collect_member_init_renames_from_stmts(&block.stmts, &all_names);
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings(&mut block.stmts, &renames);
+}
+
+fn collect_member_init_renames_from_module(
+    body: &[ModuleItem],
+    all_names: &HashSet<String>,
+) -> Vec<BindingRename> {
+    let mut renames = Vec::new();
+    let mut used_names = all_names.clone();
+    for item in body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        collect_member_init_var_renames(var, &mut renames, &mut used_names);
+    }
+    renames
+}
+
+fn collect_member_init_renames_from_stmts(
+    stmts: &[Stmt],
+    all_names: &HashSet<String>,
+) -> Vec<BindingRename> {
+    let mut renames = Vec::new();
+    let mut used_names = all_names.clone();
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else { continue };
+        collect_member_init_var_renames(var, &mut renames, &mut used_names);
+    }
+    renames
+}
+
+fn collect_member_init_var_renames(
+    var: &VarDecl,
+    renames: &mut Vec<BindingRename>,
+    used_names: &mut HashSet<String>,
+) {
+    for decl in &var.decls {
+        let Pat::Ident(bi) = &decl.name else { continue };
+        let Some(init) = &decl.init else { continue };
+        let old_name = bi.id.sym.to_string();
+
+        // Only rename short (minified) names
+        if old_name.chars().count() > REACT_MINIFIED_THRESHOLD {
+            continue;
+        }
+
+        // Match: var x = obj.prop
+        let Expr::Member(member) = init.as_ref() else { continue };
+        let MemberProp::Ident(prop) = &member.prop else { continue };
+        let prop_name = prop.sym.to_string();
+
+        // Build new name: obj_prop
+        let new_name = if let Expr::Ident(obj) = member.obj.as_ref() {
+            let obj_name = obj.sym.to_string();
+            // Skip if both obj and prop are short — the combined name wouldn't help
+            if obj_name.chars().count() <= REACT_MINIFIED_THRESHOLD
+                && prop_name.chars().count() <= REACT_MINIFIED_THRESHOLD
+            {
+                continue;
+            }
+            format!("{}_{}", obj_name, prop_name)
+        } else {
+            // Non-ident obj (e.g. call().prop) — skip if prop is too short
+            if prop_name.chars().count() <= REACT_MINIFIED_THRESHOLD {
+                continue;
+            }
+            prop_name.clone()
+        };
+
+        let new_name = find_non_conflicting_name(&new_name, used_names);
+        if new_name == old_name {
+            continue;
+        }
+        used_names.insert(new_name.clone());
+        renames.push(BindingRename {
+            old: (bi.id.sym.clone(), bi.id.ctxt),
+            new: new_name.as_str().into(),
+        });
     }
 }
 

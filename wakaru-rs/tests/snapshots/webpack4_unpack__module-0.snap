@@ -12,8 +12,7 @@ export { p as r };
 export { h as u };
 export { m as o };
 export { y as h };
-export { w as v };
-export { E as w };
+export { E as v };
 export { x as f };
 export { k as l };
 export { S as m };
@@ -57,9 +56,9 @@ function y(e, t, n) {
         throw new Error(n);
     }
 }
-const v = Object.prototype.hasOwnProperty;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
 function b(e, t) {
-    return q.notUndef(e) && v.call(e, t);
+    return q.notUndef(e) && hasOwnProperty.call(e, t);
 }
 export const q = {
     undef (e) {
@@ -115,7 +114,7 @@ export const q = {
         return q.func(e) && b(e, "toString");
     }
 };
-const w = {
+export const v = {
     assign (e, t) {
         for(const n in t){
             if (b(t, n)) {

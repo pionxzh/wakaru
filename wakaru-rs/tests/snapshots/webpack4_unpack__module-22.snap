@@ -95,14 +95,14 @@ const y = (e)=>({
 function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymous", w) {
     o.h(e, o.q.iterator, f);
     const E = o.n(z, o.z("[...effects]", "all([...effects])"));
-    const { sagaMonitor: x, logger: k, onError: T } = h;
-    const S = k || o.s;
+    const { sagaMonitor, logger, onError } = h;
+    const S = logger || o.s;
     const O = (e)=>{
-        let t = e.sagaStack;
-        if (!t && e.stack) {
-            t = -1 !== e.stack.split("\n")[0].indexOf(e.message) ? e.stack : `Error: ${e.message}\n${e.stack}`;
+        let e_sagaStack = e.sagaStack;
+        if (!e_sagaStack && e.stack) {
+            e_sagaStack = -1 !== e.stack.split("\n")[0].indexOf(e.message) ? e.stack : `Error: ${e.message}\n${e.stack}`;
         }
-        S("error", `uncaught at ${g}`, t || e.message || e);
+        S("error", `uncaught at ${g}`, e_sagaStack || e.message || e);
     };
     const C = i.f(t);
     const P = Object.create(s);
@@ -268,7 +268,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                     configurable: true
                 });
             }
-            _.cont || (t instanceof Error && T ? T(t) : O(t));
+            _.cont || (t instanceof Error && onError ? onError(t) : O(t));
             e._error = t;
             e._isAborted = true;
             if (e._deferredEnd) {
@@ -288,8 +288,8 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
     }
     function L(e, s, f = "", h) {
         const v = o.y();
-        if (x) {
-            x.effectTriggered({
+        if (sagaMonitor) {
+            sagaMonitor.effectTriggered({
                 effectId: v,
                 parentEffectId: s,
                 label: f,
@@ -301,7 +301,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             if (!b) {
                 b = true;
                 h.cancel = o.u;
-                x && (t ? x.effectRejected(v, e) : x.effectResolved(v, e));
+                sagaMonitor && (t ? sagaMonitor.effectRejected(v, e) : sagaMonitor.effectResolved(v, e));
                 h(e, t);
             }
         }
@@ -315,8 +315,8 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                     O(e);
                 }
                 w.cancel = o.u;
-                if (x) {
-                    x.effectCancelled(v);
+                if (sagaMonitor) {
+                    sagaMonitor.effectCancelled(v);
                 }
             }
         };
@@ -335,20 +335,20 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         }
         if (k = u.d.take(e)) {
             return ((e, t)=>{
-                let n = e.channel;
-                const { pattern: r, maybe: o } = e;
-                n = n || C;
+                let e_channel = e.channel;
+                const { pattern, maybe } = e;
+                e_channel = e_channel || C;
                 const a = (e)=>{
                     if (e instanceof Error) {
                         return t(e, true);
                     }
-                    if (i.e(e) && !o) {
+                    if (i.e(e) && !maybe) {
                         return t(d);
                     }
                     return t(e);
                 };
                 try {
-                    n.take(a, m(r));
+                    e_channel.take(a, m(pattern));
                 } catch (e) {
                     return t(e, true);
                 }
@@ -357,18 +357,18 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         }
         if (k = u.d.put(e)) {
             return ((e, t)=>{
-                const { channel: r, action: i, resolve: u } = e;
+                const { channel, action, resolve } = e;
                 a.a(()=>{
                     let e = undefined;
                     try {
-                        e = (r ? r.put : n)(i);
+                        e = (channel ? channel.put : n)(action);
                     } catch (e) {
-                        if (r || u) {
+                        if (channel || resolve) {
                             return t(e, true);
                         }
                         O(e);
                     }
-                    if (!u || !o.q.promise(e)) {
+                    if (!resolve || !o.q.promise(e)) {
                         return t(e);
                     }
                     I(e, t);
@@ -420,10 +420,10 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         }
         if (k = u.d.call(e)) {
             return ((e, t, n)=>{
-                const { context: r, fn: i, args: a } = e;
+                const { context, fn, args } = e;
                 let u = undefined;
                 try {
-                    u = i.apply(r, a);
+                    u = fn.apply(context, args);
                 } catch (e) {
                     return n(e, true);
                 }
@@ -431,14 +431,14 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                     return I(u, n);
                 }
                 if (o.q.iterator(u)) {
-                    return D(u, t, i.name, n);
+                    return D(u, t, fn.name, n);
                 }
                 return n(u);
             })(k, v, w);
         }
         if (k = u.d.cps(e)) {
             return ((e, t)=>{
-                const { context: n, fn: r, args: i } = e;
+                const { context, fn, args } = e;
                 try {
                     const a = (e, n)=>{
                         if (o.q.undef(e)) {
@@ -446,7 +446,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                         }
                         return t(e, true);
                     };
-                    r.apply(n, i.concat(a));
+                    fn.apply(context, args.concat(a));
                     if (a.cancel) {
                         t.cancel = ()=>a.cancel();
                     }
@@ -489,11 +489,11 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         }
         if (k = u.d.select(e)) {
             return ((e, t)=>{
-                const { selector: n, args: o } = e;
+                const { selector, args } = e;
                 try {
-                    const i = n(...[
+                    const i = selector(...[
                         r()
-                    ].concat(o));
+                    ].concat(args));
                     t(i);
                 } catch (e) {
                     t(e, true);
@@ -502,10 +502,10 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         }
         if (k = u.d.actionChannel(e)) {
             return ((e, n)=>{
-                const { pattern: r, buffer: o } = e;
-                const a = m(r);
-                a.pattern = r;
-                n(i.d(t, o || l.a.fixed(), a));
+                const { pattern, buffer } = e;
+                const a = m(pattern);
+                a.pattern = pattern;
+                n(i.d(t, buffer || l.a.fixed(), a));
             })(k, w);
         }
         if (k = u.d.flush(e)) {
@@ -545,16 +545,16 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         v(e, t, n, r, P, h, o, i, a);
     }
     function F(e, i, u) {
-        const { context: l, fn: c, args: s, detached: f } = e;
+        const { context, fn, args, detached } = e;
         const d = ((e)=>{
-            const { context: t, fn: n, args: r } = e;
-            if (o.q.iterator(n)) {
-                return n;
+            const { context, fn, args } = e;
+            if (o.q.iterator(fn)) {
+                return fn;
             }
             let i = undefined;
             let a = undefined;
             try {
-                i = n.apply(t, r);
+                i = fn.apply(context, args);
             } catch (e) {
                 a = e;
             }
@@ -584,14 +584,14 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                 };
             })());
         })({
-            context: l,
-            fn: c,
-            args: s
+            context,
+            fn,
+            args
         });
         try {
             a.c();
-            const p = v(d, t, n, r, P, h, i, c.name, f ? null : o.u);
-            if (f) {
+            const p = v(d, t, n, r, P, h, i, fn.name, detached ? null : o.u);
+            if (detached) {
                 u(p);
             } else if (d._isRunning) {
                 R.addTask(p);
@@ -646,15 +646,15 @@ export function runSaga(e, t) {
         a = t(...r);
         o.h(a, o.q.iterator, b);
     }
-    const { subscribe: l, dispatch: c, getState: s, context: f, sagaMonitor: d, logger: p, onError: h } = e;
+    const { subscribe, dispatch, getState, context, sagaMonitor, logger, onError } = e;
     const m = o.y();
-    if (d) {
-        d.effectTriggered = d.effectTriggered || o.u;
-        d.effectResolved = d.effectResolved || o.u;
-        d.effectRejected = d.effectRejected || o.u;
-        d.effectCancelled = d.effectCancelled || o.u;
-        d.actionDispatched = d.actionDispatched || o.u;
-        d.effectTriggered({
+    if (sagaMonitor) {
+        sagaMonitor.effectTriggered = sagaMonitor.effectTriggered || o.u;
+        sagaMonitor.effectResolved = sagaMonitor.effectResolved || o.u;
+        sagaMonitor.effectRejected = sagaMonitor.effectRejected || o.u;
+        sagaMonitor.effectCancelled = sagaMonitor.effectCancelled || o.u;
+        sagaMonitor.actionDispatched = sagaMonitor.actionDispatched || o.u;
+        sagaMonitor.effectTriggered({
             effectId: m,
             root: true,
             parentEffectId: 0,
@@ -665,13 +665,13 @@ export function runSaga(e, t) {
             }
         });
     }
-    const y = v(a, l, o.A(c), s, f, {
-        sagaMonitor: d,
-        logger: p,
-        onError: h
+    const y = v(a, subscribe, o.A(dispatch), getState, context, {
+        sagaMonitor,
+        logger,
+        onError
     }, m, t.name);
-    if (d) {
-        d.effectResolved(m, y);
+    if (sagaMonitor) {
+        sagaMonitor.effectResolved(m, y);
     }
     return y;
 }
@@ -687,8 +687,8 @@ export const CANCEL = o.a;
 export const detach = u.i;
 export { E as effects };
 export default ((e = {})=>{
-    const t = e.context;
-    const n = t === undefined ? {} : t;
+    const e_context = e.context;
+    const n = e_context === undefined ? {} : e_context;
     const r = ((e, t)=>{
         const n = {};
         for(const r in e){
@@ -698,35 +698,35 @@ export default ((e = {})=>{
     })(e, [
         "context"
     ]);
-    const { sagaMonitor: a, logger: u, onError: l } = r;
+    const { sagaMonitor, logger, onError } = r;
     if (o.q.func(r)) {
         throw new Error("Saga middleware no longer accept Generator functions. Use sagaMiddleware.run instead");
     }
-    if (u && !o.q.func(u)) {
+    if (logger && !o.q.func(logger)) {
         throw new Error("`options.logger` passed to the Saga middleware is not a function!");
     }
-    if (l && !o.q.func(l)) {
+    if (onError && !o.q.func(onError)) {
         throw new Error("`options.onError` passed to the Saga middleware is not a function!");
     }
     if (r.emitter && !o.q.func(r.emitter)) {
         throw new Error("`options.emitter` passed to the Saga middleware is not a function!");
     }
     function c(e) {
-        const { getState: t, dispatch: s } = e;
+        const { getState, dispatch } = e;
         const f = i.c();
         f.emit = (r.emitter || o.o)(f.emit);
         c.run = runSaga.bind(null, {
             context: n,
             subscribe: f.subscribe,
-            dispatch: s,
-            getState: t,
-            sagaMonitor: a,
-            logger: u,
-            onError: l
+            dispatch,
+            getState,
+            sagaMonitor,
+            logger,
+            onError
         });
         return (e)=>(t)=>{
-                if (a && a.actionDispatched) {
-                    a.actionDispatched(t);
+                if (sagaMonitor && sagaMonitor.actionDispatched) {
+                    sagaMonitor.actionDispatched(t);
                 }
                 const n = e(t);
                 f.emit(t);

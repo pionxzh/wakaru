@@ -139,7 +139,7 @@ export function tokensToRegExp(e, t, n) {
         n = t || n;
         t = [];
     }
-    const o = (n = n || {}).strict;
+    const strict = (n = n || {}).strict;
     const i = n.end !== false;
     let a = "";
     for(let u = 0; u < e.length; u++){
@@ -158,10 +158,10 @@ export function tokensToRegExp(e, t, n) {
     }
     const h = c(n.delimiter || "/");
     const m = a.slice(-h.length) === h;
-    if (!o) {
+    if (!strict) {
         a = `${m ? a.slice(0, -h.length) : a}(?:${h}(?=\$))?`;
     }
-    a += i ? "$" : o && m ? "" : `(?=${h}|\$)`;
+    a += i ? "$" : strict && m ? "" : `(?=${h}|\$)`;
     return f(new RegExp(`^${a}`, d(n)), t);
 }
 function h(e, t, n) {

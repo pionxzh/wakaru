@@ -37,21 +37,21 @@ export function createProvider(e = "store") {
     const n = `${e}Subscription`;
     const r = ((t)=>{
         o(a, t);
-        const r = a.prototype;
+        const a_prototype = a.prototype;
         function a(n, r) {
             let o;
             o = t.call(this, n, r) || this;
             o[e] = n.store;
             return o;
         }
-        r.getChildContext = function() {
+        a_prototype.getChildContext = function() {
             let t;
             t = {};
             t[e] = this[e];
             t[n] = null;
             return t;
         };
-        r.render = function() {
+        a_prototype.render = function() {
             return i.Children.only(this.props.children);
         };
         return a;
@@ -164,18 +164,18 @@ export function connectAdvanced(e, t = {}) {
     let n;
     let r;
     const a = t;
-    const u = a.getDisplayName;
-    const l = u === undefined ? (e)=>`ConnectAdvanced(${e})` : u;
-    const f = a.methodName;
-    const d = f === undefined ? "connectAdvanced" : f;
-    const y = a.renderCountProp;
-    const b = y === undefined ? undefined : y;
-    const E = a.shouldHandleStateChanges;
-    const x = E === undefined || E;
-    const P = a.storeKey;
-    const _ = P === undefined ? "store" : P;
-    const j = a.withRef;
-    const R = j !== undefined && j;
+    const a_getDisplayName = a.getDisplayName;
+    const l = a_getDisplayName === undefined ? (e)=>`ConnectAdvanced(${e})` : a_getDisplayName;
+    const a_methodName = a.methodName;
+    const d = a_methodName === undefined ? "connectAdvanced" : a_methodName;
+    const a_renderCountProp = a.renderCountProp;
+    const b = a_renderCountProp === undefined ? undefined : a_renderCountProp;
+    const a_shouldHandleStateChanges = a.shouldHandleStateChanges;
+    const x = a_shouldHandleStateChanges === undefined || a_shouldHandleStateChanges;
+    const a_storeKey = a.storeKey;
+    const _ = a_storeKey === undefined ? "store" : a_storeKey;
+    const a_withRef = a.withRef;
+    const R = a_withRef !== undefined && a_withRef;
     const N = m(a, [
         "getDisplayName",
         "methodName",
@@ -224,15 +224,15 @@ export function connectAdvanced(e, t = {}) {
                 return o;
             }
             o(u, n);
-            const l = u.prototype;
-            l.getChildContext = function() {
+            const u_prototype = u.prototype;
+            u_prototype.getChildContext = function() {
                 let e;
                 const t = this.propsMode ? null : this.subscription;
                 e = {};
                 e[M] = t || this.context[M];
                 return e;
             };
-            l.componentDidMount = function() {
+            u_prototype.componentDidMount = function() {
                 if (x) {
                     this.subscription.trySubscribe();
                     this.selector.run(this.props);
@@ -241,13 +241,13 @@ export function connectAdvanced(e, t = {}) {
                     }
                 }
             };
-            l.componentWillReceiveProps = function(e) {
+            u_prototype.componentWillReceiveProps = function(e) {
                 this.selector.run(e);
             };
-            l.shouldComponentUpdate = function() {
+            u_prototype.shouldComponentUpdate = function() {
                 return this.selector.shouldComponentUpdate;
             };
-            l.componentWillUnmount = function() {
+            u_prototype.componentWillUnmount = function() {
                 if (this.subscription) {
                     this.subscription.tryUnsubscribe();
                 }
@@ -257,14 +257,14 @@ export function connectAdvanced(e, t = {}) {
                 this.selector.run = C;
                 this.selector.shouldComponentUpdate = false;
             };
-            l.getWrappedInstance = function() {
+            u_prototype.getWrappedInstance = function() {
                 b(R, `To access the wrapped instance, you need to specify { withRef: true } in the options argument of the ${d}() call.`);
                 return this.wrappedInstance;
             };
-            l.setWrappedInstance = function(e) {
+            u_prototype.setWrappedInstance = function(e) {
                 this.wrappedInstance = e;
             };
-            l.initSelector = function() {
+            u_prototype.initSelector = function() {
                 const t = e(this.store.dispatch, a);
                 this.selector = ((e, t)=>{
                     const n = {
@@ -286,14 +286,14 @@ export function connectAdvanced(e, t = {}) {
                 })(t, this.store);
                 this.selector.run(this.props);
             };
-            l.initSubscription = function() {
+            u_prototype.initSubscription = function() {
                 if (x) {
                     const e = (this.propsMode ? this.props : this.context)[M];
                     this.subscription = new k(this.store, e, this.onStateChange.bind(this));
                     this.notifyNestedSubs = this.subscription.notifyNestedSubs.bind(this.subscription);
                 }
             };
-            l.onStateChange = function() {
+            u_prototype.onStateChange = function() {
                 this.selector.run(this.props);
                 if (this.selector.shouldComponentUpdate) {
                     this.componentDidUpdate = this.notifyNestedSubsOnComponentDidUpdate;
@@ -302,14 +302,14 @@ export function connectAdvanced(e, t = {}) {
                     this.notifyNestedSubs();
                 }
             };
-            l.notifyNestedSubsOnComponentDidUpdate = function() {
+            u_prototype.notifyNestedSubsOnComponentDidUpdate = function() {
                 this.componentDidUpdate = undefined;
                 this.notifyNestedSubs();
             };
-            l.isSubscribed = function() {
+            u_prototype.isSubscribed = function() {
                 return Boolean(this.subscription) && this.subscription.isSubscribed();
             };
-            l.addExtraProps = function(e) {
+            u_prototype.addExtraProps = function(e) {
                 if (!(R || b || this.propsMode && this.subscription)) {
                     return e;
                 }
@@ -325,13 +325,13 @@ export function connectAdvanced(e, t = {}) {
                 }
                 return t;
             };
-            l.render = function() {
-                const e = this.selector;
-                e.shouldComponentUpdate = false;
-                if (e.error) {
-                    throw e.error;
+            u_prototype.render = function() {
+                const selector = this.selector;
+                selector.shouldComponentUpdate = false;
+                if (selector.error) {
+                    throw selector.error;
                 }
-                return <T1 {...this.addExtraProps(e.props)}/>;
+                return <T1 {...this.addExtraProps(selector.props)}/>;
             };
             return u;
         })(i.Component);
@@ -347,7 +347,7 @@ export function connectAdvanced(e, t = {}) {
         return y(u, T1);
     };
 }
-const _ = Object.prototype.hasOwnProperty;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
 function j(e, t) {
     if (e === t) {
         return e !== 0 || t !== 0 || 1 / e == 1 / t;
@@ -367,7 +367,7 @@ function R(e, t) {
         return false;
     }
     for(let o = 0; o < n.length; o++){
-        if (!_.call(t, n[o]) || !j(e[n[o]], t[n[o]])) {
+        if (!hasOwnProperty.call(t, n[o]) || !j(e[n[o]], t[n[o]])) {
             return false;
         }
     }
@@ -455,12 +455,12 @@ const z = [
             return ((e)=>(t, n)=>{
                     n.displayName;
                     let r;
-                    const { pure: o, areMergedPropsEqual: i } = n;
+                    const { pure, areMergedPropsEqual } = n;
                     let a = false;
                     return (t, n, u)=>{
                         const l = e(t, n, u);
                         if (a) {
-                            if (!(o && i(l, r))) {
+                            if (!(pure && areMergedPropsEqual(l, r))) {
                                 r = l;
                             }
                         } else {
@@ -488,11 +488,11 @@ function U(e, t, n, r, o) {
     let u;
     let l;
     let c;
-    const { areStatesEqual: s, areOwnPropsEqual: f, areStatePropsEqual: d } = o;
+    const { areStatesEqual, areOwnPropsEqual, areStatePropsEqual } = o;
     let p = false;
     function h(o, p) {
-        const h = !f(p, a);
-        const m = !s(o, i);
+        const h = !areOwnPropsEqual(p, a);
+        const m = !areStatesEqual(o, i);
         i = o;
         a = p;
         if (h && m) {
@@ -514,7 +514,7 @@ function U(e, t, n, r, o) {
         if (m) {
             return (()=>{
                 const t = e(i, a);
-                const r = !d(t, u);
+                const r = !areStatePropsEqual(t, u);
                 u = t;
                 if (r) {
                     c = n(u, l, a);
@@ -538,15 +538,15 @@ function U(e, t, n, r, o) {
     };
 }
 function H(e, t) {
-    const { initMapStateToProps: n, initMapDispatchToProps: r, initMergeProps: o } = t;
+    const { initMapStateToProps, initMapDispatchToProps, initMergeProps } = t;
     const i = m(t, [
         "initMapStateToProps",
         "initMapDispatchToProps",
         "initMergeProps"
     ]);
-    const a = n(e, i);
-    const u = r(e, i);
-    const l = o(e, i);
+    const a = initMapStateToProps(e, i);
+    const u = initMapDispatchToProps(e, i);
+    const l = initMergeProps(e, i);
     return (i.pure ? U : q)(a, u, l, e, i);
 }
 function W(e, t, n) {
@@ -565,28 +565,28 @@ function $(e, t) {
 }
 export const connect = ((e)=>{
     const t = e === undefined ? {} : e;
-    const n = t.connectHOC;
-    const r = n === undefined ? connectAdvanced : n;
-    const o = t.mapStateToPropsFactories;
-    const i = o === undefined ? D : o;
-    const a = t.mapDispatchToPropsFactories;
-    const u = a === undefined ? I : a;
-    const l = t.mergePropsFactories;
-    const c = l === undefined ? z : l;
-    const s = t.selectorFactory;
-    const f = s === undefined ? H : s;
+    const t_connectHOC = t.connectHOC;
+    const r = t_connectHOC === undefined ? connectAdvanced : t_connectHOC;
+    const t_mapStateToPropsFactories = t.mapStateToPropsFactories;
+    const i = t_mapStateToPropsFactories === undefined ? D : t_mapStateToPropsFactories;
+    const t_mapDispatchToPropsFactories = t.mapDispatchToPropsFactories;
+    const u = t_mapDispatchToPropsFactories === undefined ? I : t_mapDispatchToPropsFactories;
+    const t_mergePropsFactories = t.mergePropsFactories;
+    const c = t_mergePropsFactories === undefined ? z : t_mergePropsFactories;
+    const t_selectorFactory = t.selectorFactory;
+    const f = t_selectorFactory === undefined ? H : t_selectorFactory;
     return (e, t, n, o = {})=>{
         const a = o;
-        const l = a.pure;
-        const s = l === undefined || l;
-        const d = a.areStatesEqual;
-        const p = d === undefined ? $ : d;
-        const y = a.areOwnPropsEqual;
-        const v = y === undefined ? R : y;
-        const b = a.areStatePropsEqual;
-        const g = b === undefined ? R : b;
-        const w = a.areMergedPropsEqual;
-        const E = w === undefined ? R : w;
+        const a_pure = a.pure;
+        const s = a_pure === undefined || a_pure;
+        const a_areStatesEqual = a.areStatesEqual;
+        const p = a_areStatesEqual === undefined ? $ : a_areStatesEqual;
+        const a_areOwnPropsEqual = a.areOwnPropsEqual;
+        const v = a_areOwnPropsEqual === undefined ? R : a_areOwnPropsEqual;
+        const a_areStatePropsEqual = a.areStatePropsEqual;
+        const g = a_areStatePropsEqual === undefined ? R : a_areStatePropsEqual;
+        const a_areMergedPropsEqual = a.areMergedPropsEqual;
+        const E = a_areMergedPropsEqual === undefined ? R : a_areMergedPropsEqual;
         const x = m(a, [
             "pure",
             "areStatesEqual",

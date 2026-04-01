@@ -148,13 +148,13 @@ export function parsePath(e) {
     };
 }
 export function createPath(e) {
-    const { pathname: t, search: n, hash: r } = e;
-    let o = t || "/";
-    if (n && n !== "?") {
-        o += n.charAt(0) === "?" ? n : `?${n}`;
+    const { pathname, search, hash } = e;
+    let o = pathname || "/";
+    if (search && search !== "?") {
+        o += search.charAt(0) === "?" ? search : `?${search}`;
     }
-    if (r && r !== "#") {
-        o += r.charAt(0) === "#" ? r : `#${r}`;
+    if (hash && hash !== "#") {
+        o += hash.charAt(0) === "#" ? hash : `#${hash}`;
     }
     return o;
 }
@@ -258,29 +258,29 @@ export function createBrowserHistory(e = {}) {
     if (!E) {
         f(false);
     }
-    const t = window.history;
+    const window_history = window.history;
     const n = (()=>{
-        const e = window.navigator.userAgent;
-        return (-1 === e.indexOf("Android 2.") && -1 === e.indexOf("Android 4.0") || -1 === e.indexOf("Mobile Safari") || -1 !== e.indexOf("Chrome") || -1 !== e.indexOf("Windows Phone")) && window.history && "pushState" in window.history;
+        const userAgent = window.navigator.userAgent;
+        return (-1 === userAgent.indexOf("Android 2.") && -1 === userAgent.indexOf("Android 4.0") || -1 === userAgent.indexOf("Mobile Safari") || -1 !== userAgent.indexOf("Chrome") || -1 !== userAgent.indexOf("Windows Phone")) && window.history && "pushState" in window.history;
     })();
     const o = !(-1 === window.navigator.userAgent.indexOf("Trident"));
     const i = e;
-    const a = i.forceRefresh;
-    const u = a !== undefined && a;
-    const l = i.getUserConfirmation;
-    const c = l === undefined ? x : l;
-    const s = i.keyLength;
-    const p = s === undefined ? 6 : s;
+    const i_forceRefresh = i.forceRefresh;
+    const u = i_forceRefresh !== undefined && i_forceRefresh;
+    const i_getUserConfirmation = i.getUserConfirmation;
+    const c = i_getUserConfirmation === undefined ? x : i_getUserConfirmation;
+    const i_keyLength = i.keyLength;
+    const p = i_keyLength === undefined ? 6 : i_keyLength;
     const y = e.basename ? m(d(e.basename)) : "";
     function g(e) {
         const t = e || {};
-        const { key: n, state: r } = t;
-        const o = window.location;
-        let i = o.pathname + o.search + o.hash;
+        const { key, state } = t;
+        const window_location = window.location;
+        let i = window_location.pathname + window_location.search + window_location.hash;
         if (y) {
             i = h(i, y);
         }
-        return createLocation(i, r, n);
+        return createLocation(i, state, key);
     }
     function O() {
         return Math.random().toString(36).substr(2, p);
@@ -288,7 +288,7 @@ export function createBrowserHistory(e = {}) {
     const C = w();
     function P(e) {
         r.a(q, e);
-        q.length = t.length;
+        q.length = window_history.length;
         C.notifyListeners(q.location, q.action);
     }
     function _(e) {
@@ -313,8 +313,8 @@ export function createBrowserHistory(e = {}) {
                     });
                 } else {
                     ((e)=>{
-                        const t = q.location;
-                        let n = A.indexOf(t.key);
+                        const q_location = q.location;
+                        let n = A.indexOf(q_location.key);
                         if (-1 === n) {
                             n = 0;
                         }
@@ -340,7 +340,7 @@ export function createBrowserHistory(e = {}) {
         return y + createPath(e);
     }
     function I(e) {
-        t.go(e);
+        window_history.go(e);
     }
     let D = 0;
     function F(e) {
@@ -358,7 +358,7 @@ export function createBrowserHistory(e = {}) {
     }
     let z = false;
     const q = {
-        length: t.length,
+        length: window_history.length,
         action: "POP",
         location: M,
         createHref: L,
@@ -369,7 +369,7 @@ export function createBrowserHistory(e = {}) {
                     const r = L(o);
                     const { key: i, state: a } = o;
                     if (n) {
-                        t.pushState({
+                        window_history.pushState({
                             key: i,
                             state: a
                         }, null, r);
@@ -398,7 +398,7 @@ export function createBrowserHistory(e = {}) {
                     const r = L(o);
                     const { key: i, state: a } = o;
                     if (n) {
-                        t.replaceState({
+                        window_history.replaceState({
                             key: i,
                             state: a
                         }, null, r);
@@ -485,12 +485,12 @@ function _(e) {
     return e.slice(0, t);
 }
 function j() {
-    const e = window.location.href;
-    const t = e.indexOf("#");
+    const href = window.location.href;
+    const t = href.indexOf("#");
     if (-1 === t) {
         return "";
     }
-    return e.substring(t + 1);
+    return href.substring(t + 1);
 }
 function R(e) {
     window.location.replace(`${_(window.location.href)}#${e}`);
@@ -499,18 +499,18 @@ export function createHashHistory(e = {}) {
     if (!E) {
         f(false);
     }
-    const t = window.history;
+    const window_history = window.history;
     window.navigator.userAgent.indexOf("Firefox");
     const n = e;
-    const o = n.getUserConfirmation;
-    const i = o === undefined ? x : o;
-    const a = n.hashType;
-    const u = a === undefined ? "slash" : a;
+    const n_getUserConfirmation = n.getUserConfirmation;
+    const i = n_getUserConfirmation === undefined ? x : n_getUserConfirmation;
+    const n_hashType = n.hashType;
+    const u = n_hashType === undefined ? "slash" : n_hashType;
     const l = e.basename ? m(d(e.basename)) : "";
     const c = P[u];
-    const { encodePath: s, decodePath: p } = c;
+    const { encodePath, decodePath } = c;
     function y() {
-        let e = p(j());
+        let e = decodePath(j());
         if (l) {
             e = h(e, l);
         }
@@ -519,14 +519,14 @@ export function createHashHistory(e = {}) {
     const g = w();
     function k(e) {
         r.a(q, e);
-        q.length = t.length;
+        q.length = window_history.length;
         g.notifyListeners(q.location, q.action);
     }
     let T = false;
     let S = null;
     function O() {
         const e = j();
-        const t = s(e);
+        const t = encodePath(e);
         if (e !== t) {
             R(t);
         } else {
@@ -552,8 +552,8 @@ export function createHashHistory(e = {}) {
                             });
                         } else {
                             ((e)=>{
-                                const t = q.location;
-                                let n = L.lastIndexOf(createPath(t));
+                                const q_location = q.location;
+                                let n = L.lastIndexOf(createPath(q_location));
                                 if (-1 === n) {
                                     n = 0;
                                 }
@@ -574,7 +574,7 @@ export function createHashHistory(e = {}) {
         }
     }
     const N = j();
-    const M = s(N);
+    const M = encodePath(N);
     if (N !== M) {
         R(M);
     }
@@ -583,7 +583,7 @@ export function createHashHistory(e = {}) {
         createPath(A)
     ];
     function I(e) {
-        t.go(e);
+        window_history.go(e);
     }
     let D = 0;
     function F(e) {
@@ -595,7 +595,7 @@ export function createHashHistory(e = {}) {
     }
     let z = false;
     const q = {
-        length: t.length,
+        length: window_history.length,
         action: "POP",
         location: A,
         createHref (e) {
@@ -604,14 +604,14 @@ export function createHashHistory(e = {}) {
             if (t && t.getAttribute("href")) {
                 n = _(window.location.href);
             }
-            return `${n}#${s(l + createPath(e))}`;
+            return `${n}#${encodePath(l + createPath(e))}`;
         },
         push (e, t) {
             const n = createLocation(e, undefined, undefined, q.location);
             g.confirmTransitionTo(n, "PUSH", i, (e)=>{
                 if (e) {
                     const t = createPath(n);
-                    const r = s(l + t);
+                    const r = encodePath(l + t);
                     if (j() !== r) {
                         S = t;
                         ((e)=>{
@@ -636,7 +636,7 @@ export function createHashHistory(e = {}) {
             g.confirmTransitionTo(n, "REPLACE", i, (e)=>{
                 if (e) {
                     const t = createPath(n);
-                    const r = s(l + t);
+                    const r = encodePath(l + t);
                     if (j() !== r) {
                         S = t;
                         R(r);
@@ -689,14 +689,14 @@ function M(e, t, n) {
 }
 export function createMemoryHistory(e = {}) {
     const t = e;
-    const { getUserConfirmation: n, initialEntries: o } = t;
-    const i = o === undefined ? [
+    const { getUserConfirmation, initialEntries } = t;
+    const i = initialEntries === undefined ? [
         "/"
-    ] : o;
-    const a = t.initialIndex;
-    const u = a === undefined ? 0 : a;
-    const l = t.keyLength;
-    const c = l === undefined ? 6 : l;
+    ] : initialEntries;
+    const t_initialIndex = t.initialIndex;
+    const u = t_initialIndex === undefined ? 0 : t_initialIndex;
+    const t_keyLength = t.keyLength;
+    const c = t_keyLength === undefined ? 6 : t_keyLength;
     const s = w();
     function f(e) {
         r.a(g, e);
@@ -711,7 +711,7 @@ export function createMemoryHistory(e = {}) {
     function y(e) {
         const t = M(g.index + e, 0, g.entries.length - 1);
         const r = g.entries[t];
-        s.confirmTransitionTo(r, "POP", n, (e)=>{
+        s.confirmTransitionTo(r, "POP", getUserConfirmation, (e)=>{
             if (e) {
                 f({
                     action: "POP",
@@ -732,7 +732,7 @@ export function createMemoryHistory(e = {}) {
         createHref: createPath,
         push (e, t) {
             const r = createLocation(e, t, d(), g.location);
-            s.confirmTransitionTo(r, "PUSH", n, (e)=>{
+            s.confirmTransitionTo(r, "PUSH", getUserConfirmation, (e)=>{
                 if (e) {
                     const t = g.index + 1;
                     const n = g.entries.slice(0);
@@ -752,7 +752,7 @@ export function createMemoryHistory(e = {}) {
         },
         replace (e, t) {
             const r = createLocation(e, t, d(), g.location);
-            s.confirmTransitionTo(r, "REPLACE", n, (e)=>{
+            s.confirmTransitionTo(r, "REPLACE", getUserConfirmation, (e)=>{
                 if (e) {
                     g.entries[g.index] = r;
                     f({

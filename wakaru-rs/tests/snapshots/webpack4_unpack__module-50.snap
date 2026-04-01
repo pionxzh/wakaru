@@ -63,7 +63,7 @@ k.isPureReactComponent = true;
 const T = {
     current: null
 };
-const S = Object.prototype.hasOwnProperty;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
 const O = {
     key: true,
     ref: true,
@@ -83,7 +83,7 @@ export function createElement(e, t, n) {
             a = `${t.key}`;
         }
         for(r in t){
-            if (S.call(t, r) && !O.hasOwnProperty(r)) {
+            if (hasOwnProperty.call(t, r) && !O.hasOwnProperty(r)) {
                 o[r] = t[r];
             }
         }
@@ -216,10 +216,10 @@ function L(e, t) {
     e.func.call(e.context, t, e.count++);
 }
 function I(e, t, n) {
-    const { result: r, keyPrefix: o } = e;
+    const { result, keyPrefix } = e;
     e = e.func.call(e.context, t, e.count++);
     if (Array.isArray(e)) {
-        D(e, r, n, (e)=>e);
+        D(e, result, n, (e)=>e);
     } else if (e != null) {
         if (isValidElement(e)) {
             e = ((e, t)=>({
@@ -229,9 +229,9 @@ function I(e, t, n) {
                     ref: e.ref,
                     props: e.props,
                     _owner: e._owner
-                }))(e, o + (!e.key || t && t.key === e.key ? "" : `${`${e.key}`.replace(_, "$&/")}/`) + n);
+                }))(e, keyPrefix + (!e.key || t && t.key === e.key ? "" : `${`${e.key}`.replace(_, "$&/")}/`) + n);
         }
-        r.push(e);
+        result.push(e);
     }
 }
 function D(e, t, n, r, o) {
@@ -246,11 +246,11 @@ const F = {
     current: null
 };
 function z() {
-    const e = F.current;
-    if (e === null) {
+    const F_current = F.current;
+    if (F_current === null) {
         throw Error(v(321));
     }
-    return e;
+    return F_current;
 }
 export const __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
     ReactCurrentDispatcher: F,
@@ -299,20 +299,20 @@ export const cloneElement = function(e, t, n) {
         throw Error(v(267, e));
     }
     const o = r({}, e.props);
-    let a = e.key;
-    let u = e.ref;
-    let l = e._owner;
+    let e_key = e.key;
+    let e_ref = e.ref;
+    let e__owner = e._owner;
     if (t != null) {
         if (t.ref !== undefined) {
-            u = t.ref;
-            l = T.current;
+            e_ref = t.ref;
+            e__owner = T.current;
         }
         if (t.key !== undefined) {
-            a = `${t.key}`;
+            e_key = `${t.key}`;
         }
         if (e.type && e.type.defaultProps) var c = e.type.defaultProps;
         for(s in t){
-            if (S.call(t, s) && !O.hasOwnProperty(s)) {
+            if (hasOwnProperty.call(t, s) && !O.hasOwnProperty(s)) {
                 o[s] = t[s] === undefined && c !== undefined ? c[s] : t[s];
             }
         }
@@ -330,10 +330,10 @@ export const cloneElement = function(e, t, n) {
     return {
         $$typeof: i,
         type: e.type,
-        key: a,
-        ref: u,
+        key: e_key,
+        ref: e_ref,
         props: o,
-        _owner: l
+        _owner: e__owner
     };
 };
 export const createContext = (e, t = null)=>{

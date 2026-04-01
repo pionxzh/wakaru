@@ -22,10 +22,10 @@ const s = {
     location: null
 };
 export function routerReducer(e = s, t = {}) {
-    const { type: n, payload: r } = t;
-    if (n === LOCATION_CHANGE) {
+    const { type, payload } = t;
+    if (type === LOCATION_CHANGE) {
         return l({}, e, {
-            location: r
+            location: payload
         });
     }
     return e;
@@ -74,12 +74,12 @@ export const ConnectedRouter = ((e)=>{
         t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
     })(t, e);
     t.prototype.componentWillMount = function() {
-        const e = this.props;
-        const { store: t, history: n, isSSR: r } = e;
-        this.store = t || this.context.store;
-        this.handleLocationChange(n.location);
-        if (!r) {
-            this.unsubscribeFromHistory = n.listen(this.handleLocationChange);
+        const props = this.props;
+        const { store, history, isSSR } = props;
+        this.store = store || this.context.store;
+        this.handleLocationChange(history.location);
+        if (!isSSR) {
+            this.unsubscribeFromHistory = history.listen(this.handleLocationChange);
         }
     };
     t.prototype.componentWillUnmount = function() {
@@ -106,12 +106,12 @@ export const createMatchSelector = (e)=>{
     let t = null;
     let n = null;
     return (r)=>{
-        const o = (getLocation(r) || {}).pathname;
-        if (o === t) {
+        const pathname = (getLocation(r) || {}).pathname;
+        if (pathname === t) {
             return n;
         }
-        t = o;
-        const i = m.a(o, e);
+        t = pathname;
+        const i = m.a(pathname, e);
         if (!(i && n && i.url === n.url)) {
             n = i;
         }
@@ -145,8 +145,8 @@ export function routerMiddleware(e) {
                 if (n.type !== CALL_HISTORY_METHOD) {
                     return t(n);
                 }
-                const r = n.payload;
-                const { method: o, args: i } = r;
-                e[o](...i);
+                const n_payload = n.payload;
+                const { method, args } = n_payload;
+                e[method](...args);
             };
 }

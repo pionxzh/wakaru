@@ -4,13 +4,13 @@ expression: code
 ---
 export function a(e) {
     let t;
-    const n = e.Symbol;
-    if (typeof n == "function") {
-        if (n.observable) {
-            t = n.observable;
+    const e_Symbol = e.Symbol;
+    if (typeof e_Symbol == "function") {
+        if (e_Symbol.observable) {
+            t = e_Symbol.observable;
         } else {
-            t = n("observable");
-            n.observable = t;
+            t = e_Symbol("observable");
+            e_Symbol.observable = t;
         }
     } else {
         t = "@@observable";

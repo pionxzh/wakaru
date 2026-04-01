@@ -110,17 +110,17 @@ if (typeof window == "undefined" || typeof MessageChannel != "function") {
     };
 }
 function S(e, t) {
-    let n = e.length;
+    let e_length = e.length;
     e.push(t);
     e: while(true){
-        const r = n - 1 >>> 1;
+        const r = e_length - 1 >>> 1;
         const o = e[r];
         if (!(o !== undefined && P(o, t) > 0)) {
             break e;
         }
         e[r] = t;
-        e[n] = o;
-        n = r;
+        e[e_length] = o;
+        e_length = r;
     }
 }
 function O(e) {

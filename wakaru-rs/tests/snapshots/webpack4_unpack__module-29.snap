@@ -2,9 +2,9 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-const r = Object.getOwnPropertySymbols;
-const o = Object.prototype.hasOwnProperty;
-const i = Object.prototype.propertyIsEnumerable;
+const Object_getOwnPropertySymbols = Object.getOwnPropertySymbols;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+const propertyIsEnumerable = Object.prototype.propertyIsEnumerable;
 export default (()=>{
     try {
         if (!Object.assign) {
@@ -43,14 +43,14 @@ export default (()=>{
     })(e);
     for(let l = 1; l < arguments.length; l++){
         for(const c in n = Object(arguments[l])){
-            if (o.call(n, c)) {
+            if (hasOwnProperty.call(n, c)) {
                 u[c] = n[c];
             }
         }
-        if (r) {
-            a = r(n);
+        if (Object_getOwnPropertySymbols) {
+            a = Object_getOwnPropertySymbols(n);
             for(let s = 0; s < a.length; s++){
-                if (i.call(n, a[s])) {
+                if (propertyIsEnumerable.call(n, a[s])) {
                     u[a[s]] = n[a[s]];
                 }
             }
