@@ -5,22 +5,10 @@ expression: code
 import r from "./module-0.js";
 import o from "./module-9.js";
 import i from "./module-12.js";
-export { u as a };
 export { l as e };
 export { c };
 export { h as f };
-const a = Object.assign || function(e) {
-    for(let t = 1; t < arguments.length; t++){
-        const n = arguments[t];
-        for(const r in n){
-            if (Object.prototype.hasOwnProperty.call(n, r)) {
-                e[r] = n[r];
-            }
-        }
-    }
-    return e;
-};
-const u = {
+export const a = {
     type: "@@redux-saga/CHANNEL_END"
 };
 const l = (e)=>e && e.type === "@@redux-saga/CHANNEL_END";
@@ -58,7 +46,7 @@ export function b(e = o.a.fixed()) {
             i();
             r.h(o, r.q.func, "channel.take's callback must be a function");
             if (t && e.isEmpty()) {
-                o(u);
+                o(a);
             } else if (e.isEmpty()) {
                 n.push(o);
                 o.cancel = ()=>r.w(n, o);
@@ -86,7 +74,7 @@ export function b(e = o.a.fixed()) {
             i();
             r.h(n, r.q.func, "channel.flush' callback must be a function");
             if (t && e.isEmpty()) {
-                n(u);
+                n(a);
             } else {
                 n(e.flush());
             }
@@ -97,7 +85,7 @@ export function b(e = o.a.fixed()) {
                 const e = n;
                 n = [];
                 for(let r = 0, o = e.length; r < o; r++){
-                    e[r](u);
+                    e[r](a);
                 }
             }
         },
@@ -149,7 +137,8 @@ function h(e) {
                 i.a(()=>t(e));
             }
         }));
-    return a({}, t, {
+    return {
+        ...t,
         take (e, n) {
             if (arguments.length > 1) {
                 r.h(n, r.q.func, "channel.take's matcher argument must be a function");
@@ -157,5 +146,5 @@ function h(e) {
             }
             t.take(e);
         }
-    });
+    };
 }

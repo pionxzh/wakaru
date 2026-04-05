@@ -8,7 +8,6 @@ export { l as b };
 export { c as a };
 export { s as c };
 export { f as d };
-export { p as r };
 export { h as u };
 export { m as o };
 export { y as h };
@@ -18,21 +17,9 @@ export { k as l };
 export { S as m };
 export { C as y };
 export { R as s };
-export { A as p };
 export { L as k };
-export { I as A };
+export { I as p };
 export { D as i };
-const r = Object.assign || function(e) {
-    for(let t = 1; t < arguments.length; t++){
-        const n = arguments[t];
-        for(const r in n){
-            if (Object.prototype.hasOwnProperty.call(n, r)) {
-                e[r] = n[r];
-            }
-        }
-    }
-    return e;
-};
 const o = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (e)=>typeof e : (e)=>{
     if (e && typeof Symbol == "function" && e.constructor === Symbol && e !== Symbol.prototype) {
         return "symbol";
@@ -47,7 +34,7 @@ const c = i("CANCEL_PROMISE");
 const s = i("SAGA_ACTION");
 const f = i("SELF_CANCELLATION");
 const d = (e)=>()=>e;
-const p = d(true);
+export const r = d(true);
 const h = ()=>{};
 const m = (e)=>e;
 function y(e, t, n) {
@@ -141,7 +128,9 @@ const x = {
     }
 };
 function k(e = {}) {
-    const t = r({}, e);
+    const t = {
+        ...e
+    };
     const n = new Promise((e, n)=>{
         t.resolve = e;
         t.reject = n;
@@ -215,7 +204,7 @@ export function n(e, t) {
     };
 }
 export const z = (e, t)=>`${e} has been deprecated in favor of ${t}, please update your code`;
-const A = (e)=>new Error(`\n  redux-saga: Error checking hooks detected an inconsistent state. This is likely a bug\n  in redux-saga code and not yours. Thanks for reporting this in the project's github repo.\n  Error: ${e}\n`);
+export const p = (e)=>new Error(`\n  redux-saga: Error checking hooks detected an inconsistent state. This is likely a bug\n  in redux-saga code and not yours. Thanks for reporting this in the project's github repo.\n  Error: ${e}\n`);
 const L = (e, t)=>`${e ? `${e}.` : ""}setContext(props): argument ${t} is not a plain object`;
 const I = (e)=>(t)=>e(Object.defineProperty(t, s, {
             value: true

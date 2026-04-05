@@ -268,6 +268,16 @@ fn detect_helper_from_var_decl(
         }
     }
 
+    // var _extends = Object.assign || function(target) { ... }
+    // This is the Babel 6 or pre-evaluated form of the _extends polyfill.
+    if let Expr::Bin(bin) = init.as_ref() {
+        if bin.op == BinaryOp::LogicalOr {
+            if is_object_assign_ref(&bin.left) && is_extends_polyfill_fn(&bin.right) {
+                return Some((key, BabelHelperKind::Extends));
+            }
+        }
+    }
+
     None
 }
 
@@ -679,6 +689,66 @@ fn is_extends_fn(func: &Function) -> bool {
     scan_stmts_for_markers(&body.stmts, &mut markers);
 
     markers.has_object_assign && markers.has_apply_this_arguments
+}
+
+// ---------------------------------------------------------------------------
+// _extends polyfill form: Object.assign || function(target) { for-in arguments }
+//
+// var _extends = Object.assign || function(target) {
+//   for (var i = 1; i < arguments.length; i++) {
+//     var source = arguments[i];
+//     for (var key in source) {
+//       if (Object.prototype.hasOwnProperty.call(source, key))
+//         target[key] = source[key];
+//     }
+//   }
+//   return target;
+// };
+//
+// Key signal: 1 param, references `arguments`, loops with for-in, returns param.
+// ---------------------------------------------------------------------------
+
+/// Check if an expression is `Object.assign`.
+fn is_object_assign_ref(expr: &Expr) -> bool {
+    let Expr::Member(member) = expr else { return false };
+    let Expr::Ident(obj) = member.obj.as_ref() else { return false };
+    obj.sym.as_ref() == "Object" && is_member_prop_name(&member.prop, "assign")
+}
+
+/// Check if an expression is the inline polyfill function for _extends.
+/// Shape: function(target) { for (...; i < arguments.length; ...) { for (key in source) { ... } } return target; }
+fn is_extends_polyfill_fn(expr: &Expr) -> bool {
+    let func = match expr {
+        Expr::Fn(fn_expr) => &fn_expr.function,
+        _ => return false,
+    };
+
+    if func.params.len() != 1 {
+        return false;
+    }
+
+    let body = match func.body.as_ref() {
+        Some(b) => b,
+        None => return false,
+    };
+
+    let Pat::Ident(param) = &func.params[0].pat else { return false };
+
+    // Must reference `arguments` (the for loop iterates arguments[i])
+    let mut markers = BodyMarkerState::default();
+    scan_stmts_for_markers(&body.stmts, &mut markers);
+    if !markers.has_arguments_ref {
+        return false;
+    }
+
+    // Last stmt should return the param
+    if let Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. })) = body.stmts.last() {
+        if is_same_ident(arg, &param.id.sym, param.id.ctxt) {
+            return true;
+        }
+    }
+
+    false
 }
 
 // ---------------------------------------------------------------------------

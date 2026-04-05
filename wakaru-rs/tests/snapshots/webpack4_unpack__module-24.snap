@@ -129,17 +129,6 @@ y.propTypes = {
     children: u.node
 };
 export const HashRouter = y;
-const w = Object.assign || function(e) {
-    for(let t = 1; t < arguments.length; t++){
-        const n = arguments[t];
-        for(const r in n){
-            if (Object.prototype.hasOwnProperty.call(n, r)) {
-                e[r] = n[r];
-            }
-        }
-    }
-    return e;
-};
 function E(e, t) {
     if (!e) {
         throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
@@ -214,11 +203,12 @@ const k = ((e)=>{
         const history = this.context.router.history;
         const i = typeof to == "string" ? c.createLocation(to, null, null, history.location) : to;
         const u = history.createHref(i);
-        return i.createElement("a", w({}, r, {
+        return i.createElement("a", {
+            ...r,
             onClick: this.handleClick,
             href: u,
             ref: innerRef
-        }));
+        });
     };
     return t;
 })(i.Component);
@@ -305,17 +295,6 @@ O.propTypes = {
     children: u.node
 };
 export const MemoryRouter = O;
-const _ = Object.assign || function(e) {
-    for(let t = 1; t < arguments.length; t++){
-        const n = arguments[t];
-        for(const r in n){
-            if (Object.prototype.hasOwnProperty.call(n, r)) {
-                e[r] = n[r];
-            }
-        }
-    }
-    return e;
-};
 function j(e, t) {
     if (!e) {
         throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
@@ -359,12 +338,13 @@ const N = ((e)=>{
     })(t, e);
     t.prototype.getChildContext = function() {
         return {
-            router: _({}, this.context.router, {
+            router: {
+                ...this.context.router,
                 route: {
                     location: this.props.location || this.context.router.route.location,
                     match: this.state.match
                 }
-            })
+            }
         };
     };
     t.prototype.computeMatch = (e, t)=>{
@@ -501,7 +481,10 @@ const D = (e)=>{
                     className,
                     activeClassName
                 ].filter((e)=>e).join(" ") : className,
-                style: o ? L({}, style, activeStyle) : style,
+                style: o ? {
+                    ...style,
+                    ...activeStyle
+                } : style,
                 "aria-current": o && aria-current || null
             }, d));
         }
@@ -633,17 +616,6 @@ const B = (e = "/", t = {})=>{
         pretty: true
     });
 };
-const V = Object.assign || function(e) {
-    for(let t = 1; t < arguments.length; t++){
-        const n = arguments[t];
-        for(const r in n){
-            if (Object.prototype.hasOwnProperty.call(n, r)) {
-                e[r] = n[r];
-            }
-        }
-    }
-    return e;
-};
 const Q = ((e)=>{
     function t() {
         ((e, t)=>{
@@ -701,9 +673,10 @@ const Q = ((e)=>{
     t.prototype.computeTo = (e)=>{
         const { computedMatch, to } = e;
         if (computedMatch) {
-            return typeof to == "string" ? B(to, computedMatch.params) : V({}, to, {
+            return typeof to == "string" ? B(to, computedMatch.params) : {
+                ...to,
                 pathname: B(to.pathname, computedMatch.params)
-            });
+            };
         }
         return to;
     };
@@ -742,17 +715,6 @@ Q.contextTypes = {
     }).isRequired
 };
 export const Redirect = Q;
-const Y = Object.assign || function(e) {
-    for(let t = 1; t < arguments.length; t++){
-        const n = arguments[t];
-        for(const r in n){
-            if (Object.prototype.hasOwnProperty.call(n, r)) {
-                e[r] = n[r];
-            }
-        }
-    }
-    return e;
-};
 function G(e, t) {
     if (!e) {
         throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
@@ -770,9 +732,10 @@ const X = (e)=>{
 };
 const J = (e, t)=>{
     if (e) {
-        return Y({}, t, {
+        return {
+            ...t,
             pathname: X(e) + t.pathname
-        });
+        };
     }
     return t;
 };
@@ -868,9 +831,10 @@ const ne = ((e)=>{
                 if (t.pathname.indexOf(n) !== 0) {
                     return t;
                 }
-                return Y({}, t, {
+                return {
+                    ...t,
                     pathname: t.pathname.substr(n.length)
-                });
+                };
             })(e_basename, c.createLocation(e_location)),
             push: this.handlePush,
             replace: this.handleReplace,
@@ -880,9 +844,10 @@ const ne = ((e)=>{
             listen: this.handleListen,
             block: this.handleBlock
         };
-        return i.createElement(s.a, Y({}, r, {
+        return i.createElement(s.a, {
+            ...r,
             history: o
-        }));
+        });
     };
     return t;
 })(i.Component);
@@ -982,17 +947,6 @@ oe.propTypes = {
 export const Switch = oe;
 export const generatePath = B;
 export const matchPath = P.a;
-const se = Object.assign || function(e) {
-    for(let t = 1; t < arguments.length; t++){
-        const n = arguments[t];
-        for(const r in n){
-            if (Object.prototype.hasOwnProperty.call(n, r)) {
-                e[r] = n[r];
-            }
-        }
-    }
-    return e;
-};
 export const withRouter = (e)=>{
     const t = (t)=>{
         const t_wrappedComponentRef = t.wrappedComponentRef;
@@ -1007,9 +961,11 @@ export const withRouter = (e)=>{
         ]);
         return i.createElement(M, {
             children (t) {
-                return i.createElement(e, se({}, r, t, {
+                return i.createElement(e, {
+                    ...r,
+                    ...t,
                     ref: t_wrappedComponentRef
-                }));
+                });
             }
         });
     };

@@ -6,17 +6,6 @@ import r from "./module-3.js";
 import i from "./module-1.js";
 import u from "./module-16.js";
 import m from "./module-15.js";
-const l = Object.assign || function(e) {
-    for(let t = 1; t < arguments.length; t++){
-        const n = arguments[t];
-        for(const r in n){
-            if (Object.prototype.hasOwnProperty.call(n, r)) {
-                e[r] = n[r];
-            }
-        }
-    }
-    return e;
-};
 export const LOCATION_CHANGE = "@@router/LOCATION_CHANGE";
 const s = {
     location: null
@@ -24,9 +13,10 @@ const s = {
 export function routerReducer(e = s, t = {}) {
     const { type, payload } = t;
     if (type === LOCATION_CHANGE) {
-        return l({}, e, {
+        return {
+            ...e,
             location: payload
-        });
+        };
     }
     return e;
 }

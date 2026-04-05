@@ -41,17 +41,6 @@ export const utils = {
         return d;
     }
 };
-const c = Object.assign || function(e) {
-    for(let t = 1; t < arguments.length; t++){
-        const n = arguments[t];
-        for(const r in n){
-            if (Object.prototype.hasOwnProperty.call(n, r)) {
-                e[r] = n[r];
-            }
-        }
-    }
-    return e;
-};
 const s = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (e)=>typeof e : (e)=>{
     if (e && typeof Symbol == "function" && e.constructor === Symbol && e !== Symbol.prototype) {
         return "symbol";
@@ -396,9 +385,10 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                                 s = {};
                                 s[t] = u;
                                 const f = s;
-                                n(o.q.array(e) ? Array.prototype.slice.call(c({}, f, {
+                                n(o.q.array(e) ? Array.prototype.slice.call({
+                                    ...f,
                                     length: a.length
-                                })) : f);
+                                }) : f);
                             }
                         }
                     };
@@ -616,9 +606,10 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         const s = {};
         r.forEach((t)=>{
             const f = (s, f)=>{
-                u || (f || i.e(s) || s === d || s === p ? (n.cancel(), n(s, f)) : (l[t] = s, ++a === r.length && (u = true, n(o.q.array(e) ? o.f.from(c({}, l, {
+                u || (f || i.e(s) || s === d || s === p ? (n.cancel(), n(s, f)) : (l[t] = s, ++a === r.length && (u = true, n(o.q.array(e) ? o.f.from({
+                    ...l,
                     length: r.length
-                })) : l))));
+                }) : l))));
             };
             f.cancel = o.u;
             s[t] = f;

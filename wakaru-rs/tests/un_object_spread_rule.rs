@@ -228,6 +228,49 @@ var x = _extends(target, source);
 }
 
 #[test]
+fn detects_object_assign_or_polyfill_as_extends() {
+    // Babel 6 / pre-evaluated form: var _extends = Object.assign || function(target) { ... }
+    let input = r#"
+var f = Object.assign || function(e) {
+    for (var t = 1; t < arguments.length; t++) {
+        var n = arguments[t];
+        for (var r in n) {
+            if (Object.prototype.hasOwnProperty.call(n, r)) {
+                e[r] = n[r];
+            }
+        }
+    }
+    return e;
+};
+var x = f({}, a, { b: 1 });
+"#;
+    let expected = r#"
+const x = { ...a, b: 1 };
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn object_assign_or_polyfill_preserves_non_empty_target() {
+    let input = r#"
+var f = Object.assign || function(e) {
+    for (var t = 1; t < arguments.length; t++) {
+        var n = arguments[t];
+        for (var r in n) {
+            if (Object.prototype.hasOwnProperty.call(n, r)) {
+                e[r] = n[r];
+            }
+        }
+    }
+    return e;
+};
+var x = f(target, source);
+"#;
+    let output = render(input);
+    assert!(output.contains("f(target"), "should not transform with real target");
+}
+
+#[test]
 fn no_false_positive_zero_param_unrelated() {
     // A zero-param function that doesn't match extends shape
     let input = r#"
