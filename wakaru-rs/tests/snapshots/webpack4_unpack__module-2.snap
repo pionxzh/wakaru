@@ -142,10 +142,7 @@ function M(e) {
     for(let t = arguments.length, n = Array(t > 1 ? t - 1 : 0), r = 1; r < t; r++){
         n[r - 1] = arguments[r];
     }
-    return x(N(...[
-        e,
-        ...n
-    ]));
+    return x(N(e, ...n));
 }
 function A(...t) {
     if (t.length > 1) {

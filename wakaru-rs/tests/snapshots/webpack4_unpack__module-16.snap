@@ -10,10 +10,7 @@ export const a = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = e.call(...[
-            this,
-            ...i
-        ]);
+        n = r = e.call(this, ...i);
         r.state = {
             match: r.computeMatch(r.props.history.location.pathname)
         };

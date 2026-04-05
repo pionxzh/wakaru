@@ -16,10 +16,7 @@ const p = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = e.call(...[
-            this,
-            ...i
-        ]);
+        n = r = e.call(this, ...i);
         r.history = c.createBrowserHistory(r.props);
         return n;
     }
@@ -60,10 +57,7 @@ const y = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = e.call(...[
-            this,
-            ...i
-        ]);
+        n = r = e.call(this, ...i);
         r.history = c.createHashHistory(r.props);
         return n;
     }
@@ -108,10 +102,7 @@ const k = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = e.call(...[
-            this,
-            ...i
-        ]);
+        n = r = e.call(this, ...i);
         r.handleClick = (e)=>{
             if (r.props.onClick) {
                 r.props.onClick(e);
@@ -203,10 +194,7 @@ const O = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = e.call(...[
-            this,
-            ...i
-        ]);
+        n = r = e.call(this, ...i);
         r.history = c.createMemoryHistory(r.props);
         return n;
     }
@@ -248,10 +236,7 @@ const N = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = e.call(...[
-            this,
-            ...i
-        ]);
+        n = r = e.call(this, ...i);
         r.state = {
             match: r.computeMatch(r.props, r.context.router)
         };
@@ -663,10 +648,7 @@ const ne = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = e.call(...[
-            this,
-            ...i
-        ]);
+        n = r = e.call(this, ...i);
         r.createHref = (e)=>X(r.props.basename + Z(e));
         r.handlePush = (e)=>{
             const r_props = r.props;

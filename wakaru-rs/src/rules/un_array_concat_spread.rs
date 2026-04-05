@@ -50,17 +50,18 @@ fn try_simplify_array_concat(call: &CallExpr) -> Option<ArrayLit> {
         return None;
     }
 
+    // Don't transform if any argument uses spread syntax.
+    // `[].concat(...arr)` flattens sub-arrays via concat's built-in behavior,
+    // but `[...arr]` does not — so the transformation would change semantics.
+    if call.args.iter().any(|a| a.spread.is_some()) {
+        return None;
+    }
+
     // Build the new array: start with receiver elements
     let mut elems: Vec<Option<ExprOrSpread>> = receiver_arr.elems.clone();
 
     // Add each concat argument
     for arg in &call.args {
-        if arg.spread.is_some() {
-            // Already a spread: pass through
-            elems.push(Some(arg.clone()));
-            continue;
-        }
-
         match arg.expr.as_ref() {
             // Array literal arg: flatten its elements
             Expr::Array(arr) => {
