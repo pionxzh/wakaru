@@ -9,23 +9,15 @@ export { c as a };
 export { s as c };
 export { f as d };
 export { h as u };
-export { m as o };
 export { y as h };
 export { E as v };
 export { x as f };
 export { k as l };
-export { S as m };
 export { C as y };
 export { R as s };
 export { L as k };
 export { I as p };
 export { D as i };
-const o = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (e)=>typeof e : (e)=>{
-    if (e && typeof Symbol == "function" && e.constructor === Symbol && e !== Symbol.prototype) {
-        return "symbol";
-    }
-    return typeof e;
-};
 const i = (e)=>`@@redux-saga/${e}`;
 const a = i("TASK");
 const u = i("HELPER");
@@ -36,7 +28,7 @@ const f = i("SELF_CANCELLATION");
 const d = (e)=>()=>e;
 export const r = d(true);
 const h = ()=>{};
-const m = (e)=>e;
+export const o = (e)=>e;
 function y(e, t, n) {
     if (!t(e)) {
         R("error", "uncaught at check", n);
@@ -65,7 +57,7 @@ export const q = {
     },
     array: Array.isArray,
     object (e) {
-        return e && !q.array(e) && (e === undefined ? "undefined" : o(e)) === "object";
+        return e && !q.array(e) && (e === undefined ? "undefined" : typeof e) === "object";
     },
     promise (e) {
         return e && q.func(e.then);
@@ -89,7 +81,7 @@ export const q = {
         return e && q.func(e.isEmpty) && q.func(e.take) && q.func(e.put);
     },
     pattern (e) {
-        return e && (q.string(e) || (e === undefined ? "undefined" : o(e)) === "symbol" || q.func(e) || q.array(e));
+        return e && (q.string(e) || (e === undefined ? "undefined" : typeof e) === "symbol" || q.func(e) || q.array(e));
     },
     channel (e) {
         return e && q.func(e.take) && q.func(e.close);
@@ -145,7 +137,7 @@ export function g(e) {
     }
     return t;
 }
-function S(e, t = true) {
+export function m(e, t = true) {
     let n = undefined;
     const r = new Promise((r)=>{
         n = setTimeout(()=>r(t), e);

@@ -41,12 +41,6 @@ export const utils = {
         return d;
     }
 };
-const s = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (e)=>typeof e : (e)=>{
-    if (e && typeof Symbol == "function" && e.constructor === Symbol && e !== Symbol.prototype) {
-        return "symbol";
-    }
-    return typeof e;
-};
 const f = "proc first argument (Saga function result) must be an iterator";
 const d = {
     toString () {
@@ -63,7 +57,7 @@ const h = {
         return o.r;
     },
     default (e) {
-        if ((e === undefined ? "undefined" : s(e)) === "symbol") {
+        if ((e === undefined ? "undefined" : typeof e) === "symbol") {
             return (t)=>t.type === e;
         }
         return (t)=>t.type === String(e);

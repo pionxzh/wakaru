@@ -414,12 +414,6 @@ const L = Object.assign || function(e) {
     }
     return e;
 };
-const I = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (e)=>typeof e : (e)=>{
-    if (e && typeof Symbol == "function" && e.constructor === Symbol && e !== Symbol.prototype) {
-        return "symbol";
-    }
-    return typeof e;
-};
 const D = (e)=>{
     const { to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, "aria-current": aria-current } = e;
     const d = ((e, t)=>{
@@ -440,7 +434,7 @@ const D = (e)=>{
         "isActive",
         "aria-current"
     ]);
-    const p = (to === undefined ? "undefined" : I(to)) === "object" ? to.pathname : to;
+    const p = (to === undefined ? "undefined" : typeof to) === "object" ? to.pathname : to;
     const h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
     return i.createElement(Route, {
         path: h,

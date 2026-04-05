@@ -7,14 +7,8 @@ export const __DO_NOT_USE__ActionTypes = {
     INIT: `@@redux/INIT${Math.random().toString(36).substring(7).split("").join(".")}`,
     REPLACE: `@@redux/REPLACE${Math.random().toString(36).substring(7).split("").join(".")}`
 };
-const i = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (e)=>typeof e : (e)=>{
-    if (e && typeof Symbol == "function" && e.constructor === Symbol && e !== Symbol.prototype) {
-        return "symbol";
-    }
-    return typeof e;
-};
 function u(e) {
-    if ((e === undefined ? "undefined" : i(e)) !== "object" || e === null) {
+    if ((e === undefined ? "undefined" : typeof e) !== "object" || e === null) {
         return false;
     }
     for(let t = e; Object.getPrototypeOf(t) !== null;){
@@ -118,7 +112,7 @@ export function createStore(e, t, n) {
         const t = y;
         e = {
             subscribe (e) {
-                if ((e === undefined ? "undefined" : i(e)) !== "object" || e === null) {
+                if ((e === undefined ? "undefined" : typeof e) !== "object" || e === null) {
                     throw new TypeError("Expected the observer to be an object.");
                 }
                 function n() {
@@ -205,8 +199,8 @@ export function bindActionCreators(e, t) {
     if (typeof e == "function") {
         return f(e, t);
     }
-    if ((e === undefined ? "undefined" : i(e)) !== "object" || e === null) {
-        throw new Error(`bindActionCreators expected an object or a function, instead received ${e === null ? "null" : e === undefined ? "undefined" : i(e)}. Did you write "import ActionCreators from" instead of "import * as ActionCreators from"?`);
+    if ((e === undefined ? "undefined" : typeof e) !== "object" || e === null) {
+        throw new Error(`bindActionCreators expected an object or a function, instead received ${e === null ? "null" : e === undefined ? "undefined" : typeof e}. Did you write "import ActionCreators from" instead of "import * as ActionCreators from"?`);
     }
     const r = {};
     for(let n = Object.keys(e), o = 0; o < n.length; o++){
