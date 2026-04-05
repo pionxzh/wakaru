@@ -726,6 +726,9 @@ fn is_class_call_check_fn(func: &Function) -> bool {
     if func.params.len() != 2 {
         return false;
     }
+    let Pat::Ident(param1) = &func.params[0].pat else { return false };
+    let Pat::Ident(param2) = &func.params[1].pat else { return false };
+
     let body = match func.body.as_ref() {
         Some(b) => b,
         None => return false,
@@ -748,6 +751,14 @@ fn is_class_call_check_fn(func: &Function) -> bool {
     };
     let Expr::Bin(bin) = inner else { return false };
     if bin.op != BinaryOp::InstanceOf {
+        return false;
+    }
+
+    // Verify operands are the function's two parameters
+    if !is_same_ident(&bin.left, &param1.id.sym, param1.id.ctxt) {
+        return false;
+    }
+    if !is_same_ident(&bin.right, &param2.id.sym, param2.id.ctxt) {
         return false;
     }
 
@@ -795,6 +806,9 @@ fn is_possible_constructor_return_fn(func: &Function) -> bool {
     if func.params.len() != 2 {
         return false;
     }
+    let Pat::Ident(param1) = &func.params[0].pat else { return false };
+    let Pat::Ident(param2) = &func.params[1].pat else { return false };
+
     let body = match func.body.as_ref() {
         Some(b) => b,
         None => return false,
@@ -807,9 +821,13 @@ fn is_possible_constructor_return_fn(func: &Function) -> bool {
 
     // First statement: if (!param1) { throw new ReferenceError(...) }
     let Stmt::If(first_if) = &body.stmts[0] else { return false };
-    // Test should negate the first param
+    // Test should negate the first param specifically
     let Expr::Unary(unary) = first_if.test.as_ref() else { return false };
     if unary.op != swc_core::ecma::ast::UnaryOp::Bang {
+        return false;
+    }
+    // Verify the guard negates param1
+    if !is_same_ident(&unary.arg, &param1.id.sym, param1.id.ctxt) {
         return false;
     }
     // Consequent should throw ReferenceError
@@ -835,11 +853,21 @@ fn is_possible_constructor_return_fn(func: &Function) -> bool {
     }
 
     // Last statement must be a return.
-    // Accepts both:
-    //   3-stmt form: if-throw, if-return-self, return-call
-    //   2-stmt form: if-throw, return-ternary (minified: `return !t || ... ? e : t`)
+    // 3-stmt form: if-throw, if-return-self, return-param2
+    // 2-stmt form: if-throw, return-ternary (minified: `return !t || ... ? e : t`)
     let last = body.stmts.last().unwrap();
-    matches!(last, Stmt::Return(ReturnStmt { arg: Some(_), .. }))
+    let Stmt::Return(ReturnStmt { arg: Some(ret_arg), .. }) = last else {
+        return false;
+    };
+
+    // For the 3-stmt form, verify last return is param2
+    if body.stmts.len() >= 3 {
+        return is_same_ident(ret_arg, &param2.id.sym, param2.id.ctxt);
+    }
+
+    // For the 2-stmt form (ternary), accept any return expression since
+    // the ternary encodes the param1/param2 choice internally
+    true
 }
 
 fn is_new_reference_error(expr: &Expr) -> bool {

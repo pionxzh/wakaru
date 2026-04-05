@@ -49,9 +49,15 @@ fn inline_spread_array_args(args: &mut Vec<ExprOrSpread>) {
                 for elem in arr.elems {
                     match elem {
                         Some(eos) => args.push(eos),
-                        // Holes in array literals are rare but possible
-                        // — skip them since they can't be function args
-                        None => {}
+                        // Array holes become `undefined` when spread
+                        None => args.push(ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Ident(swc_core::ecma::ast::Ident::new(
+                                "undefined".into(),
+                                swc_core::common::DUMMY_SP,
+                                Default::default(),
+                            ))),
+                        }),
                     }
                 }
                 continue;
