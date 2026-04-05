@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::SyntaxContext;
+use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     BinaryOp, BlockStmtOrExpr, Callee, Decl, Expr, Function, IfStmt, Lit, MemberProp, Module,
     ModuleItem, Pat, ReturnStmt, Stmt, VarDeclarator,
@@ -55,12 +55,19 @@ const SLICED_TO_ARRAY_PATHS: &[&str] = &[
 /// Scan module-level declarations for helper functions.
 /// Detects by function body shape and by import path.
 pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelperKind> {
+    // Phase 1: scan all module-level function bodies for Babel sub-helper markers.
+    // The Babel 7+ pattern uses a thin dispatcher (`return f(x) || g(x) || h(x) || k()`)
+    // that delegates to sub-helpers defined in the same module. We only accept OR-chain
+    // dispatchers when the module also contains functions with Array.isArray, Array.from,
+    // or Symbol.iterator — signals that Babel sub-helpers are present.
+    let has_sub_helpers = module_has_babel_sub_helper_signals(module);
+
     let mut helpers = HashMap::new();
     for item in &module.body {
         match item {
             // function _interopRequireDefault(obj) { ... }
             ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
-                if let Some(kind) = detect_helper_from_fn(&fn_decl.function) {
+                if let Some(kind) = detect_helper_from_fn(&fn_decl.function, has_sub_helpers) {
                     helpers.insert(
                         (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt),
                         kind,
@@ -70,7 +77,7 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
             // var _ird = function(obj) { ... }  OR  var _ird = require("@babel/runtime/...")
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
                 for decl in &var.decls {
-                    if let Some((key, kind)) = detect_helper_from_var_decl(decl) {
+                    if let Some((key, kind)) = detect_helper_from_var_decl(decl, has_sub_helpers) {
                         helpers.insert(key, kind);
                     }
                 }
@@ -79,6 +86,35 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
         }
     }
     helpers
+}
+
+/// Check if the module contains functions with Babel sub-helper body signals.
+/// These are markers like Array.isArray, Array.from, Symbol.iterator that appear
+/// in the inlined sub-helpers (arrayWithoutHoles, iterableToArray, etc.).
+fn module_has_babel_sub_helper_signals(module: &Module) -> bool {
+    for item in &module.body {
+        let func = match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => Some(&*fn_decl.function),
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                var.decls.iter().find_map(|d| match d.init.as_deref() {
+                    Some(Expr::Fn(f)) => Some(&*f.function),
+                    _ => None,
+                })
+            }
+            _ => None,
+        };
+        if let Some(func) = func {
+            if let Some(body) = &func.body {
+                let mut markers = BodyMarkerState::default();
+                scan_stmts_for_markers(&body.stmts, &mut markers);
+                if markers.has_array_is_array || markers.has_array_from || markers.has_symbol_iterator
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Check which helper bindings still have references in the module body,
@@ -113,23 +149,37 @@ pub(crate) fn helpers_with_remaining_refs(
         }
     }
 
-    // Scan for references, skipping VarDeclarator names and FnDecl idents
+    // Scan for references, skipping entire helper declarations (name + body).
+    // Self-references inside a helper body (e.g. `_extends = Object.assign || ...`)
+    // should not count as external usage.
     struct RefScanner<'a> {
         helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+        decl_idents: &'a HashSet<BindingKey>,
         found: HashSet<BindingKey>,
-        in_decl_name: bool,
     }
 
     impl Visit for RefScanner<'_> {
         fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
-            // Skip the binding name, only scan the init
+            // If this var declarator IS a helper, skip it entirely (name + init)
+            if let Pat::Ident(bi) = &decl.name {
+                let key = (bi.id.sym.clone(), bi.id.ctxt);
+                if self.decl_idents.contains(&key) {
+                    return;
+                }
+            }
+            // Otherwise skip just the binding name, scan the init
             if let Some(init) = &decl.init {
                 init.visit_with(self);
             }
         }
 
         fn visit_fn_decl(&mut self, fn_decl: &swc_core::ecma::ast::FnDecl) {
-            // Skip the function name ident, only scan the body
+            let key = (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt);
+            // If this fn decl IS a helper, skip it entirely (name + body)
+            if self.decl_idents.contains(&key) {
+                return;
+            }
+            // Otherwise skip just the name, scan the body
             fn_decl.function.visit_with(self);
         }
 
@@ -143,8 +193,8 @@ pub(crate) fn helpers_with_remaining_refs(
 
     let mut scanner = RefScanner {
         helpers,
+        decl_idents: &decl_idents,
         found: HashSet::new(),
-        in_decl_name: false,
     };
     module.visit_with(&mut scanner);
     scanner.found
@@ -182,21 +232,24 @@ pub(crate) fn remove_helper_declarations(
     *body = new_body;
 }
 
-fn detect_helper_from_var_decl(decl: &VarDeclarator) -> Option<(BindingKey, BabelHelperKind)> {
+fn detect_helper_from_var_decl(
+    decl: &VarDeclarator,
+    has_sub_helpers: bool,
+) -> Option<(BindingKey, BabelHelperKind)> {
     let Pat::Ident(bi) = &decl.name else { return None };
     let init = decl.init.as_ref()?;
     let key = (bi.id.sym.clone(), bi.id.ctxt);
 
     // var _ird = function(obj) { ... }
     if let Expr::Fn(fn_expr) = init.as_ref() {
-        if let Some(kind) = detect_helper_from_fn(&fn_expr.function) {
+        if let Some(kind) = detect_helper_from_fn(&fn_expr.function, has_sub_helpers) {
             return Some((key, kind));
         }
     }
 
     // var _ird = (obj) => { ... }
     if let Expr::Arrow(arrow) = init.as_ref() {
-        if let Some(kind) = detect_helper_from_arrow(arrow) {
+        if let Some(kind) = detect_helper_from_arrow(arrow, has_sub_helpers) {
             return Some((key, kind));
         }
     }
@@ -248,17 +301,32 @@ fn detect_helper_from_require(expr: &Expr) -> Option<BabelHelperKind> {
     None
 }
 
-fn detect_helper_from_fn(func: &Function) -> Option<BabelHelperKind> {
+fn detect_helper_from_fn(func: &Function, has_sub_helpers: bool) -> Option<BabelHelperKind> {
     if is_interop_require_default_fn(func) {
         return Some(BabelHelperKind::InteropRequireDefault);
     }
     if is_interop_require_wildcard_fn(func) {
         return Some(BabelHelperKind::InteropRequireWildcard);
     }
+    if is_to_consumable_array_fn(func, has_sub_helpers) {
+        return Some(BabelHelperKind::ToConsumableArray);
+    }
+    if is_extends_fn(func) {
+        return Some(BabelHelperKind::Extends);
+    }
+    if is_object_spread_fn(func) {
+        return Some(BabelHelperKind::ObjectSpread);
+    }
+    if is_sliced_to_array_fn(func, has_sub_helpers) {
+        return Some(BabelHelperKind::SlicedToArray);
+    }
     None
 }
 
-fn detect_helper_from_arrow(arrow: &swc_core::ecma::ast::ArrowExpr) -> Option<BabelHelperKind> {
+fn detect_helper_from_arrow(
+    arrow: &swc_core::ecma::ast::ArrowExpr,
+    has_sub_helpers: bool,
+) -> Option<BabelHelperKind> {
     // interopRequireDefault: single param, body returns conditional on __esModule
     if arrow.params.len() == 1 {
         let Pat::Ident(param) = &arrow.params[0] else { return None };
@@ -281,6 +349,41 @@ fn detect_helper_from_arrow(arrow: &swc_core::ecma::ast::ArrowExpr) -> Option<Ba
             }
         }
     }
+
+    // Convert arrow to equivalent Function shape and try the general matchers.
+    // Only for block-body arrows (the common case for inlined helpers).
+    if let BlockStmtOrExpr::BlockStmt(block) = &*arrow.body {
+        let func = Function {
+            params: arrow
+                .params
+                .iter()
+                .map(|p| swc_core::ecma::ast::Param {
+                    span: DUMMY_SP,
+                    decorators: vec![],
+                    pat: p.clone(),
+                })
+                .collect(),
+            decorators: vec![],
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            body: Some(block.clone()),
+            is_generator: false,
+            is_async: arrow.is_async,
+            type_params: None,
+            return_type: None,
+        };
+        if is_to_consumable_array_fn(&func, has_sub_helpers) {
+            return Some(BabelHelperKind::ToConsumableArray);
+        }
+        if is_object_spread_fn(&func) {
+            return Some(BabelHelperKind::ObjectSpread);
+        }
+        if is_sliced_to_array_fn(&func, has_sub_helpers) {
+            return Some(BabelHelperKind::SlicedToArray);
+        }
+        // Note: extends has 0 params and uses `arguments`, which arrows can't do.
+    }
+
     None
 }
 
@@ -504,4 +607,320 @@ fn check_stmt_for_wildcard_markers(stmt: &Stmt, has_esmodule: &mut bool, has_pro
 
     let mut visitor = WildcardMarkerVisitor { has_esmodule, has_property_copy };
     stmt.visit_with(&mut visitor);
+}
+
+// ---------------------------------------------------------------------------
+// toConsumableArray body-shape matcher
+//
+// Babel 7+: function(arr) { return f(arr) || g(arr) || h(arr) || k(); }
+//   where the sub-helpers reference Array.isArray / Array.from
+// Babel 6:  function(arr) { if (Array.isArray(arr)) { ... } else { return Array.from(arr); } }
+//
+// Key signal: 1 param, body references both Array.isArray and Array.from.
+// ---------------------------------------------------------------------------
+
+fn is_to_consumable_array_fn(func: &Function, has_sub_helpers: bool) -> bool {
+    if func.params.len() != 1 {
+        return false;
+    }
+
+    let body = match func.body.as_ref() {
+        Some(b) => b,
+        None => return false,
+    };
+
+    let mut markers = BodyMarkerState::default();
+    scan_stmts_for_markers(&body.stmts, &mut markers);
+
+    // Babel 6 form: Array.isArray + Array.from (or Array(len) constructor)
+    if markers.has_array_is_array && (markers.has_array_from || markers.has_array_constructor) {
+        return true;
+    }
+
+    // Babel 7+ form: single return of logical-OR chain calling sub-helpers.
+    // Pattern: return f(arr) || g(arr) || h(arr) || nonIterableSpread()
+    // Only accepted when the module also contains Babel sub-helpers (functions
+    // with Array.isArray, Array.from, etc.) to avoid false positives on
+    // normal fallback chains.
+    if has_sub_helpers && body.stmts.len() == 1 {
+        if let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = &body.stmts[0] {
+            if is_babel_helper_or_chain(arg) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+// ---------------------------------------------------------------------------
+// extends body-shape matcher
+//
+// function _extends() {
+//   _extends = Object.assign || function(target) { ... for-in ... };
+//   return _extends.apply(this, arguments);
+// }
+// Or minified: function() { return n = Object.assign || ..., n.apply(this, arguments); }
+//
+// Key signal: 0 params, references Object.assign, has .apply(this, arguments).
+// ---------------------------------------------------------------------------
+
+fn is_extends_fn(func: &Function) -> bool {
+    if !func.params.is_empty() {
+        return false;
+    }
+
+    let body = match func.body.as_ref() {
+        Some(b) => b,
+        None => return false,
+    };
+
+    let mut markers = BodyMarkerState::default();
+    scan_stmts_for_markers(&body.stmts, &mut markers);
+
+    markers.has_object_assign && markers.has_apply_this_arguments
+}
+
+// ---------------------------------------------------------------------------
+// objectSpread / objectSpread2 body-shape matcher
+//
+// function _objectSpread2(target) {
+//   for (var i = 1; i < arguments.length; i++) { ... Object.defineProperty ... }
+//   return target;
+// }
+//
+// Key signal: 1 param, references `arguments`, contains Object.defineProperty
+// or Object.getOwnPropertyDescriptor/getOwnPropertyDescriptors, returns param.
+// ---------------------------------------------------------------------------
+
+fn is_object_spread_fn(func: &Function) -> bool {
+    if func.params.len() != 1 {
+        return false;
+    }
+
+    let body = match func.body.as_ref() {
+        Some(b) => b,
+        None => return false,
+    };
+
+    let Pat::Ident(param) = &func.params[0].pat else { return false };
+
+    let mut markers = BodyMarkerState::default();
+    scan_stmts_for_markers(&body.stmts, &mut markers);
+
+    // Must reference `arguments` and have BOTH property descriptor methods.
+    // Real objectSpread2 uses both Object.defineProperty and
+    // Object.getOwnPropertyDescriptor(s); a generic utility typically has only one.
+    if !markers.has_arguments_ref {
+        return false;
+    }
+    if !markers.has_object_define_property || !markers.has_object_get_own_property_descriptor {
+        return false;
+    }
+
+    // Last stmt should return the param
+    if let Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. })) = body.stmts.last() {
+        if is_same_ident(arg, &param.id.sym, param.id.ctxt) {
+            return true;
+        }
+    }
+
+    false
+}
+
+// ---------------------------------------------------------------------------
+// slicedToArray body-shape matcher
+//
+// Babel 7+: function(arr, i) { return f(arr) || g(arr, i) || h(arr, i) || k(); }
+// Babel 6:  function(arr, i) { if (Array.isArray(arr)) { ... } else if (Symbol.iterator in ...) { ... } ... }
+//
+// Key signal: 2 params, body references Symbol.iterator or is a logical-OR
+// chain of sub-helper calls with 2 params.
+// ---------------------------------------------------------------------------
+
+fn is_sliced_to_array_fn(func: &Function, has_sub_helpers: bool) -> bool {
+    if func.params.len() != 2 {
+        return false;
+    }
+
+    let body = match func.body.as_ref() {
+        Some(b) => b,
+        None => return false,
+    };
+
+    let mut markers = BodyMarkerState::default();
+    scan_stmts_for_markers(&body.stmts, &mut markers);
+
+    // Babel 6: references both Symbol.iterator AND Array.isArray
+    // (the helper always has both: Array.isArray check + iterator protocol fallback)
+    if markers.has_symbol_iterator && markers.has_array_is_array {
+        return true;
+    }
+
+    // Babel 7+ form: single return of logical-OR chain calling sub-helpers.
+    // Only accepted when the module also contains Babel sub-helpers.
+    if has_sub_helpers && body.stmts.len() == 1 {
+        if let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = &body.stmts[0] {
+            if is_babel_helper_or_chain(arg) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Shared body scanning infrastructure
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct BodyMarkerState {
+    has_array_is_array: bool,
+    has_array_from: bool,
+    has_array_constructor: bool,
+    has_object_assign: bool,
+    has_apply_this_arguments: bool,
+    has_arguments_ref: bool,
+    has_object_define_property: bool,
+    has_object_get_own_property_descriptor: bool,
+    has_symbol_iterator: bool,
+}
+
+fn scan_stmts_for_markers(stmts: &[Stmt], state: &mut BodyMarkerState) {
+    use swc_core::ecma::visit::{Visit, VisitWith};
+
+    struct MarkerVisitor<'a> {
+        state: &'a mut BodyMarkerState,
+    }
+
+    impl Visit for MarkerVisitor<'_> {
+        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Expr::Member(member) = callee.as_ref() {
+                    // Array.isArray, Array.from
+                    if let Expr::Ident(obj) = member.obj.as_ref() {
+                        if obj.sym.as_ref() == "Array" {
+                            if is_member_prop_name(&member.prop, "isArray") {
+                                self.state.has_array_is_array = true;
+                            }
+                            if is_member_prop_name(&member.prop, "from") {
+                                self.state.has_array_from = true;
+                            }
+                        }
+                        if obj.sym.as_ref() == "Object" {
+                            if is_member_prop_name(&member.prop, "assign") {
+                                self.state.has_object_assign = true;
+                            }
+                            if is_member_prop_name(&member.prop, "defineProperty")
+                                || is_member_prop_name(&member.prop, "defineProperties")
+                            {
+                                self.state.has_object_define_property = true;
+                            }
+                            if is_member_prop_name(&member.prop, "getOwnPropertyDescriptor")
+                                || is_member_prop_name(&member.prop, "getOwnPropertyDescriptors")
+                            {
+                                self.state.has_object_get_own_property_descriptor = true;
+                            }
+                        }
+                    }
+                    // *.apply(this, arguments)
+                    if is_member_prop_name(&member.prop, "apply") && call.args.len() == 2 {
+                        if matches!(call.args[0].expr.as_ref(), Expr::This(..)) {
+                            if matches!(call.args[1].expr.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "arguments")
+                            {
+                                self.state.has_apply_this_arguments = true;
+                            }
+                        }
+                    }
+                }
+                // new Array(len) constructor
+                if let Expr::Ident(id) = callee.as_ref() {
+                    if id.sym.as_ref() == "Array" {
+                        self.state.has_array_constructor = true;
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+
+        fn visit_new_expr(&mut self, expr: &swc_core::ecma::ast::NewExpr) {
+            // new Array(len)
+            if let Expr::Ident(id) = expr.callee.as_ref() {
+                if id.sym.as_ref() == "Array" {
+                    self.state.has_array_constructor = true;
+                }
+            }
+            expr.visit_children_with(self);
+        }
+
+        fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+            if ident.sym.as_ref() == "arguments" {
+                self.state.has_arguments_ref = true;
+            }
+        }
+
+        fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+            if let Expr::Ident(obj) = member.obj.as_ref() {
+                // Object.assign (as reference, not just as call)
+                if obj.sym.as_ref() == "Object" && is_member_prop_name(&member.prop, "assign") {
+                    self.state.has_object_assign = true;
+                }
+                // Symbol.iterator
+                if obj.sym.as_ref() == "Symbol" && is_member_prop_name(&member.prop, "iterator") {
+                    self.state.has_symbol_iterator = true;
+                }
+            }
+            member.visit_children_with(self);
+        }
+    }
+
+    let mut visitor = MarkerVisitor { state };
+    for stmt in stmts {
+        stmt.visit_with(&mut visitor);
+    }
+}
+
+/// Detect the Babel 7+ helper delegation pattern:
+///   `return f(x) || g(x) || h(x) || nonIterableThrow()`
+///
+/// Key distinguishing feature: the **rightmost** (last evaluated) term is always
+/// a 0-arg call (e.g. `_nonIterableSpread()`, `_nonIterableRest()`) that throws
+/// a TypeError. Normal fallback chains don't end with a no-arg throwing call.
+///
+/// Requires at least 3 call terms total.
+fn is_babel_helper_or_chain(expr: &Expr) -> bool {
+    // The rightmost term of a left-associative || chain is the right child
+    // of the outermost BinExpr. Check it's a 0-arg call first.
+    let Expr::Bin(outermost) = expr else { return false };
+    if outermost.op != BinaryOp::LogicalOr {
+        return false;
+    }
+    // Rightmost term must be a 0-arg call (the "throw" helper)
+    let Expr::Call(rightmost_call) = outermost.right.as_ref() else {
+        return false;
+    };
+    if !rightmost_call.args.is_empty() {
+        return false;
+    }
+
+    // Now count all call terms in the chain (including the rightmost)
+    let mut call_count = 1; // already counted rightmost
+    let mut current: &Expr = &outermost.left;
+    loop {
+        match current {
+            Expr::Bin(bin) if bin.op == BinaryOp::LogicalOr => {
+                if matches!(bin.right.as_ref(), Expr::Call(..)) {
+                    call_count += 1;
+                }
+                current = &bin.left;
+            }
+            Expr::Call(..) => {
+                call_count += 1;
+                break;
+            }
+            _ => break,
+        }
+    }
+    call_count >= 3
 }
