@@ -25,11 +25,6 @@ const p = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        !((e, t)=>{
-            if (!(e instanceof t)) {
-                throw new TypeError("Cannot call a class as a function");
-            }
-        })(this, t);
         n = r = d(this, e.call(...[
             this
         ].concat(i)));
@@ -82,11 +77,6 @@ const y = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        !((e, t)=>{
-            if (!(e instanceof t)) {
-                throw new TypeError("Cannot call a class as a function");
-            }
-        })(this, t);
         n = r = m(this, e.call(...[
             this
         ].concat(i)));
@@ -143,11 +133,6 @@ const k = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        !((e, t)=>{
-            if (!(e instanceof t)) {
-                throw new TypeError("Cannot call a class as a function");
-            }
-        })(this, t);
         n = r = E(this, e.call(...[
             this
         ].concat(i)));
@@ -251,11 +236,6 @@ const O = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        !((e, t)=>{
-            if (!(e instanceof t)) {
-                throw new TypeError("Cannot call a class as a function");
-            }
-        })(this, t);
         n = r = S(this, e.call(...[
             this
         ].concat(i)));
@@ -309,11 +289,6 @@ const N = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        !((e, t)=>{
-            if (!(e instanceof t)) {
-                throw new TypeError("Cannot call a class as a function");
-            }
-        })(this, t);
         n = r = j(this, e.call(...[
             this
         ].concat(i)));
@@ -516,11 +491,6 @@ D.defaultProps = {
 export const NavLink = D;
 const z = ((e)=>{
     function t() {
-        ((e, t)=>{
-            if (!(e instanceof t)) {
-                throw new TypeError("Cannot call a class as a function");
-            }
-        })(this, t);
         return ((e, t)=>{
             if (!e) {
                 throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
@@ -618,11 +588,6 @@ const B = (e = "/", t = {})=>{
 };
 const Q = ((e)=>{
     function t() {
-        ((e, t)=>{
-            if (!(e instanceof t)) {
-                throw new TypeError("Cannot call a class as a function");
-            }
-        })(this, t);
         return ((e, t)=>{
             if (!e) {
                 throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
@@ -753,11 +718,6 @@ const ne = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        !((e, t)=>{
-            if (!(e instanceof t)) {
-                throw new TypeError("Cannot call a class as a function");
-            }
-        })(this, t);
         n = r = G(this, e.call(...[
             this
         ].concat(i)));
@@ -869,11 +829,6 @@ ne.childContextTypes = {
 export const StaticRouter = ne;
 const oe = ((e)=>{
     function t() {
-        ((e, t)=>{
-            if (!(e instanceof t)) {
-                throw new TypeError("Cannot call a class as a function");
-            }
-        })(this, t);
         return ((e, t)=>{
             if (!e) {
                 throw new ReferenceError("this hasn't been initialised - super() hasn't been called");

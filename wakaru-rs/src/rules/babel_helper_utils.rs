@@ -17,6 +17,7 @@ pub(crate) enum BabelHelperKind {
     Extends,
     ObjectSpread,
     SlicedToArray,
+    ClassCallCheck,
 }
 
 /// Known import paths for Babel runtime helpers.
@@ -86,6 +87,16 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
         }
     }
     helpers
+}
+
+/// Collect only ClassCallCheck helpers from module-level declarations.
+pub(crate) fn collect_class_call_check_helpers(
+    module: &Module,
+) -> HashMap<BindingKey, BabelHelperKind> {
+    let all = collect_helpers(module);
+    all.into_iter()
+        .filter(|(_, kind)| *kind == BabelHelperKind::ClassCallCheck)
+        .collect()
 }
 
 /// Check if the module contains functions with Babel sub-helper body signals.
@@ -329,6 +340,9 @@ fn detect_helper_from_fn(func: &Function, has_sub_helpers: bool) -> Option<Babel
     }
     if is_sliced_to_array_fn(func, has_sub_helpers) {
         return Some(BabelHelperKind::SlicedToArray);
+    }
+    if is_class_call_check_fn(func) {
+        return Some(BabelHelperKind::ClassCallCheck);
     }
     None
 }
@@ -674,6 +688,75 @@ fn is_to_consumable_array_fn(func: &Function, has_sub_helpers: bool) -> bool {
 //
 // Key signal: 0 params, references Object.assign, has .apply(this, arguments).
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// classCallCheck body-shape matcher
+//
+// function _classCallCheck(instance, Constructor) {
+//   if (!(instance instanceof Constructor)) {
+//     throw new TypeError("Cannot call a class as a function");
+//   }
+// }
+//
+// Key signal: 2 params, single if statement with !(param1 instanceof param2),
+// throws TypeError.
+// ---------------------------------------------------------------------------
+
+fn is_class_call_check_fn(func: &Function) -> bool {
+    if func.params.len() != 2 {
+        return false;
+    }
+    let body = match func.body.as_ref() {
+        Some(b) => b,
+        None => return false,
+    };
+
+    // Body: single `if` statement
+    if body.stmts.len() != 1 {
+        return false;
+    }
+    let Stmt::If(if_stmt) = &body.stmts[0] else { return false };
+
+    // Test: !(param1 instanceof param2)
+    let Expr::Unary(unary) = if_stmt.test.as_ref() else { return false };
+    if unary.op != swc_core::ecma::ast::UnaryOp::Bang {
+        return false;
+    }
+    let inner = match unary.arg.as_ref() {
+        Expr::Paren(p) => p.expr.as_ref(),
+        other => other,
+    };
+    let Expr::Bin(bin) = inner else { return false };
+    if bin.op != BinaryOp::InstanceOf {
+        return false;
+    }
+
+    // Consequent: throw new TypeError(...)
+    match if_stmt.cons.as_ref() {
+        Stmt::Throw(throw) => {
+            if let Expr::New(new_expr) = throw.arg.as_ref() {
+                if let Expr::Ident(id) = new_expr.callee.as_ref() {
+                    return id.sym.as_ref() == "TypeError";
+                }
+            }
+            false
+        }
+        Stmt::Block(block) => {
+            if block.stmts.len() != 1 {
+                return false;
+            }
+            if let Stmt::Throw(throw) = &block.stmts[0] {
+                if let Expr::New(new_expr) = throw.arg.as_ref() {
+                    if let Expr::Ident(id) = new_expr.callee.as_ref() {
+                        return id.sym.as_ref() == "TypeError";
+                    }
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
 
 fn is_extends_fn(func: &Function) -> bool {
     if !func.params.is_empty() {

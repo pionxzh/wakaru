@@ -19,11 +19,6 @@ export const a = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        !((e, t)=>{
-            if (!(e instanceof t)) {
-                throw new TypeError("Cannot call a class as a function");
-            }
-        })(this, t);
         n = r = d(this, e.call(...[
             this
         ].concat(i)));

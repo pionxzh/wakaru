@@ -42,11 +42,6 @@ const o = ((e)=>{
 })(require("./module-3.js"));
 const i = ((e)=>{
     function t() {
-        ((e, t)=>{
-            if (!(e instanceof t)) {
-                throw new TypeError("Cannot call a class as a function");
-            }
-        })(this, t);
         return ((e, t)=>{
             if (!e) {
                 throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
