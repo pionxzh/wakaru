@@ -671,8 +671,13 @@ fn is_to_consumable_array_fn(func: &Function, has_sub_helpers: bool) -> bool {
     let mut markers = BodyMarkerState::default();
     scan_stmts_for_markers(&body.stmts, &mut markers);
 
-    // Babel 6 form: Array.isArray + Array.from (or Array(len) constructor)
-    if markers.has_array_is_array && (markers.has_array_from || markers.has_array_constructor) {
+    // Babel 6 form: Array.isArray + Array.from (or Array(len) constructor).
+    // Must be a short function (≤4 statements) to avoid matching unrelated
+    // utility functions that happen to use both Array.isArray and Array.from.
+    if markers.has_array_is_array
+        && (markers.has_array_from || markers.has_array_constructor)
+        && body.stmts.len() <= 4
+    {
         return true;
     }
 
