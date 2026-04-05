@@ -11,8 +11,9 @@ export function takeEvery(e, t) {
     return r.k.apply(undefined, [
         o.b,
         e,
-        t
-    ].concat(i));
+        t,
+        ...i
+    ]);
 }
 export function takeLatest(e, t) {
     for(let n = arguments.length, i = Array(n > 2 ? n - 2 : 0), a = 2; a < n; a++){
@@ -21,8 +22,9 @@ export function takeLatest(e, t) {
     return r.k.apply(undefined, [
         o.d,
         e,
-        t
-    ].concat(i));
+        t,
+        ...i
+    ]);
 }
 export function throttle(e, t, n) {
     for(let i = arguments.length, a = Array(i > 3 ? i - 3 : 0), u = 3; u < i; u++){
@@ -32,8 +34,9 @@ export function throttle(e, t, n) {
         o.f,
         e,
         t,
-        n
-    ].concat(a));
+        n,
+        ...a
+    ]);
 }
 export const take = r.s;
 export const takem = r.t;

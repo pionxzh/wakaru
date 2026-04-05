@@ -476,8 +476,9 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                 const { selector, args } = e;
                 try {
                     const i = selector(...[
-                        r()
-                    ].concat(args));
+                        r(),
+                        ...args
+                    ]);
                     t(i);
                 } catch (e) {
                     t(e, true);

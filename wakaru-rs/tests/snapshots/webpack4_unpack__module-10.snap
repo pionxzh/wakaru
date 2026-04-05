@@ -73,10 +73,10 @@ export function b(e, t) {
                 ((e)=>({
                         done: false,
                         value: l.k.apply(undefined, [
-                            t
-                        ].concat(r, [
+                            t,
+                            ...r,
                             e
-                        ]))
+                        ])
                     }))(f)
             ];
         }
@@ -93,10 +93,10 @@ function f(e, t) {
     const f = (e)=>({
             done: false,
             value: l.k.apply(undefined, [
-                t
-            ].concat(r, [
+                t,
+                ...r,
                 e
-            ]))
+            ])
         });
     let d = undefined;
     let p = undefined;
@@ -185,10 +185,10 @@ function p(e, t, n) {
                 ((e)=>({
                         done: false,
                         value: l.k.apply(undefined, [
-                            n
-                        ].concat(s, [
+                            n,
+                            ...s,
                             e
-                        ]))
+                        ])
                     }))(p)
             ];
         },

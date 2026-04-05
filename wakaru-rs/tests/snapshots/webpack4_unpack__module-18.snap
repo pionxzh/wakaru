@@ -25,8 +25,9 @@ export const ConnectedRouter = ((e)=>{
         let n;
         let r;
         n = r = e.call(...[
-            this
-        ].concat(i));
+            this,
+            ...i
+        ]);
         r.handleLocationChange = (e)=>{
             r.store.dispatch({
                 type: LOCATION_CHANGE,

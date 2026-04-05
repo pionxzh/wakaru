@@ -1,6 +1,7 @@
 mod babel_helper_utils;
 mod import_dedup;
 mod arg_rest;
+mod un_array_concat_spread;
 mod arrow_function;
 mod arrow_return;
 mod exponent;
@@ -61,6 +62,7 @@ use swc_core::ecma::ast::Module;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 pub use arg_rest::ArgRest;
+pub use un_array_concat_spread::UnArrayConcatSpread;
 pub use import_dedup::ImportDedup;
 pub use arrow_function::ArrowFunction;
 pub use arrow_return::ArrowReturn;
@@ -162,6 +164,7 @@ pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
     module.visit_mut_with(&mut UnAssignmentMerging);
     module.visit_mut_with(&mut UnBuiltinPrototype);
     module.visit_mut_with(&mut UnArgumentSpread);
+    module.visit_mut_with(&mut UnArrayConcatSpread);
     module.visit_mut_with(&mut ObjectAssignSpread::new(unresolved_mark));
     module.visit_mut_with(&mut UnVariableMerging);
     module.visit_mut_with(&mut UnNullishCoalescing);

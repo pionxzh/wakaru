@@ -11,8 +11,9 @@ export const a = ((e)=>{
         let n;
         let r;
         n = r = e.call(...[
-            this
-        ].concat(i));
+            this,
+            ...i
+        ]);
         r.state = {
             match: r.computeMatch(r.props.history.location.pathname)
         };

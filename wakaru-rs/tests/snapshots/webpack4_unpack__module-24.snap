@@ -17,8 +17,9 @@ const p = ((e)=>{
         let n;
         let r;
         n = r = e.call(...[
-            this
-        ].concat(i));
+            this,
+            ...i
+        ]);
         r.history = c.createBrowserHistory(r.props);
         return n;
     }
@@ -60,8 +61,9 @@ const y = ((e)=>{
         let n;
         let r;
         n = r = e.call(...[
-            this
-        ].concat(i));
+            this,
+            ...i
+        ]);
         r.history = c.createHashHistory(r.props);
         return n;
     }
@@ -107,8 +109,9 @@ const k = ((e)=>{
         let n;
         let r;
         n = r = e.call(...[
-            this
-        ].concat(i));
+            this,
+            ...i
+        ]);
         r.handleClick = (e)=>{
             if (r.props.onClick) {
                 r.props.onClick(e);
@@ -201,8 +204,9 @@ const O = ((e)=>{
         let n;
         let r;
         n = r = e.call(...[
-            this
-        ].concat(i));
+            this,
+            ...i
+        ]);
         r.history = c.createMemoryHistory(r.props);
         return n;
     }
@@ -245,8 +249,9 @@ const N = ((e)=>{
         let n;
         let r;
         n = r = e.call(...[
-            this
-        ].concat(i));
+            this,
+            ...i
+        ]);
         r.state = {
             match: r.computeMatch(r.props, r.context.router)
         };
@@ -659,8 +664,9 @@ const ne = ((e)=>{
         let n;
         let r;
         n = r = e.call(...[
-            this
-        ].concat(i));
+            this,
+            ...i
+        ]);
         r.createHref = (e)=>X(r.props.basename + Z(e));
         r.handlePush = (e)=>{
             const r_props = r.props;

@@ -990,8 +990,9 @@ function nt(e, t) {
     }
     if (Array.isArray(t)) {
         return [
-            e
-        ].concat(t);
+            e,
+            ...t
+        ];
     }
     return [
         e,

@@ -143,8 +143,9 @@ function M(e) {
         n[r - 1] = arguments[r];
     }
     return x(N(...[
-        e
-    ].concat(n)));
+        e,
+        ...n
+    ]));
 }
 function A(...t) {
     if (t.length > 1) {
