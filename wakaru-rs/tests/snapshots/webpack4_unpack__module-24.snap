@@ -12,24 +12,15 @@ import P from "./module-15.js";
 import U from "./module-14.js";
 import le from "./module-30.js";
 export const Router = s.a;
-function d(e, t) {
-    if (!e) {
-        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-    }
-    if (!t || typeof t != "object" && typeof t != "function") {
-        return e;
-    }
-    return t;
-}
 const p = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = d(this, e.call(...[
+        n = r = e.call(...[
             this
-        ].concat(i)));
+        ].concat(i));
         r.history = c.createBrowserHistory(r.props);
-        return d(r, n);
+        return n;
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
@@ -64,24 +55,15 @@ p.propTypes = {
     children: u.node
 };
 export const BrowserRouter = p;
-function m(e, t) {
-    if (!e) {
-        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-    }
-    if (!t || typeof t != "object" && typeof t != "function") {
-        return e;
-    }
-    return t;
-}
 const y = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = m(this, e.call(...[
+        n = r = e.call(...[
             this
-        ].concat(i)));
+        ].concat(i));
         r.history = c.createHashHistory(r.props);
-        return m(r, n);
+        return n;
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
@@ -119,23 +101,14 @@ y.propTypes = {
     children: u.node
 };
 export const HashRouter = y;
-function E(e, t) {
-    if (!e) {
-        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-    }
-    if (!t || typeof t != "object" && typeof t != "function") {
-        return e;
-    }
-    return t;
-}
 const x = (e)=>!!(e.metaKey || e.altKey || e.ctrlKey || e.shiftKey);
 const k = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = E(this, e.call(...[
+        n = r = e.call(...[
             this
-        ].concat(i)));
+        ].concat(i));
         r.handleClick = (e)=>{
             if (r.props.onClick) {
                 r.props.onClick(e);
@@ -152,7 +125,7 @@ const k = ((e)=>{
                 }
             }
         };
-        return E(r, n);
+        return n;
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
@@ -223,24 +196,15 @@ k.contextTypes = {
     }).isRequired
 };
 export const Link = k;
-function S(e, t) {
-    if (!e) {
-        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-    }
-    if (!t || typeof t != "object" && typeof t != "function") {
-        return e;
-    }
-    return t;
-}
 const O = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = S(this, e.call(...[
+        n = r = e.call(...[
             this
-        ].concat(i)));
+        ].concat(i));
         r.history = c.createMemoryHistory(r.props);
-        return S(r, n);
+        return n;
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
@@ -275,27 +239,18 @@ O.propTypes = {
     children: u.node
 };
 export const MemoryRouter = O;
-function j(e, t) {
-    if (!e) {
-        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-    }
-    if (!t || typeof t != "object" && typeof t != "function") {
-        return e;
-    }
-    return t;
-}
 const R = (e)=>i.Children.count(e) === 0;
 const N = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = j(this, e.call(...[
+        n = r = e.call(...[
             this
-        ].concat(i)));
+        ].concat(i));
         r.state = {
             match: r.computeMatch(r.props, r.context.router)
         };
-        return j(r, n);
+        return n;
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
@@ -674,15 +629,6 @@ Q.contextTypes = {
     }).isRequired
 };
 export const Redirect = Q;
-function G(e, t) {
-    if (!e) {
-        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-    }
-    if (!t || typeof t != "object" && typeof t != "function") {
-        return e;
-    }
-    return t;
-}
 const X = (e)=>{
     if (e.charAt(0) === "/") {
         return e;
@@ -712,9 +658,9 @@ const ne = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = G(this, e.call(...[
+        n = r = e.call(...[
             this
-        ].concat(i)));
+        ].concat(i));
         r.createHref = (e)=>X(r.props.basename + Z(e));
         r.handlePush = (e)=>{
             const r_props = r.props;
@@ -732,7 +678,7 @@ const ne = ((e)=>{
         };
         r.handleListen = ()=>te;
         r.handleBlock = ()=>te;
-        return G(r, n);
+        return n;
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {

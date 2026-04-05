@@ -18,6 +18,7 @@ pub(crate) enum BabelHelperKind {
     ObjectSpread,
     SlicedToArray,
     ClassCallCheck,
+    PossibleConstructorReturn,
 }
 
 /// Known import paths for Babel runtime helpers.
@@ -87,6 +88,17 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
         }
     }
     helpers
+}
+
+/// Collect helpers of a specific kind from module-level declarations.
+pub(crate) fn collect_helpers_of_kind(
+    module: &Module,
+    kind: BabelHelperKind,
+) -> HashMap<BindingKey, BabelHelperKind> {
+    let all = collect_helpers(module);
+    all.into_iter()
+        .filter(|(_, k)| *k == kind)
+        .collect()
 }
 
 /// Collect only ClassCallCheck helpers from module-level declarations.
@@ -343,6 +355,9 @@ fn detect_helper_from_fn(func: &Function, has_sub_helpers: bool) -> Option<Babel
     }
     if is_class_call_check_fn(func) {
         return Some(BabelHelperKind::ClassCallCheck);
+    }
+    if is_possible_constructor_return_fn(func) {
+        return Some(BabelHelperKind::PossibleConstructorReturn);
     }
     None
 }
@@ -756,6 +771,76 @@ fn is_class_call_check_fn(func: &Function) -> bool {
         }
         _ => false,
     }
+}
+
+// ---------------------------------------------------------------------------
+// possibleConstructorReturn body-shape matcher
+//
+// function _possibleConstructorReturn(self, call) {
+//   if (!self) throw new ReferenceError("this hasn't been initialised...");
+//   if (!call || typeof call != "object" && typeof call != "function") return self;
+//   return call;
+// }
+//
+// Key signal: 2 params, first stmt throws ReferenceError on !param1,
+// second stmt tests typeof param2, returns param1 or param2.
+// ---------------------------------------------------------------------------
+
+fn is_possible_constructor_return_fn(func: &Function) -> bool {
+    if func.params.len() != 2 {
+        return false;
+    }
+    let body = match func.body.as_ref() {
+        Some(b) => b,
+        None => return false,
+    };
+
+    // Need at least 2 statements
+    if body.stmts.len() < 2 {
+        return false;
+    }
+
+    // First statement: if (!param1) { throw new ReferenceError(...) }
+    let Stmt::If(first_if) = &body.stmts[0] else { return false };
+    // Test should negate the first param
+    let Expr::Unary(unary) = first_if.test.as_ref() else { return false };
+    if unary.op != swc_core::ecma::ast::UnaryOp::Bang {
+        return false;
+    }
+    // Consequent should throw ReferenceError
+    match first_if.cons.as_ref() {
+        Stmt::Throw(throw) => {
+            if !is_new_reference_error(&throw.arg) {
+                return false;
+            }
+        }
+        Stmt::Block(block) => {
+            if block.stmts.len() != 1 {
+                return false;
+            }
+            if let Stmt::Throw(throw) = &block.stmts[0] {
+                if !is_new_reference_error(&throw.arg) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        _ => return false,
+    }
+
+    // Last statement must be a return.
+    // Accepts both:
+    //   3-stmt form: if-throw, if-return-self, return-call
+    //   2-stmt form: if-throw, return-ternary (minified: `return !t || ... ? e : t`)
+    let last = body.stmts.last().unwrap();
+    matches!(last, Stmt::Return(ReturnStmt { arg: Some(_), .. }))
+}
+
+fn is_new_reference_error(expr: &Expr) -> bool {
+    let Expr::New(new_expr) = expr else { return false };
+    let Expr::Ident(id) = new_expr.callee.as_ref() else { return false };
+    id.sym.as_ref() == "ReferenceError"
 }
 
 fn is_extends_fn(func: &Function) -> bool {

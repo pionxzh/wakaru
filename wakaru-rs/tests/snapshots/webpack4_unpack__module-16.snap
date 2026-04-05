@@ -6,26 +6,17 @@ import r from "./module-4.js";
 import i from "./module-5.js";
 import u from "./module-3.js";
 import c from "./module-1.js";
-function d(e, t) {
-    if (!e) {
-        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-    }
-    if (!t || typeof t != "object" && typeof t != "function") {
-        return e;
-    }
-    return t;
-}
 export const a = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = d(this, e.call(...[
+        n = r = e.call(...[
             this
-        ].concat(i)));
+        ].concat(i));
         r.state = {
             match: r.computeMatch(r.props.history.location.pathname)
         };
-        return d(r, n);
+        return n;
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {

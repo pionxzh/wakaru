@@ -20,29 +20,20 @@ export function routerReducer(e = s, t = {}) {
     }
     return e;
 }
-function d(e, t) {
-    if (!e) {
-        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-    }
-    if (!t || typeof t != "object" && typeof t != "function") {
-        return e;
-    }
-    return t;
-}
 export const ConnectedRouter = ((e)=>{
     function t(...i) {
         let n;
         let r;
-        n = r = d(this, e.call(...[
+        n = r = e.call(...[
             this
-        ].concat(i)));
+        ].concat(i));
         r.handleLocationChange = (e)=>{
             r.store.dispatch({
                 type: LOCATION_CHANGE,
                 payload: e
             });
         };
-        return d(r, n);
+        return n;
     }
     ((e, t)=>{
         if (typeof t != "function" && t !== null) {
