@@ -6,31 +6,20 @@ import r from "./module-4.js";
 import i from "./module-5.js";
 import u from "./module-3.js";
 import c from "./module-1.js";
-export const a = ((e)=>{
-    function t(...i) {
-        let n;
-        let r;
+export class a extends u.Component {
+    constructor(){
+        var n;
+        var r;
+        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++){
+            i[a] = arguments[a];
+        }
         n = r = e.call(this, ...i);
         r.state = {
             match: r.computeMatch(r.props.history.location.pathname)
         };
         return n;
     }
-    ((e, t)=>{
-        if (typeof t != "function" && t !== null) {
-            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
-        }
-        e.prototype = Object.create(t && t.prototype, {
-            constructor: {
-                value: e,
-                enumerable: false,
-                writable: true,
-                configurable: true
-            }
-        });
-        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
-    })(t, e);
-    t.prototype.getChildContext = function() {
+    getChildContext() {
         return {
             router: {
                 ...this.context.router,
@@ -41,14 +30,16 @@ export const a = ((e)=>{
                 }
             }
         };
-    };
-    t.prototype.computeMatch = (e)=>({
+    }
+    computeMatch(e) {
+        return {
             path: "/",
             url: "/",
             params: {},
             isExact: e === "/"
-        });
-    t.prototype.componentWillMount = function() {
+        };
+    }
+    componentWillMount() {
         const e = this;
         const props = this.props;
         const { children, history } = props;
@@ -58,22 +49,21 @@ export const a = ((e)=>{
                 match: e.computeMatch(history.location.pathname)
             });
         });
-    };
-    t.prototype.componentWillReceiveProps = function(e) {
+    }
+    componentWillReceiveProps(e) {
         r(this.props.history === e.history, "You cannot change <Router history>");
-    };
-    t.prototype.componentWillUnmount = function() {
+    }
+    componentWillUnmount() {
         this.unlisten();
-    };
-    t.prototype.render = function() {
+    }
+    render() {
         const children = this.props.children;
         if (children) {
             return u.Children.only(children);
         }
         return null;
-    };
-    return t;
-})(u.Component);
+    }
+}
 a.propTypes = {
     history: c.object.isRequired,
     children: c.node

@@ -1,10 +1,10 @@
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    BindingIdent, BlockStmt, CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod,
-    ComputedPropName, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, IdentName,
-    MemberExpr, MemberProp, MethodKind, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, Stmt,
-    VarDecl,
+    ArrowExpr, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Class, ClassDecl,
+    ClassMember, ClassMethod, ComputedPropName, Constructor, Decl, Expr, ExprOrSpread, ExprStmt,
+    FnExpr, Function, IdentName, MemberExpr, MemberProp, MethodKind, ModuleItem, Param,
+    ParamOrTsParamProp, Pat, PropName, Stmt, VarDecl,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -72,38 +72,51 @@ fn try_iife_to_class(var: &VarDecl) -> Option<ClassDecl> {
     // The init must be an IIFE call expression (possibly paren-wrapped)
     let call = extract_iife_call(init)?;
 
-    // Callee must be a function expression (possibly paren-wrapped)
+    // Callee must be a function or arrow expression (possibly paren-wrapped)
     let Callee::Expr(callee_expr) = &call.callee else {
         return None;
     };
-    let fn_expr = extract_fn_expr(callee_expr)?;
+    let callee_inner = strip_parens(callee_expr);
+
+    // Extract params and body from either FnExpr or ArrowExpr
+    let (param_pats, body_stmts): (Vec<&Pat>, &[Stmt]) = match callee_inner {
+        Expr::Fn(fn_expr) => {
+            let body = fn_expr.function.body.as_ref()?;
+            let pats: Vec<&Pat> = fn_expr.function.params.iter().map(|p| &p.pat).collect();
+            (pats, &body.stmts)
+        }
+        Expr::Arrow(arrow) => {
+            let BlockStmtOrExpr::BlockStmt(block) = &*arrow.body else {
+                return None;
+            };
+            let pats: Vec<&Pat> = arrow.params.iter().collect();
+            (pats, &block.stmts)
+        }
+        _ => return None,
+    };
 
     // The IIFE takes 0 args (no extends) or 1 arg (extends from _super)
     let (super_class, inner_param): (Option<Box<Expr>>, Option<Atom>) = match call.args.len() {
         0 => (None, None),
         1 => {
-            // Expect exactly 1 function parameter as well
-            if fn_expr.function.params.len() != 1 {
+            if param_pats.len() != 1 {
                 return None;
             }
-            let Pat::Ident(BindingIdent { id: param_id, .. }) = &fn_expr.function.params[0].pat
-            else {
+            let Pat::Ident(BindingIdent { id: param_id, .. }) = param_pats[0] else {
                 return None;
             };
             let super_expr = call.args[0].expr.clone();
-            // Accept any expression as the super arg (plain ident, member expr, etc.)
             (Some(super_expr), Some(param_id.sym.clone()))
         }
         _ => return None,
     };
 
     // 0-arg IIFE must have 0 params as well
-    if call.args.is_empty() && !fn_expr.function.params.is_empty() {
+    if call.args.is_empty() && !param_pats.is_empty() {
         return None;
     }
 
-    let body = fn_expr.function.body.as_ref()?;
-    let class_body = parse_class_body(&body.stmts, &class_name.sym, inner_param.as_deref())?;
+    let class_body = parse_class_body(body_stmts, &class_name.sym, inner_param.as_deref())?;
 
     Some(ClassDecl {
         ident: class_name.clone(),
@@ -128,18 +141,18 @@ fn try_iife_to_class(var: &VarDecl) -> Option<ClassDecl> {
 
 /// Strip parentheses and try to extract the inner CallExpr that represents the IIFE invocation.
 ///
-/// Handles both:
-///   `(function() { ... }())` — outer Paren wrapping a Call whose callee is FnExpr
-///   `(function() { ... })()` — Call whose callee is a Paren wrapping FnExpr
+/// Handles both function and arrow IIFEs:
+///   `(function() { ... }())` / `(function() { ... })()`
+///   `((e) => { ... })(arg)`
 fn extract_iife_call(expr: &Expr) -> Option<&CallExpr> {
     let stripped = strip_parens(expr);
     match stripped {
         Expr::Call(call) => {
-            // Verify the callee (possibly paren-wrapped) is a function expression
             let Callee::Expr(callee) = &call.callee else {
                 return None;
             };
-            if extract_fn_expr(callee).is_some() {
+            let inner = strip_parens(callee);
+            if matches!(inner, Expr::Fn(_) | Expr::Arrow(_)) {
                 Some(call)
             } else {
                 None
@@ -218,9 +231,12 @@ fn parse_class_body(
             continue;
         }
 
-        // `__extends(t, _super)` or `_inherits(t, _super)` call statement
+        // `__extends(t, _super)` or `_inherits(t, _super)` call statement,
+        // or inline IIFE: `((e, t) => { Object.create... })(t, _super)`
         if let Some(sp) = super_param {
-            if let Some(()) = try_parse_extends_call(stmt, inner_ctor_name, sp) {
+            if try_parse_extends_call(stmt, inner_ctor_name, sp).is_some()
+                || is_inline_inherits_iife(stmt, inner_ctor_name, sp)
+            {
                 extends_handled = true;
                 continue;
             }
@@ -858,6 +874,98 @@ fn is_set_prototype_of_chain_expr(expr: &Expr, super_param: &str) -> bool {
 }
 
 /// Check `if (typeof _super !== "function" && _super !== null) { throw ... }`.
+/// Detect inline IIFE `_inherits` pattern:
+/// ```js
+/// ((e, t) => {
+///     if (typeof t != "function" && t !== null) throw TypeError(...)
+///     e.prototype = Object.create(t && t.prototype, { constructor: ... })
+///     t && (Object.setPrototypeOf ? ... : ...)
+/// })(ctor, super)
+/// ```
+fn is_inline_inherits_iife(stmt: &Stmt, ctor_name: &str, super_param: &str) -> bool {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return false;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+
+    // Must have 2 args: (ctor, super)
+    if call.args.len() != 2 {
+        return false;
+    }
+    let arg0 = strip_parens(&call.args[0].expr);
+    let arg1 = strip_parens(&call.args[1].expr);
+    if !matches!(arg0, Expr::Ident(id) if id.sym.as_ref() == ctor_name) {
+        return false;
+    }
+    if !matches!(arg1, Expr::Ident(id) if id.sym.as_ref() == super_param) {
+        return false;
+    }
+
+    // Callee must be an arrow or function with 2 params
+    let inner = strip_parens(callee);
+    let body_stmts: &[Stmt] = match inner {
+        Expr::Arrow(arrow) => {
+            if arrow.params.len() != 2 {
+                return false;
+            }
+            match &*arrow.body {
+                BlockStmtOrExpr::BlockStmt(block) => &block.stmts,
+                _ => return false,
+            }
+        }
+        Expr::Fn(fn_expr) => {
+            if fn_expr.function.params.len() != 2 {
+                return false;
+            }
+            match &fn_expr.function.body {
+                Some(block) => &block.stmts,
+                None => return false,
+            }
+        }
+        _ => return false,
+    };
+
+    // Body should contain Object.create (prototype chain setup)
+    body_stmts.iter().any(|s| stmt_has_object_create(s))
+}
+
+/// Check if a statement contains `Object.create(...)` call.
+fn stmt_has_object_create(stmt: &Stmt) -> bool {
+    use swc_core::ecma::visit::{Visit, VisitWith};
+
+    struct Finder {
+        found: bool,
+    }
+    impl Visit for Finder {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Expr::Member(member) = callee.as_ref() {
+                    if let Expr::Ident(obj) = member.obj.as_ref() {
+                        if obj.sym.as_ref() == "Object" {
+                            if let MemberProp::Ident(prop) = &member.prop {
+                                if prop.sym.as_ref() == "create" {
+                                    self.found = true;
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder { found: false };
+    stmt.visit_with(&mut finder);
+    finder.found
+}
+
 fn is_super_typecheck_if_stmt(stmt: &Stmt, super_param: &str) -> bool {
     let Stmt::If(if_stmt) = stmt else {
         return false;

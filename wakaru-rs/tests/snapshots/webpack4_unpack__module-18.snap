@@ -20,10 +20,13 @@ export function routerReducer(e = s, t = {}) {
     }
     return e;
 }
-export const ConnectedRouter = ((e)=>{
-    function t(...i) {
-        let n;
-        let r;
+export class ConnectedRouter extends r.Component {
+    constructor(){
+        var n;
+        var r;
+        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++){
+            i[a] = arguments[a];
+        }
         n = r = e.call(this, ...i);
         r.handleLocationChange = (e)=>{
             r.store.dispatch({
@@ -33,21 +36,7 @@ export const ConnectedRouter = ((e)=>{
         };
         return n;
     }
-    ((e, t)=>{
-        if (typeof t != "function" && t !== null) {
-            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
-        }
-        e.prototype = Object.create(t && t.prototype, {
-            constructor: {
-                value: e,
-                enumerable: false,
-                writable: true,
-                configurable: true
-            }
-        });
-        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
-    })(t, e);
-    t.prototype.componentWillMount = function() {
+    componentWillMount() {
         const props = this.props;
         const { store, history, isSSR } = props;
         this.store = store || this.context.store;
@@ -55,17 +44,16 @@ export const ConnectedRouter = ((e)=>{
         if (!isSSR) {
             this.unsubscribeFromHistory = history.listen(this.handleLocationChange);
         }
-    };
-    t.prototype.componentWillUnmount = function() {
+    }
+    componentWillUnmount() {
         if (this.unsubscribeFromHistory) {
             this.unsubscribeFromHistory();
         }
-    };
-    t.prototype.render = function() {
+    }
+    render() {
         return <u.a {...this.props}/>;
-    };
-    return t;
-})(r.Component);
+    }
+}
 ConnectedRouter.propTypes = {
     store: i.object,
     history: i.object.isRequired,

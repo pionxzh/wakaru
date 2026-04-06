@@ -323,3 +323,82 @@ class A {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn test_arrow_iife_class_basic() {
+    let input = r#"
+var Foo = (() => {
+    function t() {}
+    t.prototype.render = function() {
+        return null;
+    };
+    return t;
+})();
+"#;
+    let expected = r#"
+class Foo {
+    render() {
+        return null;
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_arrow_iife_class_with_extends() {
+    let input = r#"
+var Foo = ((e) => {
+    function t() {}
+    ((e, t) => {
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: { value: e, enumerable: false, writable: true, configurable: true }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    })(t, e);
+    t.prototype.render = function() {
+        return null;
+    };
+    return t;
+})(Parent);
+"#;
+    let expected = r#"
+class Foo extends Parent {
+    render() {
+        return null;
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_arrow_iife_class_with_inherits_typecheck() {
+    // Full Babel pattern with typeof check in inherits IIFE
+    let input = r#"
+var Foo = ((e) => {
+    function t() {}
+    ((e, t) => {
+        if (typeof t != "function" && t !== null) {
+            throw new TypeError("Super expression must either be null or a function");
+        }
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: { value: e, enumerable: false, writable: true, configurable: true }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    })(t, e);
+    t.prototype.hello = function() {
+        return "world";
+    };
+    return t;
+})(Base);
+"#;
+    let expected = r#"
+class Foo extends Base {
+    hello() {
+        return "world";
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
