@@ -7,12 +7,9 @@ import i from "./module-5.js";
 import u from "./module-3.js";
 import c from "./module-1.js";
 export class a extends u.Component {
-    constructor(){
+    constructor(...i){
         var n;
         var r;
-        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = e.call(this, ...i);
         r.state = {
             match: r.computeMatch(r.props.history.location.pathname)

@@ -13,12 +13,9 @@ import U from "./module-14.js";
 import le from "./module-30.js";
 export const Router = s.a;
 class p extends i.Component {
-    constructor(){
+    constructor(...i){
         var n;
         var r;
-        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = e.call(this, ...i);
         r.history = c.createBrowserHistory(r.props);
         return n;
@@ -42,12 +39,9 @@ p.propTypes = {
 };
 export const BrowserRouter = p;
 class y extends i.Component {
-    constructor(){
+    constructor(...i){
         var n;
         var r;
-        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = e.call(this, ...i);
         r.history = c.createHashHistory(r.props);
         return n;
@@ -75,12 +69,9 @@ y.propTypes = {
 export const HashRouter = y;
 const x = (e)=>!!(e.metaKey || e.altKey || e.ctrlKey || e.shiftKey);
 class k extends i.Component {
-    constructor(){
+    constructor(...i){
         var n;
         var r;
-        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = e.call(this, ...i);
         r.handleClick = (e)=>{
             if (r.props.onClick) {
@@ -155,12 +146,9 @@ k.contextTypes = {
 };
 export const Link = k;
 class O extends i.Component {
-    constructor(){
+    constructor(...i){
         var n;
         var r;
-        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = e.call(this, ...i);
         r.history = c.createMemoryHistory(r.props);
         return n;
@@ -185,12 +173,9 @@ O.propTypes = {
 export const MemoryRouter = O;
 const R = (e)=>i.Children.count(e) === 0;
 class N extends i.Component {
-    constructor(){
+    constructor(...i){
         var n;
         var r;
-        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = e.call(this, ...i);
         r.state = {
             match: r.computeMatch(r.props, r.context.router)
@@ -559,12 +544,9 @@ const ee = (e)=>()=>{
     };
 const te = ()=>{};
 class ne extends i.Component {
-    constructor(){
+    constructor(...i){
         var n;
         var r;
-        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = e.call(this, ...i);
         r.createHref = (e)=>X(r.props.basename + Z(e));
         r.handlePush = (e)=>{

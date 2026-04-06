@@ -8,7 +8,9 @@ Read these first:
 
 ## Developing a Rule
 
-### Prefer test-first
+### Every change needs a unit test
+
+**No code change is committed without a corresponding unit test.** Pipeline snapshot updates alone are not sufficient — they test the whole pipeline, not the individual change.
 
 Write tests before implementation when the input→output is known:
 1. Create `tests/my_rule_rule.rs` with failing test cases
@@ -16,6 +18,8 @@ Write tests before implementation when the input→output is known:
 3. Run pipeline tests to check for regressions
 
 When exploring an unknown AST pattern, spike first, then write tests before finalizing.
+
+For bugfixes to existing rules: add a regression test that reproduces the exact bug.
 
 ### Adding a new rule
 

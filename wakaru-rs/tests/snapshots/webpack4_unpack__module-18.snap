@@ -21,12 +21,9 @@ export function routerReducer(e = s, t = {}) {
     return e;
 }
 export class ConnectedRouter extends r.Component {
-    constructor(){
+    constructor(...i){
         var n;
         var r;
-        for(var o = arguments.length, i = Array(o), a = 0; a < o; a++){
-            i[a] = arguments[a];
-        }
         n = r = e.call(this, ...i);
         r.handleLocationChange = (e)=>{
             r.store.dispatch({

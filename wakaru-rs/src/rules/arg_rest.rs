@@ -1,8 +1,8 @@
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, BindingIdent, BlockStmt, Callee, Expr, Function, Ident, Lit, MemberExpr, MemberProp,
-    Number, Param, Pat, RestPat, Stmt, VarDeclOrExpr,
+    ArrowExpr, BindingIdent, BlockStmt, Callee, Constructor, Expr, Function, Ident, Lit, MemberExpr,
+    MemberProp, Number, Param, ParamOrTsParamProp, Pat, RestPat, Stmt, VarDeclOrExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -37,11 +37,53 @@ impl VisitMut for ArgRest {
 
         // Use the copy variable's name when a Babel copy loop is present; it is
         // already unique within the scope and avoids any naming conflict.
-        let rest_name: Atom = detect_copy_var_name(body).unwrap_or_else(|| "args".into());
+        let copy_var = detect_copy_var_name(body);
+        let rest_name: Atom = copy_var.clone().unwrap_or_else(|| "args".into());
         func.params.push(make_rest_param(rest_name.clone()));
 
         // Rewrite `arguments` → `args` in the body
         if let Some(body) = &mut func.body {
+            // Remove the Babel copy loop since the rest param replaces it
+            if copy_var.is_some() {
+                remove_arguments_copy_loop(body);
+            }
+            body.visit_mut_with(&mut ArgumentsRewriter {
+                name: rest_name,
+                fixed_param_count,
+            });
+        }
+    }
+
+    fn visit_mut_constructor(&mut self, ctor: &mut Constructor) {
+        ctor.visit_mut_children_with(self);
+
+        // Skip if already has rest params
+        if ctor.params.iter().any(|p| match p {
+            ParamOrTsParamProp::Param(param) => matches!(param.pat, Pat::Rest(_)),
+            _ => false,
+        }) {
+            return;
+        }
+
+        let Some(body) = &ctor.body else { return };
+        let fixed_param_count = ctor.params.len();
+
+        let mut checker = ArgumentsChecker::new(fixed_param_count);
+        body.visit_with(&mut checker);
+
+        if !checker.has_any || checker.has_unsafe {
+            return;
+        }
+
+        let copy_var = detect_copy_var_name(body);
+        let rest_name: Atom = copy_var.clone().unwrap_or_else(|| "args".into());
+        ctor.params.push(ParamOrTsParamProp::Param(make_rest_param(rest_name.clone())));
+
+        if let Some(body) = &mut ctor.body {
+            // Remove the Babel copy loop since the rest param replaces it
+            if copy_var.is_some() {
+                remove_arguments_copy_loop(body);
+            }
             body.visit_mut_with(&mut ArgumentsRewriter {
                 name: rest_name,
                 fixed_param_count,
@@ -216,6 +258,32 @@ fn is_arguments_ident(expr: &Expr) -> bool {
 // ============================================================
 // VisitMut: rewrite `arguments` → rest param name in member exprs
 // ============================================================
+
+/// Remove the Babel arguments copy loop:
+/// `for (var len = arguments.length, arr = Array(len), i = 0; i < len; i++) arr[i] = arguments[i];`
+/// This loop is dead code once the rest param is added.
+fn remove_arguments_copy_loop(body: &mut BlockStmt) {
+    body.stmts.retain(|stmt| {
+        let Stmt::For(for_stmt) = stmt else { return true };
+        let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else { return true };
+        // The Babel copy loop has 3 declarators: len, arr, idx
+        if init.decls.len() != 3 {
+            return true;
+        }
+        // First declarator init must reference `arguments.length`
+        let Some(first_init) = &init.decls[0].init else { return true };
+        if let Expr::Member(m) = first_init.as_ref() {
+            if is_arguments_ident(&m.obj) {
+                if let MemberProp::Ident(prop) = &m.prop {
+                    if prop.sym.as_ref() == "length" {
+                        return false; // Remove this for loop
+                    }
+                }
+            }
+        }
+        true
+    });
+}
 
 struct ArgumentsRewriter {
     name: Atom,

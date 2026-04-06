@@ -166,3 +166,87 @@ function foo() {
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
+
+// ---------------------------------------------------------------------------
+// Class constructor support
+// ---------------------------------------------------------------------------
+
+#[test]
+fn constructor_arguments_becomes_rest_param() {
+    // ArgRest must also visit Constructor nodes, not just Function nodes
+    let input = r#"
+class Foo {
+    constructor() {
+        console.log(arguments[0]);
+    }
+}
+"#;
+    let expected = r#"
+class Foo {
+    constructor(...args) {
+        console.log(args[0]);
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn constructor_babel_copy_loop_removed() {
+    // The Babel rest-args copy loop should be removed when rest param is added
+    let input = r#"
+class Foo {
+    constructor() {
+        for (var o = arguments.length, i = Array(o), a = 0; a < o; a++) {
+            i[a] = arguments[a];
+        }
+        this.items = i;
+    }
+}
+"#;
+    let expected = r#"
+class Foo {
+    constructor(...i) {
+        this.items = i;
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+// ---------------------------------------------------------------------------
+// Copy loop removal in regular functions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn function_babel_copy_loop_removed() {
+    let input = r#"
+function foo() {
+    for (var len = arguments.length, args = Array(len), i = 0; i < len; i++) {
+        args[i] = arguments[i];
+    }
+    return args;
+}
+"#;
+    let expected = r#"
+function foo(...args) {
+    return args;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn copy_loop_preserved_when_not_arguments_pattern() {
+    // A for loop that doesn't match the Babel copy pattern should be kept
+    let input = r#"
+function foo() {
+    for (var i = 0; i < 10; i++) {
+        console.log(arguments[i]);
+    }
+}
+"#;
+    let output = apply(input);
+    // The for loop should still be present (it's not the copy pattern)
+    assert!(output.contains("for"), "non-copy for loop should be preserved: {}", output);
+}
