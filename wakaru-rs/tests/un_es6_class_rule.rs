@@ -603,6 +603,163 @@ class Foo extends Base {
     assert_eq_normalized(&apply(input), expected);
 }
 
+// ============================================================
+// Sequence-expression return: `return t.method = fn, ..., ClassName;`
+// ============================================================
+
+#[test]
+fn test_seq_return_proto_alias_methods() {
+    // Minified Babel loose: methods in comma expression return
+    let input = r#"
+var Foo = (function() {
+    function e(a, b) { this.a = a; this.b = b; }
+    var t = e.prototype;
+    return t.getA = function getA() { return this.a; }, t.getB = function getB() { return this.b; }, e;
+}());
+"#;
+    let expected = r#"
+class Foo {
+    constructor(a, b) { this.a = a; this.b = b; }
+    getA() { return this.a; }
+    getB() { return this.b; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_seq_return_with_extends() {
+    // Minified Babel loose with inheritance: o(child, parent) + comma-expr return
+    // Note: `|| this` fallback is a separate cleanup concern (not handled by UnEs6Class alone)
+    let input = r#"
+function o(e, t) {
+    e.prototype = Object.create(t.prototype);
+    e.prototype.constructor = e;
+}
+var Foo = (function(t) {
+    o(a, t);
+    var r = a.prototype;
+    function a(n, r) {
+        var o;
+        o = t.call(this, n, r) || this;
+        o.x = 1;
+        return o;
+    }
+    return r.getX = function() { return this.x; }, r.render = function() { return null; }, a;
+})(Parent);
+"#;
+    // The `o = super(n, r) || this` pattern retains the `|| this` fallback and alias
+    // since cleanup_super_aliases only handles direct super() calls, not `super() || this`
+    let expected = r#"
+function o(e, t) {
+    e.prototype = Object.create(t.prototype);
+    e.prototype.constructor = e;
+}
+class Foo extends Parent {
+    constructor(n, r){
+        var o;
+        o = super(n, r) || this;
+        o.x = 1;
+        return o;
+    }
+    getX() { return this.x; }
+    render() { return null; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_seq_return_with_extends_direct_super() {
+    // Same pattern but without the `|| this` fallback — alias should be cleaned up
+    let input = r#"
+function o(e, t) {
+    e.prototype = Object.create(t.prototype);
+    e.prototype.constructor = e;
+}
+var Foo = (function(t) {
+    o(a, t);
+    var r = a.prototype;
+    function a(n, r) {
+        var o;
+        o = t.call(this, n, r);
+        o.x = 1;
+        return o;
+    }
+    return r.getX = function() { return this.x; }, r.render = function() { return null; }, a;
+})(Parent);
+"#;
+    let expected = r#"
+function o(e, t) {
+    e.prototype = Object.create(t.prototype);
+    e.prototype.constructor = e;
+}
+class Foo extends Parent {
+    constructor(n, r){
+        super(n, r);
+        this.x = 1;
+    }
+    getX() { return this.x; }
+    render() { return null; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_seq_return_no_methods() {
+    // Edge: just `return e;` (no comma expression) — already handled, verifying no regression
+    let input = r#"
+var Foo = (function() {
+    function e() {}
+    e.prototype.go = function go() {}
+    return e;
+}());
+"#;
+    let expected = r#"
+class Foo {
+    go() {}
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_inherits_helper_in_outer_scope() {
+    // Module-23 pattern: inherits helper at top level, class IIFE inside a function body.
+    // The inherits helper `o` is detected at module level and available in nested scopes.
+    let input = r#"
+function o(e, t) {
+    e.prototype = Object.create(t.prototype);
+    e.prototype.constructor = e;
+}
+function createProvider() {
+    var r = (function(t) {
+        o(a, t);
+        var r = a.prototype;
+        function a(n) { t.call(this, n); }
+        r.render = function() { return null; };
+        return a;
+    })(Component);
+    return r;
+}
+"#;
+    let expected = r#"
+function o(e, t) {
+    e.prototype = Object.create(t.prototype);
+    e.prototype.constructor = e;
+}
+function createProvider() {
+    class r extends Component {
+        constructor(n) { super(n); }
+        render() { return null; }
+    }
+    return r;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
 #[test]
 fn test_inline_pcr_with_comma_and_class_call_check() {
     // Full Babel pattern: classCallCheck, possibleConstructorReturn in sequence expr

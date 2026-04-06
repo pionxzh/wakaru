@@ -1,16 +1,46 @@
+use std::collections::HashSet;
+
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
     Class, ClassDecl, ClassMember, ClassMethod, ComputedPropName, Constructor, Decl, Expr,
     ExprOrSpread, ExprStmt, FnExpr, Function, Ident, IdentName, MemberExpr, MemberProp, MethodKind,
-    ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SimpleAssignTarget, Stmt, VarDecl,
+    ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr, SimpleAssignTarget, Stmt, VarDecl,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 pub struct UnEs6Class;
 
 impl VisitMut for UnEs6Class {
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        // Pre-scan for inherits helpers at module level BEFORE visiting children,
+        // so nested scopes (function bodies) can also detect custom inherits calls.
+        let inherits_helpers = collect_inherits_helpers_from_items(items);
+
+        let mut inner = UnEs6ClassInner {
+            inherits_helpers,
+        };
+        items.visit_mut_with(&mut inner);
+    }
+
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        // Non-module context: scan local scope for inherits helpers
+        let inherits_helpers = collect_inherits_helpers_from_stmts(stmts);
+
+        let mut inner = UnEs6ClassInner {
+            inherits_helpers,
+        };
+        stmts.visit_mut_with(&mut inner);
+    }
+}
+
+/// Inner visitor that carries the inherits helpers set through all scopes.
+struct UnEs6ClassInner {
+    inherits_helpers: HashSet<Atom>,
+}
+
+impl VisitMut for UnEs6ClassInner {
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
 
@@ -18,7 +48,7 @@ impl VisitMut for UnEs6Class {
         for stmt in old {
             match stmt {
                 Stmt::Decl(Decl::Var(ref var_decl)) => {
-                    if let Some(class_decl) = try_iife_to_class(var_decl) {
+                    if let Some(class_decl) = try_iife_to_class(var_decl, &self.inherits_helpers) {
                         stmts.push(Stmt::Decl(Decl::Class(class_decl)));
                     } else {
                         stmts.push(stmt);
@@ -36,7 +66,7 @@ impl VisitMut for UnEs6Class {
         for item in old {
             match item {
                 ModuleItem::Stmt(Stmt::Decl(Decl::Var(ref var_decl))) => {
-                    if let Some(class_decl) = try_iife_to_class(var_decl) {
+                    if let Some(class_decl) = try_iife_to_class(var_decl, &self.inherits_helpers) {
                         items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
                     } else {
                         items.push(item);
@@ -48,13 +78,60 @@ impl VisitMut for UnEs6Class {
     }
 }
 
+/// Collect names of functions that match the `_inherits` body shape from statements.
+fn collect_inherits_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<Atom> {
+    let mut helpers = HashSet::new();
+    for stmt in stmts {
+        if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
+            if is_inherits_fn(&fn_decl.function) {
+                helpers.insert(fn_decl.ident.sym.clone());
+            }
+        }
+    }
+    helpers
+}
+
+/// Collect names of functions that match the `_inherits` body shape from module items.
+fn collect_inherits_helpers_from_items(items: &[ModuleItem]) -> HashSet<Atom> {
+    let mut helpers = HashSet::new();
+    for item in items {
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
+            if is_inherits_fn(&fn_decl.function) {
+                helpers.insert(fn_decl.ident.sym.clone());
+            }
+        }
+    }
+    helpers
+}
+
+/// Check if a function body matches the `_inherits` pattern:
+/// ```js
+/// function _inherits(e, t) {
+///     e.prototype = Object.create(t.prototype);
+///     e.prototype.constructor = e;
+///     // optional: setPrototypeOf / __proto__
+/// }
+/// ```
+fn is_inherits_fn(func: &Function) -> bool {
+    if func.params.len() != 2 {
+        return false;
+    }
+    let body = match &func.body {
+        Some(b) => b,
+        None => return false,
+    };
+    // Must contain `Object.create` (prototype chain setup) — the key signal
+    body.stmts.iter().any(|s| stmt_has_object_create(s))
+        && body.stmts.len() <= 5 // short body — not a general utility
+}
+
 // ============================================================
 // Core transformation
 // ============================================================
 
 /// Attempt to convert a `var Foo = (function(...) { ... }(...))` pattern into a ClassDecl.
 /// Returns None if the pattern doesn't match.
-fn try_iife_to_class(var: &VarDecl) -> Option<ClassDecl> {
+fn try_iife_to_class(var: &VarDecl, inherits_helpers: &HashSet<Atom>) -> Option<ClassDecl> {
     // Must be a single declarator
     if var.decls.len() != 1 {
         return None;
@@ -116,7 +193,7 @@ fn try_iife_to_class(var: &VarDecl) -> Option<ClassDecl> {
         return None;
     }
 
-    let class_body = parse_class_body(body_stmts, &class_name.sym, inner_param.as_deref())?;
+    let class_body = parse_class_body(body_stmts, &class_name.sym, inner_param.as_deref(), inherits_helpers)?;
 
     Some(ClassDecl {
         ident: class_name.clone(),
@@ -191,6 +268,7 @@ fn parse_class_body(
     stmts: &[Stmt],
     class_name: &str,
     super_param: Option<&str>,
+    inherits_helpers: &HashSet<Atom>,
 ) -> Option<Vec<ClassMember>> {
     // The first real statement should define the constructor function.
     // We need to identify the inner constructor function name (often mangled, e.g. `t`).
@@ -210,7 +288,8 @@ fn parse_class_body(
     // Actually we do a single forward pass for simplicity.
 
     for stmt in stmts {
-        // `return t;` or `return _createClass(t, ...)` — end of IIFE body
+        // `return t;` or `return _createClass(t, ...)` or
+        // `return t.method1 = fn, t.method2 = fn, ..., t;` — end of IIFE body
         if let Stmt::Return(ret_stmt) = stmt {
             if let Some(ret_expr) = &ret_stmt.arg {
                 let stripped = strip_parens(ret_expr);
@@ -225,16 +304,23 @@ fn parse_class_body(
                             return None;
                         }
                     }
+                    // `return t.method = fn, t.method2 = fn, ..., t;`
+                    // Minified Babel loose: method assignments in comma/sequence expression
+                    Expr::Seq(seq) => {
+                        if !try_parse_seq_return(seq, inner_ctor_name, &proto_alias, &mut members) {
+                            return None;
+                        }
+                    }
                     _ => return None,
                 }
             }
             continue;
         }
 
-        // `__extends(t, _super)` or `_inherits(t, _super)` call statement,
+        // `__extends(t, _super)` or `_inherits(t, _super)` or `customInherits(t, _super)`,
         // or inline IIFE: `((e, t) => { Object.create... })(t, _super)`
         if let Some(sp) = super_param {
-            if try_parse_extends_call(stmt, inner_ctor_name, sp).is_some()
+            if try_parse_extends_call(stmt, inner_ctor_name, sp, inherits_helpers).is_some()
                 || is_inline_inherits_iife(stmt, inner_ctor_name, sp)
             {
                 extends_handled = true;
@@ -333,8 +419,8 @@ fn parse_class_body(
 // Statement parsers
 // ============================================================
 
-/// Detect `__extends(t, _super)` or `_inherits(t, _super)` and return `Some(())` if matched.
-fn try_parse_extends_call(stmt: &Stmt, ctor_name: &str, super_param: &str) -> Option<()> {
+/// Detect `__extends(t, _super)`, `_inherits(t, _super)`, or a call to a detected inherits helper.
+fn try_parse_extends_call(stmt: &Stmt, ctor_name: &str, super_param: &str, inherits_helpers: &HashSet<Atom>) -> Option<()> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
@@ -348,7 +434,11 @@ fn try_parse_extends_call(stmt: &Stmt, ctor_name: &str, super_param: &str) -> Op
     let Expr::Ident(fn_name) = callee else {
         return None;
     };
-    if fn_name.sym.as_ref() != "__extends" && fn_name.sym.as_ref() != "_inherits" {
+    // Accept known names or any detected inherits helper
+    if fn_name.sym.as_ref() != "__extends"
+        && fn_name.sym.as_ref() != "_inherits"
+        && !inherits_helpers.contains(&fn_name.sym)
+    {
         return None;
     }
     if call.args.len() != 2 {
@@ -503,6 +593,37 @@ fn try_parse_object_define_property(
         let method_key = PropName::Ident(IdentName::new(sym.clone(), DUMMY_SP));
         let method = build_class_method(method_key, fn_expr, false, kind);
         members.push(ClassMember::Method(method));
+    }
+
+    true
+}
+
+/// Parse a sequence expression in a return statement:
+/// `return proto.method1 = fn, proto.method2 = fn, ..., ClassName;`
+///
+/// The last expression must be the constructor ident. Each preceding expression
+/// must be a method/property assignment.
+fn try_parse_seq_return(
+    seq: &SeqExpr,
+    ctor_name: &str,
+    proto_alias: &Option<Atom>,
+    members: &mut Vec<ClassMember>,
+) -> bool {
+    if seq.exprs.is_empty() {
+        return false;
+    }
+
+    // Last expression must be the constructor ident
+    let last = strip_parens(seq.exprs.last().unwrap());
+    if !matches!(last, Expr::Ident(id) if id.sym.as_ref() == ctor_name) {
+        return false;
+    }
+
+    // All preceding expressions must be method assignments
+    for expr in &seq.exprs[..seq.exprs.len() - 1] {
+        if !try_parse_method_assignment(strip_parens(expr), ctor_name, proto_alias, members) {
+            return false;
+        }
     }
 
     true

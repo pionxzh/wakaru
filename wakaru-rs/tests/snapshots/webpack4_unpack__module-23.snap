@@ -35,27 +35,24 @@ i.forwardRef;
 export function createProvider(e = "store") {
     let t;
     const n = `${e}Subscription`;
-    const r = ((t)=>{
-        o(a, t);
-        const a_prototype = a.prototype;
-        function a(n, r) {
-            let o;
-            o = t.call(this, n, r) || this;
+    class r extends i.Component {
+        constructor(n, r){
+            var o;
+            o = super(n, r) || this;
             o[e] = n.store;
             return o;
         }
-        a_prototype.getChildContext = function() {
+        getChildContext() {
             let t;
             t = {};
             t[e] = this[e];
             t[n] = null;
             return t;
-        };
-        a_prototype.render = function() {
+        }
+        render() {
             return i.Children.only(this.props.children);
-        };
-        return a;
-    })(i.Component);
+        }
+    }
     r.propTypes = {
         store: s.isRequired,
         children: u.element.isRequired
@@ -193,7 +190,7 @@ export function connectAdvanced(e, t = {}) {
     r = {};
     r[M] = c;
     const I = r;
-    return (T1)=>{
+    return function(T1) {
         b(w.isValidElementType(T1), `You must pass a component to the function returned by ${d}. Instead received ${JSON.stringify(T1)}`);
         const n = T1.displayName || T1.name || "Component";
         const r = l(n);
@@ -208,10 +205,10 @@ export function connectAdvanced(e, t = {}) {
             wrappedComponentName: n,
             WrappedComponent: T1
         });
-        const u = ((n)=>{
-            function u(e, t) {
-                let o;
-                o = n.call(this, e, t) || this;
+        class u extends i.Component {
+            constructor(e, t){
+                var o;
+                o = super(e, t) || this;
                 o.version = A;
                 o.state = {};
                 o.renderCount = 0;
@@ -223,16 +220,14 @@ export function connectAdvanced(e, t = {}) {
                 o.initSubscription();
                 return o;
             }
-            o(u, n);
-            const u_prototype = u.prototype;
-            u_prototype.getChildContext = function() {
+            getChildContext() {
                 let e;
                 const t = this.propsMode ? null : this.subscription;
                 e = {};
                 e[M] = t || this.context[M];
                 return e;
-            };
-            u_prototype.componentDidMount = function() {
+            }
+            componentDidMount() {
                 if (x) {
                     this.subscription.trySubscribe();
                     this.selector.run(this.props);
@@ -240,14 +235,14 @@ export function connectAdvanced(e, t = {}) {
                         this.forceUpdate();
                     }
                 }
-            };
-            u_prototype.componentWillReceiveProps = function(e) {
+            }
+            componentWillReceiveProps(e) {
                 this.selector.run(e);
-            };
-            u_prototype.shouldComponentUpdate = function() {
+            }
+            shouldComponentUpdate() {
                 return this.selector.shouldComponentUpdate;
-            };
-            u_prototype.componentWillUnmount = function() {
+            }
+            componentWillUnmount() {
                 if (this.subscription) {
                     this.subscription.tryUnsubscribe();
                 }
@@ -256,15 +251,15 @@ export function connectAdvanced(e, t = {}) {
                 this.store = null;
                 this.selector.run = C;
                 this.selector.shouldComponentUpdate = false;
-            };
-            u_prototype.getWrappedInstance = function() {
+            }
+            getWrappedInstance() {
                 b(R, `To access the wrapped instance, you need to specify { withRef: true } in the options argument of the ${d}() call.`);
                 return this.wrappedInstance;
-            };
-            u_prototype.setWrappedInstance = function(e) {
+            }
+            setWrappedInstance(e) {
                 this.wrappedInstance = e;
-            };
-            u_prototype.initSelector = function() {
+            }
+            initSelector() {
                 const t = e(this.store.dispatch, a);
                 this.selector = ((e, t)=>{
                     const n = {
@@ -285,15 +280,15 @@ export function connectAdvanced(e, t = {}) {
                     return n;
                 })(t, this.store);
                 this.selector.run(this.props);
-            };
-            u_prototype.initSubscription = function() {
+            }
+            initSubscription() {
                 if (x) {
                     const e = (this.propsMode ? this.props : this.context)[M];
                     this.subscription = new k(this.store, e, this.onStateChange.bind(this));
                     this.notifyNestedSubs = this.subscription.notifyNestedSubs.bind(this.subscription);
                 }
-            };
-            u_prototype.onStateChange = function() {
+            }
+            onStateChange() {
                 this.selector.run(this.props);
                 if (this.selector.shouldComponentUpdate) {
                     this.componentDidUpdate = this.notifyNestedSubsOnComponentDidUpdate;
@@ -301,15 +296,15 @@ export function connectAdvanced(e, t = {}) {
                 } else {
                     this.notifyNestedSubs();
                 }
-            };
-            u_prototype.notifyNestedSubsOnComponentDidUpdate = function() {
+            }
+            notifyNestedSubsOnComponentDidUpdate() {
                 this.componentDidUpdate = undefined;
                 this.notifyNestedSubs();
-            };
-            u_prototype.isSubscribed = function() {
+            }
+            isSubscribed() {
                 return Boolean(this.subscription) && this.subscription.isSubscribed();
-            };
-            u_prototype.addExtraProps = function(e) {
+            }
+            addExtraProps(e) {
                 if (!(R || b || this.propsMode && this.subscription)) {
                     return e;
                 }
@@ -324,17 +319,16 @@ export function connectAdvanced(e, t = {}) {
                     t[M] = this.subscription;
                 }
                 return t;
-            };
-            u_prototype.render = function() {
+            }
+            render() {
                 const selector = this.selector;
                 selector.shouldComponentUpdate = false;
                 if (selector.error) {
                     throw selector.error;
                 }
                 return <T1 {...this.addExtraProps(selector.props)}/>;
-            };
-            return u;
-        })(i.Component);
+            }
+        }
         if (T) {
             u.prototype.UNSAFE_componentWillReceiveProps = u.prototype.componentWillReceiveProps;
             delete u.prototype.componentWillReceiveProps;
