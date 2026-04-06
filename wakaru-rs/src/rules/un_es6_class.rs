@@ -116,13 +116,40 @@ fn is_inherits_fn(func: &Function) -> bool {
     if func.params.len() != 2 {
         return false;
     }
+    let Pat::Ident(param1) = &func.params[0].pat else { return false };
     let body = match &func.body {
         Some(b) => b,
         None => return false,
     };
-    // Must contain `Object.create` (prototype chain setup) — the key signal
-    body.stmts.iter().any(|s| stmt_has_object_create(s))
-        && body.stmts.len() <= 5 // short body — not a general utility
+    // Must contain `param1.prototype = Object.create(...)` — the key signal.
+    // Just checking for any Object.create is too loose (would match utility functions).
+    if body.stmts.len() > 5 {
+        return false;
+    }
+    body.stmts.iter().any(|s| is_prototype_assign_object_create(s, &param1.id.sym))
+}
+
+/// Check if a statement is `param.prototype = Object.create(...)`.
+fn is_prototype_assign_object_create(stmt: &Stmt, param_name: &Atom) -> bool {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return false };
+    let Expr::Assign(assign) = expr.as_ref() else { return false };
+    if assign.op != AssignOp::Assign {
+        return false;
+    }
+    // LHS must be `param.prototype`
+    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else { return false };
+    let Expr::Ident(obj) = lhs.obj.as_ref() else { return false };
+    if &obj.sym != param_name {
+        return false;
+    }
+    if !matches!(&lhs.prop, MemberProp::Ident(n) if n.sym.as_ref() == "prototype") {
+        return false;
+    }
+    // RHS must contain Object.create(...)
+    let rhs = strip_parens(&assign.right);
+    let Expr::Call(call) = rhs else { return false };
+    let Callee::Expr(callee) = &call.callee else { return false };
+    is_object_create_callee(callee)
 }
 
 // ============================================================
