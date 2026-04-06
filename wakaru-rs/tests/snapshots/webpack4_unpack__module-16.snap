@@ -8,13 +8,10 @@ import u from "./module-3.js";
 import c from "./module-1.js";
 export class a extends u.Component {
     constructor(...i){
-        var n;
-        var r;
-        n = r = super(...i);
-        r.state = {
-            match: r.computeMatch(r.props.history.location.pathname)
+        super(...i);
+        this.state = {
+            match: this.computeMatch(this.props.history.location.pathname)
         };
-        return n;
     }
     getChildContext() {
         return {

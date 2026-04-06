@@ -432,6 +432,64 @@ class Foo extends Parent {
 }
 
 #[test]
+fn test_super_alias_replaced_with_this() {
+    // n = r = super(...) → super(...), then r.x → this.x, return n removed
+    let input = r#"
+var Foo = ((e) => {
+    function t() {
+        var n;
+        var r;
+        n = r = e.call(this);
+        r.state = { x: 1 };
+        return n;
+    }
+    ((e, t) => {
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: { value: e, enumerable: false, writable: true, configurable: true }
+        });
+    })(t, e);
+    return t;
+})(Parent);
+"#;
+    let expected = r#"
+class Foo extends Parent {
+    constructor(){
+        super();
+        this.state = {
+            x: 1
+        };
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_single_super_alias_replaced_with_this() {
+    // r = super(...) → super(...), then r.x → this.x
+    let input = r#"
+var Foo = (function(e) {
+    function t(a) {
+        var r = e.call(this, a);
+        r.name = a;
+        return r;
+    }
+    t.prototype = Object.create(e && e.prototype);
+    return t;
+})(Base);
+"#;
+    let expected = r#"
+class Foo extends Base {
+    constructor(a){
+        super(a);
+        this.name = a;
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn test_super_call_with_spread_rewritten() {
     let input = r#"
 var Foo = (function(e) {

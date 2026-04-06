@@ -1,10 +1,10 @@
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Class, ClassDecl,
-    ClassMember, ClassMethod, ComputedPropName, Constructor, Decl, Expr, ExprOrSpread, ExprStmt,
-    FnExpr, Function, IdentName, MemberExpr, MemberProp, MethodKind, ModuleItem, Param,
-    ParamOrTsParamProp, Pat, PropName, Stmt, VarDecl,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
+    Class, ClassDecl, ClassMember, ClassMethod, ComputedPropName, Constructor, Decl, Expr,
+    ExprOrSpread, ExprStmt, FnExpr, Function, Ident, IdentName, MemberExpr, MemberProp, MethodKind,
+    ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SimpleAssignTarget, Stmt, VarDecl,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -1043,6 +1043,9 @@ fn build_constructor(function: &Function, super_param: Option<&str>) -> Option<C
         body.visit_mut_with(&mut SuperCallRewriter {
             super_param_name: sp,
         });
+        // Clean up super() aliases: in `n = r = super()`, both n and r are `this`.
+        // Replace references with `this`, remove var decls and trailing `return alias`.
+        cleanup_super_aliases(&mut body);
     }
 
     Some(Constructor {
@@ -1099,6 +1102,181 @@ impl VisitMut for SuperCallRewriter<'_> {
             type_args: None,
         });
     }
+}
+
+/// In a derived constructor, `super()` returns `this`. Clean up:
+/// - `var r = super(...)` → `super(...)`; mark `r` as this-alias
+/// - `n = r = super(...)` → `super(...)`; mark both as this-aliases
+/// - Replace all references to aliases with `this`
+/// - Remove `var` declarations for aliases
+/// - Remove trailing `return alias`
+fn cleanup_super_aliases(body: &mut BlockStmt) {
+    use std::collections::HashSet;
+
+    let mut aliases: HashSet<Atom> = HashSet::new();
+
+    // Pass 1: Find super() call statements and collect aliases
+    for stmt in body.stmts.iter_mut() {
+        // Pattern: `var r = super(...)` as a var decl
+        if let Stmt::Decl(Decl::Var(var)) = stmt {
+            for decl in &var.decls {
+                if let (Pat::Ident(bi), Some(init)) = (&decl.name, &decl.init) {
+                    if is_super_call(init) {
+                        aliases.insert(bi.id.sym.clone());
+                    }
+                }
+            }
+        }
+
+        // Pattern: `n = r = super(...)` or `r = super(...)` as expr stmt
+        if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
+            collect_assign_chain_aliases(expr, &mut aliases);
+        }
+    }
+
+    if aliases.is_empty() {
+        return;
+    }
+
+    // Pass 2: Rewrite alias references → `this`
+    body.visit_mut_with(&mut AliasToThisRewriter { aliases: &aliases });
+
+    // Pass 3: Rewrite statements — remove alias decls, simplify assign chains,
+    // replace alias references with `this`, remove trailing `return alias`.
+    let mut new_stmts = Vec::with_capacity(body.stmts.len());
+    for stmt in std::mem::take(&mut body.stmts) {
+        match stmt {
+            // `var n;` (bare alias) → drop
+            // `var r = super(...)` → keep `super(...)` as expr stmt
+            Stmt::Decl(Decl::Var(mut var)) => {
+                let mut keep_decls = Vec::new();
+                for d in std::mem::take(&mut var.decls) {
+                    let Pat::Ident(ref bi) = d.name else {
+                        keep_decls.push(d);
+                        continue;
+                    };
+                    if !aliases.contains(&bi.id.sym) {
+                        keep_decls.push(d);
+                        continue;
+                    }
+                    // Alias decl: extract super() call as statement if present
+                    if let Some(init) = &d.init {
+                        if is_super_call(init) {
+                            new_stmts.push(Stmt::Expr(ExprStmt {
+                                span: DUMMY_SP,
+                                expr: init.clone(),
+                            }));
+                        }
+                    }
+                    // Drop the var declarator
+                }
+                if !keep_decls.is_empty() {
+                    var.decls = keep_decls;
+                    new_stmts.push(Stmt::Decl(Decl::Var(var)));
+                }
+            }
+            // `n = r = super(...)` → `super(...)`
+            Stmt::Expr(ExprStmt { ref expr, span }) => {
+                if let Some(super_call) = extract_super_from_assign_chain(expr, &aliases) {
+                    new_stmts.push(Stmt::Expr(ExprStmt {
+                        expr: Box::new(super_call),
+                        span,
+                    }));
+                } else {
+                    new_stmts.push(stmt);
+                }
+            }
+            // `return alias` → drop (constructor implicitly returns this)
+            Stmt::Return(ref ret) => {
+                let should_drop = ret.arg.as_ref().is_some_and(|arg| {
+                    matches!(arg.as_ref(), Expr::Ident(id) if aliases.contains(&id.sym))
+                        || matches!(arg.as_ref(), Expr::This(..))
+                });
+                if !should_drop {
+                    new_stmts.push(stmt);
+                }
+            }
+            other => new_stmts.push(other),
+        }
+    }
+    body.stmts = new_stmts;
+}
+
+fn is_super_call(expr: &Expr) -> bool {
+    matches!(expr, Expr::Call(call) if matches!(call.callee, Callee::Super(..)))
+}
+
+/// Walk an assignment chain like `n = r = super()` and collect all LHS idents as aliases.
+fn collect_assign_chain_aliases(expr: &Expr, aliases: &mut std::collections::HashSet<Atom>) {
+    let Expr::Assign(assign) = expr else { return };
+    if assign.op != AssignOp::Assign {
+        return;
+    }
+
+    // Check if the RHS is super() or another assignment chain ending in super()
+    let rhs_is_super = is_super_call(&assign.right)
+        || matches!(assign.right.as_ref(), Expr::Assign(_) if {
+            let mut inner_aliases = std::collections::HashSet::new();
+            collect_assign_chain_aliases(&assign.right, &mut inner_aliases);
+            !inner_aliases.is_empty()
+        });
+
+    if rhs_is_super {
+        if let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = &assign.left {
+            aliases.insert(id.sym.clone());
+        }
+        // Recurse into RHS for chained assigns
+        collect_assign_chain_aliases(&assign.right, aliases);
+    }
+}
+
+/// Extract the super() call from an assignment chain like `n = r = super(...)`.
+/// Returns Some(super_call_expr) if all LHS idents are known aliases, None otherwise.
+fn extract_super_from_assign_chain(
+    expr: &Expr,
+    aliases: &std::collections::HashSet<Atom>,
+) -> Option<Expr> {
+    let Expr::Assign(assign) = expr else { return None };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+
+    // LHS must be an alias
+    let is_alias_lhs = matches!(
+        &assign.left,
+        AssignTarget::Simple(SimpleAssignTarget::Ident(id)) if aliases.contains(&id.sym)
+    );
+    if !is_alias_lhs {
+        return None;
+    }
+
+    // RHS is super() → return super()
+    if is_super_call(&assign.right) {
+        return Some(*assign.right.clone());
+    }
+
+    // RHS is another alias = super() chain → recurse
+    extract_super_from_assign_chain(&assign.right, aliases)
+}
+
+struct AliasToThisRewriter<'a> {
+    aliases: &'a std::collections::HashSet<Atom>,
+}
+
+impl VisitMut for AliasToThisRewriter<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        if let Expr::Ident(id) = expr {
+            if self.aliases.contains(&id.sym) {
+                *expr = Expr::This(swc_core::ecma::ast::ThisExpr { span: DUMMY_SP });
+            }
+        }
+    }
+
+    // Don't descend into nested functions/arrows
+    fn visit_mut_function(&mut self, _: &mut Function) {}
+    fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
 }
 
 fn is_empty_constructor(function: &Function) -> bool {

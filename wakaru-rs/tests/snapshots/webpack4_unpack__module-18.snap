@@ -22,16 +22,13 @@ export function routerReducer(e = s, t = {}) {
 }
 export class ConnectedRouter extends r.Component {
     constructor(...i){
-        var n;
-        var r;
-        n = r = super(...i);
-        r.handleLocationChange = (e)=>{
+        super(...i);
+        this.handleLocationChange = (e)=>{
             r.store.dispatch({
                 type: LOCATION_CHANGE,
                 payload: e
             });
         };
-        return n;
     }
     componentWillMount() {
         const props = this.props;

@@ -14,11 +14,8 @@ import le from "./module-30.js";
 export const Router = s.a;
 class p extends i.Component {
     constructor(...i){
-        var n;
-        var r;
-        n = r = super(...i);
-        r.history = c.createBrowserHistory(r.props);
-        return n;
+        super(...i);
+        this.history = c.createBrowserHistory(this.props);
     }
     componentWillMount() {
         r(!this.props.history, "<BrowserRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { BrowserRouter as Router }`.");
@@ -40,11 +37,8 @@ p.propTypes = {
 export const BrowserRouter = p;
 class y extends i.Component {
     constructor(...i){
-        var n;
-        var r;
-        n = r = super(...i);
-        r.history = c.createHashHistory(r.props);
-        return n;
+        super(...i);
+        this.history = c.createHashHistory(this.props);
     }
     componentWillMount() {
         r(!this.props.history, "<HashRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { HashRouter as Router }`.");
@@ -70,10 +64,8 @@ export const HashRouter = y;
 const x = (e)=>!!(e.metaKey || e.altKey || e.ctrlKey || e.shiftKey);
 class k extends i.Component {
     constructor(...i){
-        var n;
-        var r;
-        n = r = super(...i);
-        r.handleClick = (e)=>{
+        super(...i);
+        this.handleClick = (e)=>{
             if (r.props.onClick) {
                 r.props.onClick(e);
             }
@@ -89,7 +81,6 @@ class k extends i.Component {
                 }
             }
         };
-        return n;
     }
     render() {
         const props = this.props;
@@ -147,11 +138,8 @@ k.contextTypes = {
 export const Link = k;
 class O extends i.Component {
     constructor(...i){
-        var n;
-        var r;
-        n = r = super(...i);
-        r.history = c.createMemoryHistory(r.props);
-        return n;
+        super(...i);
+        this.history = c.createMemoryHistory(this.props);
     }
     componentWillMount() {
         r(!this.props.history, "<MemoryRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { MemoryRouter as Router }`.");
@@ -174,13 +162,10 @@ export const MemoryRouter = O;
 const R = (e)=>i.Children.count(e) === 0;
 class N extends i.Component {
     constructor(...i){
-        var n;
-        var r;
-        n = r = super(...i);
-        r.state = {
-            match: r.computeMatch(r.props, r.context.router)
+        super(...i);
+        this.state = {
+            match: this.computeMatch(this.props, this.context.router)
         };
-        return n;
     }
     getChildContext() {
         return {
@@ -545,27 +530,24 @@ const ee = (e)=>()=>{
 const te = ()=>{};
 class ne extends i.Component {
     constructor(...i){
-        var n;
-        var r;
-        n = r = super(...i);
-        r.createHref = (e)=>X(r.props.basename + Z(e));
-        r.handlePush = (e)=>{
+        super(...i);
+        this.createHref = (e)=>X(r.props.basename + Z(e));
+        this.handlePush = (e)=>{
             const r_props = r.props;
             const { basename, context } = r_props;
             context.action = "PUSH";
             context.location = J(basename, c.createLocation(e));
             context.url = Z(context.location);
         };
-        r.handleReplace = (e)=>{
+        this.handleReplace = (e)=>{
             const r_props = r.props;
             const { basename, context } = r_props;
             context.action = "REPLACE";
             context.location = J(basename, c.createLocation(e));
             context.url = Z(context.location);
         };
-        r.handleListen = ()=>te;
-        r.handleBlock = ()=>te;
-        return n;
+        this.handleListen = ()=>te;
+        this.handleBlock = ()=>te;
     }
     getChildContext() {
         return {
