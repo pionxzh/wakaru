@@ -433,6 +433,58 @@ class Foo extends Parent {
     assert_eq_normalized(&apply(input), expected);
 }
 
+// ============================================================
+// super() || this simplification
+// ============================================================
+
+#[test]
+fn test_super_or_this_simplified() {
+    // `o = super(n, r) || this` → `o = super(n, r)` → cleanup aliases
+    let input = r#"
+var Foo = (function(e) {
+    function t(n, r) {
+        var o;
+        o = e.call(this, n, r) || this;
+        o.x = 1;
+        return o;
+    }
+    t.prototype = Object.create(e && e.prototype);
+    return t;
+})(Base);
+"#;
+    let expected = r#"
+class Foo extends Base {
+    constructor(n, r){
+        super(n, r);
+        this.x = 1;
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_super_or_this_direct_return() {
+    // `return e.call(this) || this` → `return super()` → strip return
+    let input = r#"
+var Foo = (function(e) {
+    function t() {
+        return e.call(this) || this;
+    }
+    t.prototype = Object.create(e && e.prototype);
+    return t;
+})(Base);
+"#;
+    let expected = r#"
+class Foo extends Base {
+    constructor(){
+        super();
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
 #[test]
 fn test_super_alias_replaced_with_this() {
     // n = r = super(...) → super(...), then r.x → this.x, return n removed
@@ -648,8 +700,8 @@ var Foo = (function(t) {
     return r.getX = function() { return this.x; }, r.render = function() { return null; }, a;
 })(Parent);
 "#;
-    // The `o = super(n, r) || this` pattern retains the `|| this` fallback and alias
-    // since cleanup_super_aliases only handles direct super() calls, not `super() || this`
+    // `super(n, r) || this` is simplified to `super(n, r)`, then alias cleanup converts
+    // `o = super(...)` → `super(); this.x = 1`
     let expected = r#"
 function o(e, t) {
     e.prototype = Object.create(t.prototype);
@@ -657,10 +709,8 @@ function o(e, t) {
 }
 class Foo extends Parent {
     constructor(n, r){
-        var o;
-        o = super(n, r) || this;
-        o.x = 1;
-        return o;
+        super(n, r);
+        this.x = 1;
     }
     getX() { return this.x; }
     render() { return null; }

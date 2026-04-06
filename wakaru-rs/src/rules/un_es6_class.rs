@@ -1166,6 +1166,12 @@ fn build_constructor(function: &Function, super_param: Option<&str>) -> Option<C
         body.visit_mut_with(&mut SuperCallRewriter {
             super_param_name: sp,
         });
+        // Simplify `super(...) || this` → `super(...)` — the `|| this` is dead code
+        // per ES6 spec (super() always returns `this` in derived constructors)
+        body.visit_mut_with(&mut SuperOrThisSimplifier);
+        // Split `(alias = super(...)).prop = value` into `alias = super(...); alias.prop = value`
+        // so that cleanup_super_aliases can detect the alias pattern.
+        split_assign_prop_chains(&mut body);
         // Clean up super() aliases: in `n = r = super()`, both n and r are `this`.
         // Replace references with `this`, remove var decls and trailing `return alias`.
         cleanup_super_aliases(&mut body);
@@ -1313,6 +1319,118 @@ fn strip_return_super(body: &mut BlockStmt) {
             }
         }
     }
+}
+
+/// Split `(alias = super(...)).prop = value` into two statements:
+///   `alias = super(...);`
+///   `alias.prop = value;`
+///
+/// Babel minifiers produce `(o = super()).x = 1, o.y = 2, ...` where the assignment
+/// and property access are fused. Splitting allows `cleanup_super_aliases` to detect
+/// the alias and replace `o.x` with `this.x`.
+fn split_assign_prop_chains(body: &mut BlockStmt) {
+    let mut new_stmts = Vec::with_capacity(body.stmts.len());
+    for stmt in std::mem::take(&mut body.stmts) {
+        if let Stmt::Expr(ExprStmt { expr, span }) = &stmt {
+            if let Some((assign_stmt, prop_stmt)) = try_split_assign_prop(expr, *span) {
+                new_stmts.push(assign_stmt);
+                new_stmts.push(prop_stmt);
+                continue;
+            }
+        }
+        new_stmts.push(stmt);
+    }
+    body.stmts = new_stmts;
+}
+
+/// Try to split `(alias = super(...)).prop = value` into two statements.
+fn try_split_assign_prop(expr: &Expr, span: swc_core::common::Span) -> Option<(Stmt, Stmt)> {
+    let Expr::Assign(outer) = expr else { return None };
+    if outer.op != AssignOp::Assign {
+        return None;
+    }
+
+    // LHS must be a member expression whose object is a paren-wrapped assignment
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &outer.left else {
+        return None;
+    };
+
+    let obj = strip_parens(&member.obj);
+    let Expr::Assign(inner) = obj else { return None };
+    if inner.op != AssignOp::Assign {
+        return None;
+    }
+
+    // The inner RHS must be a super call
+    if !is_super_call(&inner.right) {
+        return None;
+    }
+
+    // Extract the alias ident
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(alias)) = &inner.left else {
+        return None;
+    };
+
+    // Statement 1: alias = super(...)
+    let assign_stmt = Stmt::Expr(ExprStmt {
+        span,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left: inner.left.clone(),
+            right: inner.right.clone(),
+        })),
+    });
+
+    // Statement 2: alias.prop = value
+    let prop_stmt = Stmt::Expr(ExprStmt {
+        span,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: outer.op,
+            left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
+                span: DUMMY_SP,
+                obj: Box::new(Expr::Ident(Ident::new(
+                    alias.sym.clone(),
+                    DUMMY_SP,
+                    alias.ctxt,
+                ))),
+                prop: member.prop.clone(),
+            })),
+            right: outer.right.clone(),
+        })),
+    });
+
+    Some((assign_stmt, prop_stmt))
+}
+
+/// Simplifies `super(...) || this` → `super(...)` in constructor bodies.
+/// In ES6, super() in a derived constructor always returns `this`, so the
+/// `|| this` fallback is dead code. Removing it allows cleanup_super_aliases
+/// to recognize the pattern.
+struct SuperOrThisSimplifier;
+
+impl VisitMut for SuperOrThisSimplifier {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        let Expr::Bin(bin) = expr else { return };
+        if bin.op != swc_core::ecma::ast::BinaryOp::LogicalOr {
+            return;
+        }
+        if !is_super_call(&bin.left) {
+            return;
+        }
+        if !matches!(*bin.right, Expr::This(..)) {
+            return;
+        }
+        // Replace `super(...) || this` with just `super(...)`
+        *expr = *bin.left.clone();
+    }
+
+    // Don't descend into nested functions/arrows
+    fn visit_mut_function(&mut self, _: &mut Function) {}
+    fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
 }
 
 /// Rewrites `superParam.call(this, args...)` → `super(args...)`

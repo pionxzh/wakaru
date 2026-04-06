@@ -37,10 +37,8 @@ export function createProvider(e = "store") {
     const n = `${e}Subscription`;
     class r extends i.Component {
         constructor(n, r){
-            var o;
-            o = super(n, r) || this;
-            o[e] = n.store;
-            return o;
+            super(n, r);
+            this[e] = n.store;
         }
         getChildContext() {
             let t;
@@ -207,18 +205,16 @@ export function connectAdvanced(e, t = {}) {
         });
         class u extends i.Component {
             constructor(e, t){
-                var o;
-                o = super(e, t) || this;
-                o.version = A;
-                o.state = {};
-                o.renderCount = 0;
-                o.store = e[_] || t[_];
-                o.propsMode = Boolean(e[_]);
-                o.setWrappedInstance = o.setWrappedInstance.bind(p(p(o)));
-                b(o.store, `Could not find "${_}" in either the context or props of "${r}". Either wrap the root component in a <Provider>, or explicitly pass "${_}" as a prop to "${r}".`);
-                o.initSelector();
-                o.initSubscription();
-                return o;
+                super(e, t);
+                this.version = A;
+                this.state = {};
+                this.renderCount = 0;
+                this.store = e[_] || t[_];
+                this.propsMode = Boolean(e[_]);
+                this.setWrappedInstance = this.setWrappedInstance.bind(p(p(this)));
+                b(this.store, `Could not find "${_}" in either the context or props of "${r}". Either wrap the root component in a <Provider>, or explicitly pass "${_}" as a prop to "${r}".`);
+                this.initSelector();
+                this.initSubscription();
             }
             getChildContext() {
                 let e;
