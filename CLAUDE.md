@@ -106,4 +106,4 @@ A private fixture repo at `../wakaru-fixtures/` contains bundled demo apps and r
 
 ## Review
 
-OpenAI Codex will review your changes.
+OpenAI Codex will review your code and changes.
