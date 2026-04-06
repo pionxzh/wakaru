@@ -262,9 +262,10 @@ var Child = (function(_super) {
     return t;
 }(Parent));
 "#;
+    // _super.apply(this, arguments) is rewritten to super(...arguments)
     let expected = r#"
 class Child extends Parent {
-    constructor() { _super.apply(this, arguments); }
+    constructor() { super(...arguments); }
     doSomething() { return true; }
 }
 "#;
@@ -292,10 +293,11 @@ var Child = (function(_super) {
     t.prototype.run = function run() { return true; }
     return t;
 }(Base));"#;
+    // _super.apply(this, arguments) is rewritten to super(...arguments)
     let expected = r#"
 class Child extends Base {
     constructor() {
-        _super !== null && _super.apply(this, arguments);
+        _super !== null && super(...arguments);
     }
     run() { return true; }
 }"#;
@@ -504,6 +506,125 @@ var Foo = (function(e) {
 class Foo extends Base {
     constructor(){
         super(a, b);
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+// ============================================================
+// super.apply(this, arguments) → super(...arguments)
+// ============================================================
+
+#[test]
+fn test_super_apply_rewritten() {
+    let input = r#"
+var Foo = (function(e) {
+    function t() {
+        e.apply(this, arguments);
+    }
+    t.prototype = Object.create(e && e.prototype);
+    return t;
+})(Base);
+"#;
+    let expected = r#"
+class Foo extends Base {
+    constructor(){
+        super(...arguments);
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+// ============================================================
+// Inline _possibleConstructorReturn IIFE unwrapping
+// ============================================================
+
+#[test]
+fn test_inline_pcr_iife_with_apply() {
+    // The pattern from module-24 classes z, Q, oe:
+    // function t() { return PCR_IIFE(this, e.apply(this, arguments)); }
+    let input = r#"
+var Foo = (function(e) {
+    function t() {
+        return function(e, t) {
+            if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+            return !t || "object" != typeof t && "function" != typeof t ? e : t;
+        }(this, e.apply(this, arguments));
+    }
+    t.prototype = Object.create(e && e.prototype);
+    t.prototype.constructor = t;
+    t.prototype.render = function render() { return null; }
+    return t;
+})(Base);
+"#;
+    let expected = r#"
+class Foo extends Base {
+    constructor(){
+        super(...arguments);
+    }
+    render() { return null; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_inline_pcr_arrow_iife_with_apply() {
+    // Arrow form of inline PCR IIFE (as seen in decompiled output)
+    let input = r#"
+var Foo = ((e) => {
+    function t() {
+        return ((e, t) => {
+            if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+            if (!t || typeof t != "object" && typeof t != "function") return e;
+            return t;
+        })(this, e.apply(this, arguments));
+    }
+    ((e, t) => {
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: { value: e, enumerable: false, writable: true, configurable: true }
+        });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    })(t, e);
+    t.prototype.enable = function(e) { this.x = e; }
+    return t;
+})(Base);
+"#;
+    let expected = r#"
+class Foo extends Base {
+    constructor(){
+        super(...arguments);
+    }
+    enable(e) { this.x = e; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_inline_pcr_with_comma_and_class_call_check() {
+    // Full Babel pattern: classCallCheck, possibleConstructorReturn in sequence expr
+    let input = r#"
+var Foo = (function(e) {
+    function t() {
+        return function(e, t) {
+            if (!(e instanceof t)) throw new TypeError("Cannot call a class as a function");
+        }(this, t), function(e, t) {
+            if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+            return !t || "object" != typeof t && "function" != typeof t ? e : t;
+        }(this, e.apply(this, arguments));
+    }
+    t.prototype = Object.create(e && e.prototype);
+    t.prototype.constructor = t;
+    return t;
+})(Base);
+"#;
+    let expected = r#"
+class Foo extends Base {
+    constructor(){
+        super(...arguments);
     }
 }
 "#;

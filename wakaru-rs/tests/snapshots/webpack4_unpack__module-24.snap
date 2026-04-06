@@ -340,15 +340,7 @@ D.defaultProps = {
 export const NavLink = D;
 class z extends i.Component {
     constructor(){
-        return ((e, t)=>{
-            if (!e) {
-                throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-            }
-            if (!t || typeof t != "object" && typeof t != "function") {
-                return e;
-            }
-            return t;
-        })(this, e.apply(this, arguments));
+        super(...arguments);
     }
     enable(e) {
         if (this.unblock) {
@@ -424,15 +416,7 @@ const B = (e = "/", t = {})=>{
 };
 class Q extends i.Component {
     constructor(){
-        return ((e, t)=>{
-            if (!e) {
-                throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-            }
-            if (!t || typeof t != "object" && typeof t != "function") {
-                return e;
-            }
-            return t;
-        })(this, e.apply(this, arguments));
+        super(...arguments);
     }
     isStatic() {
         return this.context.router && this.context.router.staticContext;
@@ -623,15 +607,7 @@ ne.childContextTypes = {
 export const StaticRouter = ne;
 class oe extends i.Component {
     constructor(){
-        return ((e, t)=>{
-            if (!e) {
-                throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-            }
-            if (!t || typeof t != "object" && typeof t != "function") {
-                return e;
-            }
-            return t;
-        })(this, e.apply(this, arguments));
+        super(...arguments);
     }
     componentWillMount() {
         b(this.context.router, "You should not use <Switch> outside a <Router>");

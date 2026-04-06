@@ -1038,14 +1038,18 @@ fn build_constructor(function: &Function, super_param: Option<&str>) -> Option<C
         })
         .collect();
 
-    // Rewrite `superParam.call(this, ...)` → `super(...)` in the constructor body
     if let Some(sp) = super_param {
+        // Unwrap inline _possibleConstructorReturn IIFEs before super rewriting
+        unwrap_inline_pcr_iife(&mut body);
+        // Rewrite `superParam.call(this, ...)` → `super(...)` in the constructor body
         body.visit_mut_with(&mut SuperCallRewriter {
             super_param_name: sp,
         });
         // Clean up super() aliases: in `n = r = super()`, both n and r are `this`.
         // Replace references with `this`, remove var decls and trailing `return alias`.
         cleanup_super_aliases(&mut body);
+        // Strip `return super(...)` → `super(...)` (constructors return implicitly)
+        strip_return_super(&mut body);
     }
 
     Some(Constructor {
@@ -1059,7 +1063,139 @@ fn build_constructor(function: &Function, super_param: Option<&str>) -> Option<C
     })
 }
 
-/// Rewrites `superParam.call(this, args...)` → `super(args...)` in constructor bodies.
+/// Detect and unwrap inline `_possibleConstructorReturn` IIFEs in constructor bodies.
+///
+/// Pattern:
+/// ```js
+/// return (function(e, t) {
+///     if (!e) throw new ReferenceError("...");
+///     return !t || ... ? e : t;
+/// })(this, superCall);
+/// ```
+/// or the arrow variant: `((e, t) => { ... })(this, superCall)`
+///
+/// Replaced with: `return superCall`
+fn unwrap_inline_pcr_iife(body: &mut BlockStmt) {
+    for stmt in body.stmts.iter_mut() {
+        // Handle `return pcrIIFE(this, expr)` → `return expr`
+        if let Stmt::Return(ret) = stmt {
+            if let Some(arg) = &mut ret.arg {
+                if let Some(unwrapped) = try_unwrap_pcr_expr(arg) {
+                    *arg = Box::new(unwrapped);
+                }
+            }
+        }
+        // Handle `pcrIIFE(this, expr)` as expression statement → `expr`
+        if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
+            if let Some(unwrapped) = try_unwrap_pcr_expr(expr) {
+                *expr = Box::new(unwrapped);
+            }
+        }
+    }
+}
+
+/// Try to unwrap an expression if it's an inline PCR IIFE call.
+/// Also handles comma expressions like `classCallCheck(this, t), pcrIIFE(this, expr)`.
+fn try_unwrap_pcr_expr(expr: &Expr) -> Option<Expr> {
+    // Handle comma/sequence expression: `a, b` — check the last element
+    if let Expr::Seq(seq) = expr {
+        if let Some(last) = seq.exprs.last() {
+            if let Some(unwrapped) = try_unwrap_pcr_call(last) {
+                return Some(unwrapped);
+            }
+        }
+        return None;
+    }
+    try_unwrap_pcr_call(expr)
+}
+
+/// Check if expr is an IIFE call matching the _possibleConstructorReturn body shape,
+/// and return the second argument if so.
+fn try_unwrap_pcr_call(expr: &Expr) -> Option<Expr> {
+    let Expr::Call(call) = expr else { return None };
+    let Callee::Expr(callee) = &call.callee else { return None };
+    let inner = strip_parens(callee);
+
+    // Must have exactly 2 args: (this, superCall)
+    if call.args.len() != 2 {
+        return None;
+    }
+    // First arg must be `this`
+    if !matches!(strip_parens(&call.args[0].expr), Expr::This(..)) {
+        return None;
+    }
+
+    // Extract params and body from the callee (function or arrow)
+    let (params, body_stmts): (Vec<&Pat>, &[Stmt]) = match inner {
+        Expr::Fn(fn_expr) => {
+            let body = fn_expr.function.body.as_ref()?;
+            let pats: Vec<&Pat> = fn_expr.function.params.iter().map(|p| &p.pat).collect();
+            (pats, &body.stmts)
+        }
+        Expr::Arrow(arrow) => {
+            let BlockStmtOrExpr::BlockStmt(block) = &*arrow.body else {
+                return None;
+            };
+            let pats: Vec<&Pat> = arrow.params.iter().collect();
+            (pats, &block.stmts)
+        }
+        _ => return None,
+    };
+
+    // Must have 2 params
+    if params.len() != 2 {
+        return None;
+    }
+    let Pat::Ident(param1) = params[0] else { return None };
+
+    // First statement must be `if (!param1) throw new ReferenceError(...)`
+    if body_stmts.is_empty() {
+        return None;
+    }
+    if !is_pcr_guard_stmt(&body_stmts[0], &param1.id.sym) {
+        return None;
+    }
+
+    // Matches! Return the second argument (the super call)
+    Some(*call.args[1].expr.clone())
+}
+
+/// Check if a statement matches `if (!param) throw new ReferenceError(...)`.
+fn is_pcr_guard_stmt(stmt: &Stmt, param_name: &str) -> bool {
+    let Stmt::If(if_stmt) = stmt else { return false };
+    let Expr::Unary(unary) = if_stmt.test.as_ref() else { return false };
+    if unary.op != swc_core::ecma::ast::UnaryOp::Bang {
+        return false;
+    }
+    if !matches!(strip_parens(&unary.arg), Expr::Ident(id) if id.sym.as_ref() == param_name) {
+        return false;
+    }
+    // Consequent should throw (block or direct)
+    matches!(if_stmt.cons.as_ref(), Stmt::Throw(_))
+        || matches!(if_stmt.cons.as_ref(), Stmt::Block(block) if block.stmts.len() == 1 && matches!(block.stmts[0], Stmt::Throw(_)))
+}
+
+/// Strip `return super(...)` at the end of a constructor body → `super(...)` as expr stmt.
+/// In derived constructors, `return super()` is unnecessary; super() implicitly returns this.
+fn strip_return_super(body: &mut BlockStmt) {
+    if let Some(last) = body.stmts.last() {
+        if let Stmt::Return(ret) = last {
+            if let Some(arg) = &ret.arg {
+                if is_super_call(arg) {
+                    let super_call = arg.clone();
+                    let len = body.stmts.len();
+                    body.stmts[len - 1] = Stmt::Expr(ExprStmt {
+                        span: DUMMY_SP,
+                        expr: super_call,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// Rewrites `superParam.call(this, args...)` → `super(args...)`
+/// and `superParam.apply(this, arguments)` → `super(...arguments)` in constructor bodies.
 struct SuperCallRewriter<'a> {
     super_param_name: &'a str,
 }
@@ -1072,35 +1208,55 @@ impl VisitMut for SuperCallRewriter<'_> {
         let Callee::Expr(callee) = &call.callee else { return };
         let Expr::Member(member) = callee.as_ref() else { return };
 
-        // Check: superParam.call
+        // Check: superParam.call or superParam.apply
         let Expr::Ident(obj_id) = member.obj.as_ref() else { return };
         if obj_id.sym.as_ref() != self.super_param_name {
             return;
         }
         let MemberProp::Ident(prop) = &member.prop else { return };
-        if prop.sym.as_ref() != "call" {
-            return;
+
+        match prop.sym.as_ref() {
+            "call" => {
+                // Must have at least 1 arg (the `this` arg)
+                if call.args.is_empty() {
+                    return;
+                }
+                // First arg should be `this` — skip it, rest become super() args
+                if !matches!(call.args[0].expr.as_ref(), Expr::This(..)) {
+                    return;
+                }
+                let super_args: Vec<ExprOrSpread> = call.args[1..].to_vec();
+                *expr = Expr::Call(CallExpr {
+                    span: DUMMY_SP,
+                    ctxt: Default::default(),
+                    callee: Callee::Super(swc_core::ecma::ast::Super { span: DUMMY_SP }),
+                    args: super_args,
+                    type_args: None,
+                });
+            }
+            "apply" => {
+                // e.apply(this, arguments) → super(...arguments)
+                if call.args.len() != 2 {
+                    return;
+                }
+                if !matches!(call.args[0].expr.as_ref(), Expr::This(..)) {
+                    return;
+                }
+                // Second arg becomes a spread argument to super()
+                let spread_arg = ExprOrSpread {
+                    spread: Some(DUMMY_SP),
+                    expr: call.args[1].expr.clone(),
+                };
+                *expr = Expr::Call(CallExpr {
+                    span: DUMMY_SP,
+                    ctxt: Default::default(),
+                    callee: Callee::Super(swc_core::ecma::ast::Super { span: DUMMY_SP }),
+                    args: vec![spread_arg],
+                    type_args: None,
+                });
+            }
+            _ => {}
         }
-
-        // Must have at least 1 arg (the `this` arg)
-        if call.args.is_empty() {
-            return;
-        }
-
-        // First arg should be `this` — skip it, rest become super() args
-        if !matches!(call.args[0].expr.as_ref(), Expr::This(..)) {
-            return;
-        }
-
-        let super_args: Vec<ExprOrSpread> = call.args[1..].to_vec();
-
-        *expr = Expr::Call(CallExpr {
-            span: DUMMY_SP,
-            ctxt: Default::default(),
-            callee: Callee::Super(swc_core::ecma::ast::Super { span: DUMMY_SP }),
-            args: super_args,
-            type_args: None,
-        });
     }
 }
 
