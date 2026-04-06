@@ -1288,6 +1288,8 @@ fn try_unwrap_pcr_call(expr: &Expr) -> Option<Expr> {
 }
 
 /// Check if a statement matches `if (!param) throw new ReferenceError(...)`.
+/// Requires the throw to construct a `ReferenceError` specifically to avoid
+/// false-positives on other guard-shaped inline functions.
 fn is_pcr_guard_stmt(stmt: &Stmt, param_name: &str) -> bool {
     let Stmt::If(if_stmt) = stmt else { return false };
     let Expr::Unary(unary) = if_stmt.test.as_ref() else { return false };
@@ -1297,9 +1299,26 @@ fn is_pcr_guard_stmt(stmt: &Stmt, param_name: &str) -> bool {
     if !matches!(strip_parens(&unary.arg), Expr::Ident(id) if id.sym.as_ref() == param_name) {
         return false;
     }
-    // Consequent should throw (block or direct)
-    matches!(if_stmt.cons.as_ref(), Stmt::Throw(_))
-        || matches!(if_stmt.cons.as_ref(), Stmt::Block(block) if block.stmts.len() == 1 && matches!(block.stmts[0], Stmt::Throw(_)))
+    // Consequent should throw ReferenceError (block or direct)
+    let throw_expr = match if_stmt.cons.as_ref() {
+        Stmt::Throw(t) => Some(&t.arg),
+        Stmt::Block(block) if block.stmts.len() == 1 => {
+            if let Stmt::Throw(t) = &block.stmts[0] {
+                Some(&t.arg)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    let Some(throw_arg) = throw_expr else { return false };
+    is_new_reference_error(throw_arg)
+}
+
+/// Check if an expression is `new ReferenceError(...)`.
+fn is_new_reference_error(expr: &Expr) -> bool {
+    let Expr::New(new_expr) = strip_parens(expr) else { return false };
+    matches!(strip_parens(&new_expr.callee), Expr::Ident(id) if id.sym.as_ref() == "ReferenceError")
 }
 
 /// Strip `return super(...)` at the end of a constructor body → `super(...)` as expr stmt.
@@ -1475,10 +1494,19 @@ impl VisitMut for SuperCallRewriter<'_> {
             }
             "apply" => {
                 // e.apply(this, arguments) → super(...arguments)
+                // Only handle when second arg is `arguments` — other values like
+                // null/undefined have different semantics with .apply vs spread.
                 if call.args.len() != 2 {
                     return;
                 }
                 if !matches!(call.args[0].expr.as_ref(), Expr::This(..)) {
+                    return;
+                }
+                // Second arg must be `arguments` or an array literal for safe conversion
+                let second = strip_parens(&call.args[1].expr);
+                let is_safe = matches!(second, Expr::Ident(id) if id.sym.as_ref() == "arguments")
+                    || matches!(second, Expr::Array(_));
+                if !is_safe {
                     return;
                 }
                 // Second arg becomes a spread argument to super()
