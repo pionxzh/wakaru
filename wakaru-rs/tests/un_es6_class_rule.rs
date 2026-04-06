@@ -105,7 +105,7 @@ var Child = (function(_super) {
 "#;
     let expected = r#"
 class Child extends Animal {
-    constructor(name) { _super.call(this, name); }
+    constructor(name) { super(name); }
     speak() { return 'hi'; }
 }
 "#;
@@ -397,6 +397,55 @@ var Foo = ((e) => {
 class Foo extends Base {
     hello() {
         return "world";
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_super_call_rewritten_in_constructor() {
+    // e.call(this, args) should become super(args) in the constructor
+    let input = r#"
+var Foo = ((e) => {
+    function t(x, y) {
+        e.call(this, x, y);
+        this.z = 1;
+    }
+    ((e, t) => {
+        e.prototype = Object.create(t && t.prototype, {
+            constructor: { value: e, enumerable: false, writable: true, configurable: true }
+        });
+    })(t, e);
+    return t;
+})(Parent);
+"#;
+    let expected = r#"
+class Foo extends Parent {
+    constructor(x, y){
+        super(x, y);
+        this.z = 1;
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_super_call_with_spread_rewritten() {
+    let input = r#"
+var Foo = (function(e) {
+    function t() {
+        e.call(this, a, b);
+    }
+    t.prototype = Object.create(e && e.prototype);
+    return t;
+})(Base);
+"#;
+    let expected = r#"
+class Foo extends Base {
+    constructor(){
+        super(a, b);
     }
 }
 "#;

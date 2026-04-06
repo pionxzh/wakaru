@@ -16,7 +16,7 @@ class p extends i.Component {
     constructor(...i){
         var n;
         var r;
-        n = r = e.call(this, ...i);
+        n = r = super(...i);
         r.history = c.createBrowserHistory(r.props);
         return n;
     }
@@ -42,7 +42,7 @@ class y extends i.Component {
     constructor(...i){
         var n;
         var r;
-        n = r = e.call(this, ...i);
+        n = r = super(...i);
         r.history = c.createHashHistory(r.props);
         return n;
     }
@@ -72,7 +72,7 @@ class k extends i.Component {
     constructor(...i){
         var n;
         var r;
-        n = r = e.call(this, ...i);
+        n = r = super(...i);
         r.handleClick = (e)=>{
             if (r.props.onClick) {
                 r.props.onClick(e);
@@ -149,7 +149,7 @@ class O extends i.Component {
     constructor(...i){
         var n;
         var r;
-        n = r = e.call(this, ...i);
+        n = r = super(...i);
         r.history = c.createMemoryHistory(r.props);
         return n;
     }
@@ -176,7 +176,7 @@ class N extends i.Component {
     constructor(...i){
         var n;
         var r;
-        n = r = e.call(this, ...i);
+        n = r = super(...i);
         r.state = {
             match: r.computeMatch(r.props, r.context.router)
         };
@@ -547,7 +547,7 @@ class ne extends i.Component {
     constructor(...i){
         var n;
         var r;
-        n = r = e.call(this, ...i);
+        n = r = super(...i);
         r.createHref = (e)=>X(r.props.basename + Z(e));
         r.handlePush = (e)=>{
             const r_props = r.props;

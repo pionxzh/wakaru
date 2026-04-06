@@ -10,7 +10,7 @@ export class a extends u.Component {
     constructor(...i){
         var n;
         var r;
-        n = r = e.call(this, ...i);
+        n = r = super(...i);
         r.state = {
             match: r.computeMatch(r.props.history.location.pathname)
         };

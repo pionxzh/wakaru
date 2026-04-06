@@ -245,7 +245,7 @@ fn parse_class_body(
         // `function t(...) { ... }` — the constructor
         if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
             if fn_decl.ident.sym.as_ref() == inner_ctor_name {
-                let ctor = build_constructor(&fn_decl.function)?;
+                let ctor = build_constructor(&fn_decl.function, super_param)?;
                 // Only add a constructor member if the body is non-empty
                 if !is_empty_constructor(&fn_decl.function) {
                     members.push(ClassMember::Constructor(ctor));
@@ -1024,8 +1024,8 @@ fn is_not_null_check(expr: &Expr, name: &str) -> bool {
 // Builder helpers
 // ============================================================
 
-fn build_constructor(function: &Function) -> Option<Constructor> {
-    let body = function.body.clone()?;
+fn build_constructor(function: &Function, super_param: Option<&str>) -> Option<Constructor> {
+    let mut body = function.body.clone()?;
     let params: Vec<ParamOrTsParamProp> = function
         .params
         .iter()
@@ -1038,6 +1038,13 @@ fn build_constructor(function: &Function) -> Option<Constructor> {
         })
         .collect();
 
+    // Rewrite `superParam.call(this, ...)` → `super(...)` in the constructor body
+    if let Some(sp) = super_param {
+        body.visit_mut_with(&mut SuperCallRewriter {
+            super_param_name: sp,
+        });
+    }
+
     Some(Constructor {
         span: DUMMY_SP,
         ctxt: Default::default(),
@@ -1047,6 +1054,51 @@ fn build_constructor(function: &Function) -> Option<Constructor> {
         accessibility: None,
         is_optional: false,
     })
+}
+
+/// Rewrites `superParam.call(this, args...)` → `super(args...)` in constructor bodies.
+struct SuperCallRewriter<'a> {
+    super_param_name: &'a str,
+}
+
+impl VisitMut for SuperCallRewriter<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        let Expr::Call(call) = expr else { return };
+        let Callee::Expr(callee) = &call.callee else { return };
+        let Expr::Member(member) = callee.as_ref() else { return };
+
+        // Check: superParam.call
+        let Expr::Ident(obj_id) = member.obj.as_ref() else { return };
+        if obj_id.sym.as_ref() != self.super_param_name {
+            return;
+        }
+        let MemberProp::Ident(prop) = &member.prop else { return };
+        if prop.sym.as_ref() != "call" {
+            return;
+        }
+
+        // Must have at least 1 arg (the `this` arg)
+        if call.args.is_empty() {
+            return;
+        }
+
+        // First arg should be `this` — skip it, rest become super() args
+        if !matches!(call.args[0].expr.as_ref(), Expr::This(..)) {
+            return;
+        }
+
+        let super_args: Vec<ExprOrSpread> = call.args[1..].to_vec();
+
+        *expr = Expr::Call(CallExpr {
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            callee: Callee::Super(swc_core::ecma::ast::Super { span: DUMMY_SP }),
+            args: super_args,
+            type_args: None,
+        });
+    }
 }
 
 fn is_empty_constructor(function: &Function) -> bool {

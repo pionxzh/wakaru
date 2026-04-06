@@ -24,7 +24,7 @@ export class ConnectedRouter extends r.Component {
     constructor(...i){
         var n;
         var r;
-        n = r = e.call(this, ...i);
+        n = r = super(...i);
         r.handleLocationChange = (e)=>{
             r.store.dispatch({
                 type: LOCATION_CHANGE,
