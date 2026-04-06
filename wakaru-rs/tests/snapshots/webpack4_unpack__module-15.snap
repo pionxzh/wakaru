@@ -4,7 +4,7 @@ expression: code
 ---
 import r from "./module-14.js";
 const i = {};
-let a = 0;
+const _a = 0;
 export const a = (e, t = {}, n)=>{
     if (typeof t == "string") {
         t = {

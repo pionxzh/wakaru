@@ -236,3 +236,34 @@ fn bracket_notation_module_not_transformed() {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn export_name_takes_priority_over_conflicting_local() {
+    // When exports.a = expr and `a` is already a local binding,
+    // the local should be renamed so the export keeps the clean name.
+    let input = r#"
+var a = 0;
+exports.a = function(x) { return a + x; };
+"#;
+    let output = apply(input);
+    // Export should use `a` as the exported name
+    assert!(output.contains("export const a"), "export should use the name `a`: {}", output);
+    // The local counter should be renamed to avoid collision
+    assert!(!output.contains("let a =") && !output.contains("var a ="),
+        "local binding should be renamed to avoid collision: {}", output);
+    // The renamed local should still be referenced in the function body
+    assert!(output.contains("_a"), "renamed local should appear as _a: {}", output);
+}
+
+#[test]
+fn no_rename_when_export_name_is_free() {
+    // No conflict — export name is not used by any local binding
+    let input = r#"
+var b = 0;
+exports.a = function(x) { return b + x; };
+"#;
+    let output = apply(input);
+    assert!(output.contains("export const a"), "should produce clean export: {}", output);
+    // VarDeclToLetConst may promote var→const, so just check `b` is still there
+    assert!(output.contains("b = 0"), "unrelated local should be unchanged: {}", output);
+}

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
@@ -6,7 +6,7 @@ use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BindingIdent, CallExpr, Callee, Decl, ExportDecl, ExportDefaultExpr,
     ExportNamedSpecifier, ExportSpecifier, Expr, Ident, IdentName, ImportDecl,
     ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, Lit, MemberExpr, MemberProp,
-    ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, Pat, SimpleAssignTarget,
+    Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, Pat, SimpleAssignTarget,
     Stmt, Str, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::VisitMut;
@@ -312,6 +312,54 @@ impl VisitMut for UnEsm {
             }
         }
 
+        // Collect local names that conflict with export names. Export names
+        // take priority (they're meaningful from the original source), so we
+        // rename the conflicting locals to free up the name for the export.
+        let mut local_names: HashSet<Atom> = HashSet::new();
+        for item in &import_decls {
+            if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
+                for spec in &import.specifiers {
+                    match spec {
+                        ImportSpecifier::Named(n) => { local_names.insert(n.local.sym.clone()); }
+                        ImportSpecifier::Default(d) => { local_names.insert(d.local.sym.clone()); }
+                        ImportSpecifier::Namespace(ns) => { local_names.insert(ns.local.sym.clone()); }
+                    }
+                }
+            }
+        }
+        for c in &classified {
+            if let Classified::Keep(ModuleItem::Stmt(Stmt::Decl(decl))) = c {
+                collect_decl_names_into(decl, &mut local_names);
+            }
+        }
+
+        // Find export names that clash with existing locals.
+        // Export names take priority (meaningful from original source), so
+        // rename the conflicting locals before building export items.
+        let mut export_names: HashSet<Atom> = HashSet::new();
+        for (idx, c) in classified.iter().enumerate() {
+            if drop_set.contains(&idx) {
+                continue;
+            }
+            if let Classified::CjsExport { kind } = c {
+                if let CjsExportKind::Named { name, expr, is_void: false } = kind {
+                    let is_ident = matches!(expr.as_ref(), Expr::Ident(_));
+                    if !is_ident && local_names.contains(name) {
+                        export_names.insert(name.clone());
+                    }
+                }
+            }
+        }
+
+        // Rename conflicting locals in Keep items before building exports
+        if !export_names.is_empty() {
+            for c in classified.iter_mut() {
+                if let Classified::Keep(item) = c {
+                    rename_conflicting_locals(item, &export_names);
+                }
+            }
+        }
+
         // Build final module body
         let mut new_body: Vec<ModuleItem> = import_decls;
 
@@ -322,8 +370,8 @@ impl VisitMut for UnEsm {
                 Classified::CjsExport { kind } => {
                     if drop_set.contains(&idx) {
                         // drop
-                    } else if let Some(item) = build_export_item(kind) {
-                        new_body.push(item);
+                    } else {
+                        new_body.extend(build_export_items(kind));
                     }
                 }
                 Classified::Keep(item) => {
@@ -418,20 +466,20 @@ fn make_import_decl(src: &str, specifiers: Vec<ImportSpecifier>) -> ImportDecl {
     }
 }
 
-fn build_export_item(kind: CjsExportKind) -> Option<ModuleItem> {
+fn build_export_items(kind: CjsExportKind) -> Vec<ModuleItem> {
     match kind {
-        CjsExportKind::ModuleExportsDefault { expr } => Some(ModuleItem::ModuleDecl(
+        CjsExportKind::ModuleExportsDefault { expr } => vec![ModuleItem::ModuleDecl(
             ModuleDecl::ExportDefaultExpr(ExportDefaultExpr {
                 span: DUMMY_SP,
                 expr,
             }),
-        )),
-        CjsExportKind::NamedDefault { expr } => Some(ModuleItem::ModuleDecl(
+        )],
+        CjsExportKind::NamedDefault { expr } => vec![ModuleItem::ModuleDecl(
             ModuleDecl::ExportDefaultExpr(ExportDefaultExpr {
                 span: DUMMY_SP,
                 expr,
             }),
-        )),
+        )],
         CjsExportKind::Named {
             name,
             expr,
@@ -440,7 +488,7 @@ fn build_export_item(kind: CjsExportKind) -> Option<ModuleItem> {
             if let Expr::Ident(id) = *expr {
                 if id.sym == name {
                     // export { foo }
-                    Some(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
+                    vec![ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
                         NamedExport {
                             span: DUMMY_SP,
                             specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
@@ -453,10 +501,10 @@ fn build_export_item(kind: CjsExportKind) -> Option<ModuleItem> {
                             type_only: false,
                             with: None,
                         },
-                    )))
+                    ))]
                 } else {
                     // export { id as name }
-                    Some(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
+                    vec![ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
                         NamedExport {
                             span: DUMMY_SP,
                             specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
@@ -469,11 +517,11 @@ fn build_export_item(kind: CjsExportKind) -> Option<ModuleItem> {
                             type_only: false,
                             with: None,
                         },
-                    )))
+                    ))]
                 }
             } else {
                 // export const name = expr
-                Some(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                vec![ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
                     span: DUMMY_SP,
                     decl: Decl::Var(Box::new(VarDecl {
                         span: DUMMY_SP,
@@ -490,11 +538,11 @@ fn build_export_item(kind: CjsExportKind) -> Option<ModuleItem> {
                             definite: false,
                         }],
                     })),
-                })))
+                }))]
             }
         }
-        CjsExportKind::Named { is_void: true, .. } => None, // should have been dropped
-        CjsExportKind::SelfRef => None,
+        CjsExportKind::Named { is_void: true, .. } => vec![], // should have been dropped
+        CjsExportKind::SelfRef => vec![],
     }
 }
 
@@ -804,4 +852,70 @@ fn make_ident(sym: Atom) -> Ident {
 
 fn wtf8_to_string(value: &swc_core::atoms::Wtf8Atom) -> String {
     value.as_str().unwrap_or("").to_string()
+}
+
+/// Rename local bindings that conflict with export names.
+/// For each conflicting name `x`, renames the binding and all references to `_x`.
+fn rename_conflicting_locals(item: &mut ModuleItem, conflicts: &HashSet<Atom>) {
+    use swc_core::ecma::visit::VisitMutWith;
+
+    struct LocalRenamer<'a> {
+        conflicts: &'a HashSet<Atom>,
+    }
+
+    impl VisitMut for LocalRenamer<'_> {
+        fn visit_mut_ident(&mut self, ident: &mut Ident) {
+            if self.conflicts.contains(&ident.sym) {
+                ident.sym = Atom::from(format!("_{}", ident.sym));
+            }
+        }
+
+        // Don't rename property names in member expressions
+        fn visit_mut_member_prop(&mut self, prop: &mut MemberProp) {
+            if let MemberProp::Computed(computed) = prop {
+                computed.visit_mut_with(self);
+            }
+        }
+
+        // Don't rename object property keys
+        fn visit_mut_key_value_prop(&mut self, prop: &mut swc_core::ecma::ast::KeyValueProp) {
+            // Only visit the value, not the key
+            prop.value.visit_mut_with(self);
+        }
+    }
+
+    item.visit_mut_with(&mut LocalRenamer { conflicts });
+}
+
+/// Collect binding names introduced by a declaration.
+fn collect_decl_names_into(decl: &Decl, names: &mut HashSet<Atom>) {
+    match decl {
+        Decl::Var(var) => {
+            for d in &var.decls {
+                collect_pat_names(&d.name, names);
+            }
+        }
+        Decl::Fn(f) => { names.insert(f.ident.sym.clone()); }
+        Decl::Class(c) => { names.insert(c.ident.sym.clone()); }
+        _ => {}
+    }
+}
+
+fn collect_pat_names(pat: &Pat, names: &mut HashSet<Atom>) {
+    match pat {
+        Pat::Ident(id) => { names.insert(id.id.sym.clone()); }
+        Pat::Array(arr) => { for p in arr.elems.iter().flatten() { collect_pat_names(p, names); } }
+        Pat::Object(obj) => {
+            for prop in &obj.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => collect_pat_names(&kv.value, names),
+                    ObjectPatProp::Assign(a) => { names.insert(a.key.id.sym.clone()); }
+                    ObjectPatProp::Rest(r) => collect_pat_names(&r.arg, names),
+                }
+            }
+        }
+        Pat::Assign(a) => collect_pat_names(&a.left, names),
+        Pat::Rest(r) => collect_pat_names(&r.arg, names),
+        _ => {}
+    }
 }
