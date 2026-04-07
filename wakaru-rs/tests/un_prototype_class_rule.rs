@@ -183,6 +183,30 @@ class Child extends Parent {
 }
 
 // ============================================================
+// Inheritance via util.inherits
+// ============================================================
+
+#[test]
+fn test_inheritance_util_inherits() {
+    let input = r#"
+function Child(name) {
+    Parent.call(this, name);
+}
+util.inherits(Child, Parent);
+Child.prototype.speak = function() { return "hi"; };
+"#;
+    let expected = r#"
+class Child extends Parent {
+    constructor(name) {
+        super(name);
+    }
+    speak() { return "hi"; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+// ============================================================
 // No-op: function without prototype methods
 // ============================================================
 

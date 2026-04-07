@@ -183,6 +183,17 @@ fn find_candidates(stmts: &[Option<&Stmt>]) -> Vec<ClassCandidate> {
                 continue;
             }
 
+            // util.inherits(Foo, Bar) or inherits(Foo, Bar) — inheritance
+            if let Some(super_expr) = extract_util_inherits(stmt, name) {
+                candidate.super_class_name = match super_expr.as_ref() {
+                    Expr::Ident(id) => Some(id.sym.clone()),
+                    _ => None,
+                };
+                candidate.super_class = Some(super_expr);
+                candidate.consumed_indices.insert(i);
+                continue;
+            }
+
             // Object.defineProperty(Foo.prototype, "name", { get/set })
             if let Some(methods) = extract_define_property(stmt, name) {
                 for m in methods {
@@ -403,6 +414,38 @@ fn extract_super_from_create_arg(expr: &Expr) -> Option<Box<Expr>> {
         }
     }
     None
+}
+
+/// Extract inheritance from `util.inherits(Child, Parent)` or `inherits(Child, Parent)`.
+fn extract_util_inherits(stmt: &Stmt, ctor_name: &Atom) -> Option<Box<Expr>> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return None };
+    let Expr::Call(call) = expr.as_ref() else { return None };
+    let Callee::Expr(callee) = &call.callee else { return None };
+
+    // Match `X.inherits(...)` or `inherits(...)`
+    let is_inherits = match callee.as_ref() {
+        Expr::Member(m) => {
+            matches!(&m.prop, MemberProp::Ident(n) if n.sym.as_ref() == "inherits")
+        }
+        Expr::Ident(id) => id.sym.as_ref() == "inherits",
+        _ => false,
+    };
+    if !is_inherits {
+        return None;
+    }
+
+    if call.args.len() != 2 {
+        return None;
+    }
+
+    // First arg must be the constructor name
+    let Expr::Ident(first) = call.args[0].expr.as_ref() else { return None };
+    if &first.sym != ctor_name {
+        return None;
+    }
+
+    // Second arg is the parent class
+    Some(call.args[1].expr.clone())
 }
 
 /// Extract getters/setters from `Object.defineProperty(Foo.prototype, "name", { get/set })`.
