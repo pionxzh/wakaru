@@ -105,12 +105,16 @@ fn find_candidates(stmts: &[Option<&Stmt>]) -> Vec<ClassCandidate> {
     let len = stmts.len();
     let get_stmt = |i: usize| stmts[i];
     // Phase 1: Find all FnDecl names and prototype method targets.
-    // A function is a constructor candidate if there are `Foo.prototype.method = function` assignments.
+    // A function is a constructor candidate if:
+    // - It has `Foo.prototype.method = function` assignments somewhere in the scope
+    // - Its body references `this` OR is empty (empty constructors are common for base classes)
     let mut fn_decls: Vec<(usize, &Atom)> = Vec::new();
     for i in 0..len {
         let Some(stmt) = get_stmt(i) else { continue };
         if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
-            fn_decls.push((i, &fn_decl.ident.sym));
+            if has_this_reference(&fn_decl.function) || is_empty_body(&fn_decl.function) {
+                fn_decls.push((i, &fn_decl.ident.sym));
+            }
         }
     }
 
@@ -151,9 +155,10 @@ fn find_candidates(stmts: &[Option<&Stmt>]) -> Vec<ClassCandidate> {
             members: Vec::new(),
         };
 
-        // Scan all statements for ones belonging to this class
-        for i in 0..len {
-            if i == *fn_idx || globally_consumed.contains(&i) {
+        // Scan statements AFTER the fn decl for ones belonging to this class.
+        // Only consuming forward avoids reordering issues with function hoisting vs class TDZ.
+        for i in (*fn_idx + 1)..len {
+            if globally_consumed.contains(&i) {
                 continue;
             }
             let Some(stmt) = get_stmt(i) else { continue };
@@ -568,7 +573,11 @@ fn has_this_reference(func: &Function) -> bool {
     }
 
     let mut finder = ThisFinder { found: false };
-    func.visit_with(&mut finder);
+    // Visit the body directly, not the Function node, because we override
+    // visit_function to skip nested functions.
+    if let Some(body) = &func.body {
+        body.visit_with(&mut finder);
+    }
     finder.found
 }
 
