@@ -620,8 +620,8 @@ class oe extends i.Component {
         const route = this.context.router.route;
         const children = this.props.children;
         const n = this.props.location || route.location;
-        let r = undefined;
-        let o = undefined;
+        let r;
+        let o;
         i.Children.forEach(children, (t)=>{
             if (r == null && i.isValidElement(t)) {
                 const i = t.props;

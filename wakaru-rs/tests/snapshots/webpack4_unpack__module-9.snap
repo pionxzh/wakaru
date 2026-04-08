@@ -47,7 +47,7 @@ function c(e = 10, t) {
             if (r < e) {
                 s(f);
             } else {
-                let p = undefined;
+                let p;
                 switch(t){
                     case i:
                         throw new Error(o);

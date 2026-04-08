@@ -75,7 +75,7 @@ function g() {
                 }
                 E[n] = t;
                 for(const r in n = t.eventTypes){
-                    let o = undefined;
+                    let o;
                     const i = n[r];
                     const u = t;
                     const l = r;
@@ -4395,7 +4395,7 @@ function oa(e, t, n, r) {
 function ia(e, t, n, r) {
     const o = Xi();
     r = r === undefined ? null : r;
-    let i = undefined;
+    let i;
     if ($i !== null) {
         const a = $i.memoizedState;
         i = a.destroy;

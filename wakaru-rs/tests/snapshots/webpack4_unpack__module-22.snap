@@ -148,7 +148,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
     const R = ((t, n)=>{
         const e = 0;
         let r = [];
-        let i = undefined;
+        let i;
         let a = false;
         function u(e) {
             c();
@@ -210,7 +210,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             throw new Error("Trying to resume an already finished generator");
         }
         try {
-            let r = undefined;
+            let r;
             if (n) {
                 r = e.throw(t);
             } else if (t === p) {
@@ -279,7 +279,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                 effect: e
             });
         }
-        let b = undefined;
+        let b;
         function w(e, t) {
             if (!b) {
                 b = true;
@@ -303,7 +303,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                 }
             }
         };
-        let k = undefined;
+        let k;
         if (o.q.promise(e)) {
             return I(e, w);
         }
@@ -342,7 +342,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             return ((e, t)=>{
                 const { channel, action, resolve } = e;
                 a.a(()=>{
-                    let e = undefined;
+                    let e;
                     try {
                         e = (channel ? channel.put : n)(action);
                     } catch (e) {
@@ -363,7 +363,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         }
         if (k = u.d.race(e)) {
             return ((e, t, n)=>{
-                let r = undefined;
+                let r;
                 const a = Object.keys(e);
                 const u = {};
                 a.forEach((t)=>{
@@ -405,7 +405,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         if (k = u.d.call(e)) {
             return ((e, t, n)=>{
                 const { context, fn, args } = e;
-                let u = undefined;
+                let u;
                 try {
                     u = fn.apply(context, args);
                 } catch (e) {
@@ -533,8 +533,8 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             if (o.q.iterator(fn)) {
                 return fn;
             }
-            let i = undefined;
-            let a = undefined;
+            let i;
+            let a;
             try {
                 i = fn.apply(context, args);
             } catch (e) {
@@ -549,7 +549,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                 });
             }
             return o.t((()=>{
-                let e = undefined;
+                let e;
                 const t = {
                     done: false,
                     value: i
@@ -593,7 +593,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             return n(o.q.array(e) ? [] : {});
         }
         let a = 0;
-        let u = undefined;
+        let u;
         const l = {};
         const s = {};
         r.forEach((t)=>{
@@ -620,7 +620,7 @@ export function runSaga(e, t) {
     for(let n = arguments.length, r = Array(n > 2 ? n - 2 : 0), i = 2; i < n; i++){
         r[i - 2] = arguments[i];
     }
-    let a = undefined;
+    let a;
     if (o.q.iterator(e)) {
         a = e;
         e = t;

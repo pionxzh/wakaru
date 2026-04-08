@@ -146,7 +146,7 @@ export function combineReducers(e) {
         }
     }
     const a = Object.keys(n);
-    let u = undefined;
+    let u;
     try {
         !((e)=>{
             Object.keys(e).forEach((t)=>{

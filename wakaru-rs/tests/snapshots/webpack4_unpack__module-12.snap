@@ -28,7 +28,7 @@ function l() {
 }
 export function b() {
     l();
-    let e = undefined;
+    let e;
     while(!o && (e = r.shift()) !== undefined){
         i(e);
     }

@@ -51,6 +51,7 @@ mod un_type_constructor;
 mod un_typeof;
 mod un_typeof_polyfill;
 mod un_typeof_strict;
+mod un_undefined_init;
 mod un_use_strict;
 mod un_variable_merging;
 mod un_webpack_define_getters;
@@ -115,6 +116,7 @@ pub use un_type_constructor::UnTypeConstructor;
 pub use un_typeof::UnTypeof;
 pub use un_typeof_polyfill::UnTypeofPolyfill;
 pub use un_typeof_strict::UnTypeofStrict;
+pub use un_undefined_init::UnUndefinedInit;
 pub use un_use_strict::UnUseStrict;
 pub use un_variable_merging::UnVariableMerging;
 pub use un_webpack_define_getters::UnWebpackDefineGetters;
@@ -188,6 +190,7 @@ pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
     module.visit_mut_with(&mut UnWebpackInterop);
     module.visit_mut_with(&mut UnEsm);
     // lebab-style modernization
+    module.visit_mut_with(&mut UnUndefinedInit);
     module.visit_mut_with(&mut VarDeclToLetConst);
     module.visit_mut_with(&mut ObjShorthand);
     module.visit_mut_with(&mut ObjMethodShorthand);

@@ -138,7 +138,7 @@ export function g(e) {
     return t;
 }
 export function m(e, t = true) {
-    let n = undefined;
+    let n;
     const r = new Promise((r)=>{
         n = setTimeout(()=>r(t), e);
     });
@@ -148,8 +148,8 @@ export function m(e, t = true) {
 export function j() {
     let e;
     let t = true;
-    let n = undefined;
-    let r = undefined;
+    let n;
+    let r;
     e = {};
     e[a] = true;
     e.isRunning = ()=>t;

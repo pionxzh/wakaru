@@ -21,7 +21,7 @@ function a(e) {
     return String(e);
 }
 function u(e, t, n = "iterator") {
-    let a = undefined;
+    let a;
     let u = t;
     function l(t, n) {
         if (u === i) {
@@ -52,7 +52,7 @@ export function b(e, t) {
         done: false,
         value: l.s(e)
     };
-    let f = undefined;
+    let f;
     const d = (e)=>f = e;
     return u({
         q1 () {
@@ -98,8 +98,8 @@ function f(e, t) {
                 e
             ])
         });
-    let d = undefined;
-    let p = undefined;
+    let d;
+    let p;
     const h = (e)=>d = e;
     const m = (e)=>p = e;
     return u({
@@ -144,8 +144,8 @@ function p(e, t, n) {
     for(let o = arguments.length, s = Array(o > 3 ? o - 3 : 0), f = 3; f < o; f++){
         s[f - 3] = arguments[f];
     }
-    let p = undefined;
-    let h = undefined;
+    let p;
+    let h;
     const m = {
         done: false,
         value: l.a(t, d.a.sliding(1))
