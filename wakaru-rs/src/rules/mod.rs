@@ -47,6 +47,7 @@ mod un_rest_array_copy;
 mod un_spread_array_literal;
 mod un_return;
 mod un_template_literal;
+mod un_then_catch;
 mod un_type_constructor;
 mod un_typeof;
 mod un_typeof_polyfill;
@@ -112,6 +113,7 @@ pub use un_rest_array_copy::UnRestArrayCopy;
 pub use un_spread_array_literal::UnSpreadArrayLiteral;
 pub use un_return::UnReturn;
 pub use un_template_literal::UnTemplateLiteral;
+pub use un_then_catch::UnThenCatch;
 pub use un_type_constructor::UnTypeConstructor;
 pub use un_typeof::UnTypeof;
 pub use un_typeof_polyfill::UnTypeofPolyfill;
@@ -190,6 +192,7 @@ pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
     module.visit_mut_with(&mut UnWebpackInterop);
     module.visit_mut_with(&mut UnEsm);
     // lebab-style modernization
+    module.visit_mut_with(&mut UnThenCatch);
     module.visit_mut_with(&mut UnUndefinedInit);
     module.visit_mut_with(&mut VarDeclToLetConst);
     module.visit_mut_with(&mut ObjShorthand);
