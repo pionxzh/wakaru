@@ -5902,7 +5902,7 @@ Wa = (e, t, n, r, i)=>{
         }
         for(u in r){
             let s = r[u];
-            c = e_memoizedProps != null ? e_memoizedProps[u] : undefined;
+            c = e_memoizedProps?.[u];
             if (r.hasOwnProperty(u) && s !== c && (s != null || c != null)) {
                 if (u === "style") {
                     if (c) {

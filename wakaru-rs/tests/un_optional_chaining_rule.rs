@@ -61,6 +61,87 @@ fn does_not_transform_when_cons_is_not_void() {
     assert_eq_normalized(&output, input);
 }
 
+// --- loose equality form: x == null ? undefined : x.prop ---
+
+#[test]
+fn transforms_loose_eq_null_member_access() {
+    let input = r#"const x = U == null ? undefined : U.userID"#;
+    let expected = r#"const x = U?.userID"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_loose_eq_null_method_call() {
+    let input = r#"const x = U == null ? undefined : U.getName()"#;
+    let expected = r#"const x = U?.getName()"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_loose_neq_null_nullish_form() {
+    // x != null ? x.prop : undefined  →  x?.prop
+    let input = r#"const x = U != null ? U.name : undefined"#;
+    let expected = r#"const x = U?.name"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_nested_loose_eq_null() {
+    // Nested: (x == null ? undefined : x.a) == null ? undefined : (x == null ? undefined : x.a).b
+    // After first pass: x?.a, then second nesting would need chaining
+    let input = r#"const x = U == null ? undefined : U.a"#;
+    let expected = r#"const x = U?.a"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_transform_loose_eq_when_cons_is_not_undefined() {
+    let input = r#"const x = U == null ? "default" : U.name"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn transforms_loose_eq_null_in_expression_position() {
+    // Inside if condition
+    let input = r#"if ((U == null ? undefined : U.message) && true) {}"#;
+    let expected = r#"if (U?.message && true) {}"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+// --- loose equality edge cases (from Codex review) ---
+
+#[test]
+fn transforms_loose_eq_null_with_void_0_consequent() {
+    let input = r#"const x = U == null ? void 0 : U.name"#;
+    let expected = r#"const x = U?.name"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_loose_eq_null_reversed_operand_order() {
+    // null == U instead of U == null
+    let input = r#"const x = null == U ? undefined : U.prop"#;
+    let expected = r#"const x = U?.prop"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_loose_eq_undefined() {
+    // x == undefined is equivalent to x == null in JS
+    let input = r#"const x = U == undefined ? undefined : U.name"#;
+    let expected = r#"const x = U?.name"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
 // --- known-broken semantic regressions ---
 
 #[test]

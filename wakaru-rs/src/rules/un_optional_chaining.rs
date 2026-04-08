@@ -25,6 +25,11 @@ fn try_optional_chaining(expr: &Expr) -> Option<Expr> {
         return Some(result);
     }
 
+    // Pattern: `obj == null ? undefined : obj.access`  (loose equality)
+    if let Some(result) = try_loose_eq_optional_chain(expr) {
+        return Some(result);
+    }
+
     None
 }
 
@@ -168,6 +173,58 @@ fn make_optional_chain_replacing(tmp: &Expr, real_rhs: &Expr, access: &Expr) -> 
 
         _ => None,
     }
+}
+
+/// Handle loose equality forms:
+/// - `obj == null ? undefined : obj.prop`  →  `obj?.prop`
+/// - `obj != null ? obj.prop : undefined`  →  `obj?.prop`
+///
+/// `x == null` matches both `null` and `undefined`, which is exactly what `?.` does.
+fn try_loose_eq_optional_chain(expr: &Expr) -> Option<Expr> {
+    let Expr::Cond(CondExpr {
+        test, cons, alt, ..
+    }) = expr
+    else {
+        return None;
+    };
+
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = &**test
+    else {
+        return None;
+    };
+
+    match op {
+        // `x == null ? undefined : x.prop`
+        BinaryOp::EqEq => {
+            if !is_void_or_undefined(cons) {
+                return None;
+            }
+            let checked = extract_loose_null_operand(left, right)?;
+            make_optional_chain(checked, alt)
+        }
+        // `x != null ? x.prop : undefined`
+        BinaryOp::NotEq => {
+            if !is_void_or_undefined(alt) {
+                return None;
+            }
+            let checked = extract_loose_null_operand(left, right)?;
+            make_optional_chain(checked, cons)
+        }
+        _ => None,
+    }
+}
+
+/// From a binary `x == null` or `null == x`, extract the non-null operand.
+fn extract_loose_null_operand(left: &Box<Expr>, right: &Box<Expr>) -> Option<Expr> {
+    if matches!(&**right, Expr::Lit(Lit::Null(_))) || is_undefined(right) {
+        return Some((**left).clone());
+    }
+    if matches!(&**left, Expr::Lit(Lit::Null(_))) || is_undefined(left) {
+        return Some((**right).clone());
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
