@@ -17,6 +17,7 @@ pub struct UnpackResult {
 pub fn unpack_bundle(source: &str) -> Option<UnpackResult> {
     webpack5::detect_and_extract(source)
         .or_else(|| webpack4::detect_and_extract(source))
+        .or_else(|| webpack5::detect_and_extract_chunk(source))
         .or_else(|| browserify::detect_and_extract(source))
         .or_else(|| esbuild::detect_and_extract(source))
 }

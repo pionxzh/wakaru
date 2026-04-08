@@ -2,9 +2,9 @@ use anyhow::anyhow;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprStmt, FnExpr, Function, Ident,
-    IdentName, MemberExpr, MemberProp, Module, ModuleItem, ObjectLit, Pat, SimpleAssignTarget,
-    Stmt, VarDecl, VarDeclarator,
+    ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, Expr,
+    ExprStmt, FnExpr, Function, Ident, IdentName, Lit, MemberExpr, MemberProp, Module, ModuleItem,
+    ObjectLit, Pat, SimpleAssignTarget, Stmt, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
@@ -87,41 +87,64 @@ impl Webpack5RuntimeNormalizer {
     }
 
     fn convert_require_d(&self, stmt: &Stmt, call: &CallExpr) -> Option<Vec<Stmt>> {
-        if call.args.len() != 2 {
-            return None;
-        }
-
-        let Expr::Object(defs) = &*call.args[1].expr else {
-            return None;
-        };
         let span = stmt.span();
         let exports_ident = Ident::new(self.exports_sym.clone(), span, Default::default());
-        let mut assignments = Vec::new();
 
-        for prop in &defs.props {
-            let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
+        // Webpack5 form: require.d(exports, { key: getter, ... })
+        if call.args.len() == 2 {
+            let Expr::Object(defs) = &*call.args[1].expr else {
                 return None;
             };
-            let swc_core::ecma::ast::Prop::KeyValue(key_value) = &**prop else {
+            let mut assignments = Vec::new();
+
+            for prop in &defs.props {
+                let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
+                    return None;
+                };
+                let swc_core::ecma::ast::Prop::KeyValue(key_value) = &**prop else {
+                    return None;
+                };
+                let export_name = match &key_value.key {
+                    swc_core::ecma::ast::PropName::Ident(name) => name.sym.clone(),
+                    swc_core::ecma::ast::PropName::Str(name) => {
+                        Atom::from(name.value.as_str().unwrap_or(""))
+                    }
+                    _ => return None,
+                };
+                let value = extract_getter_value(&key_value.value)?;
+                assignments.push(build_member_assign(
+                    exports_ident.clone(),
+                    export_name,
+                    value,
+                    span,
+                ));
+            }
+
+            return Some(assignments);
+        }
+
+        // Webpack4 form: require.d(exports, "name", getter)
+        if call.args.len() == 3 {
+            let Expr::Lit(Lit::Str(name_str)) = &*call.args[1].expr else {
                 return None;
             };
-            let export_name = match &key_value.key {
-                swc_core::ecma::ast::PropName::Ident(name) => name.sym.clone(),
-                swc_core::ecma::ast::PropName::Str(name) => {
-                    Atom::from(name.value.as_str().unwrap_or(""))
-                }
-                _ => return None,
-            };
-            let value = extract_getter_value(&key_value.value)?;
-            assignments.push(build_member_assign(
-                exports_ident.clone(),
+            let export_name: Atom = name_str
+                .value
+                .as_str()
+                .map(Atom::from)
+                .unwrap_or_else(|| {
+                    Atom::from(name_str.value.to_string_lossy().into_owned().as_str())
+                });
+            let value = extract_getter_value(&call.args[2].expr)?;
+            return Some(vec![build_member_assign(
+                exports_ident,
                 export_name,
                 value,
                 span,
-            ));
+            )]);
         }
 
-        Some(assignments)
+        None
     }
 }
 
@@ -143,6 +166,179 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
         }
         None
     })
+}
+
+/// Detect and extract modules from a webpack5 JSONP chunk format:
+/// `(self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([[chunkIds], {modules}])`
+pub fn detect_and_extract_chunk(source: &str) -> Option<UnpackResult> {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let module = parse_es_module(source, cm.clone()).ok()?;
+
+        let mut all_modules = Vec::new();
+
+        for item in &module.body {
+            let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+                continue;
+            };
+            if let Some(modules_object) = extract_chunk_push_modules(expr) {
+                let extracted = extract_modules_from_object(modules_object, cm.clone())?;
+                all_modules.extend(extracted);
+            }
+        }
+
+        if all_modules.is_empty() {
+            return None;
+        }
+
+        Some(UnpackResult {
+            modules: all_modules,
+        })
+    })
+}
+
+/// Match the pattern: `(self.X = self.X || []).push([[ids], {modules}])`
+/// or `(window["X"] = window["X"] || []).push([[ids], {modules}])`
+fn extract_chunk_push_modules(expr: &Expr) -> Option<&ObjectLit> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    let Callee::Expr(callee_expr) = &call.callee else {
+        return None;
+    };
+    // callee is (self.X = self.X || []).push
+    let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else {
+        return None;
+    };
+    let MemberProp::Ident(push_ident) = prop else {
+        return None;
+    };
+    if push_ident.sym.as_ref() != "push" {
+        return None;
+    }
+
+    // obj is (self.X = self.X || []) — a parenthesized assignment
+    let obj = strip_parens(obj);
+    let Expr::Assign(AssignExpr {
+        op: AssignOp::Assign,
+        right,
+        ..
+    }) = obj
+    else {
+        return None;
+    };
+
+    // right side: self.X || []
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalOr,
+        right: or_right,
+        ..
+    }) = &**right
+    else {
+        return None;
+    };
+    // Verify right side of || is an empty array
+    let Expr::Array(ArrayLit { elems, .. }) = &**or_right else {
+        return None;
+    };
+    if !elems.is_empty() {
+        return None;
+    }
+
+    // push argument: [[chunkIds], {modules}, ...]
+    if call.args.is_empty() {
+        return None;
+    }
+    let push_arg = &call.args[0].expr;
+    let Expr::Array(ArrayLit { elems: push_elems, .. }) = &**push_arg else {
+        return None;
+    };
+    // Must have at least 2 elements: [chunkIds, modulesObject]
+    if push_elems.len() < 2 {
+        return None;
+    }
+    // First element: array of chunk IDs
+    let Some(Some(first)) = push_elems.first() else {
+        return None;
+    };
+    if !matches!(&*first.expr, Expr::Array(_)) {
+        return None;
+    }
+    // Second element: modules object
+    let Some(Some(second)) = push_elems.get(1) else {
+        return None;
+    };
+    let Expr::Object(modules_object) = &*second.expr else {
+        return None;
+    };
+
+    // Validate that the object contains function properties
+    if modules_object.props.is_empty() {
+        return None;
+    }
+    for prop in &modules_object.props {
+        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let swc_core::ecma::ast::Prop::KeyValue(kv) = &**prop else {
+            return None;
+        };
+        // Keys must be string or numeric literals
+        if !matches!(
+            &kv.key,
+            swc_core::ecma::ast::PropName::Str(_) | swc_core::ecma::ast::PropName::Num(_)
+        ) {
+            return None;
+        }
+        if extract_factory(&kv.value).is_none() {
+            return None;
+        }
+    }
+
+    Some(modules_object)
+}
+
+/// Extract modules from an ObjectLit where keys are module IDs and values are factory functions.
+/// Used by both entry bundles and JSONP chunks.
+fn extract_modules_from_object(
+    modules_object: &ObjectLit,
+    cm: Lrc<SourceMap>,
+) -> Option<Vec<UnpackedModule>> {
+    let mut modules = Vec::new();
+
+    for prop in &modules_object.props {
+        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let swc_core::ecma::ast::Prop::KeyValue(key_value) = &**prop else {
+            return None;
+        };
+        let module_id = match &key_value.key {
+            swc_core::ecma::ast::PropName::Str(name) => {
+                name.value.as_str().unwrap_or("unknown").to_string()
+            }
+            swc_core::ecma::ast::PropName::Num(num) => format!("{}", num.value as i64),
+            _ => return None,
+        };
+        let filename = if module_id.contains('/') || module_id.contains('.') {
+            sanitize_filename(&module_id)
+        } else {
+            format!("module-{module_id}.js")
+        };
+
+        let Some((factory, body_stmts)) = extract_factory(&key_value.value) else {
+            return None;
+        };
+        let code = emit_webpack5_module(&factory, body_stmts, cm.clone())?;
+        modules.push(UnpackedModule {
+            id: module_id,
+            is_entry: false,
+            code,
+            filename,
+        });
+    }
+
+    Some(modules)
 }
 
 fn extract_webpack5_modules(
