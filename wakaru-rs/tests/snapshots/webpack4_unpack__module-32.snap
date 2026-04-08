@@ -50,7 +50,7 @@ u[r.ForwardRef] = {
 u[r.Memo] = a;
 const { defineProperty, getOwnPropertyNames, getOwnPropertySymbols, getOwnPropertyDescriptor, getPrototypeOf, prototype } = Object;
 export default (function e(t, n, r) {
-    if (typeof n != "string") {
+    if (typeof n !== "string") {
         if (prototype) {
             const o = getPrototypeOf(n);
             if (o && o !== prototype) {

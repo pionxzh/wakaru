@@ -78,7 +78,7 @@ const l = function e(t, n) {
     if (Array.isArray(t)) {
         return Array.isArray(n) && t.length === n.length && t.every((t, r)=>e(t, n[r]));
     }
-    if (typeof t == "object" || typeof n == "object") {
+    if (typeof t === "object" || typeof n === "object") {
         const r = u(t);
         const o = u(n);
         if (r !== t || o !== n) {
@@ -98,7 +98,7 @@ function f(e, t) {
         if (c) {
             throw new Error(s);
         }
-        const n = typeof t == "function" ? t() : t;
+        const n = typeof t === "function" ? t() : t;
         const r = n ? `${s}: ${n}` : s;
         throw new Error(r);
     }
@@ -160,7 +160,7 @@ export function createPath(e) {
 }
 export function createLocation(e, t, n, o) {
     let i;
-    if (typeof e == "string") {
+    if (typeof e === "string") {
         i = parsePath(e);
         i.state = t;
     } else {
@@ -209,9 +209,9 @@ function w() {
         },
         confirmTransitionTo (t, n, r, o) {
             if (e != null) {
-                const i = typeof e == "function" ? e(t, n) : e;
-                if (typeof i == "string") {
-                    if (typeof r == "function") {
+                const i = typeof e === "function" ? e(t, n) : e;
+                if (typeof i === "string") {
+                    if (typeof r === "function") {
                         r(i, o);
                     } else {
                         o(true);
@@ -241,7 +241,7 @@ function w() {
         }
     };
 }
-const E = !(typeof window == "undefined" || !window.document || !window.document.createElement);
+const E = !(typeof window === "undefined" || !window.document || !window.document.createElement);
 function x(e, t) {
     t(window.confirm(e));
 }
@@ -707,7 +707,7 @@ export function createMemoryHistory(e = {}) {
         return Math.random().toString(36).substr(2, c);
     }
     const p = M(u, 0, i.length - 1);
-    const h = i.map((e)=>createLocation(e, undefined, typeof e == "string" ? d() : e.key || d()));
+    const h = i.map((e)=>createLocation(e, undefined, typeof e === "string" ? d() : e.key || d()));
     function y(e) {
         const t = M(g.index + e, 0, g.entries.length - 1);
         const r = g.entries[t];

@@ -25,7 +25,7 @@ const o = {
 const { defineProperty, getOwnPropertyNames, getOwnPropertySymbols, getOwnPropertyDescriptor, getPrototypeOf } = Object;
 const s = getPrototypeOf && getPrototypeOf(Object);
 export default (function e(t, n, f) {
-    if (typeof n != "string") {
+    if (typeof n !== "string") {
         if (s) {
             const d = getPrototypeOf(n);
             if (d && d !== s) {

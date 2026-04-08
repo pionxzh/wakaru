@@ -47,13 +47,13 @@ export const q = {
         return e !== null && e !== undefined;
     },
     func (e) {
-        return typeof e == "function";
+        return typeof e === "function";
     },
     number (e) {
-        return typeof e == "number";
+        return typeof e === "number";
     },
     string (e) {
-        return typeof e == "string";
+        return typeof e === "string";
     },
     array: Array.isArray,
     object (e) {
@@ -178,13 +178,13 @@ export function t(e, t = P, n = "", r) {
     if (r) {
         o[u] = true;
     }
-    if (typeof Symbol != "undefined") {
+    if (typeof Symbol !== "undefined") {
         o[Symbol.iterator] = ()=>o;
     }
     return o;
 }
 function R(e, t, n = "") {
-    if (typeof window == "undefined") {
+    if (typeof window === "undefined") {
         console.log(`redux-saga ${e}: ${t}\n${n && n.stack || n}`);
     } else {
         console[e](t, n);

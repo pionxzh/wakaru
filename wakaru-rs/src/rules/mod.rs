@@ -50,6 +50,7 @@ mod un_template_literal;
 mod un_type_constructor;
 mod un_typeof;
 mod un_typeof_polyfill;
+mod un_typeof_strict;
 mod un_use_strict;
 mod un_variable_merging;
 mod un_webpack_define_getters;
@@ -113,6 +114,7 @@ pub use un_template_literal::UnTemplateLiteral;
 pub use un_type_constructor::UnTypeConstructor;
 pub use un_typeof::UnTypeof;
 pub use un_typeof_polyfill::UnTypeofPolyfill;
+pub use un_typeof_strict::UnTypeofStrict;
 pub use un_use_strict::UnUseStrict;
 pub use un_variable_merging::UnVariableMerging;
 pub use un_webpack_define_getters::UnWebpackDefineGetters;
@@ -140,6 +142,7 @@ impl Rule for NoopRule {
 pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
     module.visit_mut_with(&mut SimplifySequence::new(unresolved_mark));
     module.visit_mut_with(&mut FlipComparisons);
+    module.visit_mut_with(&mut UnTypeofStrict);
     if RemoveVoid::should_run(module) {
         module.visit_mut_with(&mut RemoveVoid);
     }

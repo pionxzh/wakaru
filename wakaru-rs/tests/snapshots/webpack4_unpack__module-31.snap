@@ -5,7 +5,7 @@ expression: code
 export function a(e) {
     let t;
     const e_Symbol = e.Symbol;
-    if (typeof e_Symbol == "function") {
+    if (typeof e_Symbol === "function") {
         if (e_Symbol.observable) {
             t = e_Symbol.observable;
         } else {

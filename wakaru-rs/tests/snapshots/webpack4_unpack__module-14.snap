@@ -65,7 +65,7 @@ function u(e) {
 export function tokensToFunction(e, t) {
     const n = new Array(e.length);
     for(let o = 0; o < e.length; o++){
-        if (typeof e[o] == "object") {
+        if (typeof e[o] === "object") {
             n[o] = new RegExp(`^(?:${e[o].pattern})\$`, d(t));
         }
     }
@@ -75,7 +75,7 @@ export function tokensToFunction(e, t) {
         const c = (o || {}).pretty ? a : encodeURIComponent;
         for(let s = 0; s < e.length; s++){
             const f = e[s];
-            if (typeof f != "string") {
+            if (typeof f !== "string") {
                 let d;
                 const p = l[f.name];
                 if (p == null) {
@@ -144,7 +144,7 @@ export function tokensToRegExp(e, t, n) {
     let a = "";
     for(let u = 0; u < e.length; u++){
         const l = e[u];
-        if (typeof l == "string") {
+        if (typeof l === "string") {
             a += c(l);
         } else {
             const s = c(l.prefix);

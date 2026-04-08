@@ -9,7 +9,7 @@ n = function() {
 try {
     n = n || Function("return this")() || eval("this");
 } catch (e) {
-    if (typeof window == "object") {
+    if (typeof window === "object") {
         n = window;
     }
 }

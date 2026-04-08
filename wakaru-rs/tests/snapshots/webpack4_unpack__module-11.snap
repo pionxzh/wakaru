@@ -18,17 +18,17 @@ function u(e) {
 }
 export function createStore(e, t, n) {
     let a;
-    if (typeof t == "function" && n === undefined) {
+    if (typeof t === "function" && n === undefined) {
         n = t;
         t = undefined;
     }
     if (n !== undefined) {
-        if (typeof n != "function") {
+        if (typeof n !== "function") {
             throw new Error("Expected the enhancer to be a function.");
         }
         return n(createStore)(e, t);
     }
-    if (typeof e != "function") {
+    if (typeof e !== "function") {
         throw new Error("Expected the reducer to be a function.");
     }
     let c = e;
@@ -48,7 +48,7 @@ export function createStore(e, t, n) {
         return s;
     }
     function y(e) {
-        if (typeof e != "function") {
+        if (typeof e !== "function") {
             throw new Error("Expected the listener to be a function.");
         }
         if (p) {
@@ -98,7 +98,7 @@ export function createStore(e, t, n) {
         subscribe: y,
         getState: m,
         replaceReducer (e) {
-            if (typeof e != "function") {
+            if (typeof e !== "function") {
                 throw new Error("Expected the nextReducer to be a function.");
             }
             c = e;
@@ -141,7 +141,7 @@ export function combineReducers(e) {
     const n = {};
     for(let t = Object.keys(e), r = 0; r < t.length; r++){
         const i = t[r];
-        if (typeof e[i] == "function") {
+        if (typeof e[i] === "function") {
             n[i] = e[i];
         }
     }
@@ -196,7 +196,7 @@ function f(e, t) {
     };
 }
 export function bindActionCreators(e, t) {
-    if (typeof e == "function") {
+    if (typeof e === "function") {
         return f(e, t);
     }
     if ((e === undefined ? "undefined" : typeof e) !== "object" || e === null) {
@@ -206,7 +206,7 @@ export function bindActionCreators(e, t) {
     for(let n = Object.keys(e), o = 0; o < n.length; o++){
         const a = n[o];
         const u = e[a];
-        if (typeof u == "function") {
+        if (typeof u === "function") {
             r[a] = f(u, t);
         }
     }

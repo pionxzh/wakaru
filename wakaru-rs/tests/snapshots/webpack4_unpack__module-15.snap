@@ -6,7 +6,7 @@ import r from "./module-14.js";
 const i = {};
 const _a = 0;
 export const a = (e, t = {}, n)=>{
-    if (typeof t == "string") {
+    if (typeof t === "string") {
         t = {
             path: t
         };

@@ -2,7 +2,7 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-const r = typeof Symbol == "function" && Symbol.for;
+const r = typeof Symbol === "function" && Symbol.for;
 export const Element = r ? Symbol.for("react.element") : 60103;
 export const Portal = r ? Symbol.for("react.portal") : 60106;
 export const Fragment = r ? Symbol.for("react.fragment") : 60107;
@@ -22,7 +22,7 @@ const g = r ? Symbol.for("react.fundamental") : 60117;
 const w = r ? Symbol.for("react.responder") : 60118;
 const E = r ? Symbol.for("react.scope") : 60119;
 export function typeOf(e) {
-    if (typeof e == "object" && e !== null) {
+    if (typeof e === "object" && e !== null) {
         const t = e.$$typeof;
         switch(t){
             case Element:
@@ -57,7 +57,7 @@ export function isConcurrentMode(e) {
 export const isAsyncMode = (e)=>isConcurrentMode(e) || typeOf(e) === AsyncMode;
 export const isContextConsumer = (e)=>typeOf(e) === ContextConsumer;
 export const isContextProvider = (e)=>typeOf(e) === ContextProvider;
-export const isElement = (e)=>typeof e == "object" && e !== null && e.$$typeof === Element;
+export const isElement = (e)=>typeof e === "object" && e !== null && e.$$typeof === Element;
 export const isForwardRef = (e)=>typeOf(e) === ForwardRef;
 export const isFragment = (e)=>typeOf(e) === Fragment;
 export const isLazy = (e)=>typeOf(e) === Lazy;
@@ -66,4 +66,4 @@ export const isPortal = (e)=>typeOf(e) === Portal;
 export const isProfiler = (e)=>typeOf(e) === Profiler;
 export const isStrictMode = (e)=>typeOf(e) === StrictMode;
 export const isSuspense = (e)=>typeOf(e) === Suspense;
-export const isValidElementType = (e)=>typeof e == "string" || typeof e == "function" || e === Fragment || e === ConcurrentMode || e === Profiler || e === StrictMode || e === Suspense || e === m || typeof e == "object" && e !== null && (e.$$typeof === Lazy || e.$$typeof === Memo || e.$$typeof === ContextProvider || e.$$typeof === ContextConsumer || e.$$typeof === ForwardRef || e.$$typeof === g || e.$$typeof === w || e.$$typeof === E || e.$$typeof === b);
+export const isValidElementType = (e)=>typeof e === "string" || typeof e === "function" || e === Fragment || e === ConcurrentMode || e === Profiler || e === StrictMode || e === Suspense || e === m || typeof e === "object" && e !== null && (e.$$typeof === Lazy || e.$$typeof === Memo || e.$$typeof === ContextProvider || e.$$typeof === ContextConsumer || e.$$typeof === ForwardRef || e.$$typeof === g || e.$$typeof === w || e.$$typeof === E || e.$$typeof === b);

@@ -3,7 +3,7 @@ source: tests/webpack4_unpack.rs
 expression: code
 ---
 import r from "./module-29.js";
-const o = typeof Symbol == "function" && Symbol.for;
+const o = typeof Symbol === "function" && Symbol.for;
 const i = o ? Symbol.for("react.element") : 60103;
 const a = o ? Symbol.for("react.portal") : 60106;
 export const Fragment = o ? Symbol.for("react.fragment") : 60107;
@@ -15,7 +15,7 @@ const d = o ? Symbol.for("react.forward_ref") : 60112;
 export const Suspense = o ? Symbol.for("react.suspense") : 60113;
 const h = o ? Symbol.for("react.memo") : 60115;
 const m = o ? Symbol.for("react.lazy") : 60116;
-const y = typeof Symbol == "function" && Symbol.iterator;
+const y = typeof Symbol === "function" && Symbol.iterator;
 function v(e) {
     let t = `https://reactjs.org/docs/error-decoder.html?invariant=${e}`;
     for(let n = 1; n < arguments.length; n++){
@@ -40,7 +40,7 @@ export class Component {
         this.updater = n || b;
     }
     setState(e, t) {
-        if (typeof e != "object" && typeof e != "function" && e != null) {
+        if (typeof e !== "object" && typeof e !== "function" && e != null) {
             throw Error(v(85));
         }
         this.updater.enqueueSetState(this, e, t, "setState");
@@ -117,7 +117,7 @@ export function createElement(e, t, n) {
     };
 }
 export function isValidElement(e) {
-    return typeof e == "object" && e !== null && e.$$typeof === i;
+    return typeof e === "object" && e !== null && e.$$typeof === i;
 }
 const _ = /\/+/g;
 const j = [];
@@ -188,8 +188,8 @@ function M(e, t, n) {
                 l += e(u, s, r, o);
             }
         } else {
-            s = t === null || typeof t != "object" ? null : typeof (s = y && t[y] || t["@@iterator"]) == "function" ? s : null;
-            if (typeof s == "function") {
+            s = t === null || typeof t !== "object" ? null : typeof (s = y && t[y] || t["@@iterator"]) === "function" ? s : null;
+            if (typeof s === "function") {
                 t = s.call(t);
                 for(c = 0; !(u = t.next()).done;){
                     l += e(u = u.value, s = n + A(u, c++), r, o);
@@ -203,7 +203,7 @@ function M(e, t, n) {
     }(e, t, n);
 }
 function A(e, t) {
-    if (typeof e == "object" && e !== null && e.key != null) {
+    if (typeof e === "object" && e !== null && e.key != null) {
         return ((e)=>{
             const t = {
                 "=": "=0",

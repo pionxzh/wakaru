@@ -100,7 +100,7 @@ class k extends i.Component {
         b(this.context.router, "You should not use <Link> outside a <Router>");
         b(to !== undefined, 'You must specify the "to" property');
         const history = this.context.router.history;
-        const i = typeof to == "string" ? c.createLocation(to, null, null, history.location) : to;
+        const i = typeof to === "string" ? c.createLocation(to, null, null, history.location) : to;
         const u = history.createHref(i);
         return i.createElement("a", {
             ...r,
@@ -223,7 +223,7 @@ class N extends i.Component {
         if (render) {
             return match ? render(s) : null;
         }
-        if (typeof children == "function") {
+        if (typeof children === "function") {
             return children(s);
         }
         if (children && !R(children)) {
@@ -444,7 +444,7 @@ class Q extends i.Component {
     computeTo(e) {
         const { computedMatch, to } = e;
         if (computedMatch) {
-            return typeof to == "string" ? B(to, computedMatch.params) : {
+            return typeof to === "string" ? B(to, computedMatch.params) : {
                 ...to,
                 pathname: B(to.pathname, computedMatch.params)
             };
@@ -503,7 +503,7 @@ const J = (e, t)=>{
     return t;
 };
 const Z = (e)=>{
-    if (typeof e == "string") {
+    if (typeof e === "string") {
         return e;
     }
     return c.createPath(e);

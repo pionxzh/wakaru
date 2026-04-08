@@ -348,7 +348,7 @@ function R(e, t) {
     if (j(e, t)) {
         return true;
     }
-    if (typeof e != "object" || e === null || typeof t != "object" || t === null) {
+    if (typeof e !== "object" || e === null || typeof t !== "object" || t === null) {
         return false;
     }
     const n = Object.keys(e);
@@ -393,7 +393,7 @@ function L(e, t) {
             r.mapToProps = e;
             r.dependsOnOwnProps = A(e);
             let o = r(t, n);
-            if (typeof o == "function") {
+            if (typeof o === "function") {
                 r.mapToProps = o;
                 r.dependsOnOwnProps = A(o);
                 o = r(t, n);
@@ -405,7 +405,7 @@ function L(e, t) {
 }
 const I = [
     (e)=>{
-        if (typeof e == "function") {
+        if (typeof e === "function") {
             return L(e);
         }
     },
@@ -418,14 +418,14 @@ const I = [
             }));
     },
     (e)=>{
-        if (e && typeof e == "object") {
+        if (e && typeof e === "object") {
             return M((t)=>N.bindActionCreators(e, t));
         }
     }
 ];
 const D = [
     (e)=>{
-        if (typeof e == "function") {
+        if (typeof e === "function") {
             return L(e);
         }
     },
@@ -441,7 +441,7 @@ function F(e, t, n) {
 }
 const z = [
     (e)=>{
-        if (typeof e == "function") {
+        if (typeof e === "function") {
             return ((e)=>(t, n)=>{
                     n.displayName;
                     let r;

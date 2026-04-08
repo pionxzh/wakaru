@@ -55,14 +55,14 @@ const l = ((e)=>{
             if (!e) {
                 throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
             }
-            if (!t || typeof t != "object" && typeof t != "function") {
+            if (!t || typeof t !== "object" && typeof t !== "function") {
                 return e;
             }
             return t;
         })(this, (t.__proto__ || Object.getPrototypeOf(t)).apply(this, arguments));
     }
     ((e, t)=>{
-        if (typeof t != "function" && t !== null) {
+        if (typeof t !== "function" && t !== null) {
             throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
         }
         e.prototype = Object.create(t && t.prototype, {
