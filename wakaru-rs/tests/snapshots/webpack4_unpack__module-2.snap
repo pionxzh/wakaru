@@ -10,7 +10,6 @@ export { C as o };
 export { j as c };
 export { R as h };
 export { N as k };
-export { M as r };
 export { A as m };
 export { L as f };
 export { I as p };
@@ -138,7 +137,7 @@ function N(e) {
     }
     return E(f, P("fork", e, n));
 }
-function M(e) {
+export function r(e) {
     for(let t = arguments.length, n = Array(t > 1 ? t - 1 : 0), r = 1; r < t; r++){
         n[r - 1] = arguments[r];
     }

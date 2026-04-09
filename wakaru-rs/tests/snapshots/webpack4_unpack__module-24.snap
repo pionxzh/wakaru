@@ -12,7 +12,7 @@ import P from "./module-15.js";
 import U from "./module-14.js";
 import le from "./module-30.js";
 export const Router = s.a;
-class p extends i.Component {
+export class BrowserRouter extends i.Component {
     constructor(...i){
         super(...i);
         this.history = c.createBrowserHistory(this.props);
@@ -27,15 +27,14 @@ class p extends i.Component {
         });
     }
 }
-p.propTypes = {
+BrowserRouter.propTypes = {
     basename: u.string,
     forceRefresh: u.bool,
     getUserConfirmation: u.func,
     keyLength: u.number,
     children: u.node
 };
-export const BrowserRouter = p;
-class y extends i.Component {
+export class HashRouter extends i.Component {
     constructor(...i){
         super(...i);
         this.history = c.createHashHistory(this.props);
@@ -50,7 +49,7 @@ class y extends i.Component {
         });
     }
 }
-y.propTypes = {
+HashRouter.propTypes = {
     basename: u.string,
     getUserConfirmation: u.func,
     hashType: u.oneOf([
@@ -60,9 +59,8 @@ y.propTypes = {
     ]),
     children: u.node
 };
-export const HashRouter = y;
 const x = (e)=>!!(e.metaKey || e.altKey || e.ctrlKey || e.shiftKey);
-class k extends i.Component {
+export class Link extends i.Component {
     constructor(...i){
         super(...i);
         this.handleClick = (e)=>{
@@ -110,7 +108,7 @@ class k extends i.Component {
         });
     }
 }
-k.propTypes = {
+Link.propTypes = {
     onClick: u.func,
     target: u.string,
     replace: u.bool,
@@ -123,10 +121,10 @@ k.propTypes = {
         u.func
     ])
 };
-k.defaultProps = {
+Link.defaultProps = {
     replace: false
 };
-k.contextTypes = {
+Link.contextTypes = {
     router: u.shape({
         history: u.shape({
             push: u.func.isRequired,
@@ -135,8 +133,7 @@ k.contextTypes = {
         }).isRequired
     }).isRequired
 };
-export const Link = k;
-class O extends i.Component {
+export class MemoryRouter extends i.Component {
     constructor(...i){
         super(...i);
         this.history = c.createMemoryHistory(this.props);
@@ -151,14 +148,13 @@ class O extends i.Component {
         });
     }
 }
-O.propTypes = {
+MemoryRouter.propTypes = {
     initialEntries: u.array,
     initialIndex: u.number,
     getUserConfirmation: u.func,
     keyLength: u.number,
     children: u.node
 };
-export const MemoryRouter = O;
 const R = (e)=>i.Children.count(e) === 0;
 class N extends i.Component {
     constructor(...i){
@@ -256,8 +252,7 @@ N.contextTypes = {
 N.childContextTypes = {
     router: u.object.isRequired
 };
-const M = N;
-export const Route = M;
+export const Route = N;
 const L = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
@@ -269,7 +264,7 @@ const L = Object.assign || function(e) {
     }
     return e;
 };
-const D = (e)=>{
+export const NavLink = (e)=>{
     const { to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, "aria-current": aria-current } = e;
     const d = ((e, t)=>{
         const n = {};
@@ -291,7 +286,7 @@ const D = (e)=>{
     ]);
     const p = (to === undefined ? "undefined" : typeof to) === "object" ? to.pathname : to;
     const h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
-    return i.createElement(Route, {
+    return i.createElement(A, {
         path: h,
         exact: exact,
         strict: strict,
@@ -299,7 +294,7 @@ const D = (e)=>{
         children (e) {
             const { location, match } = e;
             const o = !!(isActive ? isActive(match, location) : match);
-            return i.createElement(Link, L({
+            return i.createElement(T, L({
                 to: to,
                 className: o ? [
                     className,
@@ -314,8 +309,8 @@ const D = (e)=>{
         }
     });
 };
-D.propTypes = {
-    to: Link.propTypes.to,
+NavLink.propTypes = {
+    to: T.propTypes.to,
     exact: u.bool,
     strict: u.bool,
     location: u.object,
@@ -333,12 +328,11 @@ D.propTypes = {
         "true"
     ])
 };
-D.defaultProps = {
+NavLink.defaultProps = {
     activeClassName: "active",
     "aria-current": "page"
 };
-export const NavLink = D;
-class z extends i.Component {
+export class Prompt extends i.Component {
     constructor(){
         super(...arguments);
     }
@@ -374,27 +368,26 @@ class z extends i.Component {
         return null;
     }
 }
-z.propTypes = {
+Prompt.propTypes = {
     when: u.bool,
     message: u.oneOfType([
         u.func,
         u.string
     ]).isRequired
 };
-z.defaultProps = {
+Prompt.defaultProps = {
     when: true
 };
-z.contextTypes = {
+Prompt.contextTypes = {
     router: u.shape({
         history: u.shape({
             block: u.func.isRequired
         }).isRequired
     }).isRequired
 };
-export const Prompt = z;
 const W = {};
 let $ = 0;
-const B = (e = "/", t = {})=>{
+export const generatePath = (e = "/", t = {})=>{
     if (e === "/") {
         return e;
     }
@@ -414,7 +407,7 @@ const B = (e = "/", t = {})=>{
         pretty: true
     });
 };
-class Q extends i.Component {
+export class Redirect extends i.Component {
     constructor(){
         super(...arguments);
     }
@@ -444,9 +437,9 @@ class Q extends i.Component {
     computeTo(e) {
         const { computedMatch, to } = e;
         if (computedMatch) {
-            return typeof to === "string" ? B(to, computedMatch.params) : {
+            return typeof to === "string" ? generatePath(to, computedMatch.params) : {
                 ...to,
-                pathname: B(to.pathname, computedMatch.params)
+                pathname: generatePath(to.pathname, computedMatch.params)
             };
         }
         return to;
@@ -465,7 +458,7 @@ class Q extends i.Component {
         return null;
     }
 }
-Q.propTypes = {
+Redirect.propTypes = {
     computedMatch: u.object,
     push: u.bool,
     from: u.string,
@@ -474,10 +467,10 @@ Q.propTypes = {
         u.object
     ]).isRequired
 };
-Q.defaultProps = {
+Redirect.defaultProps = {
     push: false
 };
-Q.contextTypes = {
+Redirect.contextTypes = {
     router: u.shape({
         history: u.shape({
             push: u.func.isRequired,
@@ -486,7 +479,6 @@ Q.contextTypes = {
         staticContext: u.object
     }).isRequired
 };
-export const Redirect = Q;
 const X = (e)=>{
     if (e.charAt(0) === "/") {
         return e;
@@ -512,7 +504,7 @@ const ee = (e)=>()=>{
         b(false, "You cannot %s with <StaticRouter>", e);
     };
 const te = ()=>{};
-class ne extends i.Component {
+export class StaticRouter extends i.Component {
     constructor(...i){
         super(...i);
         this.createHref = (e)=>X(r.props.basename + Z(e));
@@ -589,7 +581,7 @@ class ne extends i.Component {
         });
     }
 }
-ne.propTypes = {
+StaticRouter.propTypes = {
     basename: u.string,
     context: u.object.isRequired,
     location: u.oneOfType([
@@ -597,15 +589,14 @@ ne.propTypes = {
         u.object
     ])
 };
-ne.defaultProps = {
+StaticRouter.defaultProps = {
     basename: "",
     location: "/"
 };
-ne.childContextTypes = {
+StaticRouter.childContextTypes = {
     router: u.object.isRequired
 };
-export const StaticRouter = ne;
-class oe extends i.Component {
+export class Switch extends i.Component {
     constructor(){
         super(...arguments);
     }
@@ -645,17 +636,15 @@ class oe extends i.Component {
         return null;
     }
 }
-oe.contextTypes = {
+Switch.contextTypes = {
     router: u.shape({
         route: u.object.isRequired
     }).isRequired
 };
-oe.propTypes = {
+Switch.propTypes = {
     children: u.node,
     location: u.object
 };
-export const Switch = oe;
-export const generatePath = B;
 export const matchPath = P.a;
 export const withRouter = (e)=>{
     const t = (t)=>{
@@ -669,7 +658,7 @@ export const withRouter = (e)=>{
         })(t, [
             "wrappedComponentRef"
         ]);
-        return i.createElement(M, {
+        return i.createElement(Route, {
             children (t) {
                 return i.createElement(e, {
                     ...r,

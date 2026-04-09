@@ -20,6 +20,9 @@ struct ExportRenamePlan {
     old: BindingId,
     old_name: Atom,
     new_name: Atom,
+    /// If the export used an alias (var h = p), this is `h` so we can
+    /// match the export specifier's orig for cleanup.
+    alias_name: Option<Atom>,
 }
 
 impl VisitMut for UnExportRename {
@@ -77,6 +80,7 @@ fn collect_export_rename_plans(
                                 old: info.id.clone(),
                                 old_name: info.id.0.clone(),
                                 new_name,
+                                alias_name: None,
                             });
                         }
                     }
@@ -99,31 +103,48 @@ fn collect_export_rename_plans(
                 else {
                     continue;
                 };
-                let old_name = match orig {
+                let orig_name = match orig {
                     ModuleExportName::Ident(ident) => ident.sym.clone(),
                     _ => continue,
                 };
-                let Some(info) = binding_infos.get(&old_name) else {
+                let Some(orig_info) = binding_infos.get(&orig_name) else {
                     continue;
                 };
-                if info.exported {
+                if orig_info.exported {
                     continue;
                 }
+                // Resolve through var aliases: if orig is `var h = p`,
+                // use `p`'s binding info so the real class/fn gets renamed.
+                let (info, old_name) = resolve_to_real_binding(
+                    orig_info,
+                    &orig_name,
+                    module,
+                    binding_infos,
+                );
                 let new_name = match exported {
                     ModuleExportName::Ident(ident) => ident.sym.clone(),
                     _ => continue,
                 };
+                // Skip if the export name is shorter than the local name —
+                // that would replace a more meaningful name with a less meaningful one.
                 if old_name == new_name
-                    || module_names.contains(&new_name)
+                    || new_name.len() < old_name.len()
+                    || binding_infos.contains_key(&new_name)
                     || plans.iter().any(|plan: &ExportRenamePlan| plan.old == info.id)
                     || rename_causes_shadowing(module, &info.id, &new_name)
                 {
                     continue;
                 }
+                let alias_name = if old_name != orig_name {
+                    Some(orig_name.clone())
+                } else {
+                    None
+                };
                 plans.push(ExportRenamePlan {
                     old: info.id.clone(),
                     old_name,
                     new_name,
+                    alias_name,
                 });
             }
         }
@@ -256,10 +277,36 @@ fn rewrite_export_aliases(module: &mut Module, plans: &[ExportRenamePlan]) {
         plans.iter().map(|plan| (plan.old_name.clone(), plan)).collect();
     let plans_by_old: HashMap<BindingId, &ExportRenamePlan> =
         plans.iter().map(|plan| (plan.old.clone(), plan)).collect();
+    // Also index by alias name so we can match export specifiers that
+    // reference the alias (e.g. `export { h as Foo }` where h was resolved to p).
+    let plans_by_alias: HashMap<Atom, &ExportRenamePlan> = plans
+        .iter()
+        .filter_map(|plan| plan.alias_name.as_ref().map(|a| (a.clone(), plan)))
+        .collect();
+
+    // Collect alias var names to remove (var h = p where h was the alias)
+    let alias_var_names: std::collections::HashSet<Atom> = plans
+        .iter()
+        .filter_map(|plan| plan.alias_name.clone())
+        .collect();
 
     let mut new_body = Vec::with_capacity(module.body.len());
     for item in std::mem::take(&mut module.body) {
-        if let Some(item) = rewrite_export_alias_item(item, &plans_by_old, &plans_by_old_name) {
+        // Remove alias var declarations (var h = p)
+        if !alias_var_names.is_empty() {
+            if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(ref var))) = item {
+                if var.decls.len() == 1 {
+                    if let Pat::Ident(binding) = &var.decls[0].name {
+                        if alias_var_names.contains(&binding.id.sym) {
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(item) =
+            rewrite_export_alias_item(item, &plans_by_old, &plans_by_old_name, &plans_by_alias)
+        {
             new_body.push(item);
         }
     }
@@ -270,6 +317,7 @@ fn rewrite_export_alias_item(
     item: ModuleItem,
     plans_by_old: &HashMap<BindingId, &ExportRenamePlan>,
     plans_by_old_name: &HashMap<Atom, &ExportRenamePlan>,
+    plans_by_alias: &HashMap<Atom, &ExportRenamePlan>,
 ) -> Option<ModuleItem> {
     match item {
         ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
@@ -288,7 +336,12 @@ fn rewrite_export_alias_item(
                                 continue;
                             }
                         };
-                        let Some(plan) = plans_by_old_name.get(&old_name).copied() else {
+                        // Look up by old_name directly, or by alias name
+                        let Some(plan) = plans_by_old_name
+                            .get(&old_name)
+                            .or_else(|| plans_by_alias.get(&old_name))
+                            .copied()
+                        else {
                             new_specifiers.push(ExportSpecifier::Named(named_specifier));
                             continue;
                         };
@@ -346,4 +399,36 @@ fn is_collapsed_export_const_alias(
         return false;
     };
     binding.id.sym == plan.new_name
+}
+
+/// If the binding is a simple var alias (`var h = p`), resolve to `p`'s info.
+/// Returns the resolved info and old_name to use for the rename plan.
+fn resolve_to_real_binding<'a>(
+    info: &'a TopLevelBindingInfo,
+    name: &Atom,
+    module: &Module,
+    binding_infos: &'a HashMap<Atom, TopLevelBindingInfo>,
+) -> (&'a TopLevelBindingInfo, Atom) {
+    let TopLevelBindingKind::Var { declarator_index } = &info.kind else {
+        return (info, name.clone());
+    };
+    let Some(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var)))) = module.body.get(info.item_index)
+    else {
+        return (info, name.clone());
+    };
+    let Some(decl) = var.decls.get(*declarator_index) else {
+        return (info, name.clone());
+    };
+    let Some(init) = &decl.init else {
+        return (info, name.clone());
+    };
+    let Expr::Ident(init_id) = init.as_ref() else {
+        return (info, name.clone());
+    };
+    if let Some(real_info) = binding_infos.get(&init_id.sym) {
+        if !real_info.exported {
+            return (real_info, init_id.sym.clone());
+        }
+    }
+    (info, name.clone())
 }

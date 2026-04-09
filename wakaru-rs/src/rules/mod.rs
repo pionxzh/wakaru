@@ -199,7 +199,6 @@ pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
     module.visit_mut_with(&mut UnAsyncAwait);
     module.visit_mut_with(&mut UnWebpackInterop);
     module.visit_mut_with(&mut UnEsm);
-    // lebab-style modernization
     module.visit_mut_with(&mut UnThenCatch);
     module.visit_mut_with(&mut UnUndefinedInit);
     module.visit_mut_with(&mut VarDeclToLetConst);

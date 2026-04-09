@@ -35,10 +35,16 @@ Rules run in a fixed order. Check `apply_default_rules()` in `src/rules/mod.rs` 
 - Needs `["default"]` normalized to `.default`? Place after `UnBracketNotation`
 - Needs `require()` calls present? Place before `UnEsm`
 - Creates new IIFEs? Place before the second `UnIife` pass
+- Needs alias var declarations intact? Place before `SmartInline` (it removes `var h = p`)
+- Needs export specifiers to reference real bindings? Place after `SmartInline`
 
 ### Scope-aware identifier matching
 
 If your rule matches identifiers by name, you **must** check `SyntaxContext` to avoid matching the wrong binding. See the `unresolved_mark` guard pattern in `docs/architecture.md`.
+
+### Renaming identifiers
+
+Always use `rename_utils::BindingRenamer` (via `rename_bindings_in_module` or `rename_bindings`). Never write a custom `VisitMut` that renames by `sym` alone — it will hit inner-scope locals and parameters with the same name. `BindingRenamer` matches on `(Atom, SyntaxContext)` and correctly skips property names, member access, and handles import specifier `as` clauses.
 
 ## Writing Tests
 
