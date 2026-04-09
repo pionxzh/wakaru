@@ -3,6 +3,7 @@ source: tests/webpack4_unpack.rs
 expression: code
 ---
 import o from "./module-24.js";
+import i from "./module-37.js";
 const r = ((e)=>{
     if (e && e.__esModule) {
         return e;
@@ -18,13 +19,5 @@ const r = ((e)=>{
     t.default = e;
     return t;
 })(require("./module-3.js"));
-const i = ((e)=>{
-    if (e && e.__esModule) {
-        return e;
-    }
-    return {
-        default: e
-    };
-})(require("./module-37.js"));
-const a = <o.Switch><o.Route exact path="/" component={i.default.FrontPage}/></o.Switch>;
+const a = <o.Switch><o.Route exact path="/" component={i.FrontPage}/></o.Switch>;
 export default a;

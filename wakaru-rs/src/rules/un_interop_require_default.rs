@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::ecma::ast::{
-    AssignTarget, Callee, Expr, Lit, MemberProp, Module, Pat, SimpleAssignTarget, VarDeclarator,
+    ArrowExpr, AssignTarget, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, FnExpr, Lit,
+    MemberExpr, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -18,28 +19,32 @@ pub struct UnInteropRequireDefault;
 
 impl VisitMut for UnInteropRequireDefault {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        let mut affected_bindings: HashSet<BindingKey> = HashSet::new();
+
+        // --- Named helper path ---
         let all_helpers = collect_helpers(module);
         let helpers: HashMap<BindingKey, BabelHelperKind> = all_helpers
             .into_iter()
             .filter(|(_, kind)| *kind == BabelHelperKind::InteropRequireDefault)
             .collect();
-        if helpers.is_empty() {
-            return;
+
+        if !helpers.is_empty() {
+            // Phase 1: Collect which bindings receive helper-wrapped values
+            let mut collector = AffectedBindingCollector {
+                helpers: &helpers,
+                affected: &mut affected_bindings,
+            };
+            collector.visit_module(module);
+
+            // Phase 2a: Unwrap helper calls — replace `helper(arg)` with `arg`.
+            let mut call_unwrapper = CallUnwrapper { helpers: &helpers };
+            module.visit_mut_with(&mut call_unwrapper);
         }
 
-        // Phase 1: Collect which bindings receive helper-wrapped values
-        //          (e.g. `var _a = helper(require("x"))` → record `_a`)
-        let mut affected_bindings: HashSet<BindingKey> = HashSet::new();
-        let mut collector = AffectedBindingCollector {
-            helpers: &helpers,
-            affected: &mut affected_bindings,
-        };
-        collector.visit_module(module);
-
-        // Phase 2a: Unwrap helper calls — replace `helper(arg)` with `arg`.
-        //           Also handle `helper(arg).default` → `arg`.
-        let mut call_unwrapper = CallUnwrapper { helpers: &helpers };
-        module.visit_mut_with(&mut call_unwrapper);
+        // --- Inline IIFE interop path ---
+        // Detect: `const x = ((e) => { if (e && e.__esModule) return e; return {default: e} })(require(...))`
+        // Replace with: `const x = require(...)`  and record `x` as affected
+        unwrap_inline_interop_iifes(module, &mut affected_bindings);
 
         // Phase 2b: Rewrite `.default` member access on affected bindings,
         //           but only if the binding is never reassigned.
@@ -62,7 +67,9 @@ impl VisitMut for UnInteropRequireDefault {
         }
 
         // Phase 3: Remove helper declarations.
-        remove_helper_declarations(&mut module.body, &helpers);
+        if !helpers.is_empty() {
+            remove_helper_declarations(&mut module.body, &helpers);
+        }
     }
 }
 
@@ -188,6 +195,141 @@ impl VisitMut for DefaultRefRewriter<'_> {
                 }
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Inline IIFE interop detection and unwrapping
+// ---------------------------------------------------------------------------
+
+/// Detect and unwrap inline interop IIFEs:
+/// ```js
+/// const x = ((e) => {
+///     if (e && e.__esModule) { return e; }
+///     return { default: e };
+/// })(require("./module.js"));
+/// ```
+/// → `const x = require("./module.js")`
+fn unwrap_inline_interop_iifes(
+    module: &mut Module,
+    affected: &mut HashSet<BindingKey>,
+) {
+    for item in &mut module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
+            continue;
+        };
+        for declarator in &mut var_decl.decls {
+            let Pat::Ident(binding) = &declarator.name else {
+                continue;
+            };
+            let Some(init) = &declarator.init else {
+                continue;
+            };
+            if let Some(inner_arg) = extract_inline_interop_arg(init) {
+                let key = (binding.id.sym.clone(), binding.id.ctxt);
+                affected.insert(key);
+                declarator.init = Some(inner_arg);
+            }
+        }
+    }
+}
+
+/// Check if an expression is an inline interop IIFE and extract the argument.
+///
+/// Matches: `((e) => { if (e && e.__esModule) { return e; } return { default: e }; })(arg)`
+/// Returns: `arg`
+fn extract_inline_interop_arg(expr: &Expr) -> Option<Box<Expr>> {
+    let Expr::Call(CallExpr { callee: Callee::Expr(callee), args, .. }) = expr else {
+        return None;
+    };
+    if args.len() != 1 || args[0].spread.is_some() {
+        return None;
+    }
+
+    // Unwrap parens around the callee
+    let callee = strip_parens_expr(callee);
+
+    let body_stmts = match callee {
+        Expr::Arrow(ArrowExpr { body, params, .. }) if params.len() == 1 => {
+            match &**body {
+                BlockStmtOrExpr::BlockStmt(block) => &block.stmts,
+                _ => return None,
+            }
+        }
+        Expr::Fn(FnExpr { function, .. }) if function.params.len() == 1 => {
+            function.body.as_ref()?.stmts.as_slice()
+        }
+        _ => return None,
+    };
+
+    if !is_esmodule_interop_body(body_stmts) {
+        return None;
+    }
+
+    Some(args[0].expr.clone())
+}
+
+/// Check if the function body matches the __esModule interop pattern:
+/// ```js
+/// if (e && e.__esModule) { return e; }
+/// return { default: e };
+/// ```
+fn is_esmodule_interop_body(stmts: &[Stmt]) -> bool {
+    if stmts.len() != 2 {
+        return false;
+    }
+
+    // First statement: if (e && e.__esModule) { return e; }
+    let Stmt::If(if_stmt) = &stmts[0] else {
+        return false;
+    };
+    // Test: e && e.__esModule
+    if !is_esmodule_check(&if_stmt.test) {
+        return false;
+    }
+
+    // Second statement: return { default: e }
+    let Stmt::Return(ret) = &stmts[1] else {
+        return false;
+    };
+    let Some(arg) = &ret.arg else {
+        return false;
+    };
+    // Must be an object with a `default` property
+    let Expr::Object(obj) = &**arg else {
+        return false;
+    };
+    if obj.props.len() != 1 {
+        return false;
+    }
+    let swc_core::ecma::ast::PropOrSpread::Prop(prop) = &obj.props[0] else {
+        return false;
+    };
+    let swc_core::ecma::ast::Prop::KeyValue(kv) = &**prop else {
+        return false;
+    };
+    matches!(&kv.key, swc_core::ecma::ast::PropName::Ident(id) if id.sym.as_ref() == "default")
+}
+
+/// Check if expression matches `e && e.__esModule`
+fn is_esmodule_check(expr: &Expr) -> bool {
+    let Expr::Bin(bin) = expr else {
+        return false;
+    };
+    if bin.op != swc_core::ecma::ast::BinaryOp::LogicalAnd {
+        return false;
+    }
+    // right must be X.__esModule
+    let Expr::Member(MemberExpr { prop: MemberProp::Ident(prop), .. }) = &*bin.right else {
+        return false;
+    };
+    prop.sym.as_ref() == "__esModule"
+}
+
+fn strip_parens_expr(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(p) => strip_parens_expr(&p.expr),
+        _ => expr,
     }
 }
 

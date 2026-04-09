@@ -7,17 +7,10 @@ import o from "./module-11.js";
 import "./module-27.js";
 import "./module-13.js";
 import i from "./module-25.js";
-const a = ((e)=>{
-    if (e && e.__esModule) {
-        return e;
-    }
-    return {
-        default: e
-    };
-})(require("./module-35.js"));
+import a from "./module-35.js";
 const u = {
     fetchData: i.fetchData
 };
 export default o.compose(r.connect((e)=>({
         data: e.main.data
-    }), u))(a.default);
+    }), u))(a);

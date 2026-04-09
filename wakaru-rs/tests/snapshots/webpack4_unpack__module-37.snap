@@ -2,14 +2,7 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-const r = ((e)=>{
-    if (e && e.__esModule) {
-        return e;
-    }
-    return {
-        default: e
-    };
-})(require("./module-28.js"));
+import r from "./module-28.js";
 export default {
-    FrontPage: r.default
+    FrontPage: r
 };

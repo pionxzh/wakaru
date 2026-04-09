@@ -4,6 +4,7 @@ expression: code
 ---
 import i from "./module-11.js";
 import a from "./module-24.js";
+import u from "./module-38.js";
 const r = (()=>{
     function e(e, t) {
         for(let n = 0; n < t.length; n++){
@@ -41,14 +42,6 @@ const o = ((e)=>{
     t.default = e;
     return t;
 })(require("./module-3.js"));
-const u = ((e)=>{
-    if (e && e.__esModule) {
-        return e;
-    }
-    return {
-        default: e
-    };
-})(require("./module-38.js"));
 const l = ((e)=>{
     function t() {
         return ((e, t)=>{
@@ -80,7 +73,7 @@ const l = ((e)=>{
             key: "render",
             value () {
                 console.log(this.props);
-                return <div>{u.default}</div>;
+                return <div>{u}</div>;
             }
         }
     ]);
