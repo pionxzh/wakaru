@@ -160,11 +160,19 @@ fn try_convert_for_of(stmt: &Stmt) -> Option<ForOfStmt> {
         }
     }
 
+    // Use `let` if the element variable is reassigned in the loop body, `const` otherwise
+    let elem_is_reassigned = remaining_body.iter().any(|s| stmt_assigns_ident(s, elem_sym));
+    let elem_kind = if elem_is_reassigned {
+        VarDeclKind::Let
+    } else {
+        VarDeclKind::Const
+    };
+
     // --- Build for...of ---
     let for_of_left = ForHead::VarDecl(Box::new(VarDecl {
         span: DUMMY_SP,
         ctxt: Default::default(),
-        kind: VarDeclKind::Const,
+        kind: elem_kind,
         declare: false,
         decls: vec![VarDeclarator {
             span: DUMMY_SP,
@@ -195,6 +203,42 @@ fn is_zero(expr: &Expr) -> bool {
 
 fn is_ident(expr: &Expr, sym: &Atom) -> bool {
     matches!(expr, Expr::Ident(id) if &id.sym == sym)
+}
+
+/// Check if a statement assigns to an identifier by name (e.g. `elem = ...`).
+fn stmt_assigns_ident(stmt: &Stmt, sym: &Atom) -> bool {
+    use swc_core::ecma::ast::{AssignTarget, SimpleAssignTarget};
+    use swc_core::ecma::visit::Visit;
+
+    struct AssignFinder {
+        sym: Atom,
+        found: bool,
+    }
+
+    impl Visit for AssignFinder {
+        fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
+            if let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = &assign.left {
+                if id.sym == self.sym {
+                    self.found = true;
+                }
+            }
+        }
+
+        fn visit_update_expr(&mut self, update: &UpdateExpr) {
+            if let Expr::Ident(id) = &*update.arg {
+                if id.sym == self.sym {
+                    self.found = true;
+                }
+            }
+        }
+    }
+
+    let mut finder = AssignFinder {
+        sym: sym.clone(),
+        found: false,
+    };
+    finder.visit_stmt(stmt);
+    finder.found
 }
 
 /// Check if a statement references an identifier by name.

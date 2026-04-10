@@ -51,6 +51,14 @@ fn no_transform_regular_for_loop() {
 }
 
 #[test]
+fn for_of_uses_let_when_elem_reassigned() {
+    // P3 regression: elem is reassigned so for-of must use `let`, not `const`
+    let input = r#"for (let i = 0, arr = items; i < arr.length; i++) { let elem = arr[i]; elem = normalize(elem); process(elem); }"#;
+    let expected = r#"for (let elem of items) { elem = normalize(elem); process(elem); }"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn for_of_single_decl_arr_form() {
     // Variant: for(let i = 0; i < arr.length; i++) { const x = arr[i]; ... }
     // Only one declarator, arr is external — still transformable if arr is not modified
