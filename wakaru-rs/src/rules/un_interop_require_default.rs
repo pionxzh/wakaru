@@ -225,20 +225,20 @@ fn unwrap_inline_interop_iifes(
             let Some(init) = &declarator.init else {
                 continue;
             };
-            if let Some(inner_arg) = extract_inline_interop_arg(init) {
-                let key = (binding.id.sym.clone(), binding.id.ctxt);
-                affected.insert(key);
+            if let Some((inner_arg, kind)) = extract_inline_interop_arg_with_kind(init) {
+                // Only strip `.default` for the default interop, not wildcard
+                if kind == InteropKind::Default {
+                    let key = (binding.id.sym.clone(), binding.id.ctxt);
+                    affected.insert(key);
+                }
                 declarator.init = Some(inner_arg);
             }
         }
     }
 }
 
-/// Check if an expression is an inline interop IIFE and extract the argument.
-///
-/// Matches: `((e) => { if (e && e.__esModule) { return e; } return { default: e }; })(arg)`
-/// Returns: `arg`
-fn extract_inline_interop_arg(expr: &Expr) -> Option<Box<Expr>> {
+/// Extract the IIFE argument and interop kind from an inline interop expression.
+fn extract_inline_interop_arg_with_kind(expr: &Expr) -> Option<(Box<Expr>, InteropKind)> {
     let Expr::Call(CallExpr { callee: Callee::Expr(callee), args, .. }) = expr else {
         return None;
     };
@@ -262,53 +262,75 @@ fn extract_inline_interop_arg(expr: &Expr) -> Option<Box<Expr>> {
         _ => return None,
     };
 
-    if !is_esmodule_interop_body(body_stmts) {
+    let kind = classify_interop_body(body_stmts)?;
+    Some((args[0].expr.clone(), kind))
+}
+
+#[derive(PartialEq)]
+enum InteropKind {
+    /// `if (e.__esModule) return e; return { default: e }` — strips `.default`
+    Default,
+    /// `if (e.__esModule) return e; ... t.default = e; return t` — namespace import, no `.default` strip
+    Wildcard,
+}
+
+/// Check if the function body matches an __esModule interop pattern.
+fn classify_interop_body(stmts: &[Stmt]) -> Option<InteropKind> {
+    if stmts.is_empty() {
         return None;
     }
 
-    Some(args[0].expr.clone())
-}
-
-/// Check if the function body matches the __esModule interop pattern:
-/// ```js
-/// if (e && e.__esModule) { return e; }
-/// return { default: e };
-/// ```
-fn is_esmodule_interop_body(stmts: &[Stmt]) -> bool {
-    if stmts.len() != 2 {
-        return false;
-    }
-
-    // First statement: if (e && e.__esModule) { return e; }
+    // First statement must be: if (e && e.__esModule) { return e; }
     let Stmt::If(if_stmt) = &stmts[0] else {
-        return false;
+        return None;
     };
-    // Test: e && e.__esModule
     if !is_esmodule_check(&if_stmt.test) {
-        return false;
+        return None;
     }
 
-    // Second statement: return { default: e }
-    let Stmt::Return(ret) = &stmts[1] else {
-        return false;
-    };
-    let Some(arg) = &ret.arg else {
-        return false;
-    };
-    // Must be an object with a `default` property
-    let Expr::Object(obj) = &**arg else {
-        return false;
-    };
-    if obj.props.len() != 1 {
-        return false;
+    if stmts.len() == 2 {
+        // Default pattern: return { default: e }
+        let Stmt::Return(ret) = &stmts[1] else {
+            return None;
+        };
+        let Some(arg) = &ret.arg else {
+            return None;
+        };
+        let Expr::Object(obj) = &**arg else {
+            return None;
+        };
+        if obj.props.len() != 1 {
+            return None;
+        }
+        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = &obj.props[0] else {
+            return None;
+        };
+        let swc_core::ecma::ast::Prop::KeyValue(kv) = &**prop else {
+            return None;
+        };
+        if matches!(&kv.key, swc_core::ecma::ast::PropName::Ident(id) if id.sym.as_ref() == "default") {
+            return Some(InteropKind::Default);
+        }
+        return None;
     }
-    let swc_core::ecma::ast::PropOrSpread::Prop(prop) = &obj.props[0] else {
-        return false;
-    };
-    let swc_core::ecma::ast::Prop::KeyValue(kv) = &**prop else {
-        return false;
-    };
-    matches!(&kv.key, swc_core::ecma::ast::PropName::Ident(id) if id.sym.as_ref() == "default")
+
+    // Wildcard pattern (3+ stmts): copies all props, sets .default, returns namespace object.
+    // Require: penultimate stmt is `t.default = e` (the defining feature of wildcard interop).
+    if stmts.len() >= 3 {
+        let Stmt::Return(ret) = stmts.last()? else {
+            return None;
+        };
+        if ret.arg.is_none() {
+            return None;
+        }
+        // Check penultimate: must be `X.default = Y`
+        let penultimate = &stmts[stmts.len() - 2];
+        if is_default_assignment(penultimate) {
+            return Some(InteropKind::Wildcard);
+        }
+    }
+
+    None
 }
 
 /// Check if expression matches `e && e.__esModule`
@@ -331,6 +353,23 @@ fn strip_parens_expr(expr: &Expr) -> &Expr {
         Expr::Paren(p) => strip_parens_expr(&p.expr),
         _ => expr,
     }
+}
+
+/// Check if a statement is `X.default = Y` (the wildcard interop's namespace default assignment).
+fn is_default_assignment(stmt: &Stmt) -> bool {
+    let Stmt::Expr(swc_core::ecma::ast::ExprStmt { expr, .. }) = stmt else {
+        return false;
+    };
+    let Expr::Assign(assign) = &**expr else {
+        return false;
+    };
+    let swc_core::ecma::ast::AssignTarget::Simple(
+        swc_core::ecma::ast::SimpleAssignTarget::Member(member),
+    ) = &assign.left
+    else {
+        return false;
+    };
+    is_default_prop(&member.prop)
 }
 
 fn is_default_prop(prop: &MemberProp) -> bool {

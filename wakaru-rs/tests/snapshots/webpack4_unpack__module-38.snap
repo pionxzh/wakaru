@@ -2,22 +2,8 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
+import r from "./module-3.js";
 import o from "./module-24.js";
 import i from "./module-37.js";
-const r = ((e)=>{
-    if (e && e.__esModule) {
-        return e;
-    }
-    const t = {};
-    if (e != null) {
-        for(const n in e){
-            if (Object.prototype.hasOwnProperty.call(e, n)) {
-                t[n] = e[n];
-            }
-        }
-    }
-    t.default = e;
-    return t;
-})(require("./module-3.js"));
 const a = <o.Switch><o.Route exact path="/" component={i.FrontPage}/></o.Switch>;
 export default a;

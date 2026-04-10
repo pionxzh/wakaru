@@ -2,6 +2,7 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
+import o from "./module-3.js";
 import "./module-28.js";
 const r = (()=>{
     function e(e, t) {
@@ -25,21 +26,6 @@ const r = (()=>{
         return t;
     };
 })();
-const o = ((e)=>{
-    if (e && e.__esModule) {
-        return e;
-    }
-    const t = {};
-    if (e != null) {
-        for(const n in e){
-            if (Object.prototype.hasOwnProperty.call(e, n)) {
-                t[n] = e[n];
-            }
-        }
-    }
-    t.default = e;
-    return t;
-})(require("./module-3.js"));
 const i = ((e)=>{
     function t() {
         return ((e, t)=>{

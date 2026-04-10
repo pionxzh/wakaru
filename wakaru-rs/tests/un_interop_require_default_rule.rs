@@ -164,3 +164,39 @@ _a;
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn does_not_unwrap_non_interop_iife_with_esmodule_guard() {
+    // Regression: any IIFE starting with __esModule check was being unwrapped,
+    // dropping side effects and alternate return paths
+    let input = r#"
+const x = ((e) => {
+    if (e && e.__esModule) { return e; }
+    sideEffect(e);
+    return fallback;
+})(input);
+console.log(x);
+"#;
+    let output = render(input);
+    assert!(output.contains("sideEffect"), "side effect must not be dropped: {output}");
+    assert!(output.contains("fallback"), "alternate return path must not be dropped: {output}");
+}
+
+#[test]
+fn unwraps_inline_wildcard_interop_iife() {
+    // interopRequireWildcard: copies all properties + sets .default
+    let input = r#"
+const o = ((e) => {
+    if (e && e.__esModule) { return e; }
+    const t = {};
+    if (e != null) { for (const n in e) { if (Object.prototype.hasOwnProperty.call(e, n)) { t[n] = e[n]; } } }
+    t.default = e;
+    return t;
+})(require("./react"));
+console.log(o.Component);
+"#;
+    let output = render(input);
+    // IIFE should be unwrapped, but .Component should NOT be stripped
+    assert!(!output.contains("__esModule"), "wildcard IIFE should be unwrapped: {output}");
+    assert!(output.contains("Component"), "named export access should be preserved: {output}");
+}
