@@ -13,10 +13,14 @@ pub struct SmartInline;
 
 impl VisitMut for SmartInline {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        // Step 0: Inline zero-param arrow ident wrappers (const X = () => Y) globally.
+        // Step 0a: Inline zero-param arrow ident wrappers (const X = () => Y) globally.
         // These are often produced by `require.n` rewriting and used inside nested functions,
         // so they need cross-boundary inlining before per-stmt processing.
         inline_module_arrow_wrappers(module);
+
+        // Step 0b: Inline builtin global aliases (const c = Object.defineProperty) globally.
+        // Minifiers extract these to save bytes; restore to Object.defineProperty(...) form.
+        inline_module_builtin_aliases(module);
 
         // Process module-level statements
         let stmts: Vec<Stmt> = module
@@ -106,6 +110,80 @@ type BindingKey = (Atom, SyntaxContext);
 struct GlobalUsageStats {
     callable_uses: usize,
     blocked_uses: usize,
+}
+
+/// Inline `const c = Object.defineProperty` → replace all `c(...)` with `Object.defineProperty(...)`.
+/// These aliases are created by minifiers to save bytes and should be restored for readability.
+/// Safe to inline across function boundaries since builtin globals are immutable.
+fn inline_module_builtin_aliases(module: &mut Module) {
+    let mut candidates: HashMap<BindingKey, Box<Expr>> = HashMap::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
+            continue;
+        }
+        let decl = &var.decls[0];
+        let Pat::Ident(bi) = &decl.name else { continue };
+        let Some(init) = &decl.init else { continue };
+        if let Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(_),
+            ..
+        }) = init.as_ref()
+        {
+            if let Expr::Ident(obj_id) = obj.as_ref() {
+                if is_builtin_global(&obj_id.sym) {
+                    candidates.insert((bi.id.sym.clone(), bi.id.ctxt), init.clone());
+                }
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        return;
+    }
+
+    // Remove definition stmts and replace all usages globally
+    module.body.retain(|item| {
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item {
+            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
+                if let Pat::Ident(bi) = &var.decls[0].name {
+                    if candidates.contains_key(&(bi.id.sym.clone(), bi.id.ctxt)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    });
+
+    let mut inliner = BuiltinAliasInliner { map: &candidates };
+    module.visit_mut_with(&mut inliner);
+}
+
+/// Replaces all ident usages with the builtin member expression, across all scopes.
+struct BuiltinAliasInliner<'a> {
+    map: &'a HashMap<BindingKey, Box<Expr>>,
+}
+
+impl VisitMut for BuiltinAliasInliner<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+        if let Expr::Ident(id) = expr {
+            let key = (id.sym.clone(), id.ctxt);
+            if let Some(replacement) = self.map.get(&key) {
+                *expr = *replacement.clone();
+            }
+        }
+    }
+    fn visit_mut_member_prop(&mut self, prop: &mut MemberProp) {
+        if let MemberProp::Computed(c) = prop {
+            c.visit_mut_with(self);
+        }
+    }
+    fn visit_mut_prop_name(&mut self, _: &mut PropName) {}
 }
 
 fn inline_module_arrow_wrappers(module: &mut Module) {
@@ -417,7 +495,23 @@ fn is_simple_expr(expr: &Expr) -> bool {
     // Only inline identifier aliases (const t = someVar), not literals.
     // Literal constants (const g = 'url', const n = 42) are intentionally named
     // and should not be collapsed back into their usage site.
-    matches!(expr, Expr::Ident(_))
+    match expr {
+        Expr::Ident(_) => true,
+        // Also inline member accesses on built-in globals:
+        // `const c = Object.defineProperty` → inline to `Object.defineProperty(...)`
+        Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(_),
+            ..
+        }) => {
+            if let Expr::Ident(obj_id) = obj.as_ref() {
+                is_builtin_global(&obj_id.sym)
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
 }
 
 /// Count top-level ident usages (not inside nested function bodies).
@@ -498,6 +592,39 @@ enum PropKey {
     Str(Atom),
 }
 
+/// Well-known globals whose methods should not be destructured.
+/// `Object.defineProperty(...)` is universally recognized; `defineProperty(...)` is not.
+fn is_builtin_global(name: &str) -> bool {
+    matches!(
+        name,
+        "Object"
+            | "Array"
+            | "Math"
+            | "JSON"
+            | "Reflect"
+            | "Promise"
+            | "Number"
+            | "String"
+            | "Symbol"
+            | "Date"
+            | "RegExp"
+            | "Map"
+            | "Set"
+            | "WeakMap"
+            | "WeakSet"
+            | "Error"
+            | "console"
+            | "Proxy"
+            | "Intl"
+            | "ArrayBuffer"
+            | "DataView"
+            | "Int8Array"
+            | "Uint8Array"
+            | "Float32Array"
+            | "Float64Array"
+    )
+}
+
 fn group_destructuring(stmts: Vec<Stmt>) -> Vec<Stmt> {
     // Scan for groups of consecutive `const t = obj.prop` / `const t = obj[n]`
     // where `obj` is a plain identifier.
@@ -527,6 +654,17 @@ fn group_destructuring(stmts: Vec<Stmt>) -> Vec<Stmt> {
             });
 
         if let Some((obj_name, access)) = next_access {
+            // Don't group built-in globals — `Object.defineProperty(...)` is clearer
+            // than `defineProperty(...)` and destructuring can break `this` binding.
+            if is_builtin_global(&obj_name.sym) {
+                if let Some((obj, acc)) = current_obj.take() {
+                    flush_group(&mut result, obj, acc);
+                }
+                result.push(stmts[i].clone());
+                i += 1;
+                continue;
+            }
+
             match &mut current_obj {
                 Some((cur_obj, accesses))
                     if cur_obj.sym == obj_name.sym && cur_obj.ctxt == obj_name.ctxt =>

@@ -22,26 +22,25 @@ const o = {
     arguments: true,
     arity: true
 };
-const { defineProperty, getOwnPropertyNames, getOwnPropertySymbols, getOwnPropertyDescriptor, getPrototypeOf } = Object;
-const s = getPrototypeOf && getPrototypeOf(Object);
+const s = Object.getPrototypeOf && Object.getPrototypeOf(Object);
 export default (function e(t, n, f) {
     if (typeof n !== "string") {
         if (s) {
-            const d = getPrototypeOf(n);
+            const d = Object.getPrototypeOf(n);
             if (d && d !== s) {
                 e(t, d, f);
             }
         }
-        let p = getOwnPropertyNames(n);
-        if (getOwnPropertySymbols) {
-            p = p.concat(getOwnPropertySymbols(n));
+        let p = Object.getOwnPropertyNames(n);
+        if (Object.getOwnPropertySymbols) {
+            p = p.concat(Object.getOwnPropertySymbols(n));
         }
         for(let h = 0; h < p.length; ++h){
             const m = p[h];
             if (!(r[m] || o[m] || f && f[m])) {
-                const y = getOwnPropertyDescriptor(n, m);
+                const y = Object.getOwnPropertyDescriptor(n, m);
                 try {
-                    defineProperty(t, m, y);
+                    Object.defineProperty(t, m, y);
                 } catch (e) {}
             }
         }

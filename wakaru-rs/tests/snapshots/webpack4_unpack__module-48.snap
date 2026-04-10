@@ -3561,7 +3561,6 @@ function Ei(e, t, n, r) {
         e.effectTag |= 4;
     }
 }
-const Array_isArray = Array.isArray;
 function ki(e, t, n) {
     if ((e = n.ref) !== null && typeof e !== "function" && typeof e !== "object") {
         if (n._owner) {
@@ -3715,7 +3714,7 @@ function Si(e) {
                     t.return = e;
                     return t;
             }
-            if (Array_isArray(t) || he(t)) {
+            if (Array.isArray(t) || he(t)) {
                 t = Al(t, e.mode, n, null);
                 t.return = e;
                 return t;
@@ -3748,7 +3747,7 @@ function Si(e) {
                     }
                     return null;
             }
-            if (Array_isArray(n) || he(n)) {
+            if (Array.isArray(n) || he(n)) {
                 if (o !== null) {
                     return null;
                 }
@@ -3773,7 +3772,7 @@ function Si(e) {
                 case ee:
                     return s(t, e = e.get(r.key === null ? n : r.key) || null, r, o);
             }
-            if (Array_isArray(r) || he(r)) {
+            if (Array.isArray(r) || he(r)) {
                 return f(t, e = e.get(n) || null, r, o, null);
             }
             Ti(t, r);
@@ -4010,7 +4009,7 @@ function Si(e) {
             }
             return u(e);
         }
-        if (Array_isArray(i)) {
+        if (Array.isArray(i)) {
             return m(e, r, i, l);
         }
         if (he(i)) {
@@ -6571,7 +6570,6 @@ function vu(e, t, n) {
     return n;
 }
 let bu;
-const Math_ceil = Math.ceil;
 const { ReactCurrentDispatcher: ReactCurrentDispatcher_1, ReactCurrentOwner } = r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
 const xu = 0;
 const ku = 8;
@@ -6875,7 +6873,7 @@ function ul(e) {
                                         if ((o = i - o) < 0) {
                                             o = 0;
                                         }
-                                        o = (o < 120 ? 120 : o < 480 ? 480 : o < 1080 ? 1080 : o < 1920 ? 1920 : o < 3000 ? 3000 : o < 4320 ? 4320 : 1960 * Math_ceil(o / 1960)) - o;
+                                        o = (o < 120 ? 120 : o < 480 ? 480 : o < 1080 ? 1080 : o < 1920 ? 1920 : o < 3000 ? 3000 : o < 4320 ? 4320 : 1960 * Math.ceil(o / 1960)) - o;
                                         if (r < o) {
                                             o = r;
                                         }

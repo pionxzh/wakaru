@@ -270,7 +270,58 @@ bar(foo);
 }
 
 #[test]
-fn grouped_object_access_preserves_binding_context_for_followup_renames() {
+fn builtin_global_methods_inlined_not_destructured() {
+    // Object.defineProperty etc. should be inlined back to member access form,
+    // not destructured. Destructuring breaks readability and `this` binding.
+    let input = r#"
+const a = Object.defineProperty;
+const b = Object.getOwnPropertyNames;
+a(target, key, desc);
+b(source);
+"#;
+    let expected = r#"
+Object.defineProperty(target, key, desc);
+Object.getOwnPropertyNames(source);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn builtin_global_math_inlined_not_destructured() {
+    let input = r#"
+const a = Math.ceil;
+const b = Math.floor;
+a(1.5);
+b(2.5);
+"#;
+    let expected = r#"
+Math.ceil(1.5);
+Math.floor(2.5);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn builtin_global_multi_use_also_inlined() {
+    // Even when used multiple times, builtin aliases should be inlined
+    let input = r#"
+const a = Object.defineProperty;
+a(t1, k1, d1);
+a(t2, k2, d2);
+"#;
+    let expected = r#"
+Object.defineProperty(t1, k1, d1);
+Object.defineProperty(t2, k2, d2);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn builtin_global_accesses_inlined_through_pipeline() {
+    // All builtin global aliases are inlined back to Object.X(...) form
     let input = r#"
 const i = Object.defineProperty;
 const c = Object.getPrototypeOf;
@@ -278,9 +329,8 @@ const s = c && c(Object);
 i(target, key, desc);
 "#;
     let expected = r#"
-const { defineProperty, getPrototypeOf } = Object;
-const s = getPrototypeOf && getPrototypeOf(Object);
-defineProperty(target, key, desc);
+const s = Object.getPrototypeOf && Object.getPrototypeOf(Object);
+Object.defineProperty(target, key, desc);
 "#;
     let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);

@@ -2,7 +2,6 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-const Object_getOwnPropertySymbols = Object.getOwnPropertySymbols;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable;
 export default (()=>{
@@ -47,8 +46,8 @@ export default (()=>{
                 u[c] = n[c];
             }
         }
-        if (Object_getOwnPropertySymbols) {
-            a = Object_getOwnPropertySymbols(n);
+        if (Object.getOwnPropertySymbols) {
+            a = Object.getOwnPropertySymbols(n);
             for(let s = 0; s < a.length; s++){
                 if (propertyIsEnumerable.call(n, a[s])) {
                     u[a[s]] = n[a[s]];
