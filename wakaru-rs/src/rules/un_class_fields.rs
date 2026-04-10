@@ -69,7 +69,7 @@ impl VisitMut for UnClassFields {
 
         // Find constructor and inline the __init calls
         let class_name = self.find_class_name(class);
-        let mut inlined_any = false;
+        let mut inlined_names: std::collections::HashSet<Atom> = std::collections::HashSet::new();
 
         for member in &mut class.body {
             let ClassMember::Constructor(ctor) = member else {
@@ -84,7 +84,7 @@ impl VisitMut for UnClassFields {
                 if let Some(init_name) = extract_prototype_init_call(&stmt, &class_name) {
                     if let Some(init_stmts) = init_bodies.get(&init_name) {
                         new_stmts.extend(init_stmts.iter().cloned());
-                        inlined_any = true;
+                        inlined_names.insert(init_name);
                         continue;
                     }
                 }
@@ -93,11 +93,11 @@ impl VisitMut for UnClassFields {
             body.stmts = new_stmts;
         }
 
-        if !inlined_any {
+        if inlined_names.is_empty() {
             return;
         }
 
-        // Remove the __init* methods that were inlined
+        // Remove only the __init* methods that were actually inlined
         class.body.retain(|member| {
             let ClassMember::Method(method) = member else {
                 return true;
@@ -108,7 +108,7 @@ impl VisitMut for UnClassFields {
             let Some(name) = prop_name_str(&method.key) else {
                 return true;
             };
-            if name.starts_with("__init") && init_bodies.contains_key(&Atom::from(name.as_str())) {
+            if inlined_names.contains(&Atom::from(name.as_str())) {
                 return false; // remove
             }
             true

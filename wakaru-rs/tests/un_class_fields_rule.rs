@@ -106,6 +106,28 @@ class Qux {
 }
 
 #[test]
+fn only_inlined_init_methods_removed() {
+    // P2 regression: __init2 is NOT called in constructor, so it must be kept
+    let input = r#"
+class Foo {
+    __init() {
+        this._x = 1;
+    }
+    __init2() {
+        this._y = 2;
+    }
+    constructor() {
+        Foo.prototype.__init.call(this);
+    }
+}
+"#;
+    let output = render(input);
+    assert!(output.contains("this._x = 1"), "inlined __init body should be present: {output}");
+    assert!(!output.contains("__init()"), "__init method should be removed: {output}");
+    assert!(output.contains("__init2"), "__init2 should be kept (not inlined): {output}");
+}
+
+#[test]
 fn regular_method_not_touched() {
     let input = r#"
 class Keep {
