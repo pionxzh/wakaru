@@ -217,6 +217,59 @@ console.log(o.a);
 }
 
 #[test]
+fn no_inline_when_source_ident_mutated_between_def_and_use() {
+    // Regression: const e = Ju; Ju = null; e.forEach(...)
+    // SmartInline inlined e → Ju, producing Ju.forEach(null) — a null dereference.
+    // The temp var exists to capture Ju's value before mutation.
+    let input = r#"
+if (Ju !== null) {
+    const e = Ju;
+    Ju = null;
+    e.forEach((v, k) => { process(k, v); });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("Ju.forEach"),
+        "must not inline e→Ju when Ju is mutated between def and use: {output}"
+    );
+    assert!(
+        output.contains("e.forEach"),
+        "temp var e should be preserved: {output}"
+    );
+}
+
+#[test]
+fn no_inline_when_source_ident_reassigned_in_finally() {
+    // Pattern: var n = Nu; Nu = ku; ... finally { (Nu = n) === xu }
+    // n captures old Nu before mutation — must not inline to Nu
+    let input = r#"
+const n = Nu;
+Nu = ku;
+try { doWork(); } finally { Nu = n; check(Nu); }
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("const n = Nu"),
+        "temp var n should be preserved when Nu is mutated: {output}"
+    );
+}
+
+#[test]
+fn inline_still_works_when_source_not_mutated() {
+    // Normal case: source ident is never mutated, inlining is safe
+    let input = r#"
+const t = foo;
+bar(t);
+"#;
+    let expected = r#"
+bar(foo);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn grouped_object_access_preserves_binding_context_for_followup_renames() {
     let input = r#"
 const i = Object.defineProperty;

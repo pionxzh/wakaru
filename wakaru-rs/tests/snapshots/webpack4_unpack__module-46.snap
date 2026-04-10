@@ -216,6 +216,7 @@ function z(e, n) {
         i();
     }
     A = true;
+    const r = M;
     try {
         D(n);
         for(N = O(_); N !== null && (!(N.expirationTime > n) || e && !a());){
@@ -247,7 +248,7 @@ function z(e, n) {
         return c;
     } finally{
         N = null;
-        M = M;
+        M = r;
         A = false;
     }
 }
@@ -292,11 +293,12 @@ export const unstable_next = (e)=>{
         default:
             t = M;
     }
+    const n = M;
     M = t;
     try {
         return e();
     } finally{
-        M = M;
+        M = n;
     }
 };
 export const unstable_pauseExecution = ()=>{};
@@ -311,11 +313,12 @@ export const unstable_runWithPriority = (e, t)=>{
         default:
             e = 3;
     }
+    const n = M;
     M = e;
     try {
         return t();
     } finally{
-        M = M;
+        M = n;
     }
 };
 export const unstable_scheduleCallback = (e, n, a)=>{
@@ -362,11 +365,12 @@ export const unstable_shouldYield = ()=>{
 export const unstable_wrapCallback = (e)=>{
     const t = M;
     return function() {
+        const n = M;
         M = t;
         try {
             return e.apply(this, arguments);
         } finally{
-            M = M;
+            M = n;
         }
     };
 };

@@ -49,11 +49,12 @@ function y(e, t, n) {
             if (!u) {
                 throw Error(a(198));
             }
+            const m = l;
             u = false;
             l = null;
             if (!c) {
                 c = true;
-                s = l;
+                s = m;
             }
         }
     })(r, t, undefined, e);
@@ -1429,11 +1430,12 @@ function Qt(e, t, n) {
                 if (!D) {
                     L();
                 }
+                const i = D;
                 D = true;
                 try {
                     A(Kt, e, t, n, r);
                 } finally{
-                    if (!(D = D)) {
+                    if (!(D = i)) {
                         z();
                     }
                 }
@@ -2404,10 +2406,11 @@ const Ar = Or.extend({
         if ("movementX" in e) {
             return e.movementX;
         }
+        const t = jr;
         jr = e.screenX;
         if (Nr) {
             if (e.type === "mousemove") {
-                return e.screenX - jr;
+                return e.screenX - t;
             }
             return 0;
         }
@@ -2418,10 +2421,11 @@ const Ar = Or.extend({
         if ("movementY" in e) {
             return e.movementY;
         }
+        const t = Rr;
         Rr = e.screenY;
         if (Mr) {
             if (e.type === "mousemove") {
-                return e.screenY - Rr;
+                return e.screenY - t;
             }
             return 0;
         }
@@ -3115,8 +3119,9 @@ function Vo(e) {
 }
 function Qo() {
     if (Fo !== null) {
+        const e = Fo;
         Fo = null;
-        unstable_cancelCallback(Fo);
+        unstable_cancelCallback(e);
     }
     Ko();
 }
@@ -6962,12 +6967,13 @@ function ll(e) {
     return null;
 }
 function sl(e, t) {
+    const n = Nu;
     Nu &= -2;
     Nu |= ku;
     try {
         return e(t);
     } finally{
-        if ((Nu = Nu) === xu) {
+        if ((Nu = n) === xu) {
             Qo();
         }
     }
@@ -7309,6 +7315,7 @@ function El(e) {
             o = finishedWork.firstEffect;
         }
         if (o !== null) {
+            const i = Nu;
             Nu |= Su;
             ReactCurrentOwner.current = null;
             yn = Bt;
@@ -7534,7 +7541,7 @@ function El(e) {
             }while (Bu !== null)
             Bu = null;
             Io();
-            Nu = Nu;
+            Nu = i;
         } else {
             e.current = finishedWork;
         }
@@ -7597,11 +7604,12 @@ function xl() {
     }
 }
 export function unstable_batchedUpdates(e, t) {
+    const n = Nu;
     Nu |= 1;
     try {
         return e(t);
     } finally{
-        if ((Nu = Nu) === xu) {
+        if ((Nu = n) === xu) {
             Qo();
         }
     }
@@ -8484,11 +8492,12 @@ C = (e, t, n)=>{
 };
 M = unstable_batchedUpdates;
 A = (e, t, n, r, o)=>{
+    const i = Nu;
     Nu |= 4;
     try {
         return $o(98, e.bind(null, t, n, r, o));
     } finally{
-        if ((Nu = Nu) === xu) {
+        if ((Nu = i) === xu) {
             Qo();
         }
     }
@@ -8497,8 +8506,9 @@ L = ()=>{
     if ((Nu & (1 | Tu | Su)) === xu) {
         (()=>{
             if (Ju !== null) {
+                const e = Ju;
                 Ju = null;
-                Ju.forEach((e, t)=>{
+                e.forEach((e, t)=>{
                     ql(t, e);
                     ul(t);
                 });
@@ -8509,11 +8519,12 @@ L = ()=>{
     }
 };
 I = (e, t)=>{
+    const n = Nu;
     Nu |= 2;
     try {
         return e(t);
     } finally{
-        if ((Nu = Nu) === xu) {
+        if ((Nu = n) === xu) {
             Qo();
         }
     }
@@ -8627,11 +8638,12 @@ export const flushSync = (e, t)=>{
     if ((Nu & (Tu | Su)) !== xu) {
         throw Error(a(187));
     }
+    const n = Nu;
     Nu |= 1;
     try {
         return $o(99, e.bind(null, t));
     } finally{
-        Nu = Nu;
+        Nu = n;
         Qo();
     }
 };

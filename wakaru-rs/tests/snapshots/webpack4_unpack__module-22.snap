@@ -629,7 +629,8 @@ export function runSaga(e, t) {
         a = t(...r);
         o.h(a, o.q.iterator, b);
     }
-    const { subscribe, dispatch, getState, context, sagaMonitor, logger, onError } = e;
+    const u = e;
+    const { subscribe, dispatch, getState, context, sagaMonitor, logger, onError } = u;
     const m = o.y();
     if (sagaMonitor) {
         sagaMonitor.effectTriggered = sagaMonitor.effectTriggered || o.u;

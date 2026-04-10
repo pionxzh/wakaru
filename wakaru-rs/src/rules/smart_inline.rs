@@ -329,6 +329,23 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
         return stmts;
     }
 
+    // Safety: don't inline `const t = X` if X is assigned (mutated) anywhere
+    // in the same block. The temp var exists to capture X's value before mutation.
+    let to_inline: HashMap<Atom, Box<Expr>> = to_inline
+        .into_iter()
+        .filter(|(_, init)| {
+            if let Expr::Ident(src_id) = init.as_ref() {
+                !is_ident_mutated_in_stmts(&src_id.sym, &stmts)
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    if to_inline.is_empty() {
+        return stmts;
+    }
+
     // Apply inlining: remove definition stmts, replace single usage with init expr
     let mut result = Vec::new();
     for stmt in stmts {
@@ -350,6 +367,50 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
     }
 
     result
+}
+
+/// Check if an identifier is assigned (mutated) anywhere in a list of statements.
+fn is_ident_mutated_in_stmts(sym: &Atom, stmts: &[Stmt]) -> bool {
+    use swc_core::ecma::ast::{AssignTarget, SimpleAssignTarget, UpdateExpr};
+
+    struct MutationFinder {
+        sym: Atom,
+        found: bool,
+    }
+
+    impl Visit for MutationFinder {
+        fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
+            if let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = &assign.left {
+                if id.sym == self.sym {
+                    self.found = true;
+                    return;
+                }
+            }
+            assign.visit_children_with(self);
+        }
+
+        fn visit_update_expr(&mut self, update: &UpdateExpr) {
+            if let Expr::Ident(id) = &*update.arg {
+                if id.sym == self.sym {
+                    self.found = true;
+                    return;
+                }
+            }
+            update.visit_children_with(self);
+        }
+    }
+
+    let mut finder = MutationFinder {
+        sym: sym.clone(),
+        found: false,
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+        if finder.found {
+            return true;
+        }
+    }
+    false
 }
 
 fn is_simple_expr(expr: &Expr) -> bool {
