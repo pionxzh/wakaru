@@ -286,7 +286,7 @@ export const NavLink = (e)=>{
     ]);
     const p = (to === undefined ? "undefined" : typeof to) === "object" ? to.pathname : to;
     const h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
-    return i.createElement(A, {
+    return i.createElement(Route, {
         path: h,
         exact: exact,
         strict: strict,
@@ -294,7 +294,7 @@ export const NavLink = (e)=>{
         children (e) {
             const { location, match } = e;
             const o = !!(isActive ? isActive(match, location) : match);
-            return i.createElement(T, L({
+            return i.createElement(Link, L({
                 to: to,
                 className: o ? [
                     className,
@@ -310,7 +310,7 @@ export const NavLink = (e)=>{
     });
 };
 NavLink.propTypes = {
-    to: T.propTypes.to,
+    to: Link.propTypes.to,
     exact: u.bool,
     strict: u.bool,
     location: u.object,

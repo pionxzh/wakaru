@@ -38,13 +38,27 @@ impl VisitMut for UnExportRename {
         promote_renamed_bindings(module, &plans, &binding_infos);
         rewrite_export_aliases(module, &plans);
 
-        let renames: Vec<BindingRename> = plans
+        let mut renames: Vec<BindingRename> = plans
             .iter()
             .map(|plan| BindingRename {
                 old: plan.old.clone(),
                 new: plan.new_name.clone(),
             })
             .collect();
+
+        // Also rename alias bindings (e.g. `var h = p` — rename `h` → new_name
+        // so remaining `h` references don't dangle after the alias decl is removed)
+        for plan in &plans {
+            if let Some(alias) = &plan.alias_name {
+                if let Some(alias_info) = binding_infos.get(alias) {
+                    renames.push(BindingRename {
+                        old: alias_info.id.clone(),
+                        new: plan.new_name.clone(),
+                    });
+                }
+            }
+        }
+
         rename_bindings_in_module(module, &renames);
     }
 }

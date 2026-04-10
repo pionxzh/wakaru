@@ -86,3 +86,21 @@ fn webpack4_module_24_renames_classes() {
         "BrowserRouter export should exist"
     );
 }
+
+#[test]
+fn alias_used_beyond_export_is_also_renamed() {
+    // P1 regression: var h = p; console.log(h); export { h as BrowserRouter }
+    // Removing `var h = p` without renaming remaining `h` refs leaves dangling references
+    let input = r#"
+class p {
+    render() { return 42; }
+}
+var h = p;
+console.log(h);
+export { h as BrowserRouter };
+"#;
+    let output = render(input);
+    assert!(output.contains("BrowserRouter"), "should contain BrowserRouter: {output}");
+    assert!(!output.contains("console.log(h)"), "h should be renamed, not left dangling: {output}");
+    assert!(output.contains("console.log(BrowserRouter)"), "h should become BrowserRouter: {output}");
+}
