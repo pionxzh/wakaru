@@ -335,3 +335,28 @@ Object.defineProperty(target, key, desc);
     let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn builtin_alias_inlined_in_function_scope() {
+    // Math.floor/Math.ceil aliases declared inside a function body should be inlined
+    let input = r#"
+const x = (function() {
+    const Math_ceil = Math.ceil;
+    const Math_floor = Math.floor;
+    function compute(n) {
+        return Math_floor(n) + Math_ceil(n * 2);
+    }
+    return compute(3.5);
+})();
+"#;
+    let expected = r#"
+const x = (()=>{
+    function compute(n) {
+        return Math.floor(n) + Math.ceil(n * 2);
+    }
+    return compute(3.5);
+})();
+"#;
+    let output = apply_pipeline(input);
+    assert_eq_normalized(&output, expected);
+}

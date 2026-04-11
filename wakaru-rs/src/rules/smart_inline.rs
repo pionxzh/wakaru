@@ -73,6 +73,8 @@ impl VisitMut for SmartInline {
 // ============================================================
 
 fn process_stmts(stmts: Vec<Stmt>) -> Vec<Stmt> {
+    // Pass 0: inline builtin global aliases (const x = Math.floor → replace x with Math.floor)
+    let stmts = inline_builtin_aliases_stmts(stmts);
     // Pass 1: inline single-use const declarations (temp vars)
     let stmts = inline_temp_vars(stmts);
     // Pass 2: group consecutive property / array accesses into destructuring
@@ -161,6 +163,56 @@ fn inline_module_builtin_aliases(module: &mut Module) {
 
     let mut inliner = BuiltinAliasInliner { map: &candidates };
     module.visit_mut_with(&mut inliner);
+}
+
+/// Same as `inline_module_builtin_aliases` but operates on a `Vec<Stmt>` (function bodies).
+/// Handles `const Math_floor = Math.floor` inside nested scopes.
+fn inline_builtin_aliases_stmts(mut stmts: Vec<Stmt>) -> Vec<Stmt> {
+    let mut candidates: HashMap<BindingKey, Box<Expr>> = HashMap::new();
+    for stmt in &stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else { continue };
+        if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
+            continue;
+        }
+        let decl = &var.decls[0];
+        let Pat::Ident(bi) = &decl.name else { continue };
+        let Some(init) = &decl.init else { continue };
+        if let Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(_),
+            ..
+        }) = init.as_ref()
+        {
+            if let Expr::Ident(obj_id) = obj.as_ref() {
+                if is_builtin_global(&obj_id.sym) {
+                    candidates.insert((bi.id.sym.clone(), bi.id.ctxt), init.clone());
+                }
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        return stmts;
+    }
+
+    // Remove definition stmts
+    stmts.retain(|stmt| {
+        if let Stmt::Decl(Decl::Var(var)) = stmt {
+            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
+                if let Pat::Ident(bi) = &var.decls[0].name {
+                    if candidates.contains_key(&(bi.id.sym.clone(), bi.id.ctxt)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    });
+
+    // Replace all usages
+    let mut inliner = BuiltinAliasInliner { map: &candidates };
+    stmts.visit_mut_with(&mut inliner);
+    stmts
 }
 
 /// Replaces all ident usages with the builtin member expression, across all scopes.
