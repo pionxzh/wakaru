@@ -103,6 +103,10 @@ impl SourceEntry {
 
 impl VisitMut for UnEsm {
     fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
+        // Phase 0: split compound `var s = exports.X = expr` →
+        //          `var s = expr; exports.X = s;`
+        split_compound_exports(module);
+
         let items = std::mem::take(&mut module.body);
 
         // Phase 1: classify
@@ -564,6 +568,95 @@ fn classify_item(item: ModuleItem) -> Classified {
         }
         other => Classified::Keep(other),
     }
+}
+
+/// Split compound `var s = exports.X = expr` into `var s = expr; exports.X = s;`
+/// so the normal export classification can handle the extracted `exports.X = s` statement.
+fn split_compound_exports(module: &mut Module) {
+    let mut new_body = Vec::with_capacity(module.body.len());
+    for item in std::mem::take(&mut module.body) {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(ref var))) = item else {
+            new_body.push(item);
+            continue;
+        };
+        let mut any_split = false;
+        let mut new_decls = Vec::new();
+        let mut export_stmts = Vec::new();
+
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                new_decls.push(decl.clone());
+                continue;
+            };
+            let Some(init) = &decl.init else {
+                new_decls.push(decl.clone());
+                continue;
+            };
+            if let Some((export_name, real_init)) = try_extract_exports_assign(init) {
+                any_split = true;
+                // var s = expr (stripped of exports.X wrapper)
+                new_decls.push(VarDeclarator {
+                    init: Some(real_init),
+                    ..decl.clone()
+                });
+                // exports.X = s
+                export_stmts.push(Stmt::Expr(swc_core::ecma::ast::ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Assign(swc_core::ecma::ast::AssignExpr {
+                        span: DUMMY_SP,
+                        op: AssignOp::Assign,
+                        left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
+                            span: DUMMY_SP,
+                            obj: Box::new(Expr::Ident(Ident::new(
+                                "exports".into(),
+                                DUMMY_SP,
+                                binding.id.ctxt,
+                            ))),
+                            prop: MemberProp::Ident(IdentName::new(export_name, DUMMY_SP)),
+                        })),
+                        right: Box::new(Expr::Ident(binding.id.clone())),
+                    })),
+                }));
+            } else {
+                new_decls.push(decl.clone());
+            }
+        }
+
+        if any_split {
+            let mut new_var = (**var).clone();
+            new_var.decls = new_decls;
+            new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(new_var)))));
+            for s in export_stmts {
+                new_body.push(ModuleItem::Stmt(s));
+            }
+        } else {
+            new_body.push(item);
+        }
+    }
+    module.body = new_body;
+}
+
+/// Extract `exports.X` from `exports.X = expr`, returning `(X, expr)`.
+fn try_extract_exports_assign(expr: &Expr) -> Option<(Atom, Box<Expr>)> {
+    let Expr::Assign(assign) = expr else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return None;
+    };
+    let Expr::Ident(obj_id) = member.obj.as_ref() else {
+        return None;
+    };
+    if obj_id.sym.as_ref() != "exports" {
+        return None;
+    }
+    let Some(prop_name) = is_ident_prop(&member.prop) else {
+        return None;
+    };
+    Some((prop_name, assign.right.clone()))
 }
 
 /// Try to classify as a CJS export statement

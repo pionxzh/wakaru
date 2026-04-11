@@ -8,10 +8,10 @@ import i from "./module-18.js";
 import a from "./module-8.js";
 import u from "./module-27.js";
 import l from "./module-33.js";
-const s = exports.history = a.createBrowserHistory();
+export const history = a.createBrowserHistory();
 const f = o();
 const d = [
-    i.routerMiddleware(s),
+    i.routerMiddleware(history),
     f
 ];
 const p = r.createStore(u, r.applyMiddleware.apply(undefined, d));

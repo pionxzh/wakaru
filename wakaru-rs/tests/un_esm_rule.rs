@@ -267,3 +267,15 @@ exports.a = function(x) { return b + x; };
     // VarDeclToLetConst may promote var→const, so just check `b` is still there
     assert!(output.contains("b = 0"), "unrelated local should be unchanged: {}", output);
 }
+
+#[test]
+fn compound_exports_assignment_in_var_decl() {
+    // var s = exports.history = expr → split into var s = expr + export { s as history }
+    let input = r#"
+var s = exports.history = createBrowserHistory();
+use(s);
+"#;
+    let output = apply(input);
+    assert!(!output.contains("exports.history"), "exports.history should be converted to ESM: {output}");
+    assert!(output.contains("history"), "should have history export: {output}");
+}
