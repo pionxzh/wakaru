@@ -1,5 +1,5 @@
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignPatProp, BindingIdent, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr,
     ExprStmt, FnExpr, Ident, KeyValuePatProp, Lit, MemberExpr, MemberProp, ObjectPat,
@@ -128,9 +128,9 @@ use swc_core::ecma::ast::ModuleItem;
 /// Extracted info from a preceding statement that accesses the same source object.
 enum PrecedingAccess {
     /// `const { a, b: c } = source` — destructuring with key→binding pairs
-    Destructuring(Vec<(Atom, Atom)>), // (prop_key, local_binding)
+    Destructuring(Vec<(Atom, Atom, SyntaxContext)>), // (prop_key, local_binding, binding_ctxt)
     /// `const x = source.prop` — single property access
-    PropAccess { prop: Atom, binding: Atom },
+    PropAccess { prop: Atom, binding: Atom, ctxt: SyntaxContext },
     /// `source.prop;` — bare access (no binding)
     BareAccess { prop: Atom },
 }
@@ -325,6 +325,7 @@ fn declarators_to_accesses(
                             accesses.push(PrecedingAccess::PropAccess {
                                 prop: prop_name,
                                 binding: bi.id.sym.clone(),
+                                ctxt: bi.id.ctxt,
                             });
                         }
                     }
@@ -354,14 +355,14 @@ fn try_match_preceding(
                                     ObjectPatProp::Assign(a) => {
                                         let key = a.key.id.sym.clone();
                                         if excluded_keys.contains(&key) {
-                                            pairs.push((key.clone(), key));
+                                            pairs.push((key.clone(), key, a.key.id.ctxt));
                                         }
                                     }
                                     ObjectPatProp::KeyValue(kv) => {
                                         let key = prop_name_atom(&kv.key)?;
                                         if excluded_keys.contains(&key) {
                                             if let Pat::Ident(bi) = kv.value.as_ref() {
-                                                pairs.push((key, bi.id.sym.clone()));
+                                                pairs.push((key, bi.id.sym.clone(), bi.id.ctxt));
                                             }
                                         }
                                     }
@@ -387,6 +388,7 @@ fn try_match_preceding(
                                         return Some(PrecedingAccess::PropAccess {
                                             prop: pname,
                                             binding: bi.id.sym.clone(),
+                                            ctxt: bi.id.ctxt,
                                         });
                                     }
                                 }
@@ -424,18 +426,20 @@ fn build_rest_destructuring(
     excluded_keys: &[Atom],
     merged: &[PrecedingAccess],
 ) -> Stmt {
-    // Build a map from prop key → local binding name (from preceding accesses)
-    let mut key_to_binding: std::collections::HashMap<Atom, Atom> =
+    // Build a map from prop key → (local binding name, SyntaxContext) from preceding accesses.
+    // Preserving the original SyntaxContext is critical so that downstream SmartRename
+    // can match the destructuring binding to the body references via BindingRenamer.
+    let mut key_to_binding: std::collections::HashMap<Atom, (Atom, SyntaxContext)> =
         std::collections::HashMap::new();
     for access in merged {
         match access {
             PrecedingAccess::Destructuring(pairs) => {
-                for (key, binding) in pairs {
-                    key_to_binding.insert(key.clone(), binding.clone());
+                for (key, binding, ctxt) in pairs {
+                    key_to_binding.insert(key.clone(), (binding.clone(), *ctxt));
                 }
             }
-            PrecedingAccess::PropAccess { prop, binding } => {
-                key_to_binding.insert(prop.clone(), binding.clone());
+            PrecedingAccess::PropAccess { prop, binding, ctxt } => {
+                key_to_binding.insert(prop.clone(), (binding.clone(), *ctxt));
             }
             PrecedingAccess::BareAccess { .. } => {
                 // No binding — key will be included as shorthand (unused)
@@ -446,26 +450,26 @@ fn build_rest_destructuring(
     // Build destructuring props for each excluded key
     let mut props: Vec<ObjectPatProp> = Vec::new();
     for key in excluded_keys {
-        if let Some(binding) = key_to_binding.get(key) {
+        if let Some((binding, ctxt)) = key_to_binding.get(key) {
             if *binding == *key {
-                // Shorthand: { key }
+                // Shorthand: { key } — preserve original SyntaxContext
                 props.push(ObjectPatProp::Assign(AssignPatProp {
                     span: DUMMY_SP,
                     key: BindingIdent {
-                        id: Ident::new(key.clone(), DUMMY_SP, Default::default()),
+                        id: Ident::new(key.clone(), DUMMY_SP, *ctxt),
                         type_ann: None,
                     },
                     value: None,
                 }));
             } else {
-                // Aliased: { key: binding }
+                // Aliased: { key: binding } — preserve original SyntaxContext
                 props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
                     key: PropName::Ident(swc_core::ecma::ast::IdentName::new(
                         key.clone(),
                         DUMMY_SP,
                     )),
                     value: Box::new(Pat::Ident(BindingIdent {
-                        id: Ident::new(binding.clone(), DUMMY_SP, Default::default()),
+                        id: Ident::new(binding.clone(), DUMMY_SP, *ctxt),
                         type_ann: None,
                     })),
                 }));
