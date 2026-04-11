@@ -334,3 +334,52 @@ use(l);
         "outer use site was not renamed:\n{output}"
     );
 }
+
+// ============================================================
+// Symbol.for renames
+// ============================================================
+
+#[test]
+fn symbol_for_renamed_to_upper_snake_case() {
+    let input = r#"
+const ul = Symbol.for("react.element");
+const At = Symbol.for("react.portal");
+console.log(ul, At);
+"#;
+    let result = apply(input);
+    assert!(result.contains("SYMBOL_REACT_ELEMENT"), "should rename to SYMBOL_REACT_ELEMENT, got:\n{}", result);
+    assert!(result.contains("SYMBOL_REACT_PORTAL"), "should rename to SYMBOL_REACT_PORTAL, got:\n{}", result);
+    assert!(!result.contains("const ul "), "old name should be gone, got:\n{}", result);
+}
+
+#[test]
+fn symbol_for_camel_case_key() {
+    let input = r#"
+const Ac = Symbol.for("react.forward_ref");
+console.log(Ac);
+"#;
+    let result = apply(input);
+    assert!(result.contains("SYMBOL_REACT_FORWARD_REF"), "should rename, got:\n{}", result);
+}
+
+#[test]
+fn symbol_for_skips_long_names() {
+    let input = r#"
+const reactElement = Symbol.for("react.element");
+console.log(reactElement);
+"#;
+    let result = apply(input);
+    assert!(result.contains("reactElement"), "should keep long name as-is, got:\n{}", result);
+}
+
+#[test]
+fn symbol_for_inside_function_scope() {
+    let input = r#"
+function init() {
+    const ul = Symbol.for("react.element");
+    return ul;
+}
+"#;
+    let result = apply(input);
+    assert!(result.contains("SYMBOL_REACT_ELEMENT"), "should rename inside function scope, got:\n{}", result);
+}

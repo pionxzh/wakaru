@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, Function,
-    Ident, KeyValuePatProp, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat, ObjectPatProp,
-    Param, Pat, PropName, Stmt, VarDecl,
+    Ident, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat,
+    ObjectPatProp, Param, Pat, PropName, Stmt, VarDecl,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -17,6 +17,7 @@ impl VisitMut for SmartRename {
         react_rename_module(module);
         destructuring_rename_module(module);
         member_init_rename_module(module);
+        symbol_for_rename_module(module);
         module.visit_mut_children_with(self);
     }
 
@@ -24,12 +25,14 @@ impl VisitMut for SmartRename {
         react_rename_function_body(func);
         destructuring_rename_function(func);
         member_init_rename_function(func);
+        symbol_for_rename_function(func);
         func.visit_mut_children_with(self);
     }
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         destructuring_rename_arrow(arrow);
         member_init_rename_arrow(arrow);
+        symbol_for_rename_arrow(arrow);
         arrow.visit_mut_children_with(self);
     }
 }
@@ -689,6 +692,150 @@ fn collect_member_init_var_renames(
 }
 
 // ============================================================
+// Symbol.for("key") renames: var x = Symbol.for("react.element") → symbol_react_element
+// ============================================================
+
+fn symbol_for_rename_module(module: &mut Module) {
+    let all_names = collect_names_in_module(&module.body);
+    let renames = collect_symbol_for_renames_from_module(&module.body, &all_names);
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings_in_module(module, &renames);
+}
+
+fn symbol_for_rename_function(func: &mut Function) {
+    let Some(body) = &mut func.body else { return };
+    let mut all_names = collect_names_in_stmts(&body.stmts);
+    for p in &func.params {
+        collect_names_in_pat(&p.pat, &mut all_names);
+    }
+    let renames = collect_symbol_for_renames_from_stmts(&body.stmts, &all_names);
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings(&mut body.stmts, &renames);
+}
+
+fn symbol_for_rename_arrow(arrow: &mut ArrowExpr) {
+    let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_mut() else {
+        return;
+    };
+    let all_names = collect_names_in_stmts(&block.stmts);
+    let renames = collect_symbol_for_renames_from_stmts(&block.stmts, &all_names);
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings(&mut block.stmts, &renames);
+}
+
+fn collect_symbol_for_renames_from_module(
+    body: &[ModuleItem],
+    all_names: &HashSet<String>,
+) -> Vec<BindingRename> {
+    let mut renames = Vec::new();
+    let mut used_names = all_names.clone();
+    for item in body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                collect_symbol_for_var_renames(var, &mut renames, &mut used_names);
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ed)) => {
+                if let Decl::Var(var) = &ed.decl {
+                    collect_symbol_for_var_renames(var, &mut renames, &mut used_names);
+                }
+            }
+            _ => {}
+        }
+    }
+    renames
+}
+
+fn collect_symbol_for_renames_from_stmts(
+    stmts: &[Stmt],
+    all_names: &HashSet<String>,
+) -> Vec<BindingRename> {
+    let mut renames = Vec::new();
+    let mut used_names = all_names.clone();
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else { continue };
+        collect_symbol_for_var_renames(var, &mut renames, &mut used_names);
+    }
+    renames
+}
+
+fn collect_symbol_for_var_renames(
+    var: &VarDecl,
+    renames: &mut Vec<BindingRename>,
+    used_names: &mut HashSet<String>,
+) {
+    for decl in &var.decls {
+        let Pat::Ident(bi) = &decl.name else { continue };
+        let Some(init) = &decl.init else { continue };
+        let old_name = bi.id.sym.to_string();
+
+        // Only rename short (minified) names
+        if old_name.chars().count() > REACT_MINIFIED_THRESHOLD {
+            continue;
+        }
+
+        // Match: Symbol.for("string")
+        let Some(key) = extract_symbol_for_key(init) else { continue };
+
+        // Build new name: SYMBOL_REACT_ELEMENT from "react.element"
+        // SYMBOL_ prefix hints this is a Symbol.for value, not a string constant
+        let new_name = format!("SYMBOL_{}", symbol_key_to_const_name(&key));
+
+        // Skip if the derived name is too short to be helpful
+        if new_name.chars().count() <= old_name.chars().count() {
+            continue;
+        }
+
+        let new_name = find_non_conflicting_name(&new_name, used_names);
+        if new_name == old_name {
+            continue;
+        }
+        used_names.insert(new_name.clone());
+        renames.push(BindingRename {
+            old: (bi.id.sym.clone(), bi.id.ctxt),
+            new: new_name.as_str().into(),
+        });
+    }
+}
+
+/// Extract the string key from `Symbol.for("key")`.
+fn extract_symbol_for_key(expr: &Expr) -> Option<String> {
+    let Expr::Call(CallExpr { callee, args, .. }) = expr else {
+        return None;
+    };
+    let Callee::Expr(callee_expr) = callee else {
+        return None;
+    };
+    let Expr::Member(MemberExpr { obj, prop, .. }) = callee_expr.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(obj_id) = obj.as_ref() else {
+        return None;
+    };
+    if obj_id.sym.as_ref() != "Symbol" {
+        return None;
+    }
+    let MemberProp::Ident(prop_id) = prop else {
+        return None;
+    };
+    if prop_id.sym.as_ref() != "for" {
+        return None;
+    }
+    if args.len() != 1 {
+        return None;
+    }
+    let Expr::Lit(Lit::Str(s)) = args[0].expr.as_ref() else {
+        return None;
+    };
+    s.value.as_str().map(|s| s.to_string())
+}
+
+// ============================================================
 // Name collection helpers
 // ============================================================
 
@@ -737,4 +884,28 @@ fn pascal_case_first(s: &str) -> String {
         None => String::new(),
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
     }
+}
+
+/// Convert a Symbol.for key like "react.element" to UPPER_SNAKE_CASE: "REACT_ELEMENT".
+/// Handles dots, hyphens, and camelCase boundaries as separators.
+fn symbol_key_to_const_name(key: &str) -> String {
+    let mut result = String::new();
+    let mut prev_was_sep = true; // treat start as after separator
+    for ch in key.chars() {
+        if ch == '.' || ch == '-' || ch == '_' || ch == ' ' {
+            if !result.is_empty() {
+                result.push('_');
+            }
+            prev_was_sep = true;
+        } else if ch.is_uppercase() && !prev_was_sep && !result.is_empty() {
+            // camelCase boundary: "forwardRef" → "FORWARD_REF"
+            result.push('_');
+            result.push(ch.to_ascii_uppercase());
+            prev_was_sep = false;
+        } else {
+            result.push(ch.to_ascii_uppercase());
+            prev_was_sep = false;
+        }
+    }
+    result
 }
