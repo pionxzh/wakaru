@@ -291,7 +291,7 @@ fn destructuring_rename_function(func: &mut Function) {
 }
 
 fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
-    let all_names = match arrow.body.as_ref() {
+    let mut all_names = match arrow.body.as_ref() {
         BlockStmtOrExpr::BlockStmt(b) => collect_names_in_stmts(&b.stmts),
         BlockStmtOrExpr::Expr(e) => {
             let mut names = HashSet::new();
@@ -299,6 +299,10 @@ fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
             names
         }
     };
+    // Include param names to avoid renaming into duplicates
+    for p in &arrow.params {
+        collect_names_in_pat(p, &mut all_names);
+    }
     let mut renames = collect_obj_pat_renames_from_pats(&arrow.params, &all_names);
     if let BlockStmtOrExpr::BlockStmt(b) = arrow.body.as_ref() {
         renames.extend(collect_obj_pat_renames_from_stmts(&b.stmts, &all_names));
@@ -633,7 +637,11 @@ fn member_init_rename_arrow(arrow: &mut ArrowExpr) {
     let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_mut() else {
         return;
     };
-    let all_names = collect_names_in_stmts(&block.stmts);
+    let mut all_names = collect_names_in_stmts(&block.stmts);
+    for p in &arrow.params {
+        collect_names_in_pat(p, &mut all_names);
+    }
+    let all_names = all_names;
     let renames = collect_member_init_renames_from_stmts(&block.stmts, &all_names);
     if renames.is_empty() {
         return;
@@ -749,7 +757,11 @@ fn symbol_for_rename_arrow(arrow: &mut ArrowExpr) {
     let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_mut() else {
         return;
     };
-    let all_names = collect_names_in_stmts(&block.stmts);
+    let mut all_names = collect_names_in_stmts(&block.stmts);
+    for p in &arrow.params {
+        collect_names_in_pat(p, &mut all_names);
+    }
+    let all_names = all_names;
     let renames = collect_symbol_for_renames_from_stmts(&block.stmts, &all_names);
     if renames.is_empty() {
         return;

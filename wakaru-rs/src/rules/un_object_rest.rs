@@ -51,11 +51,13 @@ impl VisitMut for UnObjectRest {
                     new_body.pop();
                 }
                 preceding_accesses.append(&mut inline_accesses);
+                let scope_names = collect_scope_names_module(&new_body);
                 let new_stmt = build_rest_destructuring(
                     &rest_binding,
                     &source,
                     &excluded_keys,
                     &preceding_accesses,
+                    &scope_names,
                 );
                 recent_stmts.push(new_stmt.clone());
                 new_body.push(ModuleItem::Stmt(new_stmt));
@@ -98,11 +100,13 @@ impl VisitMut for UnObjectRest {
                     new_stmts.pop();
                 }
                 preceding_accesses.append(&mut inline_accesses);
+                let scope_names = collect_scope_names(&new_stmts);
                 new_stmts.push(build_rest_destructuring(
                     &rest_binding,
                     &source,
                     &excluded_keys,
                     &preceding_accesses,
+                    &scope_names,
                 ));
                 if !after.is_empty() {
                     new_stmts.push(Stmt::Decl(Decl::Var(Box::new(VarDecl {
@@ -425,6 +429,7 @@ fn build_rest_destructuring(
     source: &Expr,
     excluded_keys: &[Atom],
     merged: &[PrecedingAccess],
+    scope_names: &std::collections::HashSet<Atom>,
 ) -> Stmt {
     // Build a map from prop key → (local binding name, SyntaxContext) from preceding accesses.
     // Preserving the original SyntaxContext is critical so that downstream SmartRename
@@ -446,6 +451,9 @@ fn build_rest_destructuring(
             }
         }
     }
+
+    // Track generated aliases to avoid collisions between them
+    let mut used_aliases: std::collections::HashSet<Atom> = std::collections::HashSet::new();
 
     // Build destructuring props for each excluded key
     let mut props: Vec<ObjectPatProp> = Vec::new();
@@ -472,8 +480,11 @@ fn build_rest_destructuring(
                 }));
             }
         } else {
-            // Not in preceding — use `_key` alias to avoid colliding with existing bindings
-            let alias = Atom::from(format!("_{}", key));
+            // Not in preceding — generate a `_key` alias, avoiding collisions with
+            // existing bindings in scope and other generated aliases.
+            let base = format!("_{}", key);
+            let alias = find_non_conflicting_alias(&base, scope_names, &used_aliases);
+            used_aliases.insert(alias.clone());
             props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
                 key: make_prop_name(key),
                 value: Box::new(Pat::Ident(BindingIdent {
@@ -567,6 +578,66 @@ fn strip_parens(expr: &Expr) -> &Expr {
         Expr::Paren(p) => strip_parens(&p.expr),
         _ => expr,
     }
+}
+
+/// Find an alias name that doesn't collide with scope names or already-used aliases.
+fn find_non_conflicting_alias(
+    base: &str,
+    scope_names: &std::collections::HashSet<Atom>,
+    used_aliases: &std::collections::HashSet<Atom>,
+) -> Atom {
+    let base_atom = Atom::from(base);
+    if !scope_names.contains(&base_atom) && !used_aliases.contains(&base_atom) {
+        return base_atom;
+    }
+    for i in 1.. {
+        let candidate = Atom::from(format!("{}_{}", base, i));
+        if !scope_names.contains(&candidate) && !used_aliases.contains(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+/// Collect all binding names from a list of statements (top-level idents only).
+fn collect_scope_names(stmts: &[Stmt]) -> std::collections::HashSet<Atom> {
+    use swc_core::ecma::visit::{Visit, VisitWith};
+
+    struct BindingCollector {
+        names: std::collections::HashSet<Atom>,
+    }
+    impl Visit for BindingCollector {
+        fn visit_ident(&mut self, id: &Ident) {
+            self.names.insert(id.sym.clone());
+        }
+    }
+    let mut collector = BindingCollector {
+        names: std::collections::HashSet::new(),
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut collector);
+    }
+    collector.names
+}
+
+fn collect_scope_names_module(items: &[ModuleItem]) -> std::collections::HashSet<Atom> {
+    use swc_core::ecma::visit::{Visit, VisitWith};
+
+    struct BindingCollector {
+        names: std::collections::HashSet<Atom>,
+    }
+    impl Visit for BindingCollector {
+        fn visit_ident(&mut self, id: &Ident) {
+            self.names.insert(id.sym.clone());
+        }
+    }
+    let mut collector = BindingCollector {
+        names: std::collections::HashSet::new(),
+    };
+    for item in items {
+        item.visit_with(&mut collector);
+    }
+    collector.names
 }
 
 /// Create a PropName — use Ident for valid JS identifiers, Str for others (e.g. "aria-current").

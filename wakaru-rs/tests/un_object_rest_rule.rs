@@ -252,3 +252,22 @@ const { x, ...rest } = props;
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn alias_does_not_collide_with_existing_binding() {
+    // When _replace already exists in scope, the generated alias should not duplicate it
+    let input = r#"
+const _replace = sentinel;
+const rest = function(e, t) {
+    var n = {};
+    for (var r in e) t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+    return n;
+}(props, ["replace"]);
+"#;
+    let result = render(input);
+    // Should use _replace_1 (or similar) to avoid colliding with existing _replace
+    assert!(result.contains("_replace_1") || result.contains("_replace_2"),
+        "should generate a non-colliding alias, got:\n{}", result);
+    assert!(!result.contains("replace: _replace,") && !result.contains("replace: _replace }"),
+        "must not use bare _replace (collides with existing binding):\n{}", result);
+}

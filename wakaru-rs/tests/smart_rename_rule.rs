@@ -431,3 +431,15 @@ function foo({ name, ...r }) {
     let result = apply(input);
     assert!(result.contains("...rest"), "should rename ...r to ...rest in params, got:\n{}", result);
 }
+
+#[test]
+fn rest_pattern_does_not_collide_with_other_params() {
+    // Arrow with existing `rest` param — renaming ...r to ...rest would be a duplicate
+    let input = r#"
+const fn2 = ({ name, ...r }, rest) => r;
+"#;
+    let result = apply(input);
+    // Should not produce duplicate `rest` params
+    assert!(!result.contains("...rest }, rest"), 
+        "must not create duplicate rest param:\n{}", result);
+}
