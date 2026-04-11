@@ -673,15 +673,7 @@ export { E as effects };
 export default ((e = {})=>{
     const e_context = e.context;
     const n = e_context === undefined ? {} : e_context;
-    const r = ((e, t)=>{
-        const n = {};
-        for(const r in e){
-            t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
-        }
-        return n;
-    })(e, [
-        "context"
-    ]);
+    const { context: _context, ...r } = e;
     const { sagaMonitor, logger, onError } = r;
     if (o.q.func(r)) {
         throw new Error("Saga middleware no longer accept Generator functions. Use sagaMiddleware.run instead");
