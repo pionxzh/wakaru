@@ -360,3 +360,38 @@ const x = (()=>{
     let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn no_inline_when_source_mutated_after_def_in_try_finally() {
+    // Save/restore pattern: const r = M; try { mutate M } finally { M = r; }
+    // Must NOT inline because M is mutated inside the try block.
+    let input = r#"
+const M = initial;
+const r = M;
+try {
+    M = newValue;
+} finally {
+    M = r;
+}
+"#;
+    let output = apply_pipeline(input);
+    // r must be preserved — inlining would produce M = M (self-assignment)
+    assert!(output.contains("const r = M") || output.contains("const r = initial"), 
+        "should keep the temp var, got:\n{}", output);
+    assert!(!output.contains("M = M"), "must not produce M = M, got:\n{}", output);
+}
+
+#[test]
+fn inline_when_source_mutated_only_before_def() {
+    // Mutation happens before def, not after — safe to inline.
+    let input = r#"
+let e = first;
+e = second;
+const u = e;
+console.log(u);
+"#;
+    let output = apply(input);
+    // u should be inlined since e is not mutated after const u = e
+    assert!(!output.contains("const u = "), "should inline u, got:\n{}", output);
+    assert!(output.contains("console.log(e)"), "u should be replaced with e, got:\n{}", output);
+}

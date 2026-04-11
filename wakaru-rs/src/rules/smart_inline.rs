@@ -459,13 +459,18 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
         return stmts;
     }
 
-    // Safety: don't inline `const t = X` if X is assigned (mutated) anywhere
-    // in the same block. The temp var exists to capture X's value before mutation.
+    // Safety: don't inline `const t = X` if X is assigned (mutated) between the
+    // definition of t and its single use. The temp var captures X's value at
+    // a specific point; inlining would move the read to a later point where X
+    // may have a different value.
+    //
+    // We only check statements BETWEEN def and use, not the entire block.
+    // Mutations before the def or after the use are irrelevant.
     let to_inline: HashMap<Atom, Box<Expr>> = to_inline
         .into_iter()
-        .filter(|(_, init)| {
+        .filter(|(name, init)| {
             if let Expr::Ident(src_id) = init.as_ref() {
-                !is_ident_mutated_in_stmts(&src_id.sym, &stmts)
+                !is_ident_mutated_after_def(&src_id.sym, name, &stmts)
             } else {
                 true
             }
@@ -497,6 +502,39 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
     }
 
     result
+}
+
+/// Check if `src_sym` is mutated after the definition of `temp_name`.
+/// `temp_name` is the inline candidate (e.g. `u`), `src_sym` is its init value (e.g. `e`).
+///
+/// Only checks stmts AFTER the def — mutations before the def are irrelevant
+/// because the temp var captures the value at its definition point.
+/// Checks all stmts after def (not just up to the use), because the mutation
+/// and use can be inside the same compound statement (try/finally, loops, etc.).
+fn is_ident_mutated_after_def(
+    src_sym: &Atom,
+    temp_name: &Atom,
+    stmts: &[Stmt],
+) -> bool {
+    // Find the index of the definition stmt: `const temp_name = src_sym`
+    let def_idx = stmts.iter().position(|s| {
+        if let Stmt::Decl(Decl::Var(var)) = s {
+            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
+                if let Pat::Ident(bi) = &var.decls[0].name {
+                    return &bi.id.sym == temp_name;
+                }
+            }
+        }
+        false
+    });
+
+    match def_idx {
+        Some(di) => is_ident_mutated_in_stmts(src_sym, &stmts[di + 1..]),
+        None => {
+            // Couldn't find def — fall back to conservative whole-block check
+            is_ident_mutated_in_stmts(src_sym, stmts)
+        }
+    }
 }
 
 /// Check if an identifier is assigned (mutated) anywhere in a list of statements.
