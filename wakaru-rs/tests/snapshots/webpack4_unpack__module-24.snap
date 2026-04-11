@@ -244,7 +244,7 @@ const L = Object.assign || function(e) {
     return e;
 };
 export const NavLink = (e)=>{
-    const { to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, "aria-current": f, ...rest } = e;
+    const { to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, "aria-current": aria_current, ...rest } = e;
     const p = (to === undefined ? "undefined" : typeof to) === "object" ? to.pathname : to;
     const h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
     return <Route path={h} exact={exact} strict={strict} location={location} children={(e)=>{
@@ -260,7 +260,7 @@ export const NavLink = (e)=>{
                 ...style,
                 ...activeStyle
             } : style,
-            "aria-current": o && f || null
+            "aria-current": o && aria_current || null
         }, rest)}/>;
     }}/>;
 };

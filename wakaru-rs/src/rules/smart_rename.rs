@@ -402,9 +402,14 @@ fn collect_obj_pat_renames_from_pat(
                     PropName::Str(s) => s.value.as_str().map(|s| s.to_string()).unwrap_or_default(),
                     _ => continue,
                 };
-                // Skip keys that aren't valid JS identifiers (e.g. "aria-current")
-                // — can't use them as binding names
-                if !is_valid_js_ident(&key_str) {
+                // For non-identifier keys (e.g. "aria-current"), sanitize to
+                // a valid identifier (e.g. "aria_current") instead of skipping.
+                let target_name = if is_valid_js_ident(&key_str) {
+                    key_str.clone()
+                } else {
+                    sanitize_to_ident(&key_str)
+                };
+                if target_name.is_empty() {
                     continue;
                 }
                 let alias = match extract_binding_from_pat(&kv.value) {
@@ -414,10 +419,10 @@ fn collect_obj_pat_renames_from_pat(
                 if alias.0.as_ref().chars().count() > REACT_MINIFIED_THRESHOLD {
                     continue;
                 }
-                if alias.0.as_ref() == key_str {
+                if alias.0.as_ref() == target_name {
                     continue;
                 }
-                let new_name = find_non_conflicting_name(&key_str, used_names);
+                let new_name = find_non_conflicting_name(&target_name, used_names);
                 used_names.insert(new_name.clone());
                 renames.push(BindingRename {
                     old: alias,
@@ -906,6 +911,23 @@ fn pascal_case_first(s: &str) -> String {
     match c.next() {
         None => String::new(),
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+    }
+}
+
+/// Sanitize a non-identifier string into a valid JS identifier.
+/// Replaces hyphens, dots, spaces with underscores. Strips other invalid chars.
+/// Returns empty string if nothing usable remains.
+fn sanitize_to_ident(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| if c == '-' || c == '.' || c == ' ' { '_' } else { c })
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
+        .collect();
+    // Ensure it starts with a valid identifier character
+    if sanitized.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("_{}", sanitized)
+    } else {
+        sanitized
     }
 }
 
