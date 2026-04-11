@@ -4,7 +4,7 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
-use wakaru_rs::{decompile, DecompileOptions};
+use wakaru_rs::{apply_rules_between, apply_rules_until, decompile, DecompileOptions};
 
 #[allow(dead_code)]
 pub fn render_pipeline(source: &str) -> String {
@@ -48,6 +48,46 @@ where
 
         let mut rule = build_rule(unresolved_mark);
         module.visit_mut_with(&mut rule);
+        module.visit_mut_with(&mut fixer(None));
+
+        emit_module(&module, cm)
+    })
+}
+
+/// Run the decompile pipeline up through `stop_after_rule`, then emit.
+/// Rule names match struct names (e.g. "SmartInline", "UnEsm").
+/// Second passes use suffixed names: "UnWebpackInterop2", "UnIife2".
+#[allow(dead_code)]
+pub fn render_pipeline_until(source: &str, stop_after_rule: &str) -> String {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let mut module = parse_module_with_filename(source, "fixture.js", cm.clone());
+
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        apply_rules_until(&mut module, unresolved_mark, stop_after_rule);
+        module.visit_mut_with(&mut fixer(None));
+
+        emit_module(&module, cm)
+    })
+}
+
+/// Run only the rules from `start_from` through `stop_after` (inclusive).
+/// Useful for testing a rule's behavior given realistic pre-processed input
+/// without the full pipeline's downstream effects.
+#[allow(dead_code)]
+pub fn render_pipeline_between(source: &str, start_from: &str, stop_after: &str) -> String {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let mut module = parse_module_with_filename(source, "fixture.js", cm.clone());
+
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        apply_rules_between(&mut module, unresolved_mark, start_from, stop_after);
         module.visit_mut_with(&mut fixer(None));
 
         emit_module(&module, cm)

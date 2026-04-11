@@ -152,77 +152,215 @@ impl Rule for NoopRule {
 }
 
 pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
-    module.visit_mut_with(&mut SimplifySequence::new(unresolved_mark));
-    module.visit_mut_with(&mut FlipComparisons);
-    module.visit_mut_with(&mut UnTypeofStrict);
-    if RemoveVoid::should_run(module) {
+    apply_rules_impl(module, unresolved_mark, None);
+}
+
+/// Run the decompile pipeline, stopping immediately after `stop_after` completes.
+/// Rule names match their struct names (e.g. "SmartInline", "UnEsm").
+/// Second passes are suffixed: "UnWebpackInterop2", "UnIife2".
+pub fn apply_rules_until(module: &mut Module, unresolved_mark: Mark, stop_after: &str) {
+    apply_rules_impl(module, unresolved_mark, Some(stop_after));
+}
+
+/// Returns the ordered list of rule names in the pipeline.
+pub fn rule_names() -> &'static [&'static str] {
+    &[
+        "SimplifySequence",
+        "FlipComparisons",
+        "UnTypeofStrict",
+        "RemoveVoid",
+        "UnminifyBooleans",
+        "UnInfinity",
+        "UnIndirectCall",
+        "UnTypeof",
+        "UnNumericLiteral",
+        "UnBracketNotation",
+        "UnInteropRequireDefault",
+        "UnInteropRequireWildcard",
+        "UnToConsumableArray",
+        "UnObjectSpread",
+        "UnObjectRest",
+        "UnSlicedToArray",
+        "UnClassCallCheck",
+        "UnPossibleConstructorReturn",
+        "UnTypeofPolyfill",
+        "UnTemplateLiteral",
+        "UnUseStrict",
+        "UnWhileLoop",
+        "UnCurlyBraces",
+        "UnTypeConstructor",
+        "UnEsmoduleFlag",
+        "UnAssignmentMerging",
+        "UnBuiltinPrototype",
+        "UnArgumentSpread",
+        "UnArrayConcatSpread",
+        "UnSpreadArrayLiteral",
+        "ObjectAssignSpread",
+        "UnVariableMerging",
+        "UnNullishCoalescing",
+        "UnOptionalChaining",
+        "UnWebpackInterop",
+        "UnIife",
+        "UnConditionals",
+        "UnParameters",
+        "UnEnum",
+        "UnJsx",
+        "UnEs6Class",
+        "UnClassFields",
+        "UnTsHelpers",
+        "UnAsyncAwait",
+        "UnWebpackInterop2",
+        "UnEsm",
+        "UnThenCatch",
+        "UnUndefinedInit",
+        "VarDeclToLetConst",
+        "ObjShorthand",
+        "ObjMethodShorthand",
+        "UnPrototypeClass",
+        "Exponent",
+        "ArgRest",
+        "UnRestArrayCopy",
+        "ArrowFunction",
+        "ArrowReturn",
+        "UnForOf",
+        "UnWebpackDefineGetters",
+        "UnWebpackObjectGetters",
+        "UnImportRename",
+        "UnExportRename",
+        "SmartInline",
+        "UnIife2",
+        "SmartRename",
+        "UnReturn",
+    ]
+}
+
+/// Run only the rules from `start_from` through `stop_after` (inclusive on both ends).
+/// Useful for testing a rule's behavior given realistic intermediate pipeline state.
+pub fn apply_rules_between(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    start_from: &str,
+    stop_after: &str,
+) {
+    apply_rules_range_impl(module, unresolved_mark, Some(start_from), Some(stop_after));
+}
+
+fn apply_rules_impl(module: &mut Module, unresolved_mark: Mark, stop_after: Option<&str>) {
+    apply_rules_range_impl(module, unresolved_mark, None, stop_after);
+}
+
+fn apply_rules_range_impl(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    start_from: Option<&str>,
+    stop_after: Option<&str>,
+) {
+    let mut started = start_from.is_none();
+    macro_rules! run {
+        ($rule:expr, $name:expr) => {
+            if !started {
+                if start_from == Some($name) {
+                    started = true;
+                }
+            }
+            if started {
+                module.visit_mut_with(&mut $rule);
+                if stop_after == Some($name) {
+                    return;
+                }
+            }
+        };
+    }
+
+    // Stage 1: Syntax normalization
+    run!(SimplifySequence::new(unresolved_mark), "SimplifySequence");
+    run!(FlipComparisons, "FlipComparisons");
+    run!(UnTypeofStrict, "UnTypeofStrict");
+    if !started {
+        if start_from == Some("RemoveVoid") {
+            started = true;
+        }
+    }
+    if started && RemoveVoid::should_run(module) {
         module.visit_mut_with(&mut RemoveVoid);
     }
-    module.visit_mut_with(&mut UnminifyBooleans);
-    module.visit_mut_with(&mut UnInfinity);
-    module.visit_mut_with(&mut UnIndirectCall);
-    module.visit_mut_with(&mut UnTypeof);
-    module.visit_mut_with(&mut UnNumericLiteral);
-    module.visit_mut_with(&mut UnBracketNotation);
-    // Babel/transpiler helper unwrapping — run early so downstream rules see clean code.
+    if started && stop_after == Some("RemoveVoid") { return; }
+    run!(UnminifyBooleans, "UnminifyBooleans");
+    run!(UnInfinity, "UnInfinity");
+    run!(UnIndirectCall, "UnIndirectCall");
+    run!(UnTypeof, "UnTypeof");
+    run!(UnNumericLiteral, "UnNumericLiteral");
+    run!(UnBracketNotation, "UnBracketNotation");
+
+    // Stage 2: Transpiler helper unwrapping — run early so downstream rules see clean code.
     // Needs UnIndirectCall + UnBracketNotation first (normalizes (0,x.default)() and ["default"]).
-    module.visit_mut_with(&mut UnInteropRequireDefault);
-    module.visit_mut_with(&mut UnInteropRequireWildcard);
-    module.visit_mut_with(&mut UnToConsumableArray);
-    module.visit_mut_with(&mut UnObjectSpread);
-    module.visit_mut_with(&mut UnObjectRest);
-    module.visit_mut_with(&mut UnSlicedToArray);
-    module.visit_mut_with(&mut UnClassCallCheck);
-    module.visit_mut_with(&mut UnPossibleConstructorReturn);
-    module.visit_mut_with(&mut UnTypeofPolyfill);
-    module.visit_mut_with(&mut UnTemplateLiteral);
-    module.visit_mut_with(&mut UnUseStrict);
-    module.visit_mut_with(&mut UnWhileLoop);
-    module.visit_mut_with(&mut UnCurlyBraces);
-    module.visit_mut_with(&mut UnTypeConstructor);
-    module.visit_mut_with(&mut UnEsmoduleFlag);
-    module.visit_mut_with(&mut UnAssignmentMerging);
-    module.visit_mut_with(&mut UnBuiltinPrototype);
-    module.visit_mut_with(&mut UnArgumentSpread);
-    module.visit_mut_with(&mut UnArrayConcatSpread);
-    module.visit_mut_with(&mut UnSpreadArrayLiteral);
-    module.visit_mut_with(&mut ObjectAssignSpread::new(unresolved_mark));
-    module.visit_mut_with(&mut UnVariableMerging);
-    module.visit_mut_with(&mut UnNullishCoalescing);
-    module.visit_mut_with(&mut UnOptionalChaining);
-    module.visit_mut_with(&mut UnWebpackInterop);
-    module.visit_mut_with(&mut UnIife);
-    module.visit_mut_with(&mut UnConditionals);
-    module.visit_mut_with(&mut UnParameters);
-    module.visit_mut_with(&mut UnEnum);
-    module.visit_mut_with(&mut UnJsx::new(unresolved_mark));
-    module.visit_mut_with(&mut UnEs6Class);
-    module.visit_mut_with(&mut UnClassFields);
-    module.visit_mut_with(&mut UnTsHelpers);
-    module.visit_mut_with(&mut UnAsyncAwait);
-    module.visit_mut_with(&mut UnWebpackInterop);
-    module.visit_mut_with(&mut UnEsm);
-    module.visit_mut_with(&mut UnThenCatch);
-    module.visit_mut_with(&mut UnUndefinedInit);
-    module.visit_mut_with(&mut VarDeclToLetConst);
-    module.visit_mut_with(&mut ObjShorthand);
-    module.visit_mut_with(&mut ObjMethodShorthand);
-    module.visit_mut_with(&mut UnPrototypeClass);
-    module.visit_mut_with(&mut Exponent);
-    module.visit_mut_with(&mut ArgRest);
-    module.visit_mut_with(&mut UnRestArrayCopy);
-    module.visit_mut_with(&mut ArrowFunction);
-    module.visit_mut_with(&mut ArrowReturn);
-    module.visit_mut_with(&mut UnForOf);
-    module.visit_mut_with(&mut UnWebpackDefineGetters::new(unresolved_mark));
-    module.visit_mut_with(&mut UnWebpackObjectGetters);
-    module.visit_mut_with(&mut UnImportRename);
-    module.visit_mut_with(&mut UnExportRename);
-    module.visit_mut_with(&mut SmartInline);
+    run!(UnInteropRequireDefault, "UnInteropRequireDefault");
+    run!(UnInteropRequireWildcard, "UnInteropRequireWildcard");
+    run!(UnToConsumableArray, "UnToConsumableArray");
+    run!(UnObjectSpread, "UnObjectSpread");
+    run!(UnObjectRest, "UnObjectRest");
+    run!(UnSlicedToArray, "UnSlicedToArray");
+    run!(UnClassCallCheck, "UnClassCallCheck");
+    run!(UnPossibleConstructorReturn, "UnPossibleConstructorReturn");
+    run!(UnTypeofPolyfill, "UnTypeofPolyfill");
+
+    // Stage 3: Structural restoration
+    run!(UnTemplateLiteral, "UnTemplateLiteral");
+    run!(UnUseStrict, "UnUseStrict");
+    run!(UnWhileLoop, "UnWhileLoop");
+    run!(UnCurlyBraces, "UnCurlyBraces");
+    run!(UnTypeConstructor, "UnTypeConstructor");
+    run!(UnEsmoduleFlag, "UnEsmoduleFlag");
+    run!(UnAssignmentMerging, "UnAssignmentMerging");
+    run!(UnBuiltinPrototype, "UnBuiltinPrototype");
+    run!(UnArgumentSpread, "UnArgumentSpread");
+    run!(UnArrayConcatSpread, "UnArrayConcatSpread");
+    run!(UnSpreadArrayLiteral, "UnSpreadArrayLiteral");
+    run!(ObjectAssignSpread::new(unresolved_mark), "ObjectAssignSpread");
+    run!(UnVariableMerging, "UnVariableMerging");
+    run!(UnNullishCoalescing, "UnNullishCoalescing");
+    run!(UnOptionalChaining, "UnOptionalChaining");
+
+    // Stage 4: Bundler artifacts
+    run!(UnWebpackInterop, "UnWebpackInterop");
+    run!(UnIife, "UnIife");
+    run!(UnConditionals, "UnConditionals");
+    run!(UnParameters, "UnParameters");
+    run!(UnEnum, "UnEnum");
+
+    // Stage 5: Complex pattern restoration
+    run!(UnJsx::new(unresolved_mark), "UnJsx");
+    run!(UnEs6Class, "UnEs6Class");
+    run!(UnClassFields, "UnClassFields");
+    run!(UnTsHelpers, "UnTsHelpers");
+    run!(UnAsyncAwait, "UnAsyncAwait");
+    run!(UnWebpackInterop, "UnWebpackInterop2");
+    run!(UnEsm, "UnEsm");
+
+    // Stage 6: Modernization
+    run!(UnThenCatch, "UnThenCatch");
+    run!(UnUndefinedInit, "UnUndefinedInit");
+    run!(VarDeclToLetConst, "VarDeclToLetConst");
+    run!(ObjShorthand, "ObjShorthand");
+    run!(ObjMethodShorthand, "ObjMethodShorthand");
+    run!(UnPrototypeClass, "UnPrototypeClass");
+    run!(Exponent, "Exponent");
+    run!(ArgRest, "ArgRest");
+    run!(UnRestArrayCopy, "UnRestArrayCopy");
+    run!(ArrowFunction, "ArrowFunction");
+    run!(ArrowReturn, "ArrowReturn");
+    run!(UnForOf, "UnForOf");
+
+    // Stage 7: Cleanup and renaming
+    run!(UnWebpackDefineGetters::new(unresolved_mark), "UnWebpackDefineGetters");
+    run!(UnWebpackObjectGetters, "UnWebpackObjectGetters");
+    run!(UnImportRename, "UnImportRename");
+    run!(UnExportRename, "UnExportRename");
+    run!(SmartInline, "SmartInline");
     // Second UnIife pass: simplify any (() => expr)() patterns created by SmartInline inlining
-    module.visit_mut_with(&mut UnIife);
-    module.visit_mut_with(&mut SmartRename);
+    run!(UnIife, "UnIife2");
+    run!(SmartRename, "SmartRename");
     // UnReturn runs last: no downstream rule needs tail `return undefined`, and earlier
     // rules (UnConditionals, SmartInline, etc.) can introduce new ones during restructuring.
-    module.visit_mut_with(&mut UnReturn);
+    run!(UnReturn, "UnReturn");
 }

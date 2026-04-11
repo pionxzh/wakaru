@@ -5,6 +5,7 @@ pub mod unpacker;
 pub mod utils;
 
 pub use driver::{decompile, unpack, DecompileOptions};
+pub use rules::{apply_rules_between, apply_rules_until, rule_names};
 pub use sourcemap_rename::{extract_sources, parse_sourcemap};
 pub use unpacker::{unpack_webpack4, UnpackResult, UnpackedModule};
 
