@@ -837,3 +837,114 @@ class Foo extends Base {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+// ============================================================
+// _createClass body-shape detection (minified helper name)
+// ============================================================
+
+use common::render;
+
+#[test]
+fn create_class_minified_helper_with_inline_inherits() {
+    // Babel output where _createClass is minified to `r` and _inherits is inlined.
+    // The outer IIFE has a param `e` but is called with 0 args.
+    let input = r#"
+var r = function() {
+    function e(e, t) {
+        for (var n = 0; n < t.length; n++) {
+            var r = t[n];
+            r.enumerable = r.enumerable || false;
+            r.configurable = true;
+            "value" in r && (r.writable = true);
+            Object.defineProperty(e, r.key, r);
+        }
+    }
+    return function(t, n, r) {
+        return n && e(t.prototype, n), r && e(t, r), t;
+    };
+}();
+var Foo = function(e) {
+    function t() {
+        return function(e, t) {
+            if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+            return !t || "object" != typeof t && "function" != typeof t ? e : t;
+        }(this, (t.__proto__ || Object.getPrototypeOf(t)).apply(this, arguments));
+    }
+    return function(e, t) {
+        if ("function" != typeof t && null !== t) throw new TypeError("Super expression must either be null or a function, not " + typeof t);
+        e.prototype = Object.create(t && t.prototype, { constructor: { value: e, enumerable: false, writable: true, configurable: true } });
+        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
+    }(t, Bar), r(t, [
+        { key: "render", value: function() { return 42; } }
+    ]), t;
+}();
+"#;
+    let result = render(input);
+    assert!(result.contains("class Foo extends Bar"), "should produce class Foo extends Bar, got:\n{}", result);
+    assert!(result.contains("render()"), "should have render method, got:\n{}", result);
+    assert!(!result.contains("Object.defineProperty(e, r.key"), "createClass helper should be removed, got:\n{}", result);
+}
+
+#[test]
+fn create_class_minified_no_super() {
+    let input = r#"
+var r = function() {
+    function e(e, t) {
+        for (var n = 0; n < t.length; n++) {
+            var r = t[n];
+            r.enumerable = r.enumerable || false;
+            r.configurable = true;
+            "value" in r && (r.writable = true);
+            Object.defineProperty(e, r.key, r);
+        }
+    }
+    return function(t, n, r) {
+        return n && e(t.prototype, n), r && e(t, r), t;
+    };
+}();
+var Foo = function() {
+    function t(name) { this.name = name; }
+    r(t, [
+        { key: "greet", value: function() { return "hello " + this.name; } }
+    ]);
+    return t;
+}();
+"#;
+    let result = render(input);
+    assert!(result.contains("class Foo"), "should produce class Foo, got:\n{}", result);
+    assert!(result.contains("greet()"), "should have greet method, got:\n{}", result);
+    assert!(!result.contains("Object.defineProperty"), "createClass helper should be removed, got:\n{}", result);
+}
+
+#[test]
+fn create_class_with_static_methods() {
+    let input = r#"
+var _createClass = function() {
+    function e(e, t) {
+        for (var n = 0; n < t.length; n++) {
+            var r = t[n];
+            r.enumerable = r.enumerable || false;
+            r.configurable = true;
+            "value" in r && (r.writable = true);
+            Object.defineProperty(e, r.key, r);
+        }
+    }
+    return function(t, n, r) {
+        return n && e(t.prototype, n), r && e(t, r), t;
+    };
+}();
+var Foo = function() {
+    function t() {}
+    _createClass(t, [
+        { key: "instance", value: function() { return 1; } }
+    ], [
+        { key: "staticMethod", value: function() { return 2; } }
+    ]);
+    return t;
+}();
+"#;
+    let result = render(input);
+    assert!(result.contains("class Foo"), "should produce class Foo, got:\n{}", result);
+    assert!(result.contains("instance()"), "should have instance method, got:\n{}", result);
+    assert!(result.contains("static staticMethod()"), "should have static method, got:\n{}", result);
+}

@@ -14,42 +14,53 @@ pub struct UnEs6Class;
 
 impl VisitMut for UnEs6Class {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
-        // Pre-scan for inherits helpers at module level BEFORE visiting children,
-        // so nested scopes (function bodies) can also detect custom inherits calls.
+        // Pre-scan for helpers at module level BEFORE visiting children,
+        // so nested scopes (function bodies) can also detect custom helper calls.
         let inherits_helpers = collect_inherits_helpers_from_items(items);
+        let create_class_helpers = collect_create_class_helpers_from_items(items);
 
         let mut inner = UnEs6ClassInner {
             inherits_helpers,
+            create_class_helpers,
         };
         items.visit_mut_with(&mut inner);
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
-        // Non-module context: scan local scope for inherits helpers
+        // Non-module context: scan local scope for helpers
         let inherits_helpers = collect_inherits_helpers_from_stmts(stmts);
+        let create_class_helpers = collect_create_class_helpers_from_stmts(stmts);
 
         let mut inner = UnEs6ClassInner {
             inherits_helpers,
+            create_class_helpers,
         };
         stmts.visit_mut_with(&mut inner);
     }
 }
 
-/// Inner visitor that carries the inherits helpers set through all scopes.
+/// Inner visitor that carries helper name sets through all scopes.
 struct UnEs6ClassInner {
     inherits_helpers: HashSet<Atom>,
+    create_class_helpers: HashSet<Atom>,
 }
 
 impl VisitMut for UnEs6ClassInner {
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
 
+        let mut converted_any = false;
         let old = std::mem::take(stmts);
         for stmt in old {
             match stmt {
                 Stmt::Decl(Decl::Var(ref var_decl)) => {
-                    if let Some(class_decl) = try_iife_to_class(var_decl, &self.inherits_helpers) {
+                    if let Some(class_decl) = try_iife_to_class(
+                        var_decl,
+                        &self.inherits_helpers,
+                        &self.create_class_helpers,
+                    ) {
                         stmts.push(Stmt::Decl(Decl::Class(class_decl)));
+                        converted_any = true;
                     } else {
                         stmts.push(stmt);
                     }
@@ -57,23 +68,37 @@ impl VisitMut for UnEs6ClassInner {
                 other => stmts.push(other),
             }
         }
+        // Remove orphaned _createClass helper definitions
+        if converted_any {
+            remove_orphaned_create_class_helpers(stmts, &self.create_class_helpers);
+        }
     }
 
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         items.visit_mut_children_with(self);
 
+        let mut converted_any = false;
         let old = std::mem::take(items);
         for item in old {
             match item {
                 ModuleItem::Stmt(Stmt::Decl(Decl::Var(ref var_decl))) => {
-                    if let Some(class_decl) = try_iife_to_class(var_decl, &self.inherits_helpers) {
+                    if let Some(class_decl) = try_iife_to_class(
+                        var_decl,
+                        &self.inherits_helpers,
+                        &self.create_class_helpers,
+                    ) {
                         items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
+                        converted_any = true;
                     } else {
                         items.push(item);
                     }
                 }
                 other => items.push(other),
             }
+        }
+        // Remove orphaned _createClass helper definitions
+        if converted_any {
+            remove_orphaned_create_class_helpers_module(items, &self.create_class_helpers);
         }
     }
 }
@@ -153,12 +178,232 @@ fn is_prototype_assign_object_create(stmt: &Stmt, param_name: &Atom) -> bool {
 }
 
 // ============================================================
+// _createClass helper detection (body-shape matching)
+// ============================================================
+
+/// Collect names of variables whose init is a _createClass IIFE from statements.
+fn collect_create_class_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<Atom> {
+    let mut helpers = HashSet::new();
+    for stmt in stmts {
+        if let Stmt::Decl(Decl::Var(var_decl)) = stmt {
+            if let Some(name) = detect_create_class_var(var_decl) {
+                helpers.insert(name);
+            }
+        }
+    }
+    helpers
+}
+
+/// Collect names of variables whose init is a _createClass IIFE from module items.
+fn collect_create_class_helpers_from_items(items: &[ModuleItem]) -> HashSet<Atom> {
+    let mut helpers = HashSet::new();
+    for item in items {
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item {
+            if let Some(name) = detect_create_class_var(var_decl) {
+                helpers.insert(name);
+            }
+        }
+    }
+    helpers
+}
+
+/// If a VarDecl is `var r = (function() { ... createClass body ... })()`, return the name `r`.
+fn detect_create_class_var(var_decl: &VarDecl) -> Option<Atom> {
+    if var_decl.decls.len() != 1 {
+        return None;
+    }
+    let decl = &var_decl.decls[0];
+    let Pat::Ident(bi) = &decl.name else { return None };
+    let init = decl.init.as_ref()?;
+    let call = extract_iife_call(init)?;
+    if !call.args.is_empty() {
+        return None;
+    }
+
+    // Get the IIFE body
+    let Callee::Expr(callee) = &call.callee else { return None };
+    let body_stmts = get_fn_or_arrow_body(strip_parens(callee))?;
+
+    if is_create_class_body(body_stmts) {
+        Some(bi.id.sym.clone())
+    } else {
+        None
+    }
+}
+
+/// Check if statements form the `_createClass` body:
+/// - Contains a function with `Object.defineProperty(e, r.key, r)` in a for loop
+/// - Returns a function that references `.prototype`
+fn is_create_class_body(stmts: &[Stmt]) -> bool {
+    use swc_core::ecma::visit::{Visit, VisitWith};
+
+    // Must have a function declaration and a return statement
+    let has_fn_decl = stmts.iter().any(|s| matches!(s, Stmt::Decl(Decl::Fn(_))));
+    let has_return = stmts.iter().any(|s| matches!(s, Stmt::Return(_)));
+    if !has_fn_decl || !has_return {
+        return false;
+    }
+
+    // The inner function must contain `Object.defineProperty(_, _.key, _)`
+    struct CreateClassDetector {
+        has_define_property_key: bool,
+    }
+    impl Visit for CreateClassDetector {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                // Check for Object.defineProperty
+                if let Expr::Member(m) = callee.as_ref() {
+                    if let Expr::Ident(obj) = m.obj.as_ref() {
+                        if obj.sym.as_ref() == "Object" {
+                            if let MemberProp::Ident(prop) = &m.prop {
+                                if prop.sym.as_ref() == "defineProperty" && call.args.len() >= 3 {
+                                    // Check if second arg accesses `.key`
+                                    let arg1 = strip_parens(&call.args[1].expr);
+                                    if let Expr::Member(m) = arg1 {
+                                        if let MemberProp::Ident(p) = &m.prop {
+                                            if p.sym.as_ref() == "key" {
+                                                self.has_define_property_key = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut detector = CreateClassDetector {
+        has_define_property_key: false,
+    };
+    stmts.visit_with(&mut detector);
+    detector.has_define_property_key
+}
+
+/// Get the body statements from a function or arrow expression.
+fn get_fn_or_arrow_body(expr: &Expr) -> Option<&[Stmt]> {
+    match expr {
+        Expr::Fn(fn_expr) => fn_expr.function.body.as_ref().map(|b| b.stmts.as_slice()),
+        Expr::Arrow(arrow) => match &*arrow.body {
+            BlockStmtOrExpr::BlockStmt(block) => Some(&block.stmts),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+// ============================================================
+// Orphaned helper removal
+// ============================================================
+
+/// Remove var declarations of _createClass helpers that are no longer referenced
+/// after class IIFE conversion. Only removes when there are no remaining references.
+fn remove_orphaned_create_class_helpers(stmts: &mut Vec<Stmt>, helpers: &HashSet<Atom>) {
+    if helpers.is_empty() {
+        return;
+    }
+    // Count remaining references to each helper (excluding the declaration itself)
+    let refs = count_helper_references_stmts(stmts, helpers);
+    stmts.retain(|stmt| {
+        if let Stmt::Decl(Decl::Var(var_decl)) = stmt {
+            if let Some(name) = detect_create_class_var(var_decl) {
+                return refs.get(name.as_ref()).copied().unwrap_or(0) > 0;
+            }
+        }
+        true
+    });
+}
+
+fn remove_orphaned_create_class_helpers_module(items: &mut Vec<ModuleItem>, helpers: &HashSet<Atom>) {
+    if helpers.is_empty() {
+        return;
+    }
+    let refs = count_helper_references_module(items, helpers);
+    items.retain(|item| {
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item {
+            if let Some(name) = detect_create_class_var(var_decl) {
+                return refs.get(name.as_ref()).copied().unwrap_or(0) > 0;
+            }
+        }
+        true
+    });
+}
+
+/// Count references to helper names in statements, excluding VarDecl inits.
+fn count_helper_references_stmts(
+    stmts: &[Stmt],
+    helpers: &HashSet<Atom>,
+) -> std::collections::HashMap<String, usize> {
+    use swc_core::ecma::visit::{Visit, VisitWith};
+
+    let mut counter = HelperRefCounter::new(helpers);
+    for stmt in stmts {
+        // Skip the helper definition itself
+        if let Stmt::Decl(Decl::Var(var_decl)) = stmt {
+            if detect_create_class_var(var_decl).is_some() {
+                continue;
+            }
+        }
+        stmt.visit_with(&mut counter);
+    }
+    counter.counts
+}
+
+fn count_helper_references_module(
+    items: &[ModuleItem],
+    helpers: &HashSet<Atom>,
+) -> std::collections::HashMap<String, usize> {
+    use swc_core::ecma::visit::{Visit, VisitWith};
+
+    let mut counter = HelperRefCounter::new(helpers);
+    for item in items {
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item {
+            if detect_create_class_var(var_decl).is_some() {
+                continue;
+            }
+        }
+        item.visit_with(&mut counter);
+    }
+    counter.counts
+}
+
+struct HelperRefCounter {
+    names: HashSet<String>,
+    counts: std::collections::HashMap<String, usize>,
+}
+
+impl HelperRefCounter {
+    fn new(helpers: &HashSet<Atom>) -> Self {
+        Self {
+            names: helpers.iter().map(|a| a.to_string()).collect(),
+            counts: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl swc_core::ecma::visit::Visit for HelperRefCounter {
+    fn visit_ident(&mut self, id: &Ident) {
+        let name = id.sym.to_string();
+        if self.names.contains(&name) {
+            *self.counts.entry(name).or_insert(0) += 1;
+        }
+    }
+}
+
+// ============================================================
 // Core transformation
 // ============================================================
 
 /// Attempt to convert a `var Foo = (function(...) { ... }(...))` pattern into a ClassDecl.
 /// Returns None if the pattern doesn't match.
-fn try_iife_to_class(var: &VarDecl, inherits_helpers: &HashSet<Atom>) -> Option<ClassDecl> {
+fn try_iife_to_class(
+    var: &VarDecl,
+    inherits_helpers: &HashSet<Atom>,
+    create_class_helpers: &HashSet<Atom>,
+) -> Option<ClassDecl> {
     // Must be a single declarator
     if var.decls.len() != 1 {
         return None;
@@ -200,8 +445,13 @@ fn try_iife_to_class(var: &VarDecl, inherits_helpers: &HashSet<Atom>) -> Option<
     };
 
     // The IIFE takes 0 args (no extends) or 1 arg (extends from _super)
-    let (super_class, inner_param): (Option<Box<Expr>>, Option<Atom>) = match call.args.len() {
-        0 => (None, None),
+    let (mut super_class, inner_param): (Option<Box<Expr>>, Option<Atom>) = match call.args.len() {
+        0 => {
+            // 0-arg IIFE — may still have inheritance via inline _inherits IIFE.
+            // Allow unused params (older Babel output keeps the _super param but
+            // passes the super class directly to the inline _inherits call).
+            (None, None)
+        }
         1 => {
             if param_pats.len() != 1 {
                 return None;
@@ -215,12 +465,26 @@ fn try_iife_to_class(var: &VarDecl, inherits_helpers: &HashSet<Atom>) -> Option<
         _ => return None,
     };
 
-    // 0-arg IIFE must have 0 params as well
+    // 0-arg IIFE with 0 params: no super class (standard case)
+    // 0-arg IIFE with 1+ params: unused super param, check for inline inherits
     if call.args.is_empty() && !param_pats.is_empty() {
-        return None;
+        // Scan body for inline _inherits IIFE to discover the super class.
+        // If found, super_class is extracted from the inline call's second argument.
+        if let Some(discovered_super) = find_inline_inherits_super(body_stmts) {
+            super_class = Some(discovered_super);
+        } else {
+            return None;
+        }
     }
 
-    let class_body = parse_class_body(body_stmts, &class_name.sym, inner_param.as_deref(), inherits_helpers)?;
+    let class_body = parse_class_body(
+        body_stmts,
+        &class_name.sym,
+        inner_param.as_deref(),
+        inherits_helpers,
+        create_class_helpers,
+        super_class.is_some(),
+    )?;
 
     Some(ClassDecl {
         ident: class_name.clone(),
@@ -237,6 +501,51 @@ fn try_iife_to_class(var: &VarDecl, inherits_helpers: &HashSet<Atom>) -> Option<
             implements: vec![],
         }),
     })
+}
+
+/// Scan an IIFE body for an inline `_inherits` IIFE call and extract the super class expression.
+///
+/// Pattern: `((e, t) => { ... Object.create ... })(t, SuperClass)`
+/// where the first arg is the constructor name and the second arg is the super class.
+fn find_inline_inherits_super(stmts: &[Stmt]) -> Option<Box<Expr>> {
+    let inner_ctor_name = find_inner_constructor_name(stmts)?;
+    for stmt in stmts {
+        let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { continue };
+        let Expr::Call(call) = expr.as_ref() else { continue };
+        let Callee::Expr(callee) = &call.callee else { continue };
+
+        if call.args.len() != 2 {
+            continue;
+        }
+
+        // First arg must be the constructor
+        let arg0 = strip_parens(&call.args[0].expr);
+        if !matches!(arg0, Expr::Ident(id) if id.sym.as_ref() == inner_ctor_name) {
+            continue;
+        }
+
+        // Callee must be an inline fn/arrow with Object.create in its body
+        let inner = strip_parens(callee);
+        let body_stmts = match inner {
+            Expr::Arrow(arrow) if arrow.params.len() == 2 => match &*arrow.body {
+                BlockStmtOrExpr::BlockStmt(block) => &block.stmts[..],
+                _ => continue,
+            },
+            Expr::Fn(fn_expr) if fn_expr.function.params.len() == 2 => {
+                match &fn_expr.function.body {
+                    Some(block) => &block.stmts[..],
+                    None => continue,
+                }
+            }
+            _ => continue,
+        };
+
+        if body_stmts.iter().any(|s| stmt_has_object_create(s)) {
+            // This is an inline _inherits IIFE — second arg is the super class
+            return Some(call.args[1].expr.clone());
+        }
+    }
+    None
 }
 
 // ============================================================
@@ -289,6 +598,7 @@ fn strip_parens(expr: &Expr) -> &Expr {
 ///
 /// `class_name` — the outer variable name (e.g. `"Foo"`)
 /// `super_param` — the IIFE parameter name that represents `_super` (if inheriting)
+/// `has_super` — true when a super class was discovered (either from IIFE arg or inline inherits)
 ///
 /// Returns None if any statement is unrecognised (conservative — no false positives).
 fn parse_class_body(
@@ -296,6 +606,8 @@ fn parse_class_body(
     class_name: &str,
     super_param: Option<&str>,
     inherits_helpers: &HashSet<Atom>,
+    create_class_helpers: &HashSet<Atom>,
+    has_super: bool,
 ) -> Option<Vec<ClassMember>> {
     // The first real statement should define the constructor function.
     // We need to identify the inner constructor function name (often mangled, e.g. `t`).
@@ -308,11 +620,10 @@ fn parse_class_body(
     //   `var proto = t.prototype;`
     let mut proto_alias: Option<Atom> = None;
 
-    // We process in two passes:
-    //  1. Locate constructor FnDecl / FnExpr
-    //  2. Walk all other statements for method/property assignments
-    //
-    // Actually we do a single forward pass for simplicity.
+    // Determine if the constructor should have super() rewriting.
+    // When super_param is set, use it. When has_super is true but super_param is None
+    // (inline _inherits pattern), we still need to rewrite super calls.
+    let needs_super_rewrite = super_param.is_some() || has_super;
 
     for stmt in stmts {
         // `return t;` or `return _createClass(t, ...)` or
@@ -327,7 +638,12 @@ fn parse_class_body(
                     }
                     // `return _createClass(t, [{ key: "method", value: fn }], [{ ... }])`
                     Expr::Call(call) => {
-                        if !try_parse_create_class(call, inner_ctor_name, &mut members) {
+                        if !try_parse_create_class(
+                            call,
+                            inner_ctor_name,
+                            &mut members,
+                            create_class_helpers,
+                        ) {
                             return None;
                         }
                     }
@@ -355,10 +671,30 @@ fn parse_class_body(
             }
         }
 
+        // Inline _inherits IIFE with super class baked in (0-arg IIFE pattern):
+        // `((e, t) => { ... Object.create ... })(t, SuperClass)`
+        // When super_param is None but has_super is true, we already extracted the super class
+        // in find_inline_inherits_super — just skip this statement.
+        if super_param.is_none() && has_super {
+            if is_inline_inherits_iife_any_super(stmt, inner_ctor_name) {
+                extends_handled = true;
+                continue;
+            }
+        }
+
         // `function t(...) { ... }` — the constructor
         if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
             if fn_decl.ident.sym.as_ref() == inner_ctor_name {
-                let ctor = build_constructor(&fn_decl.function, super_param)?;
+                // For super rewriting, we need a param name to match against.
+                // When we have super_param, use it directly.
+                // When super was discovered via inline inherits, use a synthetic marker
+                // that triggers the PCR unwrap + super rewriting heuristics.
+                let ctor_super_param = if needs_super_rewrite {
+                    super_param.or(Some("__super__"))
+                } else {
+                    None
+                };
+                let ctor = build_constructor(&fn_decl.function, ctor_super_param)?;
                 // Only add a constructor member if the body is non-empty
                 if !is_empty_constructor(&fn_decl.function) {
                     members.push(ClassMember::Constructor(ctor));
@@ -385,7 +721,7 @@ fn parse_class_body(
 
             // Skip `t.prototype = Object.create(...)` (prototype chain setup for inheritance)
             if is_prototype_object_create(expr, inner_ctor_name) {
-                if super_param.is_some() {
+                if has_super || super_param.is_some() {
                     extends_handled = true;
                 }
                 continue;
@@ -404,9 +740,14 @@ fn parse_class_body(
                 }
             }
 
-            // `_createClass(t, [...], [...])` as a statement (Babel non-loose)
+            // `_createClass(t, [...], [...])` or `r(t, [...])` as a statement (Babel non-loose)
             if let Expr::Call(call) = expr.as_ref() {
-                if try_parse_create_class(call, inner_ctor_name, &mut members) {
+                if try_parse_create_class(
+                    call,
+                    inner_ctor_name,
+                    &mut members,
+                    create_class_helpers,
+                ) {
                     continue;
                 }
             }
@@ -433,13 +774,46 @@ fn parse_class_body(
         return None;
     }
 
-    // If the IIFE takes a _super param but we never saw __extends, reject
-    if super_param.is_some() && !extends_handled {
+    // If there's a super class but we never saw __extends, reject
+    if (super_param.is_some() || has_super) && !extends_handled {
         return None;
     }
 
     let _ = class_name; // used only for documentation purposes
     Some(members)
+}
+
+/// Like `is_inline_inherits_iife` but doesn't check the second argument against a specific param name.
+/// Used when the super class was passed inline (not via IIFE param).
+fn is_inline_inherits_iife_any_super(stmt: &Stmt, ctor_name: &str) -> bool {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return false };
+    let Expr::Call(call) = expr.as_ref() else { return false };
+    let Callee::Expr(callee) = &call.callee else { return false };
+
+    if call.args.len() != 2 {
+        return false;
+    }
+    let arg0 = strip_parens(&call.args[0].expr);
+    if !matches!(arg0, Expr::Ident(id) if id.sym.as_ref() == ctor_name) {
+        return false;
+    }
+
+    let inner = strip_parens(callee);
+    let body_stmts = match inner {
+        Expr::Arrow(arrow) if arrow.params.len() == 2 => match &*arrow.body {
+            BlockStmtOrExpr::BlockStmt(block) => &block.stmts[..],
+            _ => return false,
+        },
+        Expr::Fn(fn_expr) if fn_expr.function.params.len() == 2 => {
+            match &fn_expr.function.body {
+                Some(block) => &block.stmts[..],
+                None => return false,
+            }
+        }
+        _ => return false,
+    };
+
+    body_stmts.iter().any(|s| stmt_has_object_create(s))
 }
 
 // ============================================================
@@ -658,16 +1032,24 @@ fn try_parse_seq_return(
 
 /// Parse `_createClass(t, instanceMethods, staticMethods)` where each methods array
 /// contains `{ key: "name", value: function() {} }` objects.
+/// Matches both the literal name `_createClass` and any name detected via body-shape matching.
 fn try_parse_create_class(
     call: &CallExpr,
     ctor_name: &str,
     members: &mut Vec<ClassMember>,
+    create_class_helpers: &HashSet<Atom>,
 ) -> bool {
-    // Callee must be `_createClass`
+    // Callee must be `_createClass` or a detected helper name
     let Callee::Expr(callee) = &call.callee else {
         return false;
     };
-    if !matches!(strip_parens(callee), Expr::Ident(id) if id.sym.as_ref() == "_createClass") {
+    let is_create_class = match strip_parens(callee) {
+        Expr::Ident(id) => {
+            id.sym.as_ref() == "_createClass" || create_class_helpers.contains(&id.sym)
+        }
+        _ => false,
+    };
+    if !is_create_class {
         return false;
     }
 
@@ -1193,6 +1575,9 @@ fn build_constructor(function: &Function, super_param: Option<&str>) -> Option<C
         body.visit_mut_with(&mut SuperCallRewriter {
             super_param_name: sp,
         });
+        // Rewrite `(ctor.__proto__ || Object.getPrototypeOf(ctor)).apply(this, arguments)` → `super(...arguments)`
+        // This pattern appears in inlined Babel classes where _inherits is baked in.
+        body.visit_mut_with(&mut ProtoGetPrototypeOfSuperRewriter);
         // Simplify `super(...) || this` → `super(...)` — the `|| this` is dead code
         // per ES6 spec (super() always returns `this` in derived constructors)
         body.visit_mut_with(&mut SuperOrThisSimplifier);
@@ -1551,6 +1936,107 @@ impl VisitMut for SuperCallRewriter<'_> {
             }
             _ => {}
         }
+    }
+}
+
+/// Rewrite `(X.__proto__ || Object.getPrototypeOf(X)).apply(this, arguments)` → `super(...arguments)`
+/// and `(X.__proto__ || Object.getPrototypeOf(X)).call(this, ...)` → `super(...)`
+///
+/// This pattern appears in inlined Babel classes where `_inherits` is called inline
+/// rather than via a separate helper function.
+struct ProtoGetPrototypeOfSuperRewriter;
+
+impl VisitMut for ProtoGetPrototypeOfSuperRewriter {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        let Expr::Call(call) = expr else { return };
+        let Callee::Expr(callee) = &call.callee else { return };
+        let Expr::Member(member) = callee.as_ref() else { return };
+        let MemberProp::Ident(prop) = &member.prop else { return };
+
+        // Object must be `(X.__proto__ || Object.getPrototypeOf(X))`
+        if !is_proto_or_get_prototype_of(strip_parens(&member.obj)) {
+            return;
+        }
+
+        match prop.sym.as_ref() {
+            "apply" => {
+                if call.args.len() != 2 {
+                    return;
+                }
+                if !matches!(call.args[0].expr.as_ref(), Expr::This(..)) {
+                    return;
+                }
+                let second = strip_parens(&call.args[1].expr);
+                let is_safe =
+                    matches!(second, Expr::Ident(id) if id.sym.as_ref() == "arguments")
+                        || matches!(second, Expr::Array(_));
+                if !is_safe {
+                    return;
+                }
+                let spread_arg = ExprOrSpread {
+                    spread: Some(DUMMY_SP),
+                    expr: call.args[1].expr.clone(),
+                };
+                *expr = Expr::Call(CallExpr {
+                    span: DUMMY_SP,
+                    ctxt: Default::default(),
+                    callee: Callee::Super(swc_core::ecma::ast::Super { span: DUMMY_SP }),
+                    args: vec![spread_arg],
+                    type_args: None,
+                });
+            }
+            "call" => {
+                if call.args.is_empty() {
+                    return;
+                }
+                if !matches!(call.args[0].expr.as_ref(), Expr::This(..)) {
+                    return;
+                }
+                let super_args: Vec<ExprOrSpread> = call.args[1..].to_vec();
+                *expr = Expr::Call(CallExpr {
+                    span: DUMMY_SP,
+                    ctxt: Default::default(),
+                    callee: Callee::Super(swc_core::ecma::ast::Super { span: DUMMY_SP }),
+                    args: super_args,
+                    type_args: None,
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Check if an expression is `(X.__proto__ || Object.getPrototypeOf(X))`.
+fn is_proto_or_get_prototype_of(expr: &Expr) -> bool {
+    match expr {
+        Expr::Bin(bin) if bin.op == swc_core::ecma::ast::BinaryOp::LogicalOr => {
+            // Left: `X.__proto__`
+            if let Expr::Member(m) = strip_parens(&bin.left) {
+                if let MemberProp::Ident(p) = &m.prop {
+                    if p.sym.as_ref() == "__proto__" {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        Expr::Call(call) => {
+            // `Object.getPrototypeOf(X)`
+            if let Callee::Expr(callee) = &call.callee {
+                if let Expr::Member(m) = callee.as_ref() {
+                    if let (Expr::Ident(obj), MemberProp::Ident(prop)) =
+                        (m.obj.as_ref(), &m.prop)
+                    {
+                        return obj.sym.as_ref() == "Object"
+                            && prop.sym.as_ref() == "getPrototypeOf";
+                    }
+                }
+            }
+            false
+        }
+        _ => false,
     }
 }
 

@@ -4,68 +4,15 @@ expression: code
 ---
 import o from "./module-3.js";
 import "./module-28.js";
-const r = (()=>{
-    function e(e, t) {
-        for(let n = 0; n < t.length; n++){
-            const r = t[n];
-            r.enumerable = r.enumerable || false;
-            r.configurable = true;
-            if ("value" in r) {
-                r.writable = true;
-            }
-            Object.defineProperty(e, r.key, r);
-        }
+class i extends o.Component {
+    constructor(){
+        super(...arguments);
     }
-    return (t, n, r)=>{
-        if (n) {
-            e(t.prototype, n);
-        }
-        if (r) {
-            e(t, r);
-        }
-        return t;
-    };
-})();
-const i = ((e)=>{
-    function t() {
-        return ((e, t)=>{
-            if (!e) {
-                throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-            }
-            if (!t || typeof t !== "object" && typeof t !== "function") {
-                return e;
-            }
-            return t;
-        })(this, (t.__proto__ || Object.getPrototypeOf(t)).apply(this, arguments));
+    componentDidMount() {
+        this.props.fetchData();
     }
-    ((e, t)=>{
-        if (typeof t !== "function" && t !== null) {
-            throw new TypeError(`Super expression must either be null or a function, not ${typeof t}`);
-        }
-        e.prototype = Object.create(t && t.prototype, {
-            constructor: {
-                value: e,
-                enumerable: false,
-                writable: true,
-                configurable: true
-            }
-        });
-        t && (Object.setPrototypeOf ? Object.setPrototypeOf(e, t) : e.__proto__ = t);
-    })(t, o.Component);
-    r(t, [
-        {
-            key: "componentDidMount",
-            value () {
-                this.props.fetchData();
-            }
-        },
-        {
-            key: "render",
-            value () {
-                return <div><h1>Front page</h1></div>;
-            }
-        }
-    ]);
-    return t;
-})();
+    render() {
+        return <div><h1>Front page</h1></div>;
+    }
+}
 export default i;
