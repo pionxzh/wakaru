@@ -82,14 +82,14 @@ export class Link extends i.Component {
     }
     render() {
         const props = this.props;
-        const { replace: _replace, to, innerRef, ...r } = props;
+        const { replace: _replace, to, innerRef, ...rest } = props;
         b(this.context.router, "You should not use <Link> outside a <Router>");
         b(t !== undefined, 'You must specify the "to" property');
         const history = this.context.router.history;
         const i = typeof t === "string" ? c.createLocation(t, null, null, history.location) : t;
         const u = history.createHref(i);
         return i.createElement("a", {
-            ...r,
+            ...rest,
             onClick: this.handleClick,
             href: u,
             ref: n
@@ -253,7 +253,7 @@ const L = Object.assign || function(e) {
     return e;
 };
 export const NavLink = (e)=>{
-    const { to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, aria-current, ...d } = e;
+    const { to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, aria-current, ...rest } = e;
     const p = (t === undefined ? "undefined" : typeof t) === "object" ? t.pathname : t;
     const h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
     return i.createElement(Route, {
@@ -275,7 +275,7 @@ export const NavLink = (e)=>{
                     ...l
                 } : c,
                 "aria-current": o && f || null
-            }, d));
+            }, rest));
         }
     });
 };
@@ -507,7 +507,7 @@ export class StaticRouter extends i.Component {
     }
     render() {
         const props = this.props;
-        const { basename, context: _context, location, ...r } = props;
+        const { basename, context: _context, location, ...rest } = props;
         const o = {
             createHref: this.createHref,
             action: "POP",
@@ -533,7 +533,7 @@ export class StaticRouter extends i.Component {
             block: this.handleBlock
         };
         return i.createElement(s.a, {
-            ...r,
+            ...rest,
             history: o
         });
     }
@@ -605,11 +605,11 @@ Switch.propTypes = {
 export const matchPath = P.a;
 export const withRouter = (e)=>{
     const t = (t)=>{
-        const { wrappedComponentRef, ...r } = t;
+        const { wrappedComponentRef, ...rest } = t;
         return i.createElement(Route, {
             children (t) {
                 return i.createElement(e, {
-                    ...r,
+                    ...rest,
                     ...t,
                     ref: n
                 });

@@ -419,7 +419,25 @@ fn collect_obj_pat_renames_from_pat(
                     new: new_name.as_str().into(),
                 });
             }
-            ObjectPatProp::Assign(_) | ObjectPatProp::Rest(_) => {}
+            ObjectPatProp::Rest(rest_pat) => {
+                // `...d` where `d` is short → rename to `rest`
+                let Some(alias) = extract_binding_from_pat(&rest_pat.arg) else {
+                    continue;
+                };
+                if alias.0.as_ref().chars().count() > REACT_MINIFIED_THRESHOLD {
+                    continue;
+                }
+                let new_name = find_non_conflicting_name("rest", used_names);
+                if new_name == alias.0.as_ref() {
+                    continue;
+                }
+                used_names.insert(new_name.clone());
+                renames.push(BindingRename {
+                    old: alias,
+                    new: new_name.as_str().into(),
+                });
+            }
+            ObjectPatProp::Assign(_) => {}
         }
     }
 }

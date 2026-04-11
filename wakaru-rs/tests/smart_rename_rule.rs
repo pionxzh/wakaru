@@ -383,3 +383,51 @@ function init() {
     let result = apply(input);
     assert!(result.contains("SYMBOL_REACT_ELEMENT"), "should rename inside function scope, got:\n{}", result);
 }
+
+// ============================================================
+// Rest pattern renames
+// ============================================================
+
+#[test]
+fn rest_pattern_renamed_to_rest() {
+    let input = r#"
+const { foo, bar, ...d } = obj;
+console.log(d);
+"#;
+    let result = apply(input);
+    assert!(result.contains("...rest"), "should rename ...d to ...rest, got:\n{}", result);
+    assert!(result.contains("console.log(rest)"), "should rename reference, got:\n{}", result);
+}
+
+#[test]
+fn rest_pattern_skips_long_names() {
+    let input = r#"
+const { foo, ...remaining } = obj;
+console.log(remaining);
+"#;
+    let result = apply(input);
+    assert!(result.contains("...remaining"), "should keep long name, got:\n{}", result);
+}
+
+#[test]
+fn rest_pattern_avoids_collision() {
+    let input = r#"
+const rest = "taken";
+const { foo, ...d } = obj;
+console.log(rest, d);
+"#;
+    let result = apply(input);
+    // `rest` is taken, so it should use `rest_1` or similar
+    assert!(!result.contains("...d "), "should rename ...d, got:\n{}", result);
+}
+
+#[test]
+fn rest_pattern_in_function_params() {
+    let input = r#"
+function foo({ name, ...r }) {
+    return r;
+}
+"#;
+    let result = apply(input);
+    assert!(result.contains("...rest"), "should rename ...r to ...rest in params, got:\n{}", result);
+}

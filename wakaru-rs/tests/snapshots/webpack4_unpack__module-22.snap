@@ -673,9 +673,9 @@ export { E as effects };
 export default ((e = {})=>{
     const e_context = e.context;
     const n = e_context === undefined ? {} : e_context;
-    const { context: _context, ...r } = e;
-    const { sagaMonitor, logger, onError } = r;
-    if (o.q.func(r)) {
+    const { context: _context, ...rest } = e;
+    const { sagaMonitor, logger, onError } = rest;
+    if (o.q.func(rest)) {
         throw new Error("Saga middleware no longer accept Generator functions. Use sagaMiddleware.run instead");
     }
     if (logger && !o.q.func(logger)) {
@@ -684,13 +684,13 @@ export default ((e = {})=>{
     if (onError && !o.q.func(onError)) {
         throw new Error("`options.onError` passed to the Saga middleware is not a function!");
     }
-    if (r.emitter && !o.q.func(r.emitter)) {
+    if (rest.emitter && !o.q.func(rest.emitter)) {
         throw new Error("`options.emitter` passed to the Saga middleware is not a function!");
     }
     function c(e) {
         const { getState, dispatch } = e;
         const f = i.c();
-        f.emit = (r.emitter || o.o)(f.emit);
+        f.emit = (rest.emitter || o.o)(f.emit);
         c.run = runSaga.bind(null, {
             context: n,
             subscribe: f.subscribe,
