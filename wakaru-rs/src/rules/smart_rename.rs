@@ -402,6 +402,11 @@ fn collect_obj_pat_renames_from_pat(
                     PropName::Str(s) => s.value.as_str().map(|s| s.to_string()).unwrap_or_default(),
                     _ => continue,
                 };
+                // Skip keys that aren't valid JS identifiers (e.g. "aria-current")
+                // — can't use them as binding names
+                if !is_valid_js_ident(&key_str) {
+                    continue;
+                }
                 let alias = match extract_binding_from_pat(&kv.value) {
                     Some(id) => id,
                     None => continue,
@@ -902,6 +907,22 @@ fn pascal_case_first(s: &str) -> String {
         None => String::new(),
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
     }
+}
+
+/// Check if a string has valid JS identifier syntax (letters, digits, _, $).
+/// Does NOT reject reserved keywords — `find_non_conflicting_name` handles those
+/// with a `_` prefix. This only rejects strings that can never be identifiers
+/// (e.g. "aria-current", "data.key", "123abc").
+fn is_valid_js_ident(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let mut chars = name.chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_alphabetic() && first != '_' && first != '$' {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }
 
 /// Convert a Symbol.for key like "react.element" to UPPER_SNAKE_CASE: "REACT_ELEMENT".

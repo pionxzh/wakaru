@@ -21,10 +21,7 @@ export class BrowserRouter extends i.Component {
         r(!this.props.history, "<BrowserRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { BrowserRouter as Router }`.");
     }
     render() {
-        return i.createElement(Router, {
-            history: this.history,
-            children: this.props.children
-        });
+        return <Router history={this.history} children={this.props.children}/>;
     }
 }
 BrowserRouter.propTypes = {
@@ -43,10 +40,7 @@ export class HashRouter extends i.Component {
         r(!this.props.history, "<HashRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { HashRouter as Router }`.");
     }
     render() {
-        return i.createElement(Router, {
-            history: this.history,
-            children: this.props.children
-        });
+        return <Router history={this.history} children={this.props.children}/>;
     }
 }
 HashRouter.propTypes = {
@@ -88,12 +82,7 @@ export class Link extends i.Component {
         const history = this.context.router.history;
         const i = typeof to === "string" ? c.createLocation(to, null, null, history.location) : to;
         const u = history.createHref(i);
-        return i.createElement("a", {
-            ...rest,
-            onClick: this.handleClick,
-            href: u,
-            ref: innerRef
-        });
+        return <a {...rest} onClick={this.handleClick} href={u} ref={innerRef}/>;
     }
 }
 Link.propTypes = {
@@ -130,10 +119,7 @@ export class MemoryRouter extends i.Component {
         r(!this.props.history, "<MemoryRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { MemoryRouter as Router }`.");
     }
     render() {
-        return i.createElement(s.a, {
-            history: this.history,
-            children: this.props.children
-        });
+        return <s.a history={this.history} children={this.props.children}/>;
     }
 }
 MemoryRouter.propTypes = {
@@ -144,7 +130,7 @@ MemoryRouter.propTypes = {
     children: u.node
 };
 const R = (e)=>i.Children.count(e) === 0;
-class N extends i.Component {
+export class Route extends i.Component {
     constructor(...i){
         super(...i);
         this.state = {
@@ -171,10 +157,10 @@ class N extends i.Component {
         const t_route = t.route;
         const pathname = (location || t_route.location).pathname;
         return P.a(pathname, {
-            path: path,
-            strict: strict,
-            exact: exact,
-            sensitive: sensitive
+            path,
+            strict,
+            exact,
+            sensitive
         }, t_route.match);
     }
     componentWillMount() {
@@ -192,20 +178,26 @@ class N extends i.Component {
     render() {
         const match = this.state.match;
         const props = this.props;
-        const { children, component, render } = props;
+        const { children, Component, render } = props;
         const router = this.context.router;
         const { history, route, staticContext } = router;
         const s = {
-            match: match,
+            match,
             location: this.props.location || route.location,
-            history: history,
-            staticContext: staticContext
+            history,
+            staticContext
         };
-        if (component) {
-            return match ? i.createElement(component, s) : null;
+        if (Component) {
+            if (match) {
+                return <Component {...s}/>;
+            }
+            return null;
         }
         if (render) {
-            return match ? render(s) : null;
+            if (match) {
+                return render(s);
+            }
+            return null;
         }
         if (typeof children === "function") {
             return children(s);
@@ -216,7 +208,7 @@ class N extends i.Component {
         return null;
     }
 }
-N.propTypes = {
+Route.propTypes = {
     computedMatch: u.object,
     path: u.string,
     exact: u.bool,
@@ -230,17 +222,16 @@ N.propTypes = {
     ]),
     location: u.object
 };
-N.contextTypes = {
+Route.contextTypes = {
     router: u.shape({
         history: u.object.isRequired,
         route: u.object.isRequired,
         staticContext: u.object
     })
 };
-N.childContextTypes = {
+Route.childContextTypes = {
     router: u.object.isRequired
 };
-export const Route = N;
 const L = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
@@ -253,31 +244,25 @@ const L = Object.assign || function(e) {
     return e;
 };
 export const NavLink = (e)=>{
-    const { to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, aria-current, ...rest } = e;
+    const { to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, "aria-current": f, ...rest } = e;
     const p = (to === undefined ? "undefined" : typeof to) === "object" ? to.pathname : to;
     const h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
-    return i.createElement(Route, {
-        path: h,
-        exact: exact,
-        strict: strict,
-        location: location,
-        children (e) {
-            const { location, match } = e;
-            const o = !!(isActive ? isActive(match, location) : match);
-            return i.createElement(Link, L({
-                to: to,
-                className: o ? [
-                    className,
-                    activeClassName
-                ].filter((e)=>e).join(" ") : className,
-                style: o ? {
-                    ...style,
-                    ...activeStyle
-                } : style,
-                "aria-current": o && aria-current || null
-            }, rest));
-        }
-    });
+    return <Route path={h} exact={exact} strict={strict} location={location} children={(e)=>{
+        const { location, match } = e;
+        const o = !!(isActive ? isActive(match, location) : match);
+        return <Link {...L({
+            to,
+            className: o ? [
+                className,
+                activeClassName
+            ].filter((e)=>e).join(" ") : className,
+            style: o ? {
+                ...style,
+                ...activeStyle
+            } : style,
+            "aria-current": o && f || null
+        }, rest)}/>;
+    }}/>;
 };
 NavLink.propTypes = {
     to: Link.propTypes.to,
@@ -326,7 +311,9 @@ export class Prompt extends i.Component {
     }
     componentWillReceiveProps(e) {
         if (e.when) {
-            this.props.when && this.props.message === e.message || this.enable(e.message);
+            if (!(this.props.when && this.props.message === e.message)) {
+                this.enable(e.message);
+            }
         } else {
             this.disable();
         }
@@ -407,7 +394,10 @@ export class Redirect extends i.Component {
     computeTo(e) {
         const { computedMatch, to } = e;
         if (computedMatch) {
-            return typeof to === "string" ? generatePath(to, computedMatch.params) : {
+            if (typeof to === "string") {
+                return generatePath(to, computedMatch.params);
+            }
+            return {
                 ...to,
                 pathname: generatePath(to.pathname, computedMatch.params)
             };
@@ -511,11 +501,11 @@ export class StaticRouter extends i.Component {
         const o = {
             createHref: this.createHref,
             action: "POP",
-            location: ((e, t)=>{
-                if (!e) {
+            location: ((basename, t)=>{
+                if (!basename) {
                     return t;
                 }
-                const n = X(e);
+                const n = X(basename);
                 if (t.pathname.indexOf(n) !== 0) {
                     return t;
                 }
@@ -532,10 +522,7 @@ export class StaticRouter extends i.Component {
             listen: this.handleListen,
             block: this.handleBlock
         };
-        return i.createElement(s.a, {
-            ...rest,
-            history: o
-        });
+        return <s.a {...rest} history={o}/>;
     }
 }
 StaticRouter.propTypes = {
@@ -606,15 +593,11 @@ export const matchPath = P.a;
 export const withRouter = (e)=>{
     const t = (t)=>{
         const { wrappedComponentRef, ...rest } = t;
-        return i.createElement(Route, {
-            children (t) {
-                return i.createElement(e, {
-                    ...rest,
-                    ...t,
-                    ref: wrappedComponentRef
-                });
-            }
-        });
+        return <Route children={(t)=>i.createElement(e, {
+                ...rest,
+                ...t,
+                ref: wrappedComponentRef
+            })}/>;
     };
     t.displayName = `withRouter(${e.displayName || e.name})`;
     t.WrappedComponent = e;

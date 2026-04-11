@@ -451,8 +451,8 @@ fn build_rest_destructuring(
     let mut props: Vec<ObjectPatProp> = Vec::new();
     for key in excluded_keys {
         if let Some((binding, ctxt)) = key_to_binding.get(key) {
-            if *binding == *key {
-                // Shorthand: { key } — preserve original SyntaxContext
+            if *binding == *key && is_valid_ident(key) {
+                // Shorthand: { key } — only when key is a valid identifier
                 props.push(ObjectPatProp::Assign(AssignPatProp {
                     span: DUMMY_SP,
                     key: BindingIdent {
@@ -464,10 +464,7 @@ fn build_rest_destructuring(
             } else {
                 // Aliased: { key: binding } — preserve original SyntaxContext
                 props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
-                    key: PropName::Ident(swc_core::ecma::ast::IdentName::new(
-                        key.clone(),
-                        DUMMY_SP,
-                    )),
+                    key: make_prop_name(key),
                     value: Box::new(Pat::Ident(BindingIdent {
                         id: Ident::new(binding.clone(), DUMMY_SP, *ctxt),
                         type_ann: None,
@@ -478,10 +475,7 @@ fn build_rest_destructuring(
             // Not in preceding — use `_key` alias to avoid colliding with existing bindings
             let alias = Atom::from(format!("_{}", key));
             props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
-                key: PropName::Ident(swc_core::ecma::ast::IdentName::new(
-                    key.clone(),
-                    DUMMY_SP,
-                )),
+                key: make_prop_name(key),
                 value: Box::new(Pat::Ident(BindingIdent {
                     id: Ident::new(alias, DUMMY_SP, Default::default()),
                     type_ann: None,
@@ -573,4 +567,30 @@ fn strip_parens(expr: &Expr) -> &Expr {
         Expr::Paren(p) => strip_parens(&p.expr),
         _ => expr,
     }
+}
+
+/// Create a PropName — use Ident for valid JS identifiers, Str for others (e.g. "aria-current").
+fn make_prop_name(name: &Atom) -> PropName {
+    if is_valid_ident(name) {
+        PropName::Ident(swc_core::ecma::ast::IdentName::new(name.clone(), DUMMY_SP))
+    } else {
+        PropName::Str(swc_core::ecma::ast::Str {
+            span: DUMMY_SP,
+            value: name.as_str().into(),
+            raw: None,
+        })
+    }
+}
+
+/// Check if a string is a valid JS identifier (can be used unquoted as a property name).
+fn is_valid_ident(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let mut chars = name.chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_alphabetic() && first != '_' && first != '$' {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }
