@@ -695,8 +695,9 @@ fn parse_class_body(
                     None
                 };
                 let ctor = build_constructor(&fn_decl.function, ctor_super_param)?;
-                // Only add a constructor member if the body is non-empty
-                if !is_empty_constructor(&fn_decl.function) {
+                // Omit the constructor if it's empty or is the default derived
+                // constructor: `constructor() { super(...arguments); }`
+                if !is_default_constructor(&ctor) {
                     members.push(ClassMember::Constructor(ctor));
                 }
                 continue;
@@ -2215,11 +2216,58 @@ impl VisitMut for AliasToThisRewriter<'_> {
     fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
 }
 
-fn is_empty_constructor(function: &Function) -> bool {
-    match &function.body {
-        None => true,
-        Some(BlockStmt { stmts, .. }) => stmts.is_empty(),
+/// Returns true if the constructor is empty or is the default derived constructor
+/// (`constructor() { super(...arguments); }` or `constructor(...args) { super(...args); }`).
+/// These are equivalent to omitting the constructor entirely.
+fn is_default_constructor(ctor: &Constructor) -> bool {
+    let Some(body) = &ctor.body else { return true };
+    if body.stmts.is_empty() {
+        return true;
     }
+    // Must have no parameters (Babel default ctor pattern uses `arguments`)
+    // OR a single rest parameter that matches the super call's spread arg
+    if body.stmts.len() != 1 {
+        return false;
+    }
+    let Stmt::Expr(ExprStmt { expr, .. }) = &body.stmts[0] else {
+        return false;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return false;
+    };
+    // Must be super(...)
+    if !matches!(&call.callee, Callee::Super(_)) {
+        return false;
+    }
+    // super() with no params — default for parameterless constructors
+    if call.args.is_empty() && ctor.params.is_empty() {
+        return true;
+    }
+    // super(...arguments) with no declared params
+    if call.args.len() == 1 && ctor.params.is_empty() {
+        let arg = &call.args[0];
+        if arg.spread.is_some() {
+            if let Expr::Ident(id) = arg.expr.as_ref() {
+                return id.sym.as_ref() == "arguments";
+            }
+        }
+    }
+    // constructor(...args) { super(...args); } — rest param forwarded to super
+    if call.args.len() == 1 && ctor.params.len() == 1 {
+        let arg = &call.args[0];
+        if arg.spread.is_some() {
+            if let Expr::Ident(arg_id) = arg.expr.as_ref() {
+                if let ParamOrTsParamProp::Param(param) = &ctor.params[0] {
+                    if let Pat::Rest(rest) = &param.pat {
+                        if let Pat::Ident(bind) = rest.arg.as_ref() {
+                            return bind.id.sym == arg_id.sym;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 fn build_class_method(

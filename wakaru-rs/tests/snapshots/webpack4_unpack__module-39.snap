@@ -7,9 +7,6 @@ import i from "./module-11.js";
 import a from "./module-24.js";
 import u from "./module-38.js";
 class l extends o.Component {
-    constructor(){
-        super(...arguments);
-    }
     render() {
         console.log(this.props);
         return <div>{u}</div>;

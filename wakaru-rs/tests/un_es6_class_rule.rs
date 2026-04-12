@@ -262,10 +262,9 @@ var Child = (function(_super) {
     return t;
 }(Parent));
 "#;
-    // _super.apply(this, arguments) is rewritten to super(...arguments)
+    // _super.apply(this, arguments) → super(...arguments) → default ctor removed
     let expected = r#"
 class Child extends Parent {
-    constructor() { super(...arguments); }
     doSomething() { return true; }
 }
 "#;
@@ -477,9 +476,6 @@ var Foo = (function(e) {
 "#;
     let expected = r#"
 class Foo extends Base {
-    constructor(){
-        super();
-    }
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
@@ -581,9 +577,6 @@ var Foo = (function(e) {
 "#;
     let expected = r#"
 class Foo extends Base {
-    constructor(){
-        super(...arguments);
-    }
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
@@ -613,9 +606,6 @@ var Foo = (function(e) {
 "#;
     let expected = r#"
 class Foo extends Base {
-    constructor(){
-        super(...arguments);
-    }
     render() { return null; }
 }
 "#;
@@ -646,9 +636,6 @@ var Foo = ((e) => {
 "#;
     let expected = r#"
 class Foo extends Base {
-    constructor(){
-        super(...arguments);
-    }
     enable(e) { this.x = e; }
 }
 "#;
@@ -830,9 +817,6 @@ var Foo = (function(e) {
 "#;
     let expected = r#"
 class Foo extends Base {
-    constructor(){
-        super(...arguments);
-    }
 }
 "#;
     assert_eq_normalized(&apply(input), expected);

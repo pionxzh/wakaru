@@ -288,9 +288,6 @@ NavLink.defaultProps = {
     "aria-current": "page"
 };
 export class Prompt extends i.Component {
-    constructor(){
-        super(...arguments);
-    }
     enable(e) {
         if (this.unblock) {
             this.unblock();
@@ -365,9 +362,6 @@ export const generatePath = (e = "/", t = {})=>{
     });
 };
 export class Redirect extends i.Component {
-    constructor(){
-        super(...arguments);
-    }
     isStatic() {
         return this.context.router && this.context.router.staticContext;
     }
@@ -541,9 +535,6 @@ StaticRouter.childContextTypes = {
     router: u.object.isRequired
 };
 export class Switch extends i.Component {
-    constructor(){
-        super(...arguments);
-    }
     componentWillMount() {
         b(this.context.router, "You should not use <Switch> outside a <Router>");
     }
