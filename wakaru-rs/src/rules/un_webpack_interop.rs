@@ -8,6 +8,32 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+/// Removes webpack's interop getter wrappers and replaces their usage with the
+/// underlying require binding.
+///
+/// Webpack emits a getter function that checks `__esModule` and returns either
+/// `mod.default` (for ES modules) or `mod` (for plain CJS). The getter is
+/// typically a zero-parameter arrow:
+///
+/// ```js
+/// var _lib = require("./lib");
+/// var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
+/// // block form:
+/// var _lib3 = () => { if (_lib && _lib.__esModule) { return _lib.default; } return _lib; };
+/// ```
+///
+/// Call sites use either `_lib2()` (invoke the getter) or `_lib2.a` (webpack's
+/// `.a` shorthand for the same thing).
+///
+/// This rule:
+/// 1. Identifies require bindings (`var x = require(…)`)
+/// 2. Finds getter declarations whose body matches the interop pattern
+/// 3. Verifies every usage of the getter is a safe form (`getter()` or `getter.a`)
+/// 4. Replaces each safe usage with the underlying require binding
+/// 5. Removes the now-dead getter declaration
+///
+/// Runs twice in the pipeline (as `UnWebpackInterop` and `UnWebpackInterop2`)
+/// to catch getters that only become visible after other rules simplify the AST.
 pub struct UnWebpackInterop;
 
 type BindingKey = (Atom, SyntaxContext);
