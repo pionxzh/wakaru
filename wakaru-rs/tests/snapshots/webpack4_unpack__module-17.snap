@@ -2,57 +2,41 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import r from "./module-2.js";
-import { b, d, f } from "./module-10.js";
+import { a, b, c, e, f, g, h, j, k, l, m, n, o as o_2, p, q, r, s, t } from "./module-2.js";
+import o from "./module-10.js";
 export function takeEvery(e, t) {
     for(let n = arguments.length, i = Array(n > 2 ? n - 2 : 0), a = 2; a < n; a++){
         i[a - 2] = arguments[a];
     }
-    return r.k.apply(undefined, [
-        b,
-        e,
-        t,
-        ...i
-    ]);
+    return k(o.b, e, t, ...i);
 }
 export function takeLatest(e, t) {
     for(let n = arguments.length, i = Array(n > 2 ? n - 2 : 0), a = 2; a < n; a++){
         i[a - 2] = arguments[a];
     }
-    return r.k.apply(undefined, [
-        d,
-        e,
-        t,
-        ...i
-    ]);
+    return k(o.d, e, t, ...i);
 }
 export function throttle(e, t, n) {
     for(let i = arguments.length, a = Array(i > 3 ? i - 3 : 0), u = 3; u < i; u++){
         a[u - 3] = arguments[u];
     }
-    return r.k.apply(undefined, [
-        f,
-        e,
-        t,
-        n,
-        ...a
-    ]);
+    return k(o.f, e, t, n, ...a);
 }
-export const take = r.s;
-export const takem = r.t;
-export const put = r.n;
-export const all = r.b;
-export const race = r.o;
-export const call = r.e;
-export const apply = r.c;
-export const cps = r.h;
-export const fork = r.k;
-export const spawn = r.r;
-export const join = r.m;
-export const cancel = r.f;
-export const select = r.p;
-export const actionChannel = r.a;
-export const cancelled = r.g;
-export const flush = r.j;
-export const getContext = r.l;
-export const setContext = r.q;
+export const take = s;
+export const takem = t;
+export const put = n;
+export const all = b;
+export const race = o_2;
+export const call = e;
+export const apply = c;
+export const cps = h;
+export const fork = k;
+export const spawn = r;
+export const join = m;
+export const cancel = f;
+export const select = p;
+export const actionChannel = a;
+export const cancelled = g;
+export const flush = j;
+export const getContext = l;
+export const setContext = q;

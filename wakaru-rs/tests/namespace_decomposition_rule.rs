@@ -227,24 +227,43 @@ z();
 // ── Regression: nested shadowing prevents decomposition ────────────
 
 #[test]
-fn inner_scope_shadow_prevents_decomposition() {
+fn inner_scope_shadow_uses_alias() {
     let target_facts = facts_for(r#"export function foo() {}"#);
     let mut facts = ModuleFactsMap::new();
     facts.insert("./mod.js", target_facts);
 
-    // `foo` is a parameter in an inner function — decomposing r.foo → foo
-    // would collide with the parameter, producing `foo + foo` instead of
-    // `r.foo + foo`.
+    // `foo` is a parameter in an inner function — decomposition aliases
+    // the import to avoid collision: `import { foo as foo_1 } from "./mod"`
     let input = r#"
 import r from "./mod.js";
 function g(foo) { return r.foo + foo; }
 "#;
-    let output = run_decomp(input, &facts);
-    assert!(normalize(&output).contains("import r from"), "should keep default import when inner scope shadows, got: {output}");
+    let expected = r#"
+import { foo as foo_1 } from "./mod.js";
+function g(foo) { return foo_1 + foo; }
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
 }
 
 #[test]
-fn catch_param_shadow_prevents_decomposition() {
+fn var_decl_in_function_body_shadow_uses_alias() {
+    let target_facts = facts_for(r#"export function a() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import h from "./mod.js";
+function f(t) { var a = t; return h.a(a); }
+"#;
+    let expected = r#"
+import { a as a_1 } from "./mod.js";
+function f(t) { var a = t; return a_1(a); }
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+#[test]
+fn catch_param_shadow_uses_alias() {
     let target_facts = facts_for(r#"export function err() {}"#);
     let mut facts = ModuleFactsMap::new();
     facts.insert("./mod.js", target_facts);
@@ -253,12 +272,15 @@ fn catch_param_shadow_prevents_decomposition() {
 import r from "./mod.js";
 try { r.err(); } catch (err) { console.log(err); }
 "#;
-    let output = run_decomp(input, &facts);
-    assert!(normalize(&output).contains("import r from"), "should keep default import when catch param shadows, got: {output}");
+    let expected = r#"
+import { err as err_1 } from "./mod.js";
+try { err_1(); } catch (err) { console.log(err); }
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
 }
 
 #[test]
-fn arrow_param_shadow_prevents_decomposition() {
+fn arrow_param_shadow_uses_alias() {
     let target_facts = facts_for(r#"export function x() {}"#);
     let mut facts = ModuleFactsMap::new();
     facts.insert("./mod.js", target_facts);
@@ -267,8 +289,11 @@ fn arrow_param_shadow_prevents_decomposition() {
 import r from "./mod.js";
 const fn = (x) => r.x + x;
 "#;
-    let output = run_decomp(input, &facts);
-    assert!(normalize(&output).contains("import r from"), "should keep default import when arrow param shadows, got: {output}");
+    let expected = r#"
+import { x as x_1 } from "./mod.js";
+const fn = (x) => x_1 + x;
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
 }
 
 // ── Regression: mixed imports preserved ────────────────────────────
@@ -294,6 +319,30 @@ import { useState, Fragment, createElement } from "./react.js";
 createElement("div");
 Fragment;
 useState();
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+#[test]
+fn no_duplicate_specifier_when_already_imported() {
+    let target_facts = facts_for(r#"
+export function Fragment() {}
+export function createElement() {}
+"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./react.js", target_facts);
+
+    // Fragment is already imported as named — decomposing React.Fragment
+    // should NOT add a second Fragment specifier
+    let input = r#"
+import React, { Fragment } from "./react.js";
+React.createElement("div");
+React.Fragment;
+"#;
+    let expected = r#"
+import { Fragment, createElement } from "./react.js";
+createElement("div");
+Fragment;
 "#;
     assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
 }

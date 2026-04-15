@@ -22,6 +22,15 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{ExportKind, ModuleFactsMap};
 
+/// A single property to decompose: maps the exported name to its local alias.
+#[derive(Debug, Clone)]
+struct DecompProp {
+    /// The exported property name (e.g. `createStore`)
+    exported: Atom,
+    /// The local binding name — equals `exported` unless aliased to avoid collision
+    local: Atom,
+}
+
 /// A candidate for namespace decomposition: a default import whose binding is used
 /// only via property access, and the target module exports those properties.
 struct DecompCandidate {
@@ -30,8 +39,8 @@ struct DecompCandidate {
     /// The local binding name and its SyntaxContext
     local_sym: Atom,
     local_ctxt: SyntaxContext,
-    /// Properties accessed on this binding (e.g. `createStore`, `applyMiddleware`)
-    accessed_props: Vec<Atom>,
+    /// Properties to decompose with their local aliases
+    props: Vec<DecompProp>,
 }
 
 /// Run namespace decomposition on a single module, using cross-module facts.
@@ -62,7 +71,7 @@ fn find_decomposition_candidates(
         bindings: HashSet::new(),
     };
     module.visit_with(&mut collector);
-    let existing_bindings = collector.bindings;
+    let mut existing_bindings = collector.bindings;
 
     // Step 1: Find default imports and their source modules
     let mut default_imports: Vec<(usize, Atom, SyntaxContext, Atom)> = Vec::new();
@@ -120,29 +129,88 @@ fn find_decomposition_candidates(
             continue;
         }
 
-        // Check for naming collisions: skip if any accessed property name
-        // would collide with an existing binding in the module (excluding the
-        // candidate's own default import binding, which will be removed).
-        let has_collision = analyzer.accessed_props.iter().any(|prop| {
-            let is_own_binding = *prop == local_sym;
-            !is_own_binding && existing_bindings.contains(prop)
-        });
-        if has_collision {
-            continue;
+        // Also collect the names already imported from this same declaration
+        // (e.g. `import React, { useState } from "react"` already has `useState`).
+        let mut already_imported: HashSet<Atom> = HashSet::new();
+        if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &module.body[import_index] {
+            for spec in &import.specifiers {
+                if let ImportSpecifier::Named(s) = spec {
+                    already_imported.insert(s.local.sym.clone());
+                }
+            }
         }
 
-        let mut accessed_props: Vec<Atom> = analyzer.accessed_props.into_iter().collect();
-        accessed_props.sort();
+        // Build decomposition props, aliasing on collision.
+        // For each accessed property, determine its local name:
+        // - if no collision, use the property name directly
+        // - if it collides with an existing binding, synthesize a safe alias
+        // - if already imported as a named specifier, skip (don't duplicate)
+        let mut props: Vec<DecompProp> = Vec::new();
+        let mut alias_count = 0usize;
+        let mut sorted_accessed: Vec<Atom> = analyzer.accessed_props.into_iter().collect();
+        sorted_accessed.sort();
+        for prop in &sorted_accessed {
+            if already_imported.contains(prop) {
+                props.push(DecompProp {
+                    exported: prop.clone(),
+                    local: prop.clone(),
+                });
+                continue;
+            }
+            let is_own_binding = *prop == local_sym;
+            let has_collision = existing_bindings.contains(prop);
+            if !is_own_binding && has_collision {
+                let alias = synthesize_alias(prop, &existing_bindings);
+                existing_bindings.insert(alias.clone());
+                alias_count += 1;
+                props.push(DecompProp {
+                    exported: prop.clone(),
+                    local: alias,
+                });
+            } else {
+                existing_bindings.insert(prop.clone());
+                props.push(DecompProp {
+                    exported: prop.clone(),
+                    local: prop.clone(),
+                });
+            }
+        }
+
+        // Skip decomposition if too many aliases are needed — the result would be
+        // less readable than the original namespace access pattern.
+        // Only triggers when there are multiple new props and most need aliasing.
+        let new_props = sorted_accessed.len() - already_imported.len();
+        if new_props > 1 && alias_count * 2 > new_props {
+            // Undo the insertions into existing_bindings
+            for prop in &props {
+                if prop.exported != prop.local {
+                    existing_bindings.remove(&prop.local);
+                }
+            }
+            continue;
+        }
 
         candidates.push(DecompCandidate {
             import_index,
             local_sym,
             local_ctxt,
-            accessed_props,
+            props,
         });
     }
 
     candidates
+}
+
+/// Generate a safe alias for a name that collides with existing bindings.
+/// Appends `_1`, `_2`, etc. until a unique name is found.
+fn synthesize_alias(name: &Atom, existing: &HashSet<Atom>) -> Atom {
+    for i in 1.. {
+        let candidate: Atom = format!("{name}_{i}").into();
+        if !existing.contains(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!()
 }
 
 /// Collects all binding names in the module, at every scope depth.
@@ -309,13 +377,20 @@ impl Visit for UsageAnalyzer<'_> {
 
 /// Apply the decomposition rewrites.
 fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
-    // Build a lookup: (sym, ctxt) → accessed_props
-    let decomp_map: HashMap<(Atom, SyntaxContext), &[Atom]> = candidates
+    // Build a lookup: (sym, ctxt) → map of exported_name → local_name
+    let decomp_map: HashMap<(Atom, SyntaxContext), HashMap<Atom, Atom>> = candidates
         .iter()
-        .map(|c| ((c.local_sym.clone(), c.local_ctxt), c.accessed_props.as_slice()))
+        .map(|c| {
+            let prop_map: HashMap<Atom, Atom> = c
+                .props
+                .iter()
+                .map(|p| (p.exported.clone(), p.local.clone()))
+                .collect();
+            ((c.local_sym.clone(), c.local_ctxt), prop_map)
+        })
         .collect();
 
-    // Rewrite import declarations: default → named
+    // Rewrite import declarations: remove default specifier, add named specifiers
     for candidate in candidates {
         let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) =
             &mut module.body[candidate.import_index]
@@ -323,30 +398,52 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
             continue;
         };
 
-        // Remove the default specifier, keep any existing named/namespace specifiers,
-        // and add the new named specifiers for the decomposed properties.
+        // Collect names already present as named imports to avoid duplicates
+        let already_imported: HashSet<Atom> = import
+            .specifiers
+            .iter()
+            .filter_map(|s| match s {
+                ImportSpecifier::Named(n) => Some(n.local.sym.clone()),
+                _ => None,
+            })
+            .collect();
+
+        // Remove the default specifier, keep existing named/namespace specifiers
         import.specifiers.retain(|s| !matches!(s, ImportSpecifier::Default(_)));
-        for prop in &candidate.accessed_props {
+
+        // Add new named specifiers for decomposed properties (skip if already present)
+        for prop in &candidate.props {
+            if already_imported.contains(&prop.local) {
+                continue;
+            }
+            let imported = if prop.exported != prop.local {
+                // Aliased import: `import { exported as local } from "..."`
+                Some(ModuleExportName::Ident(Ident::new(
+                    prop.exported.clone(),
+                    DUMMY_SP,
+                    SyntaxContext::empty(),
+                )))
+            } else {
+                None
+            };
             import.specifiers.push(ImportSpecifier::Named(ImportNamedSpecifier {
                 span: DUMMY_SP,
-                local: Ident::new(prop.clone(), DUMMY_SP, SyntaxContext::empty()),
-                imported: None,
+                local: Ident::new(prop.local.clone(), DUMMY_SP, SyntaxContext::empty()),
+                imported,
                 is_type_only: false,
             }));
         }
     }
 
-    // Rewrite usages: r.foo → foo
-    // After decomposition, `r.foo.apply(undefined, args)` becomes
-    // `foo.apply(undefined, args)` which UnArgumentSpread (Stage 3) handles
-    // naturally as Pattern 1 (simple ident callee).
+    // Rewrite usages: r.foo → local_name (which is `foo` or `foo_1` if aliased)
     let mut rewriter = UsageRewriter { decomp_map: &decomp_map };
     module.visit_mut_with(&mut rewriter);
 }
 
-/// Rewrites `r.prop` → `prop` for decomposed namespace bindings.
+/// Rewrites `r.prop` → `local_name` for decomposed namespace bindings.
 struct UsageRewriter<'a> {
-    decomp_map: &'a HashMap<(Atom, SyntaxContext), &'a [Atom]>,
+    /// Maps (namespace_sym, ctxt) → { exported_name → local_name }
+    decomp_map: &'a HashMap<(Atom, SyntaxContext), HashMap<Atom, Atom>>,
 }
 
 impl VisitMut for UsageRewriter<'_> {
@@ -358,14 +455,14 @@ impl VisitMut for UsageRewriter<'_> {
             return;
         };
         let key = (obj.sym.clone(), obj.ctxt);
-        let Some(props) = self.decomp_map.get(&key) else {
+        let Some(prop_map) = self.decomp_map.get(&key) else {
             return;
         };
         let MemberProp::Ident(prop) = &member.prop else {
             return;
         };
-        if props.contains(&prop.sym) {
-            *expr = Expr::Ident(Ident::new(prop.sym.clone(), DUMMY_SP, SyntaxContext::empty()));
+        if let Some(local_name) = prop_map.get(&prop.sym) {
+            *expr = Expr::Ident(Ident::new(local_name.clone(), DUMMY_SP, SyntaxContext::empty()));
         }
     }
 

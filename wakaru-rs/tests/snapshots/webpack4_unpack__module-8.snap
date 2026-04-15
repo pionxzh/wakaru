@@ -2,7 +2,7 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import r from "./module-7.js";
+import { a as a_2 } from "./module-7.js";
 function o(e) {
     return e.charAt(0) === "/";
 }
@@ -164,7 +164,7 @@ export function createLocation(e, t, n, o) {
         i = parsePath(e);
         i.state = t;
     } else {
-        if ((i = r.a({}, e)).pathname === undefined) {
+        if ((i = a_2({}, e)).pathname === undefined) {
             i.pathname = "";
         }
         if (i.search) {
@@ -287,7 +287,7 @@ export function createBrowserHistory(e = {}) {
     }
     const C = w();
     function P(e) {
-        r.a(q, e);
+        a_2(q, e);
         q.length = window_history.length;
         C.notifyListeners(q.location, q.action);
     }
@@ -518,7 +518,7 @@ export function createHashHistory(e = {}) {
     }
     const g = w();
     function k(e) {
-        r.a(q, e);
+        a_2(q, e);
         q.length = window_history.length;
         g.notifyListeners(q.location, q.action);
     }
@@ -699,7 +699,7 @@ export function createMemoryHistory(e = {}) {
     const c = t_keyLength === undefined ? 6 : t_keyLength;
     const s = w();
     function f(e) {
-        r.a(g, e);
+        a_2(g, e);
         g.length = g.entries.length;
         s.notifyListeners(g.location, g.action);
     }

@@ -2,16 +2,16 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import r from "./module-0.js";
+import { r, u as u_2 } from "./module-0.js";
 export { s as a };
 const o = "Channel's Buffer overflow!";
 const i = 1;
 const a = 3;
 const u = 4;
 const l = {
-    isEmpty: r.r,
-    put: r.u,
-    take: r.u
+    isEmpty: r,
+    put: u_2,
+    take: u_2
 };
 function c(e = 10, t) {
     let n = new Array(e);
