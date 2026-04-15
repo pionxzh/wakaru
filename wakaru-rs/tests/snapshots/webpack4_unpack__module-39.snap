@@ -3,8 +3,8 @@ source: tests/webpack4_unpack.rs
 expression: code
 ---
 import o from "./module-3.js";
-import i from "./module-11.js";
-import a from "./module-24.js";
+import { compose } from "./module-11.js";
+import { withRouter } from "./module-24.js";
 import u from "./module-38.js";
 class l extends o.Component {
     render() {
@@ -12,4 +12,4 @@ class l extends o.Component {
         return <div>{u}</div>;
     }
 }
-export default i.compose(a.withRouter)(l);
+export default compose(withRouter)(l);

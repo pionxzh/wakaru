@@ -4,11 +4,11 @@ expression: code
 ---
 import i from "./module-3.js";
 import u from "./module-1.js";
-import h from "./module-7.js";
+import { a } from "./module-7.js";
 import y from "./module-32.js";
 import b from "./module-5.js";
 import w from "./module-20.js";
-import N from "./module-11.js";
+import { bindActionCreators } from "./module-11.js";
 function r(e, t) {
     return (r = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : (e, t)=>{
         e.__proto__ = t;
@@ -192,7 +192,7 @@ export function connectAdvanced(e, t = {}) {
         b(w.isValidElementType(T1), `You must pass a component to the function returned by ${d}. Instead received ${JSON.stringify(T1)}`);
         const n = T1.displayName || T1.name || "Component";
         const r = l(n);
-        const a = h.a({}, N, {
+        const a = a({}, N, {
             getDisplayName: l,
             methodName: d,
             renderCountProp: b,
@@ -304,7 +304,7 @@ export function connectAdvanced(e, t = {}) {
                 if (!(R || b || this.propsMode && this.subscription)) {
                     return e;
                 }
-                const t = h.a({}, e);
+                const t = a({}, e);
                 if (R) {
                     t.ref = this.setWrappedInstance;
                 }
@@ -419,7 +419,7 @@ const I = [
     },
     (e)=>{
         if (e && typeof e === "object") {
-            return M((t)=>N.bindActionCreators(e, t));
+            return M((t)=>bindActionCreators(e, t));
         }
     }
 ];
@@ -437,7 +437,7 @@ const D = [
     }
 ];
 function F(e, t, n) {
-    return h.a({}, n, e, t);
+    return a({}, n, e, t);
 }
 const z = [
     (e)=>{
@@ -587,7 +587,7 @@ export const connect = ((e)=>{
         const k = W(e, i, "mapStateToProps");
         const T = W(t, u, "mapDispatchToProps");
         const S = W(n, c, "mergeProps");
-        return r(f, h.a({
+        return r(f, a({
             methodName: "connect",
             getDisplayName (e) {
                 return `Connect(${e})`;

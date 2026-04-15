@@ -2,15 +2,15 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import r from "./module-23.js";
-import o from "./module-11.js";
+import { connect } from "./module-23.js";
+import { compose } from "./module-11.js";
 import "./module-27.js";
 import "./module-13.js";
-import i from "./module-25.js";
+import { fetchData } from "./module-25.js";
 import a from "./module-35.js";
 const u = {
-    fetchData: i.fetchData
+    fetchData
 };
-export default o.compose(r.connect((e)=>({
+export default compose(connect((e)=>({
         data: e.main.data
     }), u))(a);

@@ -5,17 +5,17 @@ expression: code
 import r from "./module-4.js";
 import i from "./module-3.js";
 import u from "./module-1.js";
-import c from "./module-8.js";
+import { createBrowserHistory, createHashHistory, createLocation, createMemoryHistory, createPath, locationsAreEqual } from "./module-8.js";
 import s from "./module-16.js";
 import b from "./module-5.js";
-import P from "./module-15.js";
-import U from "./module-14.js";
+import { a } from "./module-15.js";
+import { compile } from "./module-14.js";
 import le from "./module-30.js";
 export const Router = s.a;
 export class BrowserRouter extends i.Component {
     constructor(...i){
         super(...i);
-        this.history = c.createBrowserHistory(this.props);
+        this.history = createBrowserHistory(this.props);
     }
     componentWillMount() {
         r(!this.props.history, "<BrowserRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { BrowserRouter as Router }`.");
@@ -34,7 +34,7 @@ BrowserRouter.propTypes = {
 export class HashRouter extends i.Component {
     constructor(...i){
         super(...i);
-        this.history = c.createHashHistory(this.props);
+        this.history = createHashHistory(this.props);
     }
     componentWillMount() {
         r(!this.props.history, "<HashRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { HashRouter as Router }`.");
@@ -80,7 +80,7 @@ export class Link extends i.Component {
         b(this.context.router, "You should not use <Link> outside a <Router>");
         b(to !== undefined, 'You must specify the "to" property');
         const history = this.context.router.history;
-        const i = typeof to === "string" ? c.createLocation(to, null, null, history.location) : to;
+        const i = typeof to === "string" ? createLocation(to, null, null, history.location) : to;
         const u = history.createHref(i);
         return <a {...rest} onClick={this.handleClick} href={u} ref={innerRef}/>;
     }
@@ -113,7 +113,7 @@ Link.contextTypes = {
 export class MemoryRouter extends i.Component {
     constructor(...i){
         super(...i);
-        this.history = c.createMemoryHistory(this.props);
+        this.history = createMemoryHistory(this.props);
     }
     componentWillMount() {
         r(!this.props.history, "<MemoryRouter> ignores the history prop. To use a custom history, use `import { Router }` instead of `import { MemoryRouter as Router }`.");
@@ -156,7 +156,7 @@ export class Route extends i.Component {
         b(t, "You should not use <Route> or withRouter() outside a <Router>");
         const t_route = t.route;
         const pathname = (location || t_route.location).pathname;
-        return P.a(pathname, {
+        return a(pathname, {
             path,
             strict,
             exact,
@@ -351,7 +351,7 @@ export const generatePath = (e = "/", t = {})=>{
         if (n[e]) {
             return n[e];
         }
-        const r = U.compile(e);
+        const r = compile(e);
         if ($ < 10000) {
             n[e] = r;
             $++;
@@ -377,9 +377,9 @@ export class Redirect extends i.Component {
         }
     }
     componentDidUpdate(e) {
-        const t = c.createLocation(e.to);
-        const n = c.createLocation(this.props.to);
-        if (c.locationsAreEqual(t, n)) {
+        const t = createLocation(e.to);
+        const n = createLocation(this.props.to);
+        if (locationsAreEqual(t, n)) {
             r(false, `You tried to redirect to the same route you're currently on: "${n.pathname}${n.search}"`);
         } else {
             this.perform();
@@ -452,7 +452,7 @@ const Z = (e)=>{
     if (typeof e === "string") {
         return e;
     }
-    return c.createPath(e);
+    return createPath(e);
 };
 const ee = (e)=>()=>{
         b(false, "You cannot %s with <StaticRouter>", e);
@@ -466,14 +466,14 @@ export class StaticRouter extends i.Component {
             const r_props = r.props;
             const { basename, context } = r_props;
             context.action = "PUSH";
-            context.location = J(basename, c.createLocation(e));
+            context.location = J(basename, createLocation(e));
             context.url = Z(context.location);
         };
         this.handleReplace = (e)=>{
             const r_props = r.props;
             const { basename, context } = r_props;
             context.action = "REPLACE";
-            context.location = J(basename, c.createLocation(e));
+            context.location = J(basename, createLocation(e));
             context.url = Z(context.location);
         };
         this.handleListen = ()=>te;
@@ -507,7 +507,7 @@ export class StaticRouter extends i.Component {
                     ...t,
                     pathname: t.pathname.substr(n.length)
                 };
-            })(basename, c.createLocation(location)),
+            })(basename, createLocation(location)),
             push: this.handlePush,
             replace: this.handleReplace,
             go: ee("go"),
@@ -554,7 +554,7 @@ export class Switch extends i.Component {
                 const { path: u, exact: l, strict: c, sensitive: s, from: f } = i;
                 const d = u || f;
                 o = t;
-                r = P.a(n.pathname, {
+                r = a(n.pathname, {
                     path: d,
                     exact: l,
                     strict: c,
@@ -580,7 +580,7 @@ Switch.propTypes = {
     children: u.node,
     location: u.object
 };
-export const matchPath = P.a;
+export const matchPath = a;
 export const withRouter = (e)=>{
     const t = (t)=>{
         const { wrappedComponentRef, ...rest } = t;

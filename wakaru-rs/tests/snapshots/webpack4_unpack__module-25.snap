@@ -2,16 +2,16 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import r from "./module-19.js";
-import o from "./module-26.js";
+import { FETCH_DATA } from "./module-19.js";
+import { START, SUCCESS } from "./module-26.js";
 import "./module-13.js";
 export const startFetchingData = ()=>({
-        type: r.FETCH_DATA + o.START
+        type: FETCH_DATA + START
     });
 export const fetchDataSuccess = (e)=>({
-        type: r.FETCH_DATA + o.SUCCESS,
+        type: FETCH_DATA + SUCCESS,
         payload: e
     });
 export const fetchData = ()=>({
-        type: r.FETCH_DATA
+        type: FETCH_DATA
     });

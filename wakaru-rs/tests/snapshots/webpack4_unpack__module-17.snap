@@ -3,13 +3,13 @@ source: tests/webpack4_unpack.rs
 expression: code
 ---
 import r from "./module-2.js";
-import o from "./module-10.js";
+import { b, d, f } from "./module-10.js";
 export function takeEvery(e, t) {
     for(let n = arguments.length, i = Array(n > 2 ? n - 2 : 0), a = 2; a < n; a++){
         i[a - 2] = arguments[a];
     }
     return r.k.apply(undefined, [
-        o.b,
+        b,
         e,
         t,
         ...i
@@ -20,7 +20,7 @@ export function takeLatest(e, t) {
         i[a - 2] = arguments[a];
     }
     return r.k.apply(undefined, [
-        o.d,
+        d,
         e,
         t,
         ...i
@@ -31,7 +31,7 @@ export function throttle(e, t, n) {
         a[u - 3] = arguments[u];
     }
     return r.k.apply(undefined, [
-        o.f,
+        f,
         e,
         t,
         n,

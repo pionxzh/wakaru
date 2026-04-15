@@ -10,7 +10,9 @@ use swc_core::ecma::visit::VisitMutWith;
 
 use rayon::prelude::*;
 
-use crate::rules::{apply_default_rules, ImportDedup, UnImportRename};
+use crate::facts::{collect_module_facts, ModuleFactsMap};
+use crate::namespace_decomposition::run_namespace_decomposition;
+use crate::rules::{apply_default_rules, apply_rules_between, apply_rules_until, ImportDedup, UnImportRename};
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::unpack_bundle;
 
@@ -65,30 +67,104 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<String> {
 
 pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, String)>> {
     match unpack_bundle(source) {
-        Some(result) => {
-            let pairs: Vec<(String, String)> = result
-                .modules
-                .into_par_iter()
-                .map(|module| {
-                    let code = decompile(
-                        &module.code,
-                        DecompileOptions {
-                            filename: module.filename.clone(),
-                            sourcemap_path: options.sourcemap_path.clone(),
-                        },
-                    )
-                    .unwrap_or(module.code);
-                    (module.filename, code)
-                })
-                .collect();
-            Ok(pairs)
-        }
+        Some(result) => unpack_multi_module(result.modules, options),
         None => {
             // Not a recognized bundle — treat as a single module
             let code = decompile(source, options)?;
             Ok(vec![("module.js".to_string(), code)])
         }
     }
+}
+
+/// Multi-module unpack with cross-module late pass.
+///
+/// Phase 1 (parallel): parse + Stage 1+2 + collect facts (facts only, code discarded)
+/// Phase 2 (parallel): full pipeline from scratch with late pass injected at barrier
+///
+/// Stage 1+2 runs twice per module — once for fact collection, once for the real pipeline.
+/// This is necessary because SWC's SyntaxContext must remain continuous across the entire
+/// pipeline (re-parsing creates fresh contexts that break rename rules).
+fn unpack_multi_module(
+    modules: Vec<crate::unpacker::UnpackedModule>,
+    options: DecompileOptions,
+) -> Result<Vec<(String, String)>> {
+    let sourcemap_bytes: Option<Vec<u8>> = options
+        .sourcemap_path
+        .as_deref()
+        .map(std::fs::read)
+        .transpose()?;
+
+    // Phase 1: collect facts (parallel). Run Stage 1+2 on each module and extract
+    // import/export facts. The AST is discarded — only facts survive the barrier.
+    let phase1: Vec<(String, crate::facts::ModuleFacts)> = modules
+        .par_iter()
+        .map(|unpacked| {
+            let facts = GLOBALS.set(&Default::default(), || {
+                let cm: Lrc<SourceMap> = Default::default();
+                let Ok(mut module) = parse_js(&unpacked.code, &unpacked.filename, cm) else {
+                    return crate::facts::ModuleFacts::default();
+                };
+                let unresolved_mark = Mark::new();
+                let top_level_mark = Mark::new();
+                module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+                apply_rules_until(&mut module, unresolved_mark, "UnEsm");
+                collect_module_facts(&module)
+            });
+            (unpacked.filename.clone(), facts)
+        })
+        .collect();
+
+    let mut module_facts = ModuleFactsMap::new();
+    for (filename, facts) in phase1 {
+        module_facts.insert(&filename, facts);
+    }
+
+    // Phase 2: full pipeline with late pass (parallel). Each module runs the entire
+    // pipeline from scratch. Between Stage 2 and Stage 3, the late pass applies
+    // cross-module rewrites using the facts collected in Phase 1.
+    let facts_ref = &module_facts;
+    let pairs: Vec<(String, String)> = modules
+        .into_par_iter()
+        .map(|unpacked| {
+            let code = GLOBALS.set(&Default::default(), || {
+                let cm: Lrc<SourceMap> = Default::default();
+                let mut module = parse_js(&unpacked.code, &unpacked.filename, cm.clone())?;
+                let unresolved_mark = Mark::new();
+                let top_level_mark = Mark::new();
+                module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+                // Stage 1+2
+                apply_rules_until(&mut module, unresolved_mark, "UnEsm");
+
+                // Late pass at the barrier
+                run_namespace_decomposition(&mut module, facts_ref);
+
+                // Stage 3+
+                apply_rules_between(
+                    &mut module,
+                    unresolved_mark,
+                    "UnTemplateLiteral",
+                    "UnReturn",
+                );
+
+                // Source-map-enhanced passes
+                if let Some(bytes) = &sourcemap_bytes {
+                    if let Ok(sm) = parse_sourcemap(bytes) {
+                        module.visit_mut_with(&mut ImportDedup);
+                        apply_sourcemap_renames(&mut module, &sm, &cm, unresolved_mark);
+                        module.visit_mut_with(&mut UnImportRename);
+                    }
+                }
+
+                module.visit_mut_with(&mut fixer(None));
+                print_js(&module, cm)
+            })
+            .unwrap_or_else(|_| unpacked.code);
+            (unpacked.filename, code)
+        })
+        .collect();
+
+    Ok(pairs)
 }
 
 fn parse_js(source: &str, filename: &str, cm: Lrc<SourceMap>) -> Result<Module> {

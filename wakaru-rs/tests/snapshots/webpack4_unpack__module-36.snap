@@ -3,8 +3,8 @@ source: tests/webpack4_unpack.rs
 expression: code
 ---
 import "./module-13.js";
-import o from "./module-26.js";
-import i from "./module-19.js";
+import { ERROR, START, SUCCESS } from "./module-26.js";
+import { FETCH_DATA } from "./module-19.js";
 let r;
 function a(e, t, n) {
     if (t in e) {
@@ -24,16 +24,16 @@ const u = {
     data: [],
     error: ""
 };
-a(r = {}, i.FETCH_DATA + o.START, (e)=>({
+a(r = {}, FETCH_DATA + START, (e)=>({
         ...e,
         isLoading: true
     }));
-a(r, i.FETCH_DATA + o.SUCCESS, (e, t)=>({
+a(r, FETCH_DATA + SUCCESS, (e, t)=>({
         ...e,
         isLoading: false,
         data: t
     }));
-a(r, i.FETCH_DATA + o.ERROR, (e, t)=>({
+a(r, FETCH_DATA + ERROR, (e, t)=>({
         ...e,
         isLoading: false,
         error: t

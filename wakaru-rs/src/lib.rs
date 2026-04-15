@@ -1,10 +1,13 @@
 pub mod driver;
+pub mod facts;
+pub mod namespace_decomposition;
 pub mod rules;
 pub mod sourcemap_rename;
 pub mod unpacker;
 pub mod utils;
 
 pub use driver::{decompile, unpack, DecompileOptions};
+pub use facts::{collect_module_facts, ExportFact, ExportKind, ImportFact, ImportKind, ModuleFacts, ModuleFactsMap};
 pub use rules::{apply_rules_between, apply_rules_until, rule_names};
 pub use sourcemap_rename::{extract_sources, parse_sourcemap};
 pub use unpacker::{unpack_webpack4, UnpackResult, UnpackedModule};

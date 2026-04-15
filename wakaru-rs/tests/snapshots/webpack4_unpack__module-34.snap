@@ -2,18 +2,18 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import r from "./module-11.js";
+import { applyMiddleware, createStore } from "./module-11.js";
 import o from "./module-22.js";
-import i from "./module-18.js";
-import a from "./module-8.js";
+import { routerMiddleware } from "./module-18.js";
+import { createBrowserHistory } from "./module-8.js";
 import u from "./module-27.js";
 import l from "./module-33.js";
-export const history = a.createBrowserHistory();
+export const history = createBrowserHistory();
 const f = o();
 const d = [
-    i.routerMiddleware(history),
+    routerMiddleware(history),
     f
 ];
-const p = r.createStore(u, r.applyMiddleware.apply(undefined, d));
+const p = createStore(u, applyMiddleware(...d));
 f.run(l);
 export default p;

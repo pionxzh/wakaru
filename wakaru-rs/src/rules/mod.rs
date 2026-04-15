@@ -336,8 +336,7 @@ fn apply_rules_range_impl(
     run!(UnClassFields, "UnClassFields");
     run!(UnTsHelpers, "UnTsHelpers");
     run!(UnAsyncAwait, "UnAsyncAwait");
-    // Second pass: catches interop getters exposed by UnAsyncAwait; now works with import
-    // bindings too (post-UnEsm) via extended collect_require_bindings.
+    // Second pass: catches interop getters exposed by UnAsyncAwait.
     run!(UnWebpackInterop, "UnWebpackInterop2");
 
     // Stage 5: Modernization

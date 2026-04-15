@@ -3,9 +3,9 @@ source: tests/webpack4_unpack.rs
 expression: code
 ---
 import "./module-22.js";
-import r from "./module-17.js";
-import o from "./module-25.js";
-import i from "./module-19.js";
+import { all, put, take } from "./module-17.js";
+import { fetchDataSuccess, startFetchingData } from "./module-25.js";
+import { FETCH_DATA } from "./module-19.js";
 const a = regeneratorRuntime.mark(l);
 const u = regeneratorRuntime.mark(c);
 function l() {
@@ -14,13 +14,13 @@ function l() {
             switch(e.prev = e.next){
                 case 0:
                     e.next = 3;
-                    return r.take(i.FETCH_DATA);
+                    return take(FETCH_DATA);
                 case 3:
                     e.next = 5;
-                    return r.put(o.startFetchingData());
+                    return put(startFetchingData());
                 case 5:
                     e.next = 7;
-                    return r.put(o.fetchDataSuccess([]));
+                    return put(fetchDataSuccess([]));
                 case 7:
                     e.next = 0;
                     break;
@@ -37,7 +37,7 @@ function c() {
             switch(e.prev = e.next){
                 case 0:
                     e.next = 2;
-                    return r.all([
+                    return all([
                         l()
                     ]);
                 case 2:

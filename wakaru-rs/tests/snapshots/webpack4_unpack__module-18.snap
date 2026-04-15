@@ -5,7 +5,7 @@ expression: code
 import r from "./module-3.js";
 import i from "./module-1.js";
 import u from "./module-16.js";
-import m from "./module-15.js";
+import { a } from "./module-15.js";
 export const LOCATION_CHANGE = "@@router/LOCATION_CHANGE";
 const s = {
     location: null
@@ -67,7 +67,7 @@ export const createMatchSelector = (e)=>{
             return n;
         }
         t = pathname;
-        const i = m.a(pathname, e);
+        const i = a(pathname, e);
         if (!(i && n && i.url === n.url)) {
             n = i;
         }
