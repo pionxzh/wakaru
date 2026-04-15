@@ -184,13 +184,15 @@ pub fn rule_names() -> &'static [&'static str] {
         "UnClassCallCheck",
         "UnPossibleConstructorReturn",
         "UnTypeofPolyfill",
-        "UnTemplateLiteral",
-        "UnUseStrict",
-        "UnWhileLoop",
         "UnCurlyBraces",
-        "UnTypeConstructor",
         "UnEsmoduleFlag",
+        "UnUseStrict",
         "UnAssignmentMerging",
+        "UnWebpackInterop",
+        "UnEsm",
+        "UnTemplateLiteral",
+        "UnWhileLoop",
+        "UnTypeConstructor",
         "UnBuiltinPrototype",
         "UnArgumentSpread",
         "UnArrayConcatSpread",
@@ -199,7 +201,6 @@ pub fn rule_names() -> &'static [&'static str] {
         "UnVariableMerging",
         "UnNullishCoalescing",
         "UnOptionalChaining",
-        "UnWebpackInterop",
         "UnIife",
         "UnConditionals",
         "UnParameters",
@@ -210,7 +211,6 @@ pub fn rule_names() -> &'static [&'static str] {
         "UnTsHelpers",
         "UnAsyncAwait",
         "UnWebpackInterop2",
-        "UnEsm",
         "UnThenCatch",
         "UnUndefinedInit",
         "VarDeclToLetConst",
@@ -292,7 +292,7 @@ fn apply_rules_range_impl(
     run!(UnNumericLiteral, "UnNumericLiteral");
     run!(UnBracketNotation, "UnBracketNotation");
 
-    // Stage 2: Transpiler helper unwrapping — run early so downstream rules see clean code.
+    // Stage 2: Transpiler helper unwrapping + module-system reconstruction.
     // Needs UnIndirectCall + UnBracketNotation first (normalizes (0,x.default)() and ["default"]).
     run!(UnInteropRequireDefault, "UnInteropRequireDefault");
     run!(UnInteropRequireWildcard, "UnInteropRequireWildcard");
@@ -303,15 +303,20 @@ fn apply_rules_range_impl(
     run!(UnClassCallCheck, "UnClassCallCheck");
     run!(UnPossibleConstructorReturn, "UnPossibleConstructorReturn");
     run!(UnTypeofPolyfill, "UnTypeofPolyfill");
+    // UnEsm prerequisites: add braces (enables assignment splitting), remove __esModule
+    // flag, strip "use strict", split chained assignments, resolve webpack interop
+    // getters — confirmed experimentally (see rule-dependency-inventory.md).
+    run!(UnCurlyBraces, "UnCurlyBraces");
+    run!(UnEsmoduleFlag, "UnEsmoduleFlag");
+    run!(UnUseStrict, "UnUseStrict");
+    run!(UnAssignmentMerging, "UnAssignmentMerging");
+    run!(UnWebpackInterop, "UnWebpackInterop");
+    run!(UnEsm, "UnEsm");
 
     // Stage 3: Structural restoration
     run!(UnTemplateLiteral, "UnTemplateLiteral");
-    run!(UnUseStrict, "UnUseStrict");
     run!(UnWhileLoop, "UnWhileLoop");
-    run!(UnCurlyBraces, "UnCurlyBraces");
     run!(UnTypeConstructor, "UnTypeConstructor");
-    run!(UnEsmoduleFlag, "UnEsmoduleFlag");
-    run!(UnAssignmentMerging, "UnAssignmentMerging");
     run!(UnBuiltinPrototype, "UnBuiltinPrototype");
     run!(UnArgumentSpread, "UnArgumentSpread");
     run!(UnArrayConcatSpread, "UnArrayConcatSpread");
@@ -321,23 +326,21 @@ fn apply_rules_range_impl(
     run!(UnNullishCoalescing, "UnNullishCoalescing");
     run!(UnOptionalChaining, "UnOptionalChaining");
 
-    // Stage 4: Bundler artifacts
-    run!(UnWebpackInterop, "UnWebpackInterop");
+    // Stage 4: Complex pattern restoration
     run!(UnIife, "UnIife");
     run!(UnConditionals, "UnConditionals");
     run!(UnParameters, "UnParameters");
     run!(UnEnum, "UnEnum");
-
-    // Stage 5: Complex pattern restoration
     run!(UnJsx::new(unresolved_mark), "UnJsx");
     run!(UnEs6Class, "UnEs6Class");
     run!(UnClassFields, "UnClassFields");
     run!(UnTsHelpers, "UnTsHelpers");
     run!(UnAsyncAwait, "UnAsyncAwait");
+    // Second pass: catches interop getters exposed by UnAsyncAwait; now works with import
+    // bindings too (post-UnEsm) via extended collect_require_bindings.
     run!(UnWebpackInterop, "UnWebpackInterop2");
-    run!(UnEsm, "UnEsm");
 
-    // Stage 6: Modernization
+    // Stage 5: Modernization
     run!(UnThenCatch, "UnThenCatch");
     run!(UnUndefinedInit, "UnUndefinedInit");
     run!(VarDeclToLetConst, "VarDeclToLetConst");

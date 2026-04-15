@@ -122,19 +122,21 @@ impl VisitMut for UnWebpackInterop {
 fn collect_require_bindings(module: &Module) -> HashSet<BindingKey> {
     let mut bindings = HashSet::new();
     for item in &module.body {
-        let ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(var))) = item else {
-            continue;
-        };
-        for decl in &var.decls {
-            let Pat::Ident(binding) = &decl.name else {
-                continue;
-            };
-            let Some(init) = &decl.init else {
-                continue;
-            };
-            if is_require_call(init.as_ref()) {
-                bindings.insert((binding.id.sym.clone(), binding.id.ctxt));
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(var))) => {
+                for decl in &var.decls {
+                    let Pat::Ident(binding) = &decl.name else {
+                        continue;
+                    };
+                    let Some(init) = &decl.init else {
+                        continue;
+                    };
+                    if is_require_call(init.as_ref()) {
+                        bindings.insert((binding.id.sym.clone(), binding.id.ctxt));
+                    }
+                }
             }
+            _ => {}
         }
     }
     bindings
@@ -201,6 +203,17 @@ fn match_interop_block(
     block: &swc_core::ecma::ast::BlockStmt,
     require_bindings: &HashSet<BindingKey>,
 ) -> Option<Ident> {
+    // Form A: { return cond ? cons : alt; }  (single return of ternary)
+    if block.stmts.len() == 1 {
+        if let Stmt::Return(ReturnStmt {
+            arg: Some(ret_arg), ..
+        }) = &block.stmts[0]
+        {
+            return match_interop_cond(ret_arg.as_ref(), require_bindings);
+        }
+    }
+
+    // Form B: { if (test) { return cons; } return alt; }  (two statements)
     if block.stmts.len() != 2 {
         return None;
     }
