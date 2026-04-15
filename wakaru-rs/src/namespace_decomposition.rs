@@ -15,8 +15,8 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    Expr, Ident, ImportDecl, ImportNamedSpecifier, ImportSpecifier, MemberExpr, MemberProp,
-    ModuleDecl, ModuleExportName, ModuleItem, Module,
+    CatchClause, Expr, Function, Ident, ImportDecl, ImportNamedSpecifier, ImportSpecifier,
+    MemberExpr, MemberProp, ModuleDecl, ModuleExportName, ModuleItem, Module, Param, Pat,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -54,41 +54,15 @@ fn find_decomposition_candidates(
     module: &Module,
     module_facts: &ModuleFactsMap,
 ) -> Vec<DecompCandidate> {
-    // Collect all existing top-level bindings to detect naming collisions
-    let mut existing_bindings: HashSet<Atom> = HashSet::new();
-    for item in &module.body {
-        match item {
-            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
-                for spec in &import.specifiers {
-                    let local = match spec {
-                        ImportSpecifier::Default(s) => &s.local.sym,
-                        ImportSpecifier::Namespace(s) => &s.local.sym,
-                        ImportSpecifier::Named(s) => &s.local.sym,
-                    };
-                    existing_bindings.insert(local.clone());
-                }
-            }
-            ModuleItem::Stmt(swc_core::ecma::ast::Stmt::Decl(decl)) => {
-                match decl {
-                    swc_core::ecma::ast::Decl::Var(var) => {
-                        for d in &var.decls {
-                            if let swc_core::ecma::ast::Pat::Ident(b) = &d.name {
-                                existing_bindings.insert(b.id.sym.clone());
-                            }
-                        }
-                    }
-                    swc_core::ecma::ast::Decl::Fn(f) => {
-                        existing_bindings.insert(f.ident.sym.clone());
-                    }
-                    swc_core::ecma::ast::Decl::Class(c) => {
-                        existing_bindings.insert(c.ident.sym.clone());
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-    }
+    // Collect ALL bindings at every scope level (including function params,
+    // catch clauses, inner var/let/const, etc.) to detect naming collisions.
+    // A property name that shadows an inner binding would produce wrong code
+    // if we rewrote `r.foo` → `foo` where `foo` is already bound in that scope.
+    let mut collector = AllBindingsCollector {
+        bindings: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    let existing_bindings = collector.bindings;
 
     // Step 1: Find default imports and their source modules
     let mut default_imports: Vec<(usize, Atom, SyntaxContext, Atom)> = Vec::new();
@@ -169,6 +143,101 @@ fn find_decomposition_candidates(
     }
 
     candidates
+}
+
+/// Collects all binding names in the module, at every scope depth.
+/// Used to detect collisions with inner-scope variables, parameters, etc.
+struct AllBindingsCollector {
+    bindings: HashSet<Atom>,
+}
+
+impl AllBindingsCollector {
+    fn collect_pat(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(b) => {
+                self.bindings.insert(b.id.sym.clone());
+            }
+            Pat::Array(a) => {
+                for elem in a.elems.iter().flatten() {
+                    self.collect_pat(elem);
+                }
+            }
+            Pat::Object(o) => {
+                for prop in &o.props {
+                    match prop {
+                        swc_core::ecma::ast::ObjectPatProp::Assign(a) => {
+                            self.bindings.insert(a.key.sym.clone());
+                        }
+                        swc_core::ecma::ast::ObjectPatProp::KeyValue(kv) => {
+                            self.collect_pat(&kv.value);
+                        }
+                        swc_core::ecma::ast::ObjectPatProp::Rest(r) => {
+                            self.collect_pat(&r.arg);
+                        }
+                    }
+                }
+            }
+            Pat::Rest(r) => {
+                self.collect_pat(&r.arg);
+            }
+            Pat::Assign(a) => {
+                self.collect_pat(&a.left);
+            }
+            Pat::Expr(_) | Pat::Invalid(_) => {}
+        }
+    }
+}
+
+impl Visit for AllBindingsCollector {
+    fn visit_import_specifier(&mut self, spec: &ImportSpecifier) {
+        let local = match spec {
+            ImportSpecifier::Default(s) => &s.local.sym,
+            ImportSpecifier::Namespace(s) => &s.local.sym,
+            ImportSpecifier::Named(s) => &s.local.sym,
+        };
+        self.bindings.insert(local.clone());
+    }
+
+    fn visit_var_declarator(&mut self, decl: &swc_core::ecma::ast::VarDeclarator) {
+        self.collect_pat(&decl.name);
+        decl.visit_children_with(self);
+    }
+
+    fn visit_fn_decl(&mut self, f: &swc_core::ecma::ast::FnDecl) {
+        self.bindings.insert(f.ident.sym.clone());
+        f.visit_children_with(self);
+    }
+
+    fn visit_class_decl(&mut self, c: &swc_core::ecma::ast::ClassDecl) {
+        self.bindings.insert(c.ident.sym.clone());
+        c.visit_children_with(self);
+    }
+
+    fn visit_param(&mut self, param: &Param) {
+        self.collect_pat(&param.pat);
+        param.visit_children_with(self);
+    }
+
+    fn visit_function(&mut self, f: &Function) {
+        for param in &f.params {
+            self.collect_pat(&param.pat);
+        }
+        f.visit_children_with(self);
+    }
+
+    fn visit_catch_clause(&mut self, c: &CatchClause) {
+        if let Some(param) = &c.param {
+            self.collect_pat(param);
+        }
+        c.visit_children_with(self);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
+        for param in &arrow.params {
+            self.collect_pat(param);
+        }
+        arrow.visit_children_with(self);
+    }
 }
 
 /// Visitor that checks whether a binding is used only via property access.
@@ -254,19 +323,17 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
             continue;
         };
 
-        // Replace default specifier with named specifiers
-        import.specifiers = candidate
-            .accessed_props
-            .iter()
-            .map(|prop| {
-                ImportSpecifier::Named(ImportNamedSpecifier {
-                    span: DUMMY_SP,
-                    local: Ident::new(prop.clone(), DUMMY_SP, SyntaxContext::empty()),
-                    imported: None,
-                    is_type_only: false,
-                })
-            })
-            .collect();
+        // Remove the default specifier, keep any existing named/namespace specifiers,
+        // and add the new named specifiers for the decomposed properties.
+        import.specifiers.retain(|s| !matches!(s, ImportSpecifier::Default(_)));
+        for prop in &candidate.accessed_props {
+            import.specifiers.push(ImportSpecifier::Named(ImportNamedSpecifier {
+                span: DUMMY_SP,
+                local: Ident::new(prop.clone(), DUMMY_SP, SyntaxContext::empty()),
+                imported: None,
+                is_type_only: false,
+            }));
+        }
     }
 
     // Rewrite usages: r.foo → foo

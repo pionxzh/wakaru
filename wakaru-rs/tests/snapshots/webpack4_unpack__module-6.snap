@@ -3,8 +3,8 @@ source: tests/webpack4_unpack.rs
 expression: code
 ---
 import r from "./module-0.js";
-import { a } from "./module-9.js";
-import { a } from "./module-12.js";
+import o from "./module-9.js";
+import i from "./module-12.js";
 export { l as e };
 export { c };
 export { h as f };
@@ -29,7 +29,7 @@ function c() {
 }
 const s = "invalid buffer passed to channel factory function";
 const f = "Saga was provided with an undefined action";
-export function b(e = a.fixed()) {
+export function b(e = o.a.fixed()) {
     let t = false;
     let n = [];
     function i() {
@@ -97,7 +97,7 @@ export function b(e = a.fixed()) {
         }
     };
 }
-export function d(e, t = a.none(), n) {
+export function d(e, t = o.a.none(), n) {
     if (arguments.length > 2) {
         r.h(n, r.q.func, "Invalid match function passed to eventChannel");
     }
@@ -134,7 +134,7 @@ function h(e) {
             if (e[r.c]) {
                 t(e);
             } else {
-                a(()=>t(e));
+                i.a(()=>t(e));
             }
         }));
     return {

@@ -223,3 +223,77 @@ z();
 "#;
     assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
 }
+
+// ── Regression: nested shadowing prevents decomposition ────────────
+
+#[test]
+fn inner_scope_shadow_prevents_decomposition() {
+    let target_facts = facts_for(r#"export function foo() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    // `foo` is a parameter in an inner function — decomposing r.foo → foo
+    // would collide with the parameter, producing `foo + foo` instead of
+    // `r.foo + foo`.
+    let input = r#"
+import r from "./mod.js";
+function g(foo) { return r.foo + foo; }
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(normalize(&output).contains("import r from"), "should keep default import when inner scope shadows, got: {output}");
+}
+
+#[test]
+fn catch_param_shadow_prevents_decomposition() {
+    let target_facts = facts_for(r#"export function err() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import r from "./mod.js";
+try { r.err(); } catch (err) { console.log(err); }
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(normalize(&output).contains("import r from"), "should keep default import when catch param shadows, got: {output}");
+}
+
+#[test]
+fn arrow_param_shadow_prevents_decomposition() {
+    let target_facts = facts_for(r#"export function x() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import r from "./mod.js";
+const fn = (x) => r.x + x;
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(normalize(&output).contains("import r from"), "should keep default import when arrow param shadows, got: {output}");
+}
+
+// ── Regression: mixed imports preserved ────────────────────────────
+
+#[test]
+fn mixed_import_preserves_named_specifiers() {
+    let target_facts = facts_for(r#"
+export function Fragment() {}
+export function createElement() {}
+export function useState() {}
+"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./react.js", target_facts);
+
+    let input = r#"
+import React, { useState } from "./react.js";
+React.createElement("div");
+React.Fragment;
+useState();
+"#;
+    let expected = r#"
+import { useState, Fragment, createElement } from "./react.js";
+createElement("div");
+Fragment;
+useState();
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}

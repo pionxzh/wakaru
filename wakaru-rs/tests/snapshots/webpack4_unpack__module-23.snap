@@ -4,7 +4,7 @@ expression: code
 ---
 import i from "./module-3.js";
 import u from "./module-1.js";
-import { a } from "./module-7.js";
+import h from "./module-7.js";
 import y from "./module-32.js";
 import b from "./module-5.js";
 import w from "./module-20.js";
@@ -192,7 +192,7 @@ export function connectAdvanced(e, t = {}) {
         b(w.isValidElementType(T1), `You must pass a component to the function returned by ${d}. Instead received ${JSON.stringify(T1)}`);
         const n = T1.displayName || T1.name || "Component";
         const r = l(n);
-        const a = a({}, N, {
+        const a = h.a({}, N, {
             getDisplayName: l,
             methodName: d,
             renderCountProp: b,
@@ -304,7 +304,7 @@ export function connectAdvanced(e, t = {}) {
                 if (!(R || b || this.propsMode && this.subscription)) {
                     return e;
                 }
-                const t = a({}, e);
+                const t = h.a({}, e);
                 if (R) {
                     t.ref = this.setWrappedInstance;
                 }
@@ -437,7 +437,7 @@ const D = [
     }
 ];
 function F(e, t, n) {
-    return a({}, n, e, t);
+    return h.a({}, n, e, t);
 }
 const z = [
     (e)=>{
@@ -587,7 +587,7 @@ export const connect = ((e)=>{
         const k = W(e, i, "mapStateToProps");
         const T = W(t, u, "mapDispatchToProps");
         const S = W(n, c, "mergeProps");
-        return r(f, a({
+        return r(f, h.a({
             methodName: "connect",
             getDisplayName (e) {
                 return `Connect(${e})`;
