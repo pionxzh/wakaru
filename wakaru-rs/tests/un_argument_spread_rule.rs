@@ -58,7 +58,9 @@ fn.apply(obj, someArray);
 
 #[test]
 fn does_not_convert_member_apply_with_null_this() {
-    // obj.fn.apply(null, ...) — not converted (thisArg doesn't equal obj)
+    // obj.fn.apply(null, ...) — not converted because it changes `this` from
+    // undefined to obj. The proper fix is namespace import decomposition
+    // (obj.fn → fn), after which Pattern 1 handles it.
     let input = r#"
 obj.fn.apply(null, someArray);
 "#;

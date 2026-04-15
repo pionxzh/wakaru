@@ -77,7 +77,11 @@ fn try_convert_apply(call: CallExpr) -> Result<Expr, CallExpr> {
         if exprs_equal(first_arg, &callee_member_obj.obj) {
             return Ok(make_spread_call(call));
         }
-        // Otherwise don't convert (obj.fn.apply(someOtherThing, ...) is not safe)
+        // obj.fn.apply(null/undefined, ...) — Babel spread artifact for standalone
+        // function calls on module namespaces (e.g. `r.applyMiddleware.apply(void 0, d)`).
+        // Not converted here because it changes `this` from undefined to obj.
+        // The proper fix is namespace import decomposition (r.fn → fn), after which
+        // Pattern 1 (simple ident) handles it.
         return Err(call);
     }
 
