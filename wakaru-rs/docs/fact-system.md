@@ -72,6 +72,20 @@ these structures. No mutation, no shared state.
 4. Add unit tests following `tests/namespace_decomposition_rule.rs` (use
    `facts_for(source)` to synthesize a target module's facts).
 
+### Gotchas when synthesizing new idents
+
+- **Use `DUMMY_SP` for new import specifiers, aliases, and rewritten usage
+  idents.** `apply_sourcemap_renames()` skips idents only when `span.is_dummy()`;
+  real spans would cause the source-map rename pass to vote on positions the
+  bundler never emitted.
+- **Propagate `SyntaxContext` when reusing an existing binding.** If your
+  rewrite replaces `R.foo` with a reference to an *existing* local, stamp the
+  existing local's ctxt on the new ident — otherwise later `(sym, ctxt)` passes
+  (e.g. `UnImportRename` Stage 6) will rename the binding + original usages but
+  miss yours, leaving an undefined reference. For newly-created import
+  specifiers, `SyntaxContext::empty()` on both binding and usage is fine (they
+  match each other and the resolver isn't re-run).
+
 ## Non-goals
 
 - No shared mutable state between rules in the same phase.
