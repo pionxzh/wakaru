@@ -103,6 +103,14 @@ When debugging: diff raw vs decompiled snapshots for the same module to isolate 
 
 A private fixture repo at `../wakaru-fixtures/` contains bundled demo apps and real-world bundles for cross-bundler regression testing. After significant rule changes, run `./run.sh` there and check `git diff` for regressions. See that repo's README for details.
 
+**CRITICAL — always rebuild the release binary before running fixtures.** `run.sh` invokes `target/release/wakaru-rs` by default; `cargo build --release` is NOT run for you. If you skip this, the fixture run exercises a stale binary and reports "zero regressions" against code that is not your current working tree. A correct invocation from `wakaru-rs/`:
+
+```bash
+cargo build --release && (cd ../../wakaru-fixtures && ./run.sh)
+```
+
+Sanity-check the binary timestamp (`ls -la target/release/wakaru-rs*`) against your most recent commit time before trusting a fixture-diff result.
+
 ## Debugging Tips
 
 - **Unexpected variable names:** Check for missing `unresolved_mark` guard or matching by `sym` instead of `(sym, SyntaxContext)`. Compare raw vs decompiled snapshots.
