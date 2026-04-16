@@ -29,6 +29,12 @@ struct DecompProp {
     exported: Atom,
     /// The local binding name — equals `exported` unless aliased to avoid collision
     local: Atom,
+    /// `SyntaxContext` to stamp on rewritten usage idents. When we reuse an
+    /// existing named specifier's local, this is that specifier's real ctxt, so
+    /// downstream `(sym, ctxt)` matching sees our rewrites as refs to the same
+    /// binding. When we add a fresh specifier, the binding is new and carries
+    /// `SyntaxContext::empty()`.
+    local_ctxt: SyntaxContext,
 }
 
 /// A candidate for namespace decomposition: a default import whose binding is used
@@ -136,7 +142,7 @@ fn find_decomposition_candidates(
         // `existing_import_locals` tracks locals that came from this import; we use
         // it to avoid removing pre-existing bindings during the readability-skip
         // undo below.
-        let mut exported_to_local: HashMap<Atom, Atom> = HashMap::new();
+        let mut exported_to_local: HashMap<Atom, (Atom, SyntaxContext)> = HashMap::new();
         let mut existing_import_locals: HashSet<Atom> = HashSet::new();
         if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &module.body[import_index] {
             for spec in &import.specifiers {
@@ -149,7 +155,7 @@ fn find_decomposition_candidates(
                         Some(ModuleExportName::Str(_)) => continue,
                         None => s.local.sym.clone(),
                     };
-                    exported_to_local.insert(exported, s.local.sym.clone());
+                    exported_to_local.insert(exported, (s.local.sym.clone(), s.local.ctxt));
                 }
             }
         }
@@ -167,10 +173,11 @@ fn find_decomposition_candidates(
         let mut sorted_accessed: Vec<Atom> = analyzer.accessed_props.into_iter().collect();
         sorted_accessed.sort();
         for prop in &sorted_accessed {
-            if let Some(existing_local) = exported_to_local.get(prop) {
+            if let Some((existing_local, existing_ctxt)) = exported_to_local.get(prop) {
                 props.push(DecompProp {
                     exported: prop.clone(),
                     local: existing_local.clone(),
+                    local_ctxt: *existing_ctxt,
                 });
                 reused_existing += 1;
                 continue;
@@ -184,12 +191,14 @@ fn find_decomposition_candidates(
                 props.push(DecompProp {
                     exported: prop.clone(),
                     local: alias,
+                    local_ctxt: SyntaxContext::empty(),
                 });
             } else {
                 existing_bindings.insert(prop.clone());
                 props.push(DecompProp {
                     exported: prop.clone(),
                     local: prop.clone(),
+                    local_ctxt: SyntaxContext::empty(),
                 });
             }
         }
@@ -398,18 +407,22 @@ impl Visit for UsageAnalyzer<'_> {
 
 /// Apply the decomposition rewrites.
 fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
-    // Build a lookup: (sym, ctxt) → map of exported_name → local_name
-    let decomp_map: HashMap<(Atom, SyntaxContext), HashMap<Atom, Atom>> = candidates
-        .iter()
-        .map(|c| {
-            let prop_map: HashMap<Atom, Atom> = c
-                .props
-                .iter()
-                .map(|p| (p.exported.clone(), p.local.clone()))
-                .collect();
-            ((c.local_sym.clone(), c.local_ctxt), prop_map)
-        })
-        .collect();
+    // Build a lookup: (sym, ctxt) → map of exported_name → (local_name, local_ctxt).
+    // Reused-existing specifiers carry their real ctxt; freshly-added ones use
+    // `SyntaxContext::empty()`. Propagating the ctxt lets downstream rules match
+    // rewritten usages against the binding.
+    let decomp_map: HashMap<(Atom, SyntaxContext), HashMap<Atom, (Atom, SyntaxContext)>> =
+        candidates
+            .iter()
+            .map(|c| {
+                let prop_map: HashMap<Atom, (Atom, SyntaxContext)> = c
+                    .props
+                    .iter()
+                    .map(|p| (p.exported.clone(), (p.local.clone(), p.local_ctxt)))
+                    .collect();
+                ((c.local_sym.clone(), c.local_ctxt), prop_map)
+            })
+            .collect();
 
     // Rewrite import declarations: remove default specifier, add named specifiers
     for candidate in candidates {
@@ -463,8 +476,8 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
 
 /// Rewrites `r.prop` → `local_name` for decomposed namespace bindings.
 struct UsageRewriter<'a> {
-    /// Maps (namespace_sym, ctxt) → { exported_name → local_name }
-    decomp_map: &'a HashMap<(Atom, SyntaxContext), HashMap<Atom, Atom>>,
+    /// Maps (namespace_sym, ctxt) → { exported_name → (local_name, local_ctxt) }
+    decomp_map: &'a HashMap<(Atom, SyntaxContext), HashMap<Atom, (Atom, SyntaxContext)>>,
 }
 
 impl VisitMut for UsageRewriter<'_> {
@@ -482,8 +495,8 @@ impl VisitMut for UsageRewriter<'_> {
         let MemberProp::Ident(prop) = &member.prop else {
             return;
         };
-        if let Some(local_name) = prop_map.get(&prop.sym) {
-            *expr = Expr::Ident(Ident::new(local_name.clone(), DUMMY_SP, SyntaxContext::empty()));
+        if let Some((local_name, local_ctxt)) = prop_map.get(&prop.sym) {
+            *expr = Expr::Ident(Ident::new(local_name.clone(), DUMMY_SP, *local_ctxt));
         }
     }
 

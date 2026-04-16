@@ -6,6 +6,7 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::VisitMutWith;
+use wakaru_rs::apply_rules_between;
 use wakaru_rs::facts::{collect_module_facts, ModuleFacts, ModuleFactsMap};
 use wakaru_rs::namespace_decomposition::run_namespace_decomposition;
 
@@ -32,6 +33,46 @@ fn run_decomp(source: &str, facts: &ModuleFactsMap) -> String {
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
         run_namespace_decomposition(&mut module, facts);
+
+        let mut output = Vec::new();
+        {
+            let mut emitter = Emitter {
+                cfg: Config::default().with_minify(false),
+                cm: cm.clone(),
+                comments: None,
+                wr: JsWriter::new(cm, "\n", &mut output, None),
+            };
+            emitter.emit_module(&module).expect("emit failed");
+        }
+        String::from_utf8(output).expect("utf8")
+    })
+}
+
+/// Like `run_decomp` but also runs `UnImportRename` (and friends) afterward.
+/// Used to verify that rewritten usages carry the right `SyntaxContext` so that
+/// downstream `(sym, ctxt)` renaming matches them.
+fn run_decomp_then_rename(source: &str, facts: &ModuleFactsMap) -> String {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let fm = cm.new_source_file(
+            FileName::Custom("test.js".to_string()).into(),
+            source.to_string(),
+        );
+        let lexer = Lexer::new(
+            Syntax::Es(EsSyntax { jsx: true, ..Default::default() }),
+            Default::default(),
+            StringInput::from(&*fm),
+            None,
+        );
+        let mut parser = Parser::new_from(lexer);
+        let mut module = parser.parse_module().expect("parse failed");
+
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        run_namespace_decomposition(&mut module, facts);
+        apply_rules_between(&mut module, unresolved_mark, "UnImportRename", "UnImportRename");
 
         let mut output = Vec::new();
         {
@@ -374,6 +415,35 @@ bar();
 bar();
 "#;
     assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+// ── Regression: ctxt propagated on reused aliased locals ──────────────
+
+#[test]
+fn reused_aliased_local_usage_has_binding_ctxt() {
+    // Without ctxt propagation, rewritten usages carry `SyntaxContext::empty()`
+    // while the original binding carries the real resolver ctxt. UnImportRename
+    // then only renames the binding + original usages and misses the rewritten
+    // ones, leaving an undefined `bar` reference.
+    let target_facts = facts_for(r#"
+export function foo() {}
+"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./react.js", target_facts);
+
+    let input = r#"
+import React, { foo as bar } from "./react.js";
+bar();
+React.foo();
+"#;
+    // UnImportRename collapses `{ foo as bar }` → `{ foo }` and renames bar → foo
+    // across all refs. Both call sites must end up as `foo()`.
+    let expected = r#"
+import { foo } from "./react.js";
+foo();
+foo();
+"#;
+    assert_eq_normalized(&run_decomp_then_rename(input, &facts), expected.trim());
 }
 
 #[test]
