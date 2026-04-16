@@ -6,38 +6,25 @@ import "./module-13.js";
 import { ERROR, START, SUCCESS } from "./module-26.js";
 import { FETCH_DATA } from "./module-19.js";
 let r;
-function a(e, t, n) {
-    if (t in e) {
-        Object.defineProperty(e, t, {
-            value: n,
-            enumerable: true,
-            configurable: true,
-            writable: true
-        });
-    } else {
-        e[t] = n;
-    }
-    return e;
-}
 const u = {
     isLoading: false,
     data: [],
     error: ""
 };
-a(r = {}, FETCH_DATA + START, (e)=>({
+(r = {})[FETCH_DATA + START] = (e)=>({
         ...e,
         isLoading: true
-    }));
-a(r, FETCH_DATA + SUCCESS, (e, t)=>({
+    });
+r[FETCH_DATA + SUCCESS] = (e, t)=>({
         ...e,
         isLoading: false,
         data: t
-    }));
-a(r, FETCH_DATA + ERROR, (e, t)=>({
+    });
+r[FETCH_DATA + ERROR] = (e, t)=>({
         ...e,
         isLoading: false,
         error: t
-    }));
+    });
 const l = r;
 export default ((e = u, t)=>{
     const n = l[t.type];

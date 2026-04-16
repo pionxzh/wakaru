@@ -22,6 +22,7 @@ mod un_async_await;
 mod un_bracket_notation;
 mod un_class_call_check;
 mod un_class_fields;
+mod un_define_property;
 mod un_builtin_prototype;
 mod un_conditionals;
 mod un_curly_braces;
@@ -93,6 +94,7 @@ pub use un_async_await::UnAsyncAwait;
 pub use un_bracket_notation::UnBracketNotation;
 pub use un_class_call_check::UnClassCallCheck;
 pub use un_class_fields::UnClassFields;
+pub use un_define_property::UnDefineProperty;
 pub use un_builtin_prototype::UnBuiltinPrototype;
 pub use un_conditionals::UnConditionals;
 pub use un_curly_braces::UnCurlyBraces;
@@ -183,6 +185,7 @@ pub fn rule_names() -> &'static [&'static str] {
         "UnObjectSpread",
         "UnObjectRest",
         "UnSlicedToArray",
+        "UnDefineProperty",
         "UnClassCallCheck",
         "UnPossibleConstructorReturn",
         "UnTypeofPolyfill",
@@ -303,6 +306,7 @@ fn apply_rules_range_impl(
     run!(UnObjectSpread, "UnObjectSpread");
     run!(UnObjectRest, "UnObjectRest");
     run!(UnSlicedToArray, "UnSlicedToArray");
+    run!(UnDefineProperty, "UnDefineProperty");
     run!(UnClassCallCheck, "UnClassCallCheck");
     run!(UnPossibleConstructorReturn, "UnPossibleConstructorReturn");
     run!(UnTypeofPolyfill, "UnTypeofPolyfill");
