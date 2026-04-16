@@ -2,7 +2,7 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import * as r from "./module-3.js";
+import "./module-3.js";
 import * as o from "./module-49.js";
 import i from "./module-23.js";
 import a from "./module-18.js";

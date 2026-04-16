@@ -6,9 +6,11 @@ fn unwraps_wildcard_by_import_path() {
     let input = r#"
 var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
 var _a = _interopRequireWildcard(require("a"));
+console.log(_a);
 "#;
     let expected = r#"
 import * as _a from "a";
+console.log(_a);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -18,9 +20,11 @@ fn unwraps_wildcard_two_args() {
     let input = r#"
 var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");
 var _b = _interopRequireWildcard(require("b"), true);
+console.log(_b);
 "#;
     let expected = r#"
 import * as _b from "b";
+console.log(_b);
 "#;
     assert_eq_normalized(&render(input), expected);
 }

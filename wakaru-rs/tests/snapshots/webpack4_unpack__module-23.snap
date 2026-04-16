@@ -6,7 +6,7 @@ import i from "./module-3.js";
 import u from "./module-1.js";
 import { a } from "./module-7.js";
 import y from "./module-32.js";
-import b from "./module-5.js";
+import "./module-5.js";
 import w from "./module-20.js";
 import { bindActionCreators } from "./module-11.js";
 function r(e, t) {

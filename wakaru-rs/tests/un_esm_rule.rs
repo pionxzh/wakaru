@@ -1,9 +1,12 @@
 mod common;
 
-use common::{assert_eq_normalized, render_pipeline};
+use common::{assert_eq_normalized, render_pipeline_until};
 
+// Stop before DeadImports (the final cleanup pass) so that synthetic inputs
+// with unused specifiers don't get stripped — these tests exercise UnEsm's
+// shape, not downstream dead-code elimination.
 fn apply(input: &str) -> String {
-    render_pipeline(input)
+    render_pipeline_until(input, "SmartRename")
 }
 
 #[test]

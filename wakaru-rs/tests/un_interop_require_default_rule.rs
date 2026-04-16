@@ -102,9 +102,11 @@ function _interopRequireDefault(obj) {
     return obj && obj.__esModule ? obj : { default: obj };
 }
 var _d = _interopRequireDefault(require("d")).default;
+console.log(_d);
 "#;
     let expected = r#"
 import _d from "d";
+console.log(_d);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
