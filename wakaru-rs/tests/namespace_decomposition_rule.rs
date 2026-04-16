@@ -113,7 +113,72 @@ fn facts_for(source: &str) -> ModuleFacts {
     })
 }
 
-// ── Namespace decomposition ────────────────────────────────────────
+// ── Namespace import decomposition ─────────────────────────────────
+
+#[test]
+fn decompose_namespace_import_to_named() {
+    let target_facts = facts_for(r#"
+export function createStore() {}
+export function applyMiddleware() {}
+"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-11.js", target_facts);
+
+    let input = r#"
+import * as r from "./module-11.js";
+const p = r.createStore(u, r.applyMiddleware(d));
+"#;
+    let expected = r#"
+import { applyMiddleware, createStore } from "./module-11.js";
+const p = createStore(u, applyMiddleware(d));
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+#[test]
+fn namespace_bare_access_prevents_decomposition() {
+    // `Object.keys(r)` is a bare usage — the namespace object itself is needed,
+    // so decomposition isn't safe.
+    let target_facts = facts_for(r#"export function foo() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import * as r from "./mod.js";
+r.foo();
+Object.keys(r);
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(
+        normalize(&output).contains("import * as r from"),
+        "should keep namespace import, got: {output}"
+    );
+}
+
+#[test]
+fn namespace_default_access_prevents_decomposition() {
+    // `r.default` can't be expressed as a named specifier, so decomposition
+    // should be skipped for the whole candidate.
+    let target_facts = facts_for(r#"
+export default function d() {}
+export function foo() {}
+"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import * as r from "./mod.js";
+r.foo();
+r.default();
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(
+        normalize(&output).contains("import * as r from"),
+        "should keep namespace import when .default is accessed, got: {output}"
+    );
+}
+
+// ── Default import decomposition ───────────────────────────────────
 
 #[test]
 fn decompose_default_import_to_named() {

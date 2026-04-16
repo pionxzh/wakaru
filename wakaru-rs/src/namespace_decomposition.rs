@@ -1,6 +1,6 @@
-//! Namespace decomposition: decompose default imports into named imports when
-//! the imported binding is only used via property access and the target module
-//! exports those properties.
+//! Namespace decomposition: decompose default or namespace imports into named
+//! imports when the imported binding is only used via property access and the
+//! target module exports those properties.
 //!
 //! Runs at the Stage 2 barrier (after `UnEsm`, before `UnTemplateLiteral`),
 //! using cross-module `ModuleFacts` to verify that the target module actually
@@ -79,27 +79,35 @@ fn find_decomposition_candidates(
     module.visit_with(&mut collector);
     let mut existing_bindings = collector.bindings;
 
-    // Step 1: Find default imports and their source modules
-    let mut default_imports: Vec<(usize, Atom, SyntaxContext, Atom)> = Vec::new();
+    // Step 1: Find default and namespace imports and their source modules.
+    // Both shapes expose a module-namespace-like binding that can be decomposed
+    // into direct named specifiers when usage is property-access only.
+    let mut namespace_like_imports: Vec<(usize, Atom, SyntaxContext, Atom)> = Vec::new();
     for (idx, item) in module.body.iter().enumerate() {
         let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
             continue;
         };
+        let source: Atom = import.src.value.as_str().unwrap_or("").into();
         for spec in &import.specifiers {
-            if let ImportSpecifier::Default(s) = spec {
-                let source: Atom = import.src.value.as_str().unwrap_or("").into();
-                default_imports.push((idx, s.local.sym.clone(), s.local.ctxt, source));
+            match spec {
+                ImportSpecifier::Default(s) => {
+                    namespace_like_imports.push((idx, s.local.sym.clone(), s.local.ctxt, source.clone()));
+                }
+                ImportSpecifier::Namespace(s) => {
+                    namespace_like_imports.push((idx, s.local.sym.clone(), s.local.ctxt, source.clone()));
+                }
+                ImportSpecifier::Named(_) => {}
             }
         }
     }
 
-    if default_imports.is_empty() {
+    if namespace_like_imports.is_empty() {
         return Vec::new();
     }
 
-    // Step 2: For each default import, analyze usage
+    // Step 2: For each default/namespace import, analyze usage
     let mut candidates = Vec::new();
-    for (import_index, local_sym, local_ctxt, source) in default_imports {
+    for (import_index, local_sym, local_ctxt, source) in namespace_like_imports {
         // Check if target module's exports are known
         let Some(target_facts) = module_facts.get(source.as_ref()) else {
             continue;
@@ -442,8 +450,14 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
             })
             .collect();
 
-        // Remove the default specifier, keep existing named/namespace specifiers
-        import.specifiers.retain(|s| !matches!(s, ImportSpecifier::Default(_)));
+        // Remove the specific specifier we're decomposing (default or namespace).
+        // Other specifiers on the same import — including a sibling default when
+        // we decompose a namespace, or named specifiers — are left intact.
+        import.specifiers.retain(|s| match s {
+            ImportSpecifier::Default(d) => d.local.sym != candidate.local_sym,
+            ImportSpecifier::Namespace(n) => n.local.sym != candidate.local_sym,
+            ImportSpecifier::Named(_) => true,
+        });
 
         // Add new named specifiers for decomposed properties (skip if already present)
         for prop in &candidate.props {
