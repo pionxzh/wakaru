@@ -129,32 +129,50 @@ fn find_decomposition_candidates(
             continue;
         }
 
-        // Also collect the names already imported from this same declaration
-        // (e.g. `import React, { useState } from "react"` already has `useState`).
-        let mut already_imported: HashSet<Atom> = HashSet::new();
+        // Map `exported_name → local_name` for named specifiers already on this
+        // import. Keying by *exported* name is essential: `import { foo as bar }`
+        // binds local `bar` to export `foo`, so if we later decompose `React.bar`
+        // we must NOT reuse the existing `bar` — that local points at export `foo`.
+        // `existing_import_locals` tracks locals that came from this import; we use
+        // it to avoid removing pre-existing bindings during the readability-skip
+        // undo below.
+        let mut exported_to_local: HashMap<Atom, Atom> = HashMap::new();
+        let mut existing_import_locals: HashSet<Atom> = HashSet::new();
         if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &module.body[import_index] {
             for spec in &import.specifiers {
                 if let ImportSpecifier::Named(s) = spec {
-                    already_imported.insert(s.local.sym.clone());
+                    existing_import_locals.insert(s.local.sym.clone());
+                    // Skip string-named imports (`import { "x" as y }`) — we can't
+                    // reuse them for identifier-keyed property access anyway.
+                    let exported = match &s.imported {
+                        Some(ModuleExportName::Ident(id)) => id.sym.clone(),
+                        Some(ModuleExportName::Str(_)) => continue,
+                        None => s.local.sym.clone(),
+                    };
+                    exported_to_local.insert(exported, s.local.sym.clone());
                 }
             }
         }
 
         // Build decomposition props, aliasing on collision.
-        // For each accessed property, determine its local name:
-        // - if no collision, use the property name directly
-        // - if it collides with an existing binding, synthesize a safe alias
-        // - if already imported as a named specifier, skip (don't duplicate)
+        // For each accessed export name, determine its local name:
+        // - if that *export* is already imported (even under an alias), reuse the
+        //   existing local binding
+        // - else if the preferred local name collides with an existing binding,
+        //   synthesize a safe alias
+        // - else use the property name directly
         let mut props: Vec<DecompProp> = Vec::new();
         let mut alias_count = 0usize;
+        let mut reused_existing = 0usize;
         let mut sorted_accessed: Vec<Atom> = analyzer.accessed_props.into_iter().collect();
         sorted_accessed.sort();
         for prop in &sorted_accessed {
-            if already_imported.contains(prop) {
+            if let Some(existing_local) = exported_to_local.get(prop) {
                 props.push(DecompProp {
                     exported: prop.clone(),
-                    local: prop.clone(),
+                    local: existing_local.clone(),
                 });
+                reused_existing += 1;
                 continue;
             }
             let is_own_binding = *prop == local_sym;
@@ -179,11 +197,14 @@ fn find_decomposition_candidates(
         // Skip decomposition if too many aliases are needed — the result would be
         // less readable than the original namespace access pattern.
         // Only triggers when there are multiple new props and most need aliasing.
-        let new_props = sorted_accessed.len() - already_imported.len();
+        let new_props = sorted_accessed.len() - reused_existing;
         if new_props > 1 && alias_count * 2 > new_props {
-            // Undo the insertions into existing_bindings
+            // Undo only the names we ourselves inserted into existing_bindings
+            // during this iteration. Skip reused existing-locals (pre-existing
+            // bindings) and freshly-added aliases/props that match pre-existing
+            // import locals.
             for prop in &props {
-                if prop.exported != prop.local {
+                if prop.exported != prop.local && !existing_import_locals.contains(&prop.local) {
                     existing_bindings.remove(&prop.local);
                 }
             }

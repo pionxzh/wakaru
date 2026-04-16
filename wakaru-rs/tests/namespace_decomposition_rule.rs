@@ -323,6 +323,59 @@ useState();
     assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
 }
 
+// ── Regression: aliased named specifier must not be reused for wrong export ──
+
+#[test]
+fn aliased_local_same_as_decomposed_prop_synthesizes_new_alias() {
+    // Scenario: `import React, { foo as bar }` — local `bar` points at export `foo`.
+    // When the user accesses `React.bar`, we need a specifier for export `bar`,
+    // NOT reuse the existing local `bar`.
+    let target_facts = facts_for(r#"
+export function foo() {}
+export function bar() {}
+"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./react.js", target_facts);
+
+    let input = r#"
+import React, { foo as bar } from "./react.js";
+bar();
+React.bar();
+"#;
+    // `React.bar` needs a specifier for export `bar`. The existing local `bar`
+    // points at export `foo`, so we must synthesize a separate alias `bar_1`.
+    let expected = r#"
+import { foo as bar, bar as bar_1 } from "./react.js";
+bar();
+bar_1();
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+#[test]
+fn aliased_local_matching_access_reuses_existing_local() {
+    // `import React, { foo as bar }` and access `React.foo` — the existing local
+    // `bar` already refers to export `foo`, so reuse it instead of adding a
+    // redundant `{ foo }` specifier.
+    let target_facts = facts_for(r#"
+export function foo() {}
+"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./react.js", target_facts);
+
+    let input = r#"
+import React, { foo as bar } from "./react.js";
+bar();
+React.foo();
+"#;
+    let expected = r#"
+import { foo as bar } from "./react.js";
+bar();
+bar();
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
 #[test]
 fn no_duplicate_specifier_when_already_imported() {
     let target_facts = facts_for(r#"
