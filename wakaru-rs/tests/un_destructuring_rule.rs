@@ -173,28 +173,22 @@ var [head, ...tail] = arr;
 }
 
 #[test]
-fn reconstructs_direct_loose_array_rest() {
+fn leaves_direct_loose_array_rest() {
     let input = r#"
 const head = values[0];
 const rest = values.slice(1);
 "#;
-    let expected = r#"
-const [head, ...rest] = values;
-"#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]
-fn reconstructs_direct_loose_array_rest_after_multiple_indexes() {
+fn leaves_direct_loose_array_rest_after_multiple_indexes() {
     let input = r#"
 const head = ref[0];
 const neck = ref[1];
 const tail = ref.slice(2);
 "#;
-    let expected = r#"
-const [head, neck, ...tail] = ref;
-"#;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]

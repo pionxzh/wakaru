@@ -41,7 +41,8 @@ export const a = (e, t = {}, n)=>{
     if (!v) {
         return null;
     }
-    const [b, ...g] = v;
+    const b = v[0];
+    const g = v.slice(1);
     const w = e === b;
     if (exact && !w) {
         return null;

@@ -105,7 +105,6 @@ fn process_stmts(stmts: Vec<Stmt>) -> Vec<Stmt> {
 
 fn try_reconstruct_group(stmts: &[Stmt], start: usize) -> Option<(Stmt, usize)> {
     try_reconstruct_ref_group(stmts, start)
-        .or_else(|| try_reconstruct_direct_array_group(stmts, start))
 }
 
 fn try_reconstruct_ref_group(stmts: &[Stmt], start: usize) -> Option<(Stmt, usize)> {
@@ -148,138 +147,11 @@ fn try_reconstruct_ref_group(stmts: &[Stmt], start: usize) -> Option<(Stmt, usiz
     Some((stmt, i - start))
 }
 
-fn try_reconstruct_direct_array_group(stmts: &[Stmt], start: usize) -> Option<(Stmt, usize)> {
-    let (first_meta, source, first_access) = try_extract_direct_array_access(stmts, start)?;
-    let mut accesses = vec![first_access];
-    let mut i = start + 1;
-
-    while i < stmts.len() {
-        if let Some((_, next_source, access)) = try_extract_direct_array_access(stmts, i) {
-            if next_source.sym == source.sym && next_source.ctxt == source.ctxt {
-                accesses.push(access);
-                i += 1;
-                continue;
-            }
-        }
-        break;
-    }
-
-    if accesses.len() < 2 || !accesses.iter().any(is_rest_or_default_access) {
-        return None;
-    }
-
-    let pat = build_array_pat(accesses)?;
-    Some((
-        build_var_stmt_from_parts(
-            first_meta.span,
-            first_meta.ctxt,
-            first_meta.kind,
-            first_meta.declare,
-            pat,
-            Box::new(Expr::Ident(source)),
-        ),
-        i - start,
-    ))
-}
-
 fn is_rest_or_default_access(access: &Access) -> bool {
     match access {
         Access::ArrayRest { .. } => true,
         Access::Array { pat, .. } | Access::Object { pat, .. } => matches!(pat, Pat::Assign(_)),
     }
-}
-
-struct VarMeta {
-    span: swc_core::common::Span,
-    ctxt: swc_core::common::SyntaxContext,
-    kind: VarDeclKind,
-    declare: bool,
-}
-
-fn try_extract_direct_array_access(
-    stmts: &[Stmt],
-    index: usize,
-) -> Option<(VarMeta, Ident, Access)> {
-    let stmt = stmts.get(index)?;
-    let Stmt::Decl(Decl::Var(var)) = stmt else {
-        return None;
-    };
-    if var.decls.len() != 1 {
-        return None;
-    }
-    let decl = &var.decls[0];
-    let Pat::Ident(binding) = &decl.name else {
-        return None;
-    };
-    let init = decl.init.as_deref()?;
-    let meta = VarMeta {
-        span: var.span,
-        ctxt: var.ctxt,
-        kind: var.kind,
-        declare: var.declare,
-    };
-
-    if let Some((source, index)) = extract_direct_array_index(init) {
-        return Some((
-            meta,
-            source,
-            Access::Array {
-                index,
-                pat: Pat::Ident(binding.clone()),
-            },
-        ));
-    }
-
-    let (source, start) = extract_direct_slice_rest(init)?;
-    Some((
-        meta,
-        source,
-        Access::ArrayRest {
-            start,
-            binding: binding.clone(),
-        },
-    ))
-}
-
-fn extract_direct_array_index(expr: &Expr) -> Option<(Ident, usize)> {
-    let Expr::Member(member) = expr else {
-        return None;
-    };
-    let Expr::Ident(source) = member.obj.as_ref() else {
-        return None;
-    };
-    let MemberProp::Computed(computed) = &member.prop else {
-        return None;
-    };
-    let Expr::Lit(Lit::Num(num)) = computed.expr.as_ref() else {
-        return None;
-    };
-    Some((source.clone(), numeric_index(num)?))
-}
-
-fn extract_direct_slice_rest(expr: &Expr) -> Option<(Ident, usize)> {
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    if call.args.len() != 1 {
-        return None;
-    }
-    let swc_core::ecma::ast::Callee::Expr(callee) = &call.callee else {
-        return None;
-    };
-    let Expr::Member(MemberExpr { obj, prop, .. }) = callee.as_ref() else {
-        return None;
-    };
-    let Expr::Ident(source) = obj.as_ref() else {
-        return None;
-    };
-    if !matches!(prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "slice") {
-        return None;
-    }
-    let Expr::Lit(Lit::Num(num)) = call.args[0].expr.as_ref() else {
-        return None;
-    };
-    Some((source.clone(), numeric_index(num)?))
 }
 
 fn extract_ref_decl(stmt: &Stmt) -> Option<RefDecl> {
