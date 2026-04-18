@@ -501,13 +501,9 @@ export function createHashHistory(e = {}) {
     }
     const window_history = window.history;
     window.navigator.userAgent.indexOf("Firefox");
-    const n = e;
-    const n_getUserConfirmation = n.getUserConfirmation;
-    const i = n_getUserConfirmation === undefined ? x : n_getUserConfirmation;
-    const n_hashType = n.hashType;
-    const u = n_hashType === undefined ? "slash" : n_hashType;
+    const { getUserConfirmation = x, hashType = "slash" } = e;
     const l = e.basename ? m(d(e.basename)) : "";
-    const c = P[u];
+    const c = P[hashType];
     const { encodePath, decodePath } = c;
     function y() {
         let e = decodePath(j());
@@ -544,7 +540,7 @@ export function createHashHistory(e = {}) {
                     T = false;
                     k();
                 } else {
-                    g.confirmTransitionTo(e, "POP", i, (t)=>{
+                    g.confirmTransitionTo(e, "POP", getUserConfirmation, (t)=>{
                         if (t) {
                             k({
                                 action: "POP",
@@ -608,7 +604,7 @@ export function createHashHistory(e = {}) {
         },
         push (e, t) {
             const n = createLocation(e, undefined, undefined, q.location);
-            g.confirmTransitionTo(n, "PUSH", i, (e)=>{
+            g.confirmTransitionTo(n, "PUSH", getUserConfirmation, (e)=>{
                 if (e) {
                     const t = createPath(n);
                     const r = encodePath(l + t);
@@ -633,7 +629,7 @@ export function createHashHistory(e = {}) {
         },
         replace (e, t) {
             const n = createLocation(e, undefined, undefined, q.location);
-            g.confirmTransitionTo(n, "REPLACE", i, (e)=>{
+            g.confirmTransitionTo(n, "REPLACE", getUserConfirmation, (e)=>{
                 if (e) {
                     const t = createPath(n);
                     const r = encodePath(l + t);
@@ -688,15 +684,9 @@ function M(e, t, n) {
     return Math.min(Math.max(e, t), n);
 }
 export function createMemoryHistory(e = {}) {
-    const t = e;
-    const { getUserConfirmation, initialEntries } = t;
-    const i = initialEntries === undefined ? [
+    const { getUserConfirmation, initialEntries = [
         "/"
-    ] : initialEntries;
-    const t_initialIndex = t.initialIndex;
-    const u = t_initialIndex === undefined ? 0 : t_initialIndex;
-    const t_keyLength = t.keyLength;
-    const c = t_keyLength === undefined ? 6 : t_keyLength;
+    ], initialIndex = 0, keyLength = 6 } = e;
     const s = w();
     function f(e) {
         a_2(g, e);
@@ -704,10 +694,10 @@ export function createMemoryHistory(e = {}) {
         s.notifyListeners(g.location, g.action);
     }
     function d() {
-        return Math.random().toString(36).substr(2, c);
+        return Math.random().toString(36).substr(2, keyLength);
     }
-    const p = M(u, 0, i.length - 1);
-    const h = i.map((e)=>createLocation(e, undefined, typeof e === "string" ? d() : e.key || d()));
+    const p = M(initialIndex, 0, initialEntries.length - 1);
+    const h = initialEntries.map((e)=>createLocation(e, undefined, typeof e === "string" ? d() : e.key || d()));
     function y(e) {
         const t = M(g.index + e, 0, g.entries.length - 1);
         const r = g.entries[t];

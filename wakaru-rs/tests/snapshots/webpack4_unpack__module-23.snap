@@ -554,17 +554,7 @@ function $(e, t) {
     return e === t;
 }
 export const connect = ((e)=>{
-    const t = e === undefined ? {} : e;
-    const t_connectHOC = t.connectHOC;
-    const r = t_connectHOC === undefined ? connectAdvanced : t_connectHOC;
-    const t_mapStateToPropsFactories = t.mapStateToPropsFactories;
-    const i = t_mapStateToPropsFactories === undefined ? D : t_mapStateToPropsFactories;
-    const t_mapDispatchToPropsFactories = t.mapDispatchToPropsFactories;
-    const u = t_mapDispatchToPropsFactories === undefined ? I : t_mapDispatchToPropsFactories;
-    const t_mergePropsFactories = t.mergePropsFactories;
-    const c = t_mergePropsFactories === undefined ? z : t_mergePropsFactories;
-    const t_selectorFactory = t.selectorFactory;
-    const f = t_selectorFactory === undefined ? H : t_selectorFactory;
+    const { connectHOC = connectAdvanced, mapStateToPropsFactories = D, mapDispatchToPropsFactories = I, mergePropsFactories = z, selectorFactory = H } = e === undefined ? {} : e;
     return (e, t, n, o = {})=>{
         const a = o;
         const a_pure = a.pure;
@@ -584,10 +574,10 @@ export const connect = ((e)=>{
             "areStatePropsEqual",
             "areMergedPropsEqual"
         ]);
-        const k = W(e, i, "mapStateToProps");
-        const T = W(t, u, "mapDispatchToProps");
-        const S = W(n, c, "mergeProps");
-        return r(f, a({
+        const k = W(e, mapStateToPropsFactories, "mapStateToProps");
+        const T = W(t, mapDispatchToPropsFactories, "mapDispatchToProps");
+        const S = W(n, mergePropsFactories, "mergeProps");
+        return connectHOC(selectorFactory, a({
             methodName: "connect",
             getDisplayName (e) {
                 return `Connect(${e})`;
