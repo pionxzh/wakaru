@@ -4,7 +4,10 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
-use wakaru_rs::{apply_rules_between, apply_rules_until, decompile, DecompileOptions};
+use wakaru_rs::{
+    apply_rules_between, apply_rules_until, decompile, trace_rules, DecompileOptions,
+    RuleTraceEvent, RuleTraceOptions,
+};
 
 #[allow(dead_code)]
 pub fn render_pipeline(source: &str) -> String {
@@ -92,6 +95,33 @@ pub fn render_pipeline_between(source: &str, start_from: &str, stop_after: &str)
 
         emit_module(&module, cm)
     })
+}
+
+#[allow(dead_code)]
+pub fn trace_pipeline(source: &str, options: RuleTraceOptions) -> Vec<RuleTraceEvent> {
+    trace_rules(
+        source,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            ..Default::default()
+        },
+        options,
+    )
+    .expect("trace should succeed")
+}
+
+#[allow(dead_code)]
+pub fn changed_rules(source: &str) -> Vec<&'static str> {
+    trace_pipeline(
+        source,
+        RuleTraceOptions {
+            only_changed: true,
+            ..Default::default()
+        },
+    )
+    .into_iter()
+    .map(|event| event.rule)
+    .collect()
 }
 
 #[allow(dead_code)]

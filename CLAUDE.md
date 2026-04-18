@@ -5,6 +5,7 @@
 Read these first:
 - `wakaru-rs/docs/architecture.md` — pipeline flow, components, design patterns
 - `wakaru-rs/docs/helper-detection.md` — how transpiler helpers are detected and restored
+- `wakaru-rs/docs/debugging.md` — rule tracing, snapshot debugging, fixture workflow
 
 ## Developing a Rule
 
@@ -80,13 +81,6 @@ INSTA_UPDATE=always cargo test
 cargo insta review
 ```
 
-### Two snapshot layers
-
-- `webpack4_unpack__*.snap` — final decompiled output (what users see)
-- `webpack4_unpack_raw__*.snap` — raw after webpack normalization, before rules
-
-When debugging: diff raw vs decompiled snapshots for the same module to isolate which rule caused the change.
-
 ## Definition of Done
 
 1. Run the focused rule tests you touched
@@ -99,20 +93,9 @@ When debugging: diff raw vs decompiled snapshots for the same module to isolate 
 3. If snapshots change, inspect the diff — confirm the output is semantically better, not just different
 4. `git status --short` — no stale `.snap.new` files or unrelated changes
 
-## Fixture Repo
-
-A private fixture repo at `../wakaru-fixtures/` contains bundled demo apps and real-world bundles for cross-bundler regression testing. After significant rule changes, run `./run.sh` there and check `git diff` for regressions. See that repo's README for details.
-
-**CRITICAL — always rebuild the release binary before running fixtures.** `run.sh` invokes `target/release/wakaru-rs` by default; `cargo build --release` is NOT run for you. If you skip this, the fixture run exercises a stale binary and reports "zero regressions" against code that is not your current working tree. A correct invocation from `wakaru-rs/`:
-
-```bash
-cargo build --release && (cd ../../wakaru-fixtures && ./run.sh)
-```
-
-Sanity-check the binary timestamp (`ls -la target/release/wakaru-rs*`) against your most recent commit time before trusting a fixture-diff result.
-
 ## Debugging Tips
 
+- **Find which rule changed a single file:** Run `cargo run -- --trace-rules path/to/module.js`. Use `--trace-all`, `--trace-from`, and `--trace-until` for narrower inspection. This is single-file only; for bundle regressions, trace an extracted raw module.
 - **Unexpected variable names:** Check for missing `unresolved_mark` guard or matching by `sym` instead of `(sym, SyntaxContext)`. Compare raw vs decompiled snapshots.
 - **Too many snapshots changed:** An early pipeline rule is cascading. Check `SimplifySequence` or `FlipComparisons` first.
 - **Rule not firing:** Check the raw snapshot — the AST shape may differ from expectations after earlier passes.

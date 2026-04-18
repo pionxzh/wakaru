@@ -1,5 +1,9 @@
 mod common;
-use common::{assert_eq_normalized, render, render_pipeline_between, render_pipeline_until};
+use common::{
+    assert_eq_normalized, changed_rules, render, render_pipeline_between, render_pipeline_until,
+    trace_pipeline,
+};
+use wakaru_rs::{trace_rules, DecompileOptions, RuleTraceOptions};
 
 // ============================================================
 // render_pipeline_until tests
@@ -112,7 +116,10 @@ fn pipeline_between_single_rule() {
 #[test]
 fn rule_names_contains_key_rules() {
     let names = wakaru_rs::rule_names();
-    assert!(names.contains(&"SimplifySequence"), "missing SimplifySequence");
+    assert!(
+        names.contains(&"SimplifySequence"),
+        "missing SimplifySequence"
+    );
     assert!(names.contains(&"SmartInline"), "missing SmartInline");
     assert!(names.contains(&"SmartRename"), "missing SmartRename");
     assert!(names.contains(&"UnReturn"), "missing UnReturn (last rule)");
@@ -125,4 +132,87 @@ fn rule_names_contains_key_rules() {
     assert_eq!(names[0], "SimplifySequence");
     // Last element should be UnReturn
     assert_eq!(names[names.len() - 1], "UnReturn");
+}
+
+#[test]
+fn trace_reports_changed_rules_only_by_default() {
+    let events = trace_pipeline(
+        "const x = void 0;",
+        RuleTraceOptions {
+            only_changed: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(events.iter().all(|event| event.changed));
+    assert!(
+        events.iter().any(|event| event.rule == "RemoveVoid"),
+        "expected RemoveVoid in changed trace, got: {:?}",
+        events.iter().map(|event| event.rule).collect::<Vec<_>>()
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.before.contains("void 0") && event.after.contains("undefined")),
+        "expected before/after code around void replacement"
+    );
+}
+
+#[test]
+fn trace_can_include_unchanged_rules() {
+    let events = trace_pipeline(
+        "const x = 1;",
+        RuleTraceOptions {
+            stop_after: Some("FlipComparisons".to_string()),
+            only_changed: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        events.iter().map(|event| event.rule).collect::<Vec<_>>(),
+        vec!["SimplifySequence", "FlipComparisons"]
+    );
+    assert!(events.iter().any(|event| !event.changed));
+}
+
+#[test]
+fn trace_supports_rule_ranges() {
+    let events = trace_pipeline(
+        "const x = void 0;",
+        RuleTraceOptions {
+            start_from: Some("RemoveVoid".to_string()),
+            stop_after: Some("UnminifyBooleans".to_string()),
+            only_changed: false,
+        },
+    );
+
+    assert_eq!(
+        events.iter().map(|event| event.rule).collect::<Vec<_>>(),
+        vec!["RemoveVoid", "UnminifyBooleans"]
+    );
+}
+
+#[test]
+fn changed_rules_helper_returns_only_names() {
+    let names = changed_rules("const x = void 0;");
+    assert!(names.contains(&"RemoveVoid"));
+}
+
+#[test]
+fn trace_rejects_unknown_rule_names() {
+    let err = trace_rules(
+        "const x = 1;",
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            ..Default::default()
+        },
+        RuleTraceOptions {
+            stop_after: Some("NoSuchRule".to_string()),
+            ..Default::default()
+        },
+    )
+    .expect_err("unknown trace rule should fail");
+
+    assert!(err.to_string().contains("NoSuchRule"));
 }

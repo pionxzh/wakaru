@@ -3,7 +3,10 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use wakaru_rs::{decompile, extract_sources, parse_sourcemap, unpack, DecompileOptions};
+use wakaru_rs::{
+    decompile, extract_sources, parse_sourcemap, trace_rules, unpack, DecompileOptions,
+    RuleTraceEvent, RuleTraceOptions,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "wakaru-rs")]
@@ -32,6 +35,23 @@ struct Cli {
     /// Requires --sourcemap.  The input JS file is not decompiled.
     #[arg(long, requires = "sourcemap")]
     extract: bool,
+
+    /// Trace the single-file rule pipeline and print per-rule before/after output.
+    /// Bundle inputs are not supported by this mode yet.
+    #[arg(long, conflicts_with_all = ["unpack", "extract"])]
+    trace_rules: bool,
+
+    /// Include rules that ran but did not change the rendered output.
+    #[arg(long, requires = "trace_rules")]
+    trace_all: bool,
+
+    /// First rule to run when tracing.
+    #[arg(long, value_name = "RULE", requires = "trace_rules")]
+    trace_from: Option<String>,
+
+    /// Last rule to run when tracing.
+    #[arg(long, value_name = "RULE", requires = "trace_rules")]
+    trace_until: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -57,7 +77,28 @@ fn main() -> Result<()> {
         sourcemap_path: cli.sourcemap.map(|p| p.to_string_lossy().into_owned()),
     };
 
-    if cli.unpack {
+    if cli.trace_rules {
+        let events = trace_rules(
+            &input,
+            options,
+            RuleTraceOptions {
+                start_from: cli.trace_from,
+                stop_after: cli.trace_until,
+                only_changed: !cli.trace_all,
+            },
+        )?;
+        let output = format_trace_events(&events);
+
+        match cli.output {
+            Some(path) => {
+                fs::write(&path, output)
+                    .with_context(|| format!("failed to write {}", path.display()))?;
+            }
+            None => {
+                print!("{output}");
+            }
+        }
+    } else if cli.unpack {
         let pairs = unpack(&input, options)?;
 
         let out_dir = cli.output.unwrap_or_else(|| PathBuf::from("unpacked"));
@@ -96,6 +137,33 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn format_trace_events(events: &[RuleTraceEvent]) -> String {
+    let mut output = String::new();
+
+    for event in events {
+        output.push_str("=== ");
+        output.push_str(event.rule);
+        output.push_str(if event.changed {
+            " changed"
+        } else {
+            " unchanged"
+        });
+        output.push_str(" ===\n");
+        output.push_str("--- before ---\n");
+        output.push_str(&event.before);
+        if !event.before.ends_with('\n') {
+            output.push('\n');
+        }
+        output.push_str("--- after ---\n");
+        output.push_str(&event.after);
+        if !event.after.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+
+    output
 }
 
 /// Return a path that hasn't been used yet, disambiguating case collisions.

@@ -156,14 +156,14 @@ impl Rule for NoopRule {
 }
 
 pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
-    apply_rules_impl(module, unresolved_mark, None);
+    apply_rules_impl(module, unresolved_mark, None, None);
 }
 
 /// Run the decompile pipeline, stopping immediately after `stop_after` completes.
 /// Rule names match their struct names (e.g. "SmartInline", "UnEsm").
 /// Second passes are suffixed: "UnWebpackInterop2", "UnIife2".
 pub fn apply_rules_until(module: &mut Module, unresolved_mark: Mark, stop_after: &str) {
-    apply_rules_impl(module, unresolved_mark, Some(stop_after));
+    apply_rules_impl(module, unresolved_mark, Some(stop_after), None);
 }
 
 /// Returns the ordered list of rule names in the pipeline.
@@ -248,11 +248,38 @@ pub fn apply_rules_between(
     start_from: &str,
     stop_after: &str,
 ) {
-    apply_rules_range_impl(module, unresolved_mark, Some(start_from), Some(stop_after));
+    apply_rules_range_impl(
+        module,
+        unresolved_mark,
+        Some(start_from),
+        Some(stop_after),
+        None,
+    );
 }
 
-fn apply_rules_impl(module: &mut Module, unresolved_mark: Mark, stop_after: Option<&str>) {
-    apply_rules_range_impl(module, unresolved_mark, None, stop_after);
+pub(crate) fn apply_rules_range_with_observer(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    start_from: Option<&str>,
+    stop_after: Option<&str>,
+    observer: &mut dyn FnMut(&'static str, &Module),
+) {
+    apply_rules_range_impl(
+        module,
+        unresolved_mark,
+        start_from,
+        stop_after,
+        Some(observer),
+    );
+}
+
+fn apply_rules_impl(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    stop_after: Option<&str>,
+    observer: Option<&mut dyn FnMut(&'static str, &Module)>,
+) {
+    apply_rules_range_impl(module, unresolved_mark, None, stop_after, observer);
 }
 
 fn apply_rules_range_impl(
@@ -260,6 +287,7 @@ fn apply_rules_range_impl(
     unresolved_mark: Mark,
     start_from: Option<&str>,
     stop_after: Option<&str>,
+    mut observer: Option<&mut dyn FnMut(&'static str, &Module)>,
 ) {
     let mut started = start_from.is_none();
     macro_rules! run {
@@ -271,6 +299,9 @@ fn apply_rules_range_impl(
             }
             if started {
                 module.visit_mut_with(&mut $rule);
+                if let Some(observer) = observer.as_deref_mut() {
+                    observer($name, module);
+                }
                 if stop_after == Some($name) {
                     return;
                 }
@@ -289,8 +320,13 @@ fn apply_rules_range_impl(
     }
     if started && RemoveVoid::should_run(module) {
         module.visit_mut_with(&mut RemoveVoid);
+        if let Some(observer) = observer.as_deref_mut() {
+            observer("RemoveVoid", module);
+        }
     }
-    if started && stop_after == Some("RemoveVoid") { return; }
+    if started && stop_after == Some("RemoveVoid") {
+        return;
+    }
     run!(UnminifyBooleans, "UnminifyBooleans");
     run!(UnInfinity, "UnInfinity");
     run!(UnIndirectCall, "UnIndirectCall");
