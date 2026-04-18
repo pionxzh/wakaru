@@ -1,9 +1,10 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, AssignPat, AssignPatProp, BinaryOp, BindingIdent, Decl, Expr, ExprOrSpread, Ident,
-    IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectPat,
-    ObjectPatProp, Pat, PropName, RestPat, Stmt, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
+    ArrayPat, AssignPat, AssignPatProp, BinaryOp, BindingIdent, Bool, Decl, Expr, ExprOrSpread,
+    Ident, IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number,
+    ObjectPat, ObjectPatProp, Pat, PropName, RestPat, Stmt, UnaryOp, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -359,7 +360,7 @@ fn try_extract_default_access(
     let source = extract_source_access(temp_init, ref_ident)?;
 
     let (binding, binding_init) = extract_binding_decl(stmts.get(index + 1)?)?;
-    let default = extract_default_cond(binding_init, &temp.id)?;
+    let default = extract_default_value(binding_init, &temp.id)?;
     let temp_key = binding_key(&temp);
     if expr_uses_ident(&default, &temp_key) {
         return None;
@@ -457,24 +458,63 @@ fn numeric_index(num: &Number) -> Option<usize> {
     Some(num.value as usize)
 }
 
-fn extract_default_cond(expr: &Expr, temp: &Ident) -> Option<Box<Expr>> {
+fn extract_default_value(expr: &Expr, temp: &Ident) -> Option<Box<Expr>> {
+    extract_ternary_default(expr, temp).or_else(|| extract_boolean_default(expr, temp))
+}
+
+fn extract_ternary_default(expr: &Expr, temp: &Ident) -> Option<Box<Expr>> {
     let Expr::Cond(cond) = expr else {
         return None;
     };
-    if !is_undefined_test(&cond.test, temp) {
-        return None;
-    }
-    if !is_ident_expr(&cond.alt, temp) {
+    if !is_undefined_test(&cond.test, temp) || !is_ident_expr(&cond.alt, temp) {
         return None;
     }
     Some(cond.cons.clone())
+}
+
+fn extract_boolean_default(expr: &Expr, temp: &Ident) -> Option<Box<Expr>> {
+    let Expr::Bin(bin) = expr else {
+        return None;
+    };
+
+    match bin.op {
+        BinaryOp::LogicalAnd
+            if is_defined_test(&bin.left, temp) && is_ident_expr(&bin.right, temp) =>
+        {
+            Some(bool_expr(false))
+        }
+        BinaryOp::LogicalOr
+            if is_undefined_test(&bin.left, temp) && is_ident_expr(&bin.right, temp) =>
+        {
+            Some(bool_expr(true))
+        }
+        _ => None,
+    }
+}
+
+fn bool_expr(value: bool) -> Box<Expr> {
+    Box::new(Expr::Lit(Lit::Bool(Bool {
+        span: DUMMY_SP,
+        value,
+    })))
 }
 
 fn is_undefined_test(expr: &Expr, temp: &Ident) -> bool {
     let Expr::Bin(bin) = expr else {
         return false;
     };
-    bin.op == BinaryOp::EqEqEq && is_ident_expr(&bin.left, temp) && is_undefined_expr(&bin.right)
+    bin.op == BinaryOp::EqEqEq
+        && ((is_ident_expr(&bin.left, temp) && is_undefined_expr(&bin.right))
+            || (is_undefined_expr(&bin.left) && is_ident_expr(&bin.right, temp)))
+}
+
+fn is_defined_test(expr: &Expr, temp: &Ident) -> bool {
+    let Expr::Bin(bin) = expr else {
+        return false;
+    };
+    bin.op == BinaryOp::NotEqEq
+        && ((is_ident_expr(&bin.left, temp) && is_undefined_expr(&bin.right))
+            || (is_undefined_expr(&bin.left) && is_ident_expr(&bin.right, temp)))
 }
 
 fn is_undefined_expr(expr: &Expr) -> bool {

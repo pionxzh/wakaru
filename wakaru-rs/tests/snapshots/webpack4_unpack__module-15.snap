@@ -11,13 +11,7 @@ export const a = (e, t = {}, n)=>{
             path: t
         };
     }
-    const r = t;
-    const { path, exact } = r;
-    const c = exact !== undefined && exact;
-    const r_strict = r.strict;
-    const f = r_strict !== undefined && r_strict;
-    const r_sensitive = r.sensitive;
-    const p = r_sensitive !== undefined && r_sensitive;
+    const { path, exact = false, strict = false, sensitive = false } = t;
     if (path == null) {
         return n;
     }
@@ -38,9 +32,9 @@ export const a = (e, t = {}, n)=>{
         }
         return l;
     })(path, {
-        end: c,
-        strict: f,
-        sensitive: p
+        end: exact,
+        strict,
+        sensitive
     });
     const { re, keys } = h;
     const v = re.exec(e);
@@ -49,7 +43,7 @@ export const a = (e, t = {}, n)=>{
     }
     const [b, ...g] = v;
     const w = e === b;
-    if (c && !w) {
+    if (exact && !w) {
         return null;
     }
     return {

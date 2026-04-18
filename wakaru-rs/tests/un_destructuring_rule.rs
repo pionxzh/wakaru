@@ -98,6 +98,48 @@ var { foo: value = 1, label } = opts;
 }
 
 #[test]
+fn reconstructs_object_default_false_from_temp_logical_and() {
+    let input = r#"
+var _ref = opts;
+var _tmp = _ref.exact;
+var exact = _tmp !== undefined && _tmp;
+var strict = _ref.strict;
+"#;
+    let expected = r#"
+var { exact = false, strict } = opts;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn reconstructs_object_default_true_from_temp_logical_or() {
+    let input = r#"
+var _ref = opts;
+var _tmp = _ref.pure;
+var pure = _tmp === undefined || _tmp;
+var mode = _ref.mode;
+"#;
+    let expected = r#"
+var { pure = true, mode } = opts;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn reconstructs_object_alias_default_false_from_reversed_undefined_check() {
+    let input = r#"
+var _ref = opts;
+var _tmp = _ref.exact;
+var enabled = undefined !== _tmp && _tmp;
+var strict = _ref.strict;
+"#;
+    let expected = r#"
+var { exact: enabled = false, strict } = opts;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn rejects_group_when_ref_is_used_later() {
     let input = r#"
 var _ref = arr;

@@ -264,13 +264,7 @@ export function createBrowserHistory(e = {}) {
         return (-1 === userAgent.indexOf("Android 2.") && -1 === userAgent.indexOf("Android 4.0") || -1 === userAgent.indexOf("Mobile Safari") || -1 !== userAgent.indexOf("Chrome") || -1 !== userAgent.indexOf("Windows Phone")) && window.history && "pushState" in window.history;
     })();
     const o = !(-1 === window.navigator.userAgent.indexOf("Trident"));
-    const i = e;
-    const i_forceRefresh = i.forceRefresh;
-    const u = i_forceRefresh !== undefined && i_forceRefresh;
-    const i_getUserConfirmation = i.getUserConfirmation;
-    const c = i_getUserConfirmation === undefined ? x : i_getUserConfirmation;
-    const i_keyLength = i.keyLength;
-    const p = i_keyLength === undefined ? 6 : i_keyLength;
+    const { forceRefresh = false, getUserConfirmation = x, keyLength = 6 } = e;
     const y = e.basename ? m(d(e.basename)) : "";
     function g(e) {
         const t = e || {};
@@ -283,7 +277,7 @@ export function createBrowserHistory(e = {}) {
         return createLocation(i, state, key);
     }
     function O() {
-        return Math.random().toString(36).substr(2, p);
+        return Math.random().toString(36).substr(2, keyLength);
     }
     const C = w();
     function P(e) {
@@ -305,7 +299,7 @@ export function createBrowserHistory(e = {}) {
             R = false;
             P();
         } else {
-            C.confirmTransitionTo(e, "POP", c, (t)=>{
+            C.confirmTransitionTo(e, "POP", getUserConfirmation, (t)=>{
                 if (t) {
                     P({
                         action: "POP",
@@ -364,7 +358,7 @@ export function createBrowserHistory(e = {}) {
         createHref: L,
         push (e, r) {
             const o = createLocation(e, r, O(), q.location);
-            C.confirmTransitionTo(o, "PUSH", c, (e)=>{
+            C.confirmTransitionTo(o, "PUSH", getUserConfirmation, (e)=>{
                 if (e) {
                     const r = L(o);
                     const { key: i, state: a } = o;
@@ -373,7 +367,7 @@ export function createBrowserHistory(e = {}) {
                             key: i,
                             state: a
                         }, null, r);
-                        if (u) {
+                        if (forceRefresh) {
                             window.location.href = r;
                         } else {
                             const l = A.indexOf(q.location.key);
@@ -393,7 +387,7 @@ export function createBrowserHistory(e = {}) {
         },
         replace (e, r) {
             const o = createLocation(e, r, O(), q.location);
-            C.confirmTransitionTo(o, "REPLACE", c, (e)=>{
+            C.confirmTransitionTo(o, "REPLACE", getUserConfirmation, (e)=>{
                 if (e) {
                     const r = L(o);
                     const { key: i, state: a } = o;
@@ -402,7 +396,7 @@ export function createBrowserHistory(e = {}) {
                             key: i,
                             state: a
                         }, null, r);
-                        if (u) {
+                        if (forceRefresh) {
                             window.location.replace(r);
                         } else {
                             const l = A.indexOf(q.location.key);
