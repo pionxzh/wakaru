@@ -86,6 +86,35 @@ console.log(obj);
 }
 
 #[test]
+fn descriptor_missing_enumerable_configurable_not_detected() {
+    let input = r#"
+function a(e, t, n) {
+    if (t in e) {
+        Object.defineProperty(e, t, { value: n, writable: true });
+    } else {
+        e[t] = n;
+    }
+    return e;
+}
+const obj = {};
+a(obj, "k", 1);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("function a(e, t, n)"),
+        "helper-shaped function should be preserved without full descriptor shape; got:\n{output}"
+    );
+    assert!(
+        output.contains("Object.defineProperty"),
+        "defineProperty call should be preserved without full descriptor shape; got:\n{output}"
+    );
+    assert!(
+        !output.contains(r#"obj["k"] = 1"#),
+        "call site should not be rewritten without full descriptor shape; got:\n{output}"
+    );
+}
+
+#[test]
 fn unrelated_three_param_function_not_detected() {
     // Function with 3 params but wrong body — must not be matched as helper.
     let input = r#"

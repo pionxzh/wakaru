@@ -186,6 +186,8 @@ fn if_consequent_matches_define_property(stmt: &Stmt, e: &Atom, t: &Atom, n: &At
         return false;
     };
     let mut has_value = false;
+    let mut has_enumerable = false;
+    let mut has_configurable = false;
     let mut has_writable = false;
     for prop in &obj_lit.props {
         let PropOrSpread::Prop(p) = prop else {
@@ -201,10 +203,17 @@ fn if_consequent_matches_define_property(stmt: &Stmt, e: &Atom, t: &Atom, n: &At
             "value" => {
                 has_value = matches!(value.as_ref(), Expr::Ident(id) if &id.sym == n);
             }
-            "enumerable" | "configurable" => {
+            "enumerable" => {
                 if !matches!(value.as_ref(), Expr::Lit(Lit::Bool(b)) if b.value) {
                     return false;
                 }
+                has_enumerable = true;
+            }
+            "configurable" => {
+                if !matches!(value.as_ref(), Expr::Lit(Lit::Bool(b)) if b.value) {
+                    return false;
+                }
+                has_configurable = true;
             }
             "writable" => {
                 if !matches!(value.as_ref(), Expr::Lit(Lit::Bool(b)) if b.value) {
@@ -215,7 +224,7 @@ fn if_consequent_matches_define_property(stmt: &Stmt, e: &Atom, t: &Atom, n: &At
             _ => return false,
         }
     }
-    has_value && has_writable
+    has_value && has_enumerable && has_configurable && has_writable
 }
 
 fn if_alternate_matches_direct_assign(stmt: &Stmt, e: &Atom, t: &Atom, n: &Atom) -> bool {
