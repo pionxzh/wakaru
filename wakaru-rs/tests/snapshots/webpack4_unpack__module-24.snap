@@ -495,11 +495,11 @@ export class StaticRouter extends i.Component {
         const o = {
             createHref: this.createHref,
             action: "POP",
-            location: ((basename, t)=>{
-                if (!basename) {
+            location: ((basename_1, t)=>{
+                if (!basename_1) {
                     return t;
                 }
-                const n = X(basename);
+                const n = X(basename_1);
                 if (t.pathname.indexOf(n) !== 0) {
                     return t;
                 }

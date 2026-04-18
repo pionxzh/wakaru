@@ -43,7 +43,7 @@ let m = null;
 function y(e, t, n) {
     const r = e.type || "unknown-event";
     e.currentTarget = m(n);
-    (function(e, t, undefined, r, o, i, f, p, h) {
+    (function(e, t, n, r, o, i, f, p, h) {
         d.apply(this, arguments);
         if (u) {
             if (!u) {

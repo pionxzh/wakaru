@@ -21,19 +21,19 @@ export const a = (e, t = {}, n)=>{
     if (path == null) {
         return n;
     }
-    const h = ((path, t)=>{
+    const h = ((path_1, t)=>{
         const n = `${t.end}${t.strict}${t.sensitive}`;
         const r = i[n] || (i[n] = {});
-        if (r[path]) {
-            return r[path];
+        if (r[path_1]) {
+            return r[path_1];
         }
         const u = [];
         const l = {
-            re: r(path, u, t),
+            re: r(path_1, u, t),
             keys: u
         };
         if (a < 10000) {
-            r[path] = l;
+            r[path_1] = l;
             a++;
         }
         return l;
