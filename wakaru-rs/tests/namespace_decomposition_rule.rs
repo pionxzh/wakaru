@@ -329,6 +329,57 @@ r[someKey];
     assert!(normalize(&output).contains("import r from"), "should keep default import, got: {output}");
 }
 
+#[test]
+fn assignment_target_prevents_decomposition() {
+    let target_facts = facts_for(r#"export function foo() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import r from "./mod.js";
+r.foo = 1;
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(
+        normalize(&output).contains("import r from"),
+        "should keep default import for member assignment, got: {output}"
+    );
+}
+
+#[test]
+fn update_target_prevents_decomposition() {
+    let target_facts = facts_for(r#"export let foo = 0;"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import * as r from "./mod.js";
+r.foo++;
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(
+        normalize(&output).contains("import * as r from"),
+        "should keep namespace import for member update, got: {output}"
+    );
+}
+
+#[test]
+fn delete_target_prevents_decomposition() {
+    let target_facts = facts_for(r#"export function foo() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import r from "./mod.js";
+delete r.foo;
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(
+        normalize(&output).contains("import r from"),
+        "should keep default import for member delete, got: {output}"
+    );
+}
+
 // ── Safety: target doesn't export accessed name ────────────────────
 
 #[test]

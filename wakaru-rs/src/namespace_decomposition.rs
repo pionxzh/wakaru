@@ -15,8 +15,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    CatchClause, Expr, Function, Ident, ImportDecl, ImportNamedSpecifier, ImportSpecifier,
-    MemberExpr, MemberProp, ModuleDecl, ModuleExportName, ModuleItem, Module, Param, Pat,
+    AssignExpr, AssignTarget, CatchClause, Expr, Function, Ident, ImportDecl,
+    ImportNamedSpecifier, ImportSpecifier, MemberExpr, MemberProp, ModuleDecl, ModuleExportName,
+    ModuleItem, Module, Param, Pat, SimpleAssignTarget, UnaryExpr, UnaryOp, UpdateExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -359,6 +360,21 @@ impl UsageAnalyzer<'_> {
     fn is_target(&self, ident: &Ident) -> bool {
         ident.sym == *self.target_sym && ident.ctxt == self.target_ctxt
     }
+
+    fn is_target_member(&self, member: &MemberExpr) -> bool {
+        matches!(member.obj.as_ref(), Expr::Ident(obj) if self.is_target(obj))
+    }
+
+    fn is_target_member_expr(&self, expr: &Expr) -> bool {
+        matches!(expr, Expr::Member(member) if self.is_target_member(member))
+    }
+
+    fn is_target_member_assign_target(&self, target: &AssignTarget) -> bool {
+        matches!(
+            target,
+            AssignTarget::Simple(SimpleAssignTarget::Member(member)) if self.is_target_member(member)
+        )
+    }
 }
 
 impl Visit for UsageAnalyzer<'_> {
@@ -367,6 +383,31 @@ impl Visit for UsageAnalyzer<'_> {
         self.in_import_decl = true;
         import.visit_children_with(self);
         self.in_import_decl = false;
+    }
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if self.is_target_member_assign_target(&assign.left) {
+            self.safe = false;
+            assign.right.visit_with(self);
+            return;
+        }
+        assign.visit_children_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &UpdateExpr) {
+        if self.is_target_member_expr(update.arg.as_ref()) {
+            self.safe = false;
+            return;
+        }
+        update.visit_children_with(self);
+    }
+
+    fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+        if unary.op == UnaryOp::Delete && self.is_target_member_expr(unary.arg.as_ref()) {
+            self.safe = false;
+            return;
+        }
+        unary.visit_children_with(self);
     }
 
     fn visit_member_expr(&mut self, member: &MemberExpr) {
