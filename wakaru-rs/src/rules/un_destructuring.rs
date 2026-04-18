@@ -134,6 +134,15 @@ fn try_reconstruct_ref_group(stmts: &[Stmt], start: usize) -> Option<(Stmt, usiz
         return None;
     }
 
+    let mut removed_bindings = vec![ref_key.clone()];
+    removed_bindings.extend(removed_temps.iter().cloned());
+    if accesses
+        .iter()
+        .any(|access| default_uses_any_removed_binding(access, &removed_bindings))
+    {
+        return None;
+    }
+
     if ident_used_in_stmts(&stmts[i..], &ref_key) {
         return None;
     }
@@ -152,6 +161,24 @@ fn is_rest_or_default_access(access: &Access) -> bool {
         Access::ArrayRest { .. } => true,
         Access::Array { pat, .. } | Access::Object { pat, .. } => matches!(pat, Pat::Assign(_)),
     }
+}
+
+fn default_uses_any_removed_binding(access: &Access, removed_bindings: &[BindingKey]) -> bool {
+    match access {
+        Access::Array { pat, .. } | Access::Object { pat, .. } => {
+            default_pat_uses_any_removed_binding(pat, removed_bindings)
+        }
+        Access::ArrayRest { .. } => false,
+    }
+}
+
+fn default_pat_uses_any_removed_binding(pat: &Pat, removed_bindings: &[BindingKey]) -> bool {
+    let Pat::Assign(assign) = pat else {
+        return false;
+    };
+    removed_bindings
+        .iter()
+        .any(|binding| expr_uses_ident(&assign.right, binding))
 }
 
 fn extract_ref_decl(stmt: &Stmt) -> Option<RefDecl> {

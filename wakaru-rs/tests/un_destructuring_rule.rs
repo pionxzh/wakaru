@@ -98,6 +98,29 @@ var { foo: value = 1, label } = opts;
 }
 
 #[test]
+fn rejects_default_that_uses_removed_ref_binding() {
+    let input = r#"
+var _ref = opts;
+var _tmp = _ref.foo;
+var foo = _tmp === void 0 ? _ref.bar : _tmp;
+var bar = _ref.bar;
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn rejects_default_that_uses_previous_removed_temp() {
+    let input = r#"
+var _ref = opts;
+var _tmp = _ref.foo;
+var foo = _tmp === void 0 ? 1 : _tmp;
+var _tmp2 = _ref.bar;
+var bar = _tmp2 === void 0 ? _tmp : _tmp2;
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn reconstructs_object_default_false_from_temp_logical_and() {
     let input = r#"
 var _ref = opts;
