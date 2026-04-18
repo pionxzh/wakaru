@@ -2,9 +2,9 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import "./module-14.js";
+import _r from "./module-14.js";
 const i = {};
-const _a = 0;
+let _a = 0;
 export const a = (e, t = {}, n)=>{
     if (typeof t === "string") {
         t = {
@@ -29,12 +29,12 @@ export const a = (e, t = {}, n)=>{
         }
         const u = [];
         const l = {
-            re: r(path_1, u, t),
+            re: _r(path_1, u, t),
             keys: u
         };
-        if (a < 10000) {
+        if (_a < 10000) {
             r[path_1] = l;
-            a++;
+            _a++;
         }
         return l;
     })(path, {

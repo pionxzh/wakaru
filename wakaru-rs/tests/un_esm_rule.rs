@@ -250,12 +250,28 @@ exports.a = function(x) { return a + x; };
 "#;
     let output = apply(input);
     // Export should use `a` as the exported name
-    assert!(output.contains("export const a"), "export should use the name `a`: {}", output);
+    assert!(
+        output.contains("export const a"),
+        "export should use the name `a`: {}",
+        output
+    );
     // The local counter should be renamed to avoid collision
-    assert!(!output.contains("let a =") && !output.contains("var a ="),
-        "local binding should be renamed to avoid collision: {}", output);
-    // The renamed local should still be referenced in the function body
-    assert!(output.contains("_a"), "renamed local should appear as _a: {}", output);
+    assert!(
+        !output.contains("let a =") && !output.contains("var a ="),
+        "local binding should be renamed to avoid collision: {}",
+        output
+    );
+    // The renamed local should still be referenced in the function body.
+    assert!(
+        output.contains("_a + x"),
+        "function body should reference renamed local: {}",
+        output
+    );
+    assert!(
+        !output.contains("=>a + x"),
+        "function body must not accidentally reference the export binding: {}",
+        output
+    );
 }
 
 #[test]
@@ -266,9 +282,17 @@ var b = 0;
 exports.a = function(x) { return b + x; };
 "#;
     let output = apply(input);
-    assert!(output.contains("export const a"), "should produce clean export: {}", output);
+    assert!(
+        output.contains("export const a"),
+        "should produce clean export: {}",
+        output
+    );
     // VarDeclToLetConst may promote var→const, so just check `b` is still there
-    assert!(output.contains("b = 0"), "unrelated local should be unchanged: {}", output);
+    assert!(
+        output.contains("b = 0"),
+        "unrelated local should be unchanged: {}",
+        output
+    );
 }
 
 #[test]
@@ -279,6 +303,12 @@ var s = exports.history = createBrowserHistory();
 use(s);
 "#;
     let output = apply(input);
-    assert!(!output.contains("exports.history"), "exports.history should be converted to ESM: {output}");
-    assert!(output.contains("history"), "should have history export: {output}");
+    assert!(
+        !output.contains("exports.history"),
+        "exports.history should be converted to ESM: {output}"
+    );
+    assert!(
+        output.contains("history"),
+        "should have history export: {output}"
+    );
 }

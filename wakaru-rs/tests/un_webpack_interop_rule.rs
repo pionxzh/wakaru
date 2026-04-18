@@ -97,7 +97,10 @@ var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
 console.log(_lib2("unexpected"));
 "#;
     let output = render(input);
-    assert!(output.contains("_lib2"), "getter should be kept when called with args");
+    assert!(
+        output.contains("_lib2"),
+        "getter should be kept when called with args"
+    );
 }
 
 #[test]
@@ -108,7 +111,10 @@ var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
 var ref = _lib2;
 "#;
     let output = render(input);
-    assert!(output.contains("_lib2"), "getter should be kept when used as a value");
+    assert!(
+        output.contains("_lib2"),
+        "getter should be kept when used as a value"
+    );
 }
 
 #[test]
@@ -119,7 +125,10 @@ var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
 console.log(_lib2.b);
 "#;
     let output = render(input);
-    assert!(output.contains("_lib2"), "getter should be kept when accessed with .b (not .a)");
+    assert!(
+        output.contains("_lib2"),
+        "getter should be kept when accessed with .b (not .a)"
+    );
 }
 
 // ── Non-require base → no match ────────────────────────────────────
@@ -132,7 +141,10 @@ var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
 console.log(_lib2());
 "#;
     let output = render(input);
-    assert!(output.contains("_lib2"), "getter should be kept when base is not a require() call");
+    assert!(
+        output.contains("_lib2"),
+        "getter should be kept when base is not a require() call"
+    );
 }
 
 // ── Mixed safe and unsafe usage → getter is kept ───────────────────
@@ -146,7 +158,10 @@ console.log(_lib2());
 var ref = _lib2;
 "#;
     let output = render(input);
-    assert!(output.contains("_lib2"), "getter should be kept with mixed safe/unsafe usage");
+    assert!(
+        output.contains("_lib2"),
+        "getter should be kept with mixed safe/unsafe usage"
+    );
 }
 
 // ── Computed property access forms ─────────────────────────────────
@@ -189,5 +204,54 @@ var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
 console.log(_lib2());
 "#;
     let output = render(input);
-    assert!(output.contains("_lib2"), "getter should be kept when no require() bindings exist");
+    assert!(
+        output.contains("_lib2"),
+        "getter should be kept when no require() bindings exist"
+    );
+}
+
+#[test]
+fn getter_replacement_avoids_inner_shadowing() {
+    let input = r#"
+var r = require("./path-to-regexp");
+var o = () => r && r.__esModule ? r.default : r;
+var holder = { r };
+function compile(pattern, options) {
+  var r = {};
+  return [holder, o()(pattern, [], options)];
+}
+"#;
+    let expected = r#"
+var _r = require("./path-to-regexp");
+var holder = {
+  r: _r
+};
+function compile(pattern, options) {
+  var r = {};
+  return [holder, _r(pattern, [], options)];
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn getter_replacement_avoids_later_scope_shadowing() {
+    let input = r#"
+var r = require("./path-to-regexp");
+var o = () => r && r.__esModule ? r.default : r;
+function compile(pattern, options) {
+  const result = o()(pattern, [], options);
+  var r = {};
+  return result;
+}
+"#;
+    let expected = r#"
+var _r = require("./path-to-regexp");
+function compile(pattern, options) {
+  const result = _r(pattern, [], options);
+  var r = {};
+  return result;
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
 }

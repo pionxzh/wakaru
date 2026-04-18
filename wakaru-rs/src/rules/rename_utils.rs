@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    ArrowExpr, Decl, DefaultDecl, Function, Ident, ImportNamedSpecifier, ImportSpecifier,
-    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat, PropName,
-    Stmt, VarDeclarator,
+    ArrowExpr, Decl, DefaultDecl, Expr, Function, Ident, ImportNamedSpecifier, ImportSpecifier,
+    KeyValueProp, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat,
+    Prop, PropName, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -131,7 +131,10 @@ pub fn rename_causes_shadowing(module: &Module, old: &BindingId, new_name: &Atom
 
     impl Visit for Checker<'_> {
         fn visit_function(&mut self, function: &Function) {
-            let params_declare = function.params.iter().any(|param| self.pat_binds_new(&param.pat));
+            let params_declare = function
+                .params
+                .iter()
+                .any(|param| self.pat_binds_new(&param.pat));
             self.scope_stack.push((params_declare, false));
             function.visit_children_with(self);
             self.on_exit_scope();
@@ -316,17 +319,34 @@ impl VisitMut for BindingRenamer<'_> {
             if spec.local.sym == rename.old.0 && spec.local.ctxt == rename.old.1 {
                 // Lock in the external name before changing local.
                 if spec.imported.is_none() {
-                    spec.imported =
-                        Some(ModuleExportName::Ident(swc_core::ecma::ast::Ident::new(
-                            spec.local.sym.clone(),
-                            spec.local.span,
-                            spec.local.ctxt,
-                        )));
+                    spec.imported = Some(ModuleExportName::Ident(swc_core::ecma::ast::Ident::new(
+                        spec.local.sym.clone(),
+                        spec.local.span,
+                        spec.local.ctxt,
+                    )));
                 }
                 spec.local.sym = rename.new.clone();
                 return;
             }
         }
+    }
+
+    fn visit_mut_prop(&mut self, prop: &mut Prop) {
+        if let Prop::Shorthand(ident) = prop {
+            for rename in self.renames {
+                if ident.sym == rename.old.0 && ident.ctxt == rename.old.1 {
+                    let key = PropName::Ident(ident.clone().into());
+                    ident.sym = rename.new.clone();
+                    *prop = Prop::KeyValue(KeyValueProp {
+                        key,
+                        value: Box::new(Expr::Ident(ident.clone())),
+                    });
+                    return;
+                }
+            }
+        }
+
+        prop.visit_mut_children_with(self);
     }
 
     fn visit_mut_prop_name(&mut self, _: &mut PropName) {}

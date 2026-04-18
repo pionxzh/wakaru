@@ -3,7 +3,7 @@ source: tests/webpack4_unpack.rs
 expression: code
 ---
 import r from "./module-4.js";
-import i from "./module-3.js";
+import _i from "./module-3.js";
 import u from "./module-1.js";
 import { createBrowserHistory, createHashHistory, createLocation, createMemoryHistory, createPath, locationsAreEqual } from "./module-8.js";
 import s from "./module-16.js";
@@ -12,7 +12,7 @@ import { a } from "./module-15.js";
 import { compile } from "./module-14.js";
 import le from "./module-30.js";
 export const Router = s.a;
-export class BrowserRouter extends i.Component {
+export class BrowserRouter extends _i.Component {
     constructor(...i){
         super(...i);
         this.history = createBrowserHistory(this.props);
@@ -31,7 +31,7 @@ BrowserRouter.propTypes = {
     keyLength: u.number,
     children: u.node
 };
-export class HashRouter extends i.Component {
+export class HashRouter extends _i.Component {
     constructor(...i){
         super(...i);
         this.history = createHashHistory(this.props);
@@ -54,7 +54,7 @@ HashRouter.propTypes = {
     children: u.node
 };
 const x = (e)=>!!(e.metaKey || e.altKey || e.ctrlKey || e.shiftKey);
-export class Link extends i.Component {
+export class Link extends _i.Component {
     constructor(...i){
         super(...i);
         this.handleClick = (e)=>{
@@ -110,7 +110,7 @@ Link.contextTypes = {
         }).isRequired
     }).isRequired
 };
-export class MemoryRouter extends i.Component {
+export class MemoryRouter extends _i.Component {
     constructor(...i){
         super(...i);
         this.history = createMemoryHistory(this.props);
@@ -129,8 +129,8 @@ MemoryRouter.propTypes = {
     keyLength: u.number,
     children: u.node
 };
-const R = (e)=>i.Children.count(e) === 0;
-export class Route extends i.Component {
+const R = (e)=>_i.Children.count(e) === 0;
+export class Route extends _i.Component {
     constructor(...i){
         super(...i);
         this.state = {
@@ -203,7 +203,7 @@ export class Route extends i.Component {
             return children(s);
         }
         if (children && !R(children)) {
-            return i.Children.only(children);
+            return _i.Children.only(children);
         }
         return null;
     }
@@ -287,7 +287,7 @@ NavLink.defaultProps = {
     activeClassName: "active",
     "aria-current": "page"
 };
-export class Prompt extends i.Component {
+export class Prompt extends _i.Component {
     enable(e) {
         if (this.unblock) {
             this.unblock();
@@ -361,7 +361,7 @@ export const generatePath = (e = "/", t = {})=>{
         pretty: true
     });
 };
-export class Redirect extends i.Component {
+export class Redirect extends _i.Component {
     isStatic() {
         return this.context.router && this.context.router.staticContext;
     }
@@ -458,7 +458,7 @@ const ee = (e)=>()=>{
         b(false, "You cannot %s with <StaticRouter>", e);
     };
 const te = ()=>{};
-export class StaticRouter extends i.Component {
+export class StaticRouter extends _i.Component {
     constructor(...i){
         super(...i);
         this.createHref = (e)=>X(r.props.basename + Z(e));
@@ -534,7 +534,7 @@ StaticRouter.defaultProps = {
 StaticRouter.childContextTypes = {
     router: u.object.isRequired
 };
-export class Switch extends i.Component {
+export class Switch extends _i.Component {
     componentWillMount() {
         b(this.context.router, "You should not use <Switch> outside a <Router>");
     }
@@ -548,8 +548,8 @@ export class Switch extends i.Component {
         const n = this.props.location || route.location;
         let r;
         let o;
-        i.Children.forEach(children, (t)=>{
-            if (r == null && i.isValidElement(t)) {
+        _i.Children.forEach(children, (t)=>{
+            if (r == null && _i.isValidElement(t)) {
                 const i = t.props;
                 const { path: u, exact: l, strict: c, sensitive: s, from: f } = i;
                 const d = u || f;
@@ -563,7 +563,7 @@ export class Switch extends i.Component {
             }
         });
         if (r) {
-            return i.cloneElement(o, {
+            return _i.cloneElement(o, {
                 location: n,
                 computedMatch: r
             });
@@ -584,7 +584,7 @@ export const matchPath = a;
 export const withRouter = (e)=>{
     const t = (t)=>{
         const { wrappedComponentRef, ...rest } = t;
-        return <Route children={(t)=>i.createElement(e, {
+        return <Route children={(t)=>_i.createElement(e, {
                 ...rest,
                 ...t,
                 ref: wrappedComponentRef

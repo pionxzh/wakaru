@@ -6,10 +6,12 @@ use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BindingIdent, CallExpr, Callee, Decl, ExportDecl, ExportDefaultExpr,
     ExportNamedSpecifier, ExportSpecifier, Expr, Ident, IdentName, ImportDecl,
     ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, Lit, MemberExpr, MemberProp,
-    Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, Pat, SimpleAssignTarget,
-    Stmt, Str, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
+    Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, Pat,
+    SimpleAssignTarget, Stmt, Str, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::VisitMut;
+
+use super::rename_utils::{rename_bindings, BindingRename};
 
 pub struct UnEsm;
 
@@ -324,9 +326,15 @@ impl VisitMut for UnEsm {
             if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
                 for spec in &import.specifiers {
                     match spec {
-                        ImportSpecifier::Named(n) => { local_names.insert(n.local.sym.clone()); }
-                        ImportSpecifier::Default(d) => { local_names.insert(d.local.sym.clone()); }
-                        ImportSpecifier::Namespace(ns) => { local_names.insert(ns.local.sym.clone()); }
+                        ImportSpecifier::Named(n) => {
+                            local_names.insert(n.local.sym.clone());
+                        }
+                        ImportSpecifier::Default(d) => {
+                            local_names.insert(d.local.sym.clone());
+                        }
+                        ImportSpecifier::Namespace(ns) => {
+                            local_names.insert(ns.local.sym.clone());
+                        }
                     }
                 }
             }
@@ -346,7 +354,12 @@ impl VisitMut for UnEsm {
                 continue;
             }
             if let Classified::CjsExport { kind } = c {
-                if let CjsExportKind::Named { name, expr, is_void: false } = kind {
+                if let CjsExportKind::Named {
+                    name,
+                    expr,
+                    is_void: false,
+                } = kind
+                {
                     let is_ident = matches!(expr.as_ref(), Expr::Ident(_));
                     if !is_ident && local_names.contains(name) {
                         export_names.insert(name.clone());
@@ -355,11 +368,41 @@ impl VisitMut for UnEsm {
             }
         }
 
-        // Rename conflicting locals in Keep items before building exports
+        // Rename conflicting locals before building exports. The export
+        // expression can reference a conflicting module-level local, so apply
+        // binding-id renames to both kept items and export expressions.
         if !export_names.is_empty() {
-            for c in classified.iter_mut() {
-                if let Classified::Keep(item) = c {
-                    rename_conflicting_locals(item, &export_names);
+            let mut used_names = local_names.clone();
+            used_names.extend(export_names.iter().cloned());
+            let mut renames = Vec::new();
+
+            collect_conflicting_import_renames(
+                &import_decls,
+                &export_names,
+                &mut used_names,
+                &mut renames,
+            );
+            for c in &classified {
+                if let Classified::Keep(ModuleItem::Stmt(Stmt::Decl(decl))) = c {
+                    collect_conflicting_decl_renames(
+                        decl,
+                        &export_names,
+                        &mut used_names,
+                        &mut renames,
+                    );
+                }
+            }
+
+            if !renames.is_empty() {
+                for item in &mut import_decls {
+                    rename_bindings(item, &renames);
+                }
+                for c in classified.iter_mut() {
+                    match c {
+                        Classified::Keep(item) => rename_bindings(item, &renames),
+                        Classified::CjsExport { kind } => rename_export_kind(kind, &renames),
+                        _ => {}
+                    }
                 }
             }
         }
@@ -947,39 +990,6 @@ fn wtf8_to_string(value: &swc_core::atoms::Wtf8Atom) -> String {
     value.as_str().unwrap_or("").to_string()
 }
 
-/// Rename local bindings that conflict with export names.
-/// For each conflicting name `x`, renames the binding and all references to `_x`.
-fn rename_conflicting_locals(item: &mut ModuleItem, conflicts: &HashSet<Atom>) {
-    use swc_core::ecma::visit::VisitMutWith;
-
-    struct LocalRenamer<'a> {
-        conflicts: &'a HashSet<Atom>,
-    }
-
-    impl VisitMut for LocalRenamer<'_> {
-        fn visit_mut_ident(&mut self, ident: &mut Ident) {
-            if self.conflicts.contains(&ident.sym) {
-                ident.sym = Atom::from(format!("_{}", ident.sym));
-            }
-        }
-
-        // Don't rename property names in member expressions
-        fn visit_mut_member_prop(&mut self, prop: &mut MemberProp) {
-            if let MemberProp::Computed(computed) = prop {
-                computed.visit_mut_with(self);
-            }
-        }
-
-        // Don't rename object property keys
-        fn visit_mut_key_value_prop(&mut self, prop: &mut swc_core::ecma::ast::KeyValueProp) {
-            // Only visit the value, not the key
-            prop.value.visit_mut_with(self);
-        }
-    }
-
-    item.visit_mut_with(&mut LocalRenamer { conflicts });
-}
-
 /// Collect binding names introduced by a declaration.
 fn collect_decl_names_into(decl: &Decl, names: &mut HashSet<Atom>) {
     match decl {
@@ -988,21 +998,152 @@ fn collect_decl_names_into(decl: &Decl, names: &mut HashSet<Atom>) {
                 collect_pat_names(&d.name, names);
             }
         }
-        Decl::Fn(f) => { names.insert(f.ident.sym.clone()); }
-        Decl::Class(c) => { names.insert(c.ident.sym.clone()); }
+        Decl::Fn(f) => {
+            names.insert(f.ident.sym.clone());
+        }
+        Decl::Class(c) => {
+            names.insert(c.ident.sym.clone());
+        }
         _ => {}
+    }
+}
+
+fn collect_conflicting_import_renames(
+    items: &[ModuleItem],
+    conflicts: &HashSet<Atom>,
+    used_names: &mut HashSet<Atom>,
+    renames: &mut Vec<BindingRename>,
+) {
+    for item in items {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        for spec in &import.specifiers {
+            let local = match spec {
+                ImportSpecifier::Named(named) => &named.local,
+                ImportSpecifier::Default(default) => &default.local,
+                ImportSpecifier::Namespace(namespace) => &namespace.local,
+            };
+            collect_conflicting_ident_rename(local, conflicts, used_names, renames);
+        }
+    }
+}
+
+fn collect_conflicting_decl_renames(
+    decl: &Decl,
+    conflicts: &HashSet<Atom>,
+    used_names: &mut HashSet<Atom>,
+    renames: &mut Vec<BindingRename>,
+) {
+    match decl {
+        Decl::Var(var) => {
+            for d in &var.decls {
+                collect_conflicting_pat_renames(&d.name, conflicts, used_names, renames);
+            }
+        }
+        Decl::Fn(f) => collect_conflicting_ident_rename(&f.ident, conflicts, used_names, renames),
+        Decl::Class(c) => {
+            collect_conflicting_ident_rename(&c.ident, conflicts, used_names, renames)
+        }
+        _ => {}
+    }
+}
+
+fn collect_conflicting_pat_renames(
+    pat: &Pat,
+    conflicts: &HashSet<Atom>,
+    used_names: &mut HashSet<Atom>,
+    renames: &mut Vec<BindingRename>,
+) {
+    match pat {
+        Pat::Ident(id) => collect_conflicting_ident_rename(&id.id, conflicts, used_names, renames),
+        Pat::Array(arr) => {
+            for p in arr.elems.iter().flatten() {
+                collect_conflicting_pat_renames(p, conflicts, used_names, renames);
+            }
+        }
+        Pat::Object(obj) => {
+            for prop in &obj.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => {
+                        collect_conflicting_pat_renames(&kv.value, conflicts, used_names, renames);
+                    }
+                    ObjectPatProp::Assign(a) => {
+                        collect_conflicting_ident_rename(&a.key.id, conflicts, used_names, renames);
+                    }
+                    ObjectPatProp::Rest(r) => {
+                        collect_conflicting_pat_renames(&r.arg, conflicts, used_names, renames);
+                    }
+                }
+            }
+        }
+        Pat::Assign(a) => collect_conflicting_pat_renames(&a.left, conflicts, used_names, renames),
+        Pat::Rest(r) => collect_conflicting_pat_renames(&r.arg, conflicts, used_names, renames),
+        _ => {}
+    }
+}
+
+fn collect_conflicting_ident_rename(
+    ident: &Ident,
+    conflicts: &HashSet<Atom>,
+    used_names: &mut HashSet<Atom>,
+    renames: &mut Vec<BindingRename>,
+) {
+    if !conflicts.contains(&ident.sym) {
+        return;
+    }
+    let new = fresh_prefixed_name(&ident.sym, used_names);
+    renames.push(BindingRename {
+        old: (ident.sym.clone(), ident.ctxt),
+        new,
+    });
+}
+
+fn fresh_prefixed_name(name: &Atom, used_names: &mut HashSet<Atom>) -> Atom {
+    let base = format!("_{name}");
+    let atom = Atom::from(base);
+    if used_names.insert(atom.clone()) {
+        return atom;
+    }
+
+    let mut index = 2usize;
+    loop {
+        let candidate = Atom::from(format!("_{name}{index}"));
+        if used_names.insert(candidate.clone()) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+fn rename_export_kind(kind: &mut CjsExportKind, renames: &[BindingRename]) {
+    match kind {
+        CjsExportKind::ModuleExportsDefault { expr }
+        | CjsExportKind::Named { expr, .. }
+        | CjsExportKind::NamedDefault { expr } => {
+            rename_bindings(expr.as_mut(), renames);
+        }
+        CjsExportKind::SelfRef => {}
     }
 }
 
 fn collect_pat_names(pat: &Pat, names: &mut HashSet<Atom>) {
     match pat {
-        Pat::Ident(id) => { names.insert(id.id.sym.clone()); }
-        Pat::Array(arr) => { for p in arr.elems.iter().flatten() { collect_pat_names(p, names); } }
+        Pat::Ident(id) => {
+            names.insert(id.id.sym.clone());
+        }
+        Pat::Array(arr) => {
+            for p in arr.elems.iter().flatten() {
+                collect_pat_names(p, names);
+            }
+        }
         Pat::Object(obj) => {
             for prop in &obj.props {
                 match prop {
                     ObjectPatProp::KeyValue(kv) => collect_pat_names(&kv.value, names),
-                    ObjectPatProp::Assign(a) => { names.insert(a.key.id.sym.clone()); }
+                    ObjectPatProp::Assign(a) => {
+                        names.insert(a.key.id.sym.clone());
+                    }
                     ObjectPatProp::Rest(r) => collect_pat_names(&r.arg, names),
                 }
             }

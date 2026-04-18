@@ -3,10 +3,13 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    BlockStmtOrExpr, Callee, Expr, Ident, IfStmt, Lit, MemberExpr, MemberProp, Module, ModuleItem,
-    Pat, ReturnStmt, Stmt, VarDecl, VarDeclarator,
+    ArrowExpr, BlockStmt, BlockStmtOrExpr, Callee, Decl, Expr, Function, Ident, IfStmt, Lit,
+    MemberExpr, MemberProp, Module, ModuleItem, ObjectPatProp, Pat, PropName, ReturnStmt, Stmt,
+    VarDecl, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+
+use super::rename_utils::{collect_module_names, rename_bindings_in_module, BindingRename};
 
 /// Removes webpack's interop getter wrappers and replaces their usage with the
 /// underlying require binding.
@@ -95,6 +98,12 @@ impl VisitMut for UnWebpackInterop {
 
         if to_inline.is_empty() {
             return;
+        }
+
+        let mut to_inline = to_inline;
+        let renames = build_shadow_avoidance_renames(module, &mut to_inline);
+        if !renames.is_empty() {
+            rename_bindings_in_module(module, &renames);
         }
 
         let mut new_body = Vec::with_capacity(module.body.len());
@@ -309,6 +318,300 @@ fn should_remove_decl(decl: &VarDeclarator, to_inline: &HashMap<BindingKey, Iden
         return false;
     };
     to_inline.contains_key(&(binding.id.sym.clone(), binding.id.ctxt))
+}
+
+fn build_shadow_avoidance_renames(
+    module: &Module,
+    to_inline: &mut HashMap<BindingKey, Ident>,
+) -> Vec<BindingRename> {
+    let mut used_names = collect_declared_names(module);
+    let mut base_renames: HashMap<BindingKey, Atom> = HashMap::new();
+
+    for (getter, replacement) in to_inline.iter_mut() {
+        if !getter_replacement_would_be_shadowed(module, getter, &replacement.sym) {
+            continue;
+        }
+
+        let base_key = (replacement.sym.clone(), replacement.ctxt);
+        let new_name = base_renames
+            .entry(base_key)
+            .or_insert_with(|| fresh_prefixed_name(&replacement.sym, &mut used_names))
+            .clone();
+        replacement.sym = new_name;
+    }
+
+    base_renames
+        .into_iter()
+        .map(|(old, new)| BindingRename { old, new })
+        .collect()
+}
+
+fn getter_replacement_would_be_shadowed(
+    module: &Module,
+    getter: &BindingKey,
+    replacement_name: &Atom,
+) -> bool {
+    struct Checker<'a> {
+        getter: &'a BindingKey,
+        replacement_name: &'a Atom,
+        scope_stack: Vec<bool>,
+        found: bool,
+    }
+
+    impl Checker<'_> {
+        fn in_shadowing_scope(&self) -> bool {
+            self.scope_stack.iter().any(|declares| *declares)
+        }
+
+        fn pat_binds_replacement(&self, pat: &Pat) -> bool {
+            pat_binds_name(pat, self.replacement_name)
+        }
+
+        fn mark_scope_decl(&mut self, pat: &Pat) {
+            if !self.scope_stack.is_empty() && self.pat_binds_replacement(pat) {
+                if let Some(scope) = self.scope_stack.last_mut() {
+                    *scope = true;
+                }
+            }
+        }
+
+        fn is_getter_ident(&self, ident: &Ident) -> bool {
+            ident.sym == self.getter.0 && ident.ctxt == self.getter.1
+        }
+    }
+
+    impl Visit for Checker<'_> {
+        fn visit_function(&mut self, function: &Function) {
+            let params_shadow = function
+                .params
+                .iter()
+                .any(|param| self.pat_binds_replacement(&param.pat));
+            let body_shadow = function
+                .body
+                .as_ref()
+                .is_some_and(|body| scope_body_binds_name(body, self.replacement_name));
+            self.scope_stack.push(params_shadow || body_shadow);
+            function.visit_children_with(self);
+            self.scope_stack.pop();
+        }
+
+        fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+            let params_shadow = arrow
+                .params
+                .iter()
+                .any(|param| self.pat_binds_replacement(param));
+            let body_shadow = match arrow.body.as_ref() {
+                BlockStmtOrExpr::BlockStmt(body) => {
+                    scope_body_binds_name(body, self.replacement_name)
+                }
+                BlockStmtOrExpr::Expr(_) => false,
+            };
+            self.scope_stack.push(params_shadow || body_shadow);
+            arrow.visit_children_with(self);
+            self.scope_stack.pop();
+        }
+
+        fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+            self.mark_scope_decl(&declarator.name);
+            declarator.visit_children_with(self);
+        }
+
+        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Expr::Ident(id) = callee.as_ref() {
+                    if call.args.is_empty() && self.is_getter_ident(id) {
+                        if self.in_shadowing_scope() {
+                            self.found = true;
+                        }
+                        for arg in &call.args {
+                            arg.visit_with(self);
+                        }
+                        return;
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+
+        fn visit_member_expr(&mut self, member: &MemberExpr) {
+            if let Expr::Ident(id) = member.obj.as_ref() {
+                if self.is_getter_ident(id) && is_dot_a(&member.prop) {
+                    if self.in_shadowing_scope() {
+                        self.found = true;
+                    }
+                    if let MemberProp::Computed(prop) = &member.prop {
+                        prop.visit_with(self);
+                    }
+                    return;
+                }
+            }
+            member.visit_children_with(self);
+        }
+
+        fn visit_prop_name(&mut self, _: &PropName) {}
+
+        fn visit_member_prop(&mut self, prop: &MemberProp) {
+            if let MemberProp::Computed(prop) = prop {
+                prop.visit_with(self);
+            }
+        }
+    }
+
+    let mut checker = Checker {
+        getter,
+        replacement_name,
+        scope_stack: Vec::new(),
+        found: false,
+    };
+    module.visit_with(&mut checker);
+    checker.found
+}
+
+fn scope_body_binds_name(body: &BlockStmt, name: &Atom) -> bool {
+    struct Collector<'a> {
+        name: &'a Atom,
+        found: bool,
+    }
+
+    impl Collector<'_> {
+        fn pat_binds_name(&self, pat: &Pat) -> bool {
+            pat_binds_name(pat, self.name)
+        }
+    }
+
+    impl Visit for Collector<'_> {
+        fn visit_decl(&mut self, decl: &Decl) {
+            match decl {
+                Decl::Var(var) => {
+                    if var.decls.iter().any(|decl| self.pat_binds_name(&decl.name)) {
+                        self.found = true;
+                    }
+                    for decl in &var.decls {
+                        if let Some(init) = &decl.init {
+                            init.visit_with(self);
+                        }
+                    }
+                }
+                Decl::Fn(function) => {
+                    if &function.ident.sym == self.name {
+                        self.found = true;
+                    }
+                }
+                Decl::Class(class) => {
+                    if &class.ident.sym == self.name {
+                        self.found = true;
+                    }
+                    class.class.visit_children_with(self);
+                }
+                _ => decl.visit_children_with(self),
+            }
+        }
+
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+        fn visit_prop_name(&mut self, _: &PropName) {}
+
+        fn visit_member_prop(&mut self, prop: &MemberProp) {
+            if let MemberProp::Computed(prop) = prop {
+                prop.visit_with(self);
+            }
+        }
+    }
+
+    let mut collector = Collector { name, found: false };
+    body.visit_with(&mut collector);
+    collector.found
+}
+
+fn collect_declared_names(module: &Module) -> HashSet<Atom> {
+    struct Collector {
+        names: HashSet<Atom>,
+    }
+
+    impl Visit for Collector {
+        fn visit_pat(&mut self, pat: &Pat) {
+            collect_pat_names(pat, &mut self.names);
+        }
+    }
+
+    let mut names = collect_module_names(module);
+    let mut collector = Collector {
+        names: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    names.extend(collector.names);
+    names
+}
+
+fn collect_pat_names(pat: &Pat, names: &mut HashSet<Atom>) {
+    match pat {
+        Pat::Ident(id) => {
+            names.insert(id.id.sym.clone());
+        }
+        Pat::Array(arr) => {
+            for elem in arr.elems.iter().flatten() {
+                collect_pat_names(elem, names);
+            }
+        }
+        Pat::Object(obj) => {
+            for prop in &obj.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => collect_pat_names(&kv.value, names),
+                    ObjectPatProp::Assign(assign) => {
+                        names.insert(assign.key.id.sym.clone());
+                    }
+                    ObjectPatProp::Rest(rest) => collect_pat_names(&rest.arg, names),
+                }
+            }
+        }
+        Pat::Assign(assign) => collect_pat_names(&assign.left, names),
+        Pat::Rest(rest) => collect_pat_names(&rest.arg, names),
+        _ => {}
+    }
+}
+
+fn pat_binds_name(pat: &Pat, name: &Atom) -> bool {
+    match pat {
+        Pat::Ident(id) => &id.id.sym == name,
+        Pat::Array(arr) => arr.elems.iter().flatten().any(|p| pat_binds_name(p, name)),
+        Pat::Object(obj) => obj.props.iter().any(|prop| match prop {
+            ObjectPatProp::KeyValue(kv) => pat_binds_name(&kv.value, name),
+            ObjectPatProp::Assign(assign) => &assign.key.id.sym == name,
+            ObjectPatProp::Rest(rest) => pat_binds_name(&rest.arg, name),
+        }),
+        Pat::Assign(assign) => pat_binds_name(&assign.left, name),
+        Pat::Rest(rest) => pat_binds_name(&rest.arg, name),
+        _ => false,
+    }
+}
+
+fn fresh_prefixed_name(name: &Atom, used_names: &mut HashSet<Atom>) -> Atom {
+    let base = format!("_{name}");
+    let atom = Atom::from(base);
+    if used_names.insert(atom.clone()) {
+        return atom;
+    }
+
+    let mut index = 2usize;
+    loop {
+        let candidate = Atom::from(format!("_{name}{index}"));
+        if used_names.insert(candidate.clone()) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+fn is_dot_a(prop: &MemberProp) -> bool {
+    match prop {
+        MemberProp::Ident(prop) => prop.sym.as_ref() == "a",
+        MemberProp::Computed(prop) => {
+            matches!(prop.expr.as_ref(), Expr::Lit(Lit::Str(value)) if value.value.as_str() == Some("a"))
+        }
+        _ => false,
+    }
 }
 
 struct GetterUsageCollector<'a> {
