@@ -1,7 +1,16 @@
+use swc_core::common::Mark;
 use swc_core::ecma::ast::{BinExpr, BinaryOp, Expr, Lit, UnaryExpr, UnaryOp};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-pub struct FlipComparisons;
+pub struct FlipComparisons {
+    unresolved_mark: Mark,
+}
+
+impl FlipComparisons {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
 
 impl VisitMut for FlipComparisons {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
@@ -12,15 +21,17 @@ impl VisitMut for FlipComparisons {
         }) = expr
         {
             if is_equality(*op) {
-                if is_flippable_literal_like(left) && !is_flippable_literal_like(right) {
+                if is_flippable_literal_like(left, self.unresolved_mark)
+                    && !is_flippable_literal_like(right, self.unresolved_mark)
+                {
                     std::mem::swap(left, right);
                 }
                 return;
             }
 
             if is_relational(*op)
-                && is_flippable_literal_like(left)
-                && !is_flippable_literal_like(right)
+                && is_flippable_literal_like(left, self.unresolved_mark)
+                && !is_flippable_literal_like(right, self.unresolved_mark)
             {
                 std::mem::swap(left, right);
                 *op = flipped_relational(*op);
@@ -53,7 +64,7 @@ fn flipped_relational(op: BinaryOp) -> BinaryOp {
     }
 }
 
-fn is_flippable_literal_like(expr: &Expr) -> bool {
+fn is_flippable_literal_like(expr: &Expr, unresolved_mark: Mark) -> bool {
     match expr {
         Expr::Lit(Lit::Null(_))
         | Expr::Lit(Lit::Bool(_))
@@ -62,7 +73,8 @@ fn is_flippable_literal_like(expr: &Expr) -> bool {
         | Expr::Lit(Lit::BigInt(_)) => true,
         Expr::Tpl(tpl) => tpl.exprs.is_empty(),
         Expr::Ident(ident) => {
-            ident.sym == "undefined" || ident.sym == "NaN" || ident.sym == "Infinity"
+            matches!(ident.sym.as_ref(), "undefined" | "NaN" | "Infinity")
+                && ident.ctxt.outer() == unresolved_mark
         }
         Expr::Unary(UnaryExpr {
             op: UnaryOp::Void,
@@ -75,7 +87,11 @@ fn is_flippable_literal_like(expr: &Expr) -> bool {
             op: UnaryOp::Minus,
             arg,
             ..
-        }) => matches!(&**arg, Expr::Ident(ident) if ident.sym == "Infinity"),
+        }) => matches!(
+            &**arg,
+            Expr::Ident(ident)
+                if ident.sym == "Infinity" && ident.ctxt.outer() == unresolved_mark
+        ),
         _ => false,
     }
 }

@@ -314,7 +314,7 @@ fn apply_rules_range_impl(
 
     // Stage 1: Syntax normalization
     run!(SimplifySequence::new(unresolved_mark), "SimplifySequence");
-    run!(FlipComparisons, "FlipComparisons");
+    run!(FlipComparisons::new(unresolved_mark), "FlipComparisons");
     run!(UnTypeofStrict, "UnTypeofStrict");
     if !started {
         if start_from == Some("RemoveVoid") {

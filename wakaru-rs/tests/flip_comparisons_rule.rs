@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render_rule};
 use wakaru_rs::rules::FlipComparisons;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| FlipComparisons)
+    render_rule(input, FlipComparisons::new)
 }
 
 #[test]
@@ -78,6 +78,23 @@ foo == 1;
 `test${1}` == foo;
 bar > 1;
 bar < 1.2;
+"#;
+
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn does_not_flip_shadowed_global_identifiers() {
+    let input = r#"
+function test(undefined, NaN, Infinity) {
+    return [
+        undefined === (undefined = 1),
+        NaN === (NaN = 1),
+        Infinity === (Infinity = 1),
+        -Infinity === value
+    ];
+}
 "#;
 
     let output = apply(input);
