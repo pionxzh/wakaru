@@ -85,6 +85,34 @@ const a = 1;
 }
 
 #[test]
+fn duplicate_side_effect_only_imports_are_deduped() {
+    let input = r#"
+import "./x.js";
+import "./x.js";
+const a = 1;
+"#;
+    let expected = r#"
+import "./x.js";
+const a = 1;
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn side_effect_import_removed_when_binding_import_remains() {
+    let input = r#"
+import "fs";
+import { existsSync } from "fs";
+console.log(existsSync);
+"#;
+    let expected = r#"
+import { existsSync } from "fs";
+console.log(existsSync);
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
 fn jsx_reference_counts_as_usage() {
     // `<Foo/>` is a reference to Foo. Must not strip it.
     let input = r#"

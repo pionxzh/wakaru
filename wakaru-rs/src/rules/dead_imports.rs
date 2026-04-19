@@ -7,6 +7,9 @@
 //! - If all specifiers are stripped, the declaration becomes a side-effect
 //!   import `import "./x.js";` — we don't delete it outright because the
 //!   source module may have side effects on evaluation.
+//! - Duplicate side-effect imports are collapsed. If any remaining binding
+//!   import exists for the same source, side-effect-only imports for that source
+//!   are removed because the binding import still evaluates the module.
 //!
 //! Property-name positions (`obj.foo`, `{foo: ...}` keys, JSX attribute names)
 //! are not counted as references.
@@ -16,7 +19,7 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    Ident, ImportDecl, ImportSpecifier, MemberProp, Module, ModuleDecl, ModuleItem, PropName,
+    Ident, ImportDecl, ImportSpecifier, MemberProp, Module, ModuleDecl, ModuleItem, PropName, Str,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -36,15 +39,13 @@ impl VisitMut for DeadImports {
             };
             strip_unused_specifiers(import, &referenced);
         }
+        dedup_side_effect_imports(module);
 
         module.visit_mut_children_with(self);
     }
 }
 
-fn strip_unused_specifiers(
-    import: &mut ImportDecl,
-    referenced: &HashSet<(Atom, SyntaxContext)>,
-) {
+fn strip_unused_specifiers(import: &mut ImportDecl, referenced: &HashSet<(Atom, SyntaxContext)>) {
     import.specifiers.retain(|spec| {
         let (sym, ctxt) = match spec {
             ImportSpecifier::Default(s) => (s.local.sym.clone(), s.local.ctxt),
@@ -53,6 +54,43 @@ fn strip_unused_specifiers(
         };
         referenced.contains(&(sym, ctxt))
     });
+}
+
+fn dedup_side_effect_imports(module: &mut Module) {
+    let sources_with_bindings: HashSet<String> = module
+        .body
+        .iter()
+        .filter_map(|item| {
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+                return None;
+            };
+            if import.specifiers.is_empty() {
+                None
+            } else {
+                Some(import_source_key(&import.src))
+            }
+        })
+        .collect();
+
+    let mut seen_side_effect_sources = HashSet::new();
+    module.body.retain(|item| {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            return true;
+        };
+        if !import.specifiers.is_empty() {
+            return true;
+        }
+
+        let source = import_source_key(&import.src);
+        if sources_with_bindings.contains(&source) {
+            return false;
+        }
+        seen_side_effect_sources.insert(source)
+    });
+}
+
+fn import_source_key(src: &Str) -> String {
+    src.value.as_str().unwrap_or("").to_string()
 }
 
 /// Collects every (sym, ctxt) pair that appears as a reference in the module.
