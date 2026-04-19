@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BinaryOp, BlockStmtOrExpr, Callee, CondExpr, Decl, Expr, Lit, MemberProp, Module, ModuleItem,
+    BinaryOp, BlockStmtOrExpr, Callee, Decl, Expr, Lit, MemberProp, Module, ModuleItem,
     Pat, Stmt, UnaryExpr, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};

@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BindingIdent, BlockStmt, CallExpr, Callee, Class, ClassDecl,
+    AssignOp, AssignTarget, BlockStmt, CallExpr, Callee, Class, ClassDecl,
     ClassMember, ClassMethod, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function,
-    Ident, IdentName, MemberExpr, MemberProp, MethodKind, ModuleItem, Param, ParamOrTsParamProp,
-    Pat, PropName, SimpleAssignTarget, Stmt, VarDecl,
+    IdentName, MemberProp, MethodKind, ModuleItem, Param, ParamOrTsParamProp, PropName,
+    SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -33,7 +33,7 @@ struct ClassCandidate {
     /// Index of the `function Foo() {}` declaration in the statement list.
     fn_decl_idx: usize,
     /// The constructor function name (e.g., "Foo").
-    name: Atom,
+    _name: Atom,
     /// Super class expression, if inheritance is detected.
     super_class: Option<Box<Expr>>,
     /// Super class name for `Parent.call(this, ...)` → `super(...)` rewriting.
@@ -148,7 +148,7 @@ fn find_candidates(stmts: &[Option<&Stmt>]) -> Vec<ClassCandidate> {
 
         let mut candidate = ClassCandidate {
             fn_decl_idx: *fn_idx,
-            name: (*name).clone(),
+            _name: (*name).clone(),
             super_class: None,
             super_class_name: None,
             consumed_indices: HashSet::new(),

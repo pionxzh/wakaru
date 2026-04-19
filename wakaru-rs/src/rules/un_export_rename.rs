@@ -65,7 +65,7 @@ impl VisitMut for UnExportRename {
 
 fn collect_export_rename_plans(
     module: &Module,
-    module_names: &std::collections::HashSet<Atom>,
+    _module_names: &std::collections::HashSet<Atom>,
     binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
 ) -> Vec<ExportRenamePlan> {
     let mut plans = Vec::new();

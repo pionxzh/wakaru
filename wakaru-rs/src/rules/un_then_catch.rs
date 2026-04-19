@@ -1,5 +1,5 @@
 use swc_core::atoms::Atom;
-use swc_core::ecma::ast::{CallExpr, Callee, Expr, ExprOrSpread, Ident, IdentName, MemberExpr, MemberProp};
+use swc_core::ecma::ast::{CallExpr, Callee, Expr, IdentName, MemberExpr, MemberProp};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::un_nullish_coalescing::is_undefined;

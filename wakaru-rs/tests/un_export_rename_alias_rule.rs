@@ -3,7 +3,7 @@ use std::fs;
 use wakaru_rs::{unpack, DecompileOptions};
 
 mod common;
-use common::{assert_eq_normalized, render};
+use common::render;
 
 #[test]
 fn export_named_renames_class() {

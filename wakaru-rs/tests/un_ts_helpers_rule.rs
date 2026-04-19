@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use common::render;
 
 #[test]
 fn renames_awaiter_alias_and_removes_decl() {

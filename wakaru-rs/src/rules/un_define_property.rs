@@ -34,8 +34,8 @@ use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, Callee, ComputedPropName,
     Decl, Expr, ExprStmt, FnDecl, Function, Ident, IdentName, KeyValueProp, Lit, MemberExpr,
-    MemberProp, Module, ModuleDecl, ModuleItem, Param, Pat, Prop, PropName, PropOrSpread,
-    ReturnStmt, SimpleAssignTarget, Stmt,
+    MemberProp, Module, ModuleItem, Param, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 

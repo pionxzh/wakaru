@@ -117,7 +117,7 @@ impl VisitMut for UnClassFields {
 }
 
 impl UnClassFields {
-    fn find_class_name(&self, class: &Class) -> Option<Atom> {
+    fn find_class_name(&self, _class: &Class) -> Option<Atom> {
         // Classes in class declarations have their name set by the parent node,
         // not on the Class itself. We'll match by checking the prototype call pattern.
         None // Will match any class name in extract_prototype_init_call

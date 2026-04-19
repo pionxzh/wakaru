@@ -136,7 +136,7 @@ enum PrecedingAccess {
     /// `const x = source.prop` — single property access
     PropAccess { prop: Atom, binding: Atom, ctxt: SyntaxContext },
     /// `source.prop;` — bare access (no binding)
-    BareAccess { prop: Atom },
+    BareAccess { _prop: Atom },
 }
 
 /// Try to extract an `_objectWithoutPropertiesLoose` inline IIFE from a statement.
@@ -412,7 +412,7 @@ fn try_match_preceding(
                     if let Some(pname) = member_prop_atom(prop) {
                         if excluded_keys.contains(&pname) {
                             return Some(PrecedingAccess::BareAccess {
-                                prop: pname,
+                                _prop: pname,
                             });
                         }
                     }

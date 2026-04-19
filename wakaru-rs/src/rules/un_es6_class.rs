@@ -337,7 +337,7 @@ fn count_helper_references_stmts(
     stmts: &[Stmt],
     helpers: &HashSet<Atom>,
 ) -> std::collections::HashMap<String, usize> {
-    use swc_core::ecma::visit::{Visit, VisitWith};
+    use swc_core::ecma::visit::VisitWith;
 
     let mut counter = HelperRefCounter::new(helpers);
     for stmt in stmts {
@@ -356,7 +356,7 @@ fn count_helper_references_module(
     items: &[ModuleItem],
     helpers: &HashSet<Atom>,
 ) -> std::collections::HashMap<String, usize> {
-    use swc_core::ecma::visit::{Visit, VisitWith};
+    use swc_core::ecma::visit::VisitWith;
 
     let mut counter = HelperRefCounter::new(helpers);
     for item in items {
@@ -571,14 +571,6 @@ fn extract_iife_call(expr: &Expr) -> Option<&CallExpr> {
                 None
             }
         }
-        _ => None,
-    }
-}
-
-fn extract_fn_expr(expr: &Expr) -> Option<&FnExpr> {
-    match expr {
-        Expr::Fn(fn_expr) => Some(fn_expr),
-        Expr::Paren(paren) => extract_fn_expr(&paren.expr),
         _ => None,
     }
 }

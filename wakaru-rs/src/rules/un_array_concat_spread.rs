@@ -1,6 +1,6 @@
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrayLit, CallExpr, Callee, Expr, ExprOrSpread, MemberExpr, MemberProp, SpreadElement,
+    ArrayLit, CallExpr, Callee, Expr, ExprOrSpread, MemberProp,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 

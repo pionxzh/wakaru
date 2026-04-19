@@ -64,7 +64,7 @@ impl VisitMut for SpreadReplacer<'_> {
         let Expr::Ident(id) = callee.as_ref() else { return };
 
         let key = (id.sym.clone(), id.ctxt);
-        let Some(kind) = self.helpers.get(&key) else {
+        let Some(_kind) = self.helpers.get(&key) else {
             return;
         };
 
