@@ -255,3 +255,49 @@ function compile(pattern, options) {
 "#;
     assert_eq_normalized(&render(input), expected.trim());
 }
+
+#[test]
+fn getter_replacement_avoids_catch_param_shadowing() {
+    let input = r#"
+var r = require("./path-to-regexp");
+var o = () => r && r.__esModule ? r.default : r;
+function compile() {
+  try {
+    return null;
+  } catch (r) {
+    return o();
+  }
+}
+"#;
+    let expected = r#"
+var _r = require("./path-to-regexp");
+function compile() {
+  try {
+    return null;
+  } catch (r) {
+    return _r;
+  }
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn getter_replacement_avoids_block_scope_shadowing() {
+    let input = r#"
+var r = require("./path-to-regexp");
+var o = () => r && r.__esModule ? r.default : r;
+{
+  let r = {};
+  console.log(o());
+}
+"#;
+    let expected = r#"
+var _r = require("./path-to-regexp");
+{
+  let r = {};
+  console.log(_r);
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}

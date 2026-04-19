@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmt, BlockStmtOrExpr, Callee, Decl, Expr, Function, Ident, IfStmt, Lit,
-    MemberExpr, MemberProp, Module, ModuleItem, ObjectPatProp, Pat, PropName, ReturnStmt, Stmt,
-    VarDecl, VarDeclarator,
+    ArrowExpr, BlockStmt, BlockStmtOrExpr, Callee, CatchClause, Decl, Expr, Function, Ident,
+    IfStmt, Lit, MemberExpr, MemberProp, Module, ModuleItem, ObjectPatProp, Pat, PropName,
+    ReturnStmt, Stmt, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -408,6 +408,24 @@ fn getter_replacement_would_be_shadowed(
             };
             self.scope_stack.push(params_shadow || body_shadow);
             arrow.visit_children_with(self);
+            self.scope_stack.pop();
+        }
+
+        fn visit_block_stmt(&mut self, block: &BlockStmt) {
+            let body_shadow = scope_body_binds_name(block, self.replacement_name);
+            self.scope_stack.push(body_shadow);
+            block.visit_children_with(self);
+            self.scope_stack.pop();
+        }
+
+        fn visit_catch_clause(&mut self, catch: &CatchClause) {
+            let param_shadow = catch
+                .param
+                .as_ref()
+                .is_some_and(|param| self.pat_binds_replacement(param));
+            let body_shadow = scope_body_binds_name(&catch.body, self.replacement_name);
+            self.scope_stack.push(param_shadow || body_shadow);
+            catch.visit_children_with(self);
             self.scope_stack.pop();
         }
 
