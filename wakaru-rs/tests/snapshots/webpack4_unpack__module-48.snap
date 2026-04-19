@@ -1,5 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 108
 expression: code
 ---
 import r from "./module-3.js";
@@ -562,10 +563,10 @@ function Ee(e, t) {
 }
 function xe(e, t) {
     let n = t.defaultValue == null ? "" : t.defaultValue;
-    const r = t.checked != null ? t.checked : t.defaultChecked;
+    const initialChecked = t.checked != null ? t.checked : t.defaultChecked;
     n = ve(t.value != null ? t.value : n);
     e._wrapperState = {
-        initialChecked: r,
+        initialChecked,
         initialValue: n,
         controlled: t.type === "checkbox" || t.type === "radio" ? t.checked != null : t.value != null
     };
@@ -1181,13 +1182,13 @@ const kt = new Map;
 const Tt = [];
 const St = "mousedown mouseup touchcancel touchend touchstart auxclick dblclick pointercancel pointerdown pointerup dragend dragstart drop compositionend compositionstart keydown keypress keyup input textInput close cancel copy cut paste click change contextmenu reset submit".split(" ");
 const Ot = "focus blur dragenter dragleave mouseover mouseout pointerover pointerout gotpointercapture lostpointercapture".split(" ");
-function Ct(e, t, n, r, o) {
+function Ct(blockedOn, topLevelType, n, container, o) {
     return {
-        blockedOn: e,
-        topLevelType: t,
+        blockedOn,
+        topLevelType,
         eventSystemFlags: 32 | n,
         nativeEvent: o,
-        container: r
+        container
     };
 }
 function Pt(e, t) {
@@ -2120,7 +2121,7 @@ function ar(e) {
     return null;
 }
 let ur = false;
-const lr = {
+const BeforeInputEventPlugin = {
     eventTypes: rr,
     extractEvents (e, t, n, r) {
         let o;
@@ -2331,7 +2332,7 @@ function Tr(e, t) {
 if (O) {
     br = lt("input") && (!document.documentMode || document.documentMode > 9);
 }
-const Sr = {
+const ChangeEventPlugin = {
     eventTypes: fr,
     _isInputEventSupported: br,
     extractEvents (e, t, n, r) {
@@ -2378,7 +2379,7 @@ function Pr(e) {
     }
     return !!(e = Cr[e]) && !!nativeEvent[e];
 }
-function _r() {
+function getModifierState() {
     return Pr;
 }
 let jr = 0;
@@ -2396,7 +2397,7 @@ const Ar = Or.extend({
     shiftKey: null,
     altKey: null,
     metaKey: null,
-    getModifierState: _r,
+    getModifierState,
     button: null,
     buttons: null,
     relatedTarget (e) {
@@ -2475,7 +2476,7 @@ const Ir = {
         ]
     }
 };
-const Dr = {
+const EnterLeaveEventPlugin = {
     eventTypes: Ir,
     extractEvents (e, t, n, r, o) {
         let i = e === "mouseover" || e === "pointerover";
@@ -2634,7 +2635,7 @@ function Qr(e, t) {
     }
     return Br = n, (e = Bn.getPooled(Hr.select, $r, e, t)).type = "select", e.target = Wr, Fn(e), e;
 }
-const Kr = {
+const SelectEventPlugin = {
     eventTypes: Hr,
     extractEvents (e, t, n, r, o, i) {
         if (!(i = !(o = i || (r.window === r ? r.document : r.nodeType === 9 ? r : r.ownerDocument)))) {
@@ -2798,7 +2799,7 @@ const to = Or.extend({
     metaKey: null,
     repeat: null,
     locale: null,
-    getModifierState: _r,
+    getModifierState,
     charCode (e) {
         if (e.type === "keypress") {
             return Jr(e);
@@ -2832,7 +2833,7 @@ const ro = Or.extend({
     metaKey: null,
     ctrlKey: null,
     shiftKey: null,
-    getModifierState: _r
+    getModifierState
 });
 const oo = Bn.extend({
     propertyName: null,
@@ -2864,7 +2865,7 @@ const io = Ar.extend({
     deltaZ: null,
     deltaMode: null
 });
-const ao = {
+const SimpleEventPlugin = {
     eventTypes: It,
     extractEvents (e, t, n, r) {
         const o = Dt.get(e);
@@ -2959,11 +2960,11 @@ p = Rn;
 h = _n;
 m = jn;
 S({
-    SimpleEventPlugin: ao,
-    EnterLeaveEventPlugin: Dr,
-    ChangeEventPlugin: Sr,
-    SelectEventPlugin: Kr,
-    BeforeInputEventPlugin: lr
+    SimpleEventPlugin,
+    EnterLeaveEventPlugin,
+    ChangeEventPlugin,
+    SelectEventPlugin,
+    BeforeInputEventPlugin
 });
 const uo = [];
 let lo = -1;
@@ -3259,10 +3260,10 @@ function li(e, t) {
         };
     }
 }
-function ci(e, t) {
+function ci(e, suspenseConfig) {
     return (e = {
         expirationTime: e,
-        suspenseConfig: t,
+        suspenseConfig,
         tag: 0,
         payload: null,
         callback: null,
@@ -4115,10 +4116,10 @@ function Fi(e) {
     }
     return null;
 }
-function zi(e, t) {
+function useResponder(responder, props) {
     return {
-        responder: e,
-        props: t
+        responder,
+        props
     };
 }
 const { ReactCurrentDispatcher, ReactCurrentBatchConfig } = r___SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
@@ -4388,7 +4389,7 @@ function na(e, t, n, r) {
     }
     return e;
 }
-function ra() {
+function useRef() {
     return Xi().memoizedState;
 }
 function oa(e, t, n, r) {
@@ -4416,7 +4417,7 @@ function aa(e, t) {
 function ua(e, t) {
     return ia(516, 4, e, t);
 }
-function la(e, t) {
+function useLayoutEffect(e, t) {
     return ia(4, 2, e, t);
 }
 function ca(e, t) {
@@ -4435,13 +4436,13 @@ function ca(e, t) {
         };
     }
 }
-function sa(e, t, n) {
+function useImperativeHandle(e, t, n) {
     n = n !== null && n !== undefined ? n.concat([
         e
     ]) : null;
     return ia(4, 2, ca.bind(null, t, e), n);
 }
-function fa() {}
+function useDebugValue() {}
 function da(e, t) {
     Gi().memoizedState = [
         e,
@@ -4462,7 +4463,7 @@ function pa(e, t) {
     ];
     return e;
 }
-function ha(e, t) {
+function useMemo(e, t) {
     const n = Xi();
     t = t === undefined ? null : t;
     const n_memoizedState = n.memoizedState;
@@ -4594,8 +4595,8 @@ const ba = {
         return Gi().memoizedState = e;
     },
     useState: ta,
-    useDebugValue: fa,
-    useResponder: zi,
+    useDebugValue,
+    useResponder,
     useDeferredValue (e, t) {
         const n = ta(e);
         const [r, o] = n;
@@ -4631,16 +4632,16 @@ const ga = {
     useCallback: pa,
     useContext: ii,
     useEffect: ua,
-    useImperativeHandle: sa,
-    useLayoutEffect: la,
-    useMemo: ha,
+    useImperativeHandle,
+    useLayoutEffect,
+    useMemo,
     useReducer: Zi,
-    useRef: ra,
+    useRef,
     useState () {
         return Zi(Ji);
     },
-    useDebugValue: fa,
-    useResponder: zi,
+    useDebugValue,
+    useResponder,
     useDeferredValue (e, t) {
         const n = Zi(Ji);
         const [r, o] = n;
@@ -4676,16 +4677,16 @@ const wa = {
     useCallback: pa,
     useContext: ii,
     useEffect: ua,
-    useImperativeHandle: sa,
-    useLayoutEffect: la,
-    useMemo: ha,
+    useImperativeHandle,
+    useLayoutEffect,
+    useMemo,
     useReducer: ea,
-    useRef: ra,
+    useRef,
     useState () {
         return ea(Ji);
     },
-    useDebugValue: fa,
-    useResponder: zi,
+    useDebugValue,
+    useResponder,
     useDeferredValue (e, t) {
         const n = ea(Ji);
         const [r, o] = n;
@@ -5818,9 +5819,9 @@ function Za(e) {
             return null;
     }
 }
-function eu(e, t) {
+function eu(value, t) {
     return {
-        value: e,
+        value,
         source: t,
         stack: ye(t)
     };
@@ -8264,7 +8265,7 @@ function ql(e, t) {
         e.lastExpiredTime = t;
     }
 }
-function Ul(e, t, n, r) {
+function Ul(element, t, n, r) {
     const t_current = t.current;
     let i = nl();
     const Y_ReactCurrentBatchConfig_suspense = Y_ReactCurrentBatchConfig.suspense;
@@ -8309,7 +8310,7 @@ function Ul(e, t, n, r) {
     }
     t = ci(i, Y_ReactCurrentBatchConfig_suspense);
     t.payload = {
-        element: e
+        element
     };
     if ((r = r === undefined ? null : r) !== null) {
         t.callback = r;
@@ -8584,16 +8585,13 @@ export function createPortal(e, t, n = null) {
     if (!Vl(t)) {
         throw Error(a(200));
     }
-    return ((e, t, r = null)=>{
-        const n = null;
-        return {
+    return ((children, containerInfo, implementation, r = null)=>({
             $$typeof: ee,
             key: r == null ? null : `${r}`,
-            children: e,
-            containerInfo: t,
-            implementation: n
-        };
-    })(e, t, n);
+            children,
+            containerInfo,
+            implementation
+        }))(e, t, null, n);
 }
 export const __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
     Events: [

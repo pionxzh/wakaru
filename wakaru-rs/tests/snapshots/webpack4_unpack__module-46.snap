@@ -1,5 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 108
 expression: code
 ---
 let r;
@@ -321,7 +322,7 @@ export const unstable_runWithPriority = (e, t)=>{
         M = n;
     }
 };
-export const unstable_scheduleCallback = (e, n, a)=>{
+export const unstable_scheduleCallback = (e, callback, a)=>{
     const u = exports.unstable_now();
     if (typeof a === "object" && a !== null) {
         var l = a.delay;
@@ -333,7 +334,7 @@ export const unstable_scheduleCallback = (e, n, a)=>{
     }
     e = {
         id: R++,
-        callback: n,
+        callback,
         priorityLevel: e,
         startTime: l,
         expirationTime: a = l + a,

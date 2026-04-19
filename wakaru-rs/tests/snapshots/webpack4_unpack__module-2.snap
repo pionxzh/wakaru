@@ -1,5 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 108
 expression: code
 ---
 import r from "./module-0.js";
@@ -91,7 +92,7 @@ function O(e) {
 function C(e) {
     return E(l, e);
 }
-function P(e, t, n) {
+function P(e, t, args) {
     r.h(t, r.q.notUndef, `${e}: argument fn is undefined`);
     let o = null;
     if (r.q.array(t)) {
@@ -110,16 +111,16 @@ function P(e, t, n) {
     return {
         context: o,
         fn: t,
-        args: n
+        args
     };
 }
 export function e(e, ...n) {
     return E(c, P("call", e, n));
 }
-function j(e, t, n = []) {
+function j(context, fn, n = []) {
     return E(c, P("apply", {
-        context: e,
-        fn: t
+        context,
+        fn
     }, n));
 }
 function R(e, ...n) {

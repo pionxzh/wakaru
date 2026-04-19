@@ -1,5 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 108
 expression: code
 ---
 import r from "./module-29.js";
@@ -224,10 +225,10 @@ function I(e, t, n) {
         D(e, result, n, (e)=>e);
     } else if (e != null) {
         if (isValidElement(e)) {
-            e = ((e, t)=>({
+            e = ((e, key)=>({
                     $$typeof: i,
                     type: e.type,
-                    key: t,
+                    key,
                     ref: e.ref,
                     props: e.props,
                     _owner: e._owner
@@ -338,10 +339,10 @@ export const cloneElement = function(e, t, n) {
         _owner: e__owner
     };
 };
-export const createContext = (e, t = null)=>{
+export const createContext = (e, _calculateChangedBits = null)=>{
     e = {
         $$typeof: f,
-        _calculateChangedBits: t,
+        _calculateChangedBits,
         _currentValue: e,
         _currentValue2: e,
         _threadCount: 0,
@@ -362,19 +363,19 @@ export const createFactory = (e)=>{
 export const createRef = ()=>({
         current: null
     });
-export const forwardRef = (e)=>({
+export const forwardRef = (render)=>({
         $$typeof: d,
-        render: e
+        render
     });
-export const lazy = (e)=>({
+export const lazy = (_ctor)=>({
         $$typeof: m,
-        _ctor: e,
+        _ctor,
         _status: -1,
         _result: null
     });
-export const memo = (e, t)=>({
+export const memo = (type, t)=>({
         $$typeof: h,
-        type: e,
+        type,
         compare: t === undefined ? null : t
     });
 export const useCallback = (e, t)=>z().useCallback(e, t);

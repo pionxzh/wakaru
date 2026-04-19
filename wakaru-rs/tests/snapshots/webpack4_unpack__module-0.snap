@@ -1,5 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 108
 expression: code
 ---
 export { i as x };
@@ -164,14 +165,14 @@ const C = ((e = 0)=>()=>++e)();
 const P = (e)=>{
     throw e;
 };
-const _ = (e)=>({
-        value: e,
+const _ = (value)=>({
+        value,
         done: true
     });
-export function t(e, t = P, n = "", r) {
+export function t(next, t = P, name = "", r) {
     const o = {
-        name: n,
-        next: e,
+        name,
+        next,
         throw: t,
         return: _
     };

@@ -1,14 +1,16 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrayPat, ArrowExpr, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, Function,
-    Ident, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat,
-    ObjectPatProp, Param, Pat, PropName, Stmt, VarDecl,
+    ArrayPat, ArrowExpr, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, ClassExpr,
+    Decl, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier, KeyValuePatProp,
+    Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat, ObjectPatProp, Param,
+    Pat, Prop, PropName, Stmt, VarDecl,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::rename_utils::{rename_bindings, rename_bindings_in_module, BindingId, BindingRename};
+use super::ObjShorthand;
 
 pub struct SmartRename;
 
@@ -19,6 +21,9 @@ impl VisitMut for SmartRename {
         member_init_rename_module(module);
         symbol_for_rename_module(module);
         module.visit_mut_children_with(self);
+        // Runs once at the module level; uses (sym, ctxt) matching so nested
+        // bindings are classified correctly without per-scope recursion.
+        value_position_rename_module(module);
     }
 
     fn visit_mut_function(&mut self, func: &mut Function) {
@@ -981,4 +986,307 @@ fn symbol_key_to_const_name(key: &str) -> String {
         }
     }
     result
+}
+
+// ============================================================
+// Value-position renames
+//
+// A short binding `x` (≤2 chars) used *only* as the value of object-literal
+// KeyValue properties with a valid-identifier key, where every such key
+// agrees on the same target name, is renamed to that name.
+//
+//   (e, t) => ({ ...e, error: t })      → (e, error) => ({ ...e, error })
+//   import r from "m"; export default { Foo: r }
+//                                        → import Foo from "m"; export default { Foo }
+//
+// Disqualified:
+//   - Any non-value-position reference (member access, call arg, spread,
+//     assignment target, export specifier, etc.)
+//   - Multiple distinct target names (e.g. `{ array: e, bool: e }`)
+//   - Computed/numeric/reserved-keyword keys
+// ============================================================
+
+fn value_position_rename_module(module: &mut Module) {
+    let mut collector = BindingCollector::default();
+    module.visit_with(&mut collector);
+    if collector.short_bindings.is_empty() {
+        return;
+    }
+
+    let mut classifier = ValuePositionClassifier::new(collector.short_bindings);
+    module.visit_with(&mut classifier);
+
+    // Group candidates by target name. If two bindings map to the same
+    // target (e.g. five React type constants all assigned to `$$typeof:`),
+    // the key isn't discriminative — drop the whole group.
+    let mut by_target: HashMap<String, Vec<BindingId>> = HashMap::new();
+    for (bid, state) in classifier.states {
+        let Some(target) = state.single_target() else {
+            continue;
+        };
+        if target.as_str() == bid.0.as_ref() {
+            continue;
+        }
+        by_target.entry(target).or_default().push(bid);
+    }
+
+    let existing_bindings = collector.all_binding_names;
+    let mut renames: Vec<BindingRename> = Vec::new();
+    for (target, bids) in by_target {
+        if bids.len() > 1 {
+            continue;
+        }
+        // Skip when the target name is already a binding anywhere in the
+        // module. Property keys are not bindings and never block a rename —
+        // we're renaming a value *to* look like its key.
+        if existing_bindings.contains(target.as_str()) {
+            continue;
+        }
+        let bid = bids.into_iter().next().unwrap();
+        renames.push(BindingRename {
+            old: bid,
+            new: target.as_str().into(),
+        });
+    }
+
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings_in_module(module, &renames);
+    // Collapse `{ Foo: Foo }` created by the rename back to `{ Foo }`.
+    module.visit_mut_with(&mut ObjShorthand);
+}
+
+#[derive(Default)]
+struct BindingCollector {
+    short_bindings: HashMap<BindingId, ()>,
+    all_binding_names: HashSet<String>,
+}
+
+impl BindingCollector {
+    fn record(&mut self, id: &Ident) {
+        self.all_binding_names.insert(id.sym.to_string());
+        if id.sym.chars().count() <= REACT_MINIFIED_THRESHOLD {
+            self.short_bindings.insert((id.sym.clone(), id.ctxt), ());
+        }
+    }
+}
+
+impl Visit for BindingCollector {
+    fn visit_pat(&mut self, pat: &Pat) {
+        if let Pat::Ident(bi) = pat {
+            self.record(&bi.id);
+        }
+        pat.visit_children_with(self);
+    }
+
+    fn visit_object_pat_prop(&mut self, prop: &ObjectPatProp) {
+        if let ObjectPatProp::Assign(a) = prop {
+            self.record(&a.key.id);
+        }
+        prop.visit_children_with(self);
+    }
+
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        self.record(&decl.ident);
+        decl.function.visit_with(self);
+    }
+
+    fn visit_class_decl(&mut self, decl: &ClassDecl) {
+        self.record(&decl.ident);
+        decl.class.visit_with(self);
+    }
+
+    fn visit_fn_expr(&mut self, fn_expr: &FnExpr) {
+        if let Some(ident) = &fn_expr.ident {
+            self.record(ident);
+        }
+        fn_expr.function.visit_with(self);
+    }
+
+    fn visit_class_expr(&mut self, ce: &ClassExpr) {
+        if let Some(ident) = &ce.ident {
+            self.record(ident);
+        }
+        ce.class.visit_with(self);
+    }
+
+    fn visit_import_decl(&mut self, decl: &ImportDecl) {
+        for spec in &decl.specifiers {
+            match spec {
+                ImportSpecifier::Default(d) => self.record(&d.local),
+                ImportSpecifier::Named(n) => self.record(&n.local),
+                ImportSpecifier::Namespace(ns) => self.record(&ns.local),
+            }
+        }
+    }
+
+    fn visit_prop_name(&mut self, name: &PropName) {
+        if let PropName::Computed(c) = name {
+            c.expr.visit_with(self);
+        }
+    }
+
+    fn visit_member_prop(&mut self, prop: &MemberProp) {
+        if let MemberProp::Computed(c) = prop {
+            c.expr.visit_with(self);
+        }
+    }
+}
+
+#[derive(Default)]
+struct ClassificationState {
+    value_targets: HashMap<String, usize>,
+    other_uses: usize,
+}
+
+impl ClassificationState {
+    fn single_target(&self) -> Option<String> {
+        if self.other_uses > 0 {
+            return None;
+        }
+        if self.value_targets.len() != 1 {
+            return None;
+        }
+        self.value_targets.keys().next().cloned()
+    }
+}
+
+struct ValuePositionClassifier {
+    states: HashMap<BindingId, ClassificationState>,
+}
+
+impl ValuePositionClassifier {
+    fn new(bindings: HashMap<BindingId, ()>) -> Self {
+        let states = bindings
+            .into_iter()
+            .map(|(k, _)| (k, ClassificationState::default()))
+            .collect();
+        Self { states }
+    }
+
+    fn record_value_use(&mut self, bid: &BindingId, target: String) {
+        if let Some(state) = self.states.get_mut(bid) {
+            *state.value_targets.entry(target).or_default() += 1;
+        }
+    }
+
+    fn record_other_use(&mut self, bid: &BindingId) {
+        if let Some(state) = self.states.get_mut(bid) {
+            state.other_uses += 1;
+        }
+    }
+}
+
+impl Visit for ValuePositionClassifier {
+    fn visit_prop(&mut self, prop: &Prop) {
+        // Handle the `{ Key: x }` value position specially so we don't
+        // double-count the value Ident as a generic "other use".
+        if let Prop::KeyValue(kv) = prop {
+            if let PropName::Computed(c) = &kv.key {
+                c.expr.visit_with(self);
+            }
+            if let Expr::Ident(id) = kv.value.as_ref() {
+                let bid = (id.sym.clone(), id.ctxt);
+                if self.states.contains_key(&bid) {
+                    match key_as_ident_target(&kv.key) {
+                        Some(name) => self.record_value_use(&bid, name),
+                        None => self.record_other_use(&bid),
+                    }
+                    return;
+                }
+            }
+            kv.value.visit_with(self);
+            return;
+        }
+        prop.visit_children_with(self);
+    }
+
+    fn visit_ident(&mut self, id: &Ident) {
+        let bid = (id.sym.clone(), id.ctxt);
+        self.record_other_use(&bid);
+    }
+
+    // Patterns contain binding sites (declarations), not uses — walk manually
+    // so we only descend into parts that can contain expressions (default
+    // initializers, computed keys).
+    fn visit_pat(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(_) => {}
+            Pat::Array(a) => {
+                for elem in a.elems.iter().flatten() {
+                    self.visit_pat(elem);
+                }
+            }
+            Pat::Object(o) => {
+                for prop in &o.props {
+                    match prop {
+                        ObjectPatProp::KeyValue(kv) => {
+                            if let PropName::Computed(c) = &kv.key {
+                                c.expr.visit_with(self);
+                            }
+                            self.visit_pat(&kv.value);
+                        }
+                        ObjectPatProp::Assign(ap) => {
+                            if let Some(v) = &ap.value {
+                                v.visit_with(self);
+                            }
+                        }
+                        ObjectPatProp::Rest(rp) => self.visit_pat(&rp.arg),
+                    }
+                }
+            }
+            Pat::Assign(a) => {
+                self.visit_pat(&a.left);
+                a.right.visit_with(self);
+            }
+            Pat::Rest(r) => self.visit_pat(&r.arg),
+            Pat::Expr(e) => e.visit_with(self),
+            Pat::Invalid(_) => {}
+        }
+    }
+
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        decl.function.visit_with(self);
+    }
+
+    fn visit_class_decl(&mut self, decl: &ClassDecl) {
+        decl.class.visit_with(self);
+    }
+
+    fn visit_fn_expr(&mut self, fn_expr: &FnExpr) {
+        fn_expr.function.visit_with(self);
+    }
+
+    fn visit_class_expr(&mut self, ce: &ClassExpr) {
+        ce.class.visit_with(self);
+    }
+
+    fn visit_import_decl(&mut self, _: &ImportDecl) {
+        // Import specifier locals are bindings, not uses.
+    }
+
+    fn visit_prop_name(&mut self, name: &PropName) {
+        if let PropName::Computed(c) = name {
+            c.expr.visit_with(self);
+        }
+    }
+
+    fn visit_member_prop(&mut self, prop: &MemberProp) {
+        if let MemberProp::Computed(c) = prop {
+            c.expr.visit_with(self);
+        }
+    }
+}
+
+fn key_as_ident_target(key: &PropName) -> Option<String> {
+    let raw = match key {
+        PropName::Ident(i) => i.sym.to_string(),
+        PropName::Str(s) => s.value.as_str().map(|s| s.to_string())?,
+        _ => return None,
+    };
+    if raw.is_empty() || !is_valid_js_ident(&raw) || is_reserved_keyword(&raw) {
+        return None;
+    }
+    Some(raw)
 }

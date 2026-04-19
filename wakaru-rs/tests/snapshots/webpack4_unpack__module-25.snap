@@ -1,5 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 108
 expression: code
 ---
 import { FETCH_DATA } from "./module-19.js";
@@ -8,9 +9,9 @@ import "./module-13.js";
 export const startFetchingData = ()=>({
         type: FETCH_DATA + START
     });
-export const fetchDataSuccess = (e)=>({
+export const fetchDataSuccess = (payload)=>({
         type: FETCH_DATA + SUCCESS,
-        payload: e
+        payload
     });
 export const fetchData = ()=>({
         type: FETCH_DATA

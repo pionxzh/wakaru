@@ -1,5 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 108
 expression: code
 ---
 import i from "./module-3.js";
@@ -413,8 +414,8 @@ const I = [
         if (e) {
             return undefined;
         }
-        return M((e)=>({
-                dispatch: e
+        return M((dispatch)=>({
+                dispatch
             }));
     },
     (e)=>{

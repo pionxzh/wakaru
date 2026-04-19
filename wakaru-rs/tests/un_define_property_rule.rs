@@ -55,7 +55,7 @@ console.log(r);
     let expected = r#"
 let r;
 (r = {})["FETCH_START"] = (e) => ({ ...e, isLoading: true });
-r["FETCH_SUCCESS"] = (e, t) => ({ ...e, data: t });
+r["FETCH_SUCCESS"] = (e, data) => ({ ...e, data });
 console.log(r);
 "#;
     assert_eq_normalized(&render(input), expected.trim());

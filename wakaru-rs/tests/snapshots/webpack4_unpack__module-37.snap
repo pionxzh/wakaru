@@ -1,8 +1,9 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 108
 expression: code
 ---
-import r from "./module-28.js";
+import FrontPage from "./module-28.js";
 export default {
-    FrontPage: r
+    FrontPage
 };

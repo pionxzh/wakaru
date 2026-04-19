@@ -1,5 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 108
 expression: code
 ---
 import r from "./module-40.js";
@@ -31,18 +32,18 @@ export function parse(e, t) {
                 r.push(u);
                 u = "";
             }
-            const E = m != null && h != null && h !== m;
-            const x = g === "+" || g === "*";
-            const k = g === "?" || g === "*";
+            const partial = m != null && h != null && h !== m;
+            const repeat = g === "+" || g === "*";
+            const optional = g === "?" || g === "*";
             const T = n[2] || l;
             const S = v || b;
             r.push({
                 name: y || i++,
                 prefix: m || "",
                 delimiter: T,
-                optional: k,
-                repeat: x,
-                partial: E,
+                optional,
+                repeat,
+                partial,
                 asterisk: !!w,
                 pattern: S ? s(S) : w ? ".*" : `[^${c(T)}]+?`
             });

@@ -1,13 +1,14 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 108
 expression: code
 ---
 import { combineReducers } from "./module-11.js";
 import { routerReducer } from "./module-18.js";
 import "./module-13.js";
-import i from "./module-36.js";
+import main from "./module-36.js";
 const a = combineReducers({
     router: routerReducer,
-    main: i
+    main
 });
 export default a;

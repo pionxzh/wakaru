@@ -440,6 +440,217 @@ const fn2 = ({ name, ...r }, rest) => r;
 "#;
     let result = apply(input);
     // Should not produce duplicate `rest` params
-    assert!(!result.contains("...rest }, rest"), 
+    assert!(!result.contains("...rest }, rest"),
         "must not create duplicate rest param:\n{}", result);
+}
+
+// ============================================================
+// Value-position renames: short binding used only as `{ Key: x }`
+// ============================================================
+
+#[test]
+fn value_position_rename_arrow_param_single_key() {
+    // `t` used only as value of `error:` — rename to `error`.
+    let input = r#"
+const f = (e, t) => ({
+    ...e,
+    isLoading: false,
+    error: t
+});
+"#;
+    let expected = r#"
+const f = (e, error) => ({
+    ...e,
+    isLoading: false,
+    error
+});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn value_position_rename_default_import_used_once() {
+    let input = r#"
+import r from "./module-28.js";
+export default {
+    FrontPage: r
+};
+"#;
+    let expected = r#"
+import FrontPage from "./module-28.js";
+export default {
+    FrontPage
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn value_position_rename_multiple_params_each_unique_key() {
+    let input = r#"
+const f = (e, t) => ({
+    data: e,
+    error: t
+});
+"#;
+    let expected = r#"
+const f = (data, error) => ({
+    data,
+    error
+});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn value_position_skips_multiple_different_keys() {
+    // `e` appears as value for many different keys — must NOT rename.
+    let input = r#"
+function outer() {
+    function e() {}
+    function t() {}
+    const n = {
+        array: e,
+        bool: e,
+        number: e,
+        arrayOf: t,
+        shape: t,
+    };
+    return n;
+}
+"#;
+    let output = apply(input);
+    assert!(output.contains("function e()"), "outer e must not be renamed:\n{}", output);
+    assert!(output.contains("function t()"), "outer t must not be renamed:\n{}", output);
+    assert!(output.contains("array: e"), "value e should stay:\n{}", output);
+    assert!(output.contains("shape: t"), "value t should stay:\n{}", output);
+}
+
+#[test]
+fn value_position_skips_non_value_usage() {
+    // `r` is used as a call callee / member access target — NOT only value position.
+    let input = r#"
+import r from "./m.js";
+r();
+const obj = { Foo: r };
+"#;
+    let output = apply(input);
+    assert!(output.contains("import r from"), "should not rename when non-value use exists:\n{}", output);
+}
+
+#[test]
+fn value_position_skips_long_names() {
+    let input = r#"
+import longName from "./m.js";
+export default { Foo: longName };
+"#;
+    let output = apply(input);
+    assert!(output.contains("import longName from"), "long names must not be renamed:\n{}", output);
+}
+
+#[test]
+fn value_position_skips_when_target_is_existing_binding() {
+    // `error` is already a binding — skip rather than emit `error_1`, which
+    // would be strictly worse than the original `t`.
+    let input = r#"
+const error = "taken";
+const f = (t) => ({ error: t });
+use(error);
+"#;
+    let output = apply(input);
+    assert!(output.contains("(t)"), "t should not be renamed when target binding exists:\n{}", output);
+}
+
+#[test]
+fn value_position_skips_when_target_shared_by_multiple_bindings() {
+    // Both `s` and `f` would want to rename to `$$typeof` — the target is
+    // too generic to discriminate, so leave them alone.
+    let input = r#"
+const s = 1;
+const f = 2;
+use({ $$typeof: s });
+use({ $$typeof: f });
+"#;
+    let output = apply(input);
+    assert!(output.contains("const s = 1"), "shared target must not be applied:\n{}", output);
+    assert!(output.contains("const f = 2"), "shared target must not be applied:\n{}", output);
+}
+
+#[test]
+fn value_position_allows_rename_when_key_is_only_property_name() {
+    // `payload` appears only as a property key, not as a binding — still rename.
+    let input = r#"
+const handler = (e) => ({
+    type: "X",
+    payload: e
+});
+use(handler);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("(payload)"),
+        "should rename even when target is a property key elsewhere:\n{}", output
+    );
+}
+
+#[test]
+fn value_position_skips_when_exported_by_name() {
+    // `export { r }` is an other use — disqualifies.
+    let input = r#"
+const r = makeThing();
+export { r };
+const obj = { Foo: r };
+"#;
+    let output = apply(input);
+    assert!(output.contains("const r = "), "should not rename when referenced by export:\n{}", output);
+}
+
+#[test]
+fn value_position_does_not_rename_to_reserved_keyword() {
+    // Key `default` is reserved — should either skip or prefix with `_`.
+    let input = r#"
+import r from "./m.js";
+export default { default: r };
+"#;
+    let output = apply(input);
+    // Must not produce `import default from ...` (invalid).
+    assert!(
+        !output.contains("import default from"),
+        "must not emit reserved keyword as binding name:\n{}", output
+    );
+}
+
+#[test]
+fn value_position_skips_computed_key() {
+    let input = r#"
+import r from "./m.js";
+const k = "Foo";
+export default { [k]: r };
+"#;
+    let output = apply(input);
+    assert!(output.contains("import r from"), "must not rename via computed key:\n{}", output);
+}
+
+#[test]
+fn value_position_skips_shadowed_use() {
+    // Outer `t` used once as value, but inner function has its own `t`.
+    // The outer rename should still apply; inner `t` must stay.
+    let input = r#"
+const t = 1;
+const obj = { count: t };
+function inner(t) { return t + 1; }
+use(obj, inner(2));
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("function inner(t)"),
+        "inner parameter must not be renamed:\n{}", output
+    );
+    assert!(
+        output.contains("const count = 1"),
+        "outer binding must be renamed to `count`:\n{}", output
+    );
 }

@@ -1,5 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 108
 expression: code
 ---
 import "./module-13.js";
@@ -15,15 +16,15 @@ const u = {
         ...e,
         isLoading: true
     });
-r[FETCH_DATA + SUCCESS] = (e, t)=>({
+r[FETCH_DATA + SUCCESS] = (e, data)=>({
         ...e,
         isLoading: false,
-        data: t
+        data
     });
-r[FETCH_DATA + ERROR] = (e, t)=>({
+r[FETCH_DATA + ERROR] = (e, error)=>({
         ...e,
         isLoading: false,
-        error: t
+        error
     });
 const l = r;
 export default ((e = u, t)=>{

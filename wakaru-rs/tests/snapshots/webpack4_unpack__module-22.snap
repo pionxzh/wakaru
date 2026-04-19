@@ -1,5 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 108
 expression: code
 ---
 import o, { q } from "./module-0.js";
@@ -269,13 +270,13 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         _.joiners.forEach((e)=>e.cb(t, n));
         _.joiners = null;
     }
-    function L(e, s, f = "", h) {
+    function L(e, parentEffectId, label = "", h) {
         const v = o.y();
         if (sagaMonitor) {
             sagaMonitor.effectTriggered({
                 effectId: v,
-                parentEffectId: s,
-                label: f,
+                parentEffectId,
+                label,
                 effect: e
             });
         }
@@ -556,9 +557,9 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                 };
                 return (n)=>{
                     if (e) {
-                        return ((e)=>({
+                        return ((value)=>({
                                 done: true,
-                                value: e
+                                value
                             }))(n);
                     }
                     e = true;
