@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    ArrowExpr, Decl, DefaultDecl, Expr, Function, Ident, ImportNamedSpecifier, ImportSpecifier,
-    KeyValueProp, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat,
-    Prop, PropName, Stmt, VarDeclarator,
+    ArrowExpr, BlockStmt, CatchClause, Class, Decl, DefaultDecl, Expr, Function, Ident, ImportDecl,
+    ImportNamedSpecifier, ImportSpecifier, KeyValueProp, MemberProp, Module, ModuleDecl,
+    ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop, PropName, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -183,6 +183,200 @@ pub fn rename_causes_shadowing(module: &Module, old: &BindingId, new_name: &Atom
     checker.found
 }
 
+/// Returns true when replacing references to `old` with an identifier named
+/// `replacement_name` would resolve to a shadowing binding at any use site.
+///
+/// This is a targeted version of SWC's rename safety check: instead of running
+/// a whole-module mangle pass, callers can ask whether a raw `Expr::Ident`
+/// substitution would be captured by a nested function, block, or catch scope.
+pub fn binding_replacement_would_be_shadowed(
+    module: &Module,
+    old: &BindingId,
+    replacement_name: &Atom,
+) -> bool {
+    struct Checker<'a> {
+        old: &'a BindingId,
+        replacement_name: &'a Atom,
+        scope_stack: Vec<bool>,
+        found: bool,
+    }
+
+    impl Checker<'_> {
+        fn in_shadowing_scope(&self) -> bool {
+            self.scope_stack.iter().any(|declares| *declares)
+        }
+
+        fn pat_binds_replacement(&self, pat: &Pat) -> bool {
+            pat_binds_name(pat, self.replacement_name)
+        }
+
+        fn block_binds_replacement(&self, block: &BlockStmt) -> bool {
+            block_binds_name(block, self.replacement_name)
+        }
+
+        fn is_old_ident(&self, ident: &Ident) -> bool {
+            ident.sym == self.old.0 && ident.ctxt == self.old.1
+        }
+
+        fn mark_current_scope_binding(&mut self, pat: &Pat) {
+            if !self.scope_stack.is_empty() && self.pat_binds_replacement(pat) {
+                if let Some(scope) = self.scope_stack.last_mut() {
+                    *scope = true;
+                }
+            }
+        }
+
+        fn visit_binding_pat_defaults(&mut self, pat: &Pat) {
+            match pat {
+                Pat::Array(array) => {
+                    for elem in array.elems.iter().flatten() {
+                        self.visit_binding_pat_defaults(elem);
+                    }
+                }
+                Pat::Object(object) => {
+                    for prop in &object.props {
+                        match prop {
+                            ObjectPatProp::KeyValue(kv) => {
+                                self.visit_binding_pat_defaults(&kv.value);
+                            }
+                            ObjectPatProp::Assign(assign) => {
+                                if let Some(value) = &assign.value {
+                                    value.visit_with(self);
+                                }
+                            }
+                            ObjectPatProp::Rest(rest) => {
+                                self.visit_binding_pat_defaults(&rest.arg);
+                            }
+                        }
+                    }
+                }
+                Pat::Assign(assign) => {
+                    assign.right.visit_with(self);
+                    self.visit_binding_pat_defaults(&assign.left);
+                }
+                Pat::Rest(rest) => self.visit_binding_pat_defaults(&rest.arg),
+                _ => {}
+            }
+        }
+    }
+
+    impl Visit for Checker<'_> {
+        fn visit_import_decl(&mut self, _: &ImportDecl) {}
+
+        fn visit_function(&mut self, function: &Function) {
+            let params_shadow = function
+                .params
+                .iter()
+                .any(|param| self.pat_binds_replacement(&param.pat));
+            let body_shadow = function
+                .body
+                .as_ref()
+                .is_some_and(|body| self.block_binds_replacement(body));
+            self.scope_stack.push(params_shadow || body_shadow);
+
+            for param in &function.params {
+                self.visit_binding_pat_defaults(&param.pat);
+            }
+            if let Some(body) = &function.body {
+                body.visit_with(self);
+            }
+
+            self.scope_stack.pop();
+        }
+
+        fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+            let params_shadow = arrow
+                .params
+                .iter()
+                .any(|param| self.pat_binds_replacement(param));
+            let body_shadow = match arrow.body.as_ref() {
+                swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(body) => {
+                    self.block_binds_replacement(body)
+                }
+                swc_core::ecma::ast::BlockStmtOrExpr::Expr(_) => false,
+            };
+            self.scope_stack.push(params_shadow || body_shadow);
+
+            for param in &arrow.params {
+                self.visit_binding_pat_defaults(param);
+            }
+            arrow.body.visit_with(self);
+
+            self.scope_stack.pop();
+        }
+
+        fn visit_block_stmt(&mut self, block: &BlockStmt) {
+            let body_shadow = self.block_binds_replacement(block);
+            self.scope_stack.push(body_shadow);
+            block.visit_children_with(self);
+            self.scope_stack.pop();
+        }
+
+        fn visit_catch_clause(&mut self, catch: &CatchClause) {
+            let param_shadow = catch
+                .param
+                .as_ref()
+                .is_some_and(|param| self.pat_binds_replacement(param));
+            let body_shadow = self.block_binds_replacement(&catch.body);
+            self.scope_stack.push(param_shadow || body_shadow);
+
+            if let Some(param) = &catch.param {
+                self.visit_binding_pat_defaults(param);
+            }
+            catch.body.visit_with(self);
+
+            self.scope_stack.pop();
+        }
+
+        fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+            self.mark_current_scope_binding(&declarator.name);
+            self.visit_binding_pat_defaults(&declarator.name);
+            if let Some(init) = &declarator.init {
+                init.visit_with(self);
+            }
+        }
+
+        fn visit_pat(&mut self, pat: &Pat) {
+            self.visit_binding_pat_defaults(pat);
+        }
+
+        fn visit_decl(&mut self, decl: &Decl) {
+            match decl {
+                Decl::Fn(function) => function.function.visit_with(self),
+                Decl::Class(class) => class.class.visit_with(self),
+                _ => decl.visit_children_with(self),
+            }
+        }
+
+        fn visit_class(&mut self, class: &Class) {
+            class.visit_children_with(self);
+        }
+
+        fn visit_ident(&mut self, ident: &Ident) {
+            if self.is_old_ident(ident) && self.in_shadowing_scope() {
+                self.found = true;
+            }
+        }
+
+        fn visit_prop_name(&mut self, _: &PropName) {}
+
+        fn visit_member_prop(&mut self, prop: &MemberProp) {
+            if let MemberProp::Computed(computed) = prop {
+                computed.visit_with(self);
+            }
+        }
+    }
+
+    let mut checker = Checker {
+        old,
+        replacement_name,
+        scope_stack: Vec::new(),
+        found: false,
+    };
+    module.visit_with(&mut checker);
+    checker.found
+}
+
 pub fn rename_bindings_in_module(module: &mut Module, renames: &[BindingRename]) {
     if renames.is_empty() {
         return;
@@ -243,6 +437,79 @@ fn collect_pat_names(pat: &Pat, names: &mut HashSet<Atom>) {
         Pat::Rest(rest) => collect_pat_names(&rest.arg, names),
         Pat::Assign(assign) => collect_pat_names(&assign.left, names),
         _ => {}
+    }
+}
+
+fn block_binds_name(block: &BlockStmt, name: &Atom) -> bool {
+    struct Collector<'a> {
+        name: &'a Atom,
+        found: bool,
+    }
+
+    impl Collector<'_> {
+        fn pat_binds_name(&self, pat: &Pat) -> bool {
+            pat_binds_name(pat, self.name)
+        }
+    }
+
+    impl Visit for Collector<'_> {
+        fn visit_decl(&mut self, decl: &Decl) {
+            match decl {
+                Decl::Var(var) => {
+                    if var.decls.iter().any(|decl| self.pat_binds_name(&decl.name)) {
+                        self.found = true;
+                    }
+                    for decl in &var.decls {
+                        if let Some(init) = &decl.init {
+                            init.visit_with(self);
+                        }
+                    }
+                }
+                Decl::Fn(function) => {
+                    if &function.ident.sym == self.name {
+                        self.found = true;
+                    }
+                }
+                Decl::Class(class) => {
+                    if &class.ident.sym == self.name {
+                        self.found = true;
+                    }
+                    class.class.visit_children_with(self);
+                }
+                _ => decl.visit_children_with(self),
+            }
+        }
+
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+        fn visit_prop_name(&mut self, _: &PropName) {}
+
+        fn visit_member_prop(&mut self, prop: &MemberProp) {
+            if let MemberProp::Computed(prop) = prop {
+                prop.visit_with(self);
+            }
+        }
+    }
+
+    let mut collector = Collector { name, found: false };
+    block.visit_with(&mut collector);
+    collector.found
+}
+
+fn pat_binds_name(pat: &Pat, name: &Atom) -> bool {
+    match pat {
+        Pat::Ident(id) => &id.id.sym == name,
+        Pat::Array(arr) => arr.elems.iter().flatten().any(|p| pat_binds_name(p, name)),
+        Pat::Object(obj) => obj.props.iter().any(|prop| match prop {
+            ObjectPatProp::KeyValue(kv) => pat_binds_name(&kv.value, name),
+            ObjectPatProp::Assign(assign) => &assign.key.id.sym == name,
+            ObjectPatProp::Rest(rest) => pat_binds_name(&rest.arg, name),
+        }),
+        Pat::Assign(assign) => pat_binds_name(&assign.left, name),
+        Pat::Rest(rest) => pat_binds_name(&rest.arg, name),
+        _ => false,
     }
 }
 
