@@ -69,6 +69,24 @@ foo_1();
 }
 
 #[test]
+fn keeps_alias_when_imported_name_conflicts_with_default_import() {
+    let input = r#"
+import a from './module-12.js';
+import { a as a_2 } from './module-9.js';
+a.a();
+a_2.fixed();
+"#;
+    let expected = r#"
+import a from './module-12.js';
+import { a as a_1 } from './module-9.js';
+a.a();
+a_1.fixed();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn keeps_default_and_namespace_imports_unchanged() {
     let input = r#"
 import defaultExport from 'mod';

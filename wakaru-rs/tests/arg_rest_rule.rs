@@ -237,6 +237,24 @@ function foo(...args) {
 }
 
 #[test]
+fn function_babel_tail_copy_loop_removed() {
+    let input = r#"
+function foo(a, b) {
+    for (var len = arguments.length, rest = Array(len > 2 ? len - 2 : 0), i = 2; i < len; i++) {
+        rest[i - 2] = arguments[i];
+    }
+    return bar(a, b, rest);
+}
+"#;
+    let expected = r#"
+function foo(a, b, ...rest) {
+    return bar(a, b, rest);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn copy_loop_preserved_when_not_arguments_pattern() {
     // A for loop that doesn't match the Babel copy pattern should be kept
     let input = r#"

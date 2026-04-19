@@ -88,6 +88,43 @@ fn run_decomp_then_rename(source: &str, facts: &ModuleFactsMap) -> String {
     })
 }
 
+fn run_decomp_then_late_pipeline(source: &str, facts: &ModuleFactsMap) -> String {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let fm = cm.new_source_file(
+            FileName::Custom("test.js".to_string()).into(),
+            source.to_string(),
+        );
+        let lexer = Lexer::new(
+            Syntax::Es(EsSyntax { jsx: true, ..Default::default() }),
+            Default::default(),
+            StringInput::from(&*fm),
+            None,
+        );
+        let mut parser = Parser::new_from(lexer);
+        let mut module = parser.parse_module().expect("parse failed");
+
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        run_namespace_decomposition(&mut module, facts);
+        apply_rules_between(&mut module, unresolved_mark, "UnTemplateLiteral", "DeadImports");
+
+        let mut output = Vec::new();
+        {
+            let mut emitter = Emitter {
+                cfg: Config::default().with_minify(false),
+                cm: cm.clone(),
+                comments: None,
+                wr: JsWriter::new(cm, "\n", &mut output, None),
+            };
+            emitter.emit_module(&module).expect("emit failed");
+        }
+        String::from_utf8(output).expect("utf8")
+    })
+}
+
 /// Collect facts from ESM source (simulates a target module).
 fn facts_for(source: &str) -> ModuleFacts {
     GLOBALS.set(&Default::default(), || {
@@ -225,6 +262,149 @@ function g(e) { return u.d.take(e); }
         normalize(&output).contains("d as d_1") || normalize(&output).contains("d_1.take"),
         "expected d_1 alias, got:\n{output}"
     );
+}
+
+#[test]
+fn partial_decomposition_keeps_namespace_for_alias_heavy_import() {
+    let target_facts = facts_for(r#"
+export function a() {}
+export function e() {}
+export function f() {}
+export function k() {}
+export function s() {}
+"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-2.js", target_facts);
+
+    let input = r#"
+import l from "./module-2.js";
+function a(e) { return l.a(e); }
+function f(e) { return l.f(e); }
+function run(t, r, e) {
+    const s = l.s(e);
+    return l.k.apply(undefined, [t, ...r, e]) || s;
+}
+"#;
+    let expected = r#"
+import l, { k } from "./module-2.js";
+function a(e) { return l.a(e); }
+function f(e) { return l.f(e); }
+function run(t, r, e) {
+    const s = l.s(e);
+    return k.apply(undefined, [t, ...r, e]) || s;
+}
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+#[test]
+fn decomposition_aliases_against_other_import_locals() {
+    let target_facts = facts_for(r#"
+export function a() {}
+"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-9.js", target_facts);
+
+    let input = r#"
+import a from "./module-12.js";
+import l from "./module-9.js";
+a.a();
+l.a.fixed();
+"#;
+    let expected = r#"
+import a from "./module-12.js";
+import { a as a_1 } from "./module-9.js";
+a.a();
+a_1.fixed();
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+#[test]
+fn decomposition_alias_survives_import_rename_cleanup() {
+    let target_facts = facts_for(r#"
+export function a() {}
+"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-9.js", target_facts);
+
+    let input = r#"
+import a from "./module-12.js";
+import l from "./module-9.js";
+a.a();
+l.a.fixed();
+"#;
+    let expected = r#"
+import a from "./module-12.js";
+import { a as a_2 } from "./module-9.js";
+a.a();
+a_2.fixed();
+"#;
+    assert_eq_normalized(&run_decomp_then_rename(input, &facts), expected.trim());
+}
+
+#[test]
+fn decomposition_alias_survives_late_pipeline_cleanup() {
+    let target_facts = facts_for(r#"
+export function a() {}
+"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-9.js", target_facts);
+
+    let input = r#"
+import a from "./module-12.js";
+import l from "./module-9.js";
+a.a();
+export const buffers = l.a;
+"#;
+    let expected = r#"
+import a from "./module-12.js";
+import { a as a_2 } from "./module-9.js";
+a.a();
+export const buffers = a_2;
+"#;
+    assert_eq_normalized(&run_decomp_then_late_pipeline(input, &facts), expected.trim());
+}
+
+#[test]
+fn decomposition_aliases_after_skipped_alias_heavy_candidate() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "./module-12.js",
+        facts_for(r#"
+export function a() {}
+export function b() {}
+export function c() {}
+"#),
+    );
+    facts.insert(
+        "./module-9.js",
+        facts_for(r#"
+export function a() {}
+"#),
+    );
+
+    let input = r#"
+import a from "./module-12.js";
+import l from "./module-9.js";
+const b = 1;
+const c = 2;
+a.a();
+a.b();
+a.c();
+export const buffers = l.a;
+"#;
+    let expected = r#"
+import a from "./module-12.js";
+import { a as a_1 } from "./module-9.js";
+const b = 1;
+const c = 2;
+a.a();
+a.b();
+a.c();
+export const buffers = a_1;
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
 }
 
 #[test]

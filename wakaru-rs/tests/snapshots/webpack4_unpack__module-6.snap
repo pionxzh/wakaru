@@ -2,7 +2,7 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import r from "./module-0.js";
+import r, { q, w } from "./module-0.js";
 import { a as a_3 } from "./module-9.js";
 import { a as a_4 } from "./module-12.js";
 export { l as e };
@@ -17,7 +17,7 @@ function c() {
     return {
         subscribe (t) {
             e.push(t);
-            return ()=>r.w(e, t);
+            return ()=>w(e, t);
         },
         emit (t) {
             const n = e.slice();
@@ -40,23 +40,23 @@ export function b(e = a_3.fixed()) {
             throw r.p("Cannot have pending takers with non empty buffer");
         }
     }
-    r.h(e, r.q.buffer, s);
+    r.h(e, q.buffer, s);
     return {
         take (o) {
             i();
-            r.h(o, r.q.func, "channel.take's callback must be a function");
+            r.h(o, q.func, "channel.take's callback must be a function");
             if (t && e.isEmpty()) {
                 o(a);
             } else if (e.isEmpty()) {
                 n.push(o);
-                o.cancel = ()=>r.w(n, o);
+                o.cancel = ()=>w(n, o);
             } else {
                 o(e.take());
             }
         },
         put (o) {
             i();
-            r.h(o, r.q.notUndef, f);
+            r.h(o, q.notUndef, f);
             if (!t) {
                 if (!n.length) {
                     return e.put(o);
@@ -72,7 +72,7 @@ export function b(e = a_3.fixed()) {
         },
         flush (n) {
             i();
-            r.h(n, r.q.func, "channel.flush' callback must be a function");
+            r.h(n, q.func, "channel.flush' callback must be a function");
             if (t && e.isEmpty()) {
                 n(a);
             } else {
@@ -99,7 +99,7 @@ export function b(e = a_3.fixed()) {
 }
 export function d(e, t = a_3.none(), n) {
     if (arguments.length > 2) {
-        r.h(n, r.q.func, "Invalid match function passed to eventChannel");
+        r.h(n, q.func, "Invalid match function passed to eventChannel");
     }
     const i = b(t);
     const a = ()=>{
@@ -120,7 +120,7 @@ export function d(e, t = a_3.none(), n) {
     if (i.__closed__) {
         u();
     }
-    if (!r.q.func(u)) {
+    if (!q.func(u)) {
         throw new Error("in eventChannel: subscribe should return a function to unsubscribe");
     }
     return {
@@ -141,7 +141,7 @@ function h(e) {
         ...t,
         take (e, n) {
             if (arguments.length > 1) {
-                r.h(n, r.q.func, "channel.take's matcher argument must be a function");
+                r.h(n, q.func, "channel.take's matcher argument must be a function");
                 e[r.b] = n;
             }
             t.take(e);

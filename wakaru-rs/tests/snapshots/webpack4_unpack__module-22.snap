@@ -2,7 +2,7 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import o from "./module-0.js";
+import o, { q } from "./module-0.js";
 import i from "./module-6.js";
 import a from "./module-12.js";
 import u from "./module-2.js";
@@ -20,7 +20,7 @@ export const utils = {
         return o.u;
     },
     get is () {
-        return o.q;
+        return q;
     },
     get deferred () {
         return o.l;
@@ -70,13 +70,13 @@ const h = {
     }
 };
 function m(e) {
-    return (e === "*" ? h.wildcard : o.q.array(e) ? h.array : o.q.stringableFunc(e) ? h.default : o.q.func(e) ? h.predicate : h.default)(e);
+    return (e === "*" ? h.wildcard : q.array(e) ? h.array : q.stringableFunc(e) ? h.default : q.func(e) ? h.predicate : h.default)(e);
 }
 const y = (e)=>({
         fn: e
     });
 function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymous", w) {
-    o.h(e, o.q.iterator, f);
+    o.h(e, q.iterator, f);
     const E = o.n(z, o.z("[...effects]", "all([...effects])"));
     const { sagaMonitor, logger, onError } = h;
     const S = logger || o.s;
@@ -119,7 +119,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         i.result = ()=>n._result;
         i.error = ()=>n._error;
         i.setContext = (e)=>{
-            o.h(e, o.q.object, o.k("task", e));
+            o.h(e, q.object, o.k("task", e));
             o.v.assign(P, e);
         };
         ((e, t)=>{
@@ -216,12 +216,12 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             } else if (t === p) {
                 j.isCancelled = true;
                 M.cancel();
-                r = o.q.func(e.return) ? e.return(p) : {
+                r = q.func(e.return) ? e.return(p) : {
                     done: true,
                     value: p
                 };
             } else {
-                r = t === d ? o.q.func(e.return) ? e.return() : {
+                r = t === d ? q.func(e.return) ? e.return() : {
                     done: true
                 } : e.next(t);
             }
@@ -304,16 +304,16 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             }
         };
         let k;
-        if (o.q.promise(e)) {
+        if (q.promise(e)) {
             return I(e, w);
         }
-        if (o.q.helper(e)) {
+        if (q.helper(e)) {
             return F(y(e), v, w);
         }
-        if (o.q.iterator(e)) {
+        if (q.iterator(e)) {
             return D(e, v, g, w);
         }
-        if (o.q.array(e)) {
+        if (q.array(e)) {
             return E(e, v, w);
         }
         if (k = u.d.take(e)) {
@@ -351,7 +351,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                         }
                         O(e);
                     }
-                    if (!resolve || !o.q.promise(e)) {
+                    if (!resolve || !q.promise(e)) {
                         return t(e);
                     }
                     I(e, t);
@@ -379,7 +379,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                                 s = {};
                                 s[t] = u;
                                 const f = s;
-                                n(o.q.array(e) ? Array.prototype.slice.call({
+                                n(q.array(e) ? Array.prototype.slice.call({
                                     ...f,
                                     length: a.length
                                 }) : f);
@@ -411,10 +411,10 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                 } catch (e) {
                     return n(e, true);
                 }
-                if (o.q.promise(u)) {
+                if (q.promise(u)) {
                     return I(u, n);
                 }
-                if (o.q.iterator(u)) {
+                if (q.iterator(u)) {
                     return D(u, t, fn.name, n);
                 }
                 return n(u);
@@ -425,7 +425,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                 const { context, fn, args } = e;
                 try {
                     const a = (e, n)=>{
-                        if (o.q.undef(e)) {
+                        if (q.undef(e)) {
                             return t(n);
                         }
                         return t(e, true);
@@ -516,9 +516,9 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
     }
     function I(e, t) {
         const n = e[o.a];
-        if (o.q.func(n)) {
+        if (q.func(n)) {
             t.cancel = n;
-        } else if (o.q.func(e.abort)) {
+        } else if (q.func(e.abort)) {
             t.cancel = ()=>e.abort();
         }
         e.then(t, (e)=>t(e, true));
@@ -530,7 +530,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         const { context, fn, args, detached } = e;
         const d = ((e)=>{
             const { context, fn, args } = e;
-            if (o.q.iterator(fn)) {
+            if (q.iterator(fn)) {
                 return fn;
             }
             let i;
@@ -540,7 +540,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             } catch (e) {
                 a = e;
             }
-            if (o.q.iterator(i)) {
+            if (q.iterator(i)) {
                 return i;
             }
             if (a) {
@@ -590,7 +590,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
     function z(e, t, n) {
         const r = Object.keys(e);
         if (!r.length) {
-            return n(o.q.array(e) ? [] : {});
+            return n(q.array(e) ? [] : {});
         }
         let a = 0;
         let u;
@@ -598,7 +598,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         const s = {};
         r.forEach((t)=>{
             const f = (s, f)=>{
-                u || (f || i.e(s) || s === d || s === p ? (n.cancel(), n(s, f)) : (l[t] = s, ++a === r.length && (u = true, n(o.q.array(e) ? o.f.from({
+                u || (f || i.e(s) || s === d || s === p ? (n.cancel(), n(s, f)) : (l[t] = s, ++a === r.length && (u = true, n(q.array(e) ? o.f.from({
                     ...l,
                     length: r.length
                 }) : l))));
@@ -616,18 +616,15 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
     }
 }
 const b = "runSaga(storeInterface, saga, ...args): saga argument must be a Generator function!";
-export function runSaga(e, t) {
-    for(let n = arguments.length, r = Array(n > 2 ? n - 2 : 0), i = 2; i < n; i++){
-        r[i - 2] = arguments[i];
-    }
+export function runSaga(e, t, ...r) {
     let a;
-    if (o.q.iterator(e)) {
+    if (q.iterator(e)) {
         a = e;
         e = t;
     } else {
-        o.h(t, o.q.func, b);
+        o.h(t, q.func, b);
         a = t(...r);
-        o.h(a, o.q.iterator, b);
+        o.h(a, q.iterator, b);
     }
     const { subscribe, dispatch, getState, context, sagaMonitor, logger, onError } = e;
     const m = o.y();
@@ -674,16 +671,16 @@ export default ((e = {})=>{
     const n = e_context === undefined ? {} : e_context;
     const { context: _context, ...rest } = e;
     const { sagaMonitor, logger, onError } = rest;
-    if (o.q.func(rest)) {
+    if (q.func(rest)) {
         throw new Error("Saga middleware no longer accept Generator functions. Use sagaMiddleware.run instead");
     }
-    if (logger && !o.q.func(logger)) {
+    if (logger && !q.func(logger)) {
         throw new Error("`options.logger` passed to the Saga middleware is not a function!");
     }
-    if (onError && !o.q.func(onError)) {
+    if (onError && !q.func(onError)) {
         throw new Error("`options.onError` passed to the Saga middleware is not a function!");
     }
-    if (rest.emitter && !o.q.func(rest.emitter)) {
+    if (rest.emitter && !q.func(rest.emitter)) {
         throw new Error("`options.emitter` passed to the Saga middleware is not a function!");
     }
     function c(e) {
@@ -712,7 +709,7 @@ export default ((e = {})=>{
         throw new Error("Before running a Saga, you must mount the Saga middleware on the Store using applyMiddleware");
     };
     c.setContext = (e)=>{
-        o.h(e, o.q.object, o.k("sagaMiddleware", e));
+        o.h(e, q.object, o.k("sagaMiddleware", e));
         o.v.assign(n, e);
     };
     return c;

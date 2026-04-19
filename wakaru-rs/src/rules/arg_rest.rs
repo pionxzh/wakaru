@@ -1,8 +1,8 @@
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, BindingIdent, BlockStmt, Callee, Constructor, Expr, Function, Ident, Lit, MemberExpr,
-    MemberProp, Number, Param, ParamOrTsParamProp, Pat, RestPat, Stmt, VarDeclOrExpr,
+    ArrowExpr, BinaryOp, BindingIdent, BlockStmt, Callee, Constructor, Expr, Function, Ident, Lit,
+    MemberExpr, MemberProp, Number, Param, ParamOrTsParamProp, Pat, RestPat, Stmt, VarDeclOrExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -28,6 +28,7 @@ impl VisitMut for ArgRest {
         let Some(body) = &func.body else { return };
         let fixed_param_count = func.params.len();
 
+        let copy_var = detect_copy_var_name(body, fixed_param_count);
         let mut checker = ArgumentsChecker::new(fixed_param_count);
         body.visit_with(&mut checker);
 
@@ -37,7 +38,6 @@ impl VisitMut for ArgRest {
 
         // Use the copy variable's name when a Babel copy loop is present; it is
         // already unique within the scope and avoids any naming conflict.
-        let copy_var = detect_copy_var_name(body);
         let rest_name: Atom = copy_var.clone().unwrap_or_else(|| "args".into());
         func.params.push(make_rest_param(rest_name.clone()));
 
@@ -45,7 +45,7 @@ impl VisitMut for ArgRest {
         if let Some(body) = &mut func.body {
             // Remove the Babel copy loop since the rest param replaces it
             if copy_var.is_some() {
-                remove_arguments_copy_loop(body);
+                remove_arguments_copy_loop(body, fixed_param_count);
             }
             body.visit_mut_with(&mut ArgumentsRewriter {
                 name: rest_name,
@@ -68,6 +68,7 @@ impl VisitMut for ArgRest {
         let Some(body) = &ctor.body else { return };
         let fixed_param_count = ctor.params.len();
 
+        let copy_var = detect_copy_var_name(body, fixed_param_count);
         let mut checker = ArgumentsChecker::new(fixed_param_count);
         body.visit_with(&mut checker);
 
@@ -75,14 +76,13 @@ impl VisitMut for ArgRest {
             return;
         }
 
-        let copy_var = detect_copy_var_name(body);
         let rest_name: Atom = copy_var.clone().unwrap_or_else(|| "args".into());
         ctor.params.push(ParamOrTsParamProp::Param(make_rest_param(rest_name.clone())));
 
         if let Some(body) = &mut ctor.body {
             // Remove the Babel copy loop since the rest param replaces it
             if copy_var.is_some() {
-                remove_arguments_copy_loop(body);
+                remove_arguments_copy_loop(body, fixed_param_count);
             }
             body.visit_mut_with(&mut ArgumentsRewriter {
                 name: rest_name,
@@ -101,8 +101,13 @@ impl VisitMut for ArgRest {
 /// ```text
 /// for (var len = arguments.length, copy = Array(len), idx = 0; …) …
 /// ```
-fn detect_copy_var_name(body: &BlockStmt) -> Option<Atom> {
-    body.stmts.iter().find_map(|stmt| {
+fn detect_copy_var_name(body: &BlockStmt, fixed_param_count: usize) -> Option<Atom> {
+    body.stmts
+        .iter()
+        .find_map(|stmt| detect_copy_var_name_from_stmt(stmt, fixed_param_count))
+}
+
+fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Option<Atom> {
         let Stmt::For(for_stmt) = stmt else {
             return None;
         };
@@ -142,7 +147,7 @@ fn detect_copy_var_name(body: &BlockStmt) -> Option<Atom> {
         let one_len_arg = |args: &[swc_core::ecma::ast::ExprOrSpread]| -> bool {
             args.len() == 1
                 && args[0].spread.is_none()
-                && matches!(args[0].expr.as_ref(), Expr::Ident(id) if id.sym == len_sym)
+                && is_copy_array_len_expr(args[0].expr.as_ref(), &len_sym, fixed_param_count)
         };
 
         match d1.init.as_deref()? {
@@ -172,8 +177,45 @@ fn detect_copy_var_name(body: &BlockStmt) -> Option<Atom> {
             _ => return None,
         }
 
+        // Decl 2: idx = 0 for whole-arguments copies, or idx = fixed_param_count
+        // for Babel's tail-rest copy loop.
+        let d2 = &init.decls[2];
+        let Some(idx_init) = d2.init.as_deref() else {
+            return None;
+        };
+        if !is_number(idx_init, fixed_param_count) {
+            return None;
+        }
+
         Some(copy_id.sym.clone())
-    })
+}
+
+fn is_copy_array_len_expr(expr: &Expr, len_sym: &Atom, fixed_param_count: usize) -> bool {
+    if fixed_param_count == 0 {
+        return matches!(expr, Expr::Ident(id) if id.sym == *len_sym);
+    }
+
+    let Expr::Cond(cond) = expr else {
+        return false;
+    };
+
+    matches!(
+        cond.test.as_ref(),
+        Expr::Bin(bin)
+            if bin.op == BinaryOp::Gt
+                && matches!(bin.left.as_ref(), Expr::Ident(id) if id.sym == *len_sym)
+                && is_number(bin.right.as_ref(), fixed_param_count)
+    ) && matches!(
+        cond.cons.as_ref(),
+        Expr::Bin(bin)
+            if bin.op == BinaryOp::Sub
+                && matches!(bin.left.as_ref(), Expr::Ident(id) if id.sym == *len_sym)
+                && is_number(bin.right.as_ref(), fixed_param_count)
+    ) && is_number(cond.alt.as_ref(), 0)
+}
+
+fn is_number(expr: &Expr, expected: usize) -> bool {
+    matches!(expr, Expr::Lit(Lit::Num(number)) if number.value == expected as f64)
 }
 
 fn make_rest_param(name: Atom) -> Param {
@@ -214,6 +256,15 @@ impl ArgumentsChecker {
 }
 
 impl Visit for ArgumentsChecker {
+    fn visit_stmt(&mut self, stmt: &Stmt) {
+        if detect_copy_var_name_from_stmt(stmt, self.fixed_param_count).is_some() {
+            self.has_any = true;
+            return;
+        }
+
+        stmt.visit_children_with(self);
+    }
+
     fn visit_member_expr(&mut self, expr: &MemberExpr) {
         if is_arguments_ident(&expr.obj) {
             self.has_any = true;
@@ -262,26 +313,9 @@ fn is_arguments_ident(expr: &Expr) -> bool {
 /// Remove the Babel arguments copy loop:
 /// `for (var len = arguments.length, arr = Array(len), i = 0; i < len; i++) arr[i] = arguments[i];`
 /// This loop is dead code once the rest param is added.
-fn remove_arguments_copy_loop(body: &mut BlockStmt) {
+fn remove_arguments_copy_loop(body: &mut BlockStmt, fixed_param_count: usize) {
     body.stmts.retain(|stmt| {
-        let Stmt::For(for_stmt) = stmt else { return true };
-        let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else { return true };
-        // The Babel copy loop has 3 declarators: len, arr, idx
-        if init.decls.len() != 3 {
-            return true;
-        }
-        // First declarator init must reference `arguments.length`
-        let Some(first_init) = &init.decls[0].init else { return true };
-        if let Expr::Member(m) = first_init.as_ref() {
-            if is_arguments_ident(&m.obj) {
-                if let MemberProp::Ident(prop) = &m.prop {
-                    if prop.sym.as_ref() == "length" {
-                        return false; // Remove this for loop
-                    }
-                }
-            }
-        }
-        true
+        detect_copy_var_name_from_stmt(stmt, fixed_param_count).is_none()
     });
 }
 

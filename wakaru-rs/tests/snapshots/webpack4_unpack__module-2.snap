@@ -113,10 +113,7 @@ function P(e, t, n) {
         args: n
     };
 }
-export function e(e) {
-    for(let t = arguments.length, n = Array(t > 1 ? t - 1 : 0), r = 1; r < t; r++){
-        n[r - 1] = arguments[r];
-    }
+export function e(e, ...n) {
     return E(c, P("call", e, n));
 }
 function j(e, t, n = []) {
@@ -125,22 +122,13 @@ function j(e, t, n = []) {
         fn: t
     }, n));
 }
-function R(e) {
-    for(let t = arguments.length, n = Array(t > 1 ? t - 1 : 0), r = 1; r < t; r++){
-        n[r - 1] = arguments[r];
-    }
+function R(e, ...n) {
     return E(s, P("cps", e, n));
 }
-function N(e) {
-    for(let t = arguments.length, n = Array(t > 1 ? t - 1 : 0), r = 1; r < t; r++){
-        n[r - 1] = arguments[r];
-    }
+function N(e, ...n) {
     return E(f, P("fork", e, n));
 }
-export function r(e) {
-    for(let t = arguments.length, n = Array(t > 1 ? t - 1 : 0), r = 1; r < t; r++){
-        n[r - 1] = arguments[r];
-    }
+export function r(e, ...n) {
     return x(N(e, ...n));
 }
 function A(...t) {

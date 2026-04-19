@@ -36,6 +36,9 @@ struct DecompProp {
     /// binding. When we add a fresh specifier, the binding is new and carries
     /// `SyntaxContext::empty()`.
     local_ctxt: SyntaxContext,
+    /// True when this prop needed a synthesized alias only to avoid a local
+    /// binding collision.
+    collision_alias: bool,
 }
 
 /// A candidate for namespace decomposition: a default import whose binding is used
@@ -48,6 +51,9 @@ struct DecompCandidate {
     local_ctxt: SyntaxContext,
     /// Properties to decompose with their local aliases
     props: Vec<DecompProp>,
+    /// Whether the original default/namespace specifier can be removed. Partial
+    /// decompositions keep it for properties that still need namespace access.
+    remove_original: bool,
 }
 
 /// Run namespace decomposition on a single module, using cross-module facts.
@@ -179,6 +185,7 @@ fn find_decomposition_candidates(
         let mut props: Vec<DecompProp> = Vec::new();
         let mut alias_count = 0usize;
         let mut reused_existing = 0usize;
+        let mut inserted_locals: HashSet<Atom> = HashSet::new();
         let mut sorted_accessed: Vec<Atom> = analyzer.accessed_props.into_iter().collect();
         sorted_accessed.sort();
         for prop in &sorted_accessed {
@@ -187,6 +194,7 @@ fn find_decomposition_candidates(
                     exported: prop.clone(),
                     local: existing_local.clone(),
                     local_ctxt: *existing_ctxt,
+                    collision_alias: false,
                 });
                 reused_existing += 1;
                 continue;
@@ -196,37 +204,49 @@ fn find_decomposition_candidates(
             if !is_own_binding && has_collision {
                 let alias = synthesize_alias(prop, &existing_bindings);
                 existing_bindings.insert(alias.clone());
+                inserted_locals.insert(alias.clone());
                 alias_count += 1;
                 props.push(DecompProp {
                     exported: prop.clone(),
                     local: alias,
                     local_ctxt: SyntaxContext::empty(),
+                    collision_alias: true,
                 });
             } else {
-                existing_bindings.insert(prop.clone());
+                if existing_bindings.insert(prop.clone()) {
+                    inserted_locals.insert(prop.clone());
+                }
                 props.push(DecompProp {
                     exported: prop.clone(),
                     local: prop.clone(),
                     local_ctxt: SyntaxContext::empty(),
+                    collision_alias: false,
                 });
             }
         }
 
-        // Skip decomposition if too many aliases are needed — the result would be
-        // less readable than the original namespace access pattern.
-        // Only triggers when there are multiple new props and most need aliasing.
+        let mut remove_original = true;
+
+        // If too many aliases are needed, keep the namespace import and decompose
+        // only properties that can use clean local names. This still enables
+        // downstream rules such as `fn.apply(undefined, args)` → `fn(...args)`.
         let new_props = sorted_accessed.len() - reused_existing;
         if new_props > 1 && alias_count * 2 > new_props {
-            // Undo only the names we ourselves inserted into existing_bindings
-            // during this iteration. Skip reused existing-locals (pre-existing
-            // bindings) and freshly-added aliases/props that match pre-existing
-            // import locals.
-            for prop in &props {
-                if prop.exported != prop.local && !existing_import_locals.contains(&prop.local) {
-                    existing_bindings.remove(&prop.local);
+            let mut partial_props = Vec::new();
+            for prop in props {
+                if prop.collision_alias || prop.local == local_sym {
+                    if inserted_locals.contains(&prop.local) {
+                        existing_bindings.remove(&prop.local);
+                    }
+                } else {
+                    partial_props.push(prop);
                 }
             }
-            continue;
+            if partial_props.is_empty() {
+                continue;
+            }
+            props = partial_props;
+            remove_original = false;
         }
 
         candidates.push(DecompCandidate {
@@ -234,6 +254,7 @@ fn find_decomposition_candidates(
             local_sym,
             local_ctxt,
             props,
+            remove_original,
         });
     }
 
@@ -494,11 +515,13 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
         // Remove the specific specifier we're decomposing (default or namespace).
         // Other specifiers on the same import — including a sibling default when
         // we decompose a namespace, or named specifiers — are left intact.
-        import.specifiers.retain(|s| match s {
-            ImportSpecifier::Default(d) => d.local.sym != candidate.local_sym,
-            ImportSpecifier::Namespace(n) => n.local.sym != candidate.local_sym,
-            ImportSpecifier::Named(_) => true,
-        });
+        if candidate.remove_original {
+            import.specifiers.retain(|s| match s {
+                ImportSpecifier::Default(d) => d.local.sym != candidate.local_sym,
+                ImportSpecifier::Namespace(n) => n.local.sym != candidate.local_sym,
+                ImportSpecifier::Named(_) => true,
+            });
+        }
 
         // Add new named specifiers for decomposed properties (skip if already present)
         for prop in &candidate.props {

@@ -2,8 +2,8 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import r from "./module-0.js";
-import l from "./module-2.js";
+import r, { q } from "./module-0.js";
+import l, { k } from "./module-2.js";
 import c from "./module-6.js";
 import d from "./module-9.js";
 const o = {
@@ -12,7 +12,7 @@ const o = {
 };
 const i = {};
 function a(e) {
-    if (r.q.channel(e)) {
+    if (q.channel(e)) {
         return "channel";
     }
     if (Array.isArray(e)) {
@@ -44,10 +44,7 @@ function u(e, t, n = "iterator") {
     }
     return r.t(l, (e)=>l(null, e), n, true);
 }
-export function b(e, t) {
-    for(let n = arguments.length, r = Array(n > 2 ? n - 2 : 0), o = 2; o < n; o++){
-        r[o - 2] = arguments[o];
-    }
+export function b(e, t, ...r) {
     const s = {
         done: false,
         value: l.s(e)
@@ -72,31 +69,20 @@ export function b(e, t) {
                 "q1",
                 ((e)=>({
                         done: false,
-                        value: l.k.apply(undefined, [
-                            t,
-                            ...r,
-                            e
-                        ])
+                        value: k(t, ...r, e)
                     }))(f)
             ];
         }
     }, "q1", `takeEvery(${a(e)}, ${t.name})`);
 }
-export function d(e, t) {
-    for(let n = arguments.length, r = Array(n > 2 ? n - 2 : 0), o = 2; o < n; o++){
-        r[o - 2] = arguments[o];
-    }
+export function d(e, t, ...r) {
     const s = {
         done: false,
         value: l.s(e)
     };
     const f = (e)=>({
             done: false,
-            value: l.k.apply(undefined, [
-                t,
-                ...r,
-                e
-            ])
+            value: k(t, ...r, e)
         });
     let d;
     let p;
@@ -140,10 +126,7 @@ export function d(e, t) {
         }
     }, "q1", `takeLatest(${a(e)}, ${t.name})`);
 }
-export function f(e, t, n) {
-    for(let o = arguments.length, s = Array(o > 3 ? o - 3 : 0), f = 3; f < o; f++){
-        s[f - 3] = arguments[f];
-    }
+export function f(e, t, n, ...s) {
     let p;
     let h;
     const m = {
@@ -184,11 +167,7 @@ export function f(e, t, n) {
                 "q4",
                 ((e)=>({
                         done: false,
-                        value: l.k.apply(undefined, [
-                            n,
-                            ...s,
-                            e
-                        ])
+                        value: k(n, ...s, e)
                     }))(p)
             ];
         },
