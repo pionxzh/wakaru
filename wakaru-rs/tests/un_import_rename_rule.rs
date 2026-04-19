@@ -130,6 +130,57 @@ foo_1();
 }
 
 #[test]
+fn generates_unique_name_when_target_shadowed_by_top_level_block() {
+    // A `const foo` inside a module-level `if` block shadows references
+    // to the renamed import within that block. The rename must account for
+    // top-level block/catch scopes, not just function bodies.
+    let input = r#"
+import { foo as ab } from 'bar';
+if (cond) {
+  const foo = 1;
+  ab();
+}
+ab();
+"#;
+    let expected = r#"
+import { foo as foo_1 } from 'bar';
+if (cond) {
+  const foo = 1;
+  foo_1();
+}
+foo_1();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn generates_unique_name_when_target_shadowed_by_catch_binding() {
+    // Same concern for `catch (foo)` at module scope: the catch binding
+    // shadows the renamed import inside the handler body.
+    let input = r#"
+import { foo as ab } from 'bar';
+try {
+  doThing();
+} catch (foo) {
+  ab();
+}
+ab();
+"#;
+    let expected = r#"
+import { foo as foo_1 } from 'bar';
+try {
+  doThing();
+} catch (foo) {
+  foo_1();
+}
+foo_1();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn import_rename_does_not_touch_shadowed_local() {
     let input = r#"
 import { foo as ab } from 'bar';

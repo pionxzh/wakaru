@@ -165,6 +165,27 @@ pub fn rename_causes_shadowing(module: &Module, old: &BindingId, new_name: &Atom
             }
         }
 
+        fn visit_block_stmt(&mut self, block: &BlockStmt) {
+            // Lexical block scope: a `let`/`const` declared here can shadow
+            // references to `old` within the block without being visible to
+            // the enclosing function. Pushing a scope here also catches
+            // module-level blocks (`if (x) { const foo = 1; ab(); }`), which
+            // are otherwise invisible because no function scope wraps them.
+            self.scope_stack.push((false, false));
+            block.visit_children_with(self);
+            self.on_exit_scope();
+        }
+
+        fn visit_catch_clause(&mut self, catch: &CatchClause) {
+            let declares = catch
+                .param
+                .as_ref()
+                .is_some_and(|p| self.pat_binds_new(p));
+            self.scope_stack.push((declares, false));
+            catch.visit_children_with(self);
+            self.on_exit_scope();
+        }
+
         fn visit_prop_name(&mut self, _: &PropName) {}
 
         fn visit_member_prop(&mut self, prop: &MemberProp) {
