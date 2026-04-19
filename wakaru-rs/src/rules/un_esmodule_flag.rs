@@ -30,7 +30,7 @@ fn is_esmodule_stmt(stmt: &Stmt) -> bool {
         return false;
     };
     match &**expr {
-        Expr::Call(call) => is_define_property_call(call),
+        Expr::Call(call) => is_define_property_call(call) || is_webpack_require_r_call(call),
         Expr::Assign(assign) => is_esmodule_assign(assign),
         _ => false,
     }
@@ -72,6 +72,23 @@ fn is_define_property_call(call: &CallExpr) -> bool {
     // We do a permissive check: just confirm the call pattern is correct (2nd arg is __esModule)
     // and trust that it's the interop flag descriptor
     true
+}
+
+/// Checks for webpack's `require.r(exports)` helper, which marks the target as an ES module.
+fn is_webpack_require_r_call(call: &CallExpr) -> bool {
+    let Callee::Expr(callee_expr) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else {
+        return false;
+    };
+    if !matches!(&**obj, Expr::Ident(id) if &*id.sym == "require") {
+        return false;
+    }
+    if !matches!(prop, MemberProp::Ident(IdentName { sym, .. }) if &**sym == "r") {
+        return false;
+    }
+    call.args.len() == 1 && is_export_object(&call.args[0].expr)
 }
 
 /// Checks for `exports.__esModule = true/!0` or `module.exports.__esModule = true/!0`

@@ -238,6 +238,64 @@ if ((typeof exports.default === "function" || typeof exports.default === "object
 }
 
 #[test]
+fn direct_webpack_export_getters_become_named_exports() {
+    let input = r#"
+require.d(exports, "APP_NAME", ()=>n);
+require.d(exports, "readSetting", ()=>i);
+const n = "Revenue Console";
+function i(t, e = null) {
+  return e;
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("export const APP_NAME = \"Revenue Console\""),
+        "should promote direct require.d getter to named export: {}",
+        output
+    );
+    assert!(
+        output.contains("export function readSetting"),
+        "should promote direct require.d function getter to named export: {}",
+        output
+    );
+    assert!(
+        !output.contains("require.d"),
+        "direct webpack export helper should be removed: {}",
+        output
+    );
+}
+
+#[test]
+fn direct_webpack_export_getter_map_becomes_named_exports() {
+    let input = r#"
+require.d(exports, {
+  APP_NAME() { return n; },
+  readSetting() { return i; }
+});
+const n = "Revenue Console";
+function i(t, e = null) {
+  return e;
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("export const APP_NAME = \"Revenue Console\""),
+        "should promote direct require.d getter map to named export: {}",
+        output
+    );
+    assert!(
+        output.contains("export function readSetting"),
+        "should promote direct require.d getter map function to named export: {}",
+        output
+    );
+    assert!(
+        !output.contains("require.d"),
+        "direct webpack export getter map should be removed: {}",
+        output
+    );
+}
+
+#[test]
 fn webpack_export_getter_iife_keeps_non_compat_if_block() {
     let input = r#"
 ((exports_1, B)=>{

@@ -452,6 +452,11 @@ fn rewrite_webpack_export_getters(module: &mut Module) {
     let mut new_body = Vec::with_capacity(module.body.len());
 
     for item in std::mem::take(&mut module.body) {
+        if let Some(exports) = extract_direct_webpack_export_getters(&item) {
+            new_body.extend(exports.into_iter().map(make_exports_assign_item));
+            continue;
+        }
+
         if let Some(exports) = extract_webpack_export_getter_iife(&item) {
             converted_getter_map = true;
             new_body.extend(exports.into_iter().map(make_exports_assign_item));
@@ -466,6 +471,49 @@ fn rewrite_webpack_export_getters(module: &mut Module) {
     }
 
     module.body = new_body;
+}
+
+fn extract_direct_webpack_export_getters(item: &ModuleItem) -> Option<Vec<(Atom, Ident)>> {
+    let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
+        return None;
+    };
+    let Expr::Call(call) = expr_stmt.expr.as_ref() else {
+        return None;
+    };
+    let Callee::Expr(callee_expr) = &call.callee else {
+        return None;
+    };
+    if !is_member_expr(callee_expr.as_ref(), "require", "d") {
+        return None;
+    }
+    if !matches!(call.args[0].expr.as_ref(), Expr::Ident(id) if id.sym == "exports") {
+        return None;
+    }
+
+    if call.args.len() == 2 {
+        let Expr::Object(getter_map) = call.args[1].expr.as_ref() else {
+            return None;
+        };
+        let exports = extract_export_getter_map(getter_map)?;
+        if exports.is_empty() {
+            return None;
+        }
+        return Some(exports);
+    }
+
+    if call.args.len() == 3 {
+        let Expr::Lit(Lit::Str(name)) = call.args[1].expr.as_ref() else {
+            return None;
+        };
+        let export_name = name.value.as_str()?;
+        if !is_valid_js_ident(export_name) {
+            return None;
+        }
+        let ident = extract_getter_expr_return_ident(call.args[2].expr.as_ref())?;
+        return Some(vec![(export_name.into(), ident)]);
+    }
+
+    None
 }
 
 fn extract_webpack_export_getter_iife(item: &ModuleItem) -> Option<Vec<(Atom, Ident)>> {

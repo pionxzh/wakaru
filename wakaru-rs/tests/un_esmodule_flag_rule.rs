@@ -57,6 +57,18 @@ module.exports.__esModule = true;
 }
 
 #[test]
+fn removes_webpack_require_r_exports() {
+    let input = r#"
+require.r(exports);
+require.r(module.exports);
+"#;
+    let expected = r#""#;
+
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn does_not_remove_unrelated_statements() {
     // Reused from packages/unminify/src/transformations/__tests__/un-esmodule-flag.spec.ts
     // UnEsmoduleFlag only removes __esModule=true (not false), and doesn't touch exports.foo
