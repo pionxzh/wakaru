@@ -81,6 +81,14 @@ INSTA_UPDATE=always cargo test
 cargo insta review
 ```
 
+### Formatting
+
+Do not run `rustfmt` or `cargo fmt` as part of normal targeted fixes. Several existing Rust files have formatting drift, so formatting them opportunistically creates large unrelated diffs that make behavior changes harder to review.
+
+Only format Rust code when:
+- the change is a dedicated format-only commit, or
+- a small newly added/rewritten file can be formatted without pulling unrelated churn into the diff.
+
 ## Definition of Done
 
 1. Run the focused rule tests you touched
