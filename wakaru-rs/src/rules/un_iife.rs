@@ -5,7 +5,7 @@ use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, CatchClause, ClassDecl,
     Constructor, Decl, Expr, ExprOrSpread, FnDecl, Function, GetterProp, Ident, Lit, MemberProp,
-    MethodProp, ObjectPatProp, Param, ParamOrTsParamProp, Pat, SetterProp, Stmt, VarDecl,
+    MethodProp, ObjectPatProp, Param, ParamOrTsParamProp, Pat, SetterProp, Stmt, ThisExpr, VarDecl,
     VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -57,6 +57,11 @@ fn try_simplify_arrow_expr_iife(call: &CallExpr) -> Option<Box<Expr>> {
 }
 
 fn process_iife(call: &mut CallExpr) {
+    // `arrow.call(thisArg, args...)` → `arrow(args...)`. Arrow functions ignore
+    // a `.call` `thisArg` (their `this` is always lexical), so the thisArg is
+    // dead weight and the resulting arrow IIFE can go through the normal path.
+    try_unwrap_dot_call_on_arrow(call);
+
     match &mut call.callee {
         Callee::Expr(callee_expr) => match callee_expr.as_mut() {
             Expr::Fn(fn_expr) => {
@@ -78,6 +83,54 @@ fn process_iife(call: &mut CallExpr) {
         },
         _ => {}
     }
+}
+
+/// Rewrite `arrow.call(thisArg, args...)` to `arrow(args...)` in place.
+///
+/// Only fires when the callee base is an arrow (possibly Paren-wrapped) —
+/// for a plain `function`, stripping the thisArg is only safe if the body
+/// doesn't reference `this`/`arguments`, and that check is already done by
+/// `ArrowFunction`. Once that converts the function to an arrow, `UnIife2`
+/// (the second pass) catches this shape.
+fn try_unwrap_dot_call_on_arrow(call: &mut CallExpr) -> bool {
+    let Callee::Expr(callee_expr) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = callee_expr.as_ref() else {
+        return false;
+    };
+    let MemberProp::Ident(prop) = &member.prop else {
+        return false;
+    };
+    if prop.sym != "call" {
+        return false;
+    }
+    let base_is_arrow = match member.obj.as_ref() {
+        Expr::Arrow(_) => true,
+        Expr::Paren(p) => matches!(p.expr.as_ref(), Expr::Arrow(_)),
+        _ => false,
+    };
+    if !base_is_arrow {
+        return false;
+    }
+    // Need at least a thisArg, and it must not be a spread — otherwise the
+    // subsequent positional args don't line up with the param list.
+    if call.args.is_empty() || call.args[0].spread.is_some() {
+        return false;
+    }
+
+    // Take the arrow base out of the Member expr without cloning the body.
+    let placeholder = Box::new(Expr::This(ThisExpr { span: DUMMY_SP }));
+    let Callee::Expr(callee_box) = &mut call.callee else {
+        unreachable!();
+    };
+    let Expr::Member(member_mut) = callee_box.as_mut() else {
+        unreachable!();
+    };
+    let arrow_base = std::mem::replace(&mut member_mut.obj, placeholder);
+    call.callee = Callee::Expr(arrow_base);
+    call.args.remove(0);
+    true
 }
 
 fn process_fn_iife(function: &mut Function, args: &mut Vec<ExprOrSpread>) {

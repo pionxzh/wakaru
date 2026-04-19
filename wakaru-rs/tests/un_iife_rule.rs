@@ -1,9 +1,14 @@
 mod common;
 
-use common::{assert_eq_normalized, render_pipeline};
+use common::{assert_eq_normalized, render_pipeline, render_rule};
+use wakaru_rs::rules::UnIife;
 
 fn apply(input: &str) -> String {
     render_pipeline(input)
+}
+
+fn apply_rule(input: &str) -> String {
+    render_rule(input, |_| UnIife)
 }
 
 #[test]
@@ -299,4 +304,71 @@ const Super = () => {};
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+// ============================================================
+// `.call(thisArg, args...)` on an arrow IIFE
+// ============================================================
+
+#[test]
+fn iife_dot_call_on_arrow_strips_this_arg() {
+    // Arrow functions ignore `.call()`'s thisArg (their `this` is lexical),
+    // so `.call(this, a, b)` is equivalent to `(a, b)` and can be stripped.
+    let input = r#"((a, b) => { f(a, b); }).call(this, x, y);"#;
+    let output = apply_rule(input);
+    assert!(!output.contains(".call"), "expected .call stripped, got: {output}");
+    assert_eq_normalized(&output, r#"((a, b) => { f(a, b); })(x, y);"#);
+}
+
+#[test]
+fn iife_dot_call_on_arrow_with_null_this_arg_stripped() {
+    // The thisArg value doesn't matter for arrows — strip regardless.
+    let input = r#"((a) => { f(a); }).call(null, x);"#;
+    let output = apply_rule(input);
+    assert!(!output.contains(".call"), "expected .call stripped, got: {output}");
+    assert_eq_normalized(&output, r#"((a) => { f(a); })(x);"#);
+}
+
+#[test]
+fn iife_dot_call_on_function_preserved() {
+    // A plain `function` may reference its own `this` via `.call`'s thisArg.
+    // UnIife must not rewrite this — `ArrowFunction` is responsible for proving
+    // `this`/`arguments` are unused before the `.call` can be stripped (by UnIife2).
+    let input = r#"(function(a) { this.x = a; }).call(obj, 1);"#;
+    let output = apply_rule(input);
+    assert!(output.contains(".call"), "expected .call preserved, got: {output}");
+}
+
+#[test]
+fn iife_dot_call_with_spread_this_arg_preserved() {
+    // Spread in the thisArg slot means subsequent args don't line up with
+    // params. Leave it alone.
+    let input = r#"((a) => { f(a); }).call(...args);"#;
+    let output = apply_rule(input);
+    assert!(output.contains(".call"), "expected .call preserved, got: {output}");
+}
+
+#[test]
+fn iife_dot_apply_preserved() {
+    // `.apply` takes an array; positional arg rewriting doesn't fit. Only
+    // `.call` is handled.
+    let input = r#"((a) => { f(a); }).apply(this, [1]);"#;
+    let output = apply_rule(input);
+    assert!(output.contains(".apply"), "expected .apply preserved, got: {output}");
+}
+
+#[test]
+fn iife_dot_call_module_21_pipeline_strips_wrapper() {
+    // Module-21 style: a `function` IIFE with no `this` usage wrapped in
+    // `.call(this, ...)` for global polyfill injection. After the full
+    // pipeline, `ArrowFunction` converts fn→arrow and `UnIife2` strips the
+    // now-dead `.call(this, ...)`.
+    let input = r#"
+(function(e, r) {
+    var o = g(e, r);
+    exports.a = o;
+}).call(this, globalPoly, amdPoly(module));
+"#;
+    let output = apply(input);
+    assert!(!output.contains(".call"), "expected .call stripped, got: {output}");
 }
