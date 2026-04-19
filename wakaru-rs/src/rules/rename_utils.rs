@@ -4,9 +4,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignPat, BlockStmt, CatchClause, Class, Decl, DefaultDecl, Expr, Function, Ident,
-    ImportDecl, ImportNamedSpecifier, ImportSpecifier, KeyValuePatProp, KeyValueProp, MemberProp,
-    Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop, PropName, Stmt,
-    VarDeclarator,
+    ExportNamedSpecifier, ImportDecl, ImportNamedSpecifier, ImportSpecifier, KeyValuePatProp,
+    KeyValueProp, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat,
+    Prop, PropName, Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -594,6 +594,30 @@ impl VisitMut for BindingRenamer<'_> {
                     )));
                 }
                 spec.local.sym = rename.new.clone();
+                return;
+            }
+        }
+    }
+
+    /// Rename the local side of a named export specifier while preserving the
+    /// public exported name.  Without this override, renaming `A` in
+    /// `export { I as A }` can incorrectly change the export name to the new
+    /// local binding name.
+    fn visit_mut_export_named_specifier(&mut self, spec: &mut ExportNamedSpecifier) {
+        let ModuleExportName::Ident(orig) = &mut spec.orig else {
+            return;
+        };
+
+        for rename in self.renames {
+            if orig.sym == rename.old.0 && orig.ctxt == rename.old.1 {
+                if spec.exported.is_none() {
+                    spec.exported = Some(ModuleExportName::Ident(swc_core::ecma::ast::Ident::new(
+                        orig.sym.clone(),
+                        orig.span,
+                        orig.ctxt,
+                    )));
+                }
+                orig.sym = rename.new.clone();
                 return;
             }
         }

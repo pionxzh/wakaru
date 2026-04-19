@@ -228,3 +228,20 @@ export { A as B };
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn renaming_binding_preserves_unrelated_exported_alias_name() {
+    let input = r#"
+const A = (e) => new Error(e);
+const I = (e) => e;
+export { A as p };
+export { I as A };
+"#;
+    let expected = r#"
+export const p = (e) => new Error(e);
+const I = (e) => e;
+export { I as A };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
