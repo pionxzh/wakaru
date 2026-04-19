@@ -6,7 +6,9 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::VisitMut;
 
-use super::rename_utils::{collect_module_names, rename_bindings_in_module, BindingRename};
+use super::rename_utils::{
+    collect_module_names, rename_bindings_in_module, rename_causes_shadowing, BindingRename,
+};
 
 pub struct UnImportRename;
 
@@ -34,10 +36,18 @@ impl VisitMut for UnImportRename {
                     continue;
                 }
 
-                let target = generate_unique_name(imported, &all_names);
+                let local_id = (local, named.local.ctxt);
+                // `all_names` covers module-level collisions; `rename_causes_shadowing`
+                // catches inner-scope locals (e.g. a nested `let a` that would capture
+                // references to the renamed import).
+                let mut target = generate_unique_name(imported, &all_names);
+                while rename_causes_shadowing(module, &local_id, &target) {
+                    all_names.insert(target.clone());
+                    target = generate_unique_name(target, &all_names);
+                }
                 all_names.insert(target.clone());
                 renames.push(BindingRename {
-                    old: (local, named.local.ctxt),
+                    old: local_id,
                     new: target,
                 });
             }

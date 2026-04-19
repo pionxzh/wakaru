@@ -105,6 +105,31 @@ ns.foo();
 }
 
 #[test]
+fn generates_unique_name_when_target_shadowed_by_nested_scope() {
+    // `foo` is not declared at module scope, but a nested function binds it —
+    // renaming the import to `foo` would silently shadow references to the
+    // import inside that scope. Must pick `foo_1` instead.
+    let input = r#"
+import { foo as ab } from 'bar';
+function outer() {
+  const foo = 1;
+  return ab();
+}
+ab();
+"#;
+    let expected = r#"
+import { foo as foo_1 } from 'bar';
+function outer() {
+  const foo = 1;
+  return foo_1();
+}
+foo_1();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn import_rename_does_not_touch_shadowed_local() {
     let input = r#"
 import { foo as ab } from 'bar';
