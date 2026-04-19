@@ -553,8 +553,8 @@ function W(e, t, n) {
 function $(e, t) {
     return e === t;
 }
-export const connect = ((e)=>{
-    const { connectHOC = connectAdvanced, mapStateToPropsFactories = D, mapDispatchToPropsFactories = I, mergePropsFactories = z, selectorFactory = H } = e === undefined ? {} : e;
+export const connect = ((e = {})=>{
+    const { connectHOC = connectAdvanced, mapStateToPropsFactories = D, mapDispatchToPropsFactories = I, mergePropsFactories = z, selectorFactory = H } = e;
     return (e, t, n, o = {})=>{
         const a = o;
         const a_pure = a.pure;

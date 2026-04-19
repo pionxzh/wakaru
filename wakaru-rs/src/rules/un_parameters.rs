@@ -30,12 +30,14 @@ impl VisitMut for UnParameters {
 fn process_function_params(params: &mut Vec<Param>, body: &mut BlockStmt) {
     process_pattern_a_params(params, body);
     process_pattern_b_params(params, body);
+    process_pattern_c_params(params, body);
     rewrite_inline_arguments_defaults(params, body);
 }
 
 /// Process Pattern A for arrow functions with Vec<Pat>.
 fn process_arrow_params(params: &mut Vec<Pat>, body: &mut BlockStmt) {
     process_pattern_a_arrow_params(params, body);
+    process_pattern_c_arrow_params(params, body);
 }
 
 // ============================================================
@@ -209,6 +211,143 @@ fn extract_assign_expr(expr: &Expr, param_name: &Atom) -> Option<Box<Expr>> {
         return None;
     }
     Some(right.clone())
+}
+
+// ============================================================
+// Pattern C: `const alias = param === undefined ? {} : param`
+// ============================================================
+
+fn process_pattern_c_params(params: &mut [Param], body: &mut BlockStmt) {
+    let scan_limit = body.stmts.len().min(15);
+
+    for stmt_idx in 0..scan_limit {
+        let Some((param_name, default_val)) =
+            extract_param_object_default_stmt(&body.stmts[stmt_idx])
+        else {
+            break;
+        };
+        let Some((param_idx, param_ident)) = find_plain_param_ident(params, &param_name) else {
+            break;
+        };
+        if !set_param_default(params, param_idx, default_val) {
+            break;
+        }
+        rewrite_param_object_default_stmt(&mut body.stmts[stmt_idx], param_ident);
+    }
+}
+
+fn process_pattern_c_arrow_params(params: &mut [Pat], body: &mut BlockStmt) {
+    let scan_limit = body.stmts.len().min(15);
+
+    for stmt_idx in 0..scan_limit {
+        let Some((param_name, default_val)) =
+            extract_param_object_default_stmt(&body.stmts[stmt_idx])
+        else {
+            break;
+        };
+        let Some((param_idx, param_ident)) = find_plain_arrow_param_ident(params, &param_name)
+        else {
+            break;
+        };
+        if !set_arrow_param_default(params, param_idx, default_val) {
+            break;
+        }
+        rewrite_param_object_default_stmt(&mut body.stmts[stmt_idx], param_ident);
+    }
+}
+
+fn extract_param_object_default_stmt(stmt: &Stmt) -> Option<(Atom, Box<Expr>)> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let init = var.decls[0].init.as_ref()?;
+    extract_param_object_default_expr(init)
+}
+
+fn extract_param_object_default_expr(expr: &Expr) -> Option<(Atom, Box<Expr>)> {
+    let Expr::Cond(cond) = strip_parens(expr) else {
+        return None;
+    };
+    let param_name = extract_void0_check(cond.test.as_ref())?;
+    if !is_empty_object_literal(cond.cons.as_ref()) {
+        return None;
+    }
+    if !is_ident_named(cond.alt.as_ref(), &param_name) {
+        return None;
+    }
+    Some((param_name, cond.cons.clone()))
+}
+
+fn rewrite_param_object_default_stmt(stmt: &mut Stmt, param_ident: Ident) {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return;
+    };
+    if let Some(decl) = var.decls.first_mut() {
+        decl.init = Some(Box::new(Expr::Ident(param_ident)));
+    }
+}
+
+fn find_plain_param_ident(params: &[Param], name: &Atom) -> Option<(usize, Ident)> {
+    params.iter().enumerate().find_map(|(idx, param)| {
+        let Pat::Ident(binding) = &param.pat else {
+            return None;
+        };
+        if &binding.id.sym == name {
+            Some((idx, binding.id.clone()))
+        } else {
+            None
+        }
+    })
+}
+
+fn find_plain_arrow_param_ident(params: &[Pat], name: &Atom) -> Option<(usize, Ident)> {
+    params.iter().enumerate().find_map(|(idx, param)| {
+        let Pat::Ident(binding) = param else {
+            return None;
+        };
+        if &binding.id.sym == name {
+            Some((idx, binding.id.clone()))
+        } else {
+            None
+        }
+    })
+}
+
+fn set_param_default(params: &mut [Param], idx: usize, default_val: Box<Expr>) -> bool {
+    let Pat::Ident(binding) = &params[idx].pat else {
+        return false;
+    };
+    let binding = binding.clone();
+    params[idx].pat = Pat::Assign(AssignPat {
+        span: DUMMY_SP,
+        left: Box::new(Pat::Ident(binding)),
+        right: default_val,
+    });
+    true
+}
+
+fn set_arrow_param_default(params: &mut [Pat], idx: usize, default_val: Box<Expr>) -> bool {
+    let Pat::Ident(binding) = &params[idx] else {
+        return false;
+    };
+    let binding = binding.clone();
+    params[idx] = Pat::Assign(AssignPat {
+        span: DUMMY_SP,
+        left: Box::new(Pat::Ident(binding)),
+        right: default_val,
+    });
+    true
+}
+
+fn is_empty_object_literal(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::Object(obj) if obj.props.is_empty())
+}
+
+fn is_ident_named(expr: &Expr, name: &Atom) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(id) if &id.sym == name)
 }
 
 // ============================================================

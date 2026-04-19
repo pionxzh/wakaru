@@ -405,6 +405,8 @@ fn apply_rules_range_impl(
     run!(UnImportRename, "UnImportRename");
     run!(UnExportRename, "UnExportRename");
     run!(UnDestructuring, "UnDestructuring");
+    // UnDestructuring can expose `param === undefined ? {} : param` initializers.
+    run!(UnParameters, "UnParameters2");
     run!(SmartInline, "SmartInline");
     // Second UnIife pass: simplify any (() => expr)() patterns created by SmartInline inlining
     run!(UnIife, "UnIife2");

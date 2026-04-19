@@ -215,3 +215,67 @@ function foo(a, b) {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn undefined_object_alias_becomes_default_param() {
+    let input = r#"
+function foo(options) {
+  const opts = options === undefined ? {} : options;
+  return opts.name;
+}
+"#;
+    let expected = r#"
+function foo(options = {}) {
+  const opts = options;
+  return opts.name;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn undefined_object_destructuring_keeps_body_defaults() {
+    let input = r#"
+function foo(options) {
+  const { name = fallback } = options === undefined ? {} : options;
+  const fallback = "x";
+  return name;
+}
+"#;
+    let expected = r#"
+function foo(options = {}) {
+  const { name = fallback } = options;
+  const fallback = "x";
+  return name;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn undefined_object_alias_arrow_becomes_default_param() {
+    let input = r#"
+const foo = (options) => {
+  const opts = options === undefined ? {} : options;
+  return opts.name;
+};
+"#;
+    let expected = r#"
+const foo = (options = {}) => {
+  const opts = options;
+  return opts.name;
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn non_empty_object_default_stays_in_body() {
+    let input = r#"
+function foo(options) {
+  const opts = options === undefined ? makeOptions() : options;
+  return opts.name;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
