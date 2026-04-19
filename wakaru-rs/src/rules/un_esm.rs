@@ -3,11 +3,13 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BindingIdent, CallExpr, Callee, Decl, ExportDecl, ExportDefaultExpr,
-    ExportNamedSpecifier, ExportSpecifier, Expr, Ident, IdentName, ImportDecl,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
+    BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, ExportDefaultExpr, ExportNamedSpecifier,
+    ExportSpecifier, Expr, ExprStmt, ForHead, ForInStmt, Ident, IdentName, ImportDecl,
     ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, Lit, MemberExpr, MemberProp,
-    Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, Pat,
-    SimpleAssignTarget, Stmt, Str, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
+    Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, Pat, Prop,
+    PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, Str, UnaryOp, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
@@ -108,6 +110,7 @@ impl VisitMut for UnEsm {
         // Phase 0: split compound `var s = exports.X = expr` →
         //          `var s = expr; exports.X = s;`
         split_compound_exports(module);
+        rewrite_webpack_export_getters(module);
         let all_declared_names = collect_all_declared_names(module);
 
         let items = std::mem::take(&mut module.body);
@@ -442,6 +445,504 @@ fn get_or_insert<'a>(
         map.insert(src.clone(), SourceEntry::default());
     }
     map.get_mut(&src).unwrap()
+}
+
+fn rewrite_webpack_export_getters(module: &mut Module) {
+    let mut converted_getter_map = false;
+    let mut new_body = Vec::with_capacity(module.body.len());
+
+    for item in std::mem::take(&mut module.body) {
+        if let Some(exports) = extract_webpack_export_getter_iife(&item) {
+            converted_getter_map = true;
+            new_body.extend(exports.into_iter().map(make_exports_assign_item));
+            continue;
+        }
+
+        if converted_getter_map && is_exports_default_compat_block(&item) {
+            continue;
+        }
+
+        new_body.push(item);
+    }
+
+    module.body = new_body;
+}
+
+fn extract_webpack_export_getter_iife(item: &ModuleItem) -> Option<Vec<(Atom, Ident)>> {
+    let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
+        return None;
+    };
+    let Expr::Call(call) = expr_stmt.expr.as_ref() else {
+        return None;
+    };
+    if call.args.len() != 2 {
+        return None;
+    }
+
+    let Callee::Expr(callee_expr) = &call.callee else {
+        return None;
+    };
+    let Expr::Arrow(arrow) = strip_expr_parens(callee_expr.as_ref()) else {
+        return None;
+    };
+    let (target_param, map_param) = extract_two_ident_params(arrow)?;
+    if !is_webpack_export_getter_loop(arrow, &target_param, &map_param) {
+        return None;
+    }
+
+    if !matches!(call.args[0].expr.as_ref(), Expr::Ident(id) if id.sym == "exports") {
+        return None;
+    }
+    let Expr::Object(getter_map) = call.args[1].expr.as_ref() else {
+        return None;
+    };
+
+    let exports = extract_export_getter_map(getter_map)?;
+    if exports.is_empty() || exports.iter().any(|(name, _)| name.as_ref() == "default") {
+        return None;
+    }
+    Some(exports)
+}
+
+fn extract_two_ident_params(arrow: &ArrowExpr) -> Option<(Ident, Ident)> {
+    if arrow.params.len() != 2 {
+        return None;
+    }
+    let Pat::Ident(target) = &arrow.params[0] else {
+        return None;
+    };
+    let Pat::Ident(map) = &arrow.params[1] else {
+        return None;
+    };
+    Some((target.id.clone(), map.id.clone()))
+}
+
+fn is_webpack_export_getter_loop(
+    arrow: &ArrowExpr,
+    target_param: &Ident,
+    map_param: &Ident,
+) -> bool {
+    let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
+        return false;
+    };
+    if block.stmts.len() != 1 {
+        return false;
+    }
+    let Stmt::ForIn(ForInStmt {
+        left, right, body, ..
+    }) = &block.stmts[0]
+    else {
+        return false;
+    };
+    if !matches!(right.as_ref(), Expr::Ident(id) if same_ident(id, map_param)) {
+        return false;
+    }
+    let Some(loop_ident) = extract_for_in_ident(left) else {
+        return false;
+    };
+
+    let Stmt::Block(body_block) = body.as_ref() else {
+        return false;
+    };
+    if body_block.stmts.len() != 1 {
+        return false;
+    }
+    let Stmt::Expr(ExprStmt { expr, .. }) = &body_block.stmts[0] else {
+        return false;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return false;
+    };
+    is_object_define_property_call(call, target_param, &loop_ident, map_param)
+}
+
+fn extract_for_in_ident(left: &ForHead) -> Option<Ident> {
+    match left {
+        ForHead::VarDecl(var) => {
+            if var.decls.len() != 1 {
+                return None;
+            }
+            let decl = &var.decls[0];
+            if decl.init.is_some() {
+                return None;
+            }
+            let Pat::Ident(binding) = &decl.name else {
+                return None;
+            };
+            Some(binding.id.clone())
+        }
+        ForHead::Pat(pat) => {
+            let Pat::Ident(binding) = pat.as_ref() else {
+                return None;
+            };
+            Some(binding.id.clone())
+        }
+        _ => None,
+    }
+}
+
+fn is_object_define_property_call(
+    call: &CallExpr,
+    target_param: &Ident,
+    loop_ident: &Ident,
+    map_param: &Ident,
+) -> bool {
+    let Callee::Expr(callee_expr) = &call.callee else {
+        return false;
+    };
+    if !is_member_expr(callee_expr.as_ref(), "Object", "defineProperty") || call.args.len() != 3 {
+        return false;
+    }
+    if !matches!(call.args[0].expr.as_ref(), Expr::Ident(id) if same_ident(id, target_param)) {
+        return false;
+    }
+    if !matches!(call.args[1].expr.as_ref(), Expr::Ident(id) if same_ident(id, loop_ident)) {
+        return false;
+    }
+    is_export_getter_descriptor(call.args[2].expr.as_ref(), map_param, loop_ident)
+}
+
+fn is_export_getter_descriptor(expr: &Expr, map_param: &Ident, loop_ident: &Ident) -> bool {
+    let Expr::Object(object) = expr else {
+        return false;
+    };
+    let mut has_enumerable_true = false;
+    let mut has_getter_lookup = false;
+
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return false;
+        };
+        let Prop::KeyValue(entry) = prop.as_ref() else {
+            return false;
+        };
+        match prop_name_as_atom(&entry.key).as_deref() {
+            Some("enumerable") => {
+                has_enumerable_true =
+                    matches!(entry.value.as_ref(), Expr::Lit(Lit::Bool(b)) if b.value);
+            }
+            Some("get") => {
+                has_getter_lookup = is_map_lookup(entry.value.as_ref(), map_param, loop_ident);
+            }
+            _ => return false,
+        }
+    }
+
+    has_enumerable_true && has_getter_lookup
+}
+
+fn extract_export_getter_map(
+    object: &swc_core::ecma::ast::ObjectLit,
+) -> Option<Vec<(Atom, Ident)>> {
+    let mut exports = Vec::with_capacity(object.props.len());
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let (name, ident) = match prop.as_ref() {
+            Prop::Method(method) => {
+                let name = prop_name_as_atom(&method.key)?;
+                if !method.function.params.is_empty()
+                    || method.function.is_async
+                    || method.function.is_generator
+                {
+                    return None;
+                }
+                let ident = extract_single_return_ident(method.function.body.as_ref()?)?;
+                (name, ident)
+            }
+            Prop::KeyValue(entry) => {
+                let name = prop_name_as_atom(&entry.key)?;
+                let ident = extract_getter_expr_return_ident(entry.value.as_ref())?;
+                (name, ident)
+            }
+            _ => return None,
+        };
+        exports.push((name, ident));
+    }
+    Some(exports)
+}
+
+fn extract_getter_expr_return_ident(expr: &Expr) -> Option<Ident> {
+    match expr {
+        Expr::Fn(fn_expr) => {
+            if fn_expr.ident.is_some()
+                || !fn_expr.function.params.is_empty()
+                || fn_expr.function.is_async
+                || fn_expr.function.is_generator
+            {
+                return None;
+            }
+            extract_single_return_ident(fn_expr.function.body.as_ref()?)
+        }
+        Expr::Arrow(arrow) => {
+            if !arrow.params.is_empty() || arrow.is_async || arrow.is_generator {
+                return None;
+            }
+            match arrow.body.as_ref() {
+                BlockStmtOrExpr::BlockStmt(block) => extract_single_return_ident(block),
+                BlockStmtOrExpr::Expr(expr) => {
+                    if let Expr::Ident(id) = expr.as_ref() {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
+        _ => None,
+    }
+}
+
+fn extract_single_return_ident(block: &BlockStmt) -> Option<Ident> {
+    if block.stmts.len() != 1 {
+        return None;
+    }
+    let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = &block.stmts[0] else {
+        return None;
+    };
+    let Expr::Ident(id) = arg.as_ref() else {
+        return None;
+    };
+    Some(id.clone())
+}
+
+fn make_exports_assign_item((name, ident): (Atom, Ident)) -> ModuleItem {
+    ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
+                span: DUMMY_SP,
+                obj: Box::new(Expr::Ident(make_ident("exports".into()))),
+                prop: MemberProp::Ident(IdentName::new(name, DUMMY_SP)),
+            })),
+            right: Box::new(Expr::Ident(ident)),
+        })),
+    }))
+}
+
+fn is_exports_default_compat_block(item: &ModuleItem) -> bool {
+    let ModuleItem::Stmt(Stmt::If(if_stmt)) = item else {
+        return false;
+    };
+    if if_stmt.alt.is_some() {
+        return false;
+    }
+    if !is_exports_default_compat_test(if_stmt.test.as_ref()) {
+        return false;
+    }
+    let Stmt::Block(block) = if_stmt.cons.as_ref() else {
+        return false;
+    };
+    if block.stmts.len() != 3 {
+        return false;
+    }
+
+    is_define_esmodule_on_exports_default(&block.stmts[0])
+        && is_object_assign_exports_default_exports(&block.stmts[1])
+        && is_module_exports_default_reassignment(&block.stmts[2])
+}
+
+fn is_exports_default_compat_test(expr: &Expr) -> bool {
+    let Expr::Bin(bin) = strip_expr_parens(expr) else {
+        return false;
+    };
+    bin.op == BinaryOp::LogicalAnd
+        && is_exports_default_type_guard(bin.left.as_ref())
+        && is_exports_default_esmodule_undefined(bin.right.as_ref())
+}
+
+fn is_exports_default_type_guard(expr: &Expr) -> bool {
+    let Expr::Bin(bin) = strip_expr_parens(expr) else {
+        return false;
+    };
+    if bin.op != BinaryOp::LogicalOr {
+        return false;
+    }
+    let Expr::Bin(object_and_not_null) = strip_expr_parens(bin.right.as_ref()) else {
+        return false;
+    };
+
+    is_typeof_exports_default_eq(bin.left.as_ref(), "function")
+        && object_and_not_null.op == BinaryOp::LogicalAnd
+        && is_typeof_exports_default_eq(object_and_not_null.left.as_ref(), "object")
+        && is_exports_default_not_null(object_and_not_null.right.as_ref())
+}
+
+fn is_typeof_exports_default_eq(expr: &Expr, expected: &str) -> bool {
+    let Expr::Bin(bin) = strip_expr_parens(expr) else {
+        return false;
+    };
+    if bin.op != BinaryOp::EqEqEq {
+        return false;
+    }
+    matches!(strip_expr_parens(bin.left.as_ref()), Expr::Unary(unary)
+        if unary.op == UnaryOp::TypeOf && is_exports_default_expr(unary.arg.as_ref()))
+        && matches!(strip_expr_parens(bin.right.as_ref()), Expr::Lit(Lit::Str(s))
+            if s.value.as_str() == Some(expected))
+}
+
+fn is_exports_default_not_null(expr: &Expr) -> bool {
+    let Expr::Bin(bin) = strip_expr_parens(expr) else {
+        return false;
+    };
+    bin.op == BinaryOp::NotEqEq
+        && is_exports_default_expr(bin.left.as_ref())
+        && matches!(
+            strip_expr_parens(bin.right.as_ref()),
+            Expr::Lit(Lit::Null(_))
+        )
+}
+
+fn is_exports_default_esmodule_undefined(expr: &Expr) -> bool {
+    let Expr::Bin(bin) = strip_expr_parens(expr) else {
+        return false;
+    };
+    bin.op == BinaryOp::EqEqEq
+        && is_exports_default_esmodule_expr(bin.left.as_ref())
+        && matches!(strip_expr_parens(bin.right.as_ref()), Expr::Ident(id) if id.sym == "undefined")
+}
+
+fn is_exports_default_esmodule_expr(expr: &Expr) -> bool {
+    let Expr::Member(member) = strip_expr_parens(expr) else {
+        return false;
+    };
+    matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "__esModule")
+        && is_exports_default_expr(member.obj.as_ref())
+}
+
+fn is_define_esmodule_on_exports_default(stmt: &Stmt) -> bool {
+    let Some(call) = expr_stmt_call(stmt) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    if !is_member_expr(callee.as_ref(), "Object", "defineProperty") || call.args.len() != 3 {
+        return false;
+    }
+    if !is_exports_default_expr(call.args[0].expr.as_ref()) {
+        return false;
+    }
+    if !matches!(call.args[1].expr.as_ref(), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("__esModule"))
+    {
+        return false;
+    }
+
+    let Expr::Object(obj) = call.args[2].expr.as_ref() else {
+        return false;
+    };
+    obj.props.iter().any(|prop| {
+        let PropOrSpread::Prop(prop) = prop else {
+            return false;
+        };
+        let Prop::KeyValue(entry) = prop.as_ref() else {
+            return false;
+        };
+        prop_name_as_atom(&entry.key).as_deref() == Some("value")
+            && matches!(entry.value.as_ref(), Expr::Lit(Lit::Bool(b)) if b.value)
+    })
+}
+
+fn is_object_assign_exports_default_exports(stmt: &Stmt) -> bool {
+    let Some(call) = expr_stmt_call(stmt) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    is_member_expr(callee.as_ref(), "Object", "assign")
+        && call.args.len() == 2
+        && is_exports_default_expr(call.args[0].expr.as_ref())
+        && matches!(call.args[1].expr.as_ref(), Expr::Ident(id) if id.sym == "exports")
+}
+
+fn is_module_exports_default_reassignment(stmt: &Stmt) -> bool {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return false;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return false;
+    };
+    if assign.op != AssignOp::Assign || !is_exports_default_expr(assign.right.as_ref()) {
+        return false;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return false;
+    };
+    is_module_exports_member(member)
+}
+
+fn expr_stmt_call(stmt: &Stmt) -> Option<&CallExpr> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return None;
+    };
+    Some(call)
+}
+
+fn is_exports_default_expr(expr: &Expr) -> bool {
+    let Expr::Member(member) = strip_expr_parens(expr) else {
+        return false;
+    };
+    matches!(member.obj.as_ref(), Expr::Ident(id) if id.sym == "exports")
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "default")
+}
+
+fn is_module_exports_member(member: &MemberExpr) -> bool {
+    matches!(member.obj.as_ref(), Expr::Ident(id) if id.sym == "module")
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "exports")
+}
+
+fn is_member_expr(expr: &Expr, object: &str, property: &str) -> bool {
+    let Expr::Member(member) = strip_expr_parens(expr) else {
+        return false;
+    };
+    matches!(member.obj.as_ref(), Expr::Ident(id) if id.sym.as_ref() == object)
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == property)
+}
+
+fn is_map_lookup(expr: &Expr, map_param: &Ident, loop_ident: &Ident) -> bool {
+    let Expr::Member(member) = strip_expr_parens(expr) else {
+        return false;
+    };
+    if !matches!(member.obj.as_ref(), Expr::Ident(id) if same_ident(id, map_param)) {
+        return false;
+    }
+    let MemberProp::Computed(computed) = &member.prop else {
+        return false;
+    };
+    matches!(computed.expr.as_ref(), Expr::Ident(id) if same_ident(id, loop_ident))
+}
+
+fn prop_name_as_atom(name: &PropName) -> Option<Atom> {
+    match name {
+        PropName::Ident(ident) => Some(ident.sym.clone()),
+        PropName::Str(str) => {
+            let value = str.value.as_str()?;
+            if is_valid_js_ident(value) {
+                Some(value.into())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn strip_expr_parens(mut expr: &Expr) -> &Expr {
+    while let Expr::Paren(paren) = expr {
+        expr = paren.expr.as_ref();
+    }
+    expr
+}
+
+fn same_ident(a: &Ident, b: &Ident) -> bool {
+    a.sym == b.sym && a.ctxt == b.ctxt
 }
 
 fn build_import_decls(src: &str, entry: &SourceEntry, out: &mut Vec<ModuleItem>) {

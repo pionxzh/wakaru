@@ -196,6 +196,83 @@ fn exports_default_prop_module_exports() {
 }
 
 #[test]
+fn webpack_export_getter_iife_becomes_named_exports() {
+    let input = r#"
+((exports_1, B)=>{
+  for (const G in B) {
+    Object.defineProperty(exports_1, G, {
+      enumerable: true,
+      get: B[G]
+    });
+  }
+})(exports, {
+  Foo() { return A; },
+  Bar() { return B; }
+});
+const A = 1;
+const B = 2;
+if ((typeof exports.default === "function" || typeof exports.default === "object" && exports.default !== null) && exports.default.__esModule === undefined) {
+  Object.defineProperty(exports.default, "__esModule", {
+    value: true
+  });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("export const Foo = 1"),
+        "should promote getter return binding A to export const Foo: {}",
+        output
+    );
+    assert!(
+        output.contains("export const Bar = 2"),
+        "should promote getter return binding B to export const Bar: {}",
+        output
+    );
+    assert!(
+        !output.contains("Object.defineProperty") && !output.contains("exports.default"),
+        "webpack export helper and compat block should be removed: {}",
+        output
+    );
+}
+
+#[test]
+fn webpack_export_getter_iife_keeps_non_compat_if_block() {
+    let input = r#"
+((exports_1, B)=>{
+  for (const G in B) {
+    Object.defineProperty(exports_1, G, {
+      enumerable: true,
+      get: B[G]
+    });
+  }
+})(exports, {
+  Foo() { return A; }
+});
+const A = 1;
+if (flag) {
+  Object.defineProperty(exports.default, "__esModule", {
+    value: true
+  });
+  Object.assign(exports.default, exports);
+  module.exports = exports.default;
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("export const Foo = 1"),
+        "getter export should still be converted: {}",
+        output
+    );
+    assert!(
+        output.contains("if (flag)") && output.contains("Object.assign(exports.default, exports)"),
+        "unrelated guarded block must remain: {}",
+        output
+    );
+}
+
+#[test]
 fn void_only_export_removed() {
     let input = "exports.foo = void 0;";
     let expected = "";
