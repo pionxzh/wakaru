@@ -1,8 +1,9 @@
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, BinaryOp, BindingIdent, BlockStmt, Callee, Constructor, Expr, Function, Ident, Lit,
-    MemberExpr, MemberProp, Number, Param, ParamOrTsParamProp, Pat, RestPat, Stmt, VarDeclOrExpr,
+    ArrowExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt, Callee, Constructor,
+    Expr, Function, Ident, Lit, MemberExpr, MemberProp, Number, Param, ParamOrTsParamProp, Pat,
+    RestPat, SimpleAssignTarget, Stmt, UpdateOp, VarDeclOrExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -108,86 +109,98 @@ fn detect_copy_var_name(body: &BlockStmt, fixed_param_count: usize) -> Option<At
 }
 
 fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Option<Atom> {
-        let Stmt::For(for_stmt) = stmt else {
-            return None;
-        };
-        let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else {
-            return None;
-        };
-        if init.decls.len() != 3 {
-            return None;
-        }
+    let Stmt::For(for_stmt) = stmt else {
+        return None;
+    };
+    let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else {
+        return None;
+    };
+    if init.decls.len() != 3 {
+        return None;
+    }
 
-        // Decl 0: len = arguments.length
-        let d0 = &init.decls[0];
-        let Pat::Ident(BindingIdent { id: len_id, .. }) = &d0.name else {
-            return None;
-        };
-        let Expr::Member(m) = d0.init.as_deref()? else {
-            return None;
-        };
-        let Expr::Ident(src) = m.obj.as_ref() else {
-            return None;
-        };
-        if src.sym != "arguments" {
-            return None;
-        }
-        if !matches!(&m.prop, MemberProp::Ident(p) if p.sym == "length") {
-            return None;
-        }
-        let len_sym = len_id.sym.clone();
+    // Decl 0: len = arguments.length
+    let d0 = &init.decls[0];
+    let Pat::Ident(BindingIdent { id: len_id, .. }) = &d0.name else {
+        return None;
+    };
+    let Expr::Member(m) = d0.init.as_deref()? else {
+        return None;
+    };
+    let Expr::Ident(src) = m.obj.as_ref() else {
+        return None;
+    };
+    if src.sym != "arguments" {
+        return None;
+    }
+    if !matches!(&m.prop, MemberProp::Ident(p) if p.sym == "length") {
+        return None;
+    }
+    let len_sym = len_id.sym.clone();
 
-        // Decl 1: copy = Array(len) or new Array(len)
-        let d1 = &init.decls[1];
-        let Pat::Ident(BindingIdent { id: copy_id, .. }) = &d1.name else {
-            return None;
-        };
+    // Decl 1: copy = Array(len) or new Array(len)
+    let d1 = &init.decls[1];
+    let Pat::Ident(BindingIdent { id: copy_id, .. }) = &d1.name else {
+        return None;
+    };
 
-        let is_array_ctor = |sym: &Atom| sym == "Array";
-        let one_len_arg = |args: &[swc_core::ecma::ast::ExprOrSpread]| -> bool {
-            args.len() == 1
-                && args[0].spread.is_none()
-                && is_copy_array_len_expr(args[0].expr.as_ref(), &len_sym, fixed_param_count)
-        };
+    let is_array_ctor = |sym: &Atom| sym == "Array";
+    let one_len_arg = |args: &[swc_core::ecma::ast::ExprOrSpread]| -> bool {
+        args.len() == 1
+            && args[0].spread.is_none()
+            && is_copy_array_len_expr(args[0].expr.as_ref(), &len_sym, fixed_param_count)
+    };
 
-        match d1.init.as_deref()? {
-            Expr::Call(call) => {
-                let Callee::Expr(callee) = &call.callee else {
-                    return None;
-                };
-                let Expr::Ident(id) = callee.as_ref() else {
-                    return None;
-                };
-                if !is_array_ctor(&id.sym) || !one_len_arg(&call.args) {
-                    return None;
-                }
+    match d1.init.as_deref()? {
+        Expr::Call(call) => {
+            let Callee::Expr(callee) = &call.callee else {
+                return None;
+            };
+            let Expr::Ident(id) = callee.as_ref() else {
+                return None;
+            };
+            if !is_array_ctor(&id.sym) || !one_len_arg(&call.args) {
+                return None;
             }
-            Expr::New(new_expr) => {
-                let Expr::Ident(id) = new_expr.callee.as_ref() else {
-                    return None;
-                };
-                if !is_array_ctor(&id.sym) {
-                    return None;
-                }
-                let args = new_expr.args.as_deref().unwrap_or(&[]);
-                if !one_len_arg(args) {
-                    return None;
-                }
+        }
+        Expr::New(new_expr) => {
+            let Expr::Ident(id) = new_expr.callee.as_ref() else {
+                return None;
+            };
+            if !is_array_ctor(&id.sym) {
+                return None;
             }
-            _ => return None,
+            let args = new_expr.args.as_deref().unwrap_or(&[]);
+            if !one_len_arg(args) {
+                return None;
+            }
         }
+        _ => return None,
+    }
 
-        // Decl 2: idx = 0 for whole-arguments copies, or idx = fixed_param_count
-        // for Babel's tail-rest copy loop.
-        let d2 = &init.decls[2];
-        let Some(idx_init) = d2.init.as_deref() else {
-            return None;
-        };
-        if !is_number(idx_init, fixed_param_count) {
-            return None;
-        }
+    // Decl 2: idx = 0 for whole-arguments copies, or idx = fixed_param_count
+    // for SWC/Babel tail-rest copy loops.
+    let d2 = &init.decls[2];
+    let Pat::Ident(BindingIdent { id: idx_id, .. }) = &d2.name else {
+        return None;
+    };
+    let Some(idx_init) = d2.init.as_deref() else {
+        return None;
+    };
+    if !is_number(idx_init, fixed_param_count) {
+        return None;
+    }
+    let idx_sym = idx_id.sym.clone();
+    let copy_sym = copy_id.sym.clone();
 
-        Some(copy_id.sym.clone())
+    if !matches_copy_loop_test(for_stmt.test.as_deref(), &idx_sym, &len_sym)
+        || !matches_copy_loop_update(for_stmt.update.as_deref(), &idx_sym)
+        || !matches_copy_loop_body(&for_stmt.body, &copy_sym, &idx_sym, fixed_param_count)
+    {
+        return None;
+    }
+
+    Some(copy_sym)
 }
 
 fn is_copy_array_len_expr(expr: &Expr, len_sym: &Atom, fixed_param_count: usize) -> bool {
@@ -216,6 +229,89 @@ fn is_copy_array_len_expr(expr: &Expr, len_sym: &Atom, fixed_param_count: usize)
 
 fn is_number(expr: &Expr, expected: usize) -> bool {
     matches!(expr, Expr::Lit(Lit::Num(number)) if number.value == expected as f64)
+}
+
+fn matches_copy_loop_test(test: Option<&Expr>, idx_sym: &Atom, len_sym: &Atom) -> bool {
+    let Some(Expr::Bin(bin)) = test else {
+        return false;
+    };
+    bin.op == BinaryOp::Lt
+        && matches!(bin.left.as_ref(), Expr::Ident(id) if id.sym == *idx_sym)
+        && matches!(bin.right.as_ref(), Expr::Ident(id) if id.sym == *len_sym)
+}
+
+fn matches_copy_loop_update(update: Option<&Expr>, idx_sym: &Atom) -> bool {
+    let Some(Expr::Update(update)) = update else {
+        return false;
+    };
+    update.op == UpdateOp::PlusPlus
+        && matches!(update.arg.as_ref(), Expr::Ident(id) if id.sym == *idx_sym)
+}
+
+fn matches_copy_loop_body(
+    body: &Stmt,
+    copy_sym: &Atom,
+    idx_sym: &Atom,
+    fixed_param_count: usize,
+) -> bool {
+    let expr = match body {
+        Stmt::Expr(expr) => expr.expr.as_ref(),
+        Stmt::Block(block) => {
+            if block.stmts.len() != 1 {
+                return false;
+            }
+            let Stmt::Expr(expr) = &block.stmts[0] else {
+                return false;
+            };
+            expr.expr.as_ref()
+        }
+        _ => return false,
+    };
+
+    let Expr::Assign(assign) = expr else {
+        return false;
+    };
+    if assign.op != AssignOp::Assign {
+        return false;
+    }
+
+    let AssignTarget::Simple(SimpleAssignTarget::Member(left)) = &assign.left else {
+        return false;
+    };
+    if !matches!(left.obj.as_ref(), Expr::Ident(id) if id.sym == *copy_sym) {
+        return false;
+    }
+    let MemberProp::Computed(left_prop) = &left.prop else {
+        return false;
+    };
+    if !is_copy_write_index(left_prop.expr.as_ref(), idx_sym, fixed_param_count) {
+        return false;
+    }
+
+    let Expr::Member(right) = assign.right.as_ref() else {
+        return false;
+    };
+    if !is_arguments_ident(&right.obj) {
+        return false;
+    }
+    let MemberProp::Computed(right_prop) = &right.prop else {
+        return false;
+    };
+    matches!(right_prop.expr.as_ref(), Expr::Ident(id) if id.sym == *idx_sym)
+}
+
+fn is_copy_write_index(expr: &Expr, idx_sym: &Atom, fixed_param_count: usize) -> bool {
+    if fixed_param_count == 0 {
+        return matches!(expr, Expr::Ident(id) if id.sym == *idx_sym);
+    }
+
+    matches!(
+        expr,
+        Expr::Bin(bin)
+            if bin.op == BinaryOp::Sub
+                && matches!(bin.left.as_ref(), Expr::Ident(id) if id.sym == *idx_sym)
+                && is_number(bin.right.as_ref(), fixed_param_count)
+    )
 }
 
 fn make_rest_param(name: Atom) -> Param {

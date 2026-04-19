@@ -255,6 +255,49 @@ function foo(a, b, ...rest) {
 }
 
 #[test]
+fn tail_copy_loop_with_wrong_test_is_preserved() {
+    let input = r#"
+function foo(a, b) {
+    for (var len = arguments.length, rest = Array(len > 2 ? len - 2 : 0), i = 2; i <= len; i++) {
+        rest[i - 2] = arguments[i];
+    }
+    return rest;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn tail_copy_loop_with_wrong_write_index_is_preserved() {
+    let input = r#"
+function foo(a, b) {
+    for (var len = arguments.length, rest = Array(len > 2 ? len - 2 : 0), i = 2; i < len; i++) {
+        rest[i] = arguments[i];
+    }
+    return rest;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn tail_copy_loop_with_extra_body_statement_is_preserved() {
+    let input = r#"
+function foo(a, b) {
+    for (var len = arguments.length, rest = Array(len > 2 ? len - 2 : 0), i = 2; i < len; i++) {
+        rest[i - 2] = arguments[i];
+        observe(arguments.callee);
+    }
+    return rest;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn copy_loop_preserved_when_not_arguments_pattern() {
     // A for loop that doesn't match the Babel copy pattern should be kept
     let input = r#"
