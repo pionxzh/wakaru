@@ -1,6 +1,6 @@
 use std::fs;
 
-use wakaru_rs::{unpack, DecompileOptions};
+use wakaru_rs::{unpack, unpack_raw, DecompileOptions};
 
 #[test]
 fn webpack4_unpack_extracts_modules() {
@@ -35,6 +35,49 @@ fn webpack4_unpack_extracts_modules() {
         has_entry,
         "no entry.js module found; filenames: {:?}",
         pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn webpack4_raw_unpack_extracts_modules_without_pipeline() {
+    let source_path = "../testcases/webpack4/dist/index.js";
+    let source = fs::read_to_string(source_path)
+        .expect("failed to read webpack4 testcase — make sure the testcases are present");
+
+    let pairs = unpack_raw(&source).expect("raw unpack should succeed");
+
+    assert!(
+        pairs.len() >= 50,
+        "expected at least 50 modules, got {}",
+        pairs.len()
+    );
+    assert!(
+        pairs.iter().any(|(name, _)| name == "entry.js"),
+        "no entry.js module found; filenames: {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    assert!(
+        pairs.iter().all(|(_, code)| !code.trim().is_empty()),
+        "raw unpack should not produce empty modules"
+    );
+
+    let decompiled_pairs = unpack(
+        &source,
+        DecompileOptions {
+            filename: source_path.to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompiled unpack should succeed");
+
+    assert!(
+        pairs
+            .iter()
+            .any(|(filename, raw_code)| decompiled_pairs.iter().any(
+                |(decompiled_filename, decompiled_code)| filename == decompiled_filename
+                    && raw_code != decompiled_code
+            )),
+        "raw unpack should preserve at least one pre-pipeline module difference"
     );
 }
 

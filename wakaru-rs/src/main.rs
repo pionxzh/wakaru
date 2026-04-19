@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::Parser;
 use wakaru_rs::{
-    decompile, extract_sources, parse_sourcemap, trace_rules, unpack, DecompileOptions,
+    decompile, extract_sources, parse_sourcemap, trace_rules, unpack, unpack_raw, DecompileOptions,
     RuleTraceEvent, RuleTraceOptions,
 };
 
@@ -23,6 +23,10 @@ struct Cli {
     /// When set, --output is treated as the output directory.
     #[arg(short, long)]
     unpack: bool,
+
+    /// With --unpack, write raw unpacker output before the decompiler rule pipeline.
+    #[arg(long, requires = "unpack")]
+    raw: bool,
 
     /// Optional source map file (.map) for enhanced decompilation:
     /// - Deduplicates identical imports collapsed by the bundler
@@ -99,7 +103,11 @@ fn main() -> Result<()> {
             }
         }
     } else if cli.unpack {
-        let pairs = unpack(&input, options)?;
+        let pairs = if cli.raw {
+            unpack_raw(&input)?
+        } else {
+            unpack(&input, options)?
+        };
 
         let out_dir = cli.output.unwrap_or_else(|| PathBuf::from("unpacked"));
         fs::create_dir_all(&out_dir)

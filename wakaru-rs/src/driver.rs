@@ -187,6 +187,23 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, St
     }
 }
 
+/// Unpack a bundle without running the decompiler rule pipeline.
+///
+/// This returns the module code exactly as produced by the bundle detector.
+/// Some detectors still do minimal runtime normalization during extraction so
+/// their output can be parsed as standalone modules, but cross-module analysis
+/// and the normal rule pipeline are skipped.
+pub fn unpack_raw(source: &str) -> Result<Vec<(String, String)>> {
+    match unpack_bundle(source) {
+        Some(result) => Ok(result
+            .modules
+            .into_iter()
+            .map(|module| (module.filename, module.code))
+            .collect()),
+        None => Ok(vec![("module.js".to_string(), source.to_string())]),
+    }
+}
+
 /// Multi-module unpack with cross-module late pass.
 ///
 /// Phase 1 (parallel): parse + Stage 1+2 + collect facts (facts only, code discarded)
