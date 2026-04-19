@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmt, CatchClause, Class, Decl, DefaultDecl, Expr, Function, Ident, ImportDecl,
-    ImportNamedSpecifier, ImportSpecifier, KeyValueProp, MemberProp, Module, ModuleDecl,
-    ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop, PropName, Stmt, VarDeclarator,
+    ArrowExpr, AssignPat, BlockStmt, CatchClause, Class, Decl, DefaultDecl, Expr, Function, Ident,
+    ImportDecl, ImportNamedSpecifier, ImportSpecifier, KeyValuePatProp, KeyValueProp, MemberProp,
+    Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat, Prop, PropName, Stmt,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -608,6 +609,35 @@ impl VisitMut for BindingRenamer<'_> {
                         key,
                         value: Box::new(Expr::Ident(ident.clone())),
                     });
+                    return;
+                }
+            }
+        }
+
+        prop.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_object_pat_prop(&mut self, prop: &mut ObjectPatProp) {
+        if let ObjectPatProp::Assign(assign) = prop {
+            for rename in self.renames {
+                if assign.key.id.sym == rename.old.0 && assign.key.id.ctxt == rename.old.1 {
+                    let key = PropName::Ident(assign.key.id.clone().into());
+                    let mut binding = assign.key.clone();
+                    binding.id.sym = rename.new.clone();
+                    let value = if let Some(default) = assign.value.take() {
+                        Pat::Assign(AssignPat {
+                            span: binding.id.span,
+                            left: Box::new(Pat::Ident(binding)),
+                            right: default,
+                        })
+                    } else {
+                        Pat::Ident(binding)
+                    };
+                    *prop = ObjectPatProp::KeyValue(KeyValuePatProp {
+                        key,
+                        value: Box::new(value),
+                    });
+                    prop.visit_mut_children_with(self);
                     return;
                 }
             }

@@ -9,7 +9,7 @@ use swc_core::ecma::ast::{
     Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, Pat,
     SimpleAssignTarget, Stmt, Str, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
 };
-use swc_core::ecma::visit::VisitMut;
+use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
 use super::rename_utils::{rename_bindings, BindingRename};
 
@@ -108,6 +108,7 @@ impl VisitMut for UnEsm {
         // Phase 0: split compound `var s = exports.X = expr` →
         //          `var s = expr; exports.X = s;`
         split_compound_exports(module);
+        let all_declared_names = collect_all_declared_names(module);
 
         let items = std::mem::take(&mut module.body);
 
@@ -372,7 +373,7 @@ impl VisitMut for UnEsm {
         // expression can reference a conflicting module-level local, so apply
         // binding-id renames to both kept items and export expressions.
         if !export_names.is_empty() {
-            let mut used_names = local_names.clone();
+            let mut used_names = all_declared_names.clone();
             used_names.extend(export_names.iter().cloned());
             let mut renames = Vec::new();
 
@@ -988,6 +989,55 @@ fn make_ident(sym: Atom) -> Ident {
 
 fn wtf8_to_string(value: &swc_core::atoms::Wtf8Atom) -> String {
     value.as_str().unwrap_or("").to_string()
+}
+
+fn collect_all_declared_names(module: &Module) -> HashSet<Atom> {
+    struct Collector {
+        names: HashSet<Atom>,
+    }
+
+    impl Visit for Collector {
+        fn visit_pat(&mut self, pat: &Pat) {
+            collect_pat_names(pat, &mut self.names);
+            pat.visit_children_with(self);
+        }
+
+        fn visit_import_decl(&mut self, import: &ImportDecl) {
+            for spec in &import.specifiers {
+                match spec {
+                    ImportSpecifier::Named(named) => {
+                        self.names.insert(named.local.sym.clone());
+                    }
+                    ImportSpecifier::Default(default) => {
+                        self.names.insert(default.local.sym.clone());
+                    }
+                    ImportSpecifier::Namespace(namespace) => {
+                        self.names.insert(namespace.local.sym.clone());
+                    }
+                }
+            }
+        }
+
+        fn visit_decl(&mut self, decl: &Decl) {
+            match decl {
+                Decl::Fn(function) => {
+                    self.names.insert(function.ident.sym.clone());
+                    function.function.visit_with(self);
+                }
+                Decl::Class(class) => {
+                    self.names.insert(class.ident.sym.clone());
+                    class.class.visit_with(self);
+                }
+                _ => decl.visit_children_with(self),
+            }
+        }
+    }
+
+    let mut collector = Collector {
+        names: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.names
 }
 
 /// Collect binding names introduced by a declaration.

@@ -275,6 +275,56 @@ exports.a = function(x) { return a + x; };
 }
 
 #[test]
+fn export_conflict_rename_avoids_nested_shadow_capture() {
+    let input = r#"
+var a = 0;
+function f(_a) { return a + _a; }
+exports.a = function(x) { return a + f(x); };
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("const _a2 = 0") || output.contains("let _a2 = 0"),
+        "top-level local should avoid nested `_a`: {}",
+        output
+    );
+    assert!(
+        output.contains("return _a2 + _a"),
+        "nested function should keep references distinct: {}",
+        output
+    );
+    assert!(
+        output.contains("export const a"),
+        "export should keep the clean name `a`: {}",
+        output
+    );
+}
+
+#[test]
+fn export_conflict_rename_preserves_object_pattern_key() {
+    let input = r#"
+var obj = { a: 1 };
+var { a } = obj;
+exports.a = function(x) { return a + x; };
+"#;
+    let output = render_pipeline_until(input, "UnEsm");
+    assert!(
+        output.contains("a: _a"),
+        "destructuring should preserve property `a` while renaming local: {}",
+        output
+    );
+    assert!(
+        !output.contains("{ _a }"),
+        "destructuring must not read property `_a`: {}",
+        output
+    );
+    assert!(
+        output.contains("export const a"),
+        "export should keep the clean name `a`: {}",
+        output
+    );
+}
+
+#[test]
 fn no_rename_when_export_name_is_free() {
     // No conflict — export name is not used by any local binding
     let input = r#"
