@@ -4,15 +4,16 @@ use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, GLOBALS};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, CondExpr, Expr,
-    ExprOrSpread, ExprStmt, FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp, Module,
-    ModuleItem, Number, Pat, SimpleAssignTarget, Stmt, Str, UnaryOp, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr,
+    CallExpr, Callee, CondExpr, Expr, ExprOrSpread, ExprStmt, FnExpr, Id, Ident, IdentName, Lit,
+    MemberExpr, MemberProp, Module, ModuleItem, Number, Pat, SimpleAssignTarget, Stmt, Str,
+    UnaryExpr, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::utils::replace_ident;
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::rules::apply_default_rules;
 use crate::unpacker::{UnpackResult, UnpackedModule};
@@ -724,6 +725,11 @@ fn extract_webpack4_modules(
         };
         synthetic_module.visit_mut_with(&mut normalizer);
 
+        // Step 2b: strip webpack's `.call(this, require(G), require(A)(module))`
+        // global-polyfill envelope when its fingerprint matches. Runs before
+        // default rules so the rules pipeline sees a cleaner top-level shape.
+        unwrap_global_polyfill(&mut synthetic_module, unresolved_mark);
+
         // Step 3: optionally apply default rules
         if apply_rules {
             apply_default_rules(&mut synthetic_module, unresolved_mark);
@@ -919,6 +925,364 @@ fn build_module_from_stmts(stmts: Vec<Stmt>) -> Module {
     }
 }
 
+// ============================================================
+// webpack4 "global polyfill" wrapper unwrapping
+// ============================================================
+//
+// webpack4 emits global-detecting modules with a distinctive envelope:
+//
+//     (function(e, r) {
+//         // ... uses `e` and `r` only as fallback globals ...
+//         o = typeof self !== "undefined"
+//             ? self
+//             : typeof window !== "undefined"
+//                 ? window
+//                 : e !== undefined ? e : r;
+//         // ... rest of body ...
+//     }).call(this, require("./module-42.js"), require("./module-41.js")(module));
+//
+// This is recognizable without a bundle-wide helper-module registry because:
+// - `.call(this, ...)` at top-level with a fn/arrow IIFE base is narrow
+// - `require(X)(<Ident "module">)` as an arg is essentially never user code
+//   — the raw `module` binding only exists inside a CommonJS wrapper, and
+//   the AMD-define polyfill is the one thing that consumes it
+// - the `typeof self → typeof window → param → param` ternary is webpack's
+//   own global-detection template, referenced only via the IIFE's params
+//
+// When all three tells line up, the wrapper is dead weight: the ternary
+// resolves to `globalThis` in any post-ES2020 runtime, and the `e`/`r`
+// arguments are only consumed as fallback arms of that same ternary. We
+// hoist the body to module scope and replace the ternary with `globalThis`.
+
+/// Strip webpack4's global-polyfill IIFE wrapper on matching top-level
+/// statements. Called once per extracted module, after the webpack runtime
+/// normalizer and before `apply_default_rules`.
+fn unwrap_global_polyfill(module: &mut Module, unresolved_mark: Mark) {
+    let mut new_body: Vec<ModuleItem> = Vec::with_capacity(module.body.len());
+    for item in module.body.drain(..) {
+        match try_unwrap_polyfill_item(&item, unresolved_mark) {
+            Some(replacement) => new_body.extend(replacement),
+            None => new_body.push(item),
+        }
+    }
+    module.body = new_body;
+}
+
+fn try_unwrap_polyfill_item(item: &ModuleItem, unresolved_mark: Mark) -> Option<Vec<ModuleItem>> {
+    let ModuleItem::Stmt(stmt) = item else {
+        return None;
+    };
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return None;
+    };
+
+    // Callee must be `<fn|arrow>.call`.
+    let Callee::Expr(callee_expr) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = callee_expr.as_ref() else {
+        return None;
+    };
+    let MemberProp::Ident(prop) = &member.prop else {
+        return None;
+    };
+    if prop.sym.as_ref() != "call" {
+        return None;
+    }
+
+    let (param_ids, body_stmts) = extract_inner_callee(&member.obj)?;
+    // Can't verify param usage on a paramless wrapper — not our pattern anyway.
+    if param_ids.is_empty() {
+        return None;
+    }
+
+    // Arg list: first must be literal `this`, none may be spreads.
+    if call.args.is_empty() || call.args[0].spread.is_some() {
+        return None;
+    }
+    if !matches!(&*call.args[0].expr, Expr::This(_)) {
+        return None;
+    }
+    if call.args.iter().skip(1).any(|a| a.spread.is_some()) {
+        return None;
+    }
+
+    // The defining fingerprint: at least one arg is `require(<str>)(module)`.
+    // User code essentially never invokes a `require()` result with the raw
+    // `module` binding — this shape is the webpack AMD-define polyfill.
+    if !call
+        .args
+        .iter()
+        .skip(1)
+        .any(|a| is_require_invoked_with_module(&a.expr))
+    {
+        return None;
+    }
+
+    // Rewrite a clone: replace the global-detect ternary with `globalThis`.
+    // If no ternary matches our signature, bail — we don't want to strip the
+    // wrapper without also neutralizing the param references inside it.
+    let mut candidate = body_stmts.clone();
+    let mut replacer = TernaryReplacer {
+        param_ids: &param_ids,
+        unresolved_mark,
+        replacements: 0,
+    };
+    for stmt in &mut candidate {
+        stmt.visit_mut_with(&mut replacer);
+    }
+    if replacer.replacements == 0 {
+        return None;
+    }
+
+    // After replacing the ternary(s), no param reference may remain — if
+    // anything survives, the wrapper was carrying real data and we can't
+    // safely drop its arguments.
+    let mut counter = ParamRefCounter {
+        param_ids: &param_ids,
+        count: 0,
+    };
+    for stmt in &candidate {
+        stmt.visit_with(&mut counter);
+    }
+    if counter.count > 0 {
+        return None;
+    }
+
+    Some(candidate.into_iter().map(ModuleItem::Stmt).collect())
+}
+
+/// Extract `(param_ids, body_stmts)` from an expression that is expected to
+/// be a fn/arrow IIFE callee. Skips a surrounding paren wrapper. Arrow
+/// expression-bodies are rejected — the wrapper pattern always has a block.
+fn extract_inner_callee(expr: &Expr) -> Option<(Vec<Id>, Vec<Stmt>)> {
+    let mut unwrapped = expr;
+    while let Expr::Paren(p) = unwrapped {
+        unwrapped = p.expr.as_ref();
+    }
+    match unwrapped {
+        Expr::Fn(FnExpr { function, .. }) => {
+            let params = collect_param_ids(function.params.iter().map(|p| &p.pat))?;
+            let body = function.body.as_ref()?.stmts.clone();
+            Some((params, body))
+        }
+        Expr::Arrow(ArrowExpr { params, body, .. }) => {
+            let param_ids = collect_param_ids(params.iter())?;
+            let BlockStmtOrExpr::BlockStmt(BlockStmt { stmts, .. }) = body.as_ref() else {
+                return None;
+            };
+            Some((param_ids, stmts.clone()))
+        }
+        _ => None,
+    }
+}
+
+fn collect_param_ids<'a, I: Iterator<Item = &'a Pat>>(pats: I) -> Option<Vec<Id>> {
+    let mut out = Vec::new();
+    for pat in pats {
+        let Pat::Ident(bi) = pat else {
+            return None;
+        };
+        out.push((bi.id.sym.clone(), bi.id.ctxt));
+    }
+    Some(out)
+}
+
+/// `require(<string literal>)(module)` — the AMD-define polyfill call site.
+/// The tail arg must be the raw `module` identifier; `module.exports` or any
+/// other shape doesn't qualify.
+fn is_require_invoked_with_module(expr: &Expr) -> bool {
+    let Expr::Call(outer) = expr else {
+        return false;
+    };
+    if outer.args.len() != 1 || outer.args[0].spread.is_some() {
+        return false;
+    }
+    let Expr::Ident(arg_ident) = &*outer.args[0].expr else {
+        return false;
+    };
+    if arg_ident.sym.as_ref() != "module" {
+        return false;
+    }
+
+    // Inner: require("./…")
+    let Callee::Expr(outer_callee) = &outer.callee else {
+        return false;
+    };
+    let Expr::Call(inner) = outer_callee.as_ref() else {
+        return false;
+    };
+    let Callee::Expr(inner_callee) = &inner.callee else {
+        return false;
+    };
+    let Expr::Ident(id) = inner_callee.as_ref() else {
+        return false;
+    };
+    if id.sym.as_ref() != "require" {
+        return false;
+    }
+    inner.args.len() == 1
+        && inner.args[0].spread.is_none()
+        && matches!(&*inner.args[0].expr, Expr::Lit(Lit::Str(_)))
+}
+
+// ---- ternary matching ----
+
+/// Matches the inner `<param> !== undefined ? <param> : <param>` arm and
+/// returns whether both leaf idents are among `param_ids`.
+fn is_param_fallback_cond(cond: &CondExpr, param_ids: &[Id]) -> bool {
+    // Test: `P !== undefined` (either order, with `void 0` accepted as undefined).
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = cond.test.as_ref()
+    else {
+        return false;
+    };
+    if !matches!(op, BinaryOp::NotEq | BinaryOp::NotEqEq) {
+        return false;
+    }
+    let test_ident = match (is_undefined_expr(left), is_undefined_expr(right)) {
+        (true, false) => right.as_ref(),
+        (false, true) => left.as_ref(),
+        _ => return false,
+    };
+    let Expr::Ident(test_id) = test_ident else {
+        return false;
+    };
+    if !id_in(param_ids, test_id) {
+        return false;
+    }
+
+    // `cons` should reference the same param as the test.
+    let Expr::Ident(cons_id) = cond.cons.as_ref() else {
+        return false;
+    };
+    if (cons_id.sym.clone(), cons_id.ctxt) != (test_id.sym.clone(), test_id.ctxt) {
+        return false;
+    }
+
+    // `alt` should be another param (the second fallback).
+    let Expr::Ident(alt_id) = cond.alt.as_ref() else {
+        return false;
+    };
+    id_in(param_ids, alt_id)
+}
+
+fn is_undefined_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Unary(UnaryExpr {
+            op: UnaryOp::Void,
+            arg,
+            ..
+        }) if matches!(arg.as_ref(), Expr::Lit(Lit::Num(_)))
+    ) || matches!(expr, Expr::Ident(id) if id.sym.as_ref() == "undefined")
+}
+
+/// `typeof <Ident> != "undefined"` — accepts either operand order and both
+/// `!=` / `!==` forms (`===` is webpack's actual emission for the outer
+/// arms, but raw output can normalize to `==` depending on what ran before).
+fn matches_typeof_defined(expr: &Expr, expected: &str) -> bool {
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = expr
+    else {
+        return false;
+    };
+    if !matches!(op, BinaryOp::NotEq | BinaryOp::NotEqEq) {
+        return false;
+    }
+    let (typeof_side, lit_side) = match (is_string_lit(left, "undefined"), is_string_lit(right, "undefined")) {
+        (true, false) => (right.as_ref(), left.as_ref()),
+        (false, true) => (left.as_ref(), right.as_ref()),
+        _ => return false,
+    };
+    let _ = lit_side;
+    let Expr::Unary(UnaryExpr {
+        op: UnaryOp::TypeOf,
+        arg,
+        ..
+    }) = typeof_side
+    else {
+        return false;
+    };
+    matches!(arg.as_ref(), Expr::Ident(id) if id.sym.as_ref() == expected)
+}
+
+fn is_string_lit(expr: &Expr, value: &str) -> bool {
+    if let Expr::Lit(Lit::Str(s)) = expr {
+        s.value.as_str().is_some_and(|v| v == value)
+    } else {
+        false
+    }
+}
+
+fn id_in(param_ids: &[Id], ident: &Ident) -> bool {
+    param_ids
+        .iter()
+        .any(|(sym, ctxt)| *sym == ident.sym && *ctxt == ident.ctxt)
+}
+
+/// Matches the full `typeof self → typeof window → param-fallback` ternary.
+fn is_global_detect_ternary(cond: &CondExpr, param_ids: &[Id]) -> bool {
+    // Outer: `typeof self != "undefined" ? self : <inner>`
+    if !matches_typeof_defined(&cond.test, "self") {
+        return false;
+    }
+    if !matches!(cond.cons.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "self") {
+        return false;
+    }
+    let Expr::Cond(inner) = cond.alt.as_ref() else {
+        return false;
+    };
+    // Middle: `typeof window != "undefined" ? window : <param-fallback>`
+    if !matches_typeof_defined(&inner.test, "window") {
+        return false;
+    }
+    if !matches!(inner.cons.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "window") {
+        return false;
+    }
+    let Expr::Cond(fallback) = inner.alt.as_ref() else {
+        return false;
+    };
+    is_param_fallback_cond(fallback, param_ids)
+}
+
+struct TernaryReplacer<'a> {
+    param_ids: &'a [Id],
+    unresolved_mark: Mark,
+    replacements: usize,
+}
+
+impl<'a> VisitMut for TernaryReplacer<'a> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+        if let Expr::Cond(cond) = expr {
+            if is_global_detect_ternary(cond, self.param_ids) {
+                let ctxt = SyntaxContext::empty().apply_mark(self.unresolved_mark);
+                *expr = Expr::Ident(Ident::new(Atom::from("globalThis"), Default::default(), ctxt));
+                self.replacements += 1;
+            }
+        }
+    }
+}
+
+struct ParamRefCounter<'a> {
+    param_ids: &'a [Id],
+    count: usize,
+}
+
+impl<'a> Visit for ParamRefCounter<'a> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if id_in(self.param_ids, ident) {
+            self.count += 1;
+        }
+    }
+}
+
 fn parse_es_module(source: &str, cm: Lrc<SourceMap>) -> anyhow::Result<Module> {
     use anyhow::anyhow;
     let fm = cm.new_source_file(
@@ -976,5 +1340,178 @@ impl StmtSpan for Stmt {
             },
             _ => Default::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod polyfill_tests {
+    use super::*;
+
+    fn run_unwrap(source: &str) -> String {
+        GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = parse_es_module(source, cm.clone()).expect("parse");
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+            unwrap_global_polyfill(&mut module, unresolved_mark);
+            module.visit_mut_with(&mut fixer(None));
+            emit_module(&module, cm).expect("emit")
+        })
+    }
+
+    // ---- positive cases ----
+
+    #[test]
+    fn unwraps_module_21_shape_function() {
+        let input = r#"(function(e, r) {
+    var o, i = require("./module-31.js");
+    o = typeof self != "undefined" ? self : typeof window != "undefined" ? window : void 0 !== e ? e : r;
+    exports.a = i.a(o);
+}).call(this, require("./module-42.js"), require("./module-41.js")(module));
+"#;
+        let out = run_unwrap(input);
+        assert!(!out.contains(".call(this"), "wrapper should be stripped: {out}");
+        assert!(out.contains("globalThis"), "ternary should collapse to globalThis: {out}");
+        assert!(out.contains(r#"require("./module-31.js")"#), "real import preserved: {out}");
+        assert!(!out.contains(r#"require("./module-41.js")"#), "amd helper arg dropped: {out}");
+    }
+
+    #[test]
+    fn unwraps_arrow_callee() {
+        let input = r#"((e, r) => {
+    let o = typeof self != "undefined" ? self : typeof window != "undefined" ? window : void 0 !== e ? e : r;
+    exports.g = o;
+}).call(this, globalA, require("./amd.js")(module));
+"#;
+        let out = run_unwrap(input);
+        assert!(!out.contains(".call(this"), "{out}");
+        assert!(out.contains("globalThis"), "{out}");
+    }
+
+    #[test]
+    fn unwraps_paren_wrapped_callee() {
+        let input = r#"((function(e, r) {
+    var o = typeof self != "undefined" ? self : typeof window != "undefined" ? window : void 0 !== e ? e : r;
+    exports.g = o;
+})).call(this, g, require("./amd.js")(module));
+"#;
+        let out = run_unwrap(input);
+        assert!(!out.contains(".call(this"), "paren-wrapped callee should still match: {out}");
+    }
+
+    #[test]
+    fn unwraps_strict_equality_typeof_check() {
+        // Webpack can emit `!==` on the typeof arms; our matcher accepts both.
+        let input = r#"(function(e, r) {
+    var o = typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : void 0 !== e ? e : r;
+    exports.g = o;
+}).call(this, g, require("./amd.js")(module));
+"#;
+        let out = run_unwrap(input);
+        assert!(!out.contains(".call(this"), "{out}");
+    }
+
+    // ---- negative cases ----
+
+    #[test]
+    fn skips_when_module_helper_tail_missing() {
+        // Without a `require(X)(module)` arg, we don't trust the shape.
+        let input = r#"(function(e, r) {
+    var o = typeof self != "undefined" ? self : typeof window != "undefined" ? window : void 0 !== e ? e : r;
+    exports.g = o;
+}).call(this, something, somethingElse);
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".call(this"), "should preserve wrapper: {out}");
+    }
+
+    #[test]
+    fn skips_when_module_arg_is_not_raw_module_binding() {
+        // `require(X)(module.exports)` doesn't count — the tell is the raw
+        // `module` binding.
+        let input = r#"(function(e, r) {
+    var o = typeof self != "undefined" ? self : typeof window != "undefined" ? window : void 0 !== e ? e : r;
+    exports.g = o;
+}).call(this, g, require("./amd.js")(module.exports));
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".call(this"), "{out}");
+    }
+
+    #[test]
+    fn skips_when_global_ternary_missing() {
+        // `(module)` tail is present but the body doesn't have the global-
+        // detect ternary — we can't safely strip the args.
+        let input = r#"(function(e, r) {
+    exports.combined = e + r;
+}).call(this, g, require("./amd.js")(module));
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".call(this"), "{out}");
+    }
+
+    #[test]
+    fn skips_dot_apply_variant() {
+        // `.apply` takes an array, not positional args — different semantics.
+        let input = r#"(function(e, r) {
+    var o = typeof self != "undefined" ? self : typeof window != "undefined" ? window : void 0 !== e ? e : r;
+    exports.g = o;
+}).apply(this, [g, require("./amd.js")(module)]);
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".apply"), "{out}");
+    }
+
+    #[test]
+    fn skips_when_this_arg_is_not_this() {
+        let input = r#"(function(e, r) {
+    var o = typeof self != "undefined" ? self : typeof window != "undefined" ? window : void 0 !== e ? e : r;
+    exports.g = o;
+}).call(null, g, require("./amd.js")(module));
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".call(null"), "non-this thisArg should preserve wrapper: {out}");
+    }
+
+    #[test]
+    fn skips_when_params_used_outside_ternary() {
+        // `r` is also assigned to a property — the wrapper carries real data,
+        // not just a fallback global. Dropping the arg would change semantics.
+        let input = r#"(function(e, r) {
+    var o = typeof self != "undefined" ? self : typeof window != "undefined" ? window : void 0 !== e ? e : r;
+    exports.g = o;
+    exports.helper = r;
+}).call(this, g, require("./amd.js")(module));
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".call(this"), "param used outside ternary — preserve: {out}");
+    }
+
+    #[test]
+    fn skips_when_wrapper_is_nested_not_top_level() {
+        // Our pass only touches top-level module items. A nested occurrence
+        // (inside another function) is untouched.
+        let input = r#"function outer() {
+    (function(e, r) {
+        var o = typeof self != "undefined" ? self : typeof window != "undefined" ? window : void 0 !== e ? e : r;
+        exports.g = o;
+    }).call(this, g, require("./amd.js")(module));
+}
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".call(this"), "nested wrapper must not be stripped: {out}");
+    }
+
+    #[test]
+    fn skips_when_param_fallback_cons_does_not_match_test() {
+        // `void 0 !== e ? r : e` — cons/test mismatch breaks the fingerprint.
+        let input = r#"(function(e, r) {
+    var o = typeof self != "undefined" ? self : typeof window != "undefined" ? window : void 0 !== e ? r : e;
+    exports.g = o;
+}).call(this, g, require("./amd.js")(module));
+"#;
+        let out = run_unwrap(input);
+        assert!(out.contains(".call(this"), "{out}");
     }
 }

@@ -2,10 +2,8 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-((e, r)=>{
-    let o;
-    const i = require("./module-31.js");
-    o = typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : e !== undefined ? e : r;
-    const a = i.a(o);
-    exports.a = a;
-})(require("./module-42.js"), require("./module-41.js")(module));
+import { a as a_2 } from "./module-31.js";
+let o;
+o = globalThis;
+const a = a_2(o);
+export { a };

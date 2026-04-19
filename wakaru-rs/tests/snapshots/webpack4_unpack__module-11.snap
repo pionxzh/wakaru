@@ -2,7 +2,7 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import r from "./module-21.js";
+import { a as a_2 } from "./module-21.js";
 export const __DO_NOT_USE__ActionTypes = {
     INIT: `@@redux/INIT${Math.random().toString(36).substring(7).split("").join(".")}`,
     REPLACE: `@@redux/REPLACE${Math.random().toString(36).substring(7).split("").join(".")}`
@@ -107,7 +107,7 @@ export function createStore(e, t, n) {
             });
         }
     };
-    a[r.a] = ()=>{
+    a[a_2] = ()=>{
         let e;
         const t = y;
         e = {
@@ -126,7 +126,7 @@ export function createStore(e, t, n) {
                 };
             }
         };
-        e[r.a] = function() {
+        e[a_2] = function() {
             return this;
         };
         return e;
