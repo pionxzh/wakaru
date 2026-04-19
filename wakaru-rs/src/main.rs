@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::Parser;
 use wakaru_rs::{
-    decompile, extract_sources, parse_sourcemap, trace_rules, unpack, unpack_raw, DecompileOptions,
-    RuleTraceEvent, RuleTraceOptions,
+    decompile, extract_sources, format_trace_events, parse_sourcemap, trace_rules, unpack,
+    unpack_raw, DecompileOptions, RuleTraceOptions,
 };
 
 #[derive(Debug, Parser)]
@@ -145,33 +145,6 @@ fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn format_trace_events(events: &[RuleTraceEvent]) -> String {
-    let mut output = String::new();
-
-    for event in events {
-        output.push_str("=== ");
-        output.push_str(event.rule);
-        output.push_str(if event.changed {
-            " changed"
-        } else {
-            " unchanged"
-        });
-        output.push_str(" ===\n");
-        output.push_str("--- before ---\n");
-        output.push_str(&event.before);
-        if !event.before.ends_with('\n') {
-            output.push('\n');
-        }
-        output.push_str("--- after ---\n");
-        output.push_str(&event.after);
-        if !event.after.ends_with('\n') {
-            output.push('\n');
-        }
-    }
-
-    output
 }
 
 /// Return a path that hasn't been used yet, disambiguating case collisions.

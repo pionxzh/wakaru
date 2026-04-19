@@ -1620,6 +1620,7 @@ dependencies = [
  "clap",
  "insta",
  "rayon",
+ "similar",
  "sourcemap",
  "swc_core",
 ]

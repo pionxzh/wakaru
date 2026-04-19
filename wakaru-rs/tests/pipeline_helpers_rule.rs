@@ -3,7 +3,9 @@ use common::{
     assert_eq_normalized, changed_rules, render, render_pipeline_between, render_pipeline_until,
     trace_pipeline,
 };
-use wakaru_rs::{trace_rules, DecompileOptions, RuleTraceOptions};
+use wakaru_rs::{
+    format_trace_events, trace_rules, DecompileOptions, RuleTraceEvent, RuleTraceOptions,
+};
 
 // ============================================================
 // render_pipeline_until tests
@@ -197,6 +199,63 @@ fn trace_supports_rule_ranges() {
 fn changed_rules_helper_returns_only_names() {
     let names = changed_rules("const x = void 0;");
     assert!(names.contains(&"RemoveVoid"));
+}
+
+// ============================================================
+// format_trace_events tests
+// ============================================================
+
+fn event(rule: &'static str, before: &str, after: &str) -> RuleTraceEvent {
+    RuleTraceEvent {
+        rule,
+        changed: before != after,
+        before: before.to_string(),
+        after: after.to_string(),
+    }
+}
+
+#[test]
+fn format_trace_prints_initial_source_once() {
+    let events = vec![
+        event("RuleA", "const x = 1;\n", "const x = 2;\n"),
+        event("RuleB", "const x = 2;\n", "const x = 3;\n"),
+    ];
+    let output = format_trace_events(&events);
+
+    // Exactly one "=== initial ===" block.
+    assert_eq!(output.matches("=== initial ===").count(), 1);
+    // The initial source line appears twice total: once in the initial block
+    // and once as "-const x = 1;" inside RuleA's hunk — not three times.
+    assert_eq!(output.matches("const x = 1;").count(), 2);
+    // Intermediate state "const x = 2;" shows up only as diff body lines
+    // (+ in RuleA, - in RuleB) — never as a full duplicated block.
+    assert_eq!(output.matches("const x = 2;").count(), 2);
+}
+
+#[test]
+fn format_trace_emits_unified_diff_for_changed_rules() {
+    let events = vec![event("RemoveVoid", "const x = void 0;\n", "const x = undefined;\n")];
+    let output = format_trace_events(&events);
+
+    assert!(output.contains("=== RemoveVoid ===\n"), "missing rule header: {output}");
+    assert!(output.contains("@@"), "missing unified diff hunk header: {output}");
+    assert!(output.contains("-const x = void 0;"), "missing removed line: {output}");
+    assert!(output.contains("+const x = undefined;"), "missing added line: {output}");
+}
+
+#[test]
+fn format_trace_unchanged_rule_prints_only_header() {
+    let events = vec![event("Noop", "const x = 1;\n", "const x = 1;\n")];
+    let output = format_trace_events(&events);
+
+    assert!(output.contains("=== Noop (unchanged) ===\n"), "{output}");
+    assert!(!output.contains("@@"), "unchanged rule should not emit a diff hunk: {output}");
+    assert!(!output.contains("-const"), "unchanged rule should not emit removed lines: {output}");
+}
+
+#[test]
+fn format_trace_empty_returns_empty_string() {
+    assert_eq!(format_trace_events(&[]), "");
 }
 
 #[test]

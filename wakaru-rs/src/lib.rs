@@ -7,7 +7,8 @@ pub mod unpacker;
 pub mod utils;
 
 pub use driver::{
-    decompile, trace_rules, unpack, unpack_raw, DecompileOptions, RuleTraceEvent, RuleTraceOptions,
+    decompile, format_trace_events, trace_rules, unpack, unpack_raw, DecompileOptions,
+    RuleTraceEvent, RuleTraceOptions,
 };
 pub use facts::{
     collect_module_facts, ExportFact, ExportKind, ImportFact, ImportKind, ModuleFacts,

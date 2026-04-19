@@ -6,8 +6,10 @@ regressions in `wakaru-rs`.
 ## Rule Trace
 
 Use the rule trace CLI before manually bisecting with `apply_rules_between`.
-It runs the normal single-file rule pipeline and prints before/after output for
-each rule that changes the rendered code.
+It runs the normal single-file rule pipeline and prints the initial source
+once, followed by a git-style unified diff for each rule that changes the
+rendered code. Rules that ran but left the output unchanged (with
+`--trace-all`) show up as a single `=== RuleName (unchanged) ===` header.
 
 ```bash
 cargo run -- --trace-rules path/to/module.js

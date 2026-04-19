@@ -176,6 +176,54 @@ fn validate_trace_rule_name(label: &str, rule_name: Option<&str>) -> Result<()> 
     }
 }
 
+/// Render a trace event list as a git-style unified diff log.
+///
+/// Prints the initial source once, then for each event:
+/// - changed: a unified diff against the previous rendering
+/// - unchanged: a single header line
+///
+/// The per-rule "before" string is implied by the previous event's output, so
+/// it's never repeated — only the delta is shown.
+pub fn format_trace_events(events: &[RuleTraceEvent]) -> String {
+    use similar::TextDiff;
+
+    let mut out = String::new();
+
+    let Some(first) = events.first() else {
+        return out;
+    };
+
+    out.push_str("=== initial ===\n");
+    out.push_str(&first.before);
+    if !first.before.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push('\n');
+
+    for event in events {
+        if !event.changed {
+            out.push_str("=== ");
+            out.push_str(event.rule);
+            out.push_str(" (unchanged) ===\n\n");
+            continue;
+        }
+
+        out.push_str("=== ");
+        out.push_str(event.rule);
+        out.push_str(" ===\n");
+
+        let diff = TextDiff::from_lines(&event.before, &event.after);
+        let mut unified = diff.unified_diff();
+        unified.missing_newline_hint(false);
+        for hunk in unified.iter_hunks() {
+            out.push_str(&hunk.to_string());
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
 pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, String)>> {
     match unpack_bundle(source) {
         Some(result) => unpack_multi_module(result.modules, options),
