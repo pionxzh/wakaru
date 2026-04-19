@@ -494,7 +494,11 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
             })
             .collect();
 
-    // Rewrite import declarations: remove default specifier, add named specifiers
+    // Rewrite import declarations: remove default specifier, add named specifiers.
+    // If a namespace specifier remains (`import * as ns`), named specifiers must
+    // be emitted in a separate import declaration because `import * as ns, { x }`
+    // is not valid JavaScript.
+    let mut extra_named_imports: HashMap<usize, Vec<ImportDecl>> = HashMap::new();
     for candidate in candidates {
         let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) =
             &mut module.body[candidate.import_index]
@@ -524,6 +528,7 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
         }
 
         // Add new named specifiers for decomposed properties (skip if already present)
+        let mut named_specifiers = Vec::new();
         for prop in &candidate.props {
             if already_imported.contains(&prop.local) {
                 continue;
@@ -538,13 +543,52 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
             } else {
                 None
             };
-            import.specifiers.push(ImportSpecifier::Named(ImportNamedSpecifier {
+            named_specifiers.push(ImportSpecifier::Named(ImportNamedSpecifier {
                 span: DUMMY_SP,
                 local: Ident::new(prop.local.clone(), DUMMY_SP, SyntaxContext::empty()),
                 imported,
                 is_type_only: false,
             }));
         }
+
+        if named_specifiers.is_empty() {
+            continue;
+        }
+
+        let has_remaining_namespace = import
+            .specifiers
+            .iter()
+            .any(|s| matches!(s, ImportSpecifier::Namespace(_)));
+        if has_remaining_namespace {
+            extra_named_imports
+                .entry(candidate.import_index)
+                .or_default()
+                .push(ImportDecl {
+                    span: import.span,
+                    specifiers: named_specifiers,
+                    src: import.src.clone(),
+                    type_only: import.type_only,
+                    with: import.with.clone(),
+                    phase: import.phase.clone(),
+                });
+        } else {
+            import.specifiers.extend(named_specifiers);
+        }
+    }
+
+    if !extra_named_imports.is_empty() {
+        let mut new_body = Vec::with_capacity(module.body.len() + extra_named_imports.len());
+        for (index, item) in std::mem::take(&mut module.body).into_iter().enumerate() {
+            new_body.push(item);
+            if let Some(imports) = extra_named_imports.remove(&index) {
+                new_body.extend(
+                    imports
+                        .into_iter()
+                        .map(|import| ModuleItem::ModuleDecl(ModuleDecl::Import(import))),
+                );
+            }
+        }
+        module.body = new_body;
     }
 
     // Rewrite usages: r.foo → local_name (which is `foo` or `foo_1` if aliased)

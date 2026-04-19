@@ -298,6 +298,40 @@ function run(t, r, e) {
 }
 
 #[test]
+fn partial_namespace_decomposition_uses_separate_named_import() {
+    let target_facts = facts_for(r#"
+export function a() {}
+export function e() {}
+export function f() {}
+export function k() {}
+export function s() {}
+"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-2.js", target_facts);
+
+    let input = r#"
+import * as l from "./module-2.js";
+function a(e) { return l.a(e); }
+function f(e) { return l.f(e); }
+function run(t, r, e) {
+    const s = l.s(e);
+    return l.k.apply(undefined, [t, ...r, e]) || s;
+}
+"#;
+    let expected = r#"
+import * as l from "./module-2.js";
+import { k } from "./module-2.js";
+function a(e) { return l.a(e); }
+function f(e) { return l.f(e); }
+function run(t, r, e) {
+    const s = l.s(e);
+    return k.apply(undefined, [t, ...r, e]) || s;
+}
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+#[test]
 fn decomposition_aliases_against_other_import_locals() {
     let target_facts = facts_for(r#"
 export function a() {}
