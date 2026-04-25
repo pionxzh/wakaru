@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignPat, BlockStmt, CatchClause, Class, Decl, DefaultDecl, Expr, Function, Ident,
-    ExportNamedSpecifier, ImportDecl, ImportNamedSpecifier, ImportSpecifier, KeyValuePatProp,
+    ArrowExpr, AssignPat, BlockStmt, CatchClause, Class, Decl, DefaultDecl, ExportNamedSpecifier,
+    Expr, Function, Ident, ImportDecl, ImportNamedSpecifier, ImportSpecifier, KeyValuePatProp,
     KeyValueProp, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectPatProp, Pat,
     Prop, PropName, Stmt, VarDeclarator,
 };
@@ -31,6 +31,151 @@ pub struct TopLevelBindingInfo {
     pub item_index: usize,
     pub exported: bool,
     pub kind: TopLevelBindingKind,
+}
+
+#[derive(Debug, Default)]
+pub struct RenameShadowIndex {
+    forbidden_names_by_binding: HashMap<BindingId, HashSet<Atom>>,
+}
+
+impl RenameShadowIndex {
+    pub fn for_bindings(module: &Module, bindings: &HashSet<BindingId>) -> Self {
+        struct ScopeFrame {
+            declared_names: HashSet<Atom>,
+            referenced_bindings: HashSet<BindingId>,
+        }
+
+        struct Builder<'a> {
+            bindings: &'a HashSet<BindingId>,
+            scope_stack: Vec<ScopeFrame>,
+            index: RenameShadowIndex,
+        }
+
+        impl Builder<'_> {
+            fn push_scope(&mut self, declared_names: HashSet<Atom>) {
+                self.scope_stack.push(ScopeFrame {
+                    declared_names,
+                    referenced_bindings: HashSet::new(),
+                });
+            }
+
+            fn pop_scope(&mut self) {
+                let Some(scope) = self.scope_stack.pop() else {
+                    return;
+                };
+
+                if scope.declared_names.is_empty() || scope.referenced_bindings.is_empty() {
+                    return;
+                }
+
+                for binding in scope.referenced_bindings {
+                    self.index
+                        .forbidden_names_by_binding
+                        .entry(binding)
+                        .or_default()
+                        .extend(scope.declared_names.iter().cloned());
+                }
+            }
+
+            fn collect_param_names(params: &[swc_core::ecma::ast::Param]) -> HashSet<Atom> {
+                let mut names = HashSet::new();
+                for param in params {
+                    collect_pat_names(&param.pat, &mut names);
+                }
+                names
+            }
+
+            fn collect_arrow_param_names(params: &[Pat]) -> HashSet<Atom> {
+                let mut names = HashSet::new();
+                for param in params {
+                    collect_pat_names(param, &mut names);
+                }
+                names
+            }
+
+            fn mark_binding_reference(&mut self, ident: &Ident) {
+                if self.scope_stack.is_empty() {
+                    return;
+                }
+
+                let binding = (ident.sym.clone(), ident.ctxt);
+                if !self.bindings.contains(&binding) {
+                    return;
+                }
+
+                for scope in &mut self.scope_stack {
+                    scope.referenced_bindings.insert(binding.clone());
+                }
+            }
+        }
+
+        impl Visit for Builder<'_> {
+            fn visit_function(&mut self, function: &Function) {
+                self.push_scope(Self::collect_param_names(&function.params));
+                function.visit_children_with(self);
+                self.pop_scope();
+            }
+
+            fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+                self.push_scope(Self::collect_arrow_param_names(&arrow.params));
+                arrow.visit_children_with(self);
+                self.pop_scope();
+            }
+
+            fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+                if let Some(scope) = self.scope_stack.last_mut() {
+                    collect_pat_names(&declarator.name, &mut scope.declared_names);
+                }
+                declarator.visit_children_with(self);
+            }
+
+            fn visit_ident(&mut self, ident: &Ident) {
+                self.mark_binding_reference(ident);
+            }
+
+            fn visit_block_stmt(&mut self, block: &BlockStmt) {
+                self.push_scope(HashSet::new());
+                block.visit_children_with(self);
+                self.pop_scope();
+            }
+
+            fn visit_catch_clause(&mut self, catch: &CatchClause) {
+                let mut declared_names = HashSet::new();
+                if let Some(param) = &catch.param {
+                    collect_pat_names(param, &mut declared_names);
+                }
+                self.push_scope(declared_names);
+                catch.visit_children_with(self);
+                self.pop_scope();
+            }
+
+            fn visit_prop_name(&mut self, _: &PropName) {}
+
+            fn visit_member_prop(&mut self, prop: &MemberProp) {
+                if let MemberProp::Computed(computed) = prop {
+                    computed.visit_children_with(self);
+                }
+            }
+        }
+
+        if bindings.is_empty() {
+            return Self::default();
+        }
+
+        let mut builder = Builder {
+            bindings,
+            scope_stack: Vec::new(),
+            index: Self::default(),
+        };
+        module.visit_with(&mut builder);
+        builder.index
+    }
+
+    pub fn rename_causes_shadowing(&self, old: &BindingId, new_name: &Atom) -> bool {
+        self.forbidden_names_by_binding
+            .get(old)
+            .is_some_and(|names| names.contains(new_name))
+    }
 }
 
 pub fn collect_module_names(module: &Module) -> HashSet<Atom> {
@@ -98,111 +243,9 @@ pub fn collect_top_level_binding_infos(module: &Module) -> HashMap<Atom, TopLeve
 }
 
 pub fn rename_causes_shadowing(module: &Module, old: &BindingId, new_name: &Atom) -> bool {
-    struct Checker<'a> {
-        old: &'a BindingId,
-        new_name: &'a Atom,
-        scope_stack: Vec<(bool, bool)>,
-        found: bool,
-    }
-
-    impl Checker<'_> {
-        fn pat_binds_new(&self, pat: &Pat) -> bool {
-            match pat {
-                Pat::Ident(id) => &id.id.sym == self.new_name,
-                Pat::Array(arr) => arr.elems.iter().flatten().any(|p| self.pat_binds_new(p)),
-                Pat::Object(obj) => obj.props.iter().any(|p| match p {
-                    ObjectPatProp::KeyValue(kv) => self.pat_binds_new(&kv.value),
-                    ObjectPatProp::Assign(assign) => &assign.key.id.sym == self.new_name,
-                    ObjectPatProp::Rest(rest) => self.pat_binds_new(&rest.arg),
-                }),
-                Pat::Assign(assign) => self.pat_binds_new(&assign.left),
-                Pat::Rest(rest) => self.pat_binds_new(&rest.arg),
-                _ => false,
-            }
-        }
-
-        fn on_exit_scope(&mut self) {
-            if let Some((declares, refs_old)) = self.scope_stack.pop() {
-                if declares && refs_old {
-                    self.found = true;
-                }
-            }
-        }
-    }
-
-    impl Visit for Checker<'_> {
-        fn visit_function(&mut self, function: &Function) {
-            let params_declare = function
-                .params
-                .iter()
-                .any(|param| self.pat_binds_new(&param.pat));
-            self.scope_stack.push((params_declare, false));
-            function.visit_children_with(self);
-            self.on_exit_scope();
-        }
-
-        fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-            let params_declare = arrow.params.iter().any(|param| self.pat_binds_new(param));
-            self.scope_stack.push((params_declare, false));
-            arrow.visit_children_with(self);
-            self.on_exit_scope();
-        }
-
-        fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-            if !self.scope_stack.is_empty() && self.pat_binds_new(&declarator.name) {
-                if let Some(top) = self.scope_stack.last_mut() {
-                    top.0 = true;
-                }
-            }
-            declarator.visit_children_with(self);
-        }
-
-        fn visit_ident(&mut self, ident: &Ident) {
-            if ident.sym == self.old.0 && ident.ctxt == self.old.1 {
-                for scope in &mut self.scope_stack {
-                    scope.1 = true;
-                }
-            }
-        }
-
-        fn visit_block_stmt(&mut self, block: &BlockStmt) {
-            // Lexical block scope: a `let`/`const` declared here can shadow
-            // references to `old` within the block without being visible to
-            // the enclosing function. Pushing a scope here also catches
-            // module-level blocks (`if (x) { const foo = 1; ab(); }`), which
-            // are otherwise invisible because no function scope wraps them.
-            self.scope_stack.push((false, false));
-            block.visit_children_with(self);
-            self.on_exit_scope();
-        }
-
-        fn visit_catch_clause(&mut self, catch: &CatchClause) {
-            let declares = catch
-                .param
-                .as_ref()
-                .is_some_and(|p| self.pat_binds_new(p));
-            self.scope_stack.push((declares, false));
-            catch.visit_children_with(self);
-            self.on_exit_scope();
-        }
-
-        fn visit_prop_name(&mut self, _: &PropName) {}
-
-        fn visit_member_prop(&mut self, prop: &MemberProp) {
-            if let MemberProp::Computed(computed) = prop {
-                computed.visit_children_with(self);
-            }
-        }
-    }
-
-    let mut checker = Checker {
-        old,
-        new_name,
-        scope_stack: Vec::new(),
-        found: false,
-    };
-    module.visit_with(&mut checker);
-    checker.found
+    let mut bindings = HashSet::new();
+    bindings.insert(old.clone());
+    RenameShadowIndex::for_bindings(module, &bindings).rename_causes_shadowing(old, new_name)
 }
 
 /// Returns true when replacing references to `old` with an identifier named

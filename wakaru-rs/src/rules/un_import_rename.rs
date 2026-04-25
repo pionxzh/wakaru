@@ -1,13 +1,11 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::ecma::ast::{
-    Module, ModuleDecl, ModuleExportName, ModuleItem, ImportSpecifier,
-};
+use swc_core::ecma::ast::{ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem};
 use swc_core::ecma::visit::VisitMut;
 
 use super::rename_utils::{
-    collect_module_names, rename_bindings_in_module, rename_causes_shadowing, BindingRename,
+    collect_module_names, rename_bindings_in_module, BindingId, BindingRename, RenameShadowIndex,
 };
 
 pub struct UnImportRename;
@@ -16,9 +14,8 @@ impl VisitMut for UnImportRename {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let mut all_names = collect_module_names(module);
 
-        // Build rename list: (local_alias_binding → target based on imported name)
-        let mut renames: Vec<BindingRename> = Vec::new();
-
+        let mut candidates: Vec<(BindingId, Atom)> = Vec::new();
+        let mut candidate_bindings = HashSet::new();
         for item in &module.body {
             let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
                 continue;
@@ -37,20 +34,30 @@ impl VisitMut for UnImportRename {
                 }
 
                 let local_id = (local, named.local.ctxt);
-                // `all_names` covers module-level collisions; `rename_causes_shadowing`
-                // catches inner-scope locals (e.g. a nested `let a` that would capture
-                // references to the renamed import).
-                let mut target = generate_unique_name(imported, &all_names);
-                while rename_causes_shadowing(module, &local_id, &target) {
-                    all_names.insert(target.clone());
-                    target = generate_unique_name(target, &all_names);
-                }
-                all_names.insert(target.clone());
-                renames.push(BindingRename {
-                    old: local_id,
-                    new: target,
-                });
+                candidate_bindings.insert(local_id.clone());
+                candidates.push((local_id, imported));
             }
+        }
+
+        let shadow_index = RenameShadowIndex::for_bindings(module, &candidate_bindings);
+
+        // Build rename list: (local_alias_binding → target based on imported name)
+        let mut renames: Vec<BindingRename> = Vec::new();
+
+        for (local_id, imported) in candidates {
+            // `all_names` covers module-level collisions; `shadow_index`
+            // catches inner-scope locals (e.g. a nested `let a` that would capture
+            // references to the renamed import).
+            let mut target = generate_unique_name(imported, &all_names);
+            while shadow_index.rename_causes_shadowing(&local_id, &target) {
+                all_names.insert(target.clone());
+                target = generate_unique_name(target, &all_names);
+            }
+            all_names.insert(target.clone());
+            renames.push(BindingRename {
+                old: local_id,
+                new: target,
+            });
         }
 
         if !renames.is_empty() {
