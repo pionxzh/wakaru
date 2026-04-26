@@ -90,10 +90,10 @@ fn function_with_arguments_converted_via_arg_rest() {
     // Arrow functions have no own `arguments`, but after ArgRest runs that is no
     // longer a blocker.
     let input = r#"
-const fn = function() { return arguments[0]; };
+export const fn = function() { return arguments[0]; };
 "#;
     let expected = r#"
-const fn = (...args) => args[0];
+export const fn = (...args) => args[0];
 "#;
     let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);

@@ -23,13 +23,13 @@ fn apply_pipeline(input: &str) -> String {
 fn removes_babel_rest_copy_loop() {
     // Typical Babel ES5 output for a rest-param function; copy var name (`i`) is reused
     let input = r#"
-function t() {
+export function t() {
     for (var o = arguments.length, i = Array(o), a = 0; a < o; a++) i[a] = arguments[a];
     return i[0] + i[1];
 }
 "#;
     let expected = r#"
-function t(...i) {
+export function t(...i) {
     return i[0] + i[1];
 }
 "#;
@@ -40,7 +40,7 @@ function t(...i) {
 fn removes_babel_rest_copy_loop_with_block_body() {
     // Babel sometimes wraps the body in braces (UnCurlyBraces will add them too)
     let input = r#"
-function t() {
+export function t() {
     for (var o = arguments.length, i = Array(o), a = 0; a < o; a++) {
         i[a] = arguments[a];
     }
@@ -48,7 +48,7 @@ function t() {
 }
 "#;
     let expected = r#"
-function t(...i) {
+export function t(...i) {
     return i.join(", ");
 }
 "#;
@@ -59,7 +59,7 @@ function t(...i) {
 fn removes_babel_rest_copy_loop_new_array_variant() {
     // Some Babel versions emit `new Array(n)` instead of `Array(n)`
     let input = r#"
-function t() {
+export function t() {
     for (var n = arguments.length, r = new Array(n), o = 0; o < n; o++) {
         r[o] = arguments[o];
     }
@@ -67,7 +67,7 @@ function t() {
 }
 "#;
     let expected = r#"
-function t(...r) {
+export function t(...r) {
     foo(r);
 }
 "#;
@@ -107,7 +107,7 @@ fn nested_function_copy_loop_removed_independently() {
     // Named function declarations are not converted to arrows, but the copy loop is
     // still removed and the rest param added correctly.
     let input = r#"
-function outer() {
+export function outer() {
     function inner() {
         for (var o = arguments.length, i = Array(o), a = 0; a < o; a++) i[a] = arguments[a];
         return i[0];
@@ -116,7 +116,7 @@ function outer() {
 }
 "#;
     let expected = r#"
-function outer() {
+export function outer() {
     function inner(...i) {
         return i[0];
     }

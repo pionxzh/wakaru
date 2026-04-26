@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render};
 #[test]
 fn removes_negated_class_call_check_iife() {
     let input = r#"
-function Foo() {
+export function Foo() {
     !((e, t) => {
         if (!(e instanceof t)) {
             throw new TypeError("Cannot call a class as a function");
@@ -14,7 +14,7 @@ function Foo() {
 }
 "#;
     let expected = r#"
-function Foo() {
+export function Foo() {
     this.x = 1;
 }
 "#;
@@ -24,7 +24,7 @@ function Foo() {
 #[test]
 fn removes_plain_class_call_check_iife() {
     let input = r#"
-function Foo() {
+export function Foo() {
     ((e, t) => {
         if (!(e instanceof t)) {
             throw new TypeError("Cannot call a class as a function");
@@ -34,7 +34,7 @@ function Foo() {
 }
 "#;
     let expected = r#"
-function Foo() {
+export function Foo() {
     this.x = 1;
 }
 "#;
@@ -44,7 +44,7 @@ function Foo() {
 #[test]
 fn removes_function_expr_class_call_check() {
     let input = r#"
-function Foo() {
+export function Foo() {
     !(function(e, t) {
         if (!(e instanceof t)) {
             throw new TypeError("Cannot call a class as a function");
@@ -54,7 +54,7 @@ function Foo() {
 }
 "#;
     let expected = r#"
-function Foo() {
+export function Foo() {
     this.x = 1;
 }
 "#;
@@ -70,13 +70,13 @@ function _classCallCheck(instance, Constructor) {
         throw new TypeError("Cannot call a class as a function");
     }
 }
-function Foo() {
+export function Foo() {
     _classCallCheck(this, Foo);
     this.x = 1;
 }
 "#;
     let expected = r#"
-function Foo() {
+export function Foo() {
     this.x = 1;
 }
 "#;
@@ -87,7 +87,7 @@ function Foo() {
 fn preserves_non_class_call_check_iife() {
     // An IIFE that doesn't match the classCallCheck pattern should be preserved
     let input = r#"
-function Foo() {
+export function Foo() {
     !((e, t) => {
         console.log(e, t);
     })(this, Foo);

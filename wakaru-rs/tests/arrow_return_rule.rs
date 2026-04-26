@@ -63,10 +63,10 @@ const noop = () => {
 #[test]
 fn pipeline_simplifies_new_arrows_created_by_arrow_function() {
     let input = r#"
-const double = function(x) { return x * 2; };
+export const double = function(x) { return x * 2; };
 "#;
     let expected = r#"
-const double = x => x * 2;
+export const double = x => x * 2;
 "#;
     assert_eq_normalized(&apply_pipeline(input), expected);
 }

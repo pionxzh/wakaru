@@ -75,6 +75,7 @@ fn detects_inlined_babel7_form() {
     // Babel 7+: logical-OR chain of sub-helper calls.
     // The module must also contain a sub-helper with Array.isArray/Array.from
     // for the OR-chain to be accepted (prevents false positives).
+    // DeadDecls removes _arrayWithoutHoles since its only caller was eliminated.
     let input = r#"
 function _arrayWithoutHoles(arr) {
     if (Array.isArray(arr)) return _arrayLikeToArray(arr);
@@ -85,11 +86,6 @@ function _toConsumableArray(arr) {
 var x = _toConsumableArray(items);
 "#;
     let expected = r#"
-function _arrayWithoutHoles(arr) {
-    if (Array.isArray(arr)) {
-        return _arrayLikeToArray(arr);
-    }
-}
 const x = [...items];
 "#;
     assert_eq_normalized(&render(input), expected);
@@ -117,6 +113,7 @@ const x = [...items];
 
 #[test]
 fn detects_var_assigned_to_consumable_array() {
+    // DeadDecls removes _arrayWithoutHoles since its only caller was eliminated.
     let input = r#"
 function _arrayWithoutHoles(arr) {
     if (Array.isArray(arr)) return _arrayLikeToArray(arr);
@@ -127,11 +124,6 @@ var _toConsumableArray = function(arr) {
 var x = _toConsumableArray(items);
 "#;
     let expected = r#"
-function _arrayWithoutHoles(arr) {
-    if (Array.isArray(arr)) {
-        return _arrayLikeToArray(arr);
-    }
-}
 const x = [...items];
 "#;
     assert_eq_normalized(&render(input), expected);

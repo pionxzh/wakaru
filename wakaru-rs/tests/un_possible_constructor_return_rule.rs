@@ -13,12 +13,12 @@ function _possibleConstructorReturn(self, call) {
     }
     return call;
 }
-function Foo() {
+export function Foo() {
     var x = _possibleConstructorReturn(this, Parent.call(this, args));
 }
 "#;
     let expected = r#"
-function Foo() {
+export function Foo() {
     const x = Parent.call(this, args);
 }
 "#;
@@ -38,13 +38,13 @@ function d(e, t) {
     }
     return t;
 }
-function Foo() {
+export function Foo() {
     var r = d(this, Parent.call(this));
     return d(r, n);
 }
 "#;
     let expected = r#"
-function Foo() {
+export function Foo() {
     const r = Parent.call(this);
     return n;
 }

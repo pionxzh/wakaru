@@ -1,6 +1,5 @@
 ---
 source: tests/webpack4_unpack.rs
-assertion_line: 108
 expression: code
 ---
 import i from "./module-3.js";
@@ -10,17 +9,6 @@ import _y from "./module-32.js";
 import _b from "./module-5.js";
 import w from "./module-20.js";
 import { bindActionCreators } from "./module-11.js";
-function r(e, t) {
-    return (r = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : (e, t)=>{
-        e.__proto__ = t;
-        return e;
-    })(e, t);
-}
-function o(e, t) {
-    e.prototype = Object.create(t.prototype);
-    e.prototype.constructor = e;
-    r(e, t);
-}
 const c = u.shape({
     trySubscribe: u.func.isRequired,
     tryUnsubscribe: u.func.isRequired,

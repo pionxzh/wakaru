@@ -62,11 +62,11 @@ fn no_inline_into_nested_function() {
     // ArrowFunction rule converts the function expression to an arrow function.
     let input = r#"
 const t = foo;
-const fn2 = function() { return t; };
+export const fn2 = function() { return t; };
 "#;
     let expected = r#"
 const t = foo;
-const fn2 = () => t;
+export const fn2 = () => t;
 "#;
     let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);
@@ -164,12 +164,12 @@ fn inline_arrow_wrapper_into_nested_function() {
     // should collapse to just `r` via the second UnIife pass.
     let input = r#"
 const o = () => r;
-function foo() {
+export function foo() {
     return o();
 }
 "#;
     let expected = r#"
-function foo() {
+export function foo() {
     return r;
 }
 "#;
@@ -183,12 +183,12 @@ fn inline_arrow_wrapper_at_all_use_sites() {
     // they are pure aliases with no semantic value (e.g. require.n wrappers).
     let input = r#"
 const o = () => r;
-function foo() { return o(); }
-function bar() { return o(); }
+export function foo() { return o(); }
+export function bar() { return o(); }
 "#;
     let expected = r#"
-function foo() { return r; }
-function bar() { return r; }
+export function foo() { return r; }
+export function bar() { return r; }
 "#;
     let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);

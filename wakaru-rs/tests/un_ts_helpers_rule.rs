@@ -6,7 +6,7 @@ use common::render;
 fn renames_awaiter_alias_and_removes_decl() {
     let input = r#"
 const V = this && this.__awaiter || ((a, b, c, d) => { return new Promise(() => {}); });
-function foo() {
+export function foo() {
     return V(this, undefined, undefined, function*() {
         const x = yield fetch("url");
         return x;

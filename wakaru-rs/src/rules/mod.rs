@@ -1,4 +1,5 @@
 mod babel_helper_utils;
+mod dead_decls;
 mod dead_imports;
 mod import_dedup;
 mod arg_rest;
@@ -73,6 +74,7 @@ use swc_core::common::Mark;
 use swc_core::ecma::ast::Module;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+pub use dead_decls::DeadDecls;
 pub use dead_imports::DeadImports;
 pub use arg_rest::ArgRest;
 pub use un_array_concat_spread::UnArrayConcatSpread;
@@ -239,6 +241,7 @@ pub fn rule_names() -> &'static [&'static str] {
         "UnIife2",
         "SmartRename",
         "DeadImports",
+        "DeadDecls",
         "UnReturn",
     ]
 }
@@ -415,6 +418,7 @@ fn apply_rules_range_impl(
     // SmartInline, SmartRename). Strips unreferenced import specifiers; keeps
     // the import as a side-effect-only declaration when all specifiers go.
     run!(DeadImports, "DeadImports");
+    run!(DeadDecls, "DeadDecls");
     // UnReturn runs last: no downstream rule needs tail `return undefined`, and earlier
     // rules (UnConditionals, SmartInline, etc.) can introduce new ones during restructuring.
     run!(UnReturn, "UnReturn");
