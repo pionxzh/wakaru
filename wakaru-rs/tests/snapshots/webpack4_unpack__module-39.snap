@@ -2,11 +2,11 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import o from "./module-3.js";
+import { Component } from "./module-50.js";
 import { compose } from "./module-11.js";
 import { withRouter } from "./module-24.js";
 import u from "./module-38.js";
-class l extends o.Component {
+class l extends Component {
     render() {
         console.log(this.props);
         return <div>{u}</div>;

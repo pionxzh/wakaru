@@ -2,7 +2,7 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import r from "./module-20.js";
+import { ForwardRef, Memo, isMemo } from "./module-43.js";
 const o = {
     childContextTypes: true,
     contextType: true,
@@ -35,19 +35,19 @@ const a = {
 };
 const u = {};
 function l(e) {
-    if (r.isMemo(e)) {
+    if (isMemo(e)) {
         return a;
     }
     return u[e.$$typeof] || o;
 }
-u[r.ForwardRef] = {
+u[ForwardRef] = {
     $$typeof: true,
     render: true,
     defaultProps: true,
     displayName: true,
     propTypes: true
 };
-u[r.Memo] = a;
+u[Memo] = a;
 export default (function e(t, n, r) {
     if (typeof n !== "string") {
         if (Object.prototype) {

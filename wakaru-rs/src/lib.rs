@@ -1,6 +1,7 @@
 pub mod driver;
 pub mod facts;
 pub mod namespace_decomposition;
+pub mod reexport_consolidation;
 pub mod rules;
 pub mod sourcemap_rename;
 pub mod unpacker;

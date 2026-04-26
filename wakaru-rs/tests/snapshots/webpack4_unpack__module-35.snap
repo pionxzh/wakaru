@@ -2,9 +2,9 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import o from "./module-3.js";
+import { Component } from "./module-50.js";
 import "./module-28.js";
-class i extends o.Component {
+class i extends Component {
     componentDidMount() {
         this.props.fetchData();
     }

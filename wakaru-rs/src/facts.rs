@@ -11,7 +11,8 @@ use std::fmt;
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    Decl, DefaultDecl, ExportSpecifier, ImportSpecifier, Module, ModuleDecl, ModuleItem,
+    Callee, Decl, DefaultDecl, Expr, ExportSpecifier, ImportSpecifier, Lit, Module, ModuleDecl,
+    ModuleItem,
 };
 
 /// How a binding was imported.
@@ -64,6 +65,9 @@ pub struct ExportFact {
 pub struct ModuleFacts {
     pub imports: Vec<ImportFact>,
     pub exports: Vec<ExportFact>,
+    /// If this module is a passthrough re-export (`export default require("./X.js")`),
+    /// this is the target module specifier. Importers can be redirected to the target.
+    pub passthrough_target: Option<Atom>,
 }
 
 /// Cross-module fact storage with normalized module key lookup.
@@ -352,7 +356,55 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
         }
     }
 
+    facts.passthrough_target = detect_passthrough(module);
     facts
+}
+
+/// Detect `export default require("./X.js")` — a module that re-exports another
+/// module's namespace as its default export. Returns the target specifier.
+fn detect_passthrough(module: &Module) -> Option<Atom> {
+    let mut require_target = None;
+    let mut has_other_exports = false;
+
+    for item in &module.body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => {
+                if require_target.is_some() {
+                    return None;
+                }
+                let Expr::Call(call) = export.expr.as_ref() else {
+                    return None;
+                };
+                let Callee::Expr(callee) = &call.callee else {
+                    return None;
+                };
+                let Expr::Ident(ident) = callee.as_ref() else {
+                    return None;
+                };
+                if ident.sym != "require" || call.args.len() != 1 || call.args[0].spread.is_some() {
+                    return None;
+                }
+                let Expr::Lit(Lit::Str(s)) = call.args[0].expr.as_ref() else {
+                    return None;
+                };
+                require_target = Some(str_to_atom(&s.value));
+            }
+            ModuleItem::ModuleDecl(
+                ModuleDecl::ExportDecl(_)
+                | ModuleDecl::ExportNamed(_)
+                | ModuleDecl::ExportDefaultDecl(_)
+                | ModuleDecl::ExportAll(_),
+            ) => {
+                has_other_exports = true;
+            }
+            _ => {}
+        }
+    }
+
+    if has_other_exports {
+        return None;
+    }
+    require_target
 }
 
 fn export_name_to_atom(name: &swc_core::ecma::ast::ModuleExportName) -> Atom {

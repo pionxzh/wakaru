@@ -2,12 +2,12 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import i from "./module-3.js";
+import { Children, Component, forwardRef } from "./module-50.js";
 import u from "./module-1.js";
 import { a as a_2 } from "./module-7.js";
 import _y from "./module-32.js";
 import _b from "./module-5.js";
-import w from "./module-20.js";
+import { isValidElementType } from "./module-43.js";
 import { bindActionCreators } from "./module-11.js";
 const c = u.shape({
     trySubscribe: u.func.isRequired,
@@ -20,11 +20,11 @@ const s = u.shape({
     dispatch: u.func.isRequired,
     getState: u.func.isRequired
 });
-i.forwardRef;
+forwardRef;
 export function createProvider(e = "store") {
     let t;
     const n = `${e}Subscription`;
-    class r extends i.Component {
+    class r extends Component {
         constructor(n, r){
             super(n, r);
             this[e] = n.store;
@@ -37,7 +37,7 @@ export function createProvider(e = "store") {
             return t;
         }
         render() {
-            return i.Children.only(this.props.children);
+            return Children.only(this.props.children);
         }
     }
     r.propTypes = {
@@ -140,7 +140,7 @@ class k {
         }
     }
 }
-const T = i.forwardRef !== undefined;
+const T = forwardRef !== undefined;
 let S = 0;
 const O = {};
 function C() {}
@@ -178,7 +178,7 @@ export function connectAdvanced(e, t = {}) {
     r[M] = c;
     const I = r;
     return function(T1) {
-        _b(w.isValidElementType(T1), `You must pass a component to the function returned by ${d}. Instead received ${JSON.stringify(T1)}`);
+        _b(isValidElementType(T1), `You must pass a component to the function returned by ${d}. Instead received ${JSON.stringify(T1)}`);
         const n = T1.displayName || T1.name || "Component";
         const r = l(n);
         const a = a_2({}, N, {
@@ -192,7 +192,7 @@ export function connectAdvanced(e, t = {}) {
             wrappedComponentName: n,
             WrappedComponent: T1
         });
-        class u extends i.Component {
+        class u extends Component {
             constructor(e, t){
                 super(e, t);
                 this.version = A;

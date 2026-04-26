@@ -1,11 +1,10 @@
 ---
 source: tests/webpack4_unpack.rs
-assertion_line: 108
 expression: code
 ---
-import r from "./module-3.js";
+import * as r from "./module-50.js";
 import o from "./module-29.js";
-import i from "./module-47.js";
+import * as i from "./module-46.js";
 function a(e) {
     let t = `https://reactjs.org/docs/error-decoder.html?invariant=${e}`;
     for(let n = 1; n < arguments.length; n++){

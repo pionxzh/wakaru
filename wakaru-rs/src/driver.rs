@@ -12,6 +12,7 @@ use rayon::prelude::*;
 
 use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
+use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
     apply_default_rules, apply_rules_between, apply_rules_range_with_observer, apply_rules_until,
     rule_names, ImportDedup, UnImportRename,
@@ -313,6 +314,7 @@ fn unpack_multi_module(
                 apply_rules_until(&mut module, unresolved_mark, "UnEsm");
 
                 // Late pass at the barrier
+                run_reexport_consolidation(&mut module, facts_ref);
                 run_namespace_decomposition(&mut module, facts_ref);
 
                 // Stage 3+

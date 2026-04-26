@@ -4,9 +4,9 @@ expression: code
 ---
 import r from "./module-4.js";
 import i from "./module-5.js";
-import u from "./module-3.js";
+import { Children, Component } from "./module-50.js";
 import c from "./module-1.js";
-export class a extends u.Component {
+export class a extends Component {
     constructor(...i){
         super(...i);
         this.state = {
@@ -37,7 +37,7 @@ export class a extends u.Component {
         const e = this;
         const props = this.props;
         const { children, history } = props;
-        i(children == null || u.Children.count(children) === 1, "A <Router> may have only one child element");
+        i(children == null || Children.count(children) === 1, "A <Router> may have only one child element");
         this.unlisten = history.listen(()=>{
             e.setState({
                 match: e.computeMatch(history.location.pathname)
@@ -53,7 +53,7 @@ export class a extends u.Component {
     render() {
         const children = this.props.children;
         if (children) {
-            return u.Children.only(children);
+            return Children.only(children);
         }
         return null;
     }
