@@ -44,7 +44,7 @@ fn compute_alive(module: &Module, candidates: &HashSet<BindingKey>) -> HashSet<B
                 let key = (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt);
                 if candidates.contains(&key) {
                     let refs = collect_refs_in_node(fn_decl, candidates, &key);
-                    edges.insert(key, refs);
+                    edges.entry(key).or_default().extend(refs);
                     continue;
                 }
             }
@@ -55,7 +55,7 @@ fn compute_alive(module: &Module, candidates: &HashSet<BindingKey>) -> HashSet<B
                         let key = (ident.sym.clone(), ident.ctxt);
                         if candidates.contains(&key) {
                             let refs = collect_refs_in_node(decl, candidates, &key);
-                            edges.insert(key, refs);
+                            edges.entry(key).or_default().extend(refs);
                             continue;
                         }
                     }
@@ -140,22 +140,32 @@ fn is_helper_init(expr: &Expr) -> bool {
 
 fn collect_removable_bindings(module: &Module) -> HashSet<BindingKey> {
     let mut bindings = HashSet::new();
+    let mut poisoned = HashSet::new();
     for item in &module.body {
         match item {
             ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
-                bindings.insert((fn_decl.ident.sym.clone(), fn_decl.ident.ctxt));
+                let key = (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt);
+                if !poisoned.contains(&key) {
+                    bindings.insert(key);
+                }
             }
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
                 for decl in &var_decl.decls {
                     let Pat::Ident(ident) = &decl.name else {
                         continue;
                     };
+                    let key = (ident.sym.clone(), ident.ctxt);
                     let is_helper = match &decl.init {
                         Some(init) => is_helper_init(init),
                         None => false,
                     };
                     if is_helper {
-                        bindings.insert((ident.sym.clone(), ident.ctxt));
+                        if !poisoned.contains(&key) {
+                            bindings.insert(key);
+                        }
+                    } else {
+                        bindings.remove(&key);
+                        poisoned.insert(key);
                     }
                 }
             }
@@ -184,6 +194,13 @@ fn strip_dead_declarators(var_decl: &mut VarDecl, dead: &HashSet<BindingKey>) {
         let Pat::Ident(ident) = &decl.name else {
             return true;
         };
+        let is_helper = match &decl.init {
+            Some(init) => is_helper_init(init),
+            None => false,
+        };
+        if !is_helper {
+            return true;
+        }
         let key = (ident.sym.clone(), ident.ctxt);
         !dead.contains(&key)
     });

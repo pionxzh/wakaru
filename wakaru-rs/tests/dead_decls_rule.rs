@@ -176,3 +176,34 @@ export const x = 2;
 "#;
     assert_eq_normalized(&render(input), expected.trim());
 }
+
+// ── Duplicate binding safety ────────────────────────────────────
+
+#[test]
+fn duplicate_binding_with_side_effect_init_is_kept() {
+    let input = r#"
+function _dead() {}
+var _dead = sideEffect();
+export const x = 2;
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("sideEffect"),
+        "side-effectful var declarator must survive: {output}"
+    );
+}
+
+#[test]
+fn duplicate_binding_preserves_deps_from_all_declarations() {
+    let input = r#"
+var a = () => b();
+function a() { return 1; }
+function b() { return 2; }
+export const x = a();
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("function b"),
+        "b must survive because a's var init calls it: {output}"
+    );
+}
