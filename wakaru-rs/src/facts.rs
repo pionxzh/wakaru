@@ -360,51 +360,37 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
     facts
 }
 
-/// Detect `export default require("./X.js")` — a module that re-exports another
-/// module's namespace as its default export. Returns the target specifier.
+/// Detect `export default require("./X.js")` — a pure passthrough module that
+/// re-exports another module's namespace as its default export. Returns the
+/// target specifier.
+///
+/// Only matches modules whose body contains nothing except the single
+/// `export default require("./X.js")`. Any other statement (side effects,
+/// imports, additional exports) disqualifies the module.
 fn detect_passthrough(module: &Module) -> Option<Atom> {
-    let mut require_target = None;
-    let mut has_other_exports = false;
-
-    for item in &module.body {
-        match item {
-            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => {
-                if require_target.is_some() {
-                    return None;
-                }
-                let Expr::Call(call) = export.expr.as_ref() else {
-                    return None;
-                };
-                let Callee::Expr(callee) = &call.callee else {
-                    return None;
-                };
-                let Expr::Ident(ident) = callee.as_ref() else {
-                    return None;
-                };
-                if ident.sym != "require" || call.args.len() != 1 || call.args[0].spread.is_some() {
-                    return None;
-                }
-                let Expr::Lit(Lit::Str(s)) = call.args[0].expr.as_ref() else {
-                    return None;
-                };
-                require_target = Some(str_to_atom(&s.value));
-            }
-            ModuleItem::ModuleDecl(
-                ModuleDecl::ExportDecl(_)
-                | ModuleDecl::ExportNamed(_)
-                | ModuleDecl::ExportDefaultDecl(_)
-                | ModuleDecl::ExportAll(_),
-            ) => {
-                has_other_exports = true;
-            }
-            _ => {}
-        }
-    }
-
-    if has_other_exports {
+    if module.body.len() != 1 {
         return None;
     }
-    require_target
+
+    let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) = &module.body[0] else {
+        return None;
+    };
+    let Expr::Call(call) = export.expr.as_ref() else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(ident) = callee.as_ref() else {
+        return None;
+    };
+    if ident.sym != "require" || call.args.len() != 1 || call.args[0].spread.is_some() {
+        return None;
+    }
+    let Expr::Lit(Lit::Str(s)) = call.args[0].expr.as_ref() else {
+        return None;
+    };
+    Some(str_to_atom(&s.value))
 }
 
 fn export_name_to_atom(name: &swc_core::ecma::ast::ModuleExportName) -> Atom {
