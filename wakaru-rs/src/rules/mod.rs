@@ -15,6 +15,7 @@ mod object_assign_spread;
 pub(crate) mod rename_utils;
 mod remove_void;
 mod simplify_sequence;
+mod un_double_negation;
 mod smart_inline;
 mod smart_rename;
 mod un_argument_spread;
@@ -89,6 +90,7 @@ pub use obj_shorthand::ObjShorthand;
 pub use object_assign_spread::ObjectAssignSpread;
 pub use remove_void::RemoveVoid;
 pub use simplify_sequence::SimplifySequence;
+pub use un_double_negation::UnDoubleNegation;
 pub use smart_inline::SmartInline;
 pub use smart_rename::SmartRename;
 pub use un_argument_spread::UnArgumentSpread;
@@ -201,6 +203,7 @@ pub fn rule_names() -> &'static [&'static str] {
         "UnTypeofStrict",
         "RemoveVoid",
         "UnminifyBooleans",
+        "UnDoubleNegation",
         "UnInfinity",
         "UnIndirectCall",
         "UnTypeof",
@@ -379,6 +382,7 @@ fn apply_rules_range_impl(
         return;
     }
     run!(UnminifyBooleans, "UnminifyBooleans");
+    run!(UnDoubleNegation, "UnDoubleNegation");
     run!(UnInfinity, "UnInfinity");
     run!(UnIndirectCall, "UnIndirectCall");
     run!(UnTypeof, "UnTypeof");
