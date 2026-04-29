@@ -178,6 +178,8 @@ fn make_optional_chain_replacing(tmp: &Expr, real_rhs: &Expr, access: &Expr) -> 
 /// Handle loose equality forms:
 /// - `obj == null ? undefined : obj.prop`  →  `obj?.prop`
 /// - `obj != null ? obj.prop : undefined`  →  `obj?.prop`
+/// - `(tmp = expr) == null ? undefined : tmp.prop`  →  `expr?.prop`
+/// - `(tmp = expr) != null ? tmp.prop : undefined`  →  `expr?.prop`
 ///
 /// `x == null` matches both `null` and `undefined`, which is exactly what `?.` does.
 fn try_loose_eq_optional_chain(expr: &Expr) -> Option<Expr> {
@@ -197,20 +199,58 @@ fn try_loose_eq_optional_chain(expr: &Expr) -> Option<Expr> {
 
     match op {
         // `x == null ? undefined : x.prop`
+        // `(tmp = expr) == null ? undefined : tmp.prop`
         BinaryOp::EqEq => {
             if !is_void_or_undefined(cons) {
                 return None;
             }
             let checked = extract_loose_null_operand(left, right)?;
-            make_optional_chain(checked, alt)
+            try_loose_chain_with_assign(checked, alt)
         }
         // `x != null ? x.prop : undefined`
+        // `(tmp = expr) != null ? tmp.prop : undefined`
         BinaryOp::NotEq => {
             if !is_void_or_undefined(alt) {
                 return None;
             }
             let checked = extract_loose_null_operand(left, right)?;
-            make_optional_chain(checked, cons)
+            try_loose_chain_with_assign(checked, cons)
+        }
+        _ => None,
+    }
+}
+
+fn try_loose_chain_with_assign(checked: Expr, access: &Expr) -> Option<Expr> {
+    if let Some((tmp_sym, real_rhs)) = extract_assign_parts(&checked) {
+        let tmp_ident_expr = find_ident_by_sym(access, &tmp_sym)?;
+        make_optional_chain_replacing(&tmp_ident_expr, real_rhs, access)
+    } else {
+        make_optional_chain(checked, access)
+    }
+}
+
+fn find_ident_by_sym(access: &Expr, sym: &swc_core::atoms::Atom) -> Option<Expr> {
+    match access {
+        Expr::Member(MemberExpr { obj, .. }) => {
+            if let Expr::Ident(id) = &**obj {
+                if id.sym == *sym {
+                    return Some(Expr::Ident(id.clone()));
+                }
+            }
+            None
+        }
+        Expr::Call(CallExpr {
+            callee: Callee::Expr(callee_expr),
+            ..
+        }) => {
+            if let Expr::Member(MemberExpr { obj, .. }) = &**callee_expr {
+                if let Expr::Ident(id) = &**obj {
+                    if id.sym == *sym {
+                        return Some(Expr::Ident(id.clone()));
+                    }
+                }
+            }
+            None
         }
         _ => None,
     }

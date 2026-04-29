@@ -142,6 +142,41 @@ fn transforms_loose_eq_undefined() {
     assert_eq_normalized(&output, expected);
 }
 
+// --- loose equality assignment form ---
+
+#[test]
+fn transforms_loose_eq_assignment_member_access() {
+    // (tmp = expr) == null ? undefined : tmp.prop  →  expr?.prop
+    let input = r#"const x = (n = e.ownerDocument) == null ? undefined : n.defaultView"#;
+    let expected = r#"const x = e.ownerDocument?.defaultView"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_loose_eq_assignment_method_call() {
+    let input = r#"const x = (t = obj.getRootNode) == null ? undefined : t.call(obj)"#;
+    let expected = r#"const x = obj.getRootNode?.call(obj)"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_loose_neq_assignment_form() {
+    let input = r#"const x = (n = e.body) != null ? n.scrollWidth : undefined"#;
+    let expected = r#"const x = e.body?.scrollWidth"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_loose_eq_assignment_with_computed_access() {
+    let input = r#"const x = (t = e[n.type]) == null ? undefined : t.duration"#;
+    let expected = r#"const x = e[n.type]?.duration"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
 // --- known-broken semantic regressions ---
 
 #[test]
