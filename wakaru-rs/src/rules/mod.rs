@@ -160,14 +160,37 @@ impl Rule for NoopRule {
 }
 
 pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
-    apply_rules_impl(module, unresolved_mark, None, None);
+    apply_default_rules_with_options(module, unresolved_mark, true);
+}
+
+pub fn apply_default_rules_with_options(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    dead_code_elimination: bool,
+) {
+    apply_rules_impl(module, unresolved_mark, None, None, dead_code_elimination);
 }
 
 /// Run the decompile pipeline, stopping immediately after `stop_after` completes.
 /// Rule names match their struct names (e.g. "SmartInline", "UnEsm").
 /// Second passes are suffixed: "UnWebpackInterop2", "UnIife2".
 pub fn apply_rules_until(module: &mut Module, unresolved_mark: Mark, stop_after: &str) {
-    apply_rules_impl(module, unresolved_mark, Some(stop_after), None);
+    apply_rules_until_with_options(module, unresolved_mark, stop_after, true);
+}
+
+pub fn apply_rules_until_with_options(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    stop_after: &str,
+    dead_code_elimination: bool,
+) {
+    apply_rules_impl(
+        module,
+        unresolved_mark,
+        Some(stop_after),
+        None,
+        dead_code_elimination,
+    );
 }
 
 /// Returns the ordered list of rule names in the pipeline.
@@ -254,21 +277,33 @@ pub fn apply_rules_between(
     start_from: &str,
     stop_after: &str,
 ) {
+    apply_rules_between_with_options(module, unresolved_mark, start_from, stop_after, true);
+}
+
+pub fn apply_rules_between_with_options(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    start_from: &str,
+    stop_after: &str,
+    dead_code_elimination: bool,
+) {
     apply_rules_range_impl(
         module,
         unresolved_mark,
         Some(start_from),
         Some(stop_after),
         None,
+        dead_code_elimination,
     );
 }
 
-pub(crate) fn apply_rules_range_with_observer(
+pub(crate) fn apply_rules_range_with_observer_with_options(
     module: &mut Module,
     unresolved_mark: Mark,
     start_from: Option<&str>,
     stop_after: Option<&str>,
     observer: &mut dyn FnMut(&'static str, &Module),
+    dead_code_elimination: bool,
 ) {
     apply_rules_range_impl(
         module,
@@ -276,6 +311,7 @@ pub(crate) fn apply_rules_range_with_observer(
         start_from,
         stop_after,
         Some(observer),
+        dead_code_elimination,
     );
 }
 
@@ -284,8 +320,16 @@ fn apply_rules_impl(
     unresolved_mark: Mark,
     stop_after: Option<&str>,
     observer: Option<&mut dyn FnMut(&'static str, &Module)>,
+    dead_code_elimination: bool,
 ) {
-    apply_rules_range_impl(module, unresolved_mark, None, stop_after, observer);
+    apply_rules_range_impl(
+        module,
+        unresolved_mark,
+        None,
+        stop_after,
+        observer,
+        dead_code_elimination,
+    );
 }
 
 fn apply_rules_range_impl(
@@ -294,6 +338,7 @@ fn apply_rules_range_impl(
     start_from: Option<&str>,
     stop_after: Option<&str>,
     mut observer: Option<&mut dyn FnMut(&'static str, &Module)>,
+    dead_code_elimination: bool,
 ) {
     let mut started = start_from.is_none();
     macro_rules! run {
@@ -414,11 +459,16 @@ fn apply_rules_range_impl(
     // Second UnIife pass: simplify any (() => expr)() patterns created by SmartInline inlining
     run!(UnIife, "UnIife2");
     run!(SmartRename, "SmartRename");
-    // DeadImports runs after all rewrites that might remove usages (JSX,
-    // SmartInline, SmartRename). Strips unreferenced import specifiers; keeps
-    // the import as a side-effect-only declaration when all specifiers go.
-    run!(DeadImports, "DeadImports");
-    run!(DeadDecls, "DeadDecls");
+    // Optional final DCE pass. Tests that focus on structural restoration can
+    // disable this to avoid coupling fixture baselines to late cleanup.
+    if dead_code_elimination {
+        // DeadImports runs after all rewrites that might remove usages (JSX,
+        // SmartInline, SmartRename). Strips unreferenced import specifiers;
+        // keeps the import as a side-effect-only declaration when all
+        // specifiers go.
+        run!(DeadImports, "DeadImports");
+        run!(DeadDecls, "DeadDecls");
+    }
     // UnReturn runs last: no downstream rule needs tail `return undefined`, and earlier
     // rules (UnConditionals, SmartInline, etc.) can introduce new ones during restructuring.
     run!(UnReturn, "UnReturn");

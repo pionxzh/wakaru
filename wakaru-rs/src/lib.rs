@@ -15,7 +15,10 @@ pub use facts::{
     collect_module_facts, ExportFact, ExportKind, ImportFact, ImportKind, ModuleFacts,
     ModuleFactsMap,
 };
-pub use rules::{apply_rules_between, apply_rules_until, rule_names};
+pub use rules::{
+    apply_default_rules_with_options, apply_rules_between, apply_rules_between_with_options,
+    apply_rules_until, apply_rules_until_with_options, rule_names,
+};
 pub use sourcemap_rename::{extract_sources, parse_sourcemap};
 pub use unpacker::{unpack_webpack4, UnpackResult, UnpackedModule};
 

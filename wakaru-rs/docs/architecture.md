@@ -59,6 +59,7 @@ Orchestrates the full pipeline.
 parse_js(source)
   → resolver(unresolved_mark, top_level_mark)
   → apply_default_rules(module, unresolved_mark)
+  → [optional: skip late DCE via DecompileOptions.dead_code_elimination = false]
   → [optional: source map rename pipeline]
   → fixer()
   → print_js(module)
@@ -105,8 +106,14 @@ Stage 6: Modernization
 
 Stage 7: Cleanup and renaming
   UnWebpackDefineGetters, UnWebpackObjectGetters, UnImportRename,
-  UnExportRename, SmartInline, UnIife (2nd pass), SmartRename, UnReturn
+  UnExportRename, SmartInline, UnIife (2nd pass), SmartRename,
+  [optional] DeadImports, [optional] DeadDecls, UnReturn
 ```
+
+`DeadImports` and `DeadDecls` are an optional late cleanup phase controlled by
+`DecompileOptions.dead_code_elimination`. They stay enabled for normal
+decompilation output, but tests can disable them to snapshot structural
+restoration separately from dead-code cleanup.
 
 #### Key design pattern: `unresolved_mark`
 

@@ -79,6 +79,7 @@ fn main() -> Result<()> {
     let options = DecompileOptions {
         filename: cli.input.to_string_lossy().to_string(),
         sourcemap_path: cli.sourcemap.map(|p| p.to_string_lossy().into_owned()),
+        ..Default::default()
     };
 
     if cli.trace_rules {

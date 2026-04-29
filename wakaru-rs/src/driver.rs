@@ -14,19 +14,34 @@ use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
-    apply_default_rules, apply_rules_between, apply_rules_range_with_observer, apply_rules_until,
-    rule_names, ImportDedup, UnImportRename,
+    apply_default_rules_with_options, apply_rules_between_with_options,
+    apply_rules_range_with_observer_with_options, apply_rules_until, rule_names, ImportDedup,
+    UnImportRename,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::unpack_bundle;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct DecompileOptions {
     pub filename: String,
     /// Path to a v3 source map file. When provided, enables:
     /// - Import deduplication (merges repeated imports of the same specifier)
     /// - Source-map-driven identifier rename (recovers original variable names)
     pub sourcemap_path: Option<String>,
+    /// Run late dead-code-elimination cleanup (`DeadImports`, `DeadDecls`).
+    /// Disable this in tests that want to snapshot structural restoration
+    /// separately from cleanup.
+    pub dead_code_elimination: bool,
+}
+
+impl Default for DecompileOptions {
+    fn default() -> Self {
+        Self {
+            filename: String::new(),
+            sourcemap_path: None,
+            dead_code_elimination: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -75,7 +90,11 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<String> {
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-        apply_default_rules(&mut module, unresolved_mark);
+        apply_default_rules_with_options(
+            &mut module,
+            unresolved_mark,
+            options.dead_code_elimination,
+        );
 
         // Source-map-enhanced passes (only when --sourcemap is supplied).
         if let Some(bytes) = &sourcemap_bytes {
@@ -149,12 +168,13 @@ pub fn trace_rules(
                 }
             };
 
-            apply_rules_range_with_observer(
+            apply_rules_range_with_observer_with_options(
                 &mut module,
                 unresolved_mark,
                 trace_options.start_from.as_deref(),
                 trace_options.stop_after.as_deref(),
                 &mut observer,
+                options.dead_code_elimination,
             );
         }
 
@@ -318,11 +338,12 @@ fn unpack_multi_module(
                 run_namespace_decomposition(&mut module, facts_ref);
 
                 // Stage 3+
-                apply_rules_between(
+                apply_rules_between_with_options(
                     &mut module,
                     unresolved_mark,
                     "UnTemplateLiteral",
                     "UnReturn",
+                    options.dead_code_elimination,
                 );
 
                 // Source-map-enhanced passes
