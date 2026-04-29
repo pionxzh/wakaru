@@ -83,6 +83,12 @@ fn is_flippable_literal_like(expr: &Expr, unresolved_mark: Mark) -> bool {
         }) => {
             matches!(&**arg, Expr::Lit(Lit::Num(_)))
         }
+        // !0 and !1 (pre-UnminifyBooleans forms of true/false)
+        Expr::Unary(UnaryExpr {
+            op: UnaryOp::Bang,
+            arg,
+            ..
+        }) => matches!(&**arg, Expr::Lit(Lit::Num(n)) if n.value == 0.0 || n.value == 1.0),
         Expr::Unary(UnaryExpr {
             op: UnaryOp::Minus,
             arg,

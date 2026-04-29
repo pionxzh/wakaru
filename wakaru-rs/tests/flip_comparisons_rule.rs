@@ -85,6 +85,24 @@ bar < 1.2;
 }
 
 #[test]
+fn flips_bang_zero_and_bang_one() {
+    let input = r#"
+!0 === foo;
+!1 === foo;
+!0 !== bar;
+!1 == baz;
+"#;
+    let expected = r#"
+foo === !0;
+foo === !1;
+bar !== !0;
+baz == !1;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn does_not_flip_shadowed_global_identifiers() {
     let input = r#"
 function test(undefined, NaN, Infinity) {
