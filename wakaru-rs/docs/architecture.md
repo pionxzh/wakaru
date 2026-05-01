@@ -59,54 +59,67 @@ Orchestrates the full pipeline.
 parse_js(source)
   → resolver(unresolved_mark, top_level_mark)
   → apply_default_rules(module, unresolved_mark)
-  → [optional: skip late DCE via DecompileOptions.dead_code_elimination = false]
   → [optional: source map rename pipeline]
   → fixer()
   → print_js(module)
 ```
 
-**`unpack(source, options)`** — bundle splitting + parallel decompilation:
+**`unpack(source, options)`** — bundle splitting + two-phase parallel decompilation
+(see "Multi-module pipeline" section below for the full two-phase design):
 ```
 unpack_bundle(source)
-  → rayon::par_iter over modules
-  → decompile(module.code, options) for each
-  → collect results
+  → Phase 1: par_iter → Stage 1+2 → collect facts → discard AST
+  → Phase 2: par_iter → Stage 1+2 → late pass → Stage 3+ → emit
 ```
+
+**`unpack_raw(source)`** — bundle splitting without the decompiler rule pipeline.
+Returns raw module code as produced by the unpacker.
+
+**`trace_rules(source, options, trace_options)`** — single-file rule tracing.
+Runs the pipeline with an observer that captures per-rule before/after snapshots.
+
+**`format_trace_events(events)`** — renders trace events as git-style unified diffs.
 
 ### Rules pipeline (`src/rules/`)
 
-~45 transformation rules, each implementing SWC's `VisitMut` trait. Applied in a fixed order by `apply_default_rules()`. Order matters — some rules depend on earlier ones having run.
+~60 transformation rules, each implementing SWC's `VisitMut` trait. Applied in a fixed order by `apply_default_rules()`. Order matters — some rules depend on earlier ones having run.
 
 #### Pipeline stages
 
 ```
 Stage 1: Syntax normalization
-  SimplifySequence, FlipComparisons, RemoveVoid, UnminifyBooleans,
-  UnInfinity, UnIndirectCall, UnTypeof, UnNumericLiteral, UnBracketNotation
+  SimplifySequence, FlipComparisons, UnTypeofStrict, RemoveVoid,
+  UnminifyBooleans, UnDoubleNegation, UnInfinity, UnIndirectCall,
+  UnTypeof, UnNumericLiteral, UnBracketNotation
 
-Stage 2: Transpiler helper unwrapping
+Stage 2: Transpiler helper unwrapping + module-system reconstruction
   UnInteropRequireDefault, UnInteropRequireWildcard, UnToConsumableArray,
-  UnObjectSpread, UnSlicedToArray
+  UnObjectSpread, UnObjectRest, UnSlicedToArray, UnDefineProperty,
+  UnClassCallCheck, UnPossibleConstructorReturn, UnTypeofPolyfill,
+  UnCurlyBraces, UnEsmoduleFlag, UnUseStrict, UnAssignmentMerging,
+  UnWebpackInterop, UnEsm
+
+  ── cross-module barrier (unpack only: fact collection + late pass) ──
 
 Stage 3: Structural restoration
-  UnTemplateLiteral, UnUseStrict, UnWhileLoop, UnCurlyBraces,
-  UnTypeConstructor, UnEsmoduleFlag, UnAssignmentMerging, UnBuiltinPrototype,
-  UnArgumentSpread, ObjectAssignSpread, UnVariableMerging,
-  UnNullishCoalescing, UnOptionalChaining
+  UnTemplateLiteral, UnWhileLoop, UnTypeConstructor, UnBuiltinPrototype,
+  UnArgumentSpread, UnArrayConcatSpread, UnSpreadArrayLiteral,
+  ObjectAssignSpread, UnVariableMerging, UnNullishCoalescing,
+  UnOptionalChaining
 
-Stage 4: Bundler artifacts
-  UnWebpackInterop, UnIife, UnConditionals, UnParameters, UnEnum
+Stage 4: Complex pattern restoration
+  UnIife, UnConditionals, UnParameters, UnEnum, UnJsx, UnEs6Class,
+  UnClassFields, UnTsHelpers, UnAsyncAwait, UnWebpackInterop (2nd pass)
 
-Stage 5: Complex pattern restoration
-  UnJsx, UnEs6Class, UnAsyncAwait, UnWebpackInterop (2nd pass), UnEsm
+Stage 5: Modernization
+  UnThenCatch, UnUndefinedInit, VarDeclToLetConst, ObjShorthand,
+  ObjMethodShorthand, UnPrototypeClass, Exponent, ArgRest,
+  UnRestArrayCopy, ArrowFunction, ArrowReturn, UnForOf
 
-Stage 6: Modernization
-  VarDeclToLetConst, ObjShorthand, ObjMethodShorthand, Exponent,
-  ArgRest, UnRestArrayCopy, ArrowFunction, ArrowReturn
-
-Stage 7: Cleanup and renaming
+Stage 6: Cleanup and renaming
   UnWebpackDefineGetters, UnWebpackObjectGetters, UnImportRename,
-  UnExportRename, SmartInline, UnIife (2nd pass), SmartRename,
+  UnExportRename, UnDestructuring, UnParameters (2nd pass),
+  SmartInline, UnIife (2nd pass), SmartRename,
   [optional] DeadImports, [optional] DeadDecls, UnReturn
 ```
 
@@ -161,62 +174,57 @@ Name recovery works by:
 
 This works even when the `names` array is empty (common in esbuild output).
 
-## Rule safety model
+## Multi-module pipeline (`driver.rs`)
 
-Rules are safe by default — they preserve program semantics. Some transformations are inherently lossy (the original toolchain discarded information). These can be offered as aggressive/unsafe options controlled by a flag:
+When unpacking bundles, the driver runs a two-phase pipeline:
 
-```rust
-// Pipeline receives the preference
-apply_default_rules(module, unresolved_mark, aggressive: bool)
+1. **Phase 1 (parallel):** Parse each module → run Stage 1+2 → extract import/export facts → discard AST
+2. **Phase 2 (parallel):** Parse each module again → run Stage 1+2 → cross-module late pass (re-export consolidation, namespace decomposition) → run Stage 3+ → emit
 
-// Individual rules check it
-module.visit_mut_with(&mut UnInteropRequireDefault { aggressive });
+The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g., converting `ns.foo` to `import { foo }`). Facts are extracted in `facts.rs` and consumed by `namespace_decomposition.rs` and `reexport_consolidation.rs`.
 
-// Safe-only rules ignore it
-module.visit_mut_with(&mut FlipComparisons);
-```
-
-Examples of safe vs aggressive:
-- **Safe**: `!0` → `true` (lossless)
-- **Safe**: `_interopRequireDefault(require("x"))` → `require("x")` (known pattern)
-- **Aggressive**: `_interopRequireWildcard(factory())` → `factory()` (drops namespace synthesis)
-- **Aggressive**: `_extends(target, source)` → `{...target, ...source}` (drops mutation semantics)
+Stage 1+2 runs twice per module — once for fact collection, once for the real pipeline. This is necessary because SWC's `SyntaxContext` must remain continuous across the entire pipeline (re-parsing creates fresh contexts that break rename rules).
 
 ## File structure
 
 ```
 src/
-  lib.rs              — public API
-  main.rs             — CLI (clap)
-  driver.rs           — decompile() and unpack() orchestration
-  sourcemap_rename.rs — source-map-driven name recovery
+  lib.rs                      — public API exports
+  main.rs                     — CLI entry point (clap)
+  driver.rs                   — decompile() and unpack() orchestration
+  facts.rs                    — post-Stage-2 cross-module fact extraction
+  sourcemap_rename.rs         — source-map-driven name recovery
+  namespace_decomposition.rs  — cross-module namespace-to-named-import rewrite
+  reexport_consolidation.rs   — cross-module re-export consolidation
   rules/
-    mod.rs            — apply_default_rules() pipeline ordering
-    babel_helper_utils.rs — shared helper detection (body shape + import path)
-    rename_utils.rs   — shared binding rename utilities
-    *.rs              — one file per transformation rule
+    mod.rs                    — apply_default_rules() pipeline ordering
+    babel_helper_utils.rs     — shared helper detection (body shape + import path)
+    rename_utils.rs           — shared binding rename utilities
+    *.rs                      — one file per transformation rule
   unpacker/
-    mod.rs            — unpack_bundle() dispatch
-    webpack4.rs       — webpack4 splitter + normalization
-    webpack5.rs       — webpack5 splitter
-    browserify.rs     — browserify splitter
-    esbuild.rs        — esbuild splitter
+    mod.rs                    — unpack_bundle() dispatch
+    webpack4.rs               — webpack4 splitter + normalization
+    webpack5.rs               — webpack5 splitter
+    browserify.rs             — browserify splitter
+    esbuild.rs                — esbuild splitter
   utils/
-    matcher.rs        — AST helper predicates
+    matcher.rs                — AST helper predicates
 
 tests/
-  common/mod.rs       — render(), normalize(), assert_eq_normalized()
-  *_rule.rs           — per-rule unit tests
-  webpack4_unpack.rs  — pipeline snapshot tests (post-rules)
-  webpack4_unpack_raw.rs — pipeline snapshot tests (pre-rules)
-  esbuild_unpack.rs   — esbuild detection tests
-  bundle_unpack.rs    — webpack5 + browserify tests
-  noop_pipeline.rs    — stability tests
-  snapshots/          — insta snapshot files
+  common/mod.rs               — test helpers (see docs/testing.md)
+  *_rule.rs                   — per-rule unit tests
+  webpack4_unpack.rs          — pipeline snapshot tests (post-rules)
+  webpack4_unpack_raw.rs      — pipeline snapshot tests (pre-rules)
+  esbuild_unpack.rs           — esbuild detection tests
+  bundle_unpack.rs            — webpack5 + browserify tests
+  noop_pipeline.rs            — stability tests
+  snapshots/                  — insta snapshot files
 
 docs/
-  architecture.md     — this file
-  helper-detection.md — transpiler helper detection design
+  architecture.md             — this file
+  helper-detection.md         — transpiler helper detection design
+  debugging.md                — rule tracing, snapshot debugging, fixture workflow
+  testing.md                  — test patterns, helpers, organization
 ```
 
 ## References

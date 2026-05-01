@@ -2,14 +2,40 @@
 
 Wakaru is a JavaScript decompiler that transforms minified/bundled code back into readable, modern ESNext. It unpacks bundles (webpack4, webpack5, esbuild, browserify), restores transpiler helpers (Babel, TypeScript), and applies ~60 rewrite rules to recover idiomatic source.
 
-Written in Rust using the SWC AST ecosystem.
+Written in Rust using the SWC AST ecosystem. The crate lives in `wakaru-rs/`.
 
 ## Understand the Project
 
-The Rust crate lives in `wakaru-rs/`. Read these first:
+Read these before contributing:
 - `wakaru-rs/docs/architecture.md` — pipeline flow, components, design patterns
+- `wakaru-rs/docs/testing.md` — test patterns, helpers, organization
 - `wakaru-rs/docs/helper-detection.md` — how transpiler helpers are detected and restored
 - `wakaru-rs/docs/debugging.md` — rule tracing, snapshot debugging, fixture workflow
+
+## Building and Running
+
+All `cargo` commands run from `wakaru-rs/`.
+
+```bash
+cargo build                                          # debug build
+cargo run -- input.js -o output.js                   # decompile single file
+cargo run -- --unpack bundle.js -o unpacked/          # unpack bundle
+cargo run -- --unpack --raw bundle.js -o raw/         # raw extraction (no rules)
+cargo run -- input.js -m input.js.map                 # with source map
+cargo run -- --trace-rules path/to/module.js          # debug: per-rule diffs
+```
+
+## Testing
+
+```bash
+cargo test                                # all tests
+cargo test --test my_rule_rule            # one test file
+cargo test --test smart_inline_rule -- inline_single_use  # one test
+INSTA_UPDATE=always cargo test            # update snapshots
+cargo insta review                        # review snapshot diffs
+```
+
+See `docs/testing.md` for test helpers, patterns, and organization.
 
 ## Developing a Rule
 
@@ -21,8 +47,6 @@ Write tests before implementation when the input→output is known:
 1. Create `tests/my_rule_rule.rs` with failing test cases
 2. Implement `src/rules/my_rule.rs` until tests pass
 3. Run pipeline tests to check for regressions
-
-When exploring an unknown AST pattern, spike first, then write tests before finalizing.
 
 For bugfixes to existing rules: add a regression test that reproduces the exact bug.
 
@@ -45,53 +69,19 @@ Rules run in a fixed order. Check `apply_default_rules()` in `src/rules/mod.rs` 
 
 ### Scope-aware identifier matching
 
-If your rule matches identifiers by name, you **must** check `SyntaxContext` to avoid matching the wrong binding. See the `unresolved_mark` guard pattern in `docs/architecture.md`.
-
-### Renaming identifiers
-
-Always use `rename_utils::BindingRenamer` (via `rename_bindings_in_module` or `rename_bindings`). Never write a custom `VisitMut` that renames by `sym` alone — it will hit inner-scope locals and parameters with the same name. `BindingRenamer` matches on `(Atom, SyntaxContext)` and correctly skips property names, member access, and handles import specifier `as` clauses.
-
-## Writing Tests
-
-Use `render(input)` for full-pipeline output:
+If your rule matches identifiers by name, you **must** check `SyntaxContext` to avoid matching the wrong binding:
 
 ```rust
-mod common;
-use common::{assert_eq_normalized, render};
-
-#[test]
-fn my_rule_test() {
-    let input = r#"void 0"#;
-    let expected = r#"undefined"#;
-    assert_eq_normalized(&render(input), expected);
+if id.ctxt.outer() != self.unresolved_mark {
+    return;
 }
 ```
 
-Don't use bare literal expression statements as test inputs (e.g. `65536;`) — `SimplifySequence` drops them as dead code. Use `const x = 65536;` instead.
+Every new visitor that matches identifiers by name must take `unresolved_mark: Mark` and gate on it. See `docs/architecture.md` for details.
 
-## Testing Workflow
+### Renaming identifiers
 
-```bash
-# Run all tests
-cargo test
-
-# Run a specific test file
-cargo test --test my_rule_rule
-
-# Update snapshots after an intentional change
-INSTA_UPDATE=always cargo test
-
-# Review snapshot diffs interactively
-cargo insta review
-```
-
-### Formatting
-
-Do not run `rustfmt` or `cargo fmt` as part of normal targeted fixes. Several existing Rust files have formatting drift, so formatting them opportunistically creates large unrelated diffs that make behavior changes harder to review.
-
-Only format Rust code when:
-- the change is a dedicated format-only commit, or
-- a small newly added/rewritten file can be formatted without pulling unrelated churn into the diff.
+Always use `rename_utils::BindingRenamer` (via `rename_bindings_in_module` or `rename_bindings`). Never write a custom `VisitMut` that renames by `sym` alone — it will hit inner-scope locals and parameters with the same name.
 
 ## Definition of Done
 
@@ -105,10 +95,18 @@ Only format Rust code when:
 3. If snapshots change, inspect the diff — confirm the output is semantically better, not just different
 4. `git status --short` — no stale `.snap.new` files or unrelated changes
 
-## Debugging Tips
+## Important Rules
 
-- **Find which rule changed a single file:** Run `cargo run -- --trace-rules path/to/module.js`. Use `--trace-all`, `--trace-from`, and `--trace-until` for narrower inspection. This is single-file only; for bundle regressions, trace an extracted raw module.
-- **Unexpected variable names:** Check for missing `unresolved_mark` guard or matching by `sym` instead of `(sym, SyntaxContext)`. Compare raw vs decompiled snapshots.
-- **Too many snapshots changed:** An early pipeline rule is cascading. Check `SimplifySequence` or `FlipComparisons` first.
-- **Rule not firing:** Check the raw snapshot — the AST shape may differ from expectations after earlier passes.
-- **`cargo test` hangs:** Likely infinite recursion. Run with `RUST_BACKTRACE=1 cargo test -- --nocapture`.
+1. **All changes must be tested** — no exceptions.
+2. **Always check `SyntaxContext`** — rules matching identifiers by name must guard on `unresolved_mark`.
+3. **Use `BindingRenamer` for renames** — never rename by `sym` alone.
+4. **Don't format opportunistically** — `cargo fmt` on existing files creates unreviewable diffs. Only format in dedicated commits.
+5. **Inspect snapshot diffs** — "different" without "better" is a regression.
+6. **Be honest about what works** — never overstate what was accomplished.
+
+## Code Review Self-Check
+
+- Before making a non-obvious choice, ask "why this and not the alternative?" Research until you can answer.
+- If neighboring code does something differently, find out _why_ before deviating — its choices are often load-bearing.
+- Don't take a bug report's suggested fix at face value; verify it's the right layer.
+- Use `render_pipeline_until()` or `--trace-rules` to verify the AST shape reaching your rule.

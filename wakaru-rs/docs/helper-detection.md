@@ -44,30 +44,32 @@ These ideas were explored (via Grok brainstorm + Codex review) and rejected:
 
 ## Architecture
 
-### Detection
+### Detection (`babel_helper_utils.rs`)
 
-A `HelperDetector` visitor scans module-level declarations (function declarations and function-assigned variables) and collects `(binding_id, HelperKind)` pairs by running each candidate through a set of shape matchers.
+The `collect_helpers()` function scans module-level declarations (function declarations and function-assigned variables) and returns a `HashMap<BindingKey, BabelHelperKind>` by running each candidate through a set of shape matchers.
 
 ```
 scan module-level declarations
   → for each function body, run shape matchers
-  → collect (binding, kind) pairs
+  → collect (binding_key, BabelHelperKind) pairs
 ```
 
 Shape matchers are plain functions: `fn(&Function) -> bool`. They check essential structural elements and ignore variable names. Writing a new matcher for a new helper is just writing a new predicate.
 
+Helper functions include `collect_helpers_of_kind()` (filter by kind), `remove_helper_declarations()` (delete the helper function), and `helpers_with_remaining_refs()` (check if a helper binding is still referenced elsewhere).
+
 ### Restoration
 
-A `HelperRestorer` visitor walks call sites of detected helpers and rewrites them according to the helper's semantics.
+Each helper kind has its own dedicated rule struct (e.g., `UnInteropRequireDefault`, `UnInteropRequireWildcard`, `UnClassCallCheck`). Each rule implements `VisitMut` and internally calls `collect_helpers()` to detect helpers, then rewrites call sites.
 
-For example, `interopRequireDefault`:
+For example, `UnInteropRequireDefault`:
 - `var _a = _interopRequireDefault(require("a"))` becomes `var _a = require("a")`
 - `_a.default` becomes `_a` (at all reference sites)
 - The helper function declaration is removed
 
 ### Where it runs in the pipeline
 
-Helper detection and restoration runs **before** the standard rule pipeline in `apply_default_rules()`. This way, subsequent rules (like `un-esm`) see clean `require()` calls without helper wrappers.
+Helper detection and restoration runs within **Stage 2** of the pipeline in `apply_default_rules()`, after Stage 1 syntax normalization. Stage 1 rules like `UnIndirectCall` and `UnBracketNotation` must run first to normalize patterns like `(0, x.default)()` and `["default"]` before helper detection can match reliably.
 
 ## Transpiler helper coverage
 
