@@ -29,3 +29,6 @@ tsconfig.tsbuildinfo
 .turbo
 
 !testcases/**/dist
+
+# Local workspace
+.claude/
