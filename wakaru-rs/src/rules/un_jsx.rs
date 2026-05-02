@@ -14,7 +14,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::Rule;
+use super::{RewriteLevel, Rule};
 
 const CLASSIC_PRAGMA: &str = "createElement";
 
@@ -32,6 +32,7 @@ struct ScopedRename {
 
 pub struct UnJsx {
     unresolved_mark: Mark,
+    level: RewriteLevel,
     pending_stmts: Vec<Vec<Stmt>>,
     used_names: Vec<HashSet<String>>,
     string_consts: Vec<HashMap<BindingId, Str>>,
@@ -39,8 +40,13 @@ pub struct UnJsx {
 
 impl UnJsx {
     pub fn new(unresolved_mark: Mark) -> Self {
+        Self::new_with_level(unresolved_mark, RewriteLevel::Standard)
+    }
+
+    pub fn new_with_level(unresolved_mark: Mark, level: RewriteLevel) -> Self {
         Self {
             unresolved_mark,
+            level,
             pending_stmts: Vec::new(),
             used_names: Vec::new(),
             string_consts: Vec::new(),
@@ -122,7 +128,7 @@ impl UnJsx {
             tag = self.to_jsx_element_name(&Expr::Lit(Lit::Str(inlined)));
         }
 
-        if tag.is_none() {
+        if tag.is_none() && self.level >= RewriteLevel::Aggressive {
             let alias = self.create_component_alias(type_expr);
             tag = Some(JSXElementName::Ident(alias));
         }

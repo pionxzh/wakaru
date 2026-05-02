@@ -1,10 +1,14 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
-use wakaru_rs::rules::UnTypeConstructor;
+use wakaru_rs::{rules::UnTypeConstructor, RewriteLevel};
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnTypeConstructor)
+    apply_with_level(input, RewriteLevel::Standard)
+}
+
+fn apply_with_level(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |_| UnTypeConstructor::new(level))
 }
 
 #[test]
@@ -20,6 +24,15 @@ Number(numStr);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_does_not_transform_unary_plus_ident_to_number_call() {
+    let input = r#"
++x;
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]

@@ -1,12 +1,17 @@
 mod common;
 
-use common::{assert_eq_normalized, render_pipeline_until};
+use common::{assert_eq_normalized, render_pipeline_until, render_pipeline_until_with_level};
+use wakaru_rs::RewriteLevel;
 
 // Stop before DeadImports (the final cleanup pass) so that synthetic inputs
 // with unused specifiers don't get stripped — these tests exercise UnEsm's
 // shape, not downstream dead-code elimination.
 fn apply(input: &str) -> String {
     render_pipeline_until(input, "SmartRename")
+}
+
+fn apply_with_level(input: &str, level: RewriteLevel) -> String {
+    render_pipeline_until_with_level(input, "SmartRename", level)
 }
 
 #[test]
@@ -16,6 +21,13 @@ fn bare_require_to_import() {
     let expected = r#"import "side-effect";"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_does_not_convert_bare_require_to_import() {
+    let input = "require('side-effect');";
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]

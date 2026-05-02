@@ -1,10 +1,14 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
-use wakaru_rs::rules::ArgRest;
+use wakaru_rs::{rules::ArgRest, RewriteLevel};
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| ArgRest)
+    apply_with_level(input, RewriteLevel::Standard)
+}
+
+fn apply_with_level(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |_| ArgRest::new(level))
 }
 
 #[test]
@@ -20,6 +24,16 @@ function foo(...args) {
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn minimal_does_not_convert_arguments_index_to_rest_args() {
+    let input = r#"
+function foo() {
+    return arguments[0] + arguments[1];
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Minimal), input);
 }
 
 #[test]

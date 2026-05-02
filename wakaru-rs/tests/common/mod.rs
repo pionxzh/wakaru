@@ -5,8 +5,9 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 use wakaru_rs::{
-    apply_rules_between, apply_rules_until, decompile, trace_rules, DecompileOptions,
+    apply_rules_between, apply_rules_until_with_level, decompile, trace_rules, DecompileOptions,
     RuleTraceEvent, RuleTraceOptions,
+    RewriteLevel,
 };
 
 #[allow(dead_code)]
@@ -62,6 +63,15 @@ where
 /// Second passes use suffixed names: "UnWebpackInterop2", "UnIife2".
 #[allow(dead_code)]
 pub fn render_pipeline_until(source: &str, stop_after_rule: &str) -> String {
+    render_pipeline_until_with_level(source, stop_after_rule, RewriteLevel::Standard)
+}
+
+#[allow(dead_code)]
+pub fn render_pipeline_until_with_level(
+    source: &str,
+    stop_after_rule: &str,
+    level: RewriteLevel,
+) -> String {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let mut module = parse_module_with_filename(source, "fixture.js", cm.clone());
@@ -70,7 +80,7 @@ pub fn render_pipeline_until(source: &str, stop_after_rule: &str) -> String {
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-        apply_rules_until(&mut module, unresolved_mark, stop_after_rule);
+        apply_rules_until_with_level(&mut module, unresolved_mark, stop_after_rule, true, level);
         module.visit_mut_with(&mut fixer(None));
 
         emit_module(&module, cm)

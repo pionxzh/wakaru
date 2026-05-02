@@ -1,7 +1,11 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
-use wakaru_rs::rules::UnJsx;
+use wakaru_rs::{rules::UnJsx, RewriteLevel};
+
+fn render_with_level(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |mark| UnJsx::new_with_level(mark, level))
+}
 
 #[test]
 fn converts_basic_create_element_to_jsx() {
@@ -21,7 +25,7 @@ function fn() {
 }
 "#;
 
-    assert_eq_normalized(&render_rule(input, UnJsx::new), expected);
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
 }
 
 #[test]
@@ -37,7 +41,7 @@ function fn() {
 }
 "#;
 
-    assert_eq_normalized(&render_rule(input, UnJsx::new), expected);
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
 }
 
 #[test]
@@ -61,11 +65,22 @@ const Foo = () => {
 };
 "#;
 
-    assert_eq_normalized(&render_rule(input, UnJsx::new), expected);
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
 }
 
 #[test]
-fn hoists_dynamic_component_tags() {
+fn standard_does_not_hoist_dynamic_component_tags() {
+    let input = r#"
+function fn() {
+  return React.createElement(r ? "a" : "div", null, "Hello");
+}
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn aggressive_hoists_dynamic_component_tags() {
     let input = r#"
 function fn() {
   return React.createElement(r ? "a" : "div", null, "Hello");
@@ -78,7 +93,7 @@ function fn() {
 }
 "#;
 
-    assert_eq_normalized(&render_rule(input, UnJsx::new), expected);
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Aggressive), expected);
 }
 
 #[test]
@@ -96,7 +111,7 @@ function fn() {
 }
 "#;
 
-    assert_eq_normalized(&render_rule(input, UnJsx::new), expected);
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
 }
 
 #[test]
@@ -110,7 +125,7 @@ function Foo() {}
 <Foo />;
 "#;
 
-    assert_eq_normalized(&render_rule(input, UnJsx::new), expected);
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
 }
 
 #[test]
@@ -126,7 +141,7 @@ FooBar.displayName = "Foo-Bar";
 var Baz = () => <div><FooBar /></div>;
 "#;
 
-    assert_eq_normalized(&render_rule(input, UnJsx::new), expected);
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
 }
 
 #[test]
@@ -136,5 +151,5 @@ var x = document.createElement("div", attrs);
 var y = window.document.createElement("div", attrs);
 "#;
 
-    assert_eq_normalized(&render_rule(input, UnJsx::new), input);
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), input);
 }

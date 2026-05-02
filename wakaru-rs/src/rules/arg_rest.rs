@@ -7,6 +7,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::RewriteLevel;
+
 /// Replaces `arguments[N]` / `arguments.length` patterns with a rest parameter
 /// `...args` and rewrites safe accesses to use `args`.
 ///
@@ -14,10 +16,27 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 /// - The function does not already have a rest parameter
 /// - All `arguments` usages are via subscript (`arguments[expr]`) or `.length`
 /// - In functions with fixed params, the accessed indices are provably in the tail
-pub struct ArgRest;
+pub struct ArgRest {
+    level: RewriteLevel,
+}
+
+impl ArgRest {
+    pub fn new(level: RewriteLevel) -> Self {
+        Self { level }
+    }
+}
+
+impl Default for ArgRest {
+    fn default() -> Self {
+        Self::new(RewriteLevel::Standard)
+    }
+}
 
 impl VisitMut for ArgRest {
     fn visit_mut_function(&mut self, func: &mut Function) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
         // Recurse first so inner functions are processed independently
         func.visit_mut_children_with(self);
 
@@ -56,6 +75,9 @@ impl VisitMut for ArgRest {
     }
 
     fn visit_mut_constructor(&mut self, ctor: &mut Constructor) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
         ctor.visit_mut_children_with(self);
 
         // Skip if already has rest params

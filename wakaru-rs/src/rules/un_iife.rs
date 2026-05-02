@@ -10,7 +10,23 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-pub struct UnIife;
+use super::RewriteLevel;
+
+pub struct UnIife {
+    level: RewriteLevel,
+}
+
+impl UnIife {
+    pub fn new(level: RewriteLevel) -> Self {
+        Self { level }
+    }
+}
+
+impl Default for UnIife {
+    fn default() -> Self {
+        Self::new(RewriteLevel::Standard)
+    }
+}
 
 impl VisitMut for UnIife {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
@@ -22,7 +38,7 @@ impl VisitMut for UnIife {
                 *expr = *inner;
                 return;
             }
-            process_iife(call_expr);
+            process_iife(call_expr, self.level);
         }
     }
 }
@@ -56,11 +72,15 @@ fn try_simplify_arrow_expr_iife(call: &CallExpr) -> Option<Box<Expr>> {
     }
 }
 
-fn process_iife(call: &mut CallExpr) {
+fn process_iife(call: &mut CallExpr, level: RewriteLevel) {
     // `arrow.call(thisArg, args...)` → `arrow(args...)`. Arrow functions ignore
     // a `.call` `thisArg` (their `this` is always lexical), so the thisArg is
     // dead weight and the resulting arrow IIFE can go through the normal path.
     try_unwrap_dot_call_on_arrow(call);
+
+    if level < RewriteLevel::Standard {
+        return;
+    }
 
     match &mut call.callee {
         Callee::Expr(callee_expr) => match callee_expr.as_mut() {

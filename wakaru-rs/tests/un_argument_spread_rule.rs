@@ -1,10 +1,14 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
-use wakaru_rs::rules::UnArgumentSpread;
+use wakaru_rs::{rules::UnArgumentSpread, RewriteLevel};
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnArgumentSpread)
+    apply_with_level(input, RewriteLevel::Standard)
+}
+
+fn apply_with_level(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |_| UnArgumentSpread::new(level))
 }
 
 #[test]
@@ -17,6 +21,15 @@ fn(...args);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_does_not_convert_apply_with_undefined_to_spread() {
+    let input = r#"
+fn.apply(undefined, args);
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]

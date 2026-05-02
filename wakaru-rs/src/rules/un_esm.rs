@@ -13,9 +13,24 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
+use super::RewriteLevel;
 use super::rename_utils::{rename_bindings, BindingRename};
 
-pub struct UnEsm;
+pub struct UnEsm {
+    level: RewriteLevel,
+}
+
+impl UnEsm {
+    pub fn new(level: RewriteLevel) -> Self {
+        Self { level }
+    }
+}
+
+impl Default for UnEsm {
+    fn default() -> Self {
+        Self::new(RewriteLevel::Standard)
+    }
+}
 
 // ============================================================
 // Classification types
@@ -107,6 +122,9 @@ impl SourceEntry {
 
 impl VisitMut for UnEsm {
     fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
         // Phase 0: split compound `var s = exports.X = expr` →
         //          `var s = expr; exports.X = s;`
         split_compound_exports(module);

@@ -1,10 +1,14 @@
 mod common;
 
 use common::{assert_eq_normalized, render_pipeline, render_rule};
-use wakaru_rs::rules::SmartInline;
+use wakaru_rs::{rules::SmartInline, RewriteLevel};
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| SmartInline)
+    apply_with_level(input, RewriteLevel::Standard)
+}
+
+fn apply_with_level(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |_| SmartInline::new(level))
 }
 
 fn apply_pipeline(input: &str) -> String {
@@ -22,6 +26,16 @@ bar(foo);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_does_not_inline_single_use_temp_var() {
+    let input = r#"
+const t = foo;
+bar(t);
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -99,6 +113,17 @@ const [a, b, c] = arr;
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_does_not_group_array_destructuring() {
+    let input = r#"
+const a = arr[0];
+const b = arr[1];
+const c = arr[2];
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -284,6 +309,19 @@ Object.defineProperty(target, key, desc);
 Object.getOwnPropertyNames(source);
 "#;
     let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_keeps_builtin_global_alias_inlining() {
+    let input = r#"
+const a = Object.defineProperty;
+a(target, key, desc);
+"#;
+    let expected = r#"
+Object.defineProperty(target, key, desc);
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
     assert_eq_normalized(&output, expected);
 }
 

@@ -9,7 +9,23 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-pub struct SmartInline;
+use super::RewriteLevel;
+
+pub struct SmartInline {
+    level: RewriteLevel,
+}
+
+impl SmartInline {
+    pub fn new(level: RewriteLevel) -> Self {
+        Self { level }
+    }
+}
+
+impl Default for SmartInline {
+    fn default() -> Self {
+        Self::new(RewriteLevel::Standard)
+    }
+}
 
 impl VisitMut for SmartInline {
     fn visit_mut_module(&mut self, module: &mut Module) {
@@ -35,7 +51,7 @@ impl VisitMut for SmartInline {
             })
             .collect();
 
-        let new_stmts = process_stmts(stmts);
+        let new_stmts = process_stmts(stmts, self.level);
 
         // Rebuild module body
         let mut new_body = Vec::new();
@@ -63,7 +79,7 @@ impl VisitMut for SmartInline {
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         let taken = std::mem::take(stmts);
-        *stmts = process_stmts(taken);
+        *stmts = process_stmts(taken, self.level);
         stmts.visit_mut_children_with(self);
     }
 }
@@ -72,9 +88,12 @@ impl VisitMut for SmartInline {
 // Main processing pipeline per statement list
 // ============================================================
 
-fn process_stmts(stmts: Vec<Stmt>) -> Vec<Stmt> {
+fn process_stmts(stmts: Vec<Stmt>, level: RewriteLevel) -> Vec<Stmt> {
     // Pass 0: inline builtin global aliases (const x = Math.floor → replace x with Math.floor)
     let stmts = inline_builtin_aliases_stmts(stmts);
+    if level < RewriteLevel::Standard {
+        return stmts;
+    }
     // Pass 1: inline single-use const declarations (temp vars)
     let stmts = inline_temp_vars(stmts);
     // Pass 2: group consecutive property / array accesses into destructuring

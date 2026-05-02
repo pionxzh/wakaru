@@ -5,10 +5,29 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-pub struct UnTypeConstructor;
+use super::RewriteLevel;
+
+pub struct UnTypeConstructor {
+    level: RewriteLevel,
+}
+
+impl UnTypeConstructor {
+    pub fn new(level: RewriteLevel) -> Self {
+        Self { level }
+    }
+}
+
+impl Default for UnTypeConstructor {
+    fn default() -> Self {
+        Self::new(RewriteLevel::Standard)
+    }
+}
 
 impl VisitMut for UnTypeConstructor {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
         expr.visit_mut_children_with(self);
 
         match expr {

@@ -30,7 +30,7 @@ impl VisitMut for UnOptionalChaining {
 
 fn try_optional_chaining(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
     // Pattern: `(obj === null || obj === void 0) ? void 0 : obj.access`
-    if let Some(result) = try_ternary_optional_chain(expr) {
+    if let Some(result) = try_ternary_optional_chain(expr, level) {
         return Some(result);
     }
 
@@ -44,7 +44,7 @@ fn try_optional_chaining(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
 
 /// Handle: `(obj === null || obj === void 0) ? void 0 : obj.access`  →  `obj?.access`
 /// Also handles assignment form: `(tmp = expr) === null || tmp === void 0 ? void 0 : tmp.access`
-fn try_ternary_optional_chain(expr: &Expr) -> Option<Expr> {
+fn try_ternary_optional_chain(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
     let Expr::Cond(CondExpr {
         test, cons, alt, ..
     }) = expr
@@ -64,6 +64,9 @@ fn try_ternary_optional_chain(expr: &Expr) -> Option<Expr> {
     } = extract_null_check(test)?;
 
     if let Some(real_rhs) = real_value {
+        if level < RewriteLevel::Aggressive {
+            return None;
+        }
         // Assignment form: `checked` is `tmp`, `real_rhs` is the original expr
         // alt must use `tmp` as the object
         let chain = make_optional_chain_replacing(&checked, &real_rhs, alt)?;

@@ -1,14 +1,18 @@
 mod common;
 
 use common::{assert_eq_normalized, render_pipeline, render_rule};
-use wakaru_rs::rules::UnIife;
+use wakaru_rs::{rules::UnIife, RewriteLevel};
 
 fn apply(input: &str) -> String {
     render_pipeline(input)
 }
 
 fn apply_rule(input: &str) -> String {
-    render_rule(input, |_| UnIife)
+    apply_rule_with_level(input, RewriteLevel::Standard)
+}
+
+fn apply_rule_with_level(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |_| UnIife::new(level))
 }
 
 #[test]
@@ -99,6 +103,17 @@ fn iife_param_with_longer_name_not_touched() {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_does_not_rewrite_iife_params_or_literal_args() {
+    let input = r#"
+((i, s, o) => {
+  return s.createElement(o);
+})(window, document, 'script');
+"#;
+    let output = apply_rule_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -318,6 +333,14 @@ fn iife_dot_call_on_arrow_strips_this_arg() {
     let output = apply_rule(input);
     assert!(!output.contains(".call"), "expected .call stripped, got: {output}");
     assert_eq_normalized(&output, r#"((a, b) => { f(a, b); })(x, y);"#);
+}
+
+#[test]
+fn minimal_still_strips_dot_call_on_arrow() {
+    let input = r#"((a) => { f(a); }).call(this, x);"#;
+    let output = apply_rule_with_level(input, RewriteLevel::Minimal);
+    assert!(!output.contains(".call"), "expected .call stripped, got: {output}");
+    assert_eq_normalized(&output, r#"((a) => { f(a); })(x);"#);
 }
 
 #[test]

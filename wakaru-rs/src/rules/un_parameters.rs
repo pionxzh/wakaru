@@ -7,37 +7,57 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-pub struct UnParameters;
+use super::RewriteLevel;
+
+pub struct UnParameters {
+    level: RewriteLevel,
+}
+
+impl UnParameters {
+    pub fn new(level: RewriteLevel) -> Self {
+        Self { level }
+    }
+}
+
+impl Default for UnParameters {
+    fn default() -> Self {
+        Self::new(RewriteLevel::Standard)
+    }
+}
 
 impl VisitMut for UnParameters {
     fn visit_mut_function(&mut self, func: &mut Function) {
         func.visit_mut_children_with(self);
         if let Some(body) = &mut func.body {
-            process_function_params(&mut func.params, body);
+            process_function_params(&mut func.params, body, self.level);
         }
     }
 
     fn visit_mut_arrow_expr(&mut self, expr: &mut ArrowExpr) {
         expr.visit_mut_children_with(self);
         if let BlockStmtOrExpr::BlockStmt(body) = &mut *expr.body {
-            process_arrow_params(&mut expr.params, body);
+            process_arrow_params(&mut expr.params, body, self.level);
         }
     }
 }
 
 /// Process Pattern A (TypeScript/Babel simple form) and Pattern B (arguments-based)
 /// for regular functions with Vec<Param>.
-fn process_function_params(params: &mut Vec<Param>, body: &mut BlockStmt) {
+fn process_function_params(params: &mut Vec<Param>, body: &mut BlockStmt, level: RewriteLevel) {
     process_pattern_a_params(params, body);
-    process_pattern_b_params(params, body);
-    process_pattern_c_params(params, body);
-    rewrite_inline_arguments_defaults(params, body);
+    if level >= RewriteLevel::Standard {
+        process_pattern_c_params(params, body);
+        process_pattern_b_params(params, body);
+        rewrite_inline_arguments_defaults(params, body);
+    }
 }
 
 /// Process Pattern A for arrow functions with Vec<Pat>.
-fn process_arrow_params(params: &mut Vec<Pat>, body: &mut BlockStmt) {
+fn process_arrow_params(params: &mut Vec<Pat>, body: &mut BlockStmt, level: RewriteLevel) {
     process_pattern_a_arrow_params(params, body);
-    process_pattern_c_arrow_params(params, body);
+    if level >= RewriteLevel::Standard {
+        process_pattern_c_arrow_params(params, body);
+    }
 }
 
 // ============================================================

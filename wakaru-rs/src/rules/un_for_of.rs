@@ -6,6 +6,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::RewriteLevel;
+
 /// Convert TypeScript-style downlevel `for` loops back to `for...of`:
 ///
 /// ```js
@@ -18,10 +20,27 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 ///     // body...
 /// }
 /// ```
-pub struct UnForOf;
+pub struct UnForOf {
+    level: RewriteLevel,
+}
+
+impl UnForOf {
+    pub fn new(level: RewriteLevel) -> Self {
+        Self { level }
+    }
+}
+
+impl Default for UnForOf {
+    fn default() -> Self {
+        Self::new(RewriteLevel::Standard)
+    }
+}
 
 impl VisitMut for UnForOf {
     fn visit_mut_stmt(&mut self, stmt: &mut Stmt) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
         stmt.visit_mut_children_with(self);
 
         if let Some(for_of) = try_convert_for_of(stmt) {

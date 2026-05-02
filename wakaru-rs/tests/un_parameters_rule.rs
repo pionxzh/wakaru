@@ -1,10 +1,14 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
-use wakaru_rs::rules::UnParameters;
+use wakaru_rs::{rules::UnParameters, RewriteLevel};
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnParameters)
+    apply_with_level(input, RewriteLevel::Standard)
+}
+
+fn apply_with_level(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |_| UnParameters::new(level))
 }
 
 // --- void 0 / undefined guard patterns ---
@@ -186,6 +190,17 @@ function foo(a, b = true) {
 }
 
 #[test]
+fn minimal_does_not_recover_arguments_boolean_presence_default() {
+    let input = r#"
+function foo(a) {
+  var b = !(arguments.length > 1 && arguments[1] !== undefined) || arguments[1];
+  return b;
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Minimal), input);
+}
+
+#[test]
 fn arguments_inline_default_expression_becomes_param_default() {
     let input = r#"
 function foo(a, b) {
@@ -198,6 +213,16 @@ function foo(a, b, _param_2 = null) {
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn minimal_does_not_recover_inline_arguments_default_expression() {
+    let input = r#"
+function foo(a, b) {
+  return bar(a, b, arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null);
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Minimal), input);
 }
 
 #[test]
@@ -234,6 +259,17 @@ function foo(options = {}) {
 }
 
 #[test]
+fn minimal_does_not_recover_undefined_object_alias_default() {
+    let input = r#"
+function foo(options) {
+  const opts = options === undefined ? {} : options;
+  return opts.name;
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Minimal), input);
+}
+
+#[test]
 fn undefined_object_destructuring_keeps_body_defaults() {
     let input = r#"
 function foo(options) {
@@ -267,6 +303,17 @@ const foo = (options = {}) => {
 };
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn minimal_does_not_recover_undefined_object_alias_default_in_arrow() {
+    let input = r#"
+const foo = (options) => {
+  const opts = options === undefined ? {} : options;
+  return opts.name;
+};
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Minimal), input);
 }
 
 #[test]

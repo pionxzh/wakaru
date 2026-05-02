@@ -36,10 +36,17 @@ fn transforms_method_call_with_args() {
 }
 
 #[test]
-fn transforms_temp_variable_assignment_form() {
+fn standard_does_not_transform_strict_temp_variable_assignment_form() {
+    let input = r#"(_a = a) === null || _a === void 0 ? void 0 : _a.b"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn aggressive_transforms_strict_temp_variable_assignment_form() {
     let input = r#"(_a = a) === null || _a === void 0 ? void 0 : _a.b"#;
     let expected = r#"a?.b"#;
-    let output = apply(input);
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
 }
 

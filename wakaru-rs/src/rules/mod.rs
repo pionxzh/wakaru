@@ -485,14 +485,14 @@ fn apply_rules_range_impl(
     run!(UnUseStrict, "UnUseStrict");
     run!(UnAssignmentMerging, "UnAssignmentMerging");
     run!(UnWebpackInterop, "UnWebpackInterop");
-    run!(UnEsm, "UnEsm");
+    run!(UnEsm::new(rewrite_level), "UnEsm");
 
     // Stage 3: Structural restoration
     run!(UnTemplateLiteral, "UnTemplateLiteral");
     run!(UnWhileLoop, "UnWhileLoop");
-    run!(UnTypeConstructor, "UnTypeConstructor");
+    run!(UnTypeConstructor::new(rewrite_level), "UnTypeConstructor");
     run!(UnBuiltinPrototype, "UnBuiltinPrototype");
-    run!(UnArgumentSpread, "UnArgumentSpread");
+    run!(UnArgumentSpread::new(rewrite_level), "UnArgumentSpread");
     run!(UnArrayConcatSpread, "UnArrayConcatSpread");
     run!(UnSpreadArrayLiteral, "UnSpreadArrayLiteral");
     run!(ObjectAssignSpread::new(unresolved_mark), "ObjectAssignSpread");
@@ -501,11 +501,11 @@ fn apply_rules_range_impl(
     run!(UnOptionalChaining::new(rewrite_level), "UnOptionalChaining");
 
     // Stage 4: Complex pattern restoration
-    run!(UnIife, "UnIife");
+    run!(UnIife::new(rewrite_level), "UnIife");
     run!(UnConditionals, "UnConditionals");
-    run!(UnParameters, "UnParameters");
+    run!(UnParameters::new(rewrite_level), "UnParameters");
     run!(UnEnum, "UnEnum");
-    run!(UnJsx::new(unresolved_mark), "UnJsx");
+    run!(UnJsx::new_with_level(unresolved_mark, rewrite_level), "UnJsx");
     run!(UnEs6Class, "UnEs6Class");
     run!(UnClassFields, "UnClassFields");
     run!(UnTsHelpers, "UnTsHelpers");
@@ -521,11 +521,11 @@ fn apply_rules_range_impl(
     run!(ObjMethodShorthand, "ObjMethodShorthand");
     run!(UnPrototypeClass, "UnPrototypeClass");
     run!(Exponent, "Exponent");
-    run!(ArgRest, "ArgRest");
+    run!(ArgRest::new(rewrite_level), "ArgRest");
     run!(UnRestArrayCopy, "UnRestArrayCopy");
     run!(ArrowFunction, "ArrowFunction");
     run!(ArrowReturn, "ArrowReturn");
-    run!(UnForOf, "UnForOf");
+    run!(UnForOf::new(rewrite_level), "UnForOf");
 
     // Stage 7: Cleanup and renaming
     run!(UnWebpackDefineGetters::new(unresolved_mark), "UnWebpackDefineGetters");
@@ -534,10 +534,10 @@ fn apply_rules_range_impl(
     run!(UnExportRename, "UnExportRename");
     run!(UnDestructuring, "UnDestructuring");
     // UnDestructuring can expose `param === undefined ? {} : param` initializers.
-    run!(UnParameters, "UnParameters2");
-    run!(SmartInline, "SmartInline");
+    run!(UnParameters::new(rewrite_level), "UnParameters2");
+    run!(SmartInline::new(rewrite_level), "SmartInline");
     // Second UnIife pass: simplify any (() => expr)() patterns created by SmartInline inlining
-    run!(UnIife, "UnIife2");
+    run!(UnIife::new(rewrite_level), "UnIife2");
     run!(SmartRename, "SmartRename");
     // Optional final DCE pass. Tests that focus on structural restoration can
     // disable this to avoid coupling fixture baselines to late cleanup.

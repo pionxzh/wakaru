@@ -18,15 +18,26 @@ default.
 User-facing configuration is controlled separately by `RewriteLevel` /
 `DecompileOptions.level`:
 
-- `minimal` — semantics-preserving rewrites only
-- `standard` — default output; includes established heuristics already considered part
-  of normal wakaru recovery
-- `aggressive` — enables additional intent-recovery patterns that are plausible for
-  generated code but not guaranteed semantics-preserving
+- `minimal` — prefer direct, local, high-confidence rewrites and avoid recovery
+  that depends on assuming generated/transpiled source
+- `standard` — default output; recover common generated-source patterns when the
+  evidence is strong and local, even if the rewrite is not a perfect edge-case
+  semantics match
+- `aggressive` — enable speculative or compiler-intent-heavy recovery when the
+  pattern is promising but the proof is weaker
+
+These levels are a rewrite policy, not a formal semantics guarantee.
 
 Mixed rules may contain subpatterns that belong to different user-facing levels. For
 those rules, level gating happens inside the rule rather than by enabling/disabling
 the whole rule.
+
+After the initial rollout, the remaining whole-rule heuristic defaults are:
+
+- `minimal`: `UnConditionals`, `SmartRename`
+- `standard`: `UnIndirectCall`, `UnObjectRest`, `UnTypeConstructor`, `UnEnum`,
+  `UnEs6Class`, `UnClassFields`, `UnAsyncAwait`, `UnEsm`, `UnPrototypeClass`,
+  `ArgRest`, `UnForOf`
 
 ---
 

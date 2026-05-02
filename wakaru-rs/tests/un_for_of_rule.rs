@@ -1,12 +1,23 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use common::{assert_eq_normalized, render, render_rule};
+use wakaru_rs::{rules::UnForOf, RewriteLevel};
+
+fn apply_with_level(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |_| UnForOf::new(level))
+}
 
 #[test]
 fn basic_for_to_for_of() {
     let input = r#"for (let i = 0, arr = items; i < arr.length; i++) { const x = arr[i]; console.log(x); }"#;
     let expected = r#"for (const x of items) { console.log(x); }"#;
     assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn minimal_does_not_convert_basic_for_to_for_of() {
+    let input = r#"for (let i = 0, arr = items; i < arr.length; i++) { const x = arr[i]; console.log(x); }"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Minimal), input);
 }
 
 #[test]

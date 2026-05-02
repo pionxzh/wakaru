@@ -17,7 +17,8 @@ pub use facts::{
 };
 pub use rules::{
     apply_default_rules_with_options, apply_rules_between, apply_rules_between_with_options,
-    apply_rules_until, apply_rules_until_with_options, rule_names, RewriteLevel,
+    apply_rules_until, apply_rules_until_with_level, apply_rules_until_with_options, rule_names,
+    RewriteLevel,
 };
 pub use sourcemap_rename::{extract_sources, parse_sourcemap};
 pub use unpacker::{unpack_webpack4, UnpackResult, UnpackedModule};

@@ -4,11 +4,31 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-pub struct UnArgumentSpread;
+use super::RewriteLevel;
+
+pub struct UnArgumentSpread {
+    level: RewriteLevel,
+}
+
+impl UnArgumentSpread {
+    pub fn new(level: RewriteLevel) -> Self {
+        Self { level }
+    }
+}
+
+impl Default for UnArgumentSpread {
+    fn default() -> Self {
+        Self::new(RewriteLevel::Standard)
+    }
+}
 
 impl VisitMut for UnArgumentSpread {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
+
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
 
         let taken = match expr {
             Expr::Call(_) => {
