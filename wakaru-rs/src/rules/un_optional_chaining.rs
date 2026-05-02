@@ -1,7 +1,7 @@
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, CallExpr, Callee,
-    CondExpr, Expr, Lit, MemberExpr, OptCall, OptChainBase, OptChainExpr, SimpleAssignTarget,
+    AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, CondExpr, Expr, Lit, MemberExpr,
+    OptCall, OptChainBase, OptChainExpr, SimpleAssignTarget,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -34,8 +34,7 @@ fn try_optional_chaining(expr: &Expr) -> Option<Expr> {
 }
 
 /// Handle: `(obj === null || obj === void 0) ? void 0 : obj.access`  →  `obj?.access`
-/// Also handles assignment form:
-/// `(tmp = expr) === null || tmp === void 0 ? void 0 : tmp.access`  →  `(tmp = expr)?.access`
+/// Also handles assignment form: `(tmp = expr) === null || tmp === void 0 ? void 0 : tmp.access`
 fn try_ternary_optional_chain(expr: &Expr) -> Option<Expr> {
     let Expr::Cond(CondExpr {
         test, cons, alt, ..
@@ -56,8 +55,9 @@ fn try_ternary_optional_chain(expr: &Expr) -> Option<Expr> {
     } = extract_null_check(test)?;
 
     if let Some(real_rhs) = real_value {
-        // Assignment form: preserve the assignment because `tmp` can be observed later.
-        let chain = make_optional_chain_from_assign(&checked, &real_rhs, alt)?;
+        // Assignment form: `checked` is `tmp`, `real_rhs` is the original expr
+        // alt must use `tmp` as the object
+        let chain = make_optional_chain_replacing(&checked, &real_rhs, alt)?;
         return Some(chain);
     }
 
@@ -67,16 +67,9 @@ fn try_ternary_optional_chain(expr: &Expr) -> Option<Expr> {
 
 /// Build `base?.prop` or `base?.method(...)` where `access` uses `base` as its object.
 fn make_optional_chain(base: Expr, access: &Expr) -> Option<Expr> {
-    let expected_obj = base.clone();
-    make_optional_chain_matching(base, &expected_obj, access)
-}
-
-/// Build `base?.prop` or `base?.method(...)` where `access` uses `expected_obj` as its object.
-fn make_optional_chain_matching(base: Expr, expected_obj: &Expr, access: &Expr) -> Option<Expr> {
     match access {
-        Expr::Member(MemberExpr { obj, prop, .. })
-            if exprs_structurally_equal(obj, expected_obj) =>
-        {
+        // x.prop → x?.prop
+        Expr::Member(MemberExpr { obj, prop, .. }) if exprs_structurally_equal(obj, &base) => {
             Some(Expr::OptChain(OptChainExpr {
                 span: DUMMY_SP,
                 optional: true,
@@ -97,7 +90,7 @@ fn make_optional_chain_matching(base: Expr, expected_obj: &Expr, access: &Expr) 
             ctxt,
         }) => {
             if let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr {
-                if exprs_structurally_equal(obj, expected_obj) {
+                if exprs_structurally_equal(obj, &base) {
                     let opt_member = Expr::OptChain(OptChainExpr {
                         span: DUMMY_SP,
                         optional: true,
@@ -127,17 +120,64 @@ fn make_optional_chain_matching(base: Expr, expected_obj: &Expr, access: &Expr) 
     }
 }
 
-/// Build an optional chain for the assignment temp-var case while preserving the assignment.
-fn make_optional_chain_from_assign(tmp: &Expr, real_rhs: &Expr, access: &Expr) -> Option<Expr> {
-    let assign_expr = build_assign_expr(tmp, real_rhs)?;
-    make_optional_chain_matching(assign_expr, tmp, access)
+/// Build an optional chain for the assignment temp-var case.
+/// `tmp` is the temp variable expr, `real_rhs` is what it was assigned from.
+/// `access` should use `tmp` as its object; we replace `tmp` with `real_rhs` in the output.
+fn make_optional_chain_replacing(tmp: &Expr, real_rhs: &Expr, access: &Expr) -> Option<Expr> {
+    match access {
+        Expr::Member(MemberExpr { obj, prop, .. }) if exprs_structurally_equal(obj, tmp) => {
+            Some(Expr::OptChain(OptChainExpr {
+                span: DUMMY_SP,
+                optional: true,
+                base: Box::new(OptChainBase::Member(MemberExpr {
+                    span: DUMMY_SP,
+                    obj: Box::new(real_rhs.clone()),
+                    prop: prop.clone(),
+                })),
+            }))
+        }
+
+        Expr::Call(CallExpr {
+            callee: Callee::Expr(callee_expr),
+            args,
+            type_args,
+            span,
+            ctxt,
+        }) => {
+            if let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr {
+                if exprs_structurally_equal(obj, tmp) {
+                    let opt_member = Expr::OptChain(OptChainExpr {
+                        span: DUMMY_SP,
+                        optional: true,
+                        base: Box::new(OptChainBase::Member(MemberExpr {
+                            span: DUMMY_SP,
+                            obj: Box::new(real_rhs.clone()),
+                            prop: prop.clone(),
+                        })),
+                    });
+                    return Some(Expr::OptChain(OptChainExpr {
+                        span: DUMMY_SP,
+                        optional: false,
+                        base: Box::new(OptChainBase::Call(OptCall {
+                            span: *span,
+                            ctxt: *ctxt,
+                            callee: Box::new(opt_member),
+                            args: args.clone(),
+                            type_args: type_args.clone(),
+                        })),
+                    }));
+                }
+            }
+            None
+        }
+
+        _ => None,
+    }
 }
 
 /// Handle loose equality forms:
 /// - `obj == null ? undefined : obj.prop`  →  `obj?.prop`
 /// - `obj != null ? obj.prop : undefined`  →  `obj?.prop`
-/// - `(tmp = expr) == null ? undefined : tmp.prop`  →  `(tmp = expr)?.prop`
-/// - `(tmp = expr) != null ? tmp.prop : undefined`  →  `(tmp = expr)?.prop`
 ///
 /// `x == null` matches both `null` and `undefined`, which is exactly what `?.` does.
 fn try_loose_eq_optional_chain(expr: &Expr) -> Option<Expr> {
@@ -163,52 +203,15 @@ fn try_loose_eq_optional_chain(expr: &Expr) -> Option<Expr> {
                 return None;
             }
             let checked = extract_loose_null_operand(left, right)?;
-            try_loose_chain_with_assign(checked, alt)
+            make_optional_chain(checked, alt)
         }
         // `x != null ? x.prop : undefined`
-        // `(tmp = expr) != null ? tmp.prop : undefined`
         BinaryOp::NotEq => {
             if !is_void_or_undefined(alt) {
                 return None;
             }
             let checked = extract_loose_null_operand(left, right)?;
-            try_loose_chain_with_assign(checked, cons)
-        }
-        _ => None,
-    }
-}
-
-fn try_loose_chain_with_assign(checked: Expr, access: &Expr) -> Option<Expr> {
-    if let Some((tmp_sym, real_rhs)) = extract_assign_parts(&checked) {
-        let tmp_ident_expr = find_ident_by_sym(access, &tmp_sym)?;
-        make_optional_chain_from_assign(&tmp_ident_expr, real_rhs, access)
-    } else {
-        make_optional_chain(checked, access)
-    }
-}
-
-fn find_ident_by_sym(access: &Expr, sym: &swc_core::atoms::Atom) -> Option<Expr> {
-    match access {
-        Expr::Member(MemberExpr { obj, .. }) => {
-            if let Expr::Ident(id) = &**obj {
-                if id.sym == *sym {
-                    return Some(Expr::Ident(id.clone()));
-                }
-            }
-            None
-        }
-        Expr::Call(CallExpr {
-            callee: Callee::Expr(callee_expr),
-            ..
-        }) => {
-            if let Expr::Member(MemberExpr { obj, .. }) = &**callee_expr {
-                if let Expr::Ident(id) = &**obj {
-                    if id.sym == *sym {
-                        return Some(Expr::Ident(id.clone()));
-                    }
-                }
-            }
-            None
+            make_optional_chain(checked, cons)
         }
         _ => None,
     }
@@ -320,22 +323,6 @@ fn strip_parens(expr: &Expr) -> &Expr {
         Expr::Paren(p) => strip_parens(&p.expr),
         _ => expr,
     }
-}
-
-fn build_assign_expr(tmp: &Expr, real_rhs: &Expr) -> Option<Expr> {
-    let Expr::Ident(id) = tmp else {
-        return None;
-    };
-
-    Some(Expr::Assign(AssignExpr {
-        span: DUMMY_SP,
-        op: AssignOp::Assign,
-        left: AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
-            id: id.clone(),
-            type_ann: None,
-        })),
-        right: Box::new(real_rhs.clone()),
-    }))
 }
 
 fn extract_assign_parts(expr: &Expr) -> Option<(swc_core::atoms::Atom, &Box<Expr>)> {

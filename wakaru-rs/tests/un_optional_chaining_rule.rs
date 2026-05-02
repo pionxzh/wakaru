@@ -34,7 +34,7 @@ fn transforms_method_call_with_args() {
 #[test]
 fn transforms_temp_variable_assignment_form() {
     let input = r#"(_a = a) === null || _a === void 0 ? void 0 : _a.b"#;
-    let expected = r#"(_a = a)?.b"#;
+    let expected = r#"a?.b"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
@@ -145,36 +145,31 @@ fn transforms_loose_eq_undefined() {
 // --- loose equality assignment form ---
 
 #[test]
-fn transforms_loose_eq_assignment_member_access() {
-    // (tmp = expr) == null ? undefined : tmp.prop  →  (tmp = expr)?.prop
+fn does_not_transform_loose_eq_assignment_member_access() {
     let input = r#"const x = (n = e.ownerDocument) == null ? undefined : n.defaultView"#;
-    let expected = r#"const x = (n = e.ownerDocument)?.defaultView"#;
     let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
-fn transforms_loose_eq_assignment_method_call() {
+fn does_not_transform_loose_eq_assignment_method_call() {
     let input = r#"const x = (t = obj.getRootNode) == null ? undefined : t.call(obj)"#;
-    let expected = r#"const x = (t = obj.getRootNode)?.call(obj)"#;
     let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
-fn transforms_loose_neq_assignment_form() {
+fn does_not_transform_loose_neq_assignment_form() {
     let input = r#"const x = (n = e.body) != null ? n.scrollWidth : undefined"#;
-    let expected = r#"const x = (n = e.body)?.scrollWidth"#;
     let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
-fn transforms_loose_eq_assignment_with_computed_access() {
+fn does_not_transform_loose_eq_assignment_with_computed_access() {
     let input = r#"const x = (t = e[n.type]) == null ? undefined : t.duration"#;
-    let expected = r#"const x = (t = e[n.type])?.duration"#;
     let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -184,13 +179,8 @@ let n = 0;
 const x = (n = obj) == null ? undefined : n.value;
 use(n);
 "#;
-    let expected = r#"
-let n = 0;
-const x = (n = obj)?.value;
-use(n);
-"#;
     let output = apply(input);
-    assert_eq_normalized(&output, expected);
+    assert_eq_normalized(&output, input);
 }
 
 // --- known-broken semantic regressions ---
