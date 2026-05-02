@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
@@ -6,8 +6,8 @@ use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, GLOBALS};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr,
     CallExpr, Callee, CondExpr, Expr, ExprOrSpread, ExprStmt, FnExpr, Id, Ident, IdentName, Lit,
-    MemberExpr, MemberProp, Module, ModuleItem, Number, Pat, SimpleAssignTarget, Stmt, Str,
-    UnaryExpr, UnaryOp, VarDeclarator,
+    MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit, Pat, Prop, PropName,
+    PropOrSpread, SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
@@ -17,6 +17,14 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::rules::apply_default_rules;
 use crate::unpacker::{UnpackResult, UnpackedModule};
+
+/// Identifies a webpack module by either its numeric index (array-form) or
+/// its string path (object-form, e.g. `"./src/index.js"`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ModuleId {
+    Numeric(usize),
+    Named(String),
+}
 
 /// Removes `require.r(exports)` calls and converts `require.d(exports, "name", getter)` to
 /// `exports.name = val`. This normalizes webpack runtime helpers before applying rules.
@@ -214,6 +222,52 @@ impl VisitMut for RequireIdRewriter<'_> {
         }
 
         if let Some(filename) = self.id_to_filename.get(&id) {
+            let path = format!("./{filename}");
+            call.args[0].expr = Box::new(Expr::Lit(Lit::Str(Str {
+                span: Default::default(),
+                value: path.as_str().into(),
+                raw: None,
+            })));
+        }
+    }
+}
+
+/// Rewrites `require("./src/greet.js")` calls (where the string arg is an original module key)
+/// to `require("./<sanitized_filename>")`. Used for object-form webpack4 bundles where modules
+/// are keyed by string paths instead of numeric indices.
+struct RequireStringIdRewriter<'a> {
+    require_sym: Atom,
+    unresolved_mark: Mark,
+    id_to_filename: &'a HashMap<String, String>,
+}
+
+impl VisitMut for RequireStringIdRewriter<'_> {
+    fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
+        // Recurse first
+        call.visit_mut_children_with(self);
+
+        // Match: require("./src/foo.js") where callee is the require ident
+        let Callee::Expr(callee_expr) = &call.callee else {
+            return;
+        };
+        let Expr::Ident(callee_ident) = &**callee_expr else {
+            return;
+        };
+        if callee_ident.sym != self.require_sym || callee_ident.ctxt.outer() != self.unresolved_mark
+        {
+            return;
+        }
+        if call.args.len() != 1 || call.args[0].spread.is_some() {
+            return;
+        }
+        let Expr::Lit(Lit::Str(s)) = &*call.args[0].expr else {
+            return;
+        };
+        let Some(key) = s.value.as_str() else {
+            return;
+        };
+
+        if let Some(filename) = self.id_to_filename.get(key) {
             let path = format!("./{filename}");
             call.args[0].expr = Box::new(Expr::Lit(Lit::Str(Str {
                 span: Default::default(),
@@ -496,30 +550,54 @@ fn extract_call_from_expr(expr: &Expr) -> Option<&CallExpr> {
     }
 }
 
-/// Given a CallExpr that should be `bootstrapFn([module0, module1, ...])`, extract the modules.
+/// Strip parentheses wrappers from an expression.
+fn strip_parens(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(p) => strip_parens(&p.expr),
+        _ => expr,
+    }
+}
+
+/// Given a CallExpr that should be `bootstrapFn([...])` or `bootstrapFn({...})`, extract modules.
 /// When `apply_rules` is false, `apply_default_rules` is skipped (raw output).
 fn extract_webpack4_modules(
     call: &CallExpr,
     cm: Lrc<SourceMap>,
     apply_rules: bool,
 ) -> Option<UnpackResult> {
-    // Callee must be a FnExpr (the bootstrap function)
+    // Callee must be a FnExpr (the bootstrap function), possibly wrapped in parens
     let Callee::Expr(callee_expr) = &call.callee else {
         return None;
     };
-    let Expr::Fn(bootstrap_fn) = &**callee_expr else {
+    let unwrapped_callee = strip_parens(callee_expr);
+    let Expr::Fn(bootstrap_fn) = unwrapped_callee else {
         return None;
     };
 
-    // Must have exactly one argument: an ArrayLit
+    // Must have exactly one argument
     if call.args.len() != 1 {
         return None;
     }
-    let array_lit = match &*call.args[0].expr {
-        Expr::Array(a) => a,
-        _ => return None,
-    };
 
+    // Branch on argument type: Array (numeric IDs) or Object (string IDs)
+    match &*call.args[0].expr {
+        Expr::Array(array_lit) => {
+            extract_webpack4_array_modules(array_lit, bootstrap_fn, cm, apply_rules)
+        }
+        Expr::Object(object_lit) => {
+            extract_webpack4_object_modules(object_lit, bootstrap_fn, cm, apply_rules)
+        }
+        _ => None,
+    }
+}
+
+/// Extract modules from the array-form: `bootstrapFn([fn0, fn1, fn2])`
+fn extract_webpack4_array_modules(
+    array_lit: &swc_core::ecma::ast::ArrayLit,
+    bootstrap_fn: &FnExpr,
+    cm: Lrc<SourceMap>,
+    apply_rules: bool,
+) -> Option<UnpackResult> {
     // Array must have at least one element
     if array_lit.elems.is_empty() {
         return None;
@@ -555,19 +633,13 @@ fn extract_webpack4_modules(
     // Find entry module IDs by scanning the bootstrap function body
     let entry_ids = find_entry_ids(bootstrap_fn);
 
-    // Extract require-fn symbol from bootstrap fn body (to know which param is require-like)
-    // In webpack4, the bootstrap fn typically has a single param `e` (the modules array)
-    // and an inner function `n` (the require). We detect `n.s = N` to find entry.
-    // We don't need the symbol since we're already looking at module functions.
-
-    // Build a map from module index → filename so require(N) can be rewritten
-    // to require("./module-N.js") / require("./entry.js") etc.
-    let id_to_filename: std::collections::HashMap<usize, String> = {
+    // Build a map from module index -> filename so require(N) can be rewritten
+    let id_to_filename: HashMap<usize, String> = {
         let total = module_fns.len();
         (0..total)
             .filter_map(|i| {
                 module_fns.get(i)?.as_ref()?;
-                let name = if entry_ids.contains(&i) {
+                let name = if entry_ids.contains(&ModuleId::Numeric(i)) {
                     if entry_ids.len() == 1 {
                         "entry.js".to_string()
                     } else {
@@ -585,158 +657,26 @@ fn extract_webpack4_modules(
 
     for (idx, maybe_fn) in module_fns.iter().enumerate() {
         let Some(fn_expr) = maybe_fn else {
-            // Array hole — skip
             continue;
         };
 
-        let is_entry = entry_ids.contains(&idx);
+        let is_entry = entry_ids.contains(&ModuleId::Numeric(idx));
 
-        // Extract param names (up to 3: module, exports, require)
-        let params = &fn_expr.function.params;
-        let param_syms: Vec<Atom> = params
-            .iter()
-            .filter_map(|p| {
-                if let Pat::Ident(bi) = &p.pat {
-                    Some(bi.sym.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Build renaming map: param[0] -> "module", param[1] -> "exports", param[2] -> "require"
-        let standard_names = ["module", "exports", "require"];
-        let renames: Vec<(Atom, Atom)> = param_syms
-            .iter()
-            .enumerate()
-            .filter_map(|(i, sym)| {
-                let target = *standard_names.get(i)?;
-                if sym.as_ref() == target {
-                    None // already correct
-                } else {
-                    Some((sym.clone(), Atom::from(target)))
-                }
-            })
-            .collect();
-
-        // Get the module's body statements
-        let body_stmts = match &fn_expr.function.body {
-            Some(body) => body.stmts.clone(),
-            None => vec![],
-        };
-
-        // Determine the (possibly renamed) exports/require symbols for normalizer
-        let exports_sym = {
-            let orig = param_syms
-                .get(1)
-                .cloned()
-                .unwrap_or_else(|| Atom::from("exports"));
-            // After renaming, it will be "exports" if there's a rename, else whatever it was
-            if renames.iter().any(|(old, _)| old == &orig) {
-                Atom::from("exports")
-            } else {
-                orig
-            }
-        };
-        let require_sym = {
-            let orig = param_syms
-                .get(2)
-                .cloned()
-                .unwrap_or_else(|| Atom::from("require"));
-            if renames.iter().any(|(old, _)| old == &orig) {
-                Atom::from("require")
-            } else {
-                orig
-            }
-        };
-
-        // Build a synthetic Module wrapping the body statements
-        let mut synthetic_module = build_module_from_stmts(body_stmts);
-
-        // Step 0: run resolver() first so every identifier gets a unique SyntaxContext.
-        // Unresolved free-variable references (the factory params like `e`, `t`, `n`)
-        // receive `unresolved_mark` as their outer mark; bound identifiers (inner params,
-        // locals) get a different mark.
-        let unresolved_mark = Mark::new();
-        let top_level_mark = Mark::new();
-        synthetic_module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-
-        // Step 1: rename factory params to standard names using swc_ecma_utils::replace_ident.
-        // replace_ident matches on Id = (Atom, SyntaxContext), so it is inherently scope-aware:
-        // only the specific unresolved free-variable references are renamed, not any inner
-        // bindings that happen to share the same symbol.
-        let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
-        for (old_sym, new_sym) in &renames {
-            let from_id = (old_sym.clone(), unresolved_ctxt);
-            // Preserve unresolved_ctxt so downstream visitors (RequireIdRewriter, etc.)
-            // can still match on `id.ctxt.outer() == unresolved_mark`.
-            let to_ident = Ident::new(new_sym.clone(), Default::default(), unresolved_ctxt);
-            replace_ident(&mut synthetic_module, from_id, &to_ident);
-        }
-
-        // Step 1b: rewrite require(N) → require("./module-N.js") so un-esm can convert them
-        // After step 1, the require parameter is now named "require"
-        let post_rename_require_sym = if param_syms.get(2).map(|s| s.as_ref()) != Some("require") {
-            Atom::from("require")
-        } else {
-            param_syms
-                .get(2)
-                .cloned()
-                .unwrap_or_else(|| Atom::from("require"))
-        };
-        {
-            let mut id_rewriter = RequireIdRewriter {
-                require_sym: post_rename_require_sym.clone(),
-                unresolved_mark,
-                id_to_filename: &id_to_filename,
-            };
-            synthetic_module.visit_mut_with(&mut id_rewriter);
-        }
-
-        // Step 1c: rewrite require.n(expr) to an explicit getter and normalize `.a` accesses.
-        {
-            let mut n_rewriter = RequireNRewriter {
-                require_sym: post_rename_require_sym.clone(),
-                unresolved_mark,
-                getter_ids: std::collections::HashSet::new(),
-            };
-            synthetic_module.visit_mut_with(&mut n_rewriter);
-            if !n_rewriter.getter_ids.is_empty() {
-                let mut access_rewriter = RequireNAccessRewriter {
-                    getter_ids: n_rewriter.getter_ids,
+        let (mut synthetic_module, unresolved_mark) =
+            build_factory_module(fn_expr, |post_rename_require_sym, unresolv_mark, module| {
+                let mut id_rewriter = RequireIdRewriter {
+                    require_sym: post_rename_require_sym.clone(),
+                    unresolved_mark: unresolv_mark,
+                    id_to_filename: &id_to_filename,
                 };
-                synthetic_module.visit_mut_with(&mut access_rewriter);
-            }
-        }
+                module.visit_mut_with(&mut id_rewriter);
+            });
 
-        // Step 2: normalize webpack runtime helpers (require.r / require.d)
-        // After renaming, require_sym may still be the original if it wasn't renamed
-        // Use the post-rename name (always "require" if renamed, else original)
-        let final_require_sym = if param_syms.get(2).map(|s| s.as_ref()) == Some("require") {
-            Atom::from("require")
-        } else {
-            // It was renamed (or doesn't exist)
-            require_sym.clone()
-        };
-        let mut normalizer = WebpackRuntimeNormalizer {
-            require_sym: final_require_sym,
-            exports_sym,
-            unresolved_mark,
-        };
-        synthetic_module.visit_mut_with(&mut normalizer);
-
-        // Step 2b: strip webpack's `.call(this, require(G), require(A)(module))`
-        // global-polyfill envelope when its fingerprint matches. Runs before
-        // default rules so the rules pipeline sees a cleaner top-level shape.
-        unwrap_global_polyfill(&mut synthetic_module, unresolved_mark);
-
-        // Step 3: optionally apply default rules
         if apply_rules {
             apply_default_rules(&mut synthetic_module, unresolved_mark);
         }
         synthetic_module.visit_mut_with(&mut fixer(None));
 
-        // Step 4: emit to code
         let code = match emit_module(&synthetic_module, cm.clone()) {
             Ok(c) => c,
             Err(_) => continue,
@@ -767,9 +707,307 @@ fn extract_webpack4_modules(
     Some(UnpackResult { modules })
 }
 
+/// Extract modules from the object-form: `bootstrapFn({"./src/index.js": fn, ...})`
+fn extract_webpack4_object_modules(
+    object_lit: &ObjectLit,
+    bootstrap_fn: &FnExpr,
+    cm: Lrc<SourceMap>,
+    apply_rules: bool,
+) -> Option<UnpackResult> {
+    if object_lit.props.is_empty() {
+        return None;
+    }
+
+    // Collect module keys and their factory FnExprs from the object properties
+    let mut module_entries: Vec<(String, &FnExpr)> = Vec::new();
+    for prop in &object_lit.props {
+        let PropOrSpread::Prop(prop_box) = prop else {
+            return None;
+        };
+        match &**prop_box {
+            Prop::KeyValue(kv) => {
+                let key = extract_string_module_id(&kv.key)?;
+                let Expr::Fn(fn_expr) = strip_parens(&kv.value) else {
+                    return None;
+                };
+                module_entries.push((key, fn_expr));
+            }
+            Prop::Method(method) => {
+                let key = extract_string_module_id(&method.key)?;
+                // Method shorthand doesn't give us a &FnExpr directly,
+                // so we skip it for wp4 object-form (wp4 dev bundles use KeyValue).
+                // Fall through to None if we encounter methods.
+                let _ = key;
+                return None;
+            }
+            _ => return None,
+        }
+    }
+
+    // Validate: at least one function with at least 1 param
+    let has_module_fn = module_entries
+        .iter()
+        .any(|(_, fn_expr)| !fn_expr.function.params.is_empty());
+    if !has_module_fn {
+        return None;
+    }
+
+    // Find entry module IDs by scanning the bootstrap function body
+    let entry_ids = find_entry_ids(bootstrap_fn);
+
+    // Detect whether all keys are numeric (e.g. {0: fn, 1: fn}) vs string paths
+    let all_numeric = module_entries
+        .iter()
+        .all(|(key, _)| key.parse::<usize>().is_ok());
+
+    // Build filename maps — numeric keys need a usize→String map for RequireIdRewriter,
+    // string keys need a String→String map for RequireStringIdRewriter
+    let str_id_to_filename: HashMap<String, String> = module_entries
+        .iter()
+        .map(|(key, _)| (key.clone(), sanitize_filename(key)))
+        .collect();
+    let num_id_to_filename: std::collections::HashMap<usize, String> = if all_numeric {
+        module_entries
+            .iter()
+            .filter_map(|(key, _)| {
+                let idx = key.parse::<usize>().ok()?;
+                let is_entry = entry_ids.contains(&ModuleId::Numeric(idx));
+                let filename = if is_entry {
+                    if entry_ids.len() == 1 {
+                        "entry.js".to_string()
+                    } else {
+                        format!("entry-{idx}.js")
+                    }
+                } else {
+                    format!("module-{idx}.js")
+                };
+                Some((idx, filename))
+            })
+            .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    let mut modules = Vec::new();
+
+    for (key, fn_expr) in &module_entries {
+        let is_entry = if all_numeric {
+            let idx = key.parse::<usize>().unwrap_or(usize::MAX);
+            entry_ids.contains(&ModuleId::Numeric(idx))
+        } else {
+            entry_ids.contains(&ModuleId::Named(key.clone()))
+        };
+
+        let (mut synthetic_module, unresolved_mark) =
+            build_factory_module(fn_expr, |post_rename_require_sym, unresolv_mark, module| {
+                if all_numeric {
+                    let mut id_rewriter = RequireIdRewriter {
+                        require_sym: post_rename_require_sym.clone(),
+                        unresolved_mark: unresolv_mark,
+                        id_to_filename: &num_id_to_filename,
+                    };
+                    module.visit_mut_with(&mut id_rewriter);
+                } else {
+                    let mut str_rewriter = RequireStringIdRewriter {
+                        require_sym: post_rename_require_sym.clone(),
+                        unresolved_mark: unresolv_mark,
+                        id_to_filename: &str_id_to_filename,
+                    };
+                    module.visit_mut_with(&mut str_rewriter);
+                }
+            });
+
+        if apply_rules {
+            apply_default_rules(&mut synthetic_module, unresolved_mark);
+        }
+        synthetic_module.visit_mut_with(&mut fixer(None));
+
+        let code = match emit_module(&synthetic_module, cm.clone()) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let filename = if all_numeric {
+            let idx = key.parse::<usize>().unwrap_or(usize::MAX);
+            num_id_to_filename
+                .get(&idx)
+                .cloned()
+                .unwrap_or_else(|| format!("module-{key}.js"))
+        } else {
+            str_id_to_filename
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| sanitize_filename(key))
+        };
+
+        modules.push(UnpackedModule {
+            id: key.clone(),
+            is_entry,
+            code,
+            filename,
+        });
+    }
+
+    if modules.is_empty() {
+        return None;
+    }
+
+    Some(UnpackResult { modules })
+}
+
+/// Extract a string module ID from a property key.
+fn extract_string_module_id(key: &PropName) -> Option<String> {
+    match key {
+        PropName::Str(s) => Some(s.value.as_str().unwrap_or("unknown").to_string()),
+        PropName::Num(n) => Some(format!("{}", n.value as i64)),
+        PropName::Ident(i) => Some(i.sym.to_string()),
+        _ => None,
+    }
+}
+
+/// Shared logic for processing a webpack4 factory FnExpr into a normalized Module.
+/// The `require_rewrite` callback is invoked after param renaming and resolver, to
+/// apply the appropriate require rewriter (numeric for array-form, string for object-form).
+/// Returns `(module, unresolved_mark)`.
+fn build_factory_module(
+    fn_expr: &FnExpr,
+    require_rewrite: impl FnOnce(&Atom, Mark, &mut Module),
+) -> (Module, Mark) {
+    // Extract param names (up to 3: module, exports, require)
+    let params = &fn_expr.function.params;
+    let param_syms: Vec<Atom> = params
+        .iter()
+        .filter_map(|p| {
+            if let Pat::Ident(bi) = &p.pat {
+                Some(bi.sym.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Build renaming map: param[0] -> "module", param[1] -> "exports", param[2] -> "require"
+    let standard_names = ["module", "exports", "require"];
+    let renames: Vec<(Atom, Atom)> = param_syms
+        .iter()
+        .enumerate()
+        .filter_map(|(i, sym)| {
+            let target = *standard_names.get(i)?;
+            if sym.as_ref() == target {
+                None // already correct
+            } else {
+                Some((sym.clone(), Atom::from(target)))
+            }
+        })
+        .collect();
+
+    // Get the module's body statements
+    let body_stmts = match &fn_expr.function.body {
+        Some(body) => body.stmts.clone(),
+        None => vec![],
+    };
+
+    // Determine the (possibly renamed) exports/require symbols for normalizer
+    let exports_sym = {
+        let orig = param_syms
+            .get(1)
+            .cloned()
+            .unwrap_or_else(|| Atom::from("exports"));
+        if renames.iter().any(|(old, _)| old == &orig) {
+            Atom::from("exports")
+        } else {
+            orig
+        }
+    };
+    let require_sym = {
+        let orig = param_syms
+            .get(2)
+            .cloned()
+            .unwrap_or_else(|| Atom::from("require"));
+        if renames.iter().any(|(old, _)| old == &orig) {
+            Atom::from("require")
+        } else {
+            orig
+        }
+    };
+
+    let mut synthetic_module = build_module_from_stmts(body_stmts);
+
+    // Step 0: run resolver()
+    let unresolved_mark = Mark::new();
+    let top_level_mark = Mark::new();
+    synthetic_module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+    // Step 1: rename factory params to standard names
+    let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
+    for (old_sym, new_sym) in &renames {
+        let from_id = (old_sym.clone(), unresolved_ctxt);
+        let to_ident = Ident::new(new_sym.clone(), Default::default(), unresolved_ctxt);
+        replace_ident(&mut synthetic_module, from_id, &to_ident);
+    }
+
+    // Step 1b: apply require rewriting (caller provides the specific rewriter)
+    let post_rename_require_sym = if param_syms.get(2).map(|s| s.as_ref()) != Some("require") {
+        Atom::from("require")
+    } else {
+        param_syms
+            .get(2)
+            .cloned()
+            .unwrap_or_else(|| Atom::from("require"))
+    };
+    require_rewrite(&post_rename_require_sym, unresolved_mark, &mut synthetic_module);
+
+    // Step 1c: rewrite require.n(expr) to an explicit getter and normalize `.a` accesses.
+    {
+        let mut n_rewriter = RequireNRewriter {
+            require_sym: post_rename_require_sym.clone(),
+            unresolved_mark,
+            getter_ids: HashSet::new(),
+        };
+        synthetic_module.visit_mut_with(&mut n_rewriter);
+        if !n_rewriter.getter_ids.is_empty() {
+            let mut access_rewriter = RequireNAccessRewriter {
+                getter_ids: n_rewriter.getter_ids,
+            };
+            synthetic_module.visit_mut_with(&mut access_rewriter);
+        }
+    }
+
+    // Step 2: normalize webpack runtime helpers (require.r / require.d)
+    let final_require_sym = if param_syms.get(2).map(|s| s.as_ref()) == Some("require") {
+        Atom::from("require")
+    } else {
+        require_sym.clone()
+    };
+    let mut normalizer = WebpackRuntimeNormalizer {
+        require_sym: final_require_sym,
+        exports_sym,
+        unresolved_mark,
+    };
+    synthetic_module.visit_mut_with(&mut normalizer);
+
+    // Step 2b: strip webpack's global-polyfill envelope
+    unwrap_global_polyfill(&mut synthetic_module, unresolved_mark);
+
+    (synthetic_module, unresolved_mark)
+}
+
+/// Sanitize a webpack module path string into a safe filename.
+/// Strips leading `./`, removes path traversal (`../`, `..\`), and falls back
+/// to `"unknown.js"` when the result would be empty.
+fn sanitize_filename(module_id: &str) -> String {
+    let stripped = module_id.trim_start_matches("./");
+    let sanitized = stripped.replace("../", "").replace("..\\", "");
+    if sanitized.is_empty() {
+        "unknown.js".to_string()
+    } else {
+        sanitized
+    }
+}
+
 /// Scan the bootstrap function body for `n.s = <number>` or `n(n.s = <number>)` patterns
 /// to identify the entry module ID(s).
-fn find_entry_ids(bootstrap_fn: &FnExpr) -> Vec<usize> {
+fn find_entry_ids(bootstrap_fn: &FnExpr) -> Vec<ModuleId> {
     let body = match &bootstrap_fn.function.body {
         Some(b) => b,
         None => return vec![],
@@ -792,18 +1030,26 @@ fn find_entry_ids(bootstrap_fn: &FnExpr) -> Vec<usize> {
 fn collect_entry_ids_from_stmt(
     stmt: &Stmt,
     allowed_entry_objects: &HashSet<Atom>,
-    entries: &mut Vec<usize>,
+    entries: &mut Vec<ModuleId>,
 ) {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
-        return;
-    };
-    collect_entry_ids_from_expr(expr, allowed_entry_objects, entries);
+    match stmt {
+        Stmt::Expr(ExprStmt { expr, .. }) => {
+            collect_entry_ids_from_expr(expr, allowed_entry_objects, entries);
+        }
+        // `return __webpack_require__(__webpack_require__.s = "./src/index.js")`
+        Stmt::Return(ret) => {
+            if let Some(arg) = &ret.arg {
+                collect_entry_ids_from_expr(arg, allowed_entry_objects, entries);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn collect_entry_ids_from_expr(
     expr: &Expr,
     allowed_entry_objects: &HashSet<Atom>,
-    entries: &mut Vec<usize>,
+    entries: &mut Vec<ModuleId>,
 ) {
     match expr {
         // `n(n.s = 51)` — call where arg is assignment to <fn>.s
@@ -812,7 +1058,7 @@ fn collect_entry_ids_from_expr(
                 collect_entry_ids_from_expr(&arg.expr, allowed_entry_objects, entries);
             }
         }
-        // `n.s = 51` at statement level
+        // `n.s = 51` or `n.s = "./src/index.js"` at statement level
         Expr::Assign(assign) => {
             if let Some(id) = extract_entry_id_from_assign(assign, allowed_entry_objects) {
                 entries.push(id);
@@ -831,7 +1077,7 @@ fn collect_entry_ids_from_expr(
 fn extract_entry_id_from_assign(
     assign: &AssignExpr,
     allowed_entry_objects: &HashSet<Atom>,
-) -> Option<usize> {
+) -> Option<ModuleId> {
     if assign.op != AssignOp::Assign {
         return None;
     }
@@ -851,12 +1097,18 @@ fn extract_entry_id_from_assign(
     if prop.sym.as_ref() != "s" {
         return None;
     }
-    // Right must be a numeric literal
-    if let Expr::Lit(Lit::Num(n)) = &*assign.right {
-        let id = n.value as usize;
-        return Some(id);
+    // Right must be a numeric literal or a string literal
+    match &*assign.right {
+        Expr::Lit(Lit::Num(n)) => {
+            let id = n.value as usize;
+            Some(ModuleId::Numeric(id))
+        }
+        Expr::Lit(Lit::Str(s)) => {
+            let value = s.value.as_str().unwrap_or("").to_string();
+            Some(ModuleId::Named(value))
+        }
+        _ => None,
     }
-    None
 }
 
 fn collect_declared_idents(stmts: &[Stmt]) -> HashSet<Atom> {
@@ -888,8 +1140,17 @@ fn collect_called_idents(stmts: &[Stmt]) -> HashSet<Atom> {
 }
 
 fn collect_called_idents_from_stmt(stmt: &Stmt, names: &mut HashSet<Atom>) {
-    if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
-        collect_called_idents_from_expr(expr, names);
+    match stmt {
+        Stmt::Expr(ExprStmt { expr, .. }) => {
+            collect_called_idents_from_expr(expr, names);
+        }
+        // `return __webpack_require__(...)` — the ident is called
+        Stmt::Return(ret) => {
+            if let Some(arg) = &ret.arg {
+                collect_called_idents_from_expr(arg, names);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1513,5 +1774,309 @@ mod polyfill_tests {
 "#;
         let out = run_unwrap(input);
         assert!(out.contains(".call(this"), "{out}");
+    }
+}
+
+#[cfg(test)]
+mod object_form_tests {
+    use super::*;
+
+    #[test]
+    fn test_wp4_object_form_detection() {
+        // Minimal wp4 object-form bundle
+        let source = r#"
+(function(modules) {
+    var installedModules = {};
+    function __webpack_require__(moduleId) {
+        if (installedModules[moduleId]) return installedModules[moduleId].exports;
+        var module = installedModules[moduleId] = { i: moduleId, l: false, exports: {} };
+        modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+        module.l = true;
+        return module.exports;
+    }
+    return __webpack_require__(__webpack_require__.s = "./src/index.js");
+})({
+    "./src/greet.js": function(module, exports) {
+        function greet(name) { return "Hello, " + name + "!"; }
+        exports.greet = greet;
+    },
+    "./src/index.js": function(module, exports, __webpack_require__) {
+        var greet = __webpack_require__("./src/greet.js");
+        console.log(greet.greet("world"));
+    }
+});
+"#;
+        let result = detect_and_extract(source).expect("should detect wp4 object-form bundle");
+        assert_eq!(
+            result.modules.len(),
+            2,
+            "expected 2 modules, got {}: {:?}",
+            result.modules.len(),
+            result.modules.iter().map(|m| &m.id).collect::<Vec<_>>()
+        );
+
+        // Verify module IDs are string paths
+        let ids: Vec<&str> = result.modules.iter().map(|m| m.id.as_str()).collect();
+        assert!(ids.contains(&"./src/greet.js"), "missing greet module: {ids:?}");
+        assert!(ids.contains(&"./src/index.js"), "missing index module: {ids:?}");
+    }
+
+    #[test]
+    fn test_wp4_object_form_string_entry() {
+        // Verify `.s = "./src/index.js"` marks the correct entry
+        let source = r#"
+(function(modules) {
+    var installedModules = {};
+    function __webpack_require__(moduleId) {
+        if (installedModules[moduleId]) return installedModules[moduleId].exports;
+        var module = installedModules[moduleId] = { i: moduleId, l: false, exports: {} };
+        modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+        module.l = true;
+        return module.exports;
+    }
+    return __webpack_require__(__webpack_require__.s = "./src/index.js");
+})({
+    "./src/greet.js": function(module, exports) {
+        exports.greet = function(name) { return "Hello, " + name; };
+    },
+    "./src/index.js": function(module, exports, __webpack_require__) {
+        var g = __webpack_require__("./src/greet.js");
+        console.log(g.greet("world"));
+    }
+});
+"#;
+        let result = detect_and_extract(source).expect("should detect wp4 object-form bundle");
+
+        let entry_modules: Vec<&str> = result
+            .modules
+            .iter()
+            .filter(|m| m.is_entry)
+            .map(|m| m.id.as_str())
+            .collect();
+        assert_eq!(
+            entry_modules,
+            vec!["./src/index.js"],
+            "expected ./src/index.js to be marked as entry, got: {entry_modules:?}"
+        );
+
+        let non_entry: Vec<&str> = result
+            .modules
+            .iter()
+            .filter(|m| !m.is_entry)
+            .map(|m| m.id.as_str())
+            .collect();
+        assert!(
+            non_entry.contains(&"./src/greet.js"),
+            "greet.js should not be entry: {non_entry:?}"
+        );
+    }
+
+    #[test]
+    fn test_wp4_object_form_filenames() {
+        // Verify filenames are sanitized from string keys
+        let source = r#"
+(function(modules) {
+    var installedModules = {};
+    function __webpack_require__(moduleId) {
+        if (installedModules[moduleId]) return installedModules[moduleId].exports;
+        var module = installedModules[moduleId] = { i: moduleId, l: false, exports: {} };
+        modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+        module.l = true;
+        return module.exports;
+    }
+    return __webpack_require__(__webpack_require__.s = "./src/index.js");
+})({
+    "./src/utils/helper.js": function(module, exports) {
+        exports.help = function() { return 42; };
+    },
+    "./src/index.js": function(module, exports, __webpack_require__) {
+        var h = __webpack_require__("./src/utils/helper.js");
+        console.log(h.help());
+    }
+});
+"#;
+        let result = detect_and_extract(source).expect("should detect wp4 object-form bundle");
+
+        let filenames: Vec<&str> = result.modules.iter().map(|m| m.filename.as_str()).collect();
+        // "./src/utils/helper.js" should become "src/utils/helper.js"
+        assert!(
+            filenames.contains(&"src/utils/helper.js"),
+            "expected sanitized filename 'src/utils/helper.js', got: {filenames:?}"
+        );
+        // "./src/index.js" should become "src/index.js"
+        assert!(
+            filenames.contains(&"src/index.js"),
+            "expected sanitized filename 'src/index.js', got: {filenames:?}"
+        );
+    }
+
+    #[test]
+    fn test_wp4_object_form_require_rewriting() {
+        // Verify that require("./src/greet.js") is rewritten to the sanitized path.
+        // After rules run, require may be converted to import, so we use raw mode.
+        let source = r#"
+(function(modules) {
+    var installedModules = {};
+    function __webpack_require__(moduleId) {
+        if (installedModules[moduleId]) return installedModules[moduleId].exports;
+        var module = installedModules[moduleId] = { i: moduleId, l: false, exports: {} };
+        modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+        module.l = true;
+        return module.exports;
+    }
+    return __webpack_require__(__webpack_require__.s = "./src/index.js");
+})({
+    "./src/greet.js": function(module, exports) {
+        exports.greet = function(name) { return "Hello, " + name; };
+    },
+    "./src/index.js": function(module, exports, __webpack_require__) {
+        var g = __webpack_require__("./src/greet.js");
+        console.log(g.greet("world"));
+    }
+});
+"#;
+        let result =
+            detect_and_extract_raw(source).expect("should detect wp4 object-form bundle (raw)");
+
+        let index_module = result
+            .modules
+            .iter()
+            .find(|m| m.id == "./src/index.js")
+            .expect("should find index module");
+
+        // The require should reference the sanitized path with ./ prefix
+        assert!(
+            index_module.code.contains("\"./src/greet.js\""),
+            "require should reference sanitized path, got: {}",
+            index_module.code
+        );
+    }
+
+    #[test]
+    fn test_wp4_object_form_fixture() {
+        // Real webpack 4 dev-mode bundle with object-form modules
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/webpack-gen/dist/wp4-cjs/bundle.js"
+        ))
+        .expect("failed to read wp4-cjs fixture");
+
+        let result = detect_and_extract(&source).expect("wp4-cjs object-form should be detected");
+        let module_ids: Vec<&str> = result.modules.iter().map(|m| m.id.as_str()).collect();
+
+        assert_eq!(
+            result.modules.len(),
+            3,
+            "expected 3 modules, got {}: {:?}",
+            result.modules.len(),
+            module_ids
+        );
+
+        // Verify entry detection
+        let entry_modules: Vec<&str> = result
+            .modules
+            .iter()
+            .filter(|m| m.is_entry)
+            .map(|m| m.id.as_str())
+            .collect();
+        assert!(
+            entry_modules.contains(&"./src/index.js"),
+            "expected ./src/index.js as entry, entries: {entry_modules:?}"
+        );
+
+        // Verify all expected modules are present
+        assert!(module_ids.contains(&"./src/greet.js"), "missing greet module");
+        assert!(module_ids.contains(&"./src/index.js"), "missing index module");
+        assert!(module_ids.contains(&"./src/utils.js"), "missing utils module");
+    }
+
+    #[test]
+    fn test_wp4_object_form_does_not_break_array_form() {
+        // Verify that the existing array-form still works
+        let source = r#"
+(function(modules) {
+    var installedModules = {};
+    function __webpack_require__(moduleId) {
+        if (installedModules[moduleId]) return installedModules[moduleId].exports;
+        var module = installedModules[moduleId] = { i: moduleId, l: false, exports: {} };
+        modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+        module.l = true;
+        return module.exports;
+    }
+    return __webpack_require__(__webpack_require__.s = 0);
+})([
+    function(module, exports, __webpack_require__) {
+        var greet = __webpack_require__(1);
+        console.log(greet.greet("world"));
+    },
+    function(module, exports) {
+        exports.greet = function(name) { return "Hello, " + name; };
+    }
+]);
+"#;
+        let result = detect_and_extract(source).expect("should still detect array-form bundle");
+        assert_eq!(result.modules.len(), 2, "expected 2 modules from array-form");
+
+        let entry_modules: Vec<&str> = result
+            .modules
+            .iter()
+            .filter(|m| m.is_entry)
+            .map(|m| m.id.as_str())
+            .collect();
+        assert!(
+            entry_modules.contains(&"0"),
+            "expected module 0 as entry, entries: {entry_modules:?}"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_filename() {
+        assert_eq!(sanitize_filename("./src/index.js"), "src/index.js");
+        assert_eq!(sanitize_filename("./src/utils/helper.js"), "src/utils/helper.js");
+        assert_eq!(sanitize_filename("../../../etc/passwd"), "etc/passwd");
+        assert_eq!(sanitize_filename("./"), "unknown.js");
+        assert_eq!(sanitize_filename("../"), "unknown.js");
+        assert_eq!(sanitize_filename("index.js"), "index.js");
+    }
+
+    #[test]
+    fn test_wp4_numeric_object_form() {
+        let source = r#"
+(function(modules) {
+    var installedModules = {};
+    function __webpack_require__(moduleId) {
+        if (installedModules[moduleId]) return installedModules[moduleId].exports;
+        var module = installedModules[moduleId] = { i: moduleId, l: false, exports: {} };
+        modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+        module.l = true;
+        return module.exports;
+    }
+    return __webpack_require__(__webpack_require__.s = 0);
+})({
+    0: function(module, exports, __webpack_require__) {
+        var greet = __webpack_require__(1);
+        console.log(greet.greet("world"));
+    },
+    1: function(module, exports) {
+        exports.greet = function(name) { return "Hello, " + name; };
+    }
+});
+"#;
+        let result = detect_and_extract(source).expect("should detect numeric object-form");
+        assert_eq!(result.modules.len(), 2, "expected 2 modules");
+
+        let entry = result.modules.iter().find(|m| m.is_entry);
+        assert!(entry.is_some(), "should have an entry module");
+        assert_eq!(entry.unwrap().filename, "entry.js", "entry should be named entry.js");
+
+        let non_entry = result.modules.iter().find(|m| !m.is_entry).unwrap();
+        assert_eq!(non_entry.filename, "module-1.js", "non-entry should be module-1.js");
+
+        // require(1) should be rewritten to require("./module-1.js")
+        assert!(
+            entry.unwrap().code.contains("module-1.js"),
+            "require(1) should be rewritten; code: {}",
+            entry.unwrap().code
+        );
     }
 }

@@ -4,7 +4,7 @@ use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, SyntaxContext
 use swc_core::ecma::ast::{
     ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, Expr,
     ExprStmt, FnExpr, Function, Ident, IdentName, Lit, MemberExpr, MemberProp, Module, ModuleItem,
-    ObjectLit, Pat, SimpleAssignTarget, Stmt, VarDecl, VarDeclarator,
+    ObjectLit, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
@@ -277,20 +277,7 @@ fn extract_chunk_push_modules(expr: &Expr) -> Option<&ObjectLit> {
         return None;
     }
     for prop in &modules_object.props {
-        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
-            return None;
-        };
-        let swc_core::ecma::ast::Prop::KeyValue(kv) = &**prop else {
-            return None;
-        };
-        // Keys must be string or numeric literals
-        if !matches!(
-            &kv.key,
-            swc_core::ecma::ast::PropName::Str(_) | swc_core::ecma::ast::PropName::Num(_)
-        ) {
-            return None;
-        }
-        if extract_factory(&kv.value).is_none() {
+        if extract_module_from_prop(prop).is_none() {
             return None;
         }
     }
@@ -307,28 +294,13 @@ fn extract_modules_from_object(
     let mut modules = Vec::new();
 
     for prop in &modules_object.props {
-        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
-            return None;
-        };
-        let swc_core::ecma::ast::Prop::KeyValue(key_value) = &**prop else {
-            return None;
-        };
-        let module_id = match &key_value.key {
-            swc_core::ecma::ast::PropName::Str(name) => {
-                name.value.as_str().unwrap_or("unknown").to_string()
-            }
-            swc_core::ecma::ast::PropName::Num(num) => format!("{}", num.value as i64),
-            _ => return None,
-        };
+        let (module_id, factory, body_stmts) = extract_module_from_prop(prop)?;
         let filename = if module_id.contains('/') || module_id.contains('.') {
             sanitize_filename(&module_id)
         } else {
             format!("module-{module_id}.js")
         };
 
-        let Some((factory, body_stmts)) = extract_factory(&key_value.value) else {
-            return None;
-        };
         let code = emit_webpack5_module(&factory, body_stmts, cm.clone())?;
         modules.push(UnpackedModule {
             id: module_id,
@@ -362,21 +334,13 @@ fn extract_webpack5_modules(
     let mut modules = Vec::new();
 
     for prop in &modules_object.props {
-        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
-            return None;
+        let (module_id, factory, body_stmts) = extract_module_from_prop(prop)?;
+        let filename = if module_id.contains('/') || module_id.contains('.') {
+            sanitize_filename(&module_id)
+        } else {
+            format!("module-{module_id}.js")
         };
-        let swc_core::ecma::ast::Prop::KeyValue(key_value) = &**prop else {
-            return None;
-        };
-        let swc_core::ecma::ast::PropName::Str(name) = &key_value.key else {
-            return None;
-        };
-        let module_id = name.value.as_str()?.to_string();
-        let filename = sanitize_filename(&module_id);
 
-        let Some((factory, body_stmts)) = extract_factory(&key_value.value) else {
-            return None;
-        };
         let code = emit_webpack5_module(&factory, body_stmts, cm.clone())?;
         modules.push(UnpackedModule {
             id: module_id,
@@ -386,7 +350,8 @@ fn extract_webpack5_modules(
         });
     }
 
-    if let Some(entry_body) = bootstrap_body
+    // Check for trailing IIFE entry point
+    let has_trailing_entry = if let Some(entry_body) = bootstrap_body
         .stmts
         .last()
         .and_then(extract_iife_stmt_body)
@@ -405,6 +370,21 @@ fn extract_webpack5_modules(
             code,
             filename: "entry.js".to_string(),
         });
+        true
+    } else {
+        false
+    };
+
+    // Fallback: scan bootstrap for `__webpack_require__(__webpack_require__.s = <id>)`
+    if !has_trailing_entry {
+        if let Some(entry_id) = find_require_s_entry(bootstrap_body) {
+            for module in &mut modules {
+                if module.id == entry_id {
+                    module.is_entry = true;
+                    break;
+                }
+            }
+        }
     }
 
     if modules.is_empty() {
@@ -414,37 +394,61 @@ fn extract_webpack5_modules(
     Some(UnpackResult { modules })
 }
 
+/// Extract a string module ID from any `PropName` variant.
+fn extract_module_id_from_prop_name(key: &PropName) -> Option<String> {
+    match key {
+        PropName::Str(s) => Some(s.value.as_str().unwrap_or("unknown").to_string()),
+        PropName::Num(n) => Some(format!("{}", n.value as i64)),
+        PropName::Ident(i) => Some(i.sym.to_string()),
+        _ => None,
+    }
+}
+
+/// Extract the factory function from a prop, handling both `Prop::KeyValue` and `Prop::Method`.
+/// Returns `(module_id, factory_function, body_stmts)`.
+fn extract_module_from_prop(prop: &PropOrSpread) -> Option<(String, Function, Vec<Stmt>)> {
+    let PropOrSpread::Prop(prop) = prop else {
+        return None;
+    };
+    match &**prop {
+        Prop::KeyValue(key_value) => {
+            let module_id = extract_module_id_from_prop_name(&key_value.key)?;
+            let (factory, body_stmts) = extract_factory(&key_value.value)?;
+            Some((module_id, factory, body_stmts))
+        }
+        Prop::Method(method) => {
+            let module_id = extract_module_id_from_prop_name(&method.key)?;
+            let body = method.function.body.as_ref()?.stmts.clone();
+            Some((module_id, *method.function.clone(), body))
+        }
+        _ => None,
+    }
+}
+
 fn extract_webpack_modules_object(var_decl: &VarDecl) -> Option<&ObjectLit> {
-    if var_decl.decls.len() != 1 {
-        return None;
-    }
-    let VarDeclarator {
-        init: Some(init), ..
-    } = &var_decl.decls[0]
-    else {
-        return None;
-    };
-    let Expr::Object(object_lit) = strip_parens(init) else {
-        return None;
-    };
-    if object_lit.props.is_empty() {
-        return None;
-    }
-    for prop in &object_lit.props {
-        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
-            return None;
+    for decl in &var_decl.decls {
+        let VarDeclarator {
+            init: Some(init), ..
+        } = decl
+        else {
+            continue;
         };
-        let swc_core::ecma::ast::Prop::KeyValue(key_value) = &**prop else {
-            return None;
+        let Expr::Object(object_lit) = strip_parens(init) else {
+            continue;
         };
-        if !matches!(key_value.key, swc_core::ecma::ast::PropName::Str(_)) {
-            return None;
+        if object_lit.props.is_empty() {
+            continue;
         }
-        if extract_factory(&key_value.value).is_none() {
-            return None;
+        let all_valid = object_lit
+            .props
+            .iter()
+            .all(|prop| extract_module_from_prop(prop).is_some());
+        if !all_valid {
+            continue;
         }
+        return Some(object_lit);
     }
-    Some(object_lit)
+    None
 }
 
 fn extract_factory(expr: &Expr) -> Option<(Function, Vec<Stmt>)> {
@@ -584,7 +588,76 @@ fn extract_callee_body(callee: &Callee) -> Option<&swc_core::ecma::ast::BlockStm
 }
 
 fn sanitize_filename(module_id: &str) -> String {
-    module_id.trim_start_matches("./").to_string()
+    let stripped = module_id.trim_start_matches("./");
+    let sanitized = stripped.replace("../", "").replace("..\\", "");
+    if sanitized.is_empty() {
+        "unknown.js".to_string()
+    } else {
+        sanitized
+    }
+}
+
+/// Scan the bootstrap body for `__webpack_require__(__webpack_require__.s = <id>)` and return
+/// the entry module ID as a string.
+fn find_require_s_entry(body: &swc_core::ecma::ast::BlockStmt) -> Option<String> {
+    for stmt in &body.stmts {
+        if let Some(id) = find_require_s_in_stmt(stmt) {
+            return Some(id);
+        }
+    }
+    None
+}
+
+/// Check a single statement for the `require(require.s = <id>)` pattern.
+/// Matches both standalone expression statements and `var x = require(require.s = <id>)`.
+fn find_require_s_in_stmt(stmt: &Stmt) -> Option<String> {
+    match stmt {
+        Stmt::Expr(ExprStmt { expr, .. }) => find_require_s_in_expr(expr),
+        Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) => {
+            for decl in &var_decl.decls {
+                if let Some(init) = &decl.init {
+                    if let Some(id) = find_require_s_in_expr(init) {
+                        return Some(id);
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Check an expression for `require(require.s = <id>)` and extract the module ID.
+fn find_require_s_in_expr(expr: &Expr) -> Option<String> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if call.args.len() != 1 {
+        return None;
+    }
+    // The argument should be `require.s = <id>`
+    let Expr::Assign(assign) = &*call.args[0].expr else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    // Left side: require.s (a member expression)
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return None;
+    };
+    let MemberProp::Ident(prop_ident) = &member.prop else {
+        return None;
+    };
+    if prop_ident.sym.as_ref() != "s" {
+        return None;
+    }
+    // Right side: the module ID (numeric literal or string)
+    match &*assign.right {
+        Expr::Lit(Lit::Num(n)) => Some(format!("{}", n.value as i64)),
+        Expr::Lit(Lit::Str(s)) => Some(s.value.as_str().unwrap_or("unknown").to_string()),
+        _ => None,
+    }
 }
 
 fn extract_getter_value(expr: &Expr) -> Option<Box<Expr>> {
@@ -697,5 +770,133 @@ impl StmtSpan for Stmt {
             },
             _ => Default::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_wp5_cjs_min_numeric_keys_and_method_shorthand() {
+        // Minified webpack 5 CJS bundle with numeric keys and method shorthand syntax
+        let source = std::fs::read_to_string(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/webpack-gen/dist/wp5-cjs-min/bundle.js"
+            ),
+        )
+        .expect("failed to read wp5-cjs-min fixture");
+
+        let result = detect_and_extract(&source).expect("wp5-cjs-min should be detected");
+        let module_ids: Vec<&str> = result.modules.iter().map(|m| m.id.as_str()).collect();
+
+        // Should extract modules with numeric IDs
+        assert!(
+            result.modules.len() >= 2,
+            "expected at least 2 modules, got {}: {:?}",
+            result.modules.len(),
+            module_ids
+        );
+        // Numeric module IDs should be present
+        assert!(
+            module_ids.iter().any(|id| id.parse::<i64>().is_ok()),
+            "expected numeric module IDs, got {:?}",
+            module_ids
+        );
+    }
+
+    #[test]
+    fn detects_wp5_require_s_entry() {
+        // Webpack 5 bundle using __webpack_require__(__webpack_require__.s = 2) for entry
+        let source = std::fs::read_to_string(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/webpack-gen/dist/wp5-require-s/bundle.js"
+            ),
+        )
+        .expect("failed to read wp5-require-s fixture");
+
+        let result = detect_and_extract(&source).expect("wp5-require-s should be detected");
+        let module_ids: Vec<&str> = result.modules.iter().map(|m| m.id.as_str()).collect();
+
+        assert!(
+            result.modules.len() >= 2,
+            "expected at least 2 modules, got {}: {:?}",
+            result.modules.len(),
+            module_ids
+        );
+        // Module "2" should be marked as entry
+        let entry_modules: Vec<&str> = result
+            .modules
+            .iter()
+            .filter(|m| m.is_entry)
+            .map(|m| m.id.as_str())
+            .collect();
+        assert!(
+            entry_modules.contains(&"2"),
+            "expected module '2' to be marked as entry, entries: {:?}",
+            entry_modules
+        );
+    }
+
+    #[test]
+    fn sanitize_filename_strips_dot_slash() {
+        assert_eq!(sanitize_filename("./src/index.js"), "src/index.js");
+    }
+
+    #[test]
+    fn sanitize_filename_strips_path_traversal() {
+        assert_eq!(sanitize_filename("../../../etc/passwd"), "etc/passwd");
+        assert_eq!(sanitize_filename("./../../foo.js"), "foo.js");
+    }
+
+    #[test]
+    fn sanitize_filename_strips_backslash_traversal() {
+        assert_eq!(
+            sanitize_filename("./\\..\\node_modules\\debug\\src\\index"),
+            "\\node_modules\\debug\\src\\index"
+        );
+    }
+
+    #[test]
+    fn sanitize_filename_empty_after_strip() {
+        assert_eq!(sanitize_filename("../"), "unknown.js");
+        assert_eq!(sanitize_filename("./"), "unknown.js");
+    }
+
+    #[test]
+    fn sanitize_filename_preserves_normal_paths() {
+        assert_eq!(sanitize_filename("src/utils.js"), "src/utils.js");
+        assert_eq!(sanitize_filename("index.js"), "index.js");
+    }
+
+    #[test]
+    fn detects_wp5_cjs_string_keys() {
+        // Non-minified webpack 5 CJS bundle with string keys (and method shorthand)
+        let source = std::fs::read_to_string(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/webpack-gen/dist/wp5-cjs/bundle.js"
+            ),
+        )
+        .expect("failed to read wp5-cjs fixture");
+
+        let result = detect_and_extract(&source).expect("wp5-cjs should be detected");
+        let module_ids: Vec<&str> = result.modules.iter().map(|m| m.id.as_str()).collect();
+
+        // Should have 3 modules: 2 library modules + 1 entry
+        assert_eq!(
+            result.modules.len(),
+            3,
+            "expected 3 modules, got {}: {:?}",
+            result.modules.len(),
+            module_ids
+        );
+        assert!(
+            result.modules.iter().any(|m| m.is_entry),
+            "expected an entry module, got {:?}",
+            module_ids
+        );
     }
 }

@@ -1,0 +1,8 @@
+---
+source: tests/webpack_fixtures.rs
+expression: code
+---
+function greet(name) {
+    return `Hello, ${name}!`;
+}
+export { greet };

@@ -1,0 +1,1 @@
+(()=>{"use strict";console.log("1.0.0",function(){return"hello"})})();

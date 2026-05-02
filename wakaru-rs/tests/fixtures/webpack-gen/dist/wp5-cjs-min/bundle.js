@@ -1,0 +1,1 @@
+(()=>{var r={529(r,o){o.greet=function(r){return`Hello, ${r}!`}},413(r,o){o.add=function(r,o){return r+o},o.multiply=function(r,o){return r*o}}},o={};function t(e){var n=o[e];if(void 0!==n)return n.exports;var u=o[e]={exports:{}};return r[e](u,u.exports,t),u.exports}const{greet:e}=t(529),n=t(413);console.log(e("world")),console.log(n.add(1,2))})();

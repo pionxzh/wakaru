@@ -1,0 +1,8 @@
+---
+source: tests/webpack_fixtures.rs
+expression: code
+---
+const { greet } = __webpack_require__("./src/greet.js");
+const utils = __webpack_require__("./src/utils.js");
+console.log(greet('world'));
+console.log(utils.add(1, 2));

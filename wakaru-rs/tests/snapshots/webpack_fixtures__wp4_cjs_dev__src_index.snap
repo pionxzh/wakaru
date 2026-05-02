@@ -1,0 +1,8 @@
+---
+source: tests/webpack_fixtures.rs
+expression: code
+---
+import { greet } from "./src/greet.js";
+import { add } from "./src/utils.js";
+console.log(greet('world'));
+console.log(add(1, 2));

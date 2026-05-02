@@ -1,0 +1,6 @@
+---
+source: tests/webpack_fixtures.rs
+expression: code
+---
+export const add = (e, n)=>e + n;
+export const multiply = (e, n)=>e * n;
