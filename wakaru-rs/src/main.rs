@@ -2,11 +2,28 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use wakaru_rs::{
     decompile, extract_sources, format_trace_events, parse_sourcemap, trace_rules, unpack,
-    unpack_raw, DecompileOptions, RuleTraceOptions,
+    unpack_raw, DecompileOptions, RewriteLevel, RuleTraceOptions,
 };
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliRewriteLevel {
+    Minimal,
+    Standard,
+    Aggressive,
+}
+
+impl From<CliRewriteLevel> for RewriteLevel {
+    fn from(value: CliRewriteLevel) -> Self {
+        match value {
+            CliRewriteLevel::Minimal => RewriteLevel::Minimal,
+            CliRewriteLevel::Standard => RewriteLevel::Standard,
+            CliRewriteLevel::Aggressive => RewriteLevel::Aggressive,
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "wakaru-rs")]
@@ -56,6 +73,10 @@ struct Cli {
     /// Last rule to run when tracing.
     #[arg(long, value_name = "RULE", requires = "trace_rules")]
     trace_until: Option<String>,
+
+    /// Rewrite aggressiveness level.
+    #[arg(long, default_value = "standard", value_enum)]
+    level: CliRewriteLevel,
 }
 
 fn main() -> Result<()> {
@@ -79,6 +100,7 @@ fn main() -> Result<()> {
     let options = DecompileOptions {
         filename: cli.input.to_string_lossy().to_string(),
         sourcemap_path: cli.sourcemap.map(|p| p.to_string_lossy().into_owned()),
+        level: cli.level.into(),
         ..Default::default()
     };
 

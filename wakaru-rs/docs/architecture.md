@@ -128,6 +128,19 @@ Stage 6: Cleanup and renaming
 decompilation output, but tests can disable them to snapshot structural
 restoration separately from dead-code cleanup.
 
+`DecompileOptions.level` is a separate user-facing control over rewrite
+aggressiveness:
+
+- `minimal` — semantics-preserving rewrites only
+- `standard` — default output; includes established heuristics that wakaru already
+  relies on for readability recovery
+- `aggressive` — enables additional intent-recovery patterns that are plausible for
+  compiler/transpiler output but not guaranteed semantics-preserving
+
+Rules are expected to gate risky subpatterns inside the rule, not by moving entire
+rules in or out of the pipeline. This keeps pipeline ordering stable while allowing
+specific rewrites to opt into `standard` or `aggressive` behavior.
+
 #### Key design pattern: `unresolved_mark`
 
 After `resolver()` runs, every identifier gets a `SyntaxContext`. Free variables (globals like `Object`, `JSON`, `require`) are marked with `unresolved_mark`. This is how rules distinguish between:

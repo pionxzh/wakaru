@@ -75,6 +75,14 @@ use swc_core::common::Mark;
 use swc_core::ecma::ast::Module;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RewriteLevel {
+    Minimal,
+    #[default]
+    Standard,
+    Aggressive,
+}
+
 pub use dead_decls::DeadDecls;
 pub use dead_imports::DeadImports;
 pub use arg_rest::ArgRest;
@@ -162,7 +170,7 @@ impl Rule for NoopRule {
 }
 
 pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
-    apply_default_rules_with_options(module, unresolved_mark, true);
+    apply_default_rules_with_level(module, unresolved_mark, true, RewriteLevel::Standard);
 }
 
 pub fn apply_default_rules_with_options(
@@ -170,14 +178,41 @@ pub fn apply_default_rules_with_options(
     unresolved_mark: Mark,
     dead_code_elimination: bool,
 ) {
-    apply_rules_impl(module, unresolved_mark, None, None, dead_code_elimination);
+    apply_default_rules_with_level(
+        module,
+        unresolved_mark,
+        dead_code_elimination,
+        RewriteLevel::Standard,
+    );
+}
+
+pub fn apply_default_rules_with_level(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    dead_code_elimination: bool,
+    rewrite_level: RewriteLevel,
+) {
+    apply_rules_impl(
+        module,
+        unresolved_mark,
+        None,
+        None,
+        dead_code_elimination,
+        rewrite_level,
+    );
 }
 
 /// Run the decompile pipeline, stopping immediately after `stop_after` completes.
 /// Rule names match their struct names (e.g. "SmartInline", "UnEsm").
 /// Second passes are suffixed: "UnWebpackInterop2", "UnIife2".
 pub fn apply_rules_until(module: &mut Module, unresolved_mark: Mark, stop_after: &str) {
-    apply_rules_until_with_options(module, unresolved_mark, stop_after, true);
+    apply_rules_until_with_level(
+        module,
+        unresolved_mark,
+        stop_after,
+        true,
+        RewriteLevel::Standard,
+    );
 }
 
 pub fn apply_rules_until_with_options(
@@ -186,12 +221,29 @@ pub fn apply_rules_until_with_options(
     stop_after: &str,
     dead_code_elimination: bool,
 ) {
+    apply_rules_until_with_level(
+        module,
+        unresolved_mark,
+        stop_after,
+        dead_code_elimination,
+        RewriteLevel::Standard,
+    );
+}
+
+pub fn apply_rules_until_with_level(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    stop_after: &str,
+    dead_code_elimination: bool,
+    rewrite_level: RewriteLevel,
+) {
     apply_rules_impl(
         module,
         unresolved_mark,
         Some(stop_after),
         None,
         dead_code_elimination,
+        rewrite_level,
     );
 }
 
@@ -290,6 +342,24 @@ pub fn apply_rules_between_with_options(
     stop_after: &str,
     dead_code_elimination: bool,
 ) {
+    apply_rules_between_with_level(
+        module,
+        unresolved_mark,
+        start_from,
+        stop_after,
+        dead_code_elimination,
+        RewriteLevel::Standard,
+    );
+}
+
+pub fn apply_rules_between_with_level(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    start_from: &str,
+    stop_after: &str,
+    dead_code_elimination: bool,
+    rewrite_level: RewriteLevel,
+) {
     apply_rules_range_impl(
         module,
         unresolved_mark,
@@ -297,16 +367,18 @@ pub fn apply_rules_between_with_options(
         Some(stop_after),
         None,
         dead_code_elimination,
+        rewrite_level,
     );
 }
 
-pub(crate) fn apply_rules_range_with_observer_with_options(
+pub(crate) fn apply_rules_range_with_observer_with_level(
     module: &mut Module,
     unresolved_mark: Mark,
     start_from: Option<&str>,
     stop_after: Option<&str>,
     observer: &mut dyn FnMut(&'static str, &Module),
     dead_code_elimination: bool,
+    rewrite_level: RewriteLevel,
 ) {
     apply_rules_range_impl(
         module,
@@ -315,6 +387,7 @@ pub(crate) fn apply_rules_range_with_observer_with_options(
         stop_after,
         Some(observer),
         dead_code_elimination,
+        rewrite_level,
     );
 }
 
@@ -324,6 +397,7 @@ fn apply_rules_impl(
     stop_after: Option<&str>,
     observer: Option<&mut dyn FnMut(&'static str, &Module)>,
     dead_code_elimination: bool,
+    rewrite_level: RewriteLevel,
 ) {
     apply_rules_range_impl(
         module,
@@ -332,6 +406,7 @@ fn apply_rules_impl(
         stop_after,
         observer,
         dead_code_elimination,
+        rewrite_level,
     );
 }
 
@@ -342,6 +417,7 @@ fn apply_rules_range_impl(
     stop_after: Option<&str>,
     mut observer: Option<&mut dyn FnMut(&'static str, &Module)>,
     dead_code_elimination: bool,
+    rewrite_level: RewriteLevel,
 ) {
     let mut started = start_from.is_none();
     macro_rules! run {
@@ -422,7 +498,7 @@ fn apply_rules_range_impl(
     run!(ObjectAssignSpread::new(unresolved_mark), "ObjectAssignSpread");
     run!(UnVariableMerging, "UnVariableMerging");
     run!(UnNullishCoalescing, "UnNullishCoalescing");
-    run!(UnOptionalChaining, "UnOptionalChaining");
+    run!(UnOptionalChaining::new(rewrite_level), "UnOptionalChaining");
 
     // Stage 4: Complex pattern restoration
     run!(UnIife, "UnIife");

@@ -9,6 +9,25 @@ It serves as the foundation for Step 1 and Step 2 of the [fact-system proposal](
 - **Safety**: `safe` (semantics-preserving), `heuristic` (high-confidence pattern match), `aggressive` (may change semantics)
 - **Fact behavior**: `writer` (could emit observations), `reader` (could benefit from merged facts), `neither`
 
+**Note on safety vs user-facing levels**
+
+The `Safety` field in this document is internal rule metadata. It describes how risky
+the rewrite logic is in principle, not whether the rewrite is enabled for end users by
+default.
+
+User-facing configuration is controlled separately by `RewriteLevel` /
+`DecompileOptions.level`:
+
+- `minimal` — semantics-preserving rewrites only
+- `standard` — default output; includes established heuristics already considered part
+  of normal wakaru recovery
+- `aggressive` — enables additional intent-recovery patterns that are plausible for
+  generated code but not guaranteed semantics-preserving
+
+Mixed rules may contain subpatterns that belong to different user-facing levels. For
+those rules, level gating happens inside the rule rather than by enabling/disabling
+the whole rule.
+
 ---
 
 ## Stage 1 — Syntax Normalization
@@ -541,8 +560,8 @@ These rules restore structural patterns and clean up minification artifacts.
 | Produces | `x?.prop` optional chaining expressions |
 | Downstream dependents | UnConditionals (should run after optional chaining) |
 | Fact behavior | Neither |
-| Safety | Safe |
-| Notes | Shares helper functions with UnNullishCoalescing (`exprs_structurally_equal`, `is_undefined`) |
+| Safety | Mixed: standard heuristic + aggressive subpatterns |
+| Notes | Shares helper functions with UnNullishCoalescing (`exprs_structurally_equal`, `is_undefined`). Level-gated behavior: `minimal` disables loose `x == null ? undefined : x.prop` recovery; `standard` enables loose null-check recovery; `aggressive` additionally enables Babel-loose temp-binding forms like `(tmp = expr) == null ? undefined : tmp.prop` → `expr?.prop`. |
 
 ---
 

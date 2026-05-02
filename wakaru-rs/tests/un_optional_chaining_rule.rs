@@ -1,10 +1,14 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
-use wakaru_rs::rules::UnOptionalChaining;
+use wakaru_rs::{rules::UnOptionalChaining, RewriteLevel};
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnOptionalChaining)
+    apply_with_level(input, RewriteLevel::Standard)
+}
+
+fn apply_with_level(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |_| UnOptionalChaining::new(level))
 }
 
 #[test]
@@ -69,6 +73,13 @@ fn transforms_loose_eq_null_member_access() {
     let expected = r#"const x = U?.userID"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_does_not_transform_loose_eq_null_member_access() {
+    let input = r#"const x = U == null ? undefined : U.userID"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -152,10 +163,26 @@ fn does_not_transform_loose_eq_assignment_member_access() {
 }
 
 #[test]
+fn aggressive_transforms_loose_eq_assignment_member_access() {
+    let input = r#"const x = (n = e.ownerDocument) == null ? undefined : n.defaultView"#;
+    let expected = r#"const x = e.ownerDocument?.defaultView"#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn does_not_transform_loose_eq_assignment_method_call() {
     let input = r#"const x = (t = obj.getRootNode) == null ? undefined : t.call(obj)"#;
     let output = apply(input);
     assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn aggressive_transforms_loose_eq_assignment_method_call() {
+    let input = r#"const x = (t = obj.getRootNode) == null ? undefined : t.call(obj)"#;
+    let expected = r#"const x = obj.getRootNode?.call(obj)"#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -166,10 +193,26 @@ fn does_not_transform_loose_neq_assignment_form() {
 }
 
 #[test]
+fn aggressive_transforms_loose_neq_assignment_form() {
+    let input = r#"const x = (n = e.body) != null ? n.scrollWidth : undefined"#;
+    let expected = r#"const x = e.body?.scrollWidth"#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn does_not_transform_loose_eq_assignment_with_computed_access() {
     let input = r#"const x = (t = e[n.type]) == null ? undefined : t.duration"#;
     let output = apply(input);
     assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn aggressive_transforms_loose_eq_assignment_with_computed_access() {
+    let input = r#"const x = (t = e[n.type]) == null ? undefined : t.duration"#;
+    let expected = r#"const x = e[n.type]?.duration"#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -181,6 +224,22 @@ use(n);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn aggressive_rewrites_observable_temp_assignment_pattern() {
+    let input = r#"
+let n = 0;
+const x = (n = obj) == null ? undefined : n.value;
+use(n);
+"#;
+    let expected = r#"
+let n = 0;
+const x = obj?.value;
+use(n);
+"#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
 }
 
 // --- known-broken semantic regressions ---
