@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use rayon::prelude::*;
 use wakaru_rs::{
     decompile, extract_sources, format_trace_events, parse_sourcemap, trace_rules, unpack,
     unpack_raw, DecompileOptions, RewriteLevel, RuleTraceOptions,
@@ -176,23 +177,40 @@ fn run_default(cli: Cli) -> Result<()> {
             unpack(&input, options)?
         };
 
-        // Track seen paths in a case-folded set so we detect collisions on
-        // case-insensitive filesystems (Windows NTFS).  When a collision is
-        // found we append `_2`, `_3`, … before the extension.
+        // Resolve output paths (serial — deduplication needs mutable seen set).
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let resolved: Vec<(PathBuf, &str)> = pairs
+            .iter()
+            .map(|(filename, code)| {
+                let out_path = deduplicate_path(&out_dir.join(filename), &mut seen);
+                (out_path, code.as_str())
+            })
+            .collect();
 
-        for (filename, code) in &pairs {
-            let out_path = deduplicate_path(&out_dir.join(filename), &mut seen);
-            if let Some(parent) = out_path.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!("failed to create output directory {}", parent.display())
-                })?;
+        // Batch-create all unique parent directories.
+        let mut dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        for (path, _) in &resolved {
+            if let Some(parent) = path.parent() {
+                if dirs.insert(parent.to_path_buf()) {
+                    fs::create_dir_all(parent).with_context(|| {
+                        format!("failed to create output directory {}", parent.display())
+                    })?;
+                }
             }
-            fs::write(&out_path, code)
-                .with_context(|| format!("failed to write {}", out_path.display()))?;
-            eprintln!("wrote {}", out_path.display());
         }
-        eprintln!("total: {} module(s)", pairs.len());
+
+        // Write files in parallel.
+        resolved
+            .par_iter()
+            .try_for_each(|(path, code)| {
+                fs::write(path, code)
+                    .with_context(|| format!("failed to write {}", path.display()))
+            })?;
+
+        for (path, _) in &resolved {
+            eprintln!("wrote {}", path.display());
+        }
+        eprintln!("total: {} module(s)", resolved.len());
     } else {
         let output = decompile(&input, options)?;
 
