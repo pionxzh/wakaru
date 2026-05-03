@@ -296,3 +296,24 @@ null !== (o = null === (s = c.foo.bar) || void 0 === s ? void 0 : s.baz.z) && vo
 c.foo.bar?.baz.z ?? false;
 `,
 )
+
+inlineTest('complex nested nullish and optional chaining',
+  `
+var a =
+      null !==
+        (t =
+          null == r ||
+          null === (n = r.app_info) ||
+          void 0 === n ||
+          null === (o = n.base_info) ||
+          void 0 === o
+            ? void 0
+            : o.app_name) && void 0 !== t
+        ? t
+        : "game";
+`,
+  `
+var a =
+      r?.app_info?.base_info?.app_name ?? "game";
+`,
+)

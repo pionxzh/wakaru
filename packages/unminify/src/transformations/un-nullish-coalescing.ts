@@ -5,6 +5,7 @@ import { removeDeclarationIfUnused } from '@wakaru/ast-utils/scope'
 import { createJSCodeshiftTransformationRule } from '@wakaru/shared/rule'
 import { negateCondition } from '../utils/condition'
 import { isDecisionTreeLeaf, makeDecisionTree, makeDecisionTreeWithConditionSplitting, negateDecisionTree } from '../utils/decisionTree'
+import { analyzeOptionalChain } from '../utils/analyze-optional-chain'
 import type { DecisionTree } from '../utils/decisionTree'
 import type { ASTTransformation } from '@wakaru/shared/rule'
 import type { ExpressionKind } from 'ast-types/lib/gen/kinds'
@@ -68,6 +69,16 @@ function convertOptionalChaining(j: JSCodeshift, path: ASTPath<ConditionalExpres
     transformed = false
 
     const expression = path.node
+    
+    // Handle complex nested nullish coalescing pattern
+    if (j.ConditionalExpression.check(expression)) {
+        const result = analyzeOptionalChain(j, path as ASTPath<ConditionalExpression>)
+        if (result) {
+            transformed = true
+            return result
+        }
+    }
+    
     // console.log('\n\n>>>', `${picocolors.green(j(expression).toSource())}`)
     const _decisionTree = makeDecisionTreeWithConditionSplitting(j, makeDecisionTree(j, expression, true))
     const shouldNegate = isNotNullBinary(j, _decisionTree.condition)
