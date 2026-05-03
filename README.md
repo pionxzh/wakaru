@@ -177,7 +177,7 @@ or damage caused by this program.
 
 ## License
 
-[MIT](./LICENSE)
+[Apache-2.0](./LICENSE)
 
 [CodecovBadge]: https://img.shields.io/codecov/c/github/pionxzh/wakaru
 [CodecovRepo]: https://codecov.io/gh/pionxzh/wakaru

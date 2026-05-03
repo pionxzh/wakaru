@@ -133,4 +133,4 @@ See [AGENTS.md](../AGENTS.md) for architecture and development guidelines.
 
 ## License
 
-MIT
+Apache-2.0
