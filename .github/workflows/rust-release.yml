@@ -1,0 +1,136 @@
+name: Rust Release
+
+on:
+  push:
+    tags:
+      - "v*-next.*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: wakaru-rs
+            archive: wakaru-rs-linux-x64.tar.gz
+            npm-pkg: cli-linux-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: wakaru-rs
+            archive: wakaru-rs-darwin-arm64.tar.gz
+            npm-pkg: cli-darwin-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: wakaru-rs.exe
+            archive: wakaru-rs-win32-x64.zip
+            npm-pkg: cli-win32-x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: wakaru-rs
+
+      - name: Build
+        working-directory: wakaru-rs
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd wakaru-rs/target/${{ matrix.target }}/release
+          tar czf ${{ matrix.archive }} ${{ matrix.artifact }}
+          mv ${{ matrix.archive }} ${{ github.workspace }}/
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "wakaru-rs/target/${{ matrix.target }}/release/${{ matrix.artifact }}" -DestinationPath "${{ matrix.archive }}"
+
+      - name: Prepare platform npm package
+        shell: bash
+        run: |
+          cp "wakaru-rs/target/${{ matrix.target }}/release/${{ matrix.artifact }}" \
+             "wakaru-rs/npm/platforms/${{ matrix.npm-pkg }}/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.npm-pkg }}
+          path: wakaru-rs/npm/platforms/${{ matrix.npm-pkg }}/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
+          generate_release_notes: true
+
+  npm-publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          for pkg in cli-darwin-arm64 cli-linux-x64 cli-win32-x64; do
+            PKG_DIR="wakaru-rs/npm/platforms/$pkg"
+            cp artifacts/$pkg/* "$PKG_DIR/"
+            cd "$PKG_DIR"
+            npm version "$VERSION" --no-git-tag-version
+            npm publish --tag next --access public
+            cd "$GITHUB_WORKSPACE"
+          done
+
+      - name: Publish main package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd wakaru-rs/npm
+          # Update version and optionalDependencies versions
+          node -e "
+            const pkg = require('./package.json');
+            pkg.version = '$VERSION';
+            for (const dep of Object.keys(pkg.optionalDependencies)) {
+              pkg.optionalDependencies[dep] = '$VERSION';
+            }
+            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          npm publish --tag next --access public

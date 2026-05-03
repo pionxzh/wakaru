@@ -1,0 +1,35 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [rust]
+  pull_request:
+    branches: [rust]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: wakaru-rs
+      - name: Format check
+        working-directory: wakaru-rs
+        run: cargo fmt --check
+      - name: Clippy
+        working-directory: wakaru-rs
+        run: cargo clippy -- -D warnings
+      - name: Test
+        working-directory: wakaru-rs
+        run: cargo test

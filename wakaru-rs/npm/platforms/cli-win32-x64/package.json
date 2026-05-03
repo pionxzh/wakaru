@@ -1,0 +1,20 @@
+{
+  "name": "@wakaru/cli-win32-x64",
+  "version": "0.2.0-next.0",
+  "description": "Wakaru CLI binary for Windows x64",
+  "author": "Pionxzh",
+  "license": "MIT",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "bin": {
+    "wakaru-rs": "./wakaru-rs.exe"
+  },
+  "files": ["wakaru-rs.exe"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pionxzh/wakaru.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

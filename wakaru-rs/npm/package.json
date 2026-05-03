@@ -1,0 +1,33 @@
+{
+  "name": "@wakaru/cli",
+  "version": "0.2.0-next.0",
+  "description": "Fast JavaScript decompiler and bundle splitter (Rust)",
+  "author": "Pionxzh",
+  "license": "MIT",
+  "bin": {
+    "wakaru": "./bin/wakaru"
+  },
+  "files": ["bin"],
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pionxzh/wakaru.git",
+    "directory": "wakaru-rs/npm"
+  },
+  "homepage": "https://github.com/pionxzh/wakaru/tree/rust/wakaru-rs",
+  "keywords": [
+    "decompile",
+    "unminify",
+    "webpack",
+    "deobfuscate",
+    "javascript",
+    "rust"
+  ],
+  "optionalDependencies": {
+    "@wakaru/cli-darwin-arm64": "0.2.0-next.0",
+    "@wakaru/cli-linux-x64": "0.2.0-next.0",
+    "@wakaru/cli-win32-x64": "0.2.0-next.0"
+  }
+}
