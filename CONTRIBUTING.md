@@ -2,20 +2,18 @@
 
 ## Setup
 
-This project uses [PNPM](https://pnpm.js.org/) for package management. Please make sure you have it installed before proceeding.
-
 1. Fork the repo and create your branch from `main`.
-2. Run `pnpm install` in the repository root.
-3. Run `pnpm dev` to start the development server.
-5. Make your changes!
+2. Install a stable Rust toolchain.
+3. Run `cargo test` from `wakaru-rs/`.
+4. Make your changes.
 
-## Linting and Type Checking
+## Checks
 
-This project uses [ESLint](https://eslint.org/) and [TypeScript](https://www.typescriptlang.org/) for linting and type checking, respectively. Please make sure your code passes both before submitting a PR.
+Rust commands should be run from `wakaru-rs/`.
 
 ```bash
-pnpm run lint
-pnpm run test
+cargo test
+cargo clippy -- -D warnings
 ```
 
 ## Commit Message Format

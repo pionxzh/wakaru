@@ -165,8 +165,8 @@ Useful docs:
 - [`helper-detection.md`](./wakaru-rs/docs/helper-detection.md)
 - [`debugging.md`](./wakaru-rs/docs/debugging.md)
 
-The old TypeScript implementation is still present in `packages/` during the
-transition period.
+The legacy TypeScript implementation is preserved on the `legacy-ts` branch
+during the transition period.
 
 ## Legal Disclaimer
 
