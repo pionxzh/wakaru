@@ -576,7 +576,7 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
                     src: import.src.clone(),
                     type_only: import.type_only,
                     with: import.with.clone(),
-                    phase: import.phase.clone(),
+                    phase: import.phase,
                 });
         } else {
             import.specifiers.extend(named_specifiers);

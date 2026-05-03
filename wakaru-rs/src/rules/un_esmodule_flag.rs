@@ -115,10 +115,10 @@ fn is_export_object(expr: &Expr) -> bool {
     }
     // module.exports
     if let Expr::Member(MemberExpr { obj, prop, .. }) = expr {
-        if matches!(&**obj, Expr::Ident(id) if &*id.sym == "module") {
-            if matches!(prop, MemberProp::Ident(IdentName { sym, .. }) if &**sym == "exports") {
-                return true;
-            }
+        if matches!(&**obj, Expr::Ident(id) if &*id.sym == "module")
+            && matches!(prop, MemberProp::Ident(IdentName { sym, .. }) if &**sym == "exports")
+        {
+            return true;
         }
     }
     false

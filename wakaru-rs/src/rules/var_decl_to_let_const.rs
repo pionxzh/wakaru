@@ -342,12 +342,11 @@ impl Visit for RefOutsideDeclBlockCollector<'_> {
 
 fn collect_assign_target_ids(target: &AssignTarget, out: &mut HashSet<BindingId>) {
     match target {
-        AssignTarget::Simple(simple) => match simple {
-            SimpleAssignTarget::Ident(bi) => {
+        AssignTarget::Simple(simple) => {
+            if let SimpleAssignTarget::Ident(bi) = simple {
                 out.insert((bi.id.sym.clone(), bi.id.ctxt));
             }
-            _ => {}
-        },
+        }
         AssignTarget::Pat(pat_target) => {
             collect_assign_pat_target_ids(pat_target, out);
         }

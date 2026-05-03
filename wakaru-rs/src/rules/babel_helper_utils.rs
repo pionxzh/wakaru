@@ -295,10 +295,11 @@ fn detect_helper_from_var_decl(
     // var _extends = Object.assign || function(target) { ... }
     // This is the Babel 6 or pre-evaluated form of the _extends polyfill.
     if let Expr::Bin(bin) = init.as_ref() {
-        if bin.op == BinaryOp::LogicalOr {
-            if is_object_assign_ref(&bin.left) && is_extends_polyfill_fn(&bin.right) {
-                return Some((key, BabelHelperKind::Extends));
-            }
+        if bin.op == BinaryOp::LogicalOr
+            && is_object_assign_ref(&bin.left)
+            && is_extends_polyfill_fn(&bin.right)
+        {
+            return Some((key, BabelHelperKind::Extends));
         }
     }
 
@@ -677,14 +678,13 @@ fn check_stmt_for_wildcard_markers(
             if let Callee::Expr(callee) = &call.callee {
                 if let Expr::Member(member) = callee.as_ref() {
                     if let Expr::Ident(obj) = member.obj.as_ref() {
-                        if obj.sym.as_ref() == "Object" {
-                            if is_member_prop_name(&member.prop, "keys")
+                        if obj.sym.as_ref() == "Object"
+                            && (is_member_prop_name(&member.prop, "keys")
                                 || is_member_prop_name(&member.prop, "getOwnPropertyDescriptor")
                                 || is_member_prop_name(&member.prop, "defineProperty")
-                                || is_member_prop_name(&member.prop, "getOwnPropertyNames")
-                            {
-                                *self.has_property_copy = true;
-                            }
+                                || is_member_prop_name(&member.prop, "getOwnPropertyNames"))
+                        {
+                            *self.has_property_copy = true;
                         }
                     }
                 }
@@ -1179,13 +1179,12 @@ fn scan_stmts_for_markers(stmts: &[Stmt], state: &mut BodyMarkerState) {
                         }
                     }
                     // *.apply(this, arguments)
-                    if is_member_prop_name(&member.prop, "apply") && call.args.len() == 2 {
-                        if matches!(call.args[0].expr.as_ref(), Expr::This(..)) {
-                            if matches!(call.args[1].expr.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "arguments")
-                            {
-                                self.state.has_apply_this_arguments = true;
-                            }
-                        }
+                    if is_member_prop_name(&member.prop, "apply")
+                        && call.args.len() == 2
+                        && matches!(call.args[0].expr.as_ref(), Expr::This(..))
+                        && matches!(call.args[1].expr.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "arguments")
+                    {
+                        self.state.has_apply_this_arguments = true;
                     }
                 }
                 // new Array(len) constructor

@@ -568,7 +568,7 @@ fn find_inline_inherits_super(stmts: &[Stmt]) -> Option<Box<Expr>> {
             _ => continue,
         };
 
-        if body_stmts.iter().any(|s| stmt_has_object_create(s)) {
+        if body_stmts.iter().any(stmt_has_object_create) {
             // This is an inline _inherits IIFE — second arg is the super class
             return Some(call.args[1].expr.clone());
         }
@@ -695,11 +695,12 @@ fn parse_class_body(
         // `((e, t) => { ... Object.create ... })(t, SuperClass)`
         // When super_param is None but has_super is true, we already extracted the super class
         // in find_inline_inherits_super — just skip this statement.
-        if super_param.is_none() && has_super {
-            if is_inline_inherits_iife_any_super(stmt, inner_ctor_name) {
-                extends_handled = true;
-                continue;
-            }
+        if super_param.is_none()
+            && has_super
+            && is_inline_inherits_iife_any_super(stmt, inner_ctor_name)
+        {
+            extends_handled = true;
+            continue;
         }
 
         // `function t(...) { ... }` — the constructor
@@ -834,7 +835,7 @@ fn is_inline_inherits_iife_any_super(stmt: &Stmt, ctor_name: &str) -> bool {
         _ => return false,
     };
 
-    body_stmts.iter().any(|s| stmt_has_object_create(s))
+    body_stmts.iter().any(stmt_has_object_create)
 }
 
 // ============================================================
@@ -1096,10 +1097,8 @@ fn try_parse_create_class(
     }
 
     // Static methods (optional 3rd arg)
-    if call.args.len() == 3 {
-        if !parse_create_class_array(&call.args[2], true, members) {
-            return false;
-        }
+    if call.args.len() == 3 && !parse_create_class_array(&call.args[2], true, members) {
+        return false;
     }
 
     true
@@ -1487,7 +1486,7 @@ fn is_inline_inherits_iife(stmt: &Stmt, ctor_name: &str, super_param: &str) -> b
     };
 
     // Body should contain Object.create (prototype chain setup)
-    body_stmts.iter().any(|s| stmt_has_object_create(s))
+    body_stmts.iter().any(stmt_has_object_create)
 }
 
 /// Check if a statement contains `Object.create(...)` call.
@@ -1646,14 +1645,14 @@ fn unwrap_inline_pcr_iife(body: &mut BlockStmt) {
         if let Stmt::Return(ret) = stmt {
             if let Some(arg) = &mut ret.arg {
                 if let Some(unwrapped) = try_unwrap_pcr_expr(arg) {
-                    *arg = Box::new(unwrapped);
+                    **arg = unwrapped;
                 }
             }
         }
         // Handle `pcrIIFE(this, expr)` as expression statement → `expr`
         if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
             if let Some(unwrapped) = try_unwrap_pcr_expr(expr) {
-                *expr = Box::new(unwrapped);
+                **expr = unwrapped;
             }
         }
     }
@@ -1774,17 +1773,15 @@ fn is_new_reference_error(expr: &Expr) -> bool {
 /// Strip `return super(...)` at the end of a constructor body → `super(...)` as expr stmt.
 /// In derived constructors, `return super()` is unnecessary; super() implicitly returns this.
 fn strip_return_super(body: &mut BlockStmt) {
-    if let Some(last) = body.stmts.last() {
-        if let Stmt::Return(ret) = last {
-            if let Some(arg) = &ret.arg {
-                if is_super_call(arg) {
-                    let super_call = arg.clone();
-                    let len = body.stmts.len();
-                    body.stmts[len - 1] = Stmt::Expr(ExprStmt {
-                        span: DUMMY_SP,
-                        expr: super_call,
-                    });
-                }
+    if let Some(Stmt::Return(ret)) = body.stmts.last() {
+        if let Some(arg) = &ret.arg {
+            if is_super_call(arg) {
+                let super_call = arg.clone();
+                let len = body.stmts.len();
+                body.stmts[len - 1] = Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: super_call,
+                });
             }
         }
     }

@@ -56,7 +56,7 @@ impl VisitMut for UnClassFields {
             if body.stmts.is_empty() {
                 continue;
             }
-            let all_this_assigns = body.stmts.iter().all(|s| is_this_assignment(s));
+            let all_this_assigns = body.stmts.iter().all(is_this_assignment);
             if !all_this_assigns {
                 continue;
             }

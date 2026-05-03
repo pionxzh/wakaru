@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{self, IsTerminal, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -288,7 +288,7 @@ fn read_input(input: Option<&PathBuf>) -> Result<(String, String)> {
     }
 }
 
-fn ensure_output_file(path: &PathBuf, force: bool) -> Result<()> {
+fn ensure_output_file(path: &Path, force: bool) -> Result<()> {
     if path.exists() && !force {
         bail!(
             "output file {} already exists; pass --force to overwrite",
@@ -329,10 +329,10 @@ fn ensure_output_dir(path: &PathBuf, force: bool) -> Result<()> {
 /// `seen` stores the lowercased string representation of every path already
 /// claimed.  When a collision is detected the stem gets a numeric suffix:
 /// `foo.js` → `foo_2.js` → `foo_3.js` …
-fn deduplicate_path(path: &PathBuf, seen: &mut std::collections::HashSet<String>) -> PathBuf {
+fn deduplicate_path(path: &Path, seen: &mut std::collections::HashSet<String>) -> PathBuf {
     let key = path.to_string_lossy().to_lowercase();
     if seen.insert(key) {
-        return path.clone();
+        return path.to_path_buf();
     }
     // Collision — append _N before the extension.
     let stem = path

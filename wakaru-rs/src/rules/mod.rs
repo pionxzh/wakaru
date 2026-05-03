@@ -443,10 +443,8 @@ fn apply_rules_range_impl(
     run!(SimplifySequence::new(unresolved_mark), "SimplifySequence");
     run!(FlipComparisons::new(unresolved_mark), "FlipComparisons");
     run!(UnTypeofStrict, "UnTypeofStrict");
-    if !started {
-        if start_from == Some("RemoveVoid") {
-            started = true;
-        }
+    if !started && start_from == Some("RemoveVoid") {
+        started = true;
     }
     if started && RemoveVoid::should_run(module) {
         module.visit_mut_with(&mut RemoveVoid);

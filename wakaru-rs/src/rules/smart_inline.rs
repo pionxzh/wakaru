@@ -97,8 +97,8 @@ fn process_stmts(stmts: Vec<Stmt>, level: RewriteLevel) -> Vec<Stmt> {
     // Pass 1: inline single-use const declarations (temp vars)
     let stmts = inline_temp_vars(stmts);
     // Pass 2: group consecutive property / array accesses into destructuring
-    let stmts = group_destructuring(stmts);
-    stmts
+
+    group_destructuring(stmts)
 }
 
 // ============================================================

@@ -375,17 +375,18 @@ impl VisitMut for UnEsm {
             if drop_set.contains(&idx) {
                 continue;
             }
-            if let Classified::CjsExport { kind } = c {
-                if let CjsExportKind::Named {
-                    name,
-                    expr,
-                    is_void: false,
-                } = kind
-                {
-                    let is_ident = matches!(expr.as_ref(), Expr::Ident(_));
-                    if !is_ident && local_names.contains(name) {
-                        export_names.insert(name.clone());
-                    }
+            if let Classified::CjsExport {
+                kind:
+                    CjsExportKind::Named {
+                        name,
+                        expr,
+                        is_void: false,
+                    },
+            } = c
+            {
+                let is_ident = matches!(expr.as_ref(), Expr::Ident(_));
+                if !is_ident && local_names.contains(name) {
+                    export_names.insert(name.clone());
                 }
             }
         }
@@ -1264,9 +1265,7 @@ fn try_extract_exports_assign(expr: &Expr) -> Option<(Atom, Box<Expr>)> {
     if obj_id.sym.as_ref() != "exports" {
         return None;
     }
-    let Some(prop_name) = is_ident_prop(&member.prop) else {
-        return None;
-    };
+    let prop_name = is_ident_prop(&member.prop)?;
     Some((prop_name, assign.right.clone()))
 }
 

@@ -1,3 +1,11 @@
+#![allow(
+    clippy::borrowed_box,
+    clippy::boxed_local,
+    clippy::ptr_arg,
+    clippy::type_complexity,
+    clippy::vec_box
+)]
+
 pub mod driver;
 pub mod facts;
 pub mod namespace_decomposition;

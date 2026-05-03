@@ -257,7 +257,7 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
                             let imported_name = s
                                 .imported
                                 .as_ref()
-                                .map(|i| export_name_to_atom(i))
+                                .map(export_name_to_atom)
                                 .unwrap_or_else(|| s.local.sym.clone());
                             (s.local.sym.clone(), ImportKind::Named(imported_name))
                         }
@@ -324,7 +324,7 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
                             let exported_name = s
                                 .exported
                                 .as_ref()
-                                .map(|e| export_name_to_atom(e))
+                                .map(export_name_to_atom)
                                 .unwrap_or_else(|| local_name.clone());
                             let kind = if exported_name.as_ref() == "default" {
                                 ExportKind::Default

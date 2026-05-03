@@ -114,6 +114,6 @@ fn is_ts_helper_decl(var_decl: &VarDecl, canonical_names: &[Atom]) -> bool {
             let Pat::Ident(binding) = &decl.name else {
                 return false;
             };
-            canonical_names.iter().any(|v| *v == binding.id.sym)
+            canonical_names.contains(&binding.id.sym)
         })
 }

@@ -82,8 +82,8 @@ fn process_iife(call: &mut CallExpr, level: RewriteLevel) {
         return;
     }
 
-    match &mut call.callee {
-        Callee::Expr(callee_expr) => match callee_expr.as_mut() {
+    if let Callee::Expr(callee_expr) = &mut call.callee {
+        match callee_expr.as_mut() {
             Expr::Fn(fn_expr) => {
                 process_fn_iife(&mut fn_expr.function, &mut call.args);
             }
@@ -100,8 +100,7 @@ fn process_iife(call: &mut CallExpr, level: RewriteLevel) {
                 _ => {}
             },
             _ => {}
-        },
-        _ => {}
+        }
     }
 }
 
@@ -276,8 +275,6 @@ where
     F: Fn(usize) -> Option<(Atom, SyntaxContext)>,
 {
     let mut plan = RewritePlan::default();
-    let arg_count = args.len();
-
     // Printed JavaScript has no `SyntaxContext`, so every new name we introduce
     // must avoid bindings anywhere in the IIFE body. This is conservative for
     // suffix renames, but avoids producing a param name that is shadowed at a
@@ -289,18 +286,15 @@ where
         }
     }
 
-    for i in 0..param_count {
+    for (i, arg) in args.iter().enumerate().take(param_count) {
         let Some((param_sym, param_ctxt)) = param_at(i) else {
             continue;
         };
         if param_sym.len() != 1 {
             continue;
         }
-        if i >= arg_count {
-            continue;
-        }
 
-        match args[i].expr.as_ref() {
+        match arg.expr.as_ref() {
             Expr::Ident(ident) => {
                 if ident.sym.len() <= 1 || ident.sym == param_sym {
                     continue;

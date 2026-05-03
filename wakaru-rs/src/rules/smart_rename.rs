@@ -221,7 +221,7 @@ fn get_single_react_hook_call(expr: &Expr) -> Option<String> {
     let valid = match fn_name.as_str() {
         "useRef" | "createContext" => args.len() <= 1,
         "useState" => args.len() <= 1,
-        "useReducer" => args.len() >= 1 && args.len() <= 3,
+        "useReducer" => !args.is_empty() && args.len() <= 3,
         "forwardRef" => args.len() == 1,
         _ => false,
     };
@@ -1177,8 +1177,8 @@ struct ValuePositionClassifier {
 impl ValuePositionClassifier {
     fn new(bindings: HashMap<BindingId, ()>) -> Self {
         let states = bindings
-            .into_iter()
-            .map(|(k, _)| (k, ClassificationState::default()))
+            .into_keys()
+            .map(|k| (k, ClassificationState::default()))
             .collect();
         Self { states }
     }

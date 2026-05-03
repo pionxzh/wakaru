@@ -300,7 +300,7 @@ impl UnJsx {
     }
 
     fn to_jsx_attrs(&self, props_arg: &ExprOrSpread) -> Option<Vec<JSXAttrOrSpread>> {
-        if let Some(_) = props_arg.spread {
+        if props_arg.spread.is_some() {
             return self.to_jsx_attrs_from_expr(props_arg.expr.as_ref());
         }
         self.to_jsx_attrs_from_expr(props_arg.expr.as_ref())

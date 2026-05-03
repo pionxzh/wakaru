@@ -71,7 +71,7 @@ pub fn run_reexport_consolidation(module: &mut Module, module_facts: &ModuleFact
             span: DUMMY_SP,
             local: Ident::new(local_ident.sym, DUMMY_SP, local_ident.ctxt),
         })];
-        import.src = Box::new(Str::from(target.as_ref()));
+        *import.src = Str::from(target.as_ref());
     }
 }
 

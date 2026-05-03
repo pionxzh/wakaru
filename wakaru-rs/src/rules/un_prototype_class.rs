@@ -81,7 +81,7 @@ fn transform_module_items(items: &mut Vec<ModuleItem>) {
 }
 
 fn transform_stmts(stmts: &mut Vec<Stmt>) {
-    let stmt_opts: Vec<Option<&Stmt>> = stmts.iter().map(|s| Some(s)).collect();
+    let stmt_opts: Vec<Option<&Stmt>> = stmts.iter().map(Some).collect();
     let candidates = find_candidates(&stmt_opts);
     if candidates.is_empty() {
         return;

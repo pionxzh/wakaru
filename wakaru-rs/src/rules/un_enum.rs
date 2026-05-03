@@ -55,15 +55,13 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>) {
             ModuleItem::Stmt(stmt) => {
                 // Check if this is a bare var decl like `var Direction;`
                 if let Some(bare_var_name) = get_bare_var_decl_name(&stmt) {
-                    if let Some(peeked) = iter.peek() {
-                        if let ModuleItem::Stmt(next_stmt) = peeked {
-                            if let Some(members) = parse_enum_iife(next_stmt, &bare_var_name) {
-                                // Consume the IIFE statement
-                                iter.next();
-                                let new_stmt = build_enum_var_decl(&bare_var_name, members, &stmt);
-                                items.push(ModuleItem::Stmt(new_stmt));
-                                continue;
-                            }
+                    if let Some(ModuleItem::Stmt(next_stmt)) = iter.peek() {
+                        if let Some(members) = parse_enum_iife(next_stmt, &bare_var_name) {
+                            // Consume the IIFE statement
+                            iter.next();
+                            let new_stmt = build_enum_var_decl(&bare_var_name, members, &stmt);
+                            items.push(ModuleItem::Stmt(new_stmt));
+                            continue;
                         }
                     }
                 }

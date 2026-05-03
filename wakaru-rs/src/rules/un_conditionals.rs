@@ -139,7 +139,7 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
 fn is_action_expr(expr: &Box<Expr>) -> bool {
     match expr.as_ref() {
         Expr::Call(_) | Expr::New(_) | Expr::Assign(_) | Expr::Yield(_) | Expr::Await(_) => true,
-        Expr::Seq(seq) => seq.exprs.iter().any(|e| is_action_expr(e)),
+        Expr::Seq(seq) => seq.exprs.iter().any(is_action_expr),
         Expr::Paren(paren) => is_action_expr(&paren.expr),
         _ => false,
     }

@@ -133,21 +133,18 @@ impl VisitMut for UnWebpackInterop {
 fn collect_require_bindings(module: &Module) -> HashSet<BindingKey> {
     let mut bindings = HashSet::new();
     for item in &module.body {
-        match item {
-            ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(var))) => {
-                for decl in &var.decls {
-                    let Pat::Ident(binding) = &decl.name else {
-                        continue;
-                    };
-                    let Some(init) = &decl.init else {
-                        continue;
-                    };
-                    if is_require_call(init.as_ref()) {
-                        bindings.insert((binding.id.sym.clone(), binding.id.ctxt));
-                    }
+        if let ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(var))) = item {
+            for decl in &var.decls {
+                let Pat::Ident(binding) = &decl.name else {
+                    continue;
+                };
+                let Some(init) = &decl.init else {
+                    continue;
+                };
+                if is_require_call(init.as_ref()) {
+                    bindings.insert((binding.id.sym.clone(), binding.id.ctxt));
                 }
             }
-            _ => {}
         }
     }
     bindings

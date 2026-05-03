@@ -647,7 +647,7 @@ fn make_ident_param(name: Atom) -> Param {
     }
 }
 
-fn strip_parens<'a>(expr: &'a Expr) -> &'a Expr {
+fn strip_parens(expr: &Expr) -> &Expr {
     let mut current = expr;
     while let Expr::Paren(paren) = current {
         current = paren.expr.as_ref();

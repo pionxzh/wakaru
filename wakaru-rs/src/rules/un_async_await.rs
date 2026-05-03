@@ -40,7 +40,7 @@ impl VisitMut for UnAsyncAwait {
 
 fn try_transform_generator(body: &mut BlockStmt) -> bool {
     // Find: return __generator(this, function(_a) { switch(_a.label) { ... } })
-    let return_idx = body.stmts.iter().position(|s| is_generator_return(s));
+    let return_idx = body.stmts.iter().position(is_generator_return);
     let return_idx = match return_idx {
         Some(i) => i,
         None => return false,
@@ -110,6 +110,7 @@ fn extract_generator_args(stmt: Stmt) -> Option<(Atom, Vec<SwitchCase>)> {
 /// Phase 2: Merge `_a.sent()` usages with the previous yield:
 ///   - standalone `_a.sent();` → drop
 ///   - `v = _a.sent()` → pop prev `yield X;`, push `v = yield X;`
+///
 /// Phase 3: Group by label and reconstruct try/catch/finally blocks.
 fn decode_state_machine(state_name: Atom, cases: Vec<SwitchCase>) -> Vec<Stmt> {
     let mut trys: Vec<[Option<usize>; 4]> = Vec::new();
@@ -537,7 +538,7 @@ fn reconstruct_with_regions(label_stmts: Vec<Vec<Stmt>>, trys: &[[Option<usize>;
 
 fn try_transform_awaiter(body: &mut BlockStmt) -> bool {
     // Find: return __awaiter(this, void0, void0, function*() { ... })
-    let return_idx = body.stmts.iter().position(|s| is_awaiter_return(s));
+    let return_idx = body.stmts.iter().position(is_awaiter_return);
     let return_idx = match return_idx {
         Some(i) => i,
         None => return false,

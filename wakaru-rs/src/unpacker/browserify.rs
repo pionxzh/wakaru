@@ -80,9 +80,7 @@ fn extract_browserify_modules(
         let Expr::Array(module_parts) = &*key_value.value else {
             return None;
         };
-        let Some((factory, body_stmts)) = extract_factory(module_parts) else {
-            return None;
-        };
+        let (factory, body_stmts) = extract_factory(module_parts)?;
 
         let code = emit_browserify_module(&factory, body_stmts, cm.clone())?;
         let is_entry = entry_ids.contains(&module_id);

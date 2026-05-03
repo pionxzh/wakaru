@@ -365,7 +365,7 @@ fn unpack_multi_module(
                     module.visit_mut_with(&mut fixer(None));
                     print_js(&module, cm)
                 })
-                .unwrap_or_else(|_| unpacked.code);
+                .unwrap_or(unpacked.code);
             (unpacked.filename, code)
         })
         .collect();

@@ -168,14 +168,11 @@ struct ReassignmentChecker<'a> {
 
 impl Visit for ReassignmentChecker<'_> {
     fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
-        match &assign.left {
-            AssignTarget::Simple(SimpleAssignTarget::Ident(id)) => {
-                let key = (id.id.sym.clone(), id.id.ctxt);
-                if self.candidates.contains(&key) {
-                    self.reassigned.insert(key);
-                }
+        if let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = &assign.left {
+            let key = (id.id.sym.clone(), id.id.ctxt);
+            if self.candidates.contains(&key) {
+                self.reassigned.insert(key);
             }
-            _ => {}
         }
         assign.visit_children_with(self);
     }
@@ -329,9 +326,7 @@ fn classify_interop_body(stmts: &[Stmt]) -> Option<InteropKind> {
         let Stmt::Return(ret) = stmts.last()? else {
             return None;
         };
-        if ret.arg.is_none() {
-            return None;
-        }
+        ret.arg.as_ref()?;
         // Check penultimate: must be `X.default = Y`
         let penultimate = &stmts[stmts.len() - 2];
         if is_default_assignment(penultimate) {

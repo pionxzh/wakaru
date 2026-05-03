@@ -208,9 +208,7 @@ fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Opti
     let Pat::Ident(BindingIdent { id: idx_id, .. }) = &d2.name else {
         return None;
     };
-    let Some(idx_init) = d2.init.as_deref() else {
-        return None;
-    };
+    let idx_init = d2.init.as_deref()?;
     if !is_number(idx_init, fixed_param_count) {
         return None;
     }

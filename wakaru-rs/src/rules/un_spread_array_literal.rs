@@ -29,11 +29,9 @@ impl VisitMut for UnSpreadArrayLiteral {
 fn inline_spread_array_args(args: &mut Vec<ExprOrSpread>) {
     let mut needs_inline = false;
     for arg in args.iter() {
-        if arg.spread.is_some() {
-            if matches!(arg.expr.as_ref(), Expr::Array(_)) {
-                needs_inline = true;
-                break;
-            }
+        if arg.spread.is_some() && matches!(arg.expr.as_ref(), Expr::Array(_)) {
+            needs_inline = true;
+            break;
         }
     }
 

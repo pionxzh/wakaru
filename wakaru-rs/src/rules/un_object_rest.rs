@@ -206,9 +206,7 @@ fn try_extract_owp_call(expr: &Expr) -> Option<(Box<Expr>, Vec<Atom>)> {
         let Expr::Lit(Lit::Str(s)) = elem.expr.as_ref() else {
             return None;
         };
-        let Some(key_str) = s.value.as_str() else {
-            return None;
-        };
+        let key_str = s.value.as_str()?;
         keys.push(Atom::from(key_str));
     }
     let callee = strip_parens(callee);
@@ -326,7 +324,7 @@ fn declarators_to_accesses(
                         MemberProp::Ident(id) => Some(id.sym.clone()),
                         MemberProp::Computed(c) => {
                             if let Expr::Lit(Lit::Str(s)) = c.expr.as_ref() {
-                                s.value.as_str().map(|v| Atom::from(v))
+                                s.value.as_str().map(Atom::from)
                             } else {
                                 None
                             }
@@ -567,7 +565,7 @@ fn member_prop_atom(prop: &MemberProp) -> Option<Atom> {
         MemberProp::Ident(id) => Some(id.sym.clone()),
         MemberProp::Computed(c) => {
             if let Expr::Lit(Lit::Str(s)) = c.expr.as_ref() {
-                s.value.as_str().map(|v| Atom::from(v))
+                s.value.as_str().map(Atom::from)
             } else {
                 None
             }
@@ -579,7 +577,7 @@ fn member_prop_atom(prop: &MemberProp) -> Option<Atom> {
 fn prop_name_atom(key: &PropName) -> Option<Atom> {
     match key {
         PropName::Ident(id) => Some(id.sym.clone()),
-        PropName::Str(s) => s.value.as_str().map(|v| Atom::from(v)),
+        PropName::Str(s) => s.value.as_str().map(Atom::from),
         _ => None,
     }
 }

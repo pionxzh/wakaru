@@ -276,9 +276,7 @@ fn extract_chunk_push_modules(expr: &Expr) -> Option<&ObjectLit> {
         return None;
     }
     for prop in &modules_object.props {
-        if extract_module_from_prop(prop).is_none() {
-            return None;
-        }
+        extract_module_from_prop(prop)?;
     }
 
     Some(modules_object)
@@ -489,7 +487,7 @@ fn extract_factory(expr: &Expr) -> Option<(Function, Vec<Stmt>)> {
     }
 }
 
-fn strip_parens<'a>(expr: &'a Expr) -> &'a Expr {
+fn strip_parens(expr: &Expr) -> &Expr {
     match expr {
         Expr::Paren(paren) => strip_parens(&paren.expr),
         _ => expr,

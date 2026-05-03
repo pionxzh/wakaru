@@ -223,11 +223,11 @@ impl VisitMut for RequireIdRewriter<'_> {
 
         if let Some(filename) = self.id_to_filename.get(&id) {
             let path = format!("./{filename}");
-            call.args[0].expr = Box::new(Expr::Lit(Lit::Str(Str {
+            *call.args[0].expr = Expr::Lit(Lit::Str(Str {
                 span: Default::default(),
                 value: path.as_str().into(),
                 raw: None,
-            })));
+            }));
         }
     }
 }
@@ -269,11 +269,11 @@ impl VisitMut for RequireStringIdRewriter<'_> {
 
         if let Some(filename) = self.id_to_filename.get(key) {
             let path = format!("./{filename}");
-            call.args[0].expr = Box::new(Expr::Lit(Lit::Str(Str {
+            *call.args[0].expr = Expr::Lit(Lit::Str(Str {
                 span: Default::default(),
                 value: path.as_str().into(),
                 raw: None,
-            })));
+            }));
         }
     }
 }
@@ -299,7 +299,7 @@ impl VisitMut for RequireNRewriter {
                 self.getter_ids
                     .insert((binding.id.sym.clone(), binding.id.ctxt));
             }
-            *init = Box::new(rewritten);
+            **init = rewritten;
             return;
         }
 
