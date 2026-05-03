@@ -28,9 +28,9 @@ Download from [GitHub Releases](https://github.com/pionxzh/wakaru/releases) — 
 
 | Platform | Archive |
 |----------|---------|
-| Linux x64 | `wakaru-rs-linux-x64.tar.gz` |
-| macOS ARM64 | `wakaru-rs-darwin-arm64.tar.gz` |
-| Windows x64 | `wakaru-rs-win32-x64.zip` |
+| Linux x64 | `wakaru-linux-x64.tar.gz` |
+| macOS ARM64 | `wakaru-darwin-arm64.tar.gz` |
+| Windows x64 | `wakaru-win32-x64.zip` |
 
 ### Build from source
 
@@ -58,13 +58,19 @@ Prints to stdout when `-o` is omitted.
 wakaru input.js --unpack -o out/
 ```
 
-Splits a bundle into one file per module under `out/`. Defaults to `unpacked/` when `-o` is omitted.
+Splits a bundle into one readable file per module under `out/`. The output directory is required for unpacking.
+
+For raw splitter output before the readability pipeline:
+
+```bash
+wakaru input.js --unpack --raw -o out/
+```
 
 ### Recover original names with a source map
 
 ```bash
-wakaru input.js -o output.js -m input.js.map
-wakaru input.js --unpack -o out/ -m input.js.map
+wakaru input.js -o output.js --source-map input.js.map
+wakaru input.js --unpack -o out/ --source-map input.js.map
 ```
 
 Uses source map position data to restore original identifier names. Works with or without a `names` array — names are extracted directly from `sourcesContent` when available.
@@ -72,10 +78,10 @@ Uses source map position data to restore original identifier names. Works with o
 ### Extract original source files from a source map
 
 ```bash
-wakaru input.js --extract -m input.js.map -o src/
+wakaru extract input.js.map -o src/
 ```
 
-Writes the embedded `sourcesContent` files to disk as-is. Does not decompile. Requires `-m`.
+Writes the embedded `sourcesContent` files to disk as-is. Does not decompile the generated JavaScript.
 
 ---
 

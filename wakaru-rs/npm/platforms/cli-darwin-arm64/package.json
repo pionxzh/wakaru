@@ -7,9 +7,9 @@
   "os": ["darwin"],
   "cpu": ["arm64"],
   "bin": {
-    "wakaru-rs": "./wakaru-rs"
+    "wakaru": "./wakaru"
   },
-  "files": ["wakaru-rs"],
+  "files": ["wakaru"],
   "repository": {
     "type": "git",
     "url": "https://github.com/pionxzh/wakaru.git"

@@ -10,7 +10,7 @@ name = "wakaru_rs"
 path = "src/lib.rs"
 
 [[bin]]
-name = "wakaru-rs"
+name = "wakaru"
 path = "src/main.rs"
 
 [dev-dependencies]

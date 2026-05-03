@@ -5,13 +5,13 @@ const { spawnSync } = require("child_process");
 
 const PLATFORMS = {
   darwin: {
-    arm64: "@wakaru/cli-darwin-arm64/wakaru-rs",
+    arm64: "@wakaru/cli-darwin-arm64/wakaru",
   },
   linux: {
-    x64: "@wakaru/cli-linux-x64/wakaru-rs",
+    x64: "@wakaru/cli-linux-x64/wakaru",
   },
   win32: {
-    x64: "@wakaru/cli-win32-x64/wakaru-rs.exe",
+    x64: "@wakaru/cli-win32-x64/wakaru.exe",
   },
 };
 

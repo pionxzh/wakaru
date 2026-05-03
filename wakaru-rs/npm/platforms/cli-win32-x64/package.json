@@ -7,9 +7,9 @@
   "os": ["win32"],
   "cpu": ["x64"],
   "bin": {
-    "wakaru-rs": "./wakaru-rs.exe"
+    "wakaru": "./wakaru.exe"
   },
-  "files": ["wakaru-rs.exe"],
+  "files": ["wakaru.exe"],
   "repository": {
     "type": "git",
     "url": "https://github.com/pionxzh/wakaru.git"
