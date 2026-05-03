@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
-use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, GLOBALS};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, GLOBALS};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr,
     CallExpr, Callee, CondExpr, Expr, ExprOrSpread, ExprStmt, FnExpr, Id, Ident, IdentName, Lit,
@@ -10,7 +10,7 @@ use swc_core::ecma::ast::{
     PropOrSpread, SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
-use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -483,7 +483,7 @@ fn build_member_assign(obj_ident: Ident, prop_name: Atom, val: Box<Expr>, span: 
 pub fn detect_and_extract_raw(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let module = parse_es_module(source, cm.clone()).ok()?;
+        let module = super::parse_es_module(source, "webpack4.js", cm.clone()).ok()?;
 
         for item in &module.body {
             let ModuleItem::Stmt(stmt) = item else {
@@ -501,19 +501,21 @@ pub fn detect_and_extract_raw(source: &str) -> Option<UnpackResult> {
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let module = parse_es_module(source, cm.clone()).ok()?;
-
-        // Find the webpack IIFE call in the top-level statements
-        for item in &module.body {
-            let ModuleItem::Stmt(stmt) = item else {
-                continue;
-            };
-            if let Some(result) = try_extract_from_stmt(stmt, cm.clone()) {
-                return Some(result);
-            }
-        }
-        None
+        let module = super::parse_es_module(source, "webpack4.js", cm.clone()).ok()?;
+        detect_from_module(&module, cm)
     })
+}
+
+pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+    for item in &module.body {
+        let ModuleItem::Stmt(stmt) = item else {
+            continue;
+        };
+        if let Some(result) = try_extract_from_stmt(stmt, cm.clone()) {
+            return Some(result);
+        }
+    }
+    None
 }
 
 /// Try to extract from a top-level statement that might be a webpack4 IIFE (raw, no default rules).
@@ -1555,23 +1557,6 @@ impl<'a> Visit for ParamRefCounter<'a> {
     }
 }
 
-fn parse_es_module(source: &str, cm: Lrc<SourceMap>) -> anyhow::Result<Module> {
-    use anyhow::anyhow;
-    let fm = cm.new_source_file(
-        FileName::Custom("webpack4.js".to_string()).into(),
-        source.to_string(),
-    );
-    let lexer = Lexer::new(
-        Syntax::Es(EsSyntax::default()),
-        Default::default(),
-        StringInput::from(&*fm),
-        None,
-    );
-    let mut parser = Parser::new_from(lexer);
-    parser
-        .parse_module()
-        .map_err(|e| anyhow!("parse error: {e:?}"))
-}
 
 fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
     use anyhow::anyhow;
@@ -1622,7 +1607,7 @@ mod polyfill_tests {
     fn run_unwrap(source: &str) -> String {
         GLOBALS.set(&Default::default(), || {
             let cm: Lrc<SourceMap> = Default::default();
-            let mut module = parse_es_module(source, cm.clone()).expect("parse");
+            let mut module = crate::unpacker::parse_es_module(source, "webpack4.js", cm.clone()).expect("parse");
             let unresolved_mark = Mark::new();
             let top_level_mark = Mark::new();
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));

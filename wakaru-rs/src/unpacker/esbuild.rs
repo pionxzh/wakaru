@@ -7,26 +7,26 @@ use swc_core::ecma::ast::{
     Stmt, Str, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
-use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 
 use crate::unpacker::{UnpackResult, UnpackedModule};
 
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
-    GLOBALS.set(&Default::default(), || detect_inner(source))
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let module = super::parse_es_module(source, "esbuild.js", cm.clone()).ok()?;
+        detect_from_module(&module, cm)
+    })
 }
 
-fn detect_inner(source: &str) -> Option<UnpackResult> {
-    let cm: Lrc<SourceMap> = Default::default();
-    let module = parse_es_module(source, cm.clone()).ok()?;
-
+pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
     // Phase 1: find the lazy-helper variables (esbuild's __commonJS / __esm equivalents).
-    let helper_syms = collect_helper_syms(&module);
+    let helper_syms = collect_helper_syms(module);
     if helper_syms.is_empty() {
         return None;
     }
 
     // Phase 2: collect factory declarations — `var X = helper(factory_fn)`.
-    let factories = collect_factories(&module, &helper_syms);
+    let factories = collect_factories(module, &helper_syms);
 
     // Require a meaningful number of factories to avoid false positives on code that
     // happens to have a couple of arrow-returning-arrow helpers.
@@ -52,8 +52,9 @@ fn detect_inner(source: &str) -> Option<UnpackResult> {
     // Phase 4: everything that is not a helper decl or factory decl becomes the entry.
     let entry_items: Vec<ModuleItem> = module
         .body
-        .into_iter()
+        .iter()
         .filter(|item| !is_helper_or_factory_item(item, &helper_syms, &factory_syms))
+        .cloned()
         .collect();
 
     if !entry_items.is_empty() {
@@ -328,27 +329,3 @@ fn emit_module_raw(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String
     String::from_utf8(output).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
-fn parse_es_module(source: &str, cm: Lrc<SourceMap>) -> anyhow::Result<Module> {
-    parse_es_module_named(source, "esbuild.js".to_string(), cm)
-}
-
-fn parse_es_module_named(
-    source: &str,
-    filename: String,
-    cm: Lrc<SourceMap>,
-) -> anyhow::Result<Module> {
-    let fm = cm.new_source_file(FileName::Custom(filename).into(), source.to_string());
-    let lexer = Lexer::new(
-        Syntax::Es(EsSyntax {
-            jsx: true,
-            ..Default::default()
-        }),
-        Default::default(),
-        StringInput::from(&*fm),
-        None,
-    );
-    let mut parser = Parser::new_from(lexer);
-    parser
-        .parse_module()
-        .map_err(|e| anyhow::anyhow!("parse error: {e:?}"))
-}

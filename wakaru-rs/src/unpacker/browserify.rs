@@ -1,12 +1,12 @@
 use anyhow::anyhow;
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, SyntaxContext, GLOBALS};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
     ArrayLit, Callee, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, Lit, Module, ModuleItem,
     Number, Pat, Stmt,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
-use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::VisitMutWith;
@@ -17,28 +17,31 @@ use crate::unpacker::{UnpackResult, UnpackedModule};
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let module = parse_es_module(source, cm.clone()).ok()?;
-
-        for item in &module.body {
-            let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
-                continue;
-            };
-            let Expr::Call(outer_call) = &**expr else {
-                continue;
-            };
-            let Callee::Expr(callee_expr) = &outer_call.callee else {
-                continue;
-            };
-            let Expr::Call(_) = &**callee_expr else {
-                continue;
-            };
-
-            if let Some(result) = extract_browserify_modules(outer_call, cm.clone()) {
-                return Some(result);
-            }
-        }
-        None
+        let module = super::parse_es_module(source, "browserify.js", cm.clone()).ok()?;
+        detect_from_module(&module, cm)
     })
+}
+
+pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+            continue;
+        };
+        let Expr::Call(outer_call) = &**expr else {
+            continue;
+        };
+        let Callee::Expr(callee_expr) = &outer_call.callee else {
+            continue;
+        };
+        let Expr::Call(_) = &**callee_expr else {
+            continue;
+        };
+
+        if let Some(result) = extract_browserify_modules(outer_call, cm.clone()) {
+            return Some(result);
+        }
+    }
+    None
 }
 
 fn extract_browserify_modules(
@@ -221,25 +224,6 @@ fn build_module_from_stmts(stmts: Vec<Stmt>) -> Module {
     }
 }
 
-fn parse_es_module(source: &str, cm: Lrc<SourceMap>) -> anyhow::Result<Module> {
-    let fm = cm.new_source_file(
-        FileName::Custom("browserify.js".to_string()).into(),
-        source.to_string(),
-    );
-    let lexer = Lexer::new(
-        Syntax::Es(EsSyntax {
-            jsx: true,
-            ..Default::default()
-        }),
-        Default::default(),
-        StringInput::from(&*fm),
-        None,
-    );
-    let mut parser = Parser::new_from(lexer);
-    parser
-        .parse_module()
-        .map_err(|e| anyhow!("parse error: {e:?}"))
-}
 
 fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
     let mut output = Vec::new();

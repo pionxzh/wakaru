@@ -1,13 +1,13 @@
 use anyhow::anyhow;
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Span, SyntaxContext, GLOBALS};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
     ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, Expr,
     ExprStmt, FnExpr, Function, Ident, IdentName, Lit, MemberExpr, MemberProp, Module, ModuleItem,
     ObjectLit, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
-use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -147,21 +147,24 @@ impl Webpack5RuntimeNormalizer {
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let module = parse_es_module(source, cm.clone()).ok()?;
-
-        for item in &module.body {
-            let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
-                continue;
-            };
-            let Some(bootstrap_body) = extract_iife_body(expr) else {
-                continue;
-            };
-            if let Some(result) = extract_webpack5_modules(bootstrap_body, cm.clone()) {
-                return Some(result);
-            }
-        }
-        None
+        let module = super::parse_es_module(source, "webpack5.js", cm.clone()).ok()?;
+        detect_from_module(&module, cm)
     })
+}
+
+pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+            continue;
+        };
+        let Some(bootstrap_body) = extract_iife_body(expr) else {
+            continue;
+        };
+        if let Some(result) = extract_webpack5_modules(bootstrap_body, cm.clone()) {
+            return Some(result);
+        }
+    }
+    None
 }
 
 /// Detect and extract modules from a webpack5 JSONP chunk format:
@@ -169,27 +172,33 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
 pub fn detect_and_extract_chunk(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let module = parse_es_module(source, cm.clone()).ok()?;
+        let module = super::parse_es_module(source, "webpack5.js", cm.clone()).ok()?;
+        detect_chunk_from_module(&module, cm)
+    })
+}
 
-        let mut all_modules = Vec::new();
+pub(super) fn detect_chunk_from_module(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+) -> Option<UnpackResult> {
+    let mut all_modules = Vec::new();
 
-        for item in &module.body {
-            let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
-                continue;
-            };
-            if let Some(modules_object) = extract_chunk_push_modules(expr) {
-                let extracted = extract_modules_from_object(modules_object, cm.clone())?;
-                all_modules.extend(extracted);
-            }
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+            continue;
+        };
+        if let Some(modules_object) = extract_chunk_push_modules(expr) {
+            let extracted = extract_modules_from_object(modules_object, cm.clone())?;
+            all_modules.extend(extracted);
         }
+    }
 
-        if all_modules.is_empty() {
-            return None;
-        }
+    if all_modules.is_empty() {
+        return None;
+    }
 
-        Some(UnpackResult {
-            modules: all_modules,
-        })
+    Some(UnpackResult {
+        modules: all_modules,
     })
 }
 
@@ -711,25 +720,6 @@ fn build_module_from_stmts(stmts: Vec<Stmt>) -> Module {
     }
 }
 
-fn parse_es_module(source: &str, cm: Lrc<SourceMap>) -> anyhow::Result<Module> {
-    let fm = cm.new_source_file(
-        FileName::Custom("webpack5.js".to_string()).into(),
-        source.to_string(),
-    );
-    let lexer = Lexer::new(
-        Syntax::Es(EsSyntax {
-            jsx: true,
-            ..Default::default()
-        }),
-        Default::default(),
-        StringInput::from(&*fm),
-        None,
-    );
-    let mut parser = Parser::new_from(lexer);
-    parser
-        .parse_module()
-        .map_err(|e| anyhow!("parse error: {e:?}"))
-}
 
 fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
     let mut output = Vec::new();
