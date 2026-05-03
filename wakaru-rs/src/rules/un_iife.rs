@@ -312,11 +312,9 @@ where
                 taken_for_suffix.insert(new_sym.clone());
                 plan.renames.push((i, param_sym, new_sym, param_ctxt));
             }
-            Expr::Lit(lit) => {
-                if !preserve_arg_list {
-                    plan.const_inserts
-                        .push((i, param_sym, param_ctxt, lit.clone()));
-                }
+            Expr::Lit(lit) if !preserve_arg_list => {
+                plan.const_inserts
+                    .push((i, param_sym, param_ctxt, lit.clone()));
             }
             _ => {}
         }
