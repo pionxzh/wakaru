@@ -80,6 +80,26 @@ function fn() {
 }
 
 #[test]
+fn standard_hoists_dynamic_component_tags_with_strong_jsx_shape() {
+    let input = r#"
+function fn() {
+  return _jsx(tt(), {
+    className: "hero",
+    children: "Hello"
+  });
+}
+"#;
+    let expected = r#"
+function fn() {
+  const Component = tt();
+  return <Component className="hero">Hello</Component>;
+}
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
 fn aggressive_hoists_dynamic_component_tags() {
     let input = r#"
 function fn() {

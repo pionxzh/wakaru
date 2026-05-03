@@ -89,7 +89,7 @@ fn standard_keeps_loose_optional_chaining_recovery_enabled() {
 }
 
 #[test]
-fn standard_disables_strict_optional_chaining_assignment_recovery() {
+fn standard_keeps_babel_strict_optional_chaining_assignment_recovery() {
     let input = r#"const x = (_a = e.ownerDocument) === null || _a === void 0 ? void 0 : _a.defaultView;"#;
 
     let output = decompile(
@@ -102,13 +102,13 @@ fn standard_disables_strict_optional_chaining_assignment_recovery() {
     )
     .expect("decompile should succeed");
 
-    let expected = r#"const x = (_a = e.ownerDocument) === null || _a === undefined ? undefined : _a.defaultView;"#;
+    let expected = r#"const x = e.ownerDocument?.defaultView;"#;
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn aggressive_enables_strict_optional_chaining_assignment_recovery() {
-    let input = r#"const x = (_a = e.ownerDocument) === null || _a === void 0 ? void 0 : _a.defaultView;"#;
+fn aggressive_enables_non_babel_strict_optional_chaining_assignment_recovery() {
+    let input = r#"const x = (n = e.ownerDocument) === null || n === void 0 ? void 0 : n.defaultView;"#;
 
     let output = decompile(
         input,
@@ -262,6 +262,37 @@ function fn() {
     .expect("decompile should succeed");
 
     assert_eq_normalized(&output, input.trim());
+}
+
+#[test]
+fn standard_enables_dynamic_jsx_component_alias_synthesis_for_strong_runtime_shape() {
+    let input = r#"
+function fn() {
+  return _jsx(tt(), {
+    className: "hero",
+    children: "Hello"
+  });
+}
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Standard,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed");
+
+    let expected = r#"
+function fn() {
+  const Component = tt();
+  return <Component className="hero">Hello</Component>;
+}
+"#;
+    assert_eq_normalized(&output, expected.trim());
 }
 
 #[test]

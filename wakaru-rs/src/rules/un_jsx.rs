@@ -128,9 +128,14 @@ impl UnJsx {
             tag = self.to_jsx_element_name(&Expr::Lit(Lit::Str(inlined)));
         }
 
-        if tag.is_none() && self.level >= RewriteLevel::Aggressive {
-            let alias = self.create_component_alias(type_expr);
-            tag = Some(JSXElementName::Ident(alias));
+        if tag.is_none() {
+            let should_alias = self.level >= RewriteLevel::Aggressive
+                || (self.level >= RewriteLevel::Standard
+                    && self.has_strong_jsx_shape(pragma, call));
+            if should_alias {
+                let alias = self.create_component_alias(type_expr);
+                tag = Some(JSXElementName::Ident(alias));
+            }
         }
 
         let tag = tag?;
@@ -443,6 +448,19 @@ impl UnJsx {
                 expr: JSXExpr::Expr(Box::new(expr.clone())),
             })),
         }
+    }
+
+    fn has_strong_jsx_shape(&self, pragma: &str, call: &CallExpr) -> bool {
+        if call.args.len() < 2 {
+            return false;
+        }
+
+        let props_expr = call.args[1].expr.as_ref();
+        if !expr_has_jsxish_props(props_expr) {
+            return false;
+        }
+
+        is_automatic_pragma(pragma) || is_jsxish_props_container(props_expr)
     }
 }
 
@@ -1043,6 +1061,63 @@ fn extract_children_attr(attrs: &mut Vec<JSXAttrOrSpread>) -> Option<JSXAttrValu
         return None;
     };
     attr.value
+}
+
+fn expr_has_jsxish_props(expr: &Expr) -> bool {
+    match expr {
+        Expr::Object(obj) => object_lit_has_jsxish_props(obj),
+        Expr::Call(call) if is_react_spread(call) || is_object_assign(call) => call
+            .args
+            .iter()
+            .any(|arg| expr_has_jsxish_props(arg.expr.as_ref())),
+        _ => false,
+    }
+}
+
+fn is_jsxish_props_container(expr: &Expr) -> bool {
+    matches!(expr, Expr::Object(_))
+        || matches!(expr, Expr::Call(call) if is_react_spread(call) || is_object_assign(call))
+}
+
+fn object_lit_has_jsxish_props(obj: &ObjectLit) -> bool {
+    obj.props.iter().any(|prop| match prop {
+        PropOrSpread::Spread(spread) => expr_has_jsxish_props(spread.expr.as_ref()),
+        PropOrSpread::Prop(prop) => prop_has_jsxish_name(prop.as_ref()),
+    })
+}
+
+fn prop_has_jsxish_name(prop: &Prop) -> bool {
+    match prop {
+        Prop::KeyValue(KeyValueProp { key, .. }) => prop_name_is_jsxish(key),
+        Prop::Method(method) => prop_name_is_jsxish(&method.key),
+        Prop::Shorthand(ident) => is_jsxish_prop_name(ident.sym.as_ref()),
+        _ => false,
+    }
+}
+
+fn prop_name_is_jsxish(name: &PropName) -> bool {
+    match name {
+        PropName::Ident(ident) => is_jsxish_prop_name(ident.sym.as_ref()),
+        PropName::Str(str_lit) => is_jsxish_prop_name(&wtf8_to_string(&str_lit.value)),
+        _ => false,
+    }
+}
+
+fn is_jsxish_prop_name(name: &str) -> bool {
+    matches!(
+        name,
+        "children"
+            | "className"
+            | "style"
+            | "ref"
+            | "key"
+            | "htmlFor"
+            | "dangerouslySetInnerHTML"
+            | "suppressHydrationWarning"
+    ) || name
+        .strip_prefix("on")
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|ch| ch.is_ascii_uppercase())
 }
 
 fn pascalize(input: &str) -> String {

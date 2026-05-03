@@ -36,10 +36,11 @@ fn transforms_method_call_with_args() {
 }
 
 #[test]
-fn standard_does_not_transform_strict_temp_variable_assignment_form() {
+fn standard_transforms_strict_babel_temp_variable_assignment_form() {
     let input = r#"(_a = a) === null || _a === void 0 ? void 0 : _a.b"#;
+    let expected = r#"a?.b"#;
     let output = apply(input);
-    assert_eq_normalized(&output, input);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -47,6 +48,101 @@ fn aggressive_transforms_strict_temp_variable_assignment_form() {
     let input = r#"(_a = a) === null || _a === void 0 ? void 0 : _a.b"#;
     let expected = r#"a?.b"#;
     let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_strict_babel_optional_call_form() {
+    let input = r#"(_a = obj.getRootNode) === null || _a === void 0 ? void 0 : _a.call(obj)"#;
+    let expected = r#"obj.getRootNode?.()"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_optional_member_call_pattern_into_optional_call() {
+    let input = r#"te?.getRootNode?.call(te)"#;
+    let expected = r#"te?.getRootNode?.()"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_strict_babel_optional_call_with_memoized_context() {
+    let input =
+        r#"(_obj_method = (_obj = getObj()).method) === null || _obj_method === void 0 ? void 0 : _obj_method.call(_obj, arg)"#;
+    let expected = r#"getObj().method?.(arg)"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_strict_babel_optional_call_from_optional_member() {
+    let input =
+        r#"(_a = te?.getRootNode) === null || _a === void 0 ? void 0 : _a.call(te)"#;
+    let expected = r#"te?.getRootNode?.()"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_nested_babel_optional_call_from_lowered_optional_member() {
+    let input = r#"(_a = (_b = runtime?.plugin) === null || _b === void 0 ? void 0 : _b.createHook) === null || _a === void 0 ? void 0 : _a.call(_b, "payload")"#;
+    let expected = r#"runtime?.plugin?.createHook?.("payload")"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_guarded_babel_optional_call_statement() {
+    let input = r#"
+if (!((_ = (K = this.handle) === null || K === void 0 ? void 0 : K.close) === null || _ === void 0)) {
+  _.call(K);
+}
+"#;
+    let expected = r#"
+this.handle?.close?.();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_short_circuit_babel_optional_call_statement() {
+    let input =
+        r#"(_ = (K = this.handle) === null || K === void 0 ? void 0 : K.close) === null || _ === void 0 || _.call(K)"#;
+    let expected = r#"this.handle?.close?.()"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_declared_scratch_temp_assignment_form() {
+    let input = r#"
+let n;
+const x = (n = service.connection) === null || n === void 0 ? void 0 : n.status;
+"#;
+    let expected = r#"
+let n;
+const x = service.connection?.status;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_nested_babel_optional_member_from_recovered_optional_chain() {
+    let input = r#"(_a = runtime?.plugin) === null || _a === void 0 ? void 0 : _a.version"#;
+    let expected = r#"runtime?.plugin?.version"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_generated_named_temp_member_access() {
+    let input = r#"(T1 = source.adapter) === null || T1 === void 0 ? void 0 : T1.name"#;
+    let expected = r#"source.adapter?.name"#;
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -170,10 +266,10 @@ fn does_not_transform_loose_eq_assignment_member_access() {
 }
 
 #[test]
-fn aggressive_transforms_loose_eq_assignment_member_access() {
-    let input = r#"const x = (n = e.ownerDocument) == null ? undefined : n.defaultView"#;
+fn standard_transforms_loose_eq_babel_assignment_member_access() {
+    let input = r#"const x = (_a = e.ownerDocument) == null ? undefined : _a.defaultView"#;
     let expected = r#"const x = e.ownerDocument?.defaultView"#;
-    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -185,9 +281,17 @@ fn does_not_transform_loose_eq_assignment_method_call() {
 }
 
 #[test]
+fn standard_transforms_loose_eq_babel_optional_call_form() {
+    let input = r#"const x = (_a = obj.getRootNode) == null ? undefined : _a.call(obj)"#;
+    let expected = r#"const x = obj.getRootNode?.()"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn aggressive_transforms_loose_eq_assignment_method_call() {
     let input = r#"const x = (t = obj.getRootNode) == null ? undefined : t.call(obj)"#;
-    let expected = r#"const x = obj.getRootNode?.call(obj)"#;
+    let expected = r#"const x = obj.getRootNode?.()"#;
     let output = apply_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
 }
@@ -226,6 +330,17 @@ fn aggressive_transforms_loose_eq_assignment_with_computed_access() {
 fn preserves_assignment_side_effect_for_observable_temp() {
     let input = r#"
 let n = 0;
+const x = (n = obj) == null ? undefined : n.value;
+use(n);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_preserves_declared_scratch_temp_when_it_is_observed_later() {
+    let input = r#"
+let n;
 const x = (n = obj) == null ? undefined : n.value;
 use(n);
 "#;
