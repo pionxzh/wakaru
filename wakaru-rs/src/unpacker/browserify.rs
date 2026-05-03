@@ -224,7 +224,6 @@ fn build_module_from_stmts(stmts: Vec<Stmt>) -> Module {
     }
 }
 
-
 fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
     let mut output = Vec::new();
     {

@@ -200,12 +200,9 @@ fn run_default(cli: Cli) -> Result<()> {
         }
 
         // Write files in parallel.
-        resolved
-            .par_iter()
-            .try_for_each(|(path, code)| {
-                fs::write(path, code)
-                    .with_context(|| format!("failed to write {}", path.display()))
-            })?;
+        resolved.par_iter().try_for_each(|(path, code)| {
+            fs::write(path, code).with_context(|| format!("failed to write {}", path.display()))
+        })?;
 
         for (path, _) in &resolved {
             eprintln!("wrote {}", path.display());

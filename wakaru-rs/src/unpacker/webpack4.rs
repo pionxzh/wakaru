@@ -1557,7 +1557,6 @@ impl<'a> Visit for ParamRefCounter<'a> {
     }
 }
 
-
 fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
     use anyhow::anyhow;
     let mut output = Vec::new();
@@ -1607,7 +1606,8 @@ mod polyfill_tests {
     fn run_unwrap(source: &str) -> String {
         GLOBALS.set(&Default::default(), || {
             let cm: Lrc<SourceMap> = Default::default();
-            let mut module = crate::unpacker::parse_es_module(source, "webpack4.js", cm.clone()).expect("parse");
+            let mut module =
+                crate::unpacker::parse_es_module(source, "webpack4.js", cm.clone()).expect("parse");
             let unresolved_mark = Mark::new();
             let top_level_mark = Mark::new();
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
