@@ -113,7 +113,10 @@ function fn() {
 }
 "#;
 
-    assert_eq_normalized(&render_with_level(input, RewriteLevel::Aggressive), expected);
+    assert_eq_normalized(
+        &render_with_level(input, RewriteLevel::Aggressive),
+        expected,
+    );
 }
 
 #[test]

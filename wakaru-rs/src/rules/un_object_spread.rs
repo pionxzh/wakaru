@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use swc_core::common::DUMMY_SP;
-use swc_core::ecma::ast::{
-    Callee, Expr, Module, ObjectLit, PropOrSpread, SpreadElement,
-};
+use swc_core::ecma::ast::{Callee, Expr, Module, ObjectLit, PropOrSpread, SpreadElement};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
@@ -60,8 +58,12 @@ impl VisitMut for SpreadReplacer<'_> {
         expr.visit_mut_children_with(self);
 
         let Expr::Call(call) = expr else { return };
-        let Callee::Expr(callee) = &call.callee else { return };
-        let Expr::Ident(id) = callee.as_ref() else { return };
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        let Expr::Ident(id) = callee.as_ref() else {
+            return;
+        };
 
         let key = (id.sym.clone(), id.ctxt);
         let Some(_kind) = self.helpers.get(&key) else {

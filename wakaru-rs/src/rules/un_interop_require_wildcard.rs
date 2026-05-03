@@ -85,11 +85,7 @@ fn try_convert_to_namespace_import(
                 specifiers: vec![swc_core::ecma::ast::ImportSpecifier::Namespace(
                     ImportStarAsSpecifier {
                         span: DUMMY_SP,
-                        local: Ident::new(
-                            bi.id.sym.clone(),
-                            DUMMY_SP,
-                            bi.id.ctxt,
-                        ),
+                        local: Ident::new(bi.id.sym.clone(), DUMMY_SP, bi.id.ctxt),
                     },
                 )],
                 src: Box::new(source),
@@ -124,8 +120,12 @@ fn extract_wildcard_require(
     helpers: &HashMap<BindingKey, BabelHelperKind>,
 ) -> Option<swc_core::ecma::ast::Str> {
     let Expr::Call(call) = expr else { return None };
-    let Callee::Expr(callee) = &call.callee else { return None };
-    let Expr::Ident(id) = callee.as_ref() else { return None };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(id) = callee.as_ref() else {
+        return None;
+    };
 
     if !helpers.contains_key(&(id.sym.clone(), id.ctxt)) {
         return None;
@@ -168,8 +168,12 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
         expr.visit_mut_children_with(self);
 
         let Expr::Call(call) = expr else { return };
-        let Callee::Expr(callee) = &call.callee else { return };
-        let Expr::Ident(id) = callee.as_ref() else { return };
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        let Expr::Ident(id) = callee.as_ref() else {
+            return;
+        };
 
         if !self.helpers.contains_key(&(id.sym.clone(), id.ctxt)) {
             return;
@@ -188,7 +192,11 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
 
 fn is_require_call(expr: &Expr) -> bool {
     let Expr::Call(call) = expr else { return false };
-    let Callee::Expr(callee) = &call.callee else { return false };
-    let Expr::Ident(id) = callee.as_ref() else { return false };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Ident(id) = callee.as_ref() else {
+        return false;
+    };
     id.sym.as_ref() == "require" && call.args.len() == 1
 }

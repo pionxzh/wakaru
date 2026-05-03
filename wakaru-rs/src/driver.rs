@@ -328,43 +328,44 @@ fn unpack_multi_module(
     let pairs: Vec<(String, String)> = modules
         .into_par_iter()
         .map(|unpacked| {
-            let code = GLOBALS.set(&Default::default(), || {
-                let cm: Lrc<SourceMap> = Default::default();
-                let mut module = parse_js(&unpacked.code, &unpacked.filename, cm.clone())?;
-                let unresolved_mark = Mark::new();
-                let top_level_mark = Mark::new();
-                module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+            let code = GLOBALS
+                .set(&Default::default(), || {
+                    let cm: Lrc<SourceMap> = Default::default();
+                    let mut module = parse_js(&unpacked.code, &unpacked.filename, cm.clone())?;
+                    let unresolved_mark = Mark::new();
+                    let top_level_mark = Mark::new();
+                    module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-                // Stage 1+2
-                apply_rules_until(&mut module, unresolved_mark, "UnEsm");
+                    // Stage 1+2
+                    apply_rules_until(&mut module, unresolved_mark, "UnEsm");
 
-                // Late pass at the barrier
-                run_reexport_consolidation(&mut module, facts_ref);
-                run_namespace_decomposition(&mut module, facts_ref);
+                    // Late pass at the barrier
+                    run_reexport_consolidation(&mut module, facts_ref);
+                    run_namespace_decomposition(&mut module, facts_ref);
 
-                // Stage 3+
-                apply_rules_between_with_level(
-                    &mut module,
-                    unresolved_mark,
-                    "UnTemplateLiteral",
-                    "UnReturn",
-                    options.dead_code_elimination,
-                    options.level,
-                );
+                    // Stage 3+
+                    apply_rules_between_with_level(
+                        &mut module,
+                        unresolved_mark,
+                        "UnTemplateLiteral",
+                        "UnReturn",
+                        options.dead_code_elimination,
+                        options.level,
+                    );
 
-                // Source-map-enhanced passes
-                if let Some(bytes) = &sourcemap_bytes {
-                    if let Ok(sm) = parse_sourcemap(bytes) {
-                        module.visit_mut_with(&mut ImportDedup);
-                        apply_sourcemap_renames(&mut module, &sm, &cm, unresolved_mark);
-                        module.visit_mut_with(&mut UnImportRename);
+                    // Source-map-enhanced passes
+                    if let Some(bytes) = &sourcemap_bytes {
+                        if let Ok(sm) = parse_sourcemap(bytes) {
+                            module.visit_mut_with(&mut ImportDedup);
+                            apply_sourcemap_renames(&mut module, &sm, &cm, unresolved_mark);
+                            module.visit_mut_with(&mut UnImportRename);
+                        }
                     }
-                }
 
-                module.visit_mut_with(&mut fixer(None));
-                print_js(&module, cm)
-            })
-            .unwrap_or_else(|_| unpacked.code);
+                    module.visit_mut_with(&mut fixer(None));
+                    print_js(&module, cm)
+                })
+                .unwrap_or_else(|_| unpacked.code);
             (unpacked.filename, code)
         })
         .collect();

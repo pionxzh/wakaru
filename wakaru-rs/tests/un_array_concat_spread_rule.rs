@@ -77,5 +77,8 @@ fn preserves_variable_concat() {
 const x = arr.concat(other);
 "#;
     let output = render(input);
-    assert!(output.contains(".concat("), "should not transform variable.concat()");
+    assert!(
+        output.contains(".concat("),
+        "should not transform variable.concat()"
+    );
 }

@@ -189,7 +189,9 @@ fn inline_module_builtin_aliases(module: &mut Module) {
 fn inline_builtin_aliases_stmts(mut stmts: Vec<Stmt>) -> Vec<Stmt> {
     let mut candidates: HashMap<BindingKey, Box<Expr>> = HashMap::new();
     for stmt in &stmts {
-        let Stmt::Decl(Decl::Var(var)) = stmt else { continue };
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
         if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
             continue;
         }
@@ -530,11 +532,7 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
 /// because the temp var captures the value at its definition point.
 /// Checks all stmts after def (not just up to the use), because the mutation
 /// and use can be inside the same compound statement (try/finally, loops, etc.).
-fn is_ident_mutated_after_def(
-    src_sym: &Atom,
-    temp_name: &Atom,
-    stmts: &[Stmt],
-) -> bool {
+fn is_ident_mutated_after_def(src_sym: &Atom, temp_name: &Atom, stmts: &[Stmt]) -> bool {
     // Find the index of the definition stmt: `const temp_name = src_sym`
     let def_idx = stmts.iter().position(|s| {
         if let Stmt::Decl(Decl::Var(var)) = s {

@@ -192,7 +192,11 @@ fn try_extract_factory(decl: &VarDeclarator, helper_syms: &HashSet<Atom>) -> Opt
                         .map(sanitize_path)
                         .unwrap_or_else(|| format!("{var_name}.js"));
                     let body_stmts = method.function.body.as_ref()?.stmts.clone();
-                    return Some(Factory { var_name, filename, body_stmts });
+                    return Some(Factory {
+                        var_name,
+                        filename,
+                        body_stmts,
+                    });
                 }
             }
             None
@@ -202,14 +206,22 @@ fn try_extract_factory(decl: &VarDeclarator, helper_syms: &HashSet<Atom>) -> Opt
         Expr::Arrow(arrow) => {
             let body_stmts = arrow_body_stmts(arrow);
             let filename = format!("{var_name}.js");
-            Some(Factory { var_name, filename, body_stmts })
+            Some(Factory {
+                var_name,
+                filename,
+                body_stmts,
+            })
         }
 
         // Minified function: m(function() { … })
         Expr::Fn(fn_expr) => {
             let body_stmts = fn_expr.function.body.as_ref()?.stmts.clone();
             let filename = format!("{var_name}.js");
-            Some(Factory { var_name, filename, body_stmts })
+            Some(Factory {
+                var_name,
+                filename,
+                body_stmts,
+            })
         }
 
         _ => None,
@@ -254,7 +266,11 @@ fn sanitize_path(raw: String) -> String {
         .trim_start_matches('/');
     // Strip leading `../` segments so the path doesn't escape the output directory.
     let s = s.trim_start_matches("../");
-    if s.is_empty() { "module.js".to_string() } else { s.to_string() }
+    if s.is_empty() {
+        "module.js".to_string()
+    } else {
+        s.to_string()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +286,9 @@ fn is_helper_or_factory_item(
         return false;
     };
     var.decls.iter().any(|d| {
-        let Pat::Ident(bi) = &d.name else { return false };
+        let Pat::Ident(bi) = &d.name else {
+            return false;
+        };
         let sym = &bi.id.sym;
         helper_syms.contains(sym) || factory_syms.contains(sym)
     })
@@ -314,14 +332,23 @@ fn parse_es_module(source: &str, cm: Lrc<SourceMap>) -> anyhow::Result<Module> {
     parse_es_module_named(source, "esbuild.js".to_string(), cm)
 }
 
-fn parse_es_module_named(source: &str, filename: String, cm: Lrc<SourceMap>) -> anyhow::Result<Module> {
+fn parse_es_module_named(
+    source: &str,
+    filename: String,
+    cm: Lrc<SourceMap>,
+) -> anyhow::Result<Module> {
     let fm = cm.new_source_file(FileName::Custom(filename).into(), source.to_string());
     let lexer = Lexer::new(
-        Syntax::Es(EsSyntax { jsx: true, ..Default::default() }),
+        Syntax::Es(EsSyntax {
+            jsx: true,
+            ..Default::default()
+        }),
         Default::default(),
         StringInput::from(&*fm),
         None,
     );
     let mut parser = Parser::new_from(lexer);
-    parser.parse_module().map_err(|e| anyhow::anyhow!("parse error: {e:?}"))
+    parser
+        .parse_module()
+        .map_err(|e| anyhow::anyhow!("parse error: {e:?}"))
 }

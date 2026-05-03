@@ -1,7 +1,5 @@
 use swc_core::common::DUMMY_SP;
-use swc_core::ecma::ast::{
-    ArrayLit, CallExpr, Callee, Expr, ExprOrSpread, MemberProp,
-};
+use swc_core::ecma::ast::{ArrayLit, CallExpr, Callee, Expr, ExprOrSpread, MemberProp};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 /// Converts `[x].concat(arr)` → `[x, ...arr]`.
@@ -33,17 +31,25 @@ impl VisitMut for UnArrayConcatSpread {
 /// Try to convert `[elems].concat(args...)` into a single array literal.
 fn try_simplify_array_concat(call: &CallExpr) -> Option<ArrayLit> {
     // Callee must be member expression: something.concat
-    let Callee::Expr(callee) = &call.callee else { return None };
-    let Expr::Member(member) = callee.as_ref() else { return None };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return None;
+    };
 
     // Property must be `concat`
-    let MemberProp::Ident(prop) = &member.prop else { return None };
+    let MemberProp::Ident(prop) = &member.prop else {
+        return None;
+    };
     if prop.sym.as_ref() != "concat" {
         return None;
     }
 
     // Receiver must be an array literal
-    let Expr::Array(receiver_arr) = member.obj.as_ref() else { return None };
+    let Expr::Array(receiver_arr) = member.obj.as_ref() else {
+        return None;
+    };
 
     // Must have at least one argument
     if call.args.is_empty() {

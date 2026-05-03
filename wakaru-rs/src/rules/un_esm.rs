@@ -13,8 +13,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
-use super::RewriteLevel;
 use super::rename_utils::{rename_bindings, BindingRename};
+use super::RewriteLevel;
 
 pub struct UnEsm {
     level: RewriteLevel,

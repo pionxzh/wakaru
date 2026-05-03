@@ -15,8 +15,14 @@ fn decompile_handles_existing_bundled_fixtures() {
             .unwrap_or("index.js")
             .to_string();
 
-        let output =
-            decompile(&input, DecompileOptions { filename, ..Default::default() }).expect("decompile should succeed");
+        let output = decompile(
+            &input,
+            DecompileOptions {
+                filename,
+                ..Default::default()
+            },
+        )
+        .expect("decompile should succeed");
         assert!(
             !output.trim().is_empty(),
             "output should not be empty for {}",

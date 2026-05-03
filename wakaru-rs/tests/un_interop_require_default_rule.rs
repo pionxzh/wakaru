@@ -120,8 +120,14 @@ function _interopRequireDefault(obj) {
 var _a = _interopRequireDefault(require("a"));
 "#;
     let output = render(input);
-    assert!(!output.contains("_interopRequireDefault"), "helper declaration should be removed");
-    assert!(!output.contains("__esModule"), "__esModule check should be removed");
+    assert!(
+        !output.contains("_interopRequireDefault"),
+        "helper declaration should be removed"
+    );
+    assert!(
+        !output.contains("__esModule"),
+        "__esModule check should be removed"
+    );
 }
 
 #[test]
@@ -134,7 +140,10 @@ var _a = notAHelper(require("a"));
 "#;
     let output = render(input);
     // Should still contain the function — not detected as helper
-    assert!(output.contains("notAHelper"), "should not remove non-helper function");
+    assert!(
+        output.contains("notAHelper"),
+        "should not remove non-helper function"
+    );
 }
 
 #[test]
@@ -149,7 +158,10 @@ console.log(_a.default);
 "#;
     let output = render(input);
     // _a is reassigned, so _a.default must NOT be rewritten to _a
-    assert!(output.contains(".default"), "should preserve .default for reassigned binding");
+    assert!(
+        output.contains(".default"),
+        "should preserve .default for reassigned binding"
+    );
 }
 
 #[test]
@@ -180,8 +192,14 @@ const x = ((e) => {
 console.log(x);
 "#;
     let output = render(input);
-    assert!(output.contains("sideEffect"), "side effect must not be dropped: {output}");
-    assert!(output.contains("fallback"), "alternate return path must not be dropped: {output}");
+    assert!(
+        output.contains("sideEffect"),
+        "side effect must not be dropped: {output}"
+    );
+    assert!(
+        output.contains("fallback"),
+        "alternate return path must not be dropped: {output}"
+    );
 }
 
 #[test]
@@ -199,6 +217,12 @@ console.log(o.Component);
 "#;
     let output = render(input);
     // IIFE should be unwrapped, but .Component should NOT be stripped
-    assert!(!output.contains("__esModule"), "wildcard IIFE should be unwrapped: {output}");
-    assert!(output.contains("Component"), "named export access should be preserved: {output}");
+    assert!(
+        !output.contains("__esModule"),
+        "wildcard IIFE should be unwrapped: {output}"
+    );
+    assert!(
+        output.contains("Component"),
+        "named export access should be preserved: {output}"
+    );
 }

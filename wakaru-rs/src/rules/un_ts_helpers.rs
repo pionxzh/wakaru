@@ -1,7 +1,6 @@
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    BinExpr, BinaryOp, Decl, Expr, MemberExpr, MemberProp, Module, ModuleItem, Pat, Stmt,
-    VarDecl,
+    BinExpr, BinaryOp, Decl, Expr, MemberExpr, MemberProp, Module, ModuleItem, Pat, Stmt, VarDecl,
 };
 use swc_core::ecma::visit::VisitMut;
 
@@ -102,10 +101,8 @@ fn extract_ts_helper_name(expr: &Expr) -> Option<Atom> {
 
     let name = &prop_name.sym;
     match name.as_ref() {
-        "__awaiter" | "__generator" | "__assign" | "__rest" | "__extends"
-        | "__importDefault" | "__importStar" | "__createBinding" | "__setModuleDefault" => {
-            Some(name.clone())
-        }
+        "__awaiter" | "__generator" | "__assign" | "__rest" | "__extends" | "__importDefault"
+        | "__importStar" | "__createBinding" | "__setModuleDefault" => Some(name.clone()),
         _ => None,
     }
 }

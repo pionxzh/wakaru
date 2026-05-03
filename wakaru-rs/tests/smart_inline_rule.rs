@@ -414,9 +414,16 @@ try {
 "#;
     let output = apply_pipeline(input);
     // r must be preserved — inlining would produce M = M (self-assignment)
-    assert!(output.contains("const r = M") || output.contains("const r = initial"), 
-        "should keep the temp var, got:\n{}", output);
-    assert!(!output.contains("M = M"), "must not produce M = M, got:\n{}", output);
+    assert!(
+        output.contains("const r = M") || output.contains("const r = initial"),
+        "should keep the temp var, got:\n{}",
+        output
+    );
+    assert!(
+        !output.contains("M = M"),
+        "must not produce M = M, got:\n{}",
+        output
+    );
 }
 
 #[test]
@@ -430,6 +437,14 @@ console.log(u);
 "#;
     let output = apply(input);
     // u should be inlined since e is not mutated after const u = e
-    assert!(!output.contains("const u = "), "should inline u, got:\n{}", output);
-    assert!(output.contains("console.log(e)"), "u should be replaced with e, got:\n{}", output);
+    assert!(
+        !output.contains("const u = "),
+        "should inline u, got:\n{}",
+        output
+    );
+    assert!(
+        output.contains("console.log(e)"),
+        "u should be replaced with e, got:\n{}",
+        output
+    );
 }

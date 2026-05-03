@@ -18,7 +18,10 @@ const rest = ((e, t) => {
 })(props, ["a", "b"]);
 "#;
     let output = render(input);
-    assert!(!output.contains("indexOf"), "IIFE should be removed: {output}");
+    assert!(
+        !output.contains("indexOf"),
+        "IIFE should be removed: {output}"
+    );
     assert!(output.contains("...rest"), "should have rest: {output}");
 }
 
@@ -88,7 +91,10 @@ const rest = ((e, t) => {
 use(rest);
 "#;
     let output = render(input);
-    assert!(!output.contains("indexOf"), "IIFE should be removed: {output}");
+    assert!(
+        !output.contains("indexOf"),
+        "IIFE should be removed: {output}"
+    );
     assert!(output.contains("...rest"), "should have rest: {output}");
 }
 
@@ -173,7 +179,10 @@ const f = (e) => {
     );
     // The preceding destructuring should be absorbed
     let destructuring_count = rule_output.matches("= e").count();
-    assert_eq!(destructuring_count, 1, "should have exactly one destructuring from e: {rule_output}");
+    assert_eq!(
+        destructuring_count, 1,
+        "should have exactly one destructuring from e: {rule_output}"
+    );
 }
 
 #[test]
@@ -211,8 +220,14 @@ const rest = ((e, t) => {
 use(rest);
 "#;
     let output = render(input);
-    assert!(output.contains("sideEffect"), "side effect must not be dropped: {output}");
-    assert!(output.contains("fallback"), "fallback return must not be dropped: {output}");
+    assert!(
+        output.contains("sideEffect"),
+        "side effect must not be dropped: {output}"
+    );
+    assert!(
+        output.contains("fallback"),
+        "fallback return must not be dropped: {output}"
+    );
 }
 
 #[test]
@@ -232,7 +247,10 @@ use(replace, rest);
     let output = render(input);
     // Should NOT produce `const { replace, ...rest } = props` since `replace` already exists
     let replace_count = output.matches("const replace").count();
-    assert!(replace_count <= 1, "should not duplicate const replace: {output}");
+    assert!(
+        replace_count <= 1,
+        "should not duplicate const replace: {output}"
+    );
 }
 
 #[test]
@@ -266,8 +284,14 @@ const rest = function(e, t) {
 "#;
     let result = render(input);
     // Should use _replace_1 (or similar) to avoid colliding with existing _replace
-    assert!(result.contains("_replace_1") || result.contains("_replace_2"),
-        "should generate a non-colliding alias, got:\n{}", result);
-    assert!(!result.contains("replace: _replace,") && !result.contains("replace: _replace }"),
-        "must not use bare _replace (collides with existing binding):\n{}", result);
+    assert!(
+        result.contains("_replace_1") || result.contains("_replace_2"),
+        "should generate a non-colliding alias, got:\n{}",
+        result
+    );
+    assert!(
+        !result.contains("replace: _replace,") && !result.contains("replace: _replace }"),
+        "must not use bare _replace (collides with existing binding):\n{}",
+        result
+    );
 }

@@ -127,9 +127,7 @@ impl UnClassFields {
 fn prop_name_str(key: &swc_core::ecma::ast::PropName) -> Option<String> {
     match key {
         swc_core::ecma::ast::PropName::Ident(id) => Some(id.sym.to_string()),
-        swc_core::ecma::ast::PropName::Str(s) => {
-            s.value.as_str().map(|s| s.to_string())
-        }
+        swc_core::ecma::ast::PropName::Str(s) => s.value.as_str().map(|s| s.to_string()),
         _ => None,
     }
 }
@@ -142,9 +140,9 @@ fn is_this_assignment(stmt: &Stmt) -> bool {
     let Expr::Assign(assign) = &**expr else {
         return false;
     };
-    let swc_core::ecma::ast::AssignTarget::Simple(
-        swc_core::ecma::ast::SimpleAssignTarget::Member(member),
-    ) = &assign.left
+    let swc_core::ecma::ast::AssignTarget::Simple(swc_core::ecma::ast::SimpleAssignTarget::Member(
+        member,
+    )) = &assign.left
     else {
         return false;
     };

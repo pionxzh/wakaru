@@ -69,8 +69,7 @@ fn transforms_optional_member_call_pattern_into_optional_call() {
 
 #[test]
 fn standard_transforms_strict_babel_optional_call_with_memoized_context() {
-    let input =
-        r#"(_obj_method = (_obj = getObj()).method) === null || _obj_method === void 0 ? void 0 : _obj_method.call(_obj, arg)"#;
+    let input = r#"(_obj_method = (_obj = getObj()).method) === null || _obj_method === void 0 ? void 0 : _obj_method.call(_obj, arg)"#;
     let expected = r#"getObj().method?.(arg)"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -78,8 +77,7 @@ fn standard_transforms_strict_babel_optional_call_with_memoized_context() {
 
 #[test]
 fn standard_transforms_strict_babel_optional_call_from_optional_member() {
-    let input =
-        r#"(_a = te?.getRootNode) === null || _a === void 0 ? void 0 : _a.call(te)"#;
+    let input = r#"(_a = te?.getRootNode) === null || _a === void 0 ? void 0 : _a.call(te)"#;
     let expected = r#"te?.getRootNode?.()"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -109,8 +107,7 @@ this.handle?.close?.();
 
 #[test]
 fn standard_transforms_short_circuit_babel_optional_call_statement() {
-    let input =
-        r#"(_ = (K = this.handle) === null || K === void 0 ? void 0 : K.close) === null || _ === void 0 || _.call(K)"#;
+    let input = r#"(_ = (K = this.handle) === null || K === void 0 ? void 0 : K.close) === null || _ === void 0 || _.call(K)"#;
     let expected = r#"this.handle?.close?.()"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);

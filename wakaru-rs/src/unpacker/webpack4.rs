@@ -955,7 +955,11 @@ fn build_factory_module(
             .cloned()
             .unwrap_or_else(|| Atom::from("require"))
     };
-    require_rewrite(&post_rename_require_sym, unresolved_mark, &mut synthetic_module);
+    require_rewrite(
+        &post_rename_require_sym,
+        unresolved_mark,
+        &mut synthetic_module,
+    );
 
     // Step 1c: rewrite require.n(expr) to an explicit getter and normalize `.a` accesses.
     {
@@ -1456,7 +1460,10 @@ fn matches_typeof_defined(expr: &Expr, expected: &str) -> bool {
     if !matches!(op, BinaryOp::NotEq | BinaryOp::NotEqEq) {
         return false;
     }
-    let (typeof_side, lit_side) = match (is_string_lit(left, "undefined"), is_string_lit(right, "undefined")) {
+    let (typeof_side, lit_side) = match (
+        is_string_lit(left, "undefined"),
+        is_string_lit(right, "undefined"),
+    ) {
         (true, false) => (right.as_ref(), left.as_ref()),
         (false, true) => (left.as_ref(), right.as_ref()),
         _ => return false,
@@ -1524,7 +1531,11 @@ impl<'a> VisitMut for TernaryReplacer<'a> {
         if let Expr::Cond(cond) = expr {
             if is_global_detect_ternary(cond, self.param_ids) {
                 let ctxt = SyntaxContext::empty().apply_mark(self.unresolved_mark);
-                *expr = Expr::Ident(Ident::new(Atom::from("globalThis"), Default::default(), ctxt));
+                *expr = Expr::Ident(Ident::new(
+                    Atom::from("globalThis"),
+                    Default::default(),
+                    ctxt,
+                ));
                 self.replacements += 1;
             }
         }
@@ -1632,10 +1643,22 @@ mod polyfill_tests {
 }).call(this, require("./module-42.js"), require("./module-41.js")(module));
 "#;
         let out = run_unwrap(input);
-        assert!(!out.contains(".call(this"), "wrapper should be stripped: {out}");
-        assert!(out.contains("globalThis"), "ternary should collapse to globalThis: {out}");
-        assert!(out.contains(r#"require("./module-31.js")"#), "real import preserved: {out}");
-        assert!(!out.contains(r#"require("./module-41.js")"#), "amd helper arg dropped: {out}");
+        assert!(
+            !out.contains(".call(this"),
+            "wrapper should be stripped: {out}"
+        );
+        assert!(
+            out.contains("globalThis"),
+            "ternary should collapse to globalThis: {out}"
+        );
+        assert!(
+            out.contains(r#"require("./module-31.js")"#),
+            "real import preserved: {out}"
+        );
+        assert!(
+            !out.contains(r#"require("./module-41.js")"#),
+            "amd helper arg dropped: {out}"
+        );
     }
 
     #[test]
@@ -1658,7 +1681,10 @@ mod polyfill_tests {
 })).call(this, g, require("./amd.js")(module));
 "#;
         let out = run_unwrap(input);
-        assert!(!out.contains(".call(this"), "paren-wrapped callee should still match: {out}");
+        assert!(
+            !out.contains(".call(this"),
+            "paren-wrapped callee should still match: {out}"
+        );
     }
 
     #[test]
@@ -1732,7 +1758,10 @@ mod polyfill_tests {
 }).call(null, g, require("./amd.js")(module));
 "#;
         let out = run_unwrap(input);
-        assert!(out.contains(".call(null"), "non-this thisArg should preserve wrapper: {out}");
+        assert!(
+            out.contains(".call(null"),
+            "non-this thisArg should preserve wrapper: {out}"
+        );
     }
 
     #[test]
@@ -1746,7 +1775,10 @@ mod polyfill_tests {
 }).call(this, g, require("./amd.js")(module));
 "#;
         let out = run_unwrap(input);
-        assert!(out.contains(".call(this"), "param used outside ternary — preserve: {out}");
+        assert!(
+            out.contains(".call(this"),
+            "param used outside ternary — preserve: {out}"
+        );
     }
 
     #[test]
@@ -1761,7 +1793,10 @@ mod polyfill_tests {
 }
 "#;
         let out = run_unwrap(input);
-        assert!(out.contains(".call(this"), "nested wrapper must not be stripped: {out}");
+        assert!(
+            out.contains(".call(this"),
+            "nested wrapper must not be stripped: {out}"
+        );
     }
 
     #[test]
@@ -1817,8 +1852,14 @@ mod object_form_tests {
 
         // Verify module IDs are string paths
         let ids: Vec<&str> = result.modules.iter().map(|m| m.id.as_str()).collect();
-        assert!(ids.contains(&"./src/greet.js"), "missing greet module: {ids:?}");
-        assert!(ids.contains(&"./src/index.js"), "missing index module: {ids:?}");
+        assert!(
+            ids.contains(&"./src/greet.js"),
+            "missing greet module: {ids:?}"
+        );
+        assert!(
+            ids.contains(&"./src/index.js"),
+            "missing index module: {ids:?}"
+        );
     }
 
     #[test]
@@ -1985,9 +2026,18 @@ mod object_form_tests {
         );
 
         // Verify all expected modules are present
-        assert!(module_ids.contains(&"./src/greet.js"), "missing greet module");
-        assert!(module_ids.contains(&"./src/index.js"), "missing index module");
-        assert!(module_ids.contains(&"./src/utils.js"), "missing utils module");
+        assert!(
+            module_ids.contains(&"./src/greet.js"),
+            "missing greet module"
+        );
+        assert!(
+            module_ids.contains(&"./src/index.js"),
+            "missing index module"
+        );
+        assert!(
+            module_ids.contains(&"./src/utils.js"),
+            "missing utils module"
+        );
     }
 
     #[test]
@@ -2015,7 +2065,11 @@ mod object_form_tests {
 ]);
 "#;
         let result = detect_and_extract(source).expect("should still detect array-form bundle");
-        assert_eq!(result.modules.len(), 2, "expected 2 modules from array-form");
+        assert_eq!(
+            result.modules.len(),
+            2,
+            "expected 2 modules from array-form"
+        );
 
         let entry_modules: Vec<&str> = result
             .modules
@@ -2032,7 +2086,10 @@ mod object_form_tests {
     #[test]
     fn test_sanitize_filename() {
         assert_eq!(sanitize_filename("./src/index.js"), "src/index.js");
-        assert_eq!(sanitize_filename("./src/utils/helper.js"), "src/utils/helper.js");
+        assert_eq!(
+            sanitize_filename("./src/utils/helper.js"),
+            "src/utils/helper.js"
+        );
         assert_eq!(sanitize_filename("../../../etc/passwd"), "etc/passwd");
         assert_eq!(sanitize_filename("./"), "unknown.js");
         assert_eq!(sanitize_filename("../"), "unknown.js");
@@ -2067,10 +2124,17 @@ mod object_form_tests {
 
         let entry = result.modules.iter().find(|m| m.is_entry);
         assert!(entry.is_some(), "should have an entry module");
-        assert_eq!(entry.unwrap().filename, "entry.js", "entry should be named entry.js");
+        assert_eq!(
+            entry.unwrap().filename,
+            "entry.js",
+            "entry should be named entry.js"
+        );
 
         let non_entry = result.modules.iter().find(|m| !m.is_entry).unwrap();
-        assert_eq!(non_entry.filename, "module-1.js", "non-entry should be module-1.js");
+        assert_eq!(
+            non_entry.filename, "module-1.js",
+            "non-entry should be module-1.js"
+        );
 
         // require(1) should be rewritten to require("./module-1.js")
         assert!(

@@ -2,12 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
-use swc_core::ecma::ast::{
-    ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem,
-};
+use swc_core::ecma::ast::{ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem};
 use swc_core::ecma::visit::VisitMut;
 
-use super::rename_utils::{BindingId, BindingRename, rename_bindings_in_module};
+use super::rename_utils::{rename_bindings_in_module, BindingId, BindingRename};
 
 // Module source paths are always valid UTF-8 in practice.
 fn src_to_key(src: &swc_core::ecma::ast::Str) -> String {
@@ -62,7 +60,9 @@ fn spec_key_and_local(spec: &ImportSpecifier) -> Option<(ImportKey, Atom, Syntax
                 named.local.ctxt,
             ))
         }
-        ImportSpecifier::Default(d) => Some((ImportKey::Default, d.local.sym.clone(), d.local.ctxt)),
+        ImportSpecifier::Default(d) => {
+            Some((ImportKey::Default, d.local.sym.clone(), d.local.ctxt))
+        }
         ImportSpecifier::Namespace(n) => {
             Some((ImportKey::Namespace, n.local.sym.clone(), n.local.ctxt))
         }

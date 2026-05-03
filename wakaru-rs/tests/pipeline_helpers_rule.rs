@@ -234,13 +234,29 @@ fn format_trace_prints_initial_source_once() {
 
 #[test]
 fn format_trace_emits_unified_diff_for_changed_rules() {
-    let events = vec![event("RemoveVoid", "const x = void 0;\n", "const x = undefined;\n")];
+    let events = vec![event(
+        "RemoveVoid",
+        "const x = void 0;\n",
+        "const x = undefined;\n",
+    )];
     let output = format_trace_events(&events);
 
-    assert!(output.contains("=== RemoveVoid ===\n"), "missing rule header: {output}");
-    assert!(output.contains("@@"), "missing unified diff hunk header: {output}");
-    assert!(output.contains("-const x = void 0;"), "missing removed line: {output}");
-    assert!(output.contains("+const x = undefined;"), "missing added line: {output}");
+    assert!(
+        output.contains("=== RemoveVoid ===\n"),
+        "missing rule header: {output}"
+    );
+    assert!(
+        output.contains("@@"),
+        "missing unified diff hunk header: {output}"
+    );
+    assert!(
+        output.contains("-const x = void 0;"),
+        "missing removed line: {output}"
+    );
+    assert!(
+        output.contains("+const x = undefined;"),
+        "missing added line: {output}"
+    );
 }
 
 #[test]
@@ -249,8 +265,14 @@ fn format_trace_unchanged_rule_prints_only_header() {
     let output = format_trace_events(&events);
 
     assert!(output.contains("=== Noop (unchanged) ===\n"), "{output}");
-    assert!(!output.contains("@@"), "unchanged rule should not emit a diff hunk: {output}");
-    assert!(!output.contains("-const"), "unchanged rule should not emit removed lines: {output}");
+    assert!(
+        !output.contains("@@"),
+        "unchanged rule should not emit a diff hunk: {output}"
+    );
+    assert!(
+        !output.contains("-const"),
+        "unchanged rule should not emit removed lines: {output}"
+    );
 }
 
 #[test]

@@ -54,8 +54,12 @@ impl VisitMut for PcrReplacer<'_> {
         expr.visit_mut_children_with(self);
 
         let Expr::Call(call) = expr else { return };
-        let Callee::Expr(callee) = &call.callee else { return };
-        let Expr::Ident(id) = callee.as_ref() else { return };
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        let Expr::Ident(id) = callee.as_ref() else {
+            return;
+        };
 
         let key = (id.sym.clone(), id.ctxt);
         if !self.helpers.contains_key(&key) {

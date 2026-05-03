@@ -3,14 +3,13 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::{Atom, Wtf8Atom};
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, BindingIdent, BlockStmt, Bool, Callee, CallExpr, Decl, Expr,
-    ArrowExpr, ExprOrSpread, Ident, JSXAttr, JSXAttrName, JSXAttrOrSpread,
+    ArrowExpr, AssignExpr, AssignOp, BindingIdent, BlockStmt, Bool, CallExpr, Callee, Decl, Expr,
+    ExprOrSpread, Ident, ImportDecl, ImportSpecifier, JSXAttr, JSXAttrName, JSXAttrOrSpread,
     JSXAttrValue, JSXClosingElement, JSXClosingFragment, JSXElement, JSXElementChild,
     JSXElementName, JSXExpr, JSXExprContainer, JSXFragment, JSXMemberExpr, JSXNamespacedName,
     JSXObject, JSXOpeningElement, JSXOpeningFragment, JSXSpreadChild, JSXText, KeyValueProp, Lit,
-    MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit, Pat, Prop, ImportDecl,
-    ImportSpecifier, Param,
-    PropName, PropOrSpread, SpreadElement, Stmt, Str, VarDecl, VarDeclKind, VarDeclarator,
+    MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit, Param, Pat, Prop, PropName,
+    PropOrSpread, SpreadElement, Stmt, Str, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -19,7 +18,10 @@ use super::{RewriteLevel, Rule};
 const CLASSIC_PRAGMA: &str = "createElement";
 
 fn is_automatic_pragma(name: &str) -> bool {
-    matches!(name, "jsx" | "jsxs" | "_jsx" | "_jsxs" | "jsxDEV" | "jsxsDEV")
+    matches!(
+        name,
+        "jsx" | "jsxs" | "_jsx" | "_jsxs" | "jsxDEV" | "jsxsDEV"
+    )
 }
 
 type BindingId = (Atom, SyntaxContext);
@@ -63,7 +65,8 @@ impl UnJsx {
         }
 
         self.used_names.push(collect_names_in_module_items(items));
-        self.string_consts.push(collect_string_consts_from_module_items(items));
+        self.string_consts
+            .push(collect_string_consts_from_module_items(items));
 
         let old = std::mem::take(items);
         let mut rewritten = Vec::with_capacity(old.len());
@@ -90,7 +93,8 @@ impl UnJsx {
         }
 
         self.used_names.push(collect_names_in_stmts(stmts));
-        self.string_consts.push(collect_string_consts_from_stmts(stmts));
+        self.string_consts
+            .push(collect_string_consts_from_stmts(stmts));
 
         let old = std::mem::take(stmts);
         let mut rewritten = Vec::with_capacity(old.len());
@@ -642,7 +646,8 @@ fn collect_display_name_renames_from_stmt(
     let Expr::Lit(Lit::Str(display_name)) = right.as_ref() else {
         return;
     };
-    let new_name = generate_unique_name(used_names, pascalize(&wtf8_to_string(&display_name.value)));
+    let new_name =
+        generate_unique_name(used_names, pascalize(&wtf8_to_string(&display_name.value)));
     renames.push(ScopedRename {
         old: (object.sym.clone(), object.ctxt),
         new: new_name.into(),
@@ -704,10 +709,8 @@ impl Visit for LowercaseComponentRenameCollector<'_> {
                             .eligible_bindings
                             .contains(&(ident.sym.clone(), ident.ctxt))
                     {
-                        let new_name = generate_unique_name(
-                            self.used_names,
-                            pascalize(ident.sym.as_ref()),
-                        );
+                        let new_name =
+                            generate_unique_name(self.used_names, pascalize(ident.sym.as_ref()));
                         self.renames.push(ScopedRename {
                             old: (ident.sym.clone(), ident.ctxt),
                             new: new_name.into(),
@@ -750,11 +753,13 @@ struct EligibleComponentBindingCollector {
 
 impl Visit for EligibleComponentBindingCollector {
     fn visit_fn_decl(&mut self, decl: &swc_core::ecma::ast::FnDecl) {
-        self.bindings.insert((decl.ident.sym.clone(), decl.ident.ctxt));
+        self.bindings
+            .insert((decl.ident.sym.clone(), decl.ident.ctxt));
     }
 
     fn visit_class_decl(&mut self, decl: &swc_core::ecma::ast::ClassDecl) {
-        self.bindings.insert((decl.ident.sym.clone(), decl.ident.ctxt));
+        self.bindings
+            .insert((decl.ident.sym.clone(), decl.ident.ctxt));
     }
 
     fn visit_import_decl(&mut self, decl: &ImportDecl) {
@@ -827,7 +832,8 @@ impl EligibleComponentBindingCollector {
                 for prop in &object.props {
                     match prop {
                         swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
-                            self.bindings.insert((assign.key.sym.clone(), assign.key.ctxt));
+                            self.bindings
+                                .insert((assign.key.sym.clone(), assign.key.ctxt));
                         }
                         swc_core::ecma::ast::ObjectPatProp::KeyValue(key_value) => {
                             self.add_pat(&key_value.value);
@@ -1002,7 +1008,11 @@ fn is_true_expr(expr: &Expr) -> bool {
 }
 
 fn can_string_be_attr_literal(value: &Str) -> bool {
-    let raw = value.raw.as_ref().map(|raw| raw.as_ref()).unwrap_or_default();
+    let raw = value
+        .raw
+        .as_ref()
+        .map(|raw| raw.as_ref())
+        .unwrap_or_default();
     !raw.contains('\\') && !wtf8_to_string(&value.value).contains('"')
 }
 

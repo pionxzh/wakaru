@@ -40,10 +40,18 @@ fn esbuild_detects_minified_lazy_helper() {
     .expect("unpack should succeed");
 
     // Should split into factory modules + entry
-    assert!(pairs.len() >= 6, "expected ≥6 modules (5 factories + entry), got {}", pairs.len());
+    assert!(
+        pairs.len() >= 6,
+        "expected ≥6 modules (5 factories + entry), got {}",
+        pairs.len()
+    );
 
     let has_entry = pairs.iter().any(|(name, _)| name == "entry.js");
-    assert!(has_entry, "entry.js not found: {:?}", pairs.iter().map(|(n, _)| n).collect::<Vec<_>>());
+    assert!(
+        has_entry,
+        "entry.js not found: {:?}",
+        pairs.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
 
     let has_mod_a = pairs.iter().any(|(name, _)| name == "mod_a.js");
     assert!(has_mod_a, "mod_a.js not found");
@@ -66,7 +74,10 @@ fn esbuild_detects_minified_cjs_helper() {
     .expect("unpack should succeed");
 
     assert!(pairs.len() >= 6, "expected ≥6 modules, got {}", pairs.len());
-    assert!(pairs.iter().any(|(n, _)| n == "entry.js"), "missing entry.js");
+    assert!(
+        pairs.iter().any(|(n, _)| n == "entry.js"),
+        "missing entry.js"
+    );
 }
 
 #[test]
@@ -105,5 +116,9 @@ a(); b();
     .expect("unpack should succeed");
 
     // Falls through to single-module path
-    assert_eq!(pairs.len(), 1, "should not detect as esbuild bundle with only 2 factories");
+    assert_eq!(
+        pairs.len(),
+        1,
+        "should not detect as esbuild bundle with only 2 factories"
+    );
 }

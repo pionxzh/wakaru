@@ -2,9 +2,9 @@ mod common;
 
 use common::{assert_eq_normalized, normalize};
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, GLOBALS};
+use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
-use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_rs::apply_rules_between;
 use wakaru_rs::facts::{collect_module_facts, ModuleFacts, ModuleFactsMap};
@@ -20,7 +20,10 @@ fn run_decomp(source: &str, facts: &ModuleFactsMap) -> String {
             source.to_string(),
         );
         let lexer = Lexer::new(
-            Syntax::Es(EsSyntax { jsx: true, ..Default::default() }),
+            Syntax::Es(EsSyntax {
+                jsx: true,
+                ..Default::default()
+            }),
             Default::default(),
             StringInput::from(&*fm),
             None,
@@ -59,7 +62,10 @@ fn run_decomp_then_rename(source: &str, facts: &ModuleFactsMap) -> String {
             source.to_string(),
         );
         let lexer = Lexer::new(
-            Syntax::Es(EsSyntax { jsx: true, ..Default::default() }),
+            Syntax::Es(EsSyntax {
+                jsx: true,
+                ..Default::default()
+            }),
             Default::default(),
             StringInput::from(&*fm),
             None,
@@ -72,7 +78,12 @@ fn run_decomp_then_rename(source: &str, facts: &ModuleFactsMap) -> String {
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
         run_namespace_decomposition(&mut module, facts);
-        apply_rules_between(&mut module, unresolved_mark, "UnImportRename", "UnImportRename");
+        apply_rules_between(
+            &mut module,
+            unresolved_mark,
+            "UnImportRename",
+            "UnImportRename",
+        );
 
         let mut output = Vec::new();
         {
@@ -96,7 +107,10 @@ fn run_decomp_then_late_pipeline(source: &str, facts: &ModuleFactsMap) -> String
             source.to_string(),
         );
         let lexer = Lexer::new(
-            Syntax::Es(EsSyntax { jsx: true, ..Default::default() }),
+            Syntax::Es(EsSyntax {
+                jsx: true,
+                ..Default::default()
+            }),
             Default::default(),
             StringInput::from(&*fm),
             None,
@@ -109,7 +123,12 @@ fn run_decomp_then_late_pipeline(source: &str, facts: &ModuleFactsMap) -> String
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
         run_namespace_decomposition(&mut module, facts);
-        apply_rules_between(&mut module, unresolved_mark, "UnTemplateLiteral", "DeadImports");
+        apply_rules_between(
+            &mut module,
+            unresolved_mark,
+            "UnTemplateLiteral",
+            "DeadImports",
+        );
 
         let mut output = Vec::new();
         {
@@ -154,10 +173,12 @@ fn facts_for(source: &str) -> ModuleFacts {
 
 #[test]
 fn decompose_namespace_import_to_named() {
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export function createStore() {}
 export function applyMiddleware() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
     facts.insert("./module-11.js", target_facts);
 
@@ -196,10 +217,12 @@ Object.keys(r);
 fn namespace_default_access_prevents_decomposition() {
     // `r.default` can't be expressed as a named specifier, so decomposition
     // should be skipped for the whole candidate.
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export default function d() {}
 export function foo() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
     facts.insert("./mod.js", target_facts);
 
@@ -266,13 +289,15 @@ function g(e) { return u.d.take(e); }
 
 #[test]
 fn partial_decomposition_keeps_namespace_for_alias_heavy_import() {
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export function a() {}
 export function e() {}
 export function f() {}
 export function k() {}
 export function s() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
     facts.insert("./module-2.js", target_facts);
 
@@ -299,13 +324,15 @@ function run(t, r, e) {
 
 #[test]
 fn partial_namespace_decomposition_uses_separate_named_import() {
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export function a() {}
 export function e() {}
 export function f() {}
 export function k() {}
 export function s() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
     facts.insert("./module-2.js", target_facts);
 
@@ -333,9 +360,11 @@ function run(t, r, e) {
 
 #[test]
 fn decomposition_aliases_against_other_import_locals() {
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export function a() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
     facts.insert("./module-9.js", target_facts);
 
@@ -356,9 +385,11 @@ a_1.fixed();
 
 #[test]
 fn decomposition_alias_survives_import_rename_cleanup() {
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export function a() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
     facts.insert("./module-9.js", target_facts);
 
@@ -379,9 +410,11 @@ a_2.fixed();
 
 #[test]
 fn decomposition_alias_survives_late_pipeline_cleanup() {
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export function a() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
     facts.insert("./module-9.js", target_facts);
 
@@ -397,7 +430,10 @@ import { a as a_2 } from "./module-9.js";
 a.a();
 export const buffers = a_2;
 "#;
-    assert_eq_normalized(&run_decomp_then_late_pipeline(input, &facts), expected.trim());
+    assert_eq_normalized(
+        &run_decomp_then_late_pipeline(input, &facts),
+        expected.trim(),
+    );
 }
 
 #[test]
@@ -405,17 +441,21 @@ fn decomposition_aliases_after_skipped_alias_heavy_candidate() {
     let mut facts = ModuleFactsMap::new();
     facts.insert(
         "./module-12.js",
-        facts_for(r#"
+        facts_for(
+            r#"
 export function a() {}
 export function b() {}
 export function c() {}
-"#),
+"#,
+        ),
     );
     facts.insert(
         "./module-9.js",
-        facts_for(r#"
+        facts_for(
+            r#"
 export function a() {}
-"#),
+"#,
+        ),
     );
 
     let input = r#"
@@ -469,12 +509,14 @@ function g(e) { return u.d.take(e); }
 
 #[test]
 fn decompose_default_import_to_named() {
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export function createStore() {}
 export function applyMiddleware() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
-    facts.insert("./module-11.js",target_facts);
+    facts.insert("./module-11.js", target_facts);
 
     let input = r#"
 import r from "./module-11.js";
@@ -491,10 +533,12 @@ const p = createStore(u, applyMiddleware(d));
 fn apply_left_for_un_argument_spread() {
     // After decomposition, r.fn.apply(undefined, args) becomes fn.apply(undefined, args).
     // UnArgumentSpread (Stage 3) handles Pattern 1: fn.apply(null, args) → fn(...args).
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export function createStore() {}
 export function applyMiddleware() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
     facts.insert("./module-11.js", target_facts);
 
@@ -515,7 +559,7 @@ const p = createStore(u, applyMiddleware.apply(undefined, d));
 fn bare_binding_prevents_decomposition() {
     let target_facts = facts_for(r#"export function foo() {}"#);
     let mut facts = ModuleFactsMap::new();
-    facts.insert("./mod.js",target_facts);
+    facts.insert("./mod.js", target_facts);
 
     let input = r#"
 import r from "./mod.js";
@@ -524,7 +568,10 @@ doSomething(r);
 "#;
     let output = run_decomp(input, &facts);
     // Should NOT decompose because `r` is used bare
-    assert!(normalize(&output).contains("import r from"), "should keep default import, got: {output}");
+    assert!(
+        normalize(&output).contains("import r from"),
+        "should keep default import, got: {output}"
+    );
 }
 
 // ── Safety: computed access prevents decomposition ─────────────────
@@ -533,14 +580,17 @@ doSomething(r);
 fn computed_access_prevents_decomposition() {
     let target_facts = facts_for(r#"export function foo() {}"#);
     let mut facts = ModuleFactsMap::new();
-    facts.insert("./mod.js",target_facts);
+    facts.insert("./mod.js", target_facts);
 
     let input = r#"
 import r from "./mod.js";
 r[someKey];
 "#;
     let output = run_decomp(input, &facts);
-    assert!(normalize(&output).contains("import r from"), "should keep default import, got: {output}");
+    assert!(
+        normalize(&output).contains("import r from"),
+        "should keep default import, got: {output}"
+    );
 }
 
 #[test]
@@ -600,7 +650,7 @@ delete r.foo;
 fn missing_export_prevents_decomposition() {
     let target_facts = facts_for(r#"export function bar() {}"#);
     let mut facts = ModuleFactsMap::new();
-    facts.insert("./mod.js",target_facts);
+    facts.insert("./mod.js", target_facts);
 
     let input = r#"
 import r from "./mod.js";
@@ -608,7 +658,10 @@ r.foo();
 "#;
     let output = run_decomp(input, &facts);
     // `foo` is not exported by target, so don't decompose
-    assert!(normalize(&output).contains("import r from"), "should keep default import, got: {output}");
+    assert!(
+        normalize(&output).contains("import r from"),
+        "should keep default import, got: {output}"
+    );
 }
 
 // ── Safety: unknown target module ──────────────────────────────────
@@ -622,7 +675,10 @@ import r from "./unknown.js";
 r.foo();
 "#;
     let output = run_decomp(input, &facts);
-    assert!(normalize(&output).contains("import r from"), "should keep default import, got: {output}");
+    assert!(
+        normalize(&output).contains("import r from"),
+        "should keep default import, got: {output}"
+    );
 }
 
 // ── No-op when no default imports ──────────────────────────────────
@@ -631,7 +687,7 @@ r.foo();
 fn named_import_untouched() {
     let target_facts = facts_for(r#"export function foo() {}"#);
     let mut facts = ModuleFactsMap::new();
-    facts.insert("./mod.js",target_facts);
+    facts.insert("./mod.js", target_facts);
 
     let input = r#"
 import { foo } from "./mod.js";
@@ -648,8 +704,8 @@ fn multiple_imports_decomposed() {
     let facts_a = facts_for(r#"export function x() {} export function y() {}"#);
     let facts_b = facts_for(r#"export function z() {}"#);
     let mut facts = ModuleFactsMap::new();
-    facts.insert("./a.js",facts_a);
-    facts.insert("./b.js",facts_b);
+    facts.insert("./a.js", facts_a);
+    facts.insert("./b.js", facts_b);
 
     let input = r#"
 import a from "./a.js";
@@ -744,11 +800,13 @@ const fn = (x) => x_1 + x;
 
 #[test]
 fn mixed_import_preserves_named_specifiers() {
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export function Fragment() {}
 export function createElement() {}
 export function useState() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
     facts.insert("./react.js", target_facts);
 
@@ -774,10 +832,12 @@ fn aliased_local_same_as_decomposed_prop_synthesizes_new_alias() {
     // Scenario: `import React, { foo as bar }` — local `bar` points at export `foo`.
     // When the user accesses `React.bar`, we need a specifier for export `bar`,
     // NOT reuse the existing local `bar`.
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export function foo() {}
 export function bar() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
     facts.insert("./react.js", target_facts);
 
@@ -801,9 +861,11 @@ fn aliased_local_matching_access_reuses_existing_local() {
     // `import React, { foo as bar }` and access `React.foo` — the existing local
     // `bar` already refers to export `foo`, so reuse it instead of adding a
     // redundant `{ foo }` specifier.
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export function foo() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
     facts.insert("./react.js", target_facts);
 
@@ -828,9 +890,11 @@ fn reused_aliased_local_usage_has_binding_ctxt() {
     // while the original binding carries the real resolver ctxt. UnImportRename
     // then only renames the binding + original usages and misses the rewritten
     // ones, leaving an undefined `bar` reference.
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export function foo() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
     facts.insert("./react.js", target_facts);
 
@@ -851,10 +915,12 @@ foo();
 
 #[test]
 fn no_duplicate_specifier_when_already_imported() {
-    let target_facts = facts_for(r#"
+    let target_facts = facts_for(
+        r#"
 export function Fragment() {}
 export function createElement() {}
-"#);
+"#,
+    );
     let mut facts = ModuleFactsMap::new();
     facts.insert("./react.js", target_facts);
 

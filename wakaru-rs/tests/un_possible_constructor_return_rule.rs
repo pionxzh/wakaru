@@ -67,8 +67,14 @@ function d(e, t) {
 var x = d(this, Parent.call(this));
 "#;
     let output = render(input);
-    assert!(!output.contains("ReferenceError"), "helper should be removed");
-    assert!(!output.contains("hasn't been initialised"), "helper should be removed");
+    assert!(
+        !output.contains("ReferenceError"),
+        "helper should be removed"
+    );
+    assert!(
+        !output.contains("hasn't been initialised"),
+        "helper should be removed"
+    );
 }
 
 #[test]
@@ -82,8 +88,15 @@ function d(e, t) {
 var x = d(this, Parent.call(this));
 "#;
     let output = render(input);
-    assert!(!output.contains("ReferenceError"), "minified form should be detected: {}", output);
-    assert!(output.contains("Parent.call"), "call args should be preserved");
+    assert!(
+        !output.contains("ReferenceError"),
+        "minified form should be detected: {}",
+        output
+    );
+    assert!(
+        output.contains("Parent.call"),
+        "call args should be preserved"
+    );
 }
 
 #[test]
@@ -112,9 +125,19 @@ var x = d(this, Parent.call(this));
 var y = m(this, Other.call(this));
 "#;
     let output = render(input);
-    assert!(!output.contains("ReferenceError"), "both helpers should be removed: {}", output);
-    assert!(output.contains("Parent.call"), "call args should be preserved");
-    assert!(output.contains("Other.call"), "call args should be preserved");
+    assert!(
+        !output.contains("ReferenceError"),
+        "both helpers should be removed: {}",
+        output
+    );
+    assert!(
+        output.contains("Parent.call"),
+        "call args should be preserved"
+    );
+    assert!(
+        output.contains("Other.call"),
+        "call args should be preserved"
+    );
 }
 
 #[test]
@@ -129,5 +152,8 @@ function validate(self, call) {
 var x = validate(obj, fn());
 "#;
     let output = render(input);
-    assert!(output.contains("validate"), "should not transform non-matching function");
+    assert!(
+        output.contains("validate"),
+        "should not transform non-matching function"
+    );
 }

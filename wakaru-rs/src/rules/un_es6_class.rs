@@ -3,10 +3,11 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee,
-    Class, ClassDecl, ClassMember, ClassMethod, ComputedPropName, Constructor, Decl, Expr,
-    ExprOrSpread, ExprStmt, FnExpr, Function, Ident, IdentName, MemberExpr, MemberProp, MethodKind,
-    ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr, SimpleAssignTarget, Stmt, VarDecl,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, BlockStmtOrExpr,
+    CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod, ComputedPropName, Constructor,
+    Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, Ident, IdentName, MemberExpr, MemberProp,
+    MethodKind, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr, SimpleAssignTarget,
+    Stmt, VarDecl,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -141,7 +142,9 @@ fn is_inherits_fn(func: &Function) -> bool {
     if func.params.len() != 2 {
         return false;
     }
-    let Pat::Ident(param1) = &func.params[0].pat else { return false };
+    let Pat::Ident(param1) = &func.params[0].pat else {
+        return false;
+    };
     let body = match &func.body {
         Some(b) => b,
         None => return false,
@@ -151,19 +154,29 @@ fn is_inherits_fn(func: &Function) -> bool {
     if body.stmts.len() > 5 {
         return false;
     }
-    body.stmts.iter().any(|s| is_prototype_assign_object_create(s, &param1.id.sym))
+    body.stmts
+        .iter()
+        .any(|s| is_prototype_assign_object_create(s, &param1.id.sym))
 }
 
 /// Check if a statement is `param.prototype = Object.create(...)`.
 fn is_prototype_assign_object_create(stmt: &Stmt, param_name: &Atom) -> bool {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return false };
-    let Expr::Assign(assign) = expr.as_ref() else { return false };
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return false;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return false;
+    };
     if assign.op != AssignOp::Assign {
         return false;
     }
     // LHS must be `param.prototype`
-    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else { return false };
-    let Expr::Ident(obj) = lhs.obj.as_ref() else { return false };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else {
+        return false;
+    };
+    let Expr::Ident(obj) = lhs.obj.as_ref() else {
+        return false;
+    };
     if &obj.sym != param_name {
         return false;
     }
@@ -173,7 +186,9 @@ fn is_prototype_assign_object_create(stmt: &Stmt, param_name: &Atom) -> bool {
     // RHS must contain Object.create(...)
     let rhs = strip_parens(&assign.right);
     let Expr::Call(call) = rhs else { return false };
-    let Callee::Expr(callee) = &call.callee else { return false };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
     is_object_create_callee(callee)
 }
 
@@ -213,7 +228,9 @@ fn detect_create_class_var(var_decl: &VarDecl) -> Option<Atom> {
         return None;
     }
     let decl = &var_decl.decls[0];
-    let Pat::Ident(bi) = &decl.name else { return None };
+    let Pat::Ident(bi) = &decl.name else {
+        return None;
+    };
     let init = decl.init.as_ref()?;
     let call = extract_iife_call(init)?;
     if !call.args.is_empty() {
@@ -221,7 +238,9 @@ fn detect_create_class_var(var_decl: &VarDecl) -> Option<Atom> {
     }
 
     // Get the IIFE body
-    let Callee::Expr(callee) = &call.callee else { return None };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
     let body_stmts = get_fn_or_arrow_body(strip_parens(callee))?;
 
     if is_create_class_body(body_stmts) {
@@ -317,7 +336,10 @@ fn remove_orphaned_create_class_helpers(stmts: &mut Vec<Stmt>, helpers: &HashSet
     });
 }
 
-fn remove_orphaned_create_class_helpers_module(items: &mut Vec<ModuleItem>, helpers: &HashSet<Atom>) {
+fn remove_orphaned_create_class_helpers_module(
+    items: &mut Vec<ModuleItem>,
+    helpers: &HashSet<Atom>,
+) {
     if helpers.is_empty() {
         return;
     }
@@ -510,9 +532,15 @@ fn try_iife_to_class(
 fn find_inline_inherits_super(stmts: &[Stmt]) -> Option<Box<Expr>> {
     let inner_ctor_name = find_inner_constructor_name(stmts)?;
     for stmt in stmts {
-        let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { continue };
-        let Expr::Call(call) = expr.as_ref() else { continue };
-        let Callee::Expr(callee) = &call.callee else { continue };
+        let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+            continue;
+        };
+        let Expr::Call(call) = expr.as_ref() else {
+            continue;
+        };
+        let Callee::Expr(callee) = &call.callee else {
+            continue;
+        };
 
         if call.args.len() != 2 {
             continue;
@@ -735,12 +763,8 @@ fn parse_class_body(
 
             // `_createClass(t, [...], [...])` or `r(t, [...])` as a statement (Babel non-loose)
             if let Expr::Call(call) = expr.as_ref() {
-                if try_parse_create_class(
-                    call,
-                    inner_ctor_name,
-                    &mut members,
-                    create_class_helpers,
-                ) {
+                if try_parse_create_class(call, inner_ctor_name, &mut members, create_class_helpers)
+                {
                     continue;
                 }
             }
@@ -779,9 +803,15 @@ fn parse_class_body(
 /// Like `is_inline_inherits_iife` but doesn't check the second argument against a specific param name.
 /// Used when the super class was passed inline (not via IIFE param).
 fn is_inline_inherits_iife_any_super(stmt: &Stmt, ctor_name: &str) -> bool {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return false };
-    let Expr::Call(call) = expr.as_ref() else { return false };
-    let Callee::Expr(callee) = &call.callee else { return false };
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return false;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
 
     if call.args.len() != 2 {
         return false;
@@ -797,12 +827,10 @@ fn is_inline_inherits_iife_any_super(stmt: &Stmt, ctor_name: &str) -> bool {
             BlockStmtOrExpr::BlockStmt(block) => &block.stmts[..],
             _ => return false,
         },
-        Expr::Fn(fn_expr) if fn_expr.function.params.len() == 2 => {
-            match &fn_expr.function.body {
-                Some(block) => &block.stmts[..],
-                None => return false,
-            }
-        }
+        Expr::Fn(fn_expr) if fn_expr.function.params.len() == 2 => match &fn_expr.function.body {
+            Some(block) => &block.stmts[..],
+            None => return false,
+        },
         _ => return false,
     };
 
@@ -814,7 +842,12 @@ fn is_inline_inherits_iife_any_super(stmt: &Stmt, ctor_name: &str) -> bool {
 // ============================================================
 
 /// Detect `__extends(t, _super)`, `_inherits(t, _super)`, or a call to a detected inherits helper.
-fn try_parse_extends_call(stmt: &Stmt, ctor_name: &str, super_param: &str, inherits_helpers: &HashSet<Atom>) -> Option<()> {
+fn try_parse_extends_call(
+    stmt: &Stmt,
+    ctor_name: &str,
+    super_param: &str,
+    inherits_helpers: &HashSet<Atom>,
+) -> Option<()> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
@@ -1645,7 +1678,9 @@ fn try_unwrap_pcr_expr(expr: &Expr) -> Option<Expr> {
 /// and return the second argument if so.
 fn try_unwrap_pcr_call(expr: &Expr) -> Option<Expr> {
     let Expr::Call(call) = expr else { return None };
-    let Callee::Expr(callee) = &call.callee else { return None };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
     let inner = strip_parens(callee);
 
     // Must have exactly 2 args: (this, superCall)
@@ -1678,7 +1713,9 @@ fn try_unwrap_pcr_call(expr: &Expr) -> Option<Expr> {
     if params.len() != 2 {
         return None;
     }
-    let Pat::Ident(param1) = params[0] else { return None };
+    let Pat::Ident(param1) = params[0] else {
+        return None;
+    };
 
     // First statement must be `if (!param1) throw new ReferenceError(...)`
     if body_stmts.is_empty() {
@@ -1696,8 +1733,12 @@ fn try_unwrap_pcr_call(expr: &Expr) -> Option<Expr> {
 /// Requires the throw to construct a `ReferenceError` specifically to avoid
 /// false-positives on other guard-shaped inline functions.
 fn is_pcr_guard_stmt(stmt: &Stmt, param_name: &str) -> bool {
-    let Stmt::If(if_stmt) = stmt else { return false };
-    let Expr::Unary(unary) = if_stmt.test.as_ref() else { return false };
+    let Stmt::If(if_stmt) = stmt else {
+        return false;
+    };
+    let Expr::Unary(unary) = if_stmt.test.as_ref() else {
+        return false;
+    };
     if unary.op != swc_core::ecma::ast::UnaryOp::Bang {
         return false;
     }
@@ -1716,13 +1757,17 @@ fn is_pcr_guard_stmt(stmt: &Stmt, param_name: &str) -> bool {
         }
         _ => None,
     };
-    let Some(throw_arg) = throw_expr else { return false };
+    let Some(throw_arg) = throw_expr else {
+        return false;
+    };
     is_new_reference_error(throw_arg)
 }
 
 /// Check if an expression is `new ReferenceError(...)`.
 fn is_new_reference_error(expr: &Expr) -> bool {
-    let Expr::New(new_expr) = strip_parens(expr) else { return false };
+    let Expr::New(new_expr) = strip_parens(expr) else {
+        return false;
+    };
     matches!(strip_parens(&new_expr.callee), Expr::Ident(id) if id.sym.as_ref() == "ReferenceError")
 }
 
@@ -1769,7 +1814,9 @@ fn split_assign_prop_chains(body: &mut BlockStmt) {
 
 /// Try to split `(alias = super(...)).prop = value` into two statements.
 fn try_split_assign_prop(expr: &Expr, span: swc_core::common::Span) -> Option<(Stmt, Stmt)> {
-    let Expr::Assign(outer) = expr else { return None };
+    let Expr::Assign(outer) = expr else {
+        return None;
+    };
     if outer.op != AssignOp::Assign {
         return None;
     }
@@ -1780,7 +1827,9 @@ fn try_split_assign_prop(expr: &Expr, span: swc_core::common::Span) -> Option<(S
     };
 
     let obj = strip_parens(&member.obj);
-    let Expr::Assign(inner) = obj else { return None };
+    let Expr::Assign(inner) = obj else {
+        return None;
+    };
     if inner.op != AssignOp::Assign {
         return None;
     }
@@ -1868,15 +1917,23 @@ impl VisitMut for SuperCallRewriter<'_> {
         expr.visit_mut_children_with(self);
 
         let Expr::Call(call) = expr else { return };
-        let Callee::Expr(callee) = &call.callee else { return };
-        let Expr::Member(member) = callee.as_ref() else { return };
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        let Expr::Member(member) = callee.as_ref() else {
+            return;
+        };
 
         // Check: superParam.call or superParam.apply
-        let Expr::Ident(obj_id) = member.obj.as_ref() else { return };
+        let Expr::Ident(obj_id) = member.obj.as_ref() else {
+            return;
+        };
         if obj_id.sym.as_ref() != self.super_param_name {
             return;
         }
-        let MemberProp::Ident(prop) = &member.prop else { return };
+        let MemberProp::Ident(prop) = &member.prop else {
+            return;
+        };
 
         match prop.sym.as_ref() {
             "call" => {
@@ -1944,9 +2001,15 @@ impl VisitMut for ProtoGetPrototypeOfSuperRewriter {
         expr.visit_mut_children_with(self);
 
         let Expr::Call(call) = expr else { return };
-        let Callee::Expr(callee) = &call.callee else { return };
-        let Expr::Member(member) = callee.as_ref() else { return };
-        let MemberProp::Ident(prop) = &member.prop else { return };
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        let Expr::Member(member) = callee.as_ref() else {
+            return;
+        };
+        let MemberProp::Ident(prop) = &member.prop else {
+            return;
+        };
 
         // Object must be `(X.__proto__ || Object.getPrototypeOf(X))`
         if !is_proto_or_get_prototype_of(strip_parens(&member.obj)) {
@@ -1962,9 +2025,8 @@ impl VisitMut for ProtoGetPrototypeOfSuperRewriter {
                     return;
                 }
                 let second = strip_parens(&call.args[1].expr);
-                let is_safe =
-                    matches!(second, Expr::Ident(id) if id.sym.as_ref() == "arguments")
-                        || matches!(second, Expr::Array(_));
+                let is_safe = matches!(second, Expr::Ident(id) if id.sym.as_ref() == "arguments")
+                    || matches!(second, Expr::Array(_));
                 if !is_safe {
                     return;
                 }
@@ -2019,9 +2081,7 @@ fn is_proto_or_get_prototype_of(expr: &Expr) -> bool {
             // `Object.getPrototypeOf(X)`
             if let Callee::Expr(callee) = &call.callee {
                 if let Expr::Member(m) = callee.as_ref() {
-                    if let (Expr::Ident(obj), MemberProp::Ident(prop)) =
-                        (m.obj.as_ref(), &m.prop)
-                    {
+                    if let (Expr::Ident(obj), MemberProp::Ident(prop)) = (m.obj.as_ref(), &m.prop) {
                         return obj.sym.as_ref() == "Object"
                             && prop.sym.as_ref() == "getPrototypeOf";
                     }
@@ -2165,7 +2225,9 @@ fn extract_super_from_assign_chain(
     expr: &Expr,
     aliases: &std::collections::HashSet<Atom>,
 ) -> Option<Expr> {
-    let Expr::Assign(assign) = expr else { return None };
+    let Expr::Assign(assign) = expr else {
+        return None;
+    };
     if assign.op != AssignOp::Assign {
         return None;
     }

@@ -15,9 +15,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, CatchClause, Expr, Function, Ident, ImportDecl,
-    ImportNamedSpecifier, ImportSpecifier, MemberExpr, MemberProp, ModuleDecl, ModuleExportName,
-    ModuleItem, Module, Param, Pat, SimpleAssignTarget, UnaryExpr, UnaryOp, UpdateExpr,
+    AssignExpr, AssignTarget, CatchClause, Expr, Function, Ident, ImportDecl, ImportNamedSpecifier,
+    ImportSpecifier, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem,
+    Param, Pat, SimpleAssignTarget, UnaryExpr, UnaryOp, UpdateExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -60,10 +60,7 @@ struct DecompCandidate {
 ///
 /// `module_facts` provides lookup from module specifier → facts of the target module.
 /// This allows checking whether the target module actually exports the accessed names.
-pub fn run_namespace_decomposition(
-    module: &mut Module,
-    module_facts: &ModuleFactsMap,
-) {
+pub fn run_namespace_decomposition(module: &mut Module, module_facts: &ModuleFactsMap) {
     let candidates = find_decomposition_candidates(module, module_facts);
     if candidates.is_empty() {
         return;
@@ -98,10 +95,20 @@ fn find_decomposition_candidates(
         for spec in &import.specifiers {
             match spec {
                 ImportSpecifier::Default(s) => {
-                    namespace_like_imports.push((idx, s.local.sym.clone(), s.local.ctxt, source.clone()));
+                    namespace_like_imports.push((
+                        idx,
+                        s.local.sym.clone(),
+                        s.local.ctxt,
+                        source.clone(),
+                    ));
                 }
                 ImportSpecifier::Namespace(s) => {
-                    namespace_like_imports.push((idx, s.local.sym.clone(), s.local.ctxt, source.clone()));
+                    namespace_like_imports.push((
+                        idx,
+                        s.local.sym.clone(),
+                        s.local.ctxt,
+                        source.clone(),
+                    ));
                 }
                 ImportSpecifier::Named(_) => {}
             }
@@ -592,7 +599,9 @@ fn apply_decompositions(module: &mut Module, candidates: &[DecompCandidate]) {
     }
 
     // Rewrite usages: r.foo → local_name (which is `foo` or `foo_1` if aliased)
-    let mut rewriter = UsageRewriter { decomp_map: &decomp_map };
+    let mut rewriter = UsageRewriter {
+        decomp_map: &decomp_map,
+    };
     module.visit_mut_with(&mut rewriter);
 }
 

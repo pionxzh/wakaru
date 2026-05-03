@@ -3,8 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    Decl, Expr, Ident, ImportDecl, MemberProp, Module, ModuleItem, Pat, PropName, Stmt,
-    VarDecl,
+    Decl, Expr, Ident, ImportDecl, MemberProp, Module, ModuleItem, Pat, PropName, Stmt, VarDecl,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 

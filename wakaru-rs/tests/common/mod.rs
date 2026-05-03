@@ -6,8 +6,7 @@ use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 use wakaru_rs::{
     apply_rules_between, apply_rules_until_with_level, decompile, trace_rules, DecompileOptions,
-    RuleTraceEvent, RuleTraceOptions,
-    RewriteLevel,
+    RewriteLevel, RuleTraceEvent, RuleTraceOptions,
 };
 
 #[allow(dead_code)]

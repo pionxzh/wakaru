@@ -96,8 +96,12 @@ impl Visit for AffectedBindingCollector<'_> {
 
 fn is_helper_call(expr: &Expr, helpers: &HashMap<BindingKey, BabelHelperKind>) -> bool {
     let Expr::Call(call) = expr else { return false };
-    let Callee::Expr(callee) = &call.callee else { return false };
-    let Expr::Ident(id) = callee.as_ref() else { return false };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Ident(id) = callee.as_ref() else {
+        return false;
+    };
     helpers.contains_key(&(id.sym.clone(), id.ctxt))
 }
 
@@ -138,8 +142,12 @@ fn extract_helper_call_arg(
     call: &swc_core::ecma::ast::CallExpr,
     helpers: &HashMap<BindingKey, BabelHelperKind>,
 ) -> Option<Expr> {
-    let Callee::Expr(callee) = &call.callee else { return None };
-    let Expr::Ident(id) = callee.as_ref() else { return None };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(id) = callee.as_ref() else {
+        return None;
+    };
     if !helpers.contains_key(&(id.sym.clone(), id.ctxt)) {
         return None;
     }
@@ -210,10 +218,7 @@ impl VisitMut for DefaultRefRewriter<'_> {
 /// })(require("./module.js"));
 /// ```
 /// → `const x = require("./module.js")`
-fn unwrap_inline_interop_iifes(
-    module: &mut Module,
-    affected: &mut HashSet<BindingKey>,
-) {
+fn unwrap_inline_interop_iifes(module: &mut Module, affected: &mut HashSet<BindingKey>) {
     for item in &mut module.body {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
             continue;
@@ -239,7 +244,12 @@ fn unwrap_inline_interop_iifes(
 
 /// Extract the IIFE argument and interop kind from an inline interop expression.
 fn extract_inline_interop_arg_with_kind(expr: &Expr) -> Option<(Box<Expr>, InteropKind)> {
-    let Expr::Call(CallExpr { callee: Callee::Expr(callee), args, .. }) = expr else {
+    let Expr::Call(CallExpr {
+        callee: Callee::Expr(callee),
+        args,
+        ..
+    }) = expr
+    else {
         return None;
     };
     if args.len() != 1 || args[0].spread.is_some() {
@@ -250,12 +260,10 @@ fn extract_inline_interop_arg_with_kind(expr: &Expr) -> Option<(Box<Expr>, Inter
     let callee = strip_parens_expr(callee);
 
     let body_stmts = match callee {
-        Expr::Arrow(ArrowExpr { body, params, .. }) if params.len() == 1 => {
-            match &**body {
-                BlockStmtOrExpr::BlockStmt(block) => &block.stmts,
-                _ => return None,
-            }
-        }
+        Expr::Arrow(ArrowExpr { body, params, .. }) if params.len() == 1 => match &**body {
+            BlockStmtOrExpr::BlockStmt(block) => &block.stmts,
+            _ => return None,
+        },
         Expr::Fn(FnExpr { function, .. }) if function.params.len() == 1 => {
             function.body.as_ref()?.stmts.as_slice()
         }
@@ -308,7 +316,8 @@ fn classify_interop_body(stmts: &[Stmt]) -> Option<InteropKind> {
         let swc_core::ecma::ast::Prop::KeyValue(kv) = &**prop else {
             return None;
         };
-        if matches!(&kv.key, swc_core::ecma::ast::PropName::Ident(id) if id.sym.as_ref() == "default") {
+        if matches!(&kv.key, swc_core::ecma::ast::PropName::Ident(id) if id.sym.as_ref() == "default")
+        {
             return Some(InteropKind::Default);
         }
         return None;
@@ -342,7 +351,11 @@ fn is_esmodule_check(expr: &Expr) -> bool {
         return false;
     }
     // right must be X.__esModule
-    let Expr::Member(MemberExpr { prop: MemberProp::Ident(prop), .. }) = &*bin.right else {
+    let Expr::Member(MemberExpr {
+        prop: MemberProp::Ident(prop),
+        ..
+    }) = &*bin.right
+    else {
         return false;
     };
     prop.sym.as_ref() == "__esModule"
@@ -363,9 +376,9 @@ fn is_default_assignment(stmt: &Stmt) -> bool {
     let Expr::Assign(assign) = &**expr else {
         return false;
     };
-    let swc_core::ecma::ast::AssignTarget::Simple(
-        swc_core::ecma::ast::SimpleAssignTarget::Member(member),
-    ) = &assign.left
+    let swc_core::ecma::ast::AssignTarget::Simple(swc_core::ecma::ast::SimpleAssignTarget::Member(
+        member,
+    )) = &assign.left
     else {
         return false;
     };

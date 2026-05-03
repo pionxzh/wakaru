@@ -90,7 +90,8 @@ fn standard_keeps_loose_optional_chaining_recovery_enabled() {
 
 #[test]
 fn standard_keeps_babel_strict_optional_chaining_assignment_recovery() {
-    let input = r#"const x = (_a = e.ownerDocument) === null || _a === void 0 ? void 0 : _a.defaultView;"#;
+    let input =
+        r#"const x = (_a = e.ownerDocument) === null || _a === void 0 ? void 0 : _a.defaultView;"#;
 
     let output = decompile(
         input,
@@ -108,7 +109,8 @@ fn standard_keeps_babel_strict_optional_chaining_assignment_recovery() {
 
 #[test]
 fn aggressive_enables_non_babel_strict_optional_chaining_assignment_recovery() {
-    let input = r#"const x = (n = e.ownerDocument) === null || n === void 0 ? void 0 : n.defaultView;"#;
+    let input =
+        r#"const x = (n = e.ownerDocument) === null || n === void 0 ? void 0 : n.defaultView;"#;
 
     let output = decompile(
         input,

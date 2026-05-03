@@ -100,7 +100,9 @@ impl VisitMut for ArgRest {
         }
 
         let rest_name: Atom = copy_var.clone().unwrap_or_else(|| "args".into());
-        ctor.params.push(ParamOrTsParamProp::Param(make_rest_param(rest_name.clone())));
+        ctor.params.push(ParamOrTsParamProp::Param(make_rest_param(
+            rest_name.clone(),
+        )));
 
         if let Some(body) = &mut ctor.body {
             // Remove the Babel copy loop since the rest param replaces it
@@ -432,9 +434,8 @@ fn is_arguments_ident(expr: &Expr) -> bool {
 /// `for (var len = arguments.length, arr = Array(len), i = 0; i < len; i++) arr[i] = arguments[i];`
 /// This loop is dead code once the rest param is added.
 fn remove_arguments_copy_loop(body: &mut BlockStmt, fixed_param_count: usize) {
-    body.stmts.retain(|stmt| {
-        detect_copy_var_name_from_stmt(stmt, fixed_param_count).is_none()
-    });
+    body.stmts
+        .retain(|stmt| detect_copy_var_name_from_stmt(stmt, fixed_param_count).is_none());
 }
 
 struct ArgumentsRewriter {

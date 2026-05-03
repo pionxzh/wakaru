@@ -180,7 +180,9 @@ fn try_convert_for_of(stmt: &Stmt) -> Option<ForOfStmt> {
     }
 
     // Use `let` if the element variable is reassigned in the loop body, `const` otherwise
-    let elem_is_reassigned = remaining_body.iter().any(|s| stmt_assigns_ident(s, elem_sym));
+    let elem_is_reassigned = remaining_body
+        .iter()
+        .any(|s| stmt_assigns_ident(s, elem_sym));
     let elem_kind = if elem_is_reassigned {
         VarDeclKind::Let
     } else {

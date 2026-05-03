@@ -33,7 +33,10 @@ var x = _toConsumableArray(a, b);
 "#;
     let output = render(input);
     // Multi-arg call is not transformed, so helper declaration must remain
-    assert!(output.contains("_toConsumableArray"), "should keep helper for untransformed calls");
+    assert!(
+        output.contains("_toConsumableArray"),
+        "should keep helper for untransformed calls"
+    );
 }
 
 #[test]
@@ -43,7 +46,10 @@ var _toConsumableArray = require("@babel/runtime/helpers/toConsumableArray");
 var x = _toConsumableArray(a);
 "#;
     let output = render(input);
-    assert!(!output.contains("_toConsumableArray"), "helper should be removed");
+    assert!(
+        !output.contains("_toConsumableArray"),
+        "helper should be removed"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +145,10 @@ function transform(arr) {
 var x = transform(items);
 "#;
     let output = render(input);
-    assert!(output.contains("transform"), "should not detect unrelated function as helper");
+    assert!(
+        output.contains("transform"),
+        "should not detect unrelated function as helper"
+    );
 }
 
 #[test]
@@ -152,5 +161,8 @@ function choose(arr) {
 var x = choose(items);
 "#;
     let output = render(input);
-    assert!(output.contains("choose"), "should not detect normal OR-chain as toConsumableArray");
+    assert!(
+        output.contains("choose"),
+        "should not detect normal OR-chain as toConsumableArray"
+    );
 }

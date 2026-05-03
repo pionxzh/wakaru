@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BinaryOp, BlockStmtOrExpr, Callee, Decl, Expr, Lit, MemberProp, Module, ModuleItem,
-    Pat, Stmt, UnaryExpr, UnaryOp, VarDeclarator,
+    BinaryOp, BlockStmtOrExpr, Callee, Decl, Expr, Lit, MemberProp, Module, ModuleItem, Pat, Stmt,
+    UnaryExpr, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -35,10 +35,7 @@ impl VisitMut for UnTypeofPolyfill {
 
         // Remove declarations if no remaining references
         let remaining = find_remaining_refs(module, &helpers);
-        let safe_to_remove: HashSet<BindingKey> = helpers
-            .difference(&remaining)
-            .cloned()
-            .collect();
+        let safe_to_remove: HashSet<BindingKey> = helpers.difference(&remaining).cloned().collect();
         if !safe_to_remove.is_empty() {
             remove_declarations(&mut module.body, &safe_to_remove);
         }
@@ -52,7 +49,9 @@ impl VisitMut for UnTypeofPolyfill {
 fn collect_typeof_helpers(module: &Module) -> HashSet<BindingKey> {
     let mut helpers = HashSet::new();
     for item in &module.body {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else { continue };
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
         for decl in &var.decls {
             if is_typeof_polyfill_decl(decl) {
                 let Pat::Ident(bi) = &decl.name else { continue };
@@ -68,7 +67,9 @@ fn collect_typeof_helpers(module: &Module) -> HashSet<BindingKey> {
 /// where the truthy branch is `(e) => typeof e` or `function(e) { return typeof e; }`.
 fn is_typeof_polyfill_decl(decl: &VarDeclarator) -> bool {
     let Some(init) = &decl.init else { return false };
-    let Expr::Cond(cond) = init.as_ref() else { return false };
+    let Expr::Cond(cond) = init.as_ref() else {
+        return false;
+    };
 
     // Test: typeof Symbol == "function" && typeof Symbol.iterator == "symbol"
     if !is_typeof_symbol_test(&cond.test) {
@@ -107,14 +108,32 @@ fn is_typeof_symbol_iterator_eq_symbol(expr: &Expr) -> bool {
 }
 
 fn is_typeof_of_ident(expr: &Expr, name: &str) -> bool {
-    let Expr::Unary(UnaryExpr { op: UnaryOp::TypeOf, arg, .. }) = expr else { return false };
+    let Expr::Unary(UnaryExpr {
+        op: UnaryOp::TypeOf,
+        arg,
+        ..
+    }) = expr
+    else {
+        return false;
+    };
     matches!(arg.as_ref(), Expr::Ident(id) if id.sym.as_ref() == name)
 }
 
 fn is_typeof_of_symbol_iterator(expr: &Expr) -> bool {
-    let Expr::Unary(UnaryExpr { op: UnaryOp::TypeOf, arg, .. }) = expr else { return false };
-    let Expr::Member(member) = arg.as_ref() else { return false };
-    let Expr::Ident(obj) = member.obj.as_ref() else { return false };
+    let Expr::Unary(UnaryExpr {
+        op: UnaryOp::TypeOf,
+        arg,
+        ..
+    }) = expr
+    else {
+        return false;
+    };
+    let Expr::Member(member) = arg.as_ref() else {
+        return false;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
     if obj.sym.as_ref() != "Symbol" {
         return false;
     }
@@ -132,7 +151,9 @@ fn is_typeof_identity_fn(expr: &Expr) -> bool {
             if arrow.params.len() != 1 {
                 return false;
             }
-            let Pat::Ident(param) = &arrow.params[0] else { return false };
+            let Pat::Ident(param) = &arrow.params[0] else {
+                return false;
+            };
             match &*arrow.body {
                 BlockStmtOrExpr::Expr(body_expr) => {
                     is_typeof_of_binding(body_expr, &param.id.sym, param.id.ctxt)
@@ -141,7 +162,9 @@ fn is_typeof_identity_fn(expr: &Expr) -> bool {
                     if block.stmts.len() != 1 {
                         return false;
                     }
-                    let Stmt::Return(ret) = &block.stmts[0] else { return false };
+                    let Stmt::Return(ret) = &block.stmts[0] else {
+                        return false;
+                    };
                     let Some(arg) = &ret.arg else { return false };
                     is_typeof_of_binding(arg, &param.id.sym, param.id.ctxt)
                 }
@@ -151,12 +174,18 @@ fn is_typeof_identity_fn(expr: &Expr) -> bool {
             if fn_expr.function.params.len() != 1 {
                 return false;
             }
-            let Pat::Ident(param) = &fn_expr.function.params[0].pat else { return false };
-            let Some(body) = &fn_expr.function.body else { return false };
+            let Pat::Ident(param) = &fn_expr.function.params[0].pat else {
+                return false;
+            };
+            let Some(body) = &fn_expr.function.body else {
+                return false;
+            };
             if body.stmts.len() != 1 {
                 return false;
             }
-            let Stmt::Return(ret) = &body.stmts[0] else { return false };
+            let Stmt::Return(ret) = &body.stmts[0] else {
+                return false;
+            };
             let Some(arg) = &ret.arg else { return false };
             is_typeof_of_binding(arg, &param.id.sym, param.id.ctxt)
         }
@@ -165,7 +194,14 @@ fn is_typeof_identity_fn(expr: &Expr) -> bool {
 }
 
 fn is_typeof_of_binding(expr: &Expr, sym: &Atom, ctxt: SyntaxContext) -> bool {
-    let Expr::Unary(UnaryExpr { op: UnaryOp::TypeOf, arg, .. }) = expr else { return false };
+    let Expr::Unary(UnaryExpr {
+        op: UnaryOp::TypeOf,
+        arg,
+        ..
+    }) = expr
+    else {
+        return false;
+    };
     matches!(arg.as_ref(), Expr::Ident(id) if id.sym == *sym && id.ctxt == ctxt)
 }
 
@@ -182,8 +218,12 @@ impl VisitMut for TypeofReplacer<'_> {
         expr.visit_mut_children_with(self);
 
         let Expr::Call(call) = expr else { return };
-        let Callee::Expr(callee) = &call.callee else { return };
-        let Expr::Ident(id) = callee.as_ref() else { return };
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        let Expr::Ident(id) = callee.as_ref() else {
+            return;
+        };
 
         let key = (id.sym.clone(), id.ctxt);
         if !self.helpers.contains(&key) {
@@ -249,15 +289,21 @@ fn find_remaining_refs(module: &Module, helpers: &HashSet<BindingKey>) -> HashSe
 
 fn remove_declarations(body: &mut Vec<ModuleItem>, helpers: &HashSet<BindingKey>) {
     for item in body.iter_mut() {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else { continue };
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
         var.decls.retain(|decl| {
-            let Pat::Ident(bi) = &decl.name else { return true };
+            let Pat::Ident(bi) = &decl.name else {
+                return true;
+            };
             let key = (bi.id.sym.clone(), bi.id.ctxt);
             !helpers.contains(&key)
         });
     }
     body.retain(|item| {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else { return true };
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            return true;
+        };
         !var.decls.is_empty()
     });
 }

@@ -92,8 +92,7 @@ impl VisitMut for UnObjectRest {
             if let Some((rest_binding, source, excluded_keys, before, after)) =
                 try_extract_owp_iife(stmt)
             {
-                let mut inline_accesses =
-                    declarators_to_accesses(&before, &source, &excluded_keys);
+                let mut inline_accesses = declarators_to_accesses(&before, &source, &excluded_keys);
                 let (absorbed, mut preceding_accesses) =
                     scan_preceding(&new_stmts, &source, &excluded_keys);
                 for _ in 0..absorbed {
@@ -134,7 +133,11 @@ enum PrecedingAccess {
     /// `const { a, b: c } = source` — destructuring with key→binding pairs
     Destructuring(Vec<(Atom, Atom, SyntaxContext)>), // (prop_key, local_binding, binding_ctxt)
     /// `const x = source.prop` — single property access
-    PropAccess { prop: Atom, binding: Atom, ctxt: SyntaxContext },
+    PropAccess {
+        prop: Atom,
+        binding: Atom,
+        ctxt: SyntaxContext,
+    },
     /// `source.prop;` — bare access (no binding)
     BareAccess { _prop: Atom },
 }
@@ -144,7 +147,13 @@ enum PrecedingAccess {
 /// The before/after declarators are from the same var decl if it had multiple declarators.
 fn try_extract_owp_iife(
     stmt: &Stmt,
-) -> Option<(BindingIdent, Box<Expr>, Vec<Atom>, Vec<VarDeclarator>, Vec<VarDeclarator>)> {
+) -> Option<(
+    BindingIdent,
+    Box<Expr>,
+    Vec<Atom>,
+    Vec<VarDeclarator>,
+    Vec<VarDeclarator>,
+)> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
@@ -411,9 +420,7 @@ fn try_match_preceding(
                 if obj_id.sym == *source_name {
                     if let Some(pname) = member_prop_atom(prop) {
                         if excluded_keys.contains(&pname) {
-                            return Some(PrecedingAccess::BareAccess {
-                                _prop: pname,
-                            });
+                            return Some(PrecedingAccess::BareAccess { _prop: pname });
                         }
                     }
                 }
@@ -443,7 +450,11 @@ fn build_rest_destructuring(
                     key_to_binding.insert(key.clone(), (binding.clone(), *ctxt));
                 }
             }
-            PrecedingAccess::PropAccess { prop, binding, ctxt } => {
+            PrecedingAccess::PropAccess {
+                prop,
+                binding,
+                ctxt,
+            } => {
                 key_to_binding.insert(prop.clone(), (binding.clone(), *ctxt));
             }
             PrecedingAccess::BareAccess { .. } => {

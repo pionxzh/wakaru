@@ -1,16 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
-use swc_core::common::DUMMY_SP;
 use swc_core::common::SyntaxContext;
+use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, CondExpr, Expr, Ident, Lit,
-    IfStmt, MemberExpr, Module, OptCall, OptChainBase, OptChainExpr, Pat, SimpleAssignTarget,
-    Stmt, UnaryExpr, UnaryOp, VarDeclarator,
+    AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, CondExpr, Expr, Ident, IfStmt,
+    Lit, MemberExpr, Module, OptCall, OptChainBase, OptChainExpr, Pat, SimpleAssignTarget, Stmt,
+    UnaryExpr, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::RewriteLevel;
 use super::un_nullish_coalescing::{exprs_structurally_equal, is_undefined};
+use super::RewriteLevel;
 
 pub struct UnOptionalChaining {
     level: RewriteLevel,
@@ -94,7 +94,10 @@ fn try_optional_call_cleanup(expr: &Expr) -> Option<Expr> {
 
 fn try_optional_call_if_stmt(stmt: &Stmt) -> Option<Stmt> {
     let Stmt::If(IfStmt {
-        test, cons, alt: None, ..
+        test,
+        cons,
+        alt: None,
+        ..
     }) = stmt
     else {
         return None;
@@ -367,7 +370,9 @@ fn make_optional_chain_replacing(tmp: &Expr, real_rhs: &Expr, access: &Expr) -> 
             if let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr {
                 if exprs_structurally_equal(obj, tmp) {
                     if prop.is_ident_with("call") {
-                        return make_optional_call_replacing(real_rhs, args, type_args, *span, *ctxt);
+                        return make_optional_call_replacing(
+                            real_rhs, args, type_args, *span, *ctxt,
+                        );
                     }
                     let opt_member = Expr::OptChain(OptChainExpr {
                         span: DUMMY_SP,
@@ -475,14 +480,13 @@ fn try_loose_chain_with_assign(
         let tmp_ident_expr = find_ident_by_sym(access, &tmp_sym)?;
         // Loose Babel lowering references the temp twice inside the chain:
         // once in the null check and once in the final access/call.
-        if is_standard_temp_expr(&tmp_ident_expr, uninitialized_bindings, binding_references, 2)
-            || is_generated_member_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
-            || is_nested_optional_chain_temp_expr(
-                &tmp_ident_expr,
-                real_rhs,
-                binding_references,
-                2,
-            )
+        if is_standard_temp_expr(
+            &tmp_ident_expr,
+            uninitialized_bindings,
+            binding_references,
+            2,
+        ) || is_generated_member_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
+            || is_nested_optional_chain_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
         {
             if let Some(chain) = make_optional_chain_replacing(&tmp_ident_expr, real_rhs, access) {
                 return Some(chain);
@@ -665,9 +669,7 @@ fn extract_optional_call_target(callee: &Expr, context: &Expr) -> Option<Expr> {
 fn optional_call_context_matches_base(base: &Expr, context: &Expr) -> bool {
     match strip_parens(base) {
         Expr::Member(MemberExpr { obj, .. }) => recover_babel_call_context(obj, context).is_some(),
-        Expr::OptChain(OptChainExpr {
-            base: opt_base, ..
-        }) => match opt_base.as_ref() {
+        Expr::OptChain(OptChainExpr { base: opt_base, .. }) => match opt_base.as_ref() {
             OptChainBase::Member(MemberExpr { obj, .. }) => {
                 recover_babel_call_context(obj, context).is_some()
             }
@@ -720,7 +722,9 @@ fn recover_lowered_optional_chain_expr(expr: &Expr) -> Option<RecoveredLoweredOp
     recover_loose_lowered_optional_chain_expr(expr)
 }
 
-fn recover_strict_lowered_optional_chain_expr(expr: &Expr) -> Option<RecoveredLoweredOptionalChain> {
+fn recover_strict_lowered_optional_chain_expr(
+    expr: &Expr,
+) -> Option<RecoveredLoweredOptionalChain> {
     let Expr::Cond(CondExpr {
         test, cons, alt, ..
     }) = strip_parens(expr)

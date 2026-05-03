@@ -95,5 +95,8 @@ export function Foo() {
 }
 "#;
     let output = render(input);
-    assert!(output.contains("console.log"), "should preserve non-classCallCheck IIFEs");
+    assert!(
+        output.contains("console.log"),
+        "should preserve non-classCallCheck IIFEs"
+    );
 }

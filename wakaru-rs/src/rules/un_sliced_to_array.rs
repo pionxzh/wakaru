@@ -59,9 +59,15 @@ fn try_unwrap_sliced_to_array(
     helpers: &HashMap<BindingKey, BabelHelperKind>,
 ) {
     let Some(init) = &decl.init else { return };
-    let Expr::Call(call) = init.as_ref() else { return };
-    let Callee::Expr(callee) = &call.callee else { return };
-    let Expr::Ident(id) = callee.as_ref() else { return };
+    let Expr::Call(call) = init.as_ref() else {
+        return;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return;
+    };
+    let Expr::Ident(id) = callee.as_ref() else {
+        return;
+    };
 
     if !helpers.contains_key(&(id.sym.clone(), id.ctxt)) {
         return;

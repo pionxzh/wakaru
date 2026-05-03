@@ -15,9 +15,18 @@ p.propTypes = {};
 export const BrowserRouter = p;
 "#;
     let output = render(input);
-    assert!(output.contains("class BrowserRouter"), "class should be renamed: {output}");
-    assert!(!output.contains("class p "), "old name should be gone: {output}");
-    assert!(!output.contains("export const BrowserRouter = "), "export const alias should be removed: {output}");
+    assert!(
+        output.contains("class BrowserRouter"),
+        "class should be renamed: {output}"
+    );
+    assert!(
+        !output.contains("class p "),
+        "old name should be gone: {output}"
+    );
+    assert!(
+        !output.contains("export const BrowserRouter = "),
+        "export const alias should be removed: {output}"
+    );
 }
 
 #[test]
@@ -31,9 +40,15 @@ var h = p;
 export const BrowserRouter = h;
 "#;
     let output = render(input);
-    assert!(output.contains("BrowserRouter"), "should contain BrowserRouter: {output}");
+    assert!(
+        output.contains("BrowserRouter"),
+        "should contain BrowserRouter: {output}"
+    );
     // h should be inlined away, class should be renamed
-    assert!(!output.contains("var h"), "alias should be removed: {output}");
+    assert!(
+        !output.contains("var h"),
+        "alias should be removed: {output}"
+    );
 }
 
 #[test]
@@ -51,8 +66,14 @@ export const Foo = p;
 export const Bar = y;
 "#;
     let output = render(input);
-    assert!(output.contains("class Foo"), "p should become Foo: {output}");
-    assert!(output.contains("class Bar"), "y should become Bar: {output}");
+    assert!(
+        output.contains("class Foo"),
+        "p should become Foo: {output}"
+    );
+    assert!(
+        output.contains("class Bar"),
+        "y should become Bar: {output}"
+    );
 }
 
 #[test]
@@ -100,7 +121,16 @@ console.log(h);
 export { h as BrowserRouter };
 "#;
     let output = render(input);
-    assert!(output.contains("BrowserRouter"), "should contain BrowserRouter: {output}");
-    assert!(!output.contains("console.log(h)"), "h should be renamed, not left dangling: {output}");
-    assert!(output.contains("console.log(BrowserRouter)"), "h should become BrowserRouter: {output}");
+    assert!(
+        output.contains("BrowserRouter"),
+        "should contain BrowserRouter: {output}"
+    );
+    assert!(
+        !output.contains("console.log(h)"),
+        "h should be renamed, not left dangling: {output}"
+    );
+    assert!(
+        output.contains("console.log(BrowserRouter)"),
+        "h should become BrowserRouter: {output}"
+    );
 }

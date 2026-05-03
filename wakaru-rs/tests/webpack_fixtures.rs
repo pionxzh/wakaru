@@ -27,7 +27,9 @@ fn assert_has_entry(pairs: &[(String, String)], path: &str) {
     let names = filenames(pairs);
     // Entry is "entry.js" for array-form (numeric IDs), or named from key for object-form
     assert!(
-        names.iter().any(|n| n.contains("entry") || n.contains("index")),
+        names
+            .iter()
+            .any(|n| n.contains("entry") || n.contains("index")),
         "{path}: expected an entry module, got {names:?}"
     );
 }
@@ -284,9 +286,9 @@ fn wp5_require_s_entry() {
         filenames(&pairs).join(", ")
     );
     let names = filenames(&pairs);
-    let has_entry = pairs.iter().any(|(name, _)| {
-        name == "entry.js" || name.contains("entry") || name == "module-2.js"
-    });
+    let has_entry = pairs
+        .iter()
+        .any(|(name, _)| name == "entry.js" || name.contains("entry") || name == "module-2.js");
     assert!(
         has_entry,
         "wp5-require-s: expected entry module, got {names:?}"
@@ -300,10 +302,7 @@ fn wp5_require_s_entry() {
 #[test]
 fn wp_path_traversal_sanitized() {
     let pairs = unpack_fixture("wp-path-traversal/bundle.js");
-    assert!(
-        !pairs.is_empty(),
-        "wp-path-traversal should unpack"
-    );
+    assert!(!pairs.is_empty(), "wp-path-traversal should unpack");
     assert_no_traversal(&pairs, "wp-path-traversal");
 }
 
@@ -316,7 +315,10 @@ fn wp4_cjs_dev_snapshots() {
     let mut pairs = unpack_fixture("wp4-cjs/bundle.js");
     pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
     for (filename, code) in &pairs {
-        let snap_name = format!("wp4_cjs_dev__{}", filename.replace('/', "_").trim_end_matches(".js"));
+        let snap_name = format!(
+            "wp4_cjs_dev__{}",
+            filename.replace('/', "_").trim_end_matches(".js")
+        );
         insta::assert_snapshot!(snap_name, code);
     }
 }
@@ -326,7 +328,10 @@ fn wp5_cjs_dev_snapshots() {
     let mut pairs = unpack_fixture("wp5-cjs/bundle.js");
     pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
     for (filename, code) in &pairs {
-        let snap_name = format!("wp5_cjs_dev__{}", filename.replace('/', "_").trim_end_matches(".js"));
+        let snap_name = format!(
+            "wp5_cjs_dev__{}",
+            filename.replace('/', "_").trim_end_matches(".js")
+        );
         insta::assert_snapshot!(snap_name, code);
     }
 }

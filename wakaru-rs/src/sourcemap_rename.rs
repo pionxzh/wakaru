@@ -22,7 +22,7 @@ fn compute_line_starts(src: &str) -> Vec<u32> {
     starts
 }
 
-use crate::rules::rename_utils::{BindingId, BindingRename, rename_bindings_in_module};
+use crate::rules::rename_utils::{rename_bindings_in_module, BindingId, BindingRename};
 
 /// Parse a source map from raw bytes.
 pub fn parse_sourcemap(data: &[u8]) -> Result<SourceMap> {
@@ -230,9 +230,10 @@ fn collect_module_level_bindings(module: &Module) -> HashSet<BindingId> {
                 }
             }
             ModuleItem::Stmt(Stmt::Decl(decl))
-            | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(
-                swc_core::ecma::ast::ExportDecl { decl, .. },
-            )) => {
+            | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(swc_core::ecma::ast::ExportDecl {
+                decl,
+                ..
+            })) => {
                 collect_decl_binding_ids(decl, &mut ids);
             }
             _ => {}

@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BlockStmt, CallExpr, Callee, Class, ClassDecl,
-    ClassMember, ClassMethod, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function,
-    IdentName, MemberProp, MethodKind, ModuleItem, Param, ParamOrTsParamProp, PropName,
-    SimpleAssignTarget, Stmt,
+    AssignOp, AssignTarget, BlockStmt, CallExpr, Callee, Class, ClassDecl, ClassMember,
+    ClassMethod, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, IdentName,
+    MemberProp, MethodKind, ModuleItem, Param, ParamOrTsParamProp, PropName, SimpleAssignTarget,
+    Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -59,8 +59,12 @@ fn transform_module_items(items: &mut Vec<ModuleItem>) {
         return;
     }
 
-    let all_consumed: HashSet<usize> = candidates.iter().flat_map(|c| c.consumed_indices.iter().copied()).collect();
-    let fn_decl_map: HashMap<usize, &ClassCandidate> = candidates.iter().map(|c| (c.fn_decl_idx, c)).collect();
+    let all_consumed: HashSet<usize> = candidates
+        .iter()
+        .flat_map(|c| c.consumed_indices.iter().copied())
+        .collect();
+    let fn_decl_map: HashMap<usize, &ClassCandidate> =
+        candidates.iter().map(|c| (c.fn_decl_idx, c)).collect();
 
     let old = std::mem::take(items);
     for (i, item) in old.into_iter().enumerate() {
@@ -83,8 +87,12 @@ fn transform_stmts(stmts: &mut Vec<Stmt>) {
         return;
     }
 
-    let all_consumed: HashSet<usize> = candidates.iter().flat_map(|c| c.consumed_indices.iter().copied()).collect();
-    let fn_decl_map: HashMap<usize, &ClassCandidate> = candidates.iter().map(|c| (c.fn_decl_idx, c)).collect();
+    let all_consumed: HashSet<usize> = candidates
+        .iter()
+        .flat_map(|c| c.consumed_indices.iter().copied())
+        .collect();
+    let fn_decl_map: HashMap<usize, &ClassCandidate> =
+        candidates.iter().map(|c| (c.fn_decl_idx, c)).collect();
 
     let old = std::mem::take(stmts);
     for (i, stmt) in old.into_iter().enumerate() {
@@ -126,13 +134,11 @@ fn find_candidates(stmts: &[Option<&Stmt>]) -> Vec<ClassCandidate> {
     let mut names_with_proto_methods: HashSet<&Atom> = HashSet::new();
     for i in 0..len {
         let Some(stmt) = get_stmt(i) else { continue };
-        let target = get_prototype_method_target(stmt)
-            .or_else(|| get_define_property_target(stmt));
+        let target = get_prototype_method_target(stmt).or_else(|| get_define_property_target(stmt));
         if let Some(name) = target {
             if fn_decls.iter().any(|(_, n)| n.as_ref() == name) {
-                names_with_proto_methods.insert(
-                    fn_decls.iter().find(|(_, n)| n.as_ref() == name).unwrap().1,
-                );
+                names_with_proto_methods
+                    .insert(fn_decls.iter().find(|(_, n)| n.as_ref() == name).unwrap().1);
             }
         }
     }
@@ -262,19 +268,37 @@ fn build_class_decl(candidate: &ClassCandidate, original_item: &ModuleItem) -> C
 
 /// Get the constructor name from `Object.defineProperty(Foo.prototype, ...)`.
 fn get_define_property_target(stmt: &Stmt) -> Option<&str> {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return None };
-    let Expr::Call(call) = expr.as_ref() else { return None };
-    let Callee::Expr(callee) = &call.callee else { return None };
-    let Expr::Member(m) = callee.as_ref() else { return None };
-    let Expr::Ident(obj_id) = m.obj.as_ref() else { return None };
-    if obj_id.sym.as_ref() != "Object" { return None }
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(m) = callee.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(obj_id) = m.obj.as_ref() else {
+        return None;
+    };
+    if obj_id.sym.as_ref() != "Object" {
+        return None;
+    }
     if !matches!(&m.prop, MemberProp::Ident(n) if n.sym.as_ref() == "defineProperty") {
         return None;
     }
-    if call.args.is_empty() { return None }
+    if call.args.is_empty() {
+        return None;
+    }
     // First arg: Foo.prototype
-    let Expr::Member(target) = call.args[0].expr.as_ref() else { return None };
-    let Expr::Ident(target_obj) = target.obj.as_ref() else { return None };
+    let Expr::Member(target) = call.args[0].expr.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(target_obj) = target.obj.as_ref() else {
+        return None;
+    };
     if !matches!(&target.prop, MemberProp::Ident(n) if n.sym.as_ref() == "prototype") {
         return None;
     }
@@ -283,16 +307,26 @@ fn get_define_property_target(stmt: &Stmt) -> Option<&str> {
 
 /// Get the constructor name from a `Foo.prototype.method = function` statement.
 fn get_prototype_method_target(stmt: &Stmt) -> Option<&str> {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return None };
-    let Expr::Assign(assign) = expr.as_ref() else { return None };
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
     if assign.op != AssignOp::Assign {
         return None;
     }
-    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else { return None };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else {
+        return None;
+    };
 
     // Must be Foo.prototype.something
-    let Expr::Member(obj_member) = lhs.obj.as_ref() else { return None };
-    let Expr::Ident(obj_id) = obj_member.obj.as_ref() else { return None };
+    let Expr::Member(obj_member) = lhs.obj.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(obj_id) = obj_member.obj.as_ref() else {
+        return None;
+    };
     if !matches!(&obj_member.prop, MemberProp::Ident(n) if n.sym.as_ref() == "prototype") {
         return None;
     }
@@ -307,19 +341,32 @@ fn get_prototype_method_target(stmt: &Stmt) -> Option<&str> {
 
 /// Extract a method assignment: `Foo.prototype.method = function() {}` or `Foo.staticMethod = function() {}`.
 /// Returns (PropName, &FnExpr, is_static).
-fn extract_method_assignment<'a>(stmt: &'a Stmt, ctor_name: &Atom) -> Option<(PropName, &'a FnExpr, bool)> {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return None };
-    let Expr::Assign(assign) = expr.as_ref() else { return None };
+fn extract_method_assignment<'a>(
+    stmt: &'a Stmt,
+    ctor_name: &Atom,
+) -> Option<(PropName, &'a FnExpr, bool)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
     if assign.op != AssignOp::Assign {
         return None;
     }
-    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else { return None };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else {
+        return None;
+    };
 
-    let Expr::Fn(fn_expr) = assign.right.as_ref() else { return None };
+    let Expr::Fn(fn_expr) = assign.right.as_ref() else {
+        return None;
+    };
 
     // Case 1: Foo.prototype.method = function() {}
     if let Expr::Member(obj_member) = lhs.obj.as_ref() {
-        let Expr::Ident(obj_id) = obj_member.obj.as_ref() else { return None };
+        let Expr::Ident(obj_id) = obj_member.obj.as_ref() else {
+            return None;
+        };
         if &obj_id.sym != ctor_name {
             return None;
         }
@@ -348,16 +395,26 @@ fn extract_method_assignment<'a>(stmt: &'a Stmt, ctor_name: &Atom) -> Option<(Pr
 
 /// Check if stmt is `Foo.prototype.constructor = Foo`.
 fn is_prototype_constructor_assign(stmt: &Stmt, ctor_name: &Atom) -> bool {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return false };
-    let Expr::Assign(assign) = expr.as_ref() else { return false };
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return false;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return false;
+    };
     if assign.op != AssignOp::Assign {
         return false;
     }
-    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else { return false };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else {
+        return false;
+    };
 
     // LHS: Foo.prototype.constructor
-    let Expr::Member(obj_member) = lhs.obj.as_ref() else { return false };
-    let Expr::Ident(obj_id) = obj_member.obj.as_ref() else { return false };
+    let Expr::Member(obj_member) = lhs.obj.as_ref() else {
+        return false;
+    };
+    let Expr::Ident(obj_id) = obj_member.obj.as_ref() else {
+        return false;
+    };
     if &obj_id.sym != ctor_name {
         return false;
     }
@@ -374,15 +431,23 @@ fn is_prototype_constructor_assign(stmt: &Stmt, ctor_name: &Atom) -> bool {
 
 /// Extract inheritance from `Foo.prototype = Object.create(Bar.prototype)`.
 fn extract_object_create_inheritance(stmt: &Stmt, ctor_name: &Atom) -> Option<Box<Expr>> {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return None };
-    let Expr::Assign(assign) = expr.as_ref() else { return None };
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
     if assign.op != AssignOp::Assign {
         return None;
     }
-    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else { return None };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else {
+        return None;
+    };
 
     // LHS: Foo.prototype
-    let Expr::Ident(obj_id) = lhs.obj.as_ref() else { return None };
+    let Expr::Ident(obj_id) = lhs.obj.as_ref() else {
+        return None;
+    };
     if &obj_id.sym != ctor_name {
         return None;
     }
@@ -391,8 +456,12 @@ fn extract_object_create_inheritance(stmt: &Stmt, ctor_name: &Atom) -> Option<Bo
     }
 
     // RHS: Object.create(Bar.prototype) or Object.create(Bar.prototype, { ... })
-    let Expr::Call(call) = assign.right.as_ref() else { return None };
-    let Callee::Expr(callee) = &call.callee else { return None };
+    let Expr::Call(call) = assign.right.as_ref() else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
     if !is_object_create(callee) {
         return None;
     }
@@ -423,9 +492,15 @@ fn extract_super_from_create_arg(expr: &Expr) -> Option<Box<Expr>> {
 
 /// Extract inheritance from `util.inherits(Child, Parent)` or `inherits(Child, Parent)`.
 fn extract_util_inherits(stmt: &Stmt, ctor_name: &Atom) -> Option<Box<Expr>> {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return None };
-    let Expr::Call(call) = expr.as_ref() else { return None };
-    let Callee::Expr(callee) = &call.callee else { return None };
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
 
     // Match `X.inherits(...)` or `inherits(...)`
     let is_inherits = match callee.as_ref() {
@@ -444,7 +519,9 @@ fn extract_util_inherits(stmt: &Stmt, ctor_name: &Atom) -> Option<Box<Expr>> {
     }
 
     // First arg must be the constructor name
-    let Expr::Ident(first) = call.args[0].expr.as_ref() else { return None };
+    let Expr::Ident(first) = call.args[0].expr.as_ref() else {
+        return None;
+    };
     if &first.sym != ctor_name {
         return None;
     }
@@ -455,13 +532,23 @@ fn extract_util_inherits(stmt: &Stmt, ctor_name: &Atom) -> Option<Box<Expr>> {
 
 /// Extract getters/setters from `Object.defineProperty(Foo.prototype, "name", { get/set })`.
 fn extract_define_property(stmt: &Stmt, ctor_name: &Atom) -> Option<Vec<ClassMethod>> {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else { return None };
-    let Expr::Call(call) = expr.as_ref() else { return None };
-    let Callee::Expr(callee) = &call.callee else { return None };
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
 
     // Must be Object.defineProperty
-    let Expr::Member(m) = callee.as_ref() else { return None };
-    let Expr::Ident(obj_id) = m.obj.as_ref() else { return None };
+    let Expr::Member(m) = callee.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(obj_id) = m.obj.as_ref() else {
+        return None;
+    };
     if obj_id.sym.as_ref() != "Object" {
         return None;
     }
@@ -474,8 +561,12 @@ fn extract_define_property(stmt: &Stmt, ctor_name: &Atom) -> Option<Vec<ClassMet
     }
 
     // First arg: Foo.prototype
-    let Expr::Member(target) = call.args[0].expr.as_ref() else { return None };
-    let Expr::Ident(target_obj) = target.obj.as_ref() else { return None };
+    let Expr::Member(target) = call.args[0].expr.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(target_obj) = target.obj.as_ref() else {
+        return None;
+    };
     if &target_obj.sym != ctor_name {
         return None;
     }
@@ -490,12 +581,18 @@ fn extract_define_property(stmt: &Stmt, ctor_name: &Atom) -> Option<Vec<ClassMet
     let sym: Atom = s.value.as_str().unwrap_or("").into();
 
     // Third arg: descriptor object
-    let Expr::Object(obj) = call.args[2].expr.as_ref() else { return None };
+    let Expr::Object(obj) = call.args[2].expr.as_ref() else {
+        return None;
+    };
 
     let mut methods = Vec::new();
     for prop in &obj.props {
-        let swc_core::ecma::ast::PropOrSpread::Prop(p) = prop else { continue };
-        let swc_core::ecma::ast::Prop::KeyValue(kv) = p.as_ref() else { continue };
+        let swc_core::ecma::ast::PropOrSpread::Prop(p) = prop else {
+            continue;
+        };
+        let swc_core::ecma::ast::Prop::KeyValue(kv) = p.as_ref() else {
+            continue;
+        };
         let key_name = match &kv.key {
             PropName::Ident(i) => i.sym.clone(),
             PropName::Str(s) => s.value.as_str().unwrap_or("").into(),
@@ -506,7 +603,9 @@ fn extract_define_property(stmt: &Stmt, ctor_name: &Atom) -> Option<Vec<ClassMet
             "set" => MethodKind::Setter,
             _ => continue,
         };
-        let Expr::Fn(fn_expr) = kv.value.as_ref() else { continue };
+        let Expr::Fn(fn_expr) = kv.value.as_ref() else {
+            continue;
+        };
         let method_key = PropName::Ident(IdentName::new(sym.clone(), DUMMY_SP));
         methods.push(build_class_method_from_fn(method_key, fn_expr, false));
         // Update kind
@@ -528,7 +627,9 @@ fn extract_define_property(stmt: &Stmt, ctor_name: &Atom) -> Option<Vec<ClassMet
 
 fn is_object_create(expr: &Expr) -> bool {
     let Expr::Member(m) = expr else { return false };
-    let Expr::Ident(obj_id) = m.obj.as_ref() else { return false };
+    let Expr::Ident(obj_id) = m.obj.as_ref() else {
+        return false;
+    };
     if obj_id.sym.as_ref() != "Object" {
         return false;
     }
@@ -597,9 +698,7 @@ fn build_constructor_from_fn(func: &Function, super_class_name: Option<&str>) ->
 
     // Rewrite `Parent.call(this, ...)` → `super(...)` if inherited
     if let Some(parent_name) = super_class_name {
-        body.visit_mut_with(&mut ParentCallRewriter {
-            parent_name,
-        });
+        body.visit_mut_with(&mut ParentCallRewriter { parent_name });
     }
 
     let params: Vec<ParamOrTsParamProp> = func
@@ -649,15 +748,23 @@ impl VisitMut for ParentCallRewriter<'_> {
         expr.visit_mut_children_with(self);
 
         let Expr::Call(call) = expr else { return };
-        let Callee::Expr(callee) = &call.callee else { return };
-        let Expr::Member(member) = callee.as_ref() else { return };
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        let Expr::Member(member) = callee.as_ref() else {
+            return;
+        };
 
         // Check: Parent.call
-        let Expr::Ident(obj_id) = member.obj.as_ref() else { return };
+        let Expr::Ident(obj_id) = member.obj.as_ref() else {
+            return;
+        };
         if obj_id.sym.as_ref() != self.parent_name {
             return;
         }
-        let MemberProp::Ident(prop) = &member.prop else { return };
+        let MemberProp::Ident(prop) = &member.prop else {
+            return;
+        };
 
         match prop.sym.as_ref() {
             "call" => {
@@ -683,7 +790,8 @@ impl VisitMut for ParentCallRewriter<'_> {
                 if !matches!(call.args[0].expr.as_ref(), Expr::This(..)) {
                     return;
                 }
-                if !matches!(call.args[1].expr.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "arguments") {
+                if !matches!(call.args[1].expr.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "arguments")
+                {
                     return;
                 }
                 let spread_arg = ExprOrSpread {

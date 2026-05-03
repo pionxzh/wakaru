@@ -128,13 +128,9 @@ impl Webpack5RuntimeNormalizer {
             let Expr::Lit(Lit::Str(name_str)) = &*call.args[1].expr else {
                 return None;
             };
-            let export_name: Atom = name_str
-                .value
-                .as_str()
-                .map(Atom::from)
-                .unwrap_or_else(|| {
-                    Atom::from(name_str.value.to_string_lossy().into_owned().as_str())
-                });
+            let export_name: Atom = name_str.value.as_str().map(Atom::from).unwrap_or_else(|| {
+                Atom::from(name_str.value.to_string_lossy().into_owned().as_str())
+            });
             let value = extract_getter_value(&call.args[2].expr)?;
             return Some(vec![build_member_assign(
                 exports_ident,
@@ -250,7 +246,10 @@ fn extract_chunk_push_modules(expr: &Expr) -> Option<&ObjectLit> {
         return None;
     }
     let push_arg = &call.args[0].expr;
-    let Expr::Array(ArrayLit { elems: push_elems, .. }) = &**push_arg else {
+    let Expr::Array(ArrayLit {
+        elems: push_elems, ..
+    }) = &**push_arg
+    else {
         return None;
     };
     // Must have at least 2 elements: [chunkIds, modulesObject]
@@ -780,12 +779,10 @@ mod tests {
     #[test]
     fn detects_wp5_cjs_min_numeric_keys_and_method_shorthand() {
         // Minified webpack 5 CJS bundle with numeric keys and method shorthand syntax
-        let source = std::fs::read_to_string(
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/webpack-gen/dist/wp5-cjs-min/bundle.js"
-            ),
-        )
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/webpack-gen/dist/wp5-cjs-min/bundle.js"
+        ))
         .expect("failed to read wp5-cjs-min fixture");
 
         let result = detect_and_extract(&source).expect("wp5-cjs-min should be detected");
@@ -809,12 +806,10 @@ mod tests {
     #[test]
     fn detects_wp5_require_s_entry() {
         // Webpack 5 bundle using __webpack_require__(__webpack_require__.s = 2) for entry
-        let source = std::fs::read_to_string(
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/webpack-gen/dist/wp5-require-s/bundle.js"
-            ),
-        )
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/webpack-gen/dist/wp5-require-s/bundle.js"
+        ))
         .expect("failed to read wp5-require-s fixture");
 
         let result = detect_and_extract(&source).expect("wp5-require-s should be detected");
@@ -874,12 +869,10 @@ mod tests {
     #[test]
     fn detects_wp5_cjs_string_keys() {
         // Non-minified webpack 5 CJS bundle with string keys (and method shorthand)
-        let source = std::fs::read_to_string(
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/webpack-gen/dist/wp5-cjs/bundle.js"
-            ),
-        )
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/webpack-gen/dist/wp5-cjs/bundle.js"
+        ))
         .expect("failed to read wp5-cjs fixture");
 
         let result = detect_and_extract(&source).expect("wp5-cjs should be detected");

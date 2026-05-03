@@ -247,7 +247,10 @@ fn member_init_rename_skips_both_short() {
 const x = q.y;
 "#;
     let output = apply(input);
-    assert!(output.contains("const x"), "should not rename when both obj and prop are short");
+    assert!(
+        output.contains("const x"),
+        "should not rename when both obj and prop are short"
+    );
 }
 
 #[test]
@@ -347,9 +350,21 @@ const At = Symbol.for("react.portal");
 console.log(ul, At);
 "#;
     let result = apply(input);
-    assert!(result.contains("SYMBOL_REACT_ELEMENT"), "should rename to SYMBOL_REACT_ELEMENT, got:\n{}", result);
-    assert!(result.contains("SYMBOL_REACT_PORTAL"), "should rename to SYMBOL_REACT_PORTAL, got:\n{}", result);
-    assert!(!result.contains("const ul "), "old name should be gone, got:\n{}", result);
+    assert!(
+        result.contains("SYMBOL_REACT_ELEMENT"),
+        "should rename to SYMBOL_REACT_ELEMENT, got:\n{}",
+        result
+    );
+    assert!(
+        result.contains("SYMBOL_REACT_PORTAL"),
+        "should rename to SYMBOL_REACT_PORTAL, got:\n{}",
+        result
+    );
+    assert!(
+        !result.contains("const ul "),
+        "old name should be gone, got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -359,7 +374,11 @@ const Ac = Symbol.for("react.forward_ref");
 console.log(Ac);
 "#;
     let result = apply(input);
-    assert!(result.contains("SYMBOL_REACT_FORWARD_REF"), "should rename, got:\n{}", result);
+    assert!(
+        result.contains("SYMBOL_REACT_FORWARD_REF"),
+        "should rename, got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -369,7 +388,11 @@ const reactElement = Symbol.for("react.element");
 console.log(reactElement);
 "#;
     let result = apply(input);
-    assert!(result.contains("reactElement"), "should keep long name as-is, got:\n{}", result);
+    assert!(
+        result.contains("reactElement"),
+        "should keep long name as-is, got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -381,7 +404,11 @@ function init() {
 }
 "#;
     let result = apply(input);
-    assert!(result.contains("SYMBOL_REACT_ELEMENT"), "should rename inside function scope, got:\n{}", result);
+    assert!(
+        result.contains("SYMBOL_REACT_ELEMENT"),
+        "should rename inside function scope, got:\n{}",
+        result
+    );
 }
 
 // ============================================================
@@ -395,8 +422,16 @@ const { foo, bar, ...d } = obj;
 console.log(d);
 "#;
     let result = apply(input);
-    assert!(result.contains("...rest"), "should rename ...d to ...rest, got:\n{}", result);
-    assert!(result.contains("console.log(rest)"), "should rename reference, got:\n{}", result);
+    assert!(
+        result.contains("...rest"),
+        "should rename ...d to ...rest, got:\n{}",
+        result
+    );
+    assert!(
+        result.contains("console.log(rest)"),
+        "should rename reference, got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -406,7 +441,11 @@ const { foo, ...remaining } = obj;
 console.log(remaining);
 "#;
     let result = apply(input);
-    assert!(result.contains("...remaining"), "should keep long name, got:\n{}", result);
+    assert!(
+        result.contains("...remaining"),
+        "should keep long name, got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -418,7 +457,11 @@ console.log(rest, d);
 "#;
     let result = apply(input);
     // `rest` is taken, so it should use `rest_1` or similar
-    assert!(!result.contains("...d "), "should rename ...d, got:\n{}", result);
+    assert!(
+        !result.contains("...d "),
+        "should rename ...d, got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -429,7 +472,11 @@ function foo({ name, ...r }) {
 }
 "#;
     let result = apply(input);
-    assert!(result.contains("...rest"), "should rename ...r to ...rest in params, got:\n{}", result);
+    assert!(
+        result.contains("...rest"),
+        "should rename ...r to ...rest in params, got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -440,8 +487,11 @@ const fn2 = ({ name, ...r }, rest) => r;
 "#;
     let result = apply(input);
     // Should not produce duplicate `rest` params
-    assert!(!result.contains("...rest }, rest"),
-        "must not create duplicate rest param:\n{}", result);
+    assert!(
+        !result.contains("...rest }, rest"),
+        "must not create duplicate rest param:\n{}",
+        result
+    );
 }
 
 // ============================================================
@@ -523,10 +573,26 @@ function outer() {
 }
 "#;
     let output = apply(input);
-    assert!(output.contains("function e()"), "outer e must not be renamed:\n{}", output);
-    assert!(output.contains("function t()"), "outer t must not be renamed:\n{}", output);
-    assert!(output.contains("array: e"), "value e should stay:\n{}", output);
-    assert!(output.contains("shape: t"), "value t should stay:\n{}", output);
+    assert!(
+        output.contains("function e()"),
+        "outer e must not be renamed:\n{}",
+        output
+    );
+    assert!(
+        output.contains("function t()"),
+        "outer t must not be renamed:\n{}",
+        output
+    );
+    assert!(
+        output.contains("array: e"),
+        "value e should stay:\n{}",
+        output
+    );
+    assert!(
+        output.contains("shape: t"),
+        "value t should stay:\n{}",
+        output
+    );
 }
 
 #[test]
@@ -538,7 +604,11 @@ r();
 const obj = { Foo: r };
 "#;
     let output = apply(input);
-    assert!(output.contains("import r from"), "should not rename when non-value use exists:\n{}", output);
+    assert!(
+        output.contains("import r from"),
+        "should not rename when non-value use exists:\n{}",
+        output
+    );
 }
 
 #[test]
@@ -548,7 +618,11 @@ import longName from "./m.js";
 export default { Foo: longName };
 "#;
     let output = apply(input);
-    assert!(output.contains("import longName from"), "long names must not be renamed:\n{}", output);
+    assert!(
+        output.contains("import longName from"),
+        "long names must not be renamed:\n{}",
+        output
+    );
 }
 
 #[test]
@@ -561,7 +635,11 @@ const f = (t) => ({ error: t });
 use(error);
 "#;
     let output = apply(input);
-    assert!(output.contains("(t)"), "t should not be renamed when target binding exists:\n{}", output);
+    assert!(
+        output.contains("(t)"),
+        "t should not be renamed when target binding exists:\n{}",
+        output
+    );
 }
 
 #[test]
@@ -575,8 +653,16 @@ use({ $$typeof: s });
 use({ $$typeof: f });
 "#;
     let output = apply(input);
-    assert!(output.contains("const s = 1"), "shared target must not be applied:\n{}", output);
-    assert!(output.contains("const f = 2"), "shared target must not be applied:\n{}", output);
+    assert!(
+        output.contains("const s = 1"),
+        "shared target must not be applied:\n{}",
+        output
+    );
+    assert!(
+        output.contains("const f = 2"),
+        "shared target must not be applied:\n{}",
+        output
+    );
 }
 
 #[test]
@@ -592,7 +678,8 @@ use(handler);
     let output = apply(input);
     assert!(
         output.contains("(payload)"),
-        "should rename even when target is a property key elsewhere:\n{}", output
+        "should rename even when target is a property key elsewhere:\n{}",
+        output
     );
 }
 
@@ -605,7 +692,11 @@ export { r };
 const obj = { Foo: r };
 "#;
     let output = apply(input);
-    assert!(output.contains("const r = "), "should not rename when referenced by export:\n{}", output);
+    assert!(
+        output.contains("const r = "),
+        "should not rename when referenced by export:\n{}",
+        output
+    );
 }
 
 #[test]
@@ -619,7 +710,8 @@ export default { default: r };
     // Must not produce `import default from ...` (invalid).
     assert!(
         !output.contains("import default from"),
-        "must not emit reserved keyword as binding name:\n{}", output
+        "must not emit reserved keyword as binding name:\n{}",
+        output
     );
 }
 
@@ -631,7 +723,11 @@ const k = "Foo";
 export default { [k]: r };
 "#;
     let output = apply(input);
-    assert!(output.contains("import r from"), "must not rename via computed key:\n{}", output);
+    assert!(
+        output.contains("import r from"),
+        "must not rename via computed key:\n{}",
+        output
+    );
 }
 
 #[test]
@@ -647,10 +743,12 @@ use(obj, inner(2));
     let output = apply(input);
     assert!(
         output.contains("function inner(t)"),
-        "inner parameter must not be renamed:\n{}", output
+        "inner parameter must not be renamed:\n{}",
+        output
     );
     assert!(
         output.contains("const count = 1"),
-        "outer binding must be renamed to `count`:\n{}", output
+        "outer binding must be renamed to `count`:\n{}",
+        output
     );
 }

@@ -14,7 +14,7 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, Expr, Ident, ImportDecl, ImportSpecifier, ImportStarAsSpecifier,
-    MemberExpr, MemberProp, ModuleDecl, ModuleItem, Module, SimpleAssignTarget, Str, UnaryExpr,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, SimpleAssignTarget, Str, UnaryExpr,
     UnaryOp, UpdateExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};

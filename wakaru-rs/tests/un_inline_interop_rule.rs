@@ -63,5 +63,8 @@ const x = ((e) => {
 console.log(x);
 "#;
     let output = render(input);
-    assert!(!output.contains("__esModule"), "should not introduce __esModule");
+    assert!(
+        !output.contains("__esModule"),
+        "should not introduce __esModule"
+    );
 }

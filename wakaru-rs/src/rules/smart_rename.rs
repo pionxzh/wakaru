@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, ClassExpr,
-    Decl, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier, KeyValuePatProp,
-    Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat, ObjectPatProp, Param,
-    Pat, Prop, PropName, Stmt, VarDecl,
+    Decl, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier, KeyValuePatProp, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat, ObjectPatProp, Param, Pat,
+    Prop, PropName, Stmt, VarDecl,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -377,7 +377,9 @@ fn collect_obj_pat_renames_from_stmts(
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
     for stmt in stmts {
-        let Stmt::Decl(Decl::Var(var)) = stmt else { continue };
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
         for decl in &var.decls {
             collect_obj_pat_renames_from_pat(&decl.name, &mut renames, &mut used_names);
         }
@@ -676,7 +678,9 @@ fn collect_member_init_renames_from_stmts(
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
     for stmt in stmts {
-        let Stmt::Decl(Decl::Var(var)) = stmt else { continue };
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
         collect_member_init_var_renames(var, &mut renames, &mut used_names);
     }
     renames
@@ -698,8 +702,12 @@ fn collect_member_init_var_renames(
         }
 
         // Match: var x = obj.prop
-        let Expr::Member(member) = init.as_ref() else { continue };
-        let MemberProp::Ident(prop) = &member.prop else { continue };
+        let Expr::Member(member) = init.as_ref() else {
+            continue;
+        };
+        let MemberProp::Ident(prop) = &member.prop else {
+            continue;
+        };
         let prop_name = prop.sym.to_string();
 
         // Build new name: obj_prop
@@ -803,7 +811,9 @@ fn collect_symbol_for_renames_from_stmts(
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
     for stmt in stmts {
-        let Stmt::Decl(Decl::Var(var)) = stmt else { continue };
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
         collect_symbol_for_var_renames(var, &mut renames, &mut used_names);
     }
     renames
@@ -825,7 +835,9 @@ fn collect_symbol_for_var_renames(
         }
 
         // Match: Symbol.for("string")
-        let Some(key) = extract_symbol_for_key(init) else { continue };
+        let Some(key) = extract_symbol_for_key(init) else {
+            continue;
+        };
 
         // Build new name: SYMBOL_REACT_ELEMENT from "react.element"
         // SYMBOL_ prefix hints this is a Symbol.for value, not a string constant
@@ -937,7 +949,13 @@ fn pascal_case_first(s: &str) -> String {
 fn sanitize_to_ident(name: &str) -> String {
     let sanitized: String = name
         .chars()
-        .map(|c| if c == '-' || c == '.' || c == ' ' { '_' } else { c })
+        .map(|c| {
+            if c == '-' || c == '.' || c == ' ' {
+                '_'
+            } else {
+                c
+            }
+        })
         .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
         .collect();
     // Ensure it starts with a valid identifier character

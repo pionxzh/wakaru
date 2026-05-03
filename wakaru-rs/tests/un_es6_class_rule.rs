@@ -864,9 +864,21 @@ var Foo = function(e) {
 }();
 "#;
     let result = render(input);
-    assert!(result.contains("class Foo extends Bar"), "should produce class Foo extends Bar, got:\n{}", result);
-    assert!(result.contains("render()"), "should have render method, got:\n{}", result);
-    assert!(!result.contains("Object.defineProperty(e, r.key"), "createClass helper should be removed, got:\n{}", result);
+    assert!(
+        result.contains("class Foo extends Bar"),
+        "should produce class Foo extends Bar, got:\n{}",
+        result
+    );
+    assert!(
+        result.contains("render()"),
+        "should have render method, got:\n{}",
+        result
+    );
+    assert!(
+        !result.contains("Object.defineProperty(e, r.key"),
+        "createClass helper should be removed, got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -895,9 +907,21 @@ var Foo = function() {
 }();
 "#;
     let result = render(input);
-    assert!(result.contains("class Foo"), "should produce class Foo, got:\n{}", result);
-    assert!(result.contains("greet()"), "should have greet method, got:\n{}", result);
-    assert!(!result.contains("Object.defineProperty"), "createClass helper should be removed, got:\n{}", result);
+    assert!(
+        result.contains("class Foo"),
+        "should produce class Foo, got:\n{}",
+        result
+    );
+    assert!(
+        result.contains("greet()"),
+        "should have greet method, got:\n{}",
+        result
+    );
+    assert!(
+        !result.contains("Object.defineProperty"),
+        "createClass helper should be removed, got:\n{}",
+        result
+    );
 }
 
 #[test]
@@ -928,7 +952,19 @@ var Foo = function() {
 }();
 "#;
     let result = render(input);
-    assert!(result.contains("class Foo"), "should produce class Foo, got:\n{}", result);
-    assert!(result.contains("instance()"), "should have instance method, got:\n{}", result);
-    assert!(result.contains("static staticMethod()"), "should have static method, got:\n{}", result);
+    assert!(
+        result.contains("class Foo"),
+        "should produce class Foo, got:\n{}",
+        result
+    );
+    assert!(
+        result.contains("instance()"),
+        "should have instance method, got:\n{}",
+        result
+    );
+    assert!(
+        result.contains("static staticMethod()"),
+        "should have static method, got:\n{}",
+        result
+    );
 }

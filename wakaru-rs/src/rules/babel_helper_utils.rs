@@ -70,10 +70,7 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
             // function _interopRequireDefault(obj) { ... }
             ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
                 if let Some(kind) = detect_helper_from_fn(&fn_decl.function, has_sub_helpers) {
-                    helpers.insert(
-                        (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt),
-                        kind,
-                    );
+                    helpers.insert((fn_decl.ident.sym.clone(), fn_decl.ident.ctxt), kind);
                 }
             }
             // var _ird = function(obj) { ... }  OR  var _ird = require("@babel/runtime/...")
@@ -96,9 +93,7 @@ pub(crate) fn collect_helpers_of_kind(
     kind: BabelHelperKind,
 ) -> HashMap<BindingKey, BabelHelperKind> {
     let all = collect_helpers(module);
-    all.into_iter()
-        .filter(|(_, k)| *k == kind)
-        .collect()
+    all.into_iter().filter(|(_, k)| *k == kind).collect()
 }
 
 /// Collect only ClassCallCheck helpers from module-level declarations.
@@ -130,7 +125,9 @@ fn module_has_babel_sub_helper_signals(module: &Module) -> bool {
             if let Some(body) = &func.body {
                 let mut markers = BodyMarkerState::default();
                 scan_stmts_for_markers(&body.stmts, &mut markers);
-                if markers.has_array_is_array || markers.has_array_from || markers.has_symbol_iterator
+                if markers.has_array_is_array
+                    || markers.has_array_from
+                    || markers.has_symbol_iterator
                 {
                     return true;
                 }
@@ -241,7 +238,9 @@ pub(crate) fn remove_helper_declarations(
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
                 let mut var = var.clone();
                 var.decls.retain(|decl| {
-                    let Pat::Ident(bi) = &decl.name else { return true };
+                    let Pat::Ident(bi) = &decl.name else {
+                        return true;
+                    };
                     let key = (bi.id.sym.clone(), bi.id.ctxt);
                     !helpers.contains_key(&key)
                 });
@@ -259,7 +258,9 @@ fn detect_helper_from_var_decl(
     decl: &VarDeclarator,
     has_sub_helpers: bool,
 ) -> Option<(BindingKey, BabelHelperKind)> {
-    let Pat::Ident(bi) = &decl.name else { return None };
+    let Pat::Ident(bi) = &decl.name else {
+        return None;
+    };
     let init = decl.init.as_ref()?;
     let key = (bi.id.sym.clone(), bi.id.ctxt);
 
@@ -306,12 +307,18 @@ fn detect_helper_from_var_decl(
 
 fn detect_helper_from_require(expr: &Expr) -> Option<BabelHelperKind> {
     let Expr::Call(call) = expr else { return None };
-    let Callee::Expr(callee) = &call.callee else { return None };
-    let Expr::Ident(id) = callee.as_ref() else { return None };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(id) = callee.as_ref() else {
+        return None;
+    };
     if id.sym.as_ref() != "require" || call.args.len() != 1 {
         return None;
     }
-    let Expr::Lit(Lit::Str(s)) = call.args[0].expr.as_ref() else { return None };
+    let Expr::Lit(Lit::Str(s)) = call.args[0].expr.as_ref() else {
+        return None;
+    };
     let path = s.value.as_str().unwrap_or("");
     if INTEROP_DEFAULT_PATHS.contains(&path) {
         return Some(BabelHelperKind::InteropRequireDefault);
@@ -368,7 +375,9 @@ fn detect_helper_from_arrow(
 ) -> Option<BabelHelperKind> {
     // interopRequireDefault: single param, body returns conditional on __esModule
     if arrow.params.len() == 1 {
-        let Pat::Ident(param) = &arrow.params[0] else { return None };
+        let Pat::Ident(param) = &arrow.params[0] else {
+            return None;
+        };
         let param_sym = &param.id.sym;
         let param_ctxt = param.id.ctxt;
 
@@ -436,7 +445,9 @@ fn is_interop_require_default_fn(func: &Function) -> bool {
     if func.params.len() != 1 {
         return false;
     }
-    let Pat::Ident(param) = &func.params[0].pat else { return false };
+    let Pat::Ident(param) = &func.params[0].pat else {
+        return false;
+    };
     let param_sym = &param.id.sym;
     let param_ctxt = param.id.ctxt;
 
@@ -458,11 +469,17 @@ fn is_interop_require_default_fn(func: &Function) -> bool {
 }
 
 /// Matches a block with a single return statement containing the ternary pattern.
-fn matches_ternary_return_block(stmts: &[Stmt], param_sym: &Atom, param_ctxt: SyntaxContext) -> bool {
+fn matches_ternary_return_block(
+    stmts: &[Stmt],
+    param_sym: &Atom,
+    param_ctxt: SyntaxContext,
+) -> bool {
     if stmts.len() != 1 {
         return false;
     }
-    let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = &stmts[0] else { return false };
+    let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = &stmts[0] else {
+        return false;
+    };
     matches_ternary_expr(arg, param_sym, param_ctxt)
 }
 
@@ -487,7 +504,15 @@ fn matches_if_return_form(stmts: &[Stmt], param_sym: &Atom, param_ctxt: SyntaxCo
     if stmts.len() != 2 {
         return false;
     }
-    let Stmt::If(IfStmt { test, cons, alt: None, .. }) = &stmts[0] else { return false };
+    let Stmt::If(IfStmt {
+        test,
+        cons,
+        alt: None,
+        ..
+    }) = &stmts[0]
+    else {
+        return false;
+    };
 
     if !matches_esmodule_test(test, param_sym, param_ctxt) {
         return false;
@@ -495,13 +520,20 @@ fn matches_if_return_form(stmts: &[Stmt], param_sym: &Atom, param_ctxt: SyntaxCo
 
     // cons: { return P; } or return P;
     let cons_return = extract_single_return(cons);
-    let Some(cons_arg) = cons_return else { return false };
+    let Some(cons_arg) = cons_return else {
+        return false;
+    };
     if !is_same_ident(cons_arg, param_sym, param_ctxt) {
         return false;
     }
 
     // second stmt: return { default: P }
-    let Stmt::Return(ReturnStmt { arg: Some(alt_arg), .. }) = &stmts[1] else { return false };
+    let Stmt::Return(ReturnStmt {
+        arg: Some(alt_arg), ..
+    }) = &stmts[1]
+    else {
+        return false;
+    };
     matches_default_object(alt_arg, param_sym, param_ctxt)
 }
 
@@ -519,12 +551,18 @@ fn matches_esmodule_test(expr: &Expr, param_sym: &Atom, param_ctxt: SyntaxContex
 
 /// Matches: { default: P } (an object literal with a single `default` property)
 fn matches_default_object(expr: &Expr, param_sym: &Atom, param_ctxt: SyntaxContext) -> bool {
-    let Expr::Object(obj) = expr else { return false };
+    let Expr::Object(obj) = expr else {
+        return false;
+    };
     if obj.props.len() != 1 {
         return false;
     }
-    let swc_core::ecma::ast::PropOrSpread::Prop(prop) = &obj.props[0] else { return false };
-    let swc_core::ecma::ast::Prop::KeyValue(kv) = prop.as_ref() else { return false };
+    let swc_core::ecma::ast::PropOrSpread::Prop(prop) = &obj.props[0] else {
+        return false;
+    };
+    let swc_core::ecma::ast::Prop::KeyValue(kv) = prop.as_ref() else {
+        return false;
+    };
 
     // key must be "default"
     let key_is_default = match &kv.key {
@@ -543,8 +581,15 @@ fn is_same_ident(expr: &Expr, sym: &Atom, ctxt: SyntaxContext) -> bool {
     matches!(expr, Expr::Ident(id) if id.sym == *sym && id.ctxt == ctxt)
 }
 
-fn matches_member_prop(expr: &Expr, obj_sym: &Atom, obj_ctxt: SyntaxContext, prop_name: &str) -> bool {
-    let Expr::Member(member) = expr else { return false };
+fn matches_member_prop(
+    expr: &Expr,
+    obj_sym: &Atom,
+    obj_ctxt: SyntaxContext,
+    prop_name: &str,
+) -> bool {
+    let Expr::Member(member) = expr else {
+        return false;
+    };
     if !is_same_ident(&member.obj, obj_sym, obj_ctxt) {
         return false;
     }
@@ -597,7 +642,11 @@ fn is_interop_require_wildcard_fn(func: &Function) -> bool {
     has_esmodule && has_property_copy
 }
 
-fn check_stmt_for_wildcard_markers(stmt: &Stmt, has_esmodule: &mut bool, has_property_copy: &mut bool) {
+fn check_stmt_for_wildcard_markers(
+    stmt: &Stmt,
+    has_esmodule: &mut bool,
+    has_property_copy: &mut bool,
+) {
     use swc_core::ecma::visit::{Visit, VisitWith};
 
     struct WildcardMarkerVisitor<'a> {
@@ -644,7 +693,10 @@ fn check_stmt_for_wildcard_markers(stmt: &Stmt, has_esmodule: &mut bool, has_pro
         }
     }
 
-    let mut visitor = WildcardMarkerVisitor { has_esmodule, has_property_copy };
+    let mut visitor = WildcardMarkerVisitor {
+        has_esmodule,
+        has_property_copy,
+    };
     stmt.visit_with(&mut visitor);
 }
 
@@ -726,8 +778,12 @@ fn is_class_call_check_fn(func: &Function) -> bool {
     if func.params.len() != 2 {
         return false;
     }
-    let Pat::Ident(param1) = &func.params[0].pat else { return false };
-    let Pat::Ident(param2) = &func.params[1].pat else { return false };
+    let Pat::Ident(param1) = &func.params[0].pat else {
+        return false;
+    };
+    let Pat::Ident(param2) = &func.params[1].pat else {
+        return false;
+    };
 
     let body = match func.body.as_ref() {
         Some(b) => b,
@@ -738,10 +794,14 @@ fn is_class_call_check_fn(func: &Function) -> bool {
     if body.stmts.len() != 1 {
         return false;
     }
-    let Stmt::If(if_stmt) = &body.stmts[0] else { return false };
+    let Stmt::If(if_stmt) = &body.stmts[0] else {
+        return false;
+    };
 
     // Test: !(param1 instanceof param2)
-    let Expr::Unary(unary) = if_stmt.test.as_ref() else { return false };
+    let Expr::Unary(unary) = if_stmt.test.as_ref() else {
+        return false;
+    };
     if unary.op != swc_core::ecma::ast::UnaryOp::Bang {
         return false;
     }
@@ -806,8 +866,12 @@ fn is_possible_constructor_return_fn(func: &Function) -> bool {
     if func.params.len() != 2 {
         return false;
     }
-    let Pat::Ident(param1) = &func.params[0].pat else { return false };
-    let Pat::Ident(param2) = &func.params[1].pat else { return false };
+    let Pat::Ident(param1) = &func.params[0].pat else {
+        return false;
+    };
+    let Pat::Ident(param2) = &func.params[1].pat else {
+        return false;
+    };
 
     let body = match func.body.as_ref() {
         Some(b) => b,
@@ -820,9 +884,13 @@ fn is_possible_constructor_return_fn(func: &Function) -> bool {
     }
 
     // First statement: if (!param1) { throw new ReferenceError(...) }
-    let Stmt::If(first_if) = &body.stmts[0] else { return false };
+    let Stmt::If(first_if) = &body.stmts[0] else {
+        return false;
+    };
     // Test should negate the first param specifically
-    let Expr::Unary(unary) = first_if.test.as_ref() else { return false };
+    let Expr::Unary(unary) = first_if.test.as_ref() else {
+        return false;
+    };
     if unary.op != swc_core::ecma::ast::UnaryOp::Bang {
         return false;
     }
@@ -856,7 +924,10 @@ fn is_possible_constructor_return_fn(func: &Function) -> bool {
     // 3-stmt form: if-throw, if-return-self, return-param2
     // 2-stmt form: if-throw, return-ternary (minified: `return !t || ... ? e : t`)
     let last = body.stmts.last().unwrap();
-    let Stmt::Return(ReturnStmt { arg: Some(ret_arg), .. }) = last else {
+    let Stmt::Return(ReturnStmt {
+        arg: Some(ret_arg), ..
+    }) = last
+    else {
         return false;
     };
 
@@ -871,8 +942,12 @@ fn is_possible_constructor_return_fn(func: &Function) -> bool {
 }
 
 fn is_new_reference_error(expr: &Expr) -> bool {
-    let Expr::New(new_expr) = expr else { return false };
-    let Expr::Ident(id) = new_expr.callee.as_ref() else { return false };
+    let Expr::New(new_expr) = expr else {
+        return false;
+    };
+    let Expr::Ident(id) = new_expr.callee.as_ref() else {
+        return false;
+    };
     id.sym.as_ref() == "ReferenceError"
 }
 
@@ -911,8 +986,12 @@ fn is_extends_fn(func: &Function) -> bool {
 
 /// Check if an expression is `Object.assign`.
 fn is_object_assign_ref(expr: &Expr) -> bool {
-    let Expr::Member(member) = expr else { return false };
-    let Expr::Ident(obj) = member.obj.as_ref() else { return false };
+    let Expr::Member(member) = expr else {
+        return false;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
     obj.sym.as_ref() == "Object" && is_member_prop_name(&member.prop, "assign")
 }
 
@@ -933,7 +1012,9 @@ fn is_extends_polyfill_fn(expr: &Expr) -> bool {
         None => return false,
     };
 
-    let Pat::Ident(param) = &func.params[0].pat else { return false };
+    let Pat::Ident(param) = &func.params[0].pat else {
+        return false;
+    };
 
     // Must reference `arguments` (the for loop iterates arguments[i])
     let mut markers = BodyMarkerState::default();
@@ -974,7 +1055,9 @@ fn is_object_spread_fn(func: &Function) -> bool {
         None => return false,
     };
 
-    let Pat::Ident(param) = &func.params[0].pat else { return false };
+    let Pat::Ident(param) = &func.params[0].pat else {
+        return false;
+    };
 
     let mut markers = BodyMarkerState::default();
     scan_stmts_for_markers(&body.stmts, &mut markers);
@@ -1163,7 +1246,9 @@ fn scan_stmts_for_markers(stmts: &[Stmt], state: &mut BodyMarkerState) {
 fn is_babel_helper_or_chain(expr: &Expr) -> bool {
     // The rightmost term of a left-associative || chain is the right child
     // of the outermost BinExpr. Check it's a 0-arg call first.
-    let Expr::Bin(outermost) = expr else { return false };
+    let Expr::Bin(outermost) = expr else {
+        return false;
+    };
     if outermost.op != BinaryOp::LogicalOr {
         return false;
     }

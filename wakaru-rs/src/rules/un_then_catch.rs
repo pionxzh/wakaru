@@ -14,8 +14,17 @@ impl VisitMut for UnThenCatch {
         expr.visit_mut_children_with(self);
 
         let Expr::Call(call) = expr else { return };
-        let Callee::Expr(callee) = &call.callee else { return };
-        let Expr::Member(MemberExpr { obj, prop: MemberProp::Ident(prop_name), .. }) = &**callee else { return };
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        let Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(prop_name),
+            ..
+        }) = &**callee
+        else {
+            return;
+        };
 
         if prop_name.sym.as_ref() != "then" || call.args.len() != 2 {
             return;

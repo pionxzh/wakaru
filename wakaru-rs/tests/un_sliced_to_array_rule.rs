@@ -11,8 +11,14 @@ var value = _ref[1];
 "#;
     // slicedToArray just unwraps; destructuring reconstruction is done by downstream rules
     let output = render(input);
-    assert!(!output.contains("_slicedToArray"), "helper call should be unwrapped");
-    assert!(!output.contains("slicedToArray"), "helper declaration should be removed");
+    assert!(
+        !output.contains("_slicedToArray"),
+        "helper call should be unwrapped"
+    );
+    assert!(
+        !output.contains("slicedToArray"),
+        "helper declaration should be removed"
+    );
 }
 
 #[test]
@@ -35,7 +41,10 @@ var _ref = _slicedToArray(expr, 3);
 var x = _ref[0];
 "#;
     let output = render(input);
-    assert!(!output.contains("_slicedToArray"), "helper should be unwrapped");
+    assert!(
+        !output.contains("_slicedToArray"),
+        "helper should be unwrapped"
+    );
 }
 
 #[test]
@@ -48,7 +57,10 @@ _slicedToArray(a, 2, 3);
 "#;
     let output = render(input);
     // Invalid calls should not be transformed, helper should remain
-    assert!(output.contains("_slicedToArray"), "should not transform invalid calls");
+    assert!(
+        output.contains("_slicedToArray"),
+        "should not transform invalid calls"
+    );
 }
 
 #[test]
@@ -59,7 +71,10 @@ var _ref = _slicedToArray(a, 2);
 var name = _ref[0];
 "#;
     let output = render(input);
-    assert!(!output.contains("require(\"@babel/runtime"), "helper import should be removed");
+    assert!(
+        !output.contains("require(\"@babel/runtime"),
+        "helper import should be removed"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -95,7 +110,10 @@ var key = _ref[0];
 var value = _ref[1];
 "#;
     let output = render(input);
-    assert!(!output.contains("_slicedToArray"), "helper should be unwrapped");
+    assert!(
+        !output.contains("_slicedToArray"),
+        "helper should be unwrapped"
+    );
 }
 
 #[test]
@@ -114,7 +132,10 @@ var key = _ref[0];
 var value = _ref[1];
 "#;
     let output = render(input);
-    assert!(!output.contains("_slicedToArray"), "helper should be unwrapped");
+    assert!(
+        !output.contains("_slicedToArray"),
+        "helper should be unwrapped"
+    );
 }
 
 #[test]
@@ -130,7 +151,10 @@ var _ref = r(pair, 2);
 var key = _ref[0];
 "#;
     let output = render(input);
-    assert!(!output.contains("function r"), "minified helper should be detected and removed");
+    assert!(
+        !output.contains("function r"),
+        "minified helper should be detected and removed"
+    );
 }
 
 #[test]
@@ -146,7 +170,10 @@ var _ref = _slicedToArray(pair, 2);
 var key = _ref[0];
 "#;
     let output = render(input);
-    assert!(!output.contains("_slicedToArray"), "var-assigned helper should be detected");
+    assert!(
+        !output.contains("_slicedToArray"),
+        "var-assigned helper should be detected"
+    );
 }
 
 #[test]
@@ -159,7 +186,10 @@ function slice(arr, count) {
 var x = slice(items, 3);
 "#;
     let output = render(input);
-    assert!(output.contains("slice"), "should not detect unrelated function as helper");
+    assert!(
+        output.contains("slice"),
+        "should not detect unrelated function as helper"
+    );
 }
 
 #[test]
@@ -173,7 +203,10 @@ function maybeIter(arr, count) {
 var x = maybeIter(items, 2);
 "#;
     let output = render(input);
-    assert!(output.contains("maybeIter"), "should not detect iterator utility as slicedToArray");
+    assert!(
+        output.contains("maybeIter"),
+        "should not detect iterator utility as slicedToArray"
+    );
 }
 
 #[test]
@@ -186,5 +219,8 @@ function resolve(a, b) {
 var x = resolve(items, 2);
 "#;
     let output = render(input);
-    assert!(output.contains("resolve"), "should not detect normal OR-chain as slicedToArray");
+    assert!(
+        output.contains("resolve"),
+        "should not detect normal OR-chain as slicedToArray"
+    );
 }

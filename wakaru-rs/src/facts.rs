@@ -11,7 +11,7 @@ use std::fmt;
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    Callee, Decl, DefaultDecl, Expr, ExportSpecifier, ImportSpecifier, Lit, Module, ModuleDecl,
+    Callee, Decl, DefaultDecl, ExportSpecifier, Expr, ImportSpecifier, Lit, Module, ModuleDecl,
     ModuleItem,
 };
 
@@ -141,7 +141,10 @@ impl ModuleFactsMap {
     /// Strips leading `./` — the canonical key is always a relative path
     /// without the dot-slash prefix.
     fn canonicalize(specifier: &str) -> String {
-        specifier.strip_prefix("./").unwrap_or(specifier).to_string()
+        specifier
+            .strip_prefix("./")
+            .unwrap_or(specifier)
+            .to_string()
     }
 }
 
@@ -183,7 +186,11 @@ impl fmt::Display for ExportKind {
 
 impl fmt::Display for ImportFact {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "import {} from \"{}\" [{}]", self.local, self.source, self.kind)
+        write!(
+            f,
+            "import {} from \"{}\" [{}]",
+            self.local, self.source, self.kind
+        )
     }
 }
 
@@ -242,9 +249,7 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
                 let source = str_to_atom(&import.src.value);
                 for spec in &import.specifiers {
                     let (local, kind) = match spec {
-                        ImportSpecifier::Default(s) => {
-                            (s.local.sym.clone(), ImportKind::Default)
-                        }
+                        ImportSpecifier::Default(s) => (s.local.sym.clone(), ImportKind::Default),
                         ImportSpecifier::Namespace(s) => {
                             (s.local.sym.clone(), ImportKind::Namespace)
                         }

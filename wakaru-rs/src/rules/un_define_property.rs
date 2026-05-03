@@ -132,7 +132,13 @@ fn is_define_property_fn(func: &Function) -> bool {
 }
 
 fn is_in_check(expr: &Expr, left_sym: &Atom, right_sym: &Atom) -> bool {
-    let Expr::Bin(BinExpr { op: BinaryOp::In, left, right, .. }) = expr else {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::In,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
         return false;
     };
     matches!(left.as_ref(), Expr::Ident(id) if &id.sym == left_sym)
@@ -238,7 +244,13 @@ fn if_alternate_matches_direct_assign(stmt: &Stmt, e: &Atom, t: &Atom, n: &Atom)
         }
         _ => return false,
     };
-    let Expr::Assign(AssignExpr { op: AssignOp::Assign, left, right, .. }) = expr else {
+    let Expr::Assign(AssignExpr {
+        op: AssignOp::Assign,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
         return false;
     };
     let AssignTarget::Simple(SimpleAssignTarget::Member(m)) = left else {

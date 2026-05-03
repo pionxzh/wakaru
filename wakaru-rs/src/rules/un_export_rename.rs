@@ -87,7 +87,9 @@ fn collect_export_rename_plans(
                         }
                         let new_name = id.id.sym.clone();
                         if new_name != info.id.0
-                            && !plans.iter().any(|plan: &ExportRenamePlan| plan.old == info.id)
+                            && !plans
+                                .iter()
+                                .any(|plan: &ExportRenamePlan| plan.old == info.id)
                             && !rename_causes_shadowing(module, &info.id, &new_name)
                         {
                             plans.push(ExportRenamePlan {
@@ -129,12 +131,8 @@ fn collect_export_rename_plans(
                 }
                 // Resolve through var aliases: if orig is `var h = p`,
                 // use `p`'s binding info so the real class/fn gets renamed.
-                let (info, old_name) = resolve_to_real_binding(
-                    orig_info,
-                    &orig_name,
-                    module,
-                    binding_infos,
-                );
+                let (info, old_name) =
+                    resolve_to_real_binding(orig_info, &orig_name, module, binding_infos);
                 let new_name = match exported {
                     ModuleExportName::Ident(ident) => ident.sym.clone(),
                     _ => continue,
@@ -144,7 +142,9 @@ fn collect_export_rename_plans(
                 if old_name == new_name
                     || new_name.len() < old_name.len()
                     || binding_infos.contains_key(&new_name)
-                    || plans.iter().any(|plan: &ExportRenamePlan| plan.old == info.id)
+                    || plans
+                        .iter()
+                        .any(|plan: &ExportRenamePlan| plan.old == info.id)
                     || rename_causes_shadowing(module, &info.id, &new_name)
                 {
                     continue;
@@ -181,8 +181,10 @@ fn promote_renamed_bindings(
         })
         .collect();
 
-    let infos_by_old: HashMap<BindingId, &TopLevelBindingInfo> =
-        binding_infos.values().map(|info| (info.id.clone(), info)).collect();
+    let infos_by_old: HashMap<BindingId, &TopLevelBindingInfo> = binding_infos
+        .values()
+        .map(|info| (info.id.clone(), info))
+        .collect();
 
     let mut new_body = Vec::with_capacity(module.body.len());
     for (item_index, item) in std::mem::take(&mut module.body).into_iter().enumerate() {
@@ -205,17 +207,13 @@ fn rewrite_promoted_item(
     info: &TopLevelBindingInfo,
 ) -> Vec<ModuleItem> {
     match item {
-        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-            rewrite_var_decl(*var, false, plan, info).unwrap_or_else(|var| {
-                vec![ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(var))))]
-            })
-        }
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => rewrite_var_decl(*var, false, plan, info)
+            .unwrap_or_else(|var| vec![ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(var))))]),
         ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
             decl: Decl::Var(var),
             ..
-        })) => rewrite_var_decl(*var, true, plan, info).unwrap_or_else(|var| {
-            vec![wrap_var_decl(var, true)]
-        }),
+        })) => rewrite_var_decl(*var, true, plan, info)
+            .unwrap_or_else(|var| vec![wrap_var_decl(var, true)]),
         ModuleItem::Stmt(Stmt::Decl(Decl::Fn(mut function))) => {
             function.ident.sym = plan.new_name.clone();
             vec![ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
@@ -287,8 +285,10 @@ fn wrap_var_decl(var: VarDecl, exported: bool) -> ModuleItem {
 }
 
 fn rewrite_export_aliases(module: &mut Module, plans: &[ExportRenamePlan]) {
-    let plans_by_old_name: HashMap<Atom, &ExportRenamePlan> =
-        plans.iter().map(|plan| (plan.old_name.clone(), plan)).collect();
+    let plans_by_old_name: HashMap<Atom, &ExportRenamePlan> = plans
+        .iter()
+        .map(|plan| (plan.old_name.clone(), plan))
+        .collect();
     let plans_by_old: HashMap<BindingId, &ExportRenamePlan> =
         plans.iter().map(|plan| (plan.old.clone(), plan)).collect();
     // Also index by alias name so we can match export specifiers that
@@ -409,7 +409,10 @@ fn is_collapsed_export_const_alias(
     let Expr::Ident(init_id) = init.as_ref() else {
         return false;
     };
-    let Some(plan) = plans_by_old.get(&(init_id.sym.clone(), init_id.ctxt)).copied() else {
+    let Some(plan) = plans_by_old
+        .get(&(init_id.sym.clone(), init_id.ctxt))
+        .copied()
+    else {
         return false;
     };
     binding.id.sym == plan.new_name

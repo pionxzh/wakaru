@@ -29,7 +29,8 @@ fn for_of_with_block_body() {
 
 #[test]
 fn for_of_with_method_call_iterable() {
-    let input = r#"for (let Y = 0, V = Object.keys(obj); Y < V.length; Y++) { const Z = V[Y]; use(Z); }"#;
+    let input =
+        r#"for (let Y = 0, V = Object.keys(obj); Y < V.length; Y++) { const Z = V[Y]; use(Z); }"#;
     let expected = r#"for (const Z of Object.keys(obj)) { use(Z); }"#;
     assert_eq_normalized(&render(input), expected);
 }
@@ -73,7 +74,8 @@ fn for_of_uses_let_when_elem_reassigned() {
 fn for_of_single_decl_arr_form() {
     // Variant: for(let i = 0; i < arr.length; i++) { const x = arr[i]; ... }
     // Only one declarator, arr is external — still transformable if arr is not modified
-    let input = r#"for (let Y = 0, V = B.split("."); Y < V.length; Y++) { const Z = V[Y]; process(Z); }"#;
+    let input =
+        r#"for (let Y = 0, V = B.split("."); Y < V.length; Y++) { const Z = V[Y]; process(Z); }"#;
     let expected = r#"for (const Z of B.split(".")) { process(Z); }"#;
     assert_eq_normalized(&render(input), expected);
 }

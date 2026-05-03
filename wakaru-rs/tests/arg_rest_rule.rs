@@ -323,5 +323,9 @@ function foo() {
 "#;
     let output = apply(input);
     // The for loop should still be present (it's not the copy pattern)
-    assert!(output.contains("for"), "non-copy for loop should be preserved: {}", output);
+    assert!(
+        output.contains("for"),
+        "non-copy for loop should be preserved: {}",
+        output
+    );
 }
