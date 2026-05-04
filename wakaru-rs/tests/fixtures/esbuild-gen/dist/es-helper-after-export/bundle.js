@@ -19,9 +19,9 @@ function multiply(a, b) {
   return a * b;
 }
 
-// src/utils.js
-var utils_exports = {};
-__export(utils_exports, {
+// src/utils-after.js
+var utils_after_exports = {};
+__export(utils_after_exports, {
   compute: () => compute
 });
 function compute(a, b) {
@@ -31,12 +31,12 @@ function normalize(x) {
   return x / Math.abs(x) || 0;
 }
 
-// src/entry.js
+// src/entry-helper-after-export.js
 var main = function() {
   return "entry";
 };
 export {
+  main,
   math_exports as math,
-  utils_exports as utils,
-  main
+  utils_after_exports as utils
 };

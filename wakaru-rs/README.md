@@ -93,6 +93,12 @@ Writes the embedded `sourcesContent` files to disk as-is. Does not decompile the
 | webpack 5 | yes |
 | Browserify | yes |
 | esbuild | yes |
+| Bun | partial — scope-hoisted ESM namespace output |
+
+Bun support currently reuses the esbuild-style scope-hoisted ESM unpacker. It
+works when Bun emits namespace export boundaries such as `__export(ns, ...)`.
+Fully flattened Bun output without module boundaries is kept as a single module
+unless a source map is used.
 
 ---
 

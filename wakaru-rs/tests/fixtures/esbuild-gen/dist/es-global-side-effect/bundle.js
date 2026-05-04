@@ -4,7 +4,7 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// tests/fixtures/esbuild-gen/src/math.js
+// src/math.js
 var math_exports = {};
 __export(math_exports, {
   PI: () => PI,
@@ -19,7 +19,7 @@ function multiply(a, b) {
   return a * b;
 }
 
-// tests/fixtures/esbuild-gen/src/constants.js
+// src/constants.js
 var constants_exports = {};
 __export(constants_exports, {
   LABEL: () => LABEL,

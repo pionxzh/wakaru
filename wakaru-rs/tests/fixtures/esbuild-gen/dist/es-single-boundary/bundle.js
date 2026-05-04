@@ -19,7 +19,7 @@ function multiply(a, b) {
   return a * b;
 }
 
-// src/entry.js
+// src/entry-single-boundary.js
 console.log("entry initialized");
 export {
   math_exports as math

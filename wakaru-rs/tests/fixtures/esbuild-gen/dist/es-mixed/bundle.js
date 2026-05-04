@@ -28,9 +28,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/utils-cjs.cjs
+// src/utils-cjs.cjs
 var require_utils_cjs = __commonJS({
-  "wakaru-rs/tests/fixtures/esbuild-gen/src/utils-cjs.cjs"(exports) {
+  "src/utils-cjs.cjs"(exports) {
     exports.clamp = function(val, min, max) {
       return Math.min(Math.max(val, min), max);
     };
@@ -40,9 +40,9 @@ var require_utils_cjs = __commonJS({
   }
 });
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/format-cjs.cjs
+// src/format-cjs.cjs
 var require_format_cjs = __commonJS({
-  "wakaru-rs/tests/fixtures/esbuild-gen/src/format-cjs.cjs"(exports) {
+  "src/format-cjs.cjs"(exports) {
     exports.padLeft = function(str, len, ch) {
       return String(ch || " ").repeat(Math.max(0, len - str.length)) + str;
     };
@@ -52,9 +52,9 @@ var require_format_cjs = __commonJS({
   }
 });
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/validate-cjs.cjs
+// src/validate-cjs.cjs
 var require_validate_cjs = __commonJS({
-  "wakaru-rs/tests/fixtures/esbuild-gen/src/validate-cjs.cjs"(exports) {
+  "src/validate-cjs.cjs"(exports) {
     exports.isEmail = function(s) {
       return /^[^@]+@[^@]+$/.test(s);
     };
@@ -64,9 +64,9 @@ var require_validate_cjs = __commonJS({
   }
 });
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/convert-cjs.cjs
+// src/convert-cjs.cjs
 var require_convert_cjs = __commonJS({
-  "wakaru-rs/tests/fixtures/esbuild-gen/src/convert-cjs.cjs"(exports) {
+  "src/convert-cjs.cjs"(exports) {
     exports.toUpper = function(s) {
       return s.toUpperCase();
     };
@@ -76,9 +76,9 @@ var require_convert_cjs = __commonJS({
   }
 });
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/array-cjs.cjs
+// src/array-cjs.cjs
 var require_array_cjs = __commonJS({
-  "wakaru-rs/tests/fixtures/esbuild-gen/src/array-cjs.cjs"(exports) {
+  "src/array-cjs.cjs"(exports) {
     exports.unique = function(arr) {
       return [...new Set(arr)];
     };
@@ -88,9 +88,9 @@ var require_array_cjs = __commonJS({
   }
 });
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/object-cjs.cjs
+// src/object-cjs.cjs
 var require_object_cjs = __commonJS({
-  "wakaru-rs/tests/fixtures/esbuild-gen/src/object-cjs.cjs"(exports) {
+  "src/object-cjs.cjs"(exports) {
     exports.keys = function(obj) {
       return Object.keys(obj);
     };
@@ -100,7 +100,7 @@ var require_object_cjs = __commonJS({
   }
 });
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/entry-mixed.js
+// src/entry-mixed.js
 var import_utils_cjs = __toESM(require_utils_cjs());
 var import_format_cjs = __toESM(require_format_cjs());
 var import_validate_cjs = __toESM(require_validate_cjs());
@@ -108,7 +108,7 @@ var import_convert_cjs = __toESM(require_convert_cjs());
 var import_array_cjs = __toESM(require_array_cjs());
 var import_object_cjs = __toESM(require_object_cjs());
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/math.js
+// src/math.js
 var math_exports = {};
 __export(math_exports, {
   PI: () => PI,
@@ -123,7 +123,7 @@ function multiply(a, b) {
   return a * b;
 }
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/greet.js
+// src/greet.js
 var greet_exports = {};
 __export(greet_exports, {
   farewell: () => farewell,
@@ -136,7 +136,7 @@ function farewell(name) {
   return `Goodbye, ${name}!`;
 }
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/entry-mixed.js
+// src/entry-mixed.js
 function main() {
   return (0, import_format_cjs.padLeft)((0, import_convert_cjs.toUpper)((0, import_validate_cjs.isEmail)("a@b") ? "yes" : "no"), 10) + (0, import_utils_cjs.clamp)(42, 0, 100) + (0, import_array_cjs.unique)([1, 1, 2]).length + (0, import_object_cjs.keys)({ a: 1 }).length;
 }

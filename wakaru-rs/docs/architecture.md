@@ -46,7 +46,9 @@ Each unpacker detects a specific bundle format and extracts individual modules a
 1. **webpack5** — IIFE/arrow with module factory array or object
 2. **webpack4** — `(function(modules) { ... })([...])` with `__webpack_require__` runtime
 3. **browserify** — `(function e(t,n,r) { ... })({1:[function(...){...}, {...}], ...})`
-4. **esbuild** — scope-hoisted ESM with lazy-module helpers (`__commonJS` / `__esm`)
+4. **esbuild / Bun-compatible scope-hoisted ESM** — scope-hoisted ESM
+   namespace boundaries (`__export(ns, ...)`) and esbuild lazy-module helpers
+   (`__commonJS` / `__esm`)
 
 Unpackers emit raw module code. They do NOT run transformation rules — that's the driver's job. Webpack4 is the exception: it applies webpack-specific normalization (param rename, `require()` rewriting, runtime helper removal) before emitting, because those transforms are tightly coupled to the webpack format.
 

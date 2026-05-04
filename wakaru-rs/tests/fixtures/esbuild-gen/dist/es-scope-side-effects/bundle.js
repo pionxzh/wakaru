@@ -4,7 +4,7 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/math.js
+// src/math.js
 var math_exports = {};
 __export(math_exports, {
   PI: () => PI,
@@ -19,7 +19,7 @@ function multiply(a, b) {
   return a * b;
 }
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/registry.js
+// src/registry.js
 var registry_exports = {};
 __export(registry_exports, {
   lookup: () => lookup,

@@ -25,9 +25,9 @@
     mod
   ));
 
-  // wakaru-rs/tests/fixtures/esbuild-gen/src/utils-cjs.cjs
+  // src/utils-cjs.cjs
   var require_utils_cjs = __commonJS({
-    "wakaru-rs/tests/fixtures/esbuild-gen/src/utils-cjs.cjs"(exports) {
+    "src/utils-cjs.cjs"(exports) {
       exports.clamp = function(val, min, max) {
         return Math.min(Math.max(val, min), max);
       };
@@ -37,9 +37,9 @@
     }
   });
 
-  // wakaru-rs/tests/fixtures/esbuild-gen/src/format-cjs.cjs
+  // src/format-cjs.cjs
   var require_format_cjs = __commonJS({
-    "wakaru-rs/tests/fixtures/esbuild-gen/src/format-cjs.cjs"(exports) {
+    "src/format-cjs.cjs"(exports) {
       exports.padLeft = function(str, len, ch) {
         return String(ch || " ").repeat(Math.max(0, len - str.length)) + str;
       };
@@ -49,9 +49,9 @@
     }
   });
 
-  // wakaru-rs/tests/fixtures/esbuild-gen/src/validate-cjs.cjs
+  // src/validate-cjs.cjs
   var require_validate_cjs = __commonJS({
-    "wakaru-rs/tests/fixtures/esbuild-gen/src/validate-cjs.cjs"(exports) {
+    "src/validate-cjs.cjs"(exports) {
       exports.isEmail = function(s) {
         return /^[^@]+@[^@]+$/.test(s);
       };
@@ -61,9 +61,9 @@
     }
   });
 
-  // wakaru-rs/tests/fixtures/esbuild-gen/src/convert-cjs.cjs
+  // src/convert-cjs.cjs
   var require_convert_cjs = __commonJS({
-    "wakaru-rs/tests/fixtures/esbuild-gen/src/convert-cjs.cjs"(exports) {
+    "src/convert-cjs.cjs"(exports) {
       exports.toUpper = function(s) {
         return s.toUpperCase();
       };
@@ -73,9 +73,9 @@
     }
   });
 
-  // wakaru-rs/tests/fixtures/esbuild-gen/src/array-cjs.cjs
+  // src/array-cjs.cjs
   var require_array_cjs = __commonJS({
-    "wakaru-rs/tests/fixtures/esbuild-gen/src/array-cjs.cjs"(exports) {
+    "src/array-cjs.cjs"(exports) {
       exports.unique = function(arr) {
         return [...new Set(arr)];
       };
@@ -85,18 +85,18 @@
     }
   });
 
-  // wakaru-rs/tests/fixtures/esbuild-gen/src/math.js
+  // src/math.js
   var PI = 3.14159;
   function add(a, b) {
     return a + b;
   }
 
-  // wakaru-rs/tests/fixtures/esbuild-gen/src/greet.js
+  // src/greet.js
   function greet(name) {
     return `Hello, ${name}!`;
   }
 
-  // wakaru-rs/tests/fixtures/esbuild-gen/src/entry-factories.js
+  // src/entry-factories.js
   var import_utils_cjs = __toESM(require_utils_cjs());
   var import_format_cjs = __toESM(require_format_cjs());
   var import_validate_cjs = __toESM(require_validate_cjs());

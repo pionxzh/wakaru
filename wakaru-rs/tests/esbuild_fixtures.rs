@@ -45,6 +45,19 @@ fn module_code<'a>(pairs: &'a [(String, String)], needle: &str) -> &'a str {
         })
 }
 
+fn code_containing<'a>(pairs: &'a [(String, String)], needle: &str) -> &'a str {
+    pairs
+        .iter()
+        .find(|(_, code)| code.contains(needle))
+        .map(|(_, code)| code.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a module containing {needle}, got {:?}",
+                filenames(pairs)
+            )
+        })
+}
+
 #[test]
 fn es_mixed_extracts_factories_scope_modules_and_decompiles() {
     let raw = unpack_fixture_raw("es-mixed/bundle.js");
@@ -202,5 +215,96 @@ fn private_helper_after_export_stays_with_referencing_module() {
     assert!(
         entry.contains("main") && !entry.contains("normalize"),
         "entry should keep main and not absorb utils internals:\n{entry}"
+    );
+}
+
+#[test]
+fn bun_minified_scope_only_bundle_extracts_scope_modules() {
+    let raw = unpack_fixture_raw("bun-scope-only-min/bundle.js");
+    let names = filenames(&raw);
+    let entry = module_code(&raw, "entry");
+
+    assert_eq!(
+        raw.len(),
+        3,
+        "bun-scope-only-min: expected two scope modules plus entry, got {names:?}"
+    );
+    assert!(
+        entry.contains("export") && entry.contains("math") && entry.contains("greet"),
+        "entry should keep Bun namespace exports:\n{entry}"
+    );
+    code_containing(&raw, "3.14159");
+    code_containing(&raw, "Hello");
+}
+
+#[test]
+fn bun_minified_side_effect_stays_with_scope_module() {
+    let raw = unpack_fixture_raw("bun-scope-side-effects-min/bundle.js");
+    let registry = code_containing(&raw, "self");
+    let entry = module_code(&raw, "entry");
+
+    assert!(
+        registry.contains("loaded") && !entry.contains("loaded"),
+        "registry side effect should stay out of entry:\nentry:\n{entry}\nregistry:\n{registry}"
+    );
+}
+
+#[test]
+fn bun_minified_mixed_splits_scope_modules_and_keeps_inlined_cjs_in_entry() {
+    let raw = unpack_fixture_raw("bun-mixed-min/bundle.js");
+    let names = filenames(&raw);
+    let entry = module_code(&raw, "entry");
+
+    assert_eq!(
+        raw.len(),
+        3,
+        "bun-mixed-min: expected math, greet, and entry modules, got {names:?}"
+    );
+    assert!(
+        entry.contains("Math.min") && entry.contains("Object.keys"),
+        "Bun inlines CJS helpers, so they should remain in entry:\n{entry}"
+    );
+    code_containing(&raw, "3.14159");
+    code_containing(&raw, "Hello");
+}
+
+#[test]
+fn bun_minified_single_boundary_splits_with_esm_export_corroboration() {
+    let raw = unpack_fixture_raw("bun-single-boundary-min/bundle.js");
+    let names = filenames(&raw);
+    let entry = module_code(&raw, "entry");
+
+    assert_eq!(
+        raw.len(),
+        2,
+        "bun-single-boundary-min: expected one scope module plus entry, got {names:?}"
+    );
+    assert!(
+        entry.contains("entry initialized") && entry.contains("export"),
+        "entry should keep entry expression and namespace export:\n{entry}"
+    );
+}
+
+#[test]
+fn bun_minified_private_helper_after_export_stays_with_module() {
+    let raw = unpack_fixture_raw("bun-helper-after-export-min/bundle.js");
+    let utils = code_containing(&raw, "Math.abs");
+    let entry = module_code(&raw, "entry");
+
+    assert!(
+        utils.contains("Math.abs") && !entry.contains("Math.abs"),
+        "private helper should stay with Bun utils module:\nentry:\n{entry}\nutils:\n{utils}"
+    );
+}
+
+#[test]
+fn bun_minified_without_namespace_boundaries_remains_single_module() {
+    let raw = unpack_fixture_raw("bun-factories-min/bundle.js");
+
+    assert_eq!(
+        raw.len(),
+        1,
+        "Bun output without namespace export boundaries should pass through, got {:?}",
+        filenames(&raw)
     );
 }

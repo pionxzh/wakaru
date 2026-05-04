@@ -4,7 +4,7 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/math.js
+// src/math.js
 var math_exports = {};
 __export(math_exports, {
   PI: () => PI,
@@ -19,7 +19,7 @@ function multiply(a, b) {
   return a * b;
 }
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/helper.js
+// src/helper.js
 var helper_exports = {};
 __export(helper_exports, {
   average: () => average,
@@ -35,7 +35,7 @@ function average(arr) {
   return total(arr) / arr.length;
 }
 
-// wakaru-rs/tests/fixtures/esbuild-gen/src/entry-private-helper.js
+// src/entry-private-helper.js
 var main = function() {
   return "entry";
 };

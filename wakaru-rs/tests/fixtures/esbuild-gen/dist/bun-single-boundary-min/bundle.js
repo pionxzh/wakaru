@@ -1,0 +1,1 @@
+var i=Object.defineProperty;var p=(o,t)=>{for(var r in t)i(o,r,{get:t[r],enumerable:!0,configurable:!0,set:(e)=>t[r]=()=>e})};var n={};p(n,{multiply:()=>a,add:()=>u,PI:()=>l});var l=3.14159;function u(o,t){return o+t}function a(o,t){return o*t}console.log("entry initialized");export{n as math};
