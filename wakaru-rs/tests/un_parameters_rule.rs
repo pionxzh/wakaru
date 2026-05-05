@@ -8,7 +8,9 @@ fn apply(input: &str) -> String {
 }
 
 fn apply_with_level(input: &str, level: RewriteLevel) -> String {
-    render_rule(input, |_| UnParameters::new(level))
+    render_rule(input, |unresolved_mark| {
+        UnParameters::new(unresolved_mark, level)
+    })
 }
 
 // --- void 0 / undefined guard patterns ---
@@ -62,6 +64,18 @@ function foo(a = 1, b = 2) {
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn shadowed_undefined_guard_stays_in_body() {
+    let input = r#"
+function foo(a) {
+  var undefined = 42;
+  if (a === undefined) a = 1;
+  return a;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]
@@ -190,6 +204,17 @@ function foo(a, b = true) {
 }
 
 #[test]
+fn shadowed_arguments_param_stays_in_body() {
+    let input = r#"
+function foo(arguments) {
+  var b = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 1;
+  return b;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn minimal_does_not_recover_arguments_boolean_presence_default() {
     let input = r#"
 function foo(a) {
@@ -239,6 +264,28 @@ function foo(a, b) {
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn arguments_alias_to_existing_param_name_stays_in_body() {
+    let input = r#"
+function foo(a) {
+  const b = arguments[0];
+  return b;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arguments_default_to_existing_param_name_stays_in_body() {
+    let input = r#"
+function foo(a) {
+  var b = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : 1;
+  return b;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]

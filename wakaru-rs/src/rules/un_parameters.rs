@@ -1,5 +1,5 @@
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignTarget, BinExpr, BinaryOp, BindingIdent,
     BlockStmt, BlockStmtOrExpr, Bool, Decl, Expr, Function, Ident, IfStmt, Lit, MemberExpr,
@@ -10,18 +10,16 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 use super::RewriteLevel;
 
 pub struct UnParameters {
+    unresolved_mark: Mark,
     level: RewriteLevel,
 }
 
 impl UnParameters {
-    pub fn new(level: RewriteLevel) -> Self {
-        Self { level }
-    }
-}
-
-impl Default for UnParameters {
-    fn default() -> Self {
-        Self::new(RewriteLevel::Standard)
+    pub fn new(unresolved_mark: Mark, level: RewriteLevel) -> Self {
+        Self {
+            unresolved_mark,
+            level,
+        }
     }
 }
 
@@ -29,34 +27,44 @@ impl VisitMut for UnParameters {
     fn visit_mut_function(&mut self, func: &mut Function) {
         func.visit_mut_children_with(self);
         if let Some(body) = &mut func.body {
-            process_function_params(&mut func.params, body, self.level);
+            process_function_params(&mut func.params, body, self.level, self.unresolved_mark);
         }
     }
 
     fn visit_mut_arrow_expr(&mut self, expr: &mut ArrowExpr) {
         expr.visit_mut_children_with(self);
         if let BlockStmtOrExpr::BlockStmt(body) = &mut *expr.body {
-            process_arrow_params(&mut expr.params, body, self.level);
+            process_arrow_params(&mut expr.params, body, self.level, self.unresolved_mark);
         }
     }
 }
 
 /// Process Pattern A (TypeScript/Babel simple form) and Pattern B (arguments-based)
 /// for regular functions with Vec<Param>.
-fn process_function_params(params: &mut Vec<Param>, body: &mut BlockStmt, level: RewriteLevel) {
-    process_pattern_a_params(params, body);
+fn process_function_params(
+    params: &mut Vec<Param>,
+    body: &mut BlockStmt,
+    level: RewriteLevel,
+    unresolved_mark: Mark,
+) {
+    process_pattern_a_params(params, body, unresolved_mark);
     if level >= RewriteLevel::Standard {
-        process_pattern_c_params(params, body);
-        process_pattern_b_params(params, body);
-        rewrite_inline_arguments_defaults(params, body);
+        process_pattern_c_params(params, body, unresolved_mark);
+        process_pattern_b_params(params, body, unresolved_mark);
+        rewrite_inline_arguments_defaults(params, body, unresolved_mark);
     }
 }
 
 /// Process Pattern A for arrow functions with Vec<Pat>.
-fn process_arrow_params(params: &mut Vec<Pat>, body: &mut BlockStmt, level: RewriteLevel) {
-    process_pattern_a_arrow_params(params, body);
+fn process_arrow_params(
+    params: &mut Vec<Pat>,
+    body: &mut BlockStmt,
+    level: RewriteLevel,
+    unresolved_mark: Mark,
+) {
+    process_pattern_a_arrow_params(params, body, unresolved_mark);
     if level >= RewriteLevel::Standard {
-        process_pattern_c_arrow_params(params, body);
+        process_pattern_c_arrow_params(params, body, unresolved_mark);
     }
 }
 
@@ -64,14 +72,14 @@ fn process_arrow_params(params: &mut Vec<Pat>, body: &mut BlockStmt, level: Rewr
 // Pattern A: `if (a === void 0) { a = 1; }` → default param
 // ============================================================
 
-fn process_pattern_a_params(params: &mut Vec<Param>, body: &mut BlockStmt) {
+fn process_pattern_a_params(params: &mut Vec<Param>, body: &mut BlockStmt, unresolved_mark: Mark) {
     let mut to_remove: Vec<usize> = Vec::new();
 
     // Only scan first 15 statements
     let scan_limit = body.stmts.len().min(15);
 
     for (stmt_idx, stmt) in body.stmts[..scan_limit].iter().enumerate() {
-        let extracted = extract_default_param_from_if(stmt);
+        let extracted = extract_default_param_from_if(stmt, unresolved_mark);
 
         if let Some((param_name, default_val)) = extracted {
             // Find the matching parameter
@@ -95,13 +103,17 @@ fn process_pattern_a_params(params: &mut Vec<Param>, body: &mut BlockStmt) {
     }
 }
 
-fn process_pattern_a_arrow_params(params: &mut Vec<Pat>, body: &mut BlockStmt) {
+fn process_pattern_a_arrow_params(
+    params: &mut Vec<Pat>,
+    body: &mut BlockStmt,
+    unresolved_mark: Mark,
+) {
     let mut to_remove: Vec<usize> = Vec::new();
 
     let scan_limit = body.stmts.len().min(15);
 
     for (stmt_idx, stmt) in body.stmts[..scan_limit].iter().enumerate() {
-        let extracted = extract_default_param_from_if(stmt);
+        let extracted = extract_default_param_from_if(stmt, unresolved_mark);
 
         if let Some((param_name, default_val)) = extracted {
             if let Some(param_idx) = find_plain_pat_idx(params, &param_name) {
@@ -126,7 +138,7 @@ fn process_pattern_a_arrow_params(params: &mut Vec<Pat>, body: &mut BlockStmt) {
 /// - `if (a === void 0) a = 1;`
 /// - `if (a === void 0) { a = 1; }`
 /// - `if (void 0 === a) a = 1;`  (also handles `undefined`)
-fn extract_default_param_from_if(stmt: &Stmt) -> Option<(Atom, Box<Expr>)> {
+fn extract_default_param_from_if(stmt: &Stmt, unresolved_mark: Mark) -> Option<(Atom, Box<Expr>)> {
     let Stmt::If(IfStmt {
         test, cons, alt, ..
     }) = stmt
@@ -137,7 +149,7 @@ fn extract_default_param_from_if(stmt: &Stmt) -> Option<(Atom, Box<Expr>)> {
         return None;
     }
 
-    let param_name = extract_void0_check(test)?;
+    let param_name = extract_void0_check(test, unresolved_mark)?;
     let default_val = extract_assign_from_cons(cons, &param_name)?;
 
     Some((param_name, default_val))
@@ -146,7 +158,7 @@ fn extract_default_param_from_if(stmt: &Stmt) -> Option<(Atom, Box<Expr>)> {
 /// Check if `expr` is `ident === void 0` or `void 0 === ident`
 /// or `ident === undefined` or `undefined === ident`.
 /// Returns the identifier name if matched.
-fn extract_void0_check(expr: &Expr) -> Option<Atom> {
+fn extract_void0_check(expr: &Expr, unresolved_mark: Mark) -> Option<Atom> {
     let Expr::Bin(BinExpr {
         op, left, right, ..
     }) = expr
@@ -158,13 +170,13 @@ fn extract_void0_check(expr: &Expr) -> Option<Atom> {
     }
 
     // left === void 0 / left === undefined
-    if is_void0_or_undefined(right) {
+    if is_void0_or_undefined(right, unresolved_mark) {
         if let Expr::Ident(id) = left.as_ref() {
             return Some(id.sym.clone());
         }
     }
     // void 0 === right / undefined === right
-    if is_void0_or_undefined(left) {
+    if is_void0_or_undefined(left, unresolved_mark) {
         if let Expr::Ident(id) = right.as_ref() {
             return Some(id.sym.clone());
         }
@@ -173,7 +185,7 @@ fn extract_void0_check(expr: &Expr) -> Option<Atom> {
     None
 }
 
-fn is_void0_or_undefined(expr: &Expr) -> bool {
+fn is_void0_or_undefined(expr: &Expr, unresolved_mark: Mark) -> bool {
     // void 0 (or void <num>)
     if let Expr::Unary(UnaryExpr {
         op: UnaryOp::Void,
@@ -187,11 +199,20 @@ fn is_void0_or_undefined(expr: &Expr) -> bool {
     }
     // undefined identifier
     if let Expr::Ident(id) = expr {
-        if id.sym == "undefined" {
+        if is_undefined_ident(id, unresolved_mark) {
             return true;
         }
     }
     false
+}
+
+fn is_undefined_ident(id: &Ident, unresolved_mark: Mark) -> bool {
+    id.sym.as_ref() == "undefined"
+        && (id.ctxt.outer() == unresolved_mark || id.ctxt == SyntaxContext::empty())
+}
+
+fn is_arguments_ident(id: &Ident, unresolved_mark: Mark) -> bool {
+    id.sym.as_ref() == "arguments" && id.ctxt.outer() == unresolved_mark
 }
 
 /// Extract the assigned default value from the consequent branch.
@@ -237,12 +258,12 @@ fn extract_assign_expr(expr: &Expr, param_name: &Atom) -> Option<Box<Expr>> {
 // Pattern C: `const alias = param === undefined ? {} : param`
 // ============================================================
 
-fn process_pattern_c_params(params: &mut [Param], body: &mut BlockStmt) {
+fn process_pattern_c_params(params: &mut [Param], body: &mut BlockStmt, unresolved_mark: Mark) {
     let scan_limit = body.stmts.len().min(15);
 
     for stmt_idx in 0..scan_limit {
         let Some((param_name, default_val)) =
-            extract_param_object_default_stmt(&body.stmts[stmt_idx])
+            extract_param_object_default_stmt(&body.stmts[stmt_idx], unresolved_mark)
         else {
             break;
         };
@@ -256,12 +277,12 @@ fn process_pattern_c_params(params: &mut [Param], body: &mut BlockStmt) {
     }
 }
 
-fn process_pattern_c_arrow_params(params: &mut [Pat], body: &mut BlockStmt) {
+fn process_pattern_c_arrow_params(params: &mut [Pat], body: &mut BlockStmt, unresolved_mark: Mark) {
     let scan_limit = body.stmts.len().min(15);
 
     for stmt_idx in 0..scan_limit {
         let Some((param_name, default_val)) =
-            extract_param_object_default_stmt(&body.stmts[stmt_idx])
+            extract_param_object_default_stmt(&body.stmts[stmt_idx], unresolved_mark)
         else {
             break;
         };
@@ -276,7 +297,10 @@ fn process_pattern_c_arrow_params(params: &mut [Pat], body: &mut BlockStmt) {
     }
 }
 
-fn extract_param_object_default_stmt(stmt: &Stmt) -> Option<(Atom, Box<Expr>)> {
+fn extract_param_object_default_stmt(
+    stmt: &Stmt,
+    unresolved_mark: Mark,
+) -> Option<(Atom, Box<Expr>)> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
@@ -284,14 +308,17 @@ fn extract_param_object_default_stmt(stmt: &Stmt) -> Option<(Atom, Box<Expr>)> {
         return None;
     }
     let init = var.decls[0].init.as_ref()?;
-    extract_param_object_default_expr(init)
+    extract_param_object_default_expr(init, unresolved_mark)
 }
 
-fn extract_param_object_default_expr(expr: &Expr) -> Option<(Atom, Box<Expr>)> {
+fn extract_param_object_default_expr(
+    expr: &Expr,
+    unresolved_mark: Mark,
+) -> Option<(Atom, Box<Expr>)> {
     let Expr::Cond(cond) = strip_parens(expr) else {
         return None;
     };
-    let param_name = extract_void0_check(cond.test.as_ref())?;
+    let param_name = extract_void0_check(cond.test.as_ref(), unresolved_mark)?;
     if !is_empty_object_literal(cond.cons.as_ref()) {
         return None;
     }
@@ -374,20 +401,26 @@ fn is_ident_named(expr: &Expr, name: &Atom) -> bool {
 // Pattern B: arguments-based default params
 // ============================================================
 
-fn process_pattern_b_params(params: &mut Vec<Param>, body: &mut BlockStmt) {
+fn process_pattern_b_params(params: &mut Vec<Param>, body: &mut BlockStmt, unresolved_mark: Mark) {
     let mut to_remove: Vec<usize> = Vec::new();
 
     // Scan entire body for var declarations matching the arguments pattern
     for (stmt_idx, stmt) in body.stmts.iter().enumerate() {
-        if let Some((param_idx, param_name, default_val)) = extract_arguments_default(stmt) {
-            if ensure_default_param(params, param_idx, param_name, default_val).is_some() {
+        if let Some((param_idx, param_name, default_val)) =
+            extract_arguments_default(stmt, unresolved_mark)
+        {
+            if param_slot_can_use_name(params, param_idx, &param_name)
+                && ensure_default_param(params, param_idx, param_name, default_val).is_some()
+            {
                 to_remove.push(stmt_idx);
             }
             continue;
         }
 
-        if let Some((param_idx, param_name)) = extract_arguments_alias(stmt) {
-            if ensure_plain_param(params, param_idx, param_name).is_some() {
+        if let Some((param_idx, param_name)) = extract_arguments_alias(stmt, unresolved_mark) {
+            if param_slot_can_use_name(params, param_idx, &param_name)
+                && ensure_plain_param(params, param_idx, param_name).is_some()
+            {
                 to_remove.push(stmt_idx);
             }
         }
@@ -401,7 +434,10 @@ fn process_pattern_b_params(params: &mut Vec<Param>, body: &mut BlockStmt) {
 /// Match:
 /// `var name = arguments.length > N && arguments[N] !== undefined ? arguments[N] : defaultVal`
 /// Returns `(param_index, var_name, default_value)` if matched.
-fn extract_arguments_default(stmt: &Stmt) -> Option<(usize, Atom, Box<Expr>)> {
+fn extract_arguments_default(
+    stmt: &Stmt,
+    unresolved_mark: Mark,
+) -> Option<(usize, Atom, Box<Expr>)> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
@@ -418,27 +454,27 @@ fn extract_arguments_default(stmt: &Stmt) -> Option<(usize, Atom, Box<Expr>)> {
     };
     let init = declarator.init.as_ref()?;
 
-    let (param_idx, default_val) = extract_arguments_default_expr(init.as_ref())?;
+    let (param_idx, default_val) = extract_arguments_default_expr(init.as_ref(), unresolved_mark)?;
     Some((param_idx, var_ident.sym.clone(), default_val))
 }
 
 /// Check if `expr` is `arguments.length > N ? arguments[N] : undefined` (simple optional)
-fn extract_simple_arguments_optional(expr: &Expr) -> Option<usize> {
+fn extract_simple_arguments_optional(expr: &Expr, unresolved_mark: Mark) -> Option<usize> {
     let Expr::Cond(cond) = expr else {
         return None;
     };
-    let n = extract_arguments_length_threshold(cond.test.as_ref())?;
-    if !is_arguments_idx(&cond.cons, n) {
+    let n = extract_arguments_length_threshold(cond.test.as_ref(), unresolved_mark)?;
+    if !is_arguments_idx(&cond.cons, n, unresolved_mark) {
         return None;
     }
-    if !is_void0_or_undefined(&cond.alt) {
+    if !is_void0_or_undefined(&cond.alt, unresolved_mark) {
         return None;
     }
     Some(n)
 }
 
 /// Extract index N from `arguments.length > N && arguments[N] !== undefined`
-fn extract_arguments_cond_index(expr: &Expr) -> Option<usize> {
+fn extract_arguments_cond_index(expr: &Expr, unresolved_mark: Mark) -> Option<usize> {
     let expr = strip_parens(expr);
     let Expr::Bin(BinExpr {
         op, left, right, ..
@@ -449,7 +485,7 @@ fn extract_arguments_cond_index(expr: &Expr) -> Option<usize> {
 
     // Handle: `arguments.length > N && arguments[N] !== undefined`
     if *op == BinaryOp::LogicalAnd {
-        let n = extract_arguments_length_threshold(left.as_ref())?;
+        let n = extract_arguments_length_threshold(left.as_ref(), unresolved_mark)?;
 
         // Right side: `arguments[N] !== undefined` or `undefined !== arguments[N]`
         let Expr::Bin(BinExpr {
@@ -465,14 +501,14 @@ fn extract_arguments_cond_index(expr: &Expr) -> Option<usize> {
             return None;
         }
         // arguments[N] !== undefined  OR  undefined !== arguments[N]
-        let args_side = if is_void0_or_undefined(rr) {
+        let args_side = if is_void0_or_undefined(rr, unresolved_mark) {
             rl.as_ref()
-        } else if is_void0_or_undefined(rl) {
+        } else if is_void0_or_undefined(rl, unresolved_mark) {
             rr.as_ref()
         } else {
             return None;
         };
-        if !is_arguments_idx(args_side, n) {
+        if !is_arguments_idx(args_side, n, unresolved_mark) {
             return None;
         }
         return Some(n);
@@ -481,7 +517,7 @@ fn extract_arguments_cond_index(expr: &Expr) -> Option<usize> {
     None
 }
 
-fn extract_arguments_length_threshold(expr: &Expr) -> Option<usize> {
+fn extract_arguments_length_threshold(expr: &Expr, unresolved_mark: Mark) -> Option<usize> {
     let expr = strip_parens(expr);
     let Expr::Bin(BinExpr {
         op, left, right, ..
@@ -490,26 +526,33 @@ fn extract_arguments_length_threshold(expr: &Expr) -> Option<usize> {
         return None;
     };
     match *op {
-        BinaryOp::Gt if is_arguments_length(left.as_ref()) => extract_num_literal(right.as_ref()),
-        BinaryOp::Lt if is_arguments_length(right.as_ref()) => extract_num_literal(left.as_ref()),
+        BinaryOp::Gt if is_arguments_length(left.as_ref(), unresolved_mark) => {
+            extract_num_literal(right.as_ref())
+        }
+        BinaryOp::Lt if is_arguments_length(right.as_ref(), unresolved_mark) => {
+            extract_num_literal(left.as_ref())
+        }
         _ => None,
     }
 }
 
-fn extract_arguments_default_expr(expr: &Expr) -> Option<(usize, Box<Expr>)> {
+fn extract_arguments_default_expr(
+    expr: &Expr,
+    unresolved_mark: Mark,
+) -> Option<(usize, Box<Expr>)> {
     let expr = strip_parens(expr);
-    if let Some(n) = extract_simple_arguments_optional(expr) {
+    if let Some(n) = extract_simple_arguments_optional(expr, unresolved_mark) {
         let _ = n;
         return None;
     }
 
     match expr {
         Expr::Cond(cond) => {
-            let param_idx = extract_arguments_cond_index(cond.test.as_ref())?;
-            if !is_arguments_idx(cond.cons.as_ref(), param_idx) {
+            let param_idx = extract_arguments_cond_index(cond.test.as_ref(), unresolved_mark)?;
+            if !is_arguments_idx(cond.cons.as_ref(), param_idx, unresolved_mark) {
                 return None;
             }
-            if is_void0_or_undefined(cond.alt.as_ref()) {
+            if is_void0_or_undefined(cond.alt.as_ref(), unresolved_mark) {
                 return None;
             }
             Some((param_idx, cond.alt.clone()))
@@ -528,8 +571,8 @@ fn extract_arguments_default_expr(expr: &Expr) -> Option<(usize, Box<Expr>)> {
             else {
                 return None;
             };
-            let param_idx = extract_arguments_cond_index(arg.as_ref())?;
-            if !is_arguments_idx(right.as_ref(), param_idx) {
+            let param_idx = extract_arguments_cond_index(arg.as_ref(), unresolved_mark)?;
+            if !is_arguments_idx(right.as_ref(), param_idx, unresolved_mark) {
                 return None;
             }
             Some((
@@ -544,7 +587,7 @@ fn extract_arguments_default_expr(expr: &Expr) -> Option<(usize, Box<Expr>)> {
     }
 }
 
-fn extract_arguments_alias(stmt: &Stmt) -> Option<(usize, Atom)> {
+fn extract_arguments_alias(stmt: &Stmt, unresolved_mark: Mark) -> Option<(usize, Atom)> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
@@ -556,16 +599,16 @@ fn extract_arguments_alias(stmt: &Stmt) -> Option<(usize, Atom)> {
         return None;
     };
     let init = declarator.init.as_ref()?;
-    let param_idx = extract_arguments_index_expr(init.as_ref())?;
+    let param_idx = extract_arguments_index_expr(init.as_ref(), unresolved_mark)?;
     Some((param_idx, var_ident.sym.clone()))
 }
 
-fn extract_arguments_index_expr(expr: &Expr) -> Option<usize> {
+fn extract_arguments_index_expr(expr: &Expr, unresolved_mark: Mark) -> Option<usize> {
     let expr = strip_parens(expr);
     let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
         return None;
     };
-    if !matches!(obj.as_ref(), Expr::Ident(id) if id.sym == "arguments") {
+    if !matches!(obj.as_ref(), Expr::Ident(id) if is_arguments_ident(id, unresolved_mark)) {
         return None;
     }
     let MemberProp::Computed(computed) = prop else {
@@ -575,22 +618,22 @@ fn extract_arguments_index_expr(expr: &Expr) -> Option<usize> {
 }
 
 /// Check if expr is `arguments.length`
-fn is_arguments_length(expr: &Expr) -> bool {
+fn is_arguments_length(expr: &Expr, unresolved_mark: Mark) -> bool {
     let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
         return false;
     };
-    if !matches!(obj.as_ref(), Expr::Ident(id) if id.sym == "arguments") {
+    if !matches!(obj.as_ref(), Expr::Ident(id) if is_arguments_ident(id, unresolved_mark)) {
         return false;
     }
     matches!(prop, MemberProp::Ident(i) if i.sym == "length")
 }
 
 /// Check if expr is `arguments[N]`
-fn is_arguments_idx(expr: &Expr, n: usize) -> bool {
+fn is_arguments_idx(expr: &Expr, n: usize, unresolved_mark: Mark) -> bool {
     let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
         return false;
     };
-    if !matches!(obj.as_ref(), Expr::Ident(id) if id.sym == "arguments") {
+    if !matches!(obj.as_ref(), Expr::Ident(id) if is_arguments_ident(id, unresolved_mark)) {
         return false;
     }
     let MemberProp::Computed(computed) = prop else {
@@ -655,8 +698,15 @@ fn strip_parens(expr: &Expr) -> &Expr {
     current
 }
 
-fn rewrite_inline_arguments_defaults(params: &mut Vec<Param>, body: &mut BlockStmt) {
-    let mut rewriter = InlineArgumentsDefaultRewriter { params };
+fn rewrite_inline_arguments_defaults(
+    params: &mut Vec<Param>,
+    body: &mut BlockStmt,
+    unresolved_mark: Mark,
+) {
+    let mut rewriter = InlineArgumentsDefaultRewriter {
+        params,
+        unresolved_mark,
+    };
     body.visit_mut_with(&mut rewriter);
 }
 
@@ -673,6 +723,16 @@ fn placeholder_name(idx: usize) -> Atom {
 
 fn is_placeholder(sym: &Atom, idx: usize) -> bool {
     *sym == placeholder_name(idx)
+}
+
+fn param_slot_can_use_name(params: &[Param], idx: usize, preferred_name: &Atom) -> bool {
+    let Some(param) = params.get(idx) else {
+        return true;
+    };
+    let Pat::Ident(binding) = &param.pat else {
+        return false;
+    };
+    binding.id.sym == *preferred_name || is_placeholder(&binding.id.sym, idx)
 }
 
 fn ensure_plain_param(params: &mut Vec<Param>, idx: usize, preferred_name: Atom) -> Option<Ident> {
@@ -722,19 +782,24 @@ fn ensure_default_param(
 
 struct InlineArgumentsDefaultRewriter<'a> {
     params: &'a mut Vec<Param>,
+    unresolved_mark: Mark,
 }
 
 impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
-        let Some((idx, default_val)) = extract_arguments_default_expr(expr) else {
+        let Some((idx, default_val)) = extract_arguments_default_expr(expr, self.unresolved_mark)
+        else {
             return;
         };
 
         let preferred_name = placeholder_name(idx);
-        if let Some(ident) = ensure_default_param(self.params, idx, preferred_name, default_val) {
-            *expr = Expr::Ident(ident);
+        if param_slot_can_use_name(self.params, idx, &preferred_name) {
+            if let Some(ident) = ensure_default_param(self.params, idx, preferred_name, default_val)
+            {
+                *expr = Expr::Ident(ident);
+            }
         }
     }
 

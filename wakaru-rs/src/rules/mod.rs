@@ -504,7 +504,10 @@ fn apply_rules_range_impl(
     // Stage 4: Complex pattern restoration
     run!(UnIife::new(rewrite_level), "UnIife");
     run!(UnConditionals, "UnConditionals");
-    run!(UnParameters::new(rewrite_level), "UnParameters");
+    run!(
+        UnParameters::new(unresolved_mark, rewrite_level),
+        "UnParameters"
+    );
     run!(UnEnum, "UnEnum");
     run!(
         UnJsx::new_with_level(unresolved_mark, rewrite_level),
@@ -541,7 +544,10 @@ fn apply_rules_range_impl(
     run!(UnExportRename, "UnExportRename");
     run!(UnDestructuring, "UnDestructuring");
     // UnDestructuring can expose `param === undefined ? {} : param` initializers.
-    run!(UnParameters::new(rewrite_level), "UnParameters2");
+    run!(
+        UnParameters::new(unresolved_mark, rewrite_level),
+        "UnParameters2"
+    );
     run!(SmartInline::new(rewrite_level), "SmartInline");
     // Second UnIife pass: simplify any (() => expr)() patterns created by SmartInline inlining
     run!(UnIife::new(rewrite_level), "UnIife2");
