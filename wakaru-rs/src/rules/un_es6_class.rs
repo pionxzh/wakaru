@@ -1984,6 +1984,12 @@ impl VisitMut for SuperCallRewriter<'_> {
             _ => {}
         }
     }
+
+    fn visit_mut_function(&mut self, _: &mut Function) {}
+
+    fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
+
+    fn visit_mut_class(&mut self, _: &mut Class) {}
 }
 
 /// Rewrite `(X.__proto__ || Object.getPrototypeOf(X)).apply(this, arguments)` → `super(...arguments)`

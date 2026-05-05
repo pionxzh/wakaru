@@ -112,6 +112,36 @@ class Child extends Animal {
     assert_eq_normalized(&apply(input), expected);
 }
 
+#[test]
+fn test_super_rewrite_skips_nested_function_scope() {
+    let input = r#"
+var Child = (function(e) {
+    _inherits(t, e);
+    function t() {
+        e.call(this);
+        function inner(e) {
+            return e.call(this);
+        }
+        this.inner = inner;
+    }
+    return t;
+}(Base));
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("super()"),
+        "outer constructor super call should be rewritten: {output}"
+    );
+    assert!(
+        output.contains("return e.call(this)"),
+        "nested shadowed e.call(this) must remain unchanged: {output}"
+    );
+    assert!(
+        !output.contains("return super()"),
+        "nested function must not be rewritten to super(): {output}"
+    );
+}
+
 // ============================================================
 // Inheritance via _inherits (Babel)
 // ============================================================
