@@ -2,7 +2,7 @@
 source: tests/webpack4_unpack.rs
 expression: code
 ---
-import { a, b, c, e, f, g, h, j, k, l, m, n, o as o_2, p, q, r, s, t } from "./module-2.js";
+import { a as a_2, b, c, e, f, g, h, j, k, l, m, n, o as o_2, p, q, r, s, t } from "./module-2.js";
 import o, { d } from "./module-10.js";
 export function takeEvery(e, t, ...i) {
     return k(o.b, e, t, ...i);
@@ -26,7 +26,7 @@ export const spawn = r;
 export const join = m;
 export const cancel = f;
 export const select = p;
-export const actionChannel = a;
+export const actionChannel = a_2;
 export const cancelled = g;
 export const flush = j;
 export const getContext = l;

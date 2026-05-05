@@ -31,6 +31,18 @@ fn minimal_does_not_convert_bare_require_to_import() {
 }
 
 #[test]
+fn local_require_binding_not_converted_to_import() {
+    let input = r#"
+function require(x) {
+  return x;
+}
+var foo = require("foo");
+"#;
+    let output = render_pipeline_until(input, "UnEsm");
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn default_require_to_import() {
     let input = "var foo = require('foo');";
     let expected = r#"import foo from "foo";"#;
@@ -125,6 +137,26 @@ fn exports_named_const() {
     let expected = "export const foo = 1;";
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn local_exports_binding_not_converted_to_export() {
+    let input = r#"
+var exports = {};
+exports.foo = 1;
+"#;
+    let output = render_pipeline_until(input, "UnEsm");
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn local_module_binding_not_converted_to_export() {
+    let input = r#"
+var module = { exports: {} };
+module.exports = value;
+"#;
+    let output = render_pipeline_until(input, "UnEsm");
+    assert_eq_normalized(&output, input);
 }
 
 #[test]

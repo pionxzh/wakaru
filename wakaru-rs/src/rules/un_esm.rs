@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
     BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, ExportDefaultExpr, ExportNamedSpecifier,
@@ -17,18 +17,16 @@ use super::rename_utils::{rename_bindings, BindingRename};
 use super::RewriteLevel;
 
 pub struct UnEsm {
+    unresolved_mark: Mark,
     level: RewriteLevel,
 }
 
 impl UnEsm {
-    pub fn new(level: RewriteLevel) -> Self {
-        Self { level }
-    }
-}
-
-impl Default for UnEsm {
-    fn default() -> Self {
-        Self::new(RewriteLevel::Standard)
+    pub fn new(unresolved_mark: Mark, level: RewriteLevel) -> Self {
+        Self {
+            unresolved_mark,
+            level,
+        }
     }
 }
 
@@ -127,8 +125,8 @@ impl VisitMut for UnEsm {
         }
         // Phase 0: split compound `var s = exports.X = expr` →
         //          `var s = expr; exports.X = s;`
-        split_compound_exports(module);
-        rewrite_webpack_export_getters(module);
+        split_compound_exports(module, self.unresolved_mark);
+        rewrite_webpack_export_getters(module, self.unresolved_mark);
         let all_declared_names = collect_all_declared_names(module);
 
         let items = std::mem::take(&mut module.body);
@@ -137,7 +135,7 @@ impl VisitMut for UnEsm {
         let mut classified: Vec<Classified> = Vec::with_capacity(items.len());
 
         for item in items {
-            classified.push(classify_item(item));
+            classified.push(classify_item(item, self.unresolved_mark));
         }
 
         // Phase 2: export dedup
@@ -466,23 +464,31 @@ fn get_or_insert<'a>(
     map.get_mut(&src).unwrap()
 }
 
-fn rewrite_webpack_export_getters(module: &mut Module) {
+fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
     let mut converted_getter_map = false;
     let mut new_body = Vec::with_capacity(module.body.len());
 
     for item in std::mem::take(&mut module.body) {
-        if let Some(exports) = extract_direct_webpack_export_getters(&item) {
-            new_body.extend(exports.into_iter().map(make_exports_assign_item));
+        if let Some(exports) = extract_direct_webpack_export_getters(&item, unresolved_mark) {
+            new_body.extend(
+                exports
+                    .into_iter()
+                    .map(|export| make_exports_assign_item(export, unresolved_mark)),
+            );
             continue;
         }
 
-        if let Some(exports) = extract_webpack_export_getter_iife(&item) {
+        if let Some(exports) = extract_webpack_export_getter_iife(&item, unresolved_mark) {
             converted_getter_map = true;
-            new_body.extend(exports.into_iter().map(make_exports_assign_item));
+            new_body.extend(
+                exports
+                    .into_iter()
+                    .map(|export| make_exports_assign_item(export, unresolved_mark)),
+            );
             continue;
         }
 
-        if converted_getter_map && is_exports_default_compat_block(&item) {
+        if converted_getter_map && is_exports_default_compat_block(&item, unresolved_mark) {
             continue;
         }
 
@@ -492,7 +498,10 @@ fn rewrite_webpack_export_getters(module: &mut Module) {
     module.body = new_body;
 }
 
-fn extract_direct_webpack_export_getters(item: &ModuleItem) -> Option<Vec<(Atom, Ident)>> {
+fn extract_direct_webpack_export_getters(
+    item: &ModuleItem,
+    unresolved_mark: Mark,
+) -> Option<Vec<(Atom, Ident)>> {
     let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
         return None;
     };
@@ -502,10 +511,14 @@ fn extract_direct_webpack_export_getters(item: &ModuleItem) -> Option<Vec<(Atom,
     let Callee::Expr(callee_expr) = &call.callee else {
         return None;
     };
-    if !is_member_expr(callee_expr.as_ref(), "require", "d") {
+    if !is_unresolved_member_expr(callee_expr.as_ref(), "require", "d", unresolved_mark) {
         return None;
     }
-    if !matches!(call.args[0].expr.as_ref(), Expr::Ident(id) if id.sym == "exports") {
+    if call.args.is_empty() {
+        return None;
+    }
+    if !matches!(call.args[0].expr.as_ref(), Expr::Ident(id) if is_unresolved_ident(id, "exports", unresolved_mark))
+    {
         return None;
     }
 
@@ -535,7 +548,10 @@ fn extract_direct_webpack_export_getters(item: &ModuleItem) -> Option<Vec<(Atom,
     None
 }
 
-fn extract_webpack_export_getter_iife(item: &ModuleItem) -> Option<Vec<(Atom, Ident)>> {
+fn extract_webpack_export_getter_iife(
+    item: &ModuleItem,
+    unresolved_mark: Mark,
+) -> Option<Vec<(Atom, Ident)>> {
     let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
         return None;
     };
@@ -557,7 +573,8 @@ fn extract_webpack_export_getter_iife(item: &ModuleItem) -> Option<Vec<(Atom, Id
         return None;
     }
 
-    if !matches!(call.args[0].expr.as_ref(), Expr::Ident(id) if id.sym == "exports") {
+    if !matches!(call.args[0].expr.as_ref(), Expr::Ident(id) if is_unresolved_ident(id, "exports", unresolved_mark))
+    {
         return None;
     }
     let Expr::Object(getter_map) = call.args[1].expr.as_ref() else {
@@ -774,7 +791,7 @@ fn extract_single_return_ident(block: &BlockStmt) -> Option<Ident> {
     Some(id.clone())
 }
 
-fn make_exports_assign_item((name, ident): (Atom, Ident)) -> ModuleItem {
+fn make_exports_assign_item((name, ident): (Atom, Ident), unresolved_mark: Mark) -> ModuleItem {
     ModuleItem::Stmt(Stmt::Expr(ExprStmt {
         span: DUMMY_SP,
         expr: Box::new(Expr::Assign(AssignExpr {
@@ -782,7 +799,10 @@ fn make_exports_assign_item((name, ident): (Atom, Ident)) -> ModuleItem {
             op: AssignOp::Assign,
             left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
                 span: DUMMY_SP,
-                obj: Box::new(Expr::Ident(make_ident("exports".into()))),
+                obj: Box::new(Expr::Ident(make_unresolved_ident(
+                    "exports".into(),
+                    unresolved_mark,
+                ))),
                 prop: MemberProp::Ident(IdentName::new(name, DUMMY_SP)),
             })),
             right: Box::new(Expr::Ident(ident)),
@@ -790,14 +810,14 @@ fn make_exports_assign_item((name, ident): (Atom, Ident)) -> ModuleItem {
     }))
 }
 
-fn is_exports_default_compat_block(item: &ModuleItem) -> bool {
+fn is_exports_default_compat_block(item: &ModuleItem, unresolved_mark: Mark) -> bool {
     let ModuleItem::Stmt(Stmt::If(if_stmt)) = item else {
         return false;
     };
     if if_stmt.alt.is_some() {
         return false;
     }
-    if !is_exports_default_compat_test(if_stmt.test.as_ref()) {
+    if !is_exports_default_compat_test(if_stmt.test.as_ref(), unresolved_mark) {
         return false;
     }
     let Stmt::Block(block) = if_stmt.cons.as_ref() else {
@@ -807,21 +827,21 @@ fn is_exports_default_compat_block(item: &ModuleItem) -> bool {
         return false;
     }
 
-    is_define_esmodule_on_exports_default(&block.stmts[0])
-        && is_object_assign_exports_default_exports(&block.stmts[1])
-        && is_module_exports_default_reassignment(&block.stmts[2])
+    is_define_esmodule_on_exports_default(&block.stmts[0], unresolved_mark)
+        && is_object_assign_exports_default_exports(&block.stmts[1], unresolved_mark)
+        && is_module_exports_default_reassignment(&block.stmts[2], unresolved_mark)
 }
 
-fn is_exports_default_compat_test(expr: &Expr) -> bool {
+fn is_exports_default_compat_test(expr: &Expr, unresolved_mark: Mark) -> bool {
     let Expr::Bin(bin) = strip_expr_parens(expr) else {
         return false;
     };
     bin.op == BinaryOp::LogicalAnd
-        && is_exports_default_type_guard(bin.left.as_ref())
-        && is_exports_default_esmodule_undefined(bin.right.as_ref())
+        && is_exports_default_type_guard(bin.left.as_ref(), unresolved_mark)
+        && is_exports_default_esmodule_undefined(bin.right.as_ref(), unresolved_mark)
 }
 
-fn is_exports_default_type_guard(expr: &Expr) -> bool {
+fn is_exports_default_type_guard(expr: &Expr, unresolved_mark: Mark) -> bool {
     let Expr::Bin(bin) = strip_expr_parens(expr) else {
         return false;
     };
@@ -832,13 +852,17 @@ fn is_exports_default_type_guard(expr: &Expr) -> bool {
         return false;
     };
 
-    is_typeof_exports_default_eq(bin.left.as_ref(), "function")
+    is_typeof_exports_default_eq(bin.left.as_ref(), "function", unresolved_mark)
         && object_and_not_null.op == BinaryOp::LogicalAnd
-        && is_typeof_exports_default_eq(object_and_not_null.left.as_ref(), "object")
-        && is_exports_default_not_null(object_and_not_null.right.as_ref())
+        && is_typeof_exports_default_eq(
+            object_and_not_null.left.as_ref(),
+            "object",
+            unresolved_mark,
+        )
+        && is_exports_default_not_null(object_and_not_null.right.as_ref(), unresolved_mark)
 }
 
-fn is_typeof_exports_default_eq(expr: &Expr, expected: &str) -> bool {
+fn is_typeof_exports_default_eq(expr: &Expr, expected: &str, unresolved_mark: Mark) -> bool {
     let Expr::Bin(bin) = strip_expr_parens(expr) else {
         return false;
     };
@@ -846,51 +870,53 @@ fn is_typeof_exports_default_eq(expr: &Expr, expected: &str) -> bool {
         return false;
     }
     matches!(strip_expr_parens(bin.left.as_ref()), Expr::Unary(unary)
-        if unary.op == UnaryOp::TypeOf && is_exports_default_expr(unary.arg.as_ref()))
+        if unary.op == UnaryOp::TypeOf && is_exports_default_expr(unary.arg.as_ref(), unresolved_mark))
         && matches!(strip_expr_parens(bin.right.as_ref()), Expr::Lit(Lit::Str(s))
             if s.value.as_str() == Some(expected))
 }
 
-fn is_exports_default_not_null(expr: &Expr) -> bool {
+fn is_exports_default_not_null(expr: &Expr, unresolved_mark: Mark) -> bool {
     let Expr::Bin(bin) = strip_expr_parens(expr) else {
         return false;
     };
     bin.op == BinaryOp::NotEqEq
-        && is_exports_default_expr(bin.left.as_ref())
+        && is_exports_default_expr(bin.left.as_ref(), unresolved_mark)
         && matches!(
             strip_expr_parens(bin.right.as_ref()),
             Expr::Lit(Lit::Null(_))
         )
 }
 
-fn is_exports_default_esmodule_undefined(expr: &Expr) -> bool {
+fn is_exports_default_esmodule_undefined(expr: &Expr, unresolved_mark: Mark) -> bool {
     let Expr::Bin(bin) = strip_expr_parens(expr) else {
         return false;
     };
     bin.op == BinaryOp::EqEqEq
-        && is_exports_default_esmodule_expr(bin.left.as_ref())
-        && matches!(strip_expr_parens(bin.right.as_ref()), Expr::Ident(id) if id.sym == "undefined")
+        && is_exports_default_esmodule_expr(bin.left.as_ref(), unresolved_mark)
+        && matches!(strip_expr_parens(bin.right.as_ref()), Expr::Ident(id) if is_undefined_ident(id, unresolved_mark))
 }
 
-fn is_exports_default_esmodule_expr(expr: &Expr) -> bool {
+fn is_exports_default_esmodule_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
     let Expr::Member(member) = strip_expr_parens(expr) else {
         return false;
     };
     matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "__esModule")
-        && is_exports_default_expr(member.obj.as_ref())
+        && is_exports_default_expr(member.obj.as_ref(), unresolved_mark)
 }
 
-fn is_define_esmodule_on_exports_default(stmt: &Stmt) -> bool {
+fn is_define_esmodule_on_exports_default(stmt: &Stmt, unresolved_mark: Mark) -> bool {
     let Some(call) = expr_stmt_call(stmt) else {
         return false;
     };
     let Callee::Expr(callee) = &call.callee else {
         return false;
     };
-    if !is_member_expr(callee.as_ref(), "Object", "defineProperty") || call.args.len() != 3 {
+    if !is_unresolved_member_expr(callee.as_ref(), "Object", "defineProperty", unresolved_mark)
+        || call.args.len() != 3
+    {
         return false;
     }
-    if !is_exports_default_expr(call.args[0].expr.as_ref()) {
+    if !is_exports_default_expr(call.args[0].expr.as_ref(), unresolved_mark) {
         return false;
     }
     if !matches!(call.args[1].expr.as_ref(), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some("__esModule"))
@@ -913,33 +939,35 @@ fn is_define_esmodule_on_exports_default(stmt: &Stmt) -> bool {
     })
 }
 
-fn is_object_assign_exports_default_exports(stmt: &Stmt) -> bool {
+fn is_object_assign_exports_default_exports(stmt: &Stmt, unresolved_mark: Mark) -> bool {
     let Some(call) = expr_stmt_call(stmt) else {
         return false;
     };
     let Callee::Expr(callee) = &call.callee else {
         return false;
     };
-    is_member_expr(callee.as_ref(), "Object", "assign")
+    is_unresolved_member_expr(callee.as_ref(), "Object", "assign", unresolved_mark)
         && call.args.len() == 2
-        && is_exports_default_expr(call.args[0].expr.as_ref())
-        && matches!(call.args[1].expr.as_ref(), Expr::Ident(id) if id.sym == "exports")
+        && is_exports_default_expr(call.args[0].expr.as_ref(), unresolved_mark)
+        && matches!(call.args[1].expr.as_ref(), Expr::Ident(id) if is_unresolved_ident(id, "exports", unresolved_mark))
 }
 
-fn is_module_exports_default_reassignment(stmt: &Stmt) -> bool {
+fn is_module_exports_default_reassignment(stmt: &Stmt, unresolved_mark: Mark) -> bool {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return false;
     };
     let Expr::Assign(assign) = expr.as_ref() else {
         return false;
     };
-    if assign.op != AssignOp::Assign || !is_exports_default_expr(assign.right.as_ref()) {
+    if assign.op != AssignOp::Assign
+        || !is_exports_default_expr(assign.right.as_ref(), unresolved_mark)
+    {
         return false;
     }
     let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
         return false;
     };
-    is_module_exports_member(member)
+    is_module_exports_member(member, unresolved_mark)
 }
 
 fn expr_stmt_call(stmt: &Stmt) -> Option<&CallExpr> {
@@ -952,17 +980,30 @@ fn expr_stmt_call(stmt: &Stmt) -> Option<&CallExpr> {
     Some(call)
 }
 
-fn is_exports_default_expr(expr: &Expr) -> bool {
+fn is_exports_default_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
     let Expr::Member(member) = strip_expr_parens(expr) else {
         return false;
     };
-    matches!(member.obj.as_ref(), Expr::Ident(id) if id.sym == "exports")
+    matches!(member.obj.as_ref(), Expr::Ident(id) if is_unresolved_ident(id, "exports", unresolved_mark))
         && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "default")
 }
 
-fn is_module_exports_member(member: &MemberExpr) -> bool {
-    matches!(member.obj.as_ref(), Expr::Ident(id) if id.sym == "module")
+fn is_module_exports_member(member: &MemberExpr, unresolved_mark: Mark) -> bool {
+    matches!(member.obj.as_ref(), Expr::Ident(id) if is_unresolved_ident(id, "module", unresolved_mark))
         && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "exports")
+}
+
+fn is_unresolved_member_expr(
+    expr: &Expr,
+    object: &str,
+    property: &str,
+    unresolved_mark: Mark,
+) -> bool {
+    let Expr::Member(member) = strip_expr_parens(expr) else {
+        return false;
+    };
+    matches!(member.obj.as_ref(), Expr::Ident(id) if is_unresolved_ident(id, object, unresolved_mark))
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == property)
 }
 
 fn is_member_expr(expr: &Expr, object: &str, property: &str) -> bool {
@@ -1184,14 +1225,14 @@ fn build_dropped_export_side_effect_items(kind: CjsExportKind) -> Vec<ModuleItem
 // Classification helpers
 // ============================================================
 
-fn classify_item(item: ModuleItem) -> Classified {
+fn classify_item(item: ModuleItem, unresolved_mark: Mark) -> Classified {
     match item {
         ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => Classified::ExistingImport(import),
         ModuleItem::Stmt(ref stmt) => {
-            if let Some(kind) = try_classify_cjs_export(stmt) {
+            if let Some(kind) = try_classify_cjs_export(stmt, unresolved_mark) {
                 return Classified::CjsExport { kind };
             }
-            if let Some(kind) = try_classify_cjs_require(stmt) {
+            if let Some(kind) = try_classify_cjs_require(stmt, unresolved_mark) {
                 return Classified::CjsRequire(kind);
             }
             Classified::Keep(item)
@@ -1202,7 +1243,7 @@ fn classify_item(item: ModuleItem) -> Classified {
 
 /// Split compound `var s = exports.X = expr` into `var s = expr; exports.X = s;`
 /// so the normal export classification can handle the extracted `exports.X = s` statement.
-fn split_compound_exports(module: &mut Module) {
+fn split_compound_exports(module: &mut Module, unresolved_mark: Mark) {
     let mut new_body = Vec::with_capacity(module.body.len());
     for item in std::mem::take(&mut module.body) {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(ref var))) = item else {
@@ -1222,7 +1263,9 @@ fn split_compound_exports(module: &mut Module) {
                 new_decls.push(decl.clone());
                 continue;
             };
-            if let Some((export_name, real_init)) = try_extract_exports_assign(init) {
+            if let Some((export_name, real_init)) =
+                try_extract_exports_assign(init, unresolved_mark)
+            {
                 any_split = true;
                 // var s = expr (stripped of exports.X wrapper)
                 new_decls.push(VarDeclarator {
@@ -1237,10 +1280,9 @@ fn split_compound_exports(module: &mut Module) {
                         op: AssignOp::Assign,
                         left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
                             span: DUMMY_SP,
-                            obj: Box::new(Expr::Ident(Ident::new(
+                            obj: Box::new(Expr::Ident(make_unresolved_ident(
                                 "exports".into(),
-                                DUMMY_SP,
-                                binding.id.ctxt,
+                                unresolved_mark,
                             ))),
                             prop: MemberProp::Ident(IdentName::new(export_name, DUMMY_SP)),
                         })),
@@ -1267,7 +1309,7 @@ fn split_compound_exports(module: &mut Module) {
 }
 
 /// Extract `exports.X` from `exports.X = expr`, returning `(X, expr)`.
-fn try_extract_exports_assign(expr: &Expr) -> Option<(Atom, Box<Expr>)> {
+fn try_extract_exports_assign(expr: &Expr, unresolved_mark: Mark) -> Option<(Atom, Box<Expr>)> {
     let Expr::Assign(assign) = expr else {
         return None;
     };
@@ -1280,7 +1322,7 @@ fn try_extract_exports_assign(expr: &Expr) -> Option<(Atom, Box<Expr>)> {
     let Expr::Ident(obj_id) = member.obj.as_ref() else {
         return None;
     };
-    if obj_id.sym.as_ref() != "exports" {
+    if !is_unresolved_ident(obj_id, "exports", unresolved_mark) {
         return None;
     }
     let prop_name = is_ident_prop(&member.prop)?;
@@ -1288,7 +1330,7 @@ fn try_extract_exports_assign(expr: &Expr) -> Option<(Atom, Box<Expr>)> {
 }
 
 /// Try to classify as a CJS export statement
-fn try_classify_cjs_export(stmt: &Stmt) -> Option<CjsExportKind> {
+fn try_classify_cjs_export(stmt: &Stmt, unresolved_mark: Mark) -> Option<CjsExportKind> {
     let Stmt::Expr(expr_stmt) = stmt else {
         return None;
     };
@@ -1306,19 +1348,19 @@ fn try_classify_cjs_export(stmt: &Stmt) -> Option<CjsExportKind> {
     };
 
     // Check if obj is `module.exports` (the member object itself is `module.exports`)
-    if is_module_exports_expr(&member.obj) {
+    if is_module_exports_expr(&member.obj, unresolved_mark) {
         // module.exports.foo = expr
         if let Some(prop) = is_ident_prop(&member.prop) {
             if prop.as_ref() == "default" {
                 // module.exports.default = module.exports → self-ref
-                if is_module_exports_expr(&assign.right) {
+                if is_module_exports_expr(&assign.right, unresolved_mark) {
                     return Some(CjsExportKind::SelfRef);
                 }
                 return Some(CjsExportKind::NamedDefault {
                     expr: assign.right.clone(),
                 });
             }
-            let is_void = is_void_or_undefined(&assign.right);
+            let is_void = is_void_or_undefined(&assign.right, unresolved_mark);
             return Some(CjsExportKind::Named {
                 name: prop,
                 expr: assign.right.clone(),
@@ -1331,7 +1373,7 @@ fn try_classify_cjs_export(stmt: &Stmt) -> Option<CjsExportKind> {
 
     // Check if member is exactly `module.exports` (obj=module, prop=exports)
     if let Expr::Ident(obj_id) = member.obj.as_ref() {
-        if obj_id.sym.as_ref() == "module" {
+        if is_unresolved_ident(obj_id, "module", unresolved_mark) {
             if let MemberProp::Ident(IdentName { sym, .. }) = &member.prop {
                 if sym.as_ref() == "exports" {
                     // module.exports = expr (module.exports as an assignment target)
@@ -1347,14 +1389,14 @@ fn try_classify_cjs_export(stmt: &Stmt) -> Option<CjsExportKind> {
 
     // Check if obj is `exports` identifier
     if let Expr::Ident(obj_id) = member.obj.as_ref() {
-        if obj_id.sym.as_ref() == "exports" {
+        if is_unresolved_ident(obj_id, "exports", unresolved_mark) {
             if let Some(prop) = is_ident_prop(&member.prop) {
                 if prop.as_ref() == "default" {
                     return Some(CjsExportKind::NamedDefault {
                         expr: assign.right.clone(),
                     });
                 }
-                let is_void = is_void_or_undefined(&assign.right);
+                let is_void = is_void_or_undefined(&assign.right, unresolved_mark);
                 return Some(CjsExportKind::Named {
                     name: prop,
                     expr: assign.right.clone(),
@@ -1368,12 +1410,12 @@ fn try_classify_cjs_export(stmt: &Stmt) -> Option<CjsExportKind> {
 }
 
 /// Try to classify as a CJS require statement
-fn try_classify_cjs_require(stmt: &Stmt) -> Option<CjsRequireKind> {
+fn try_classify_cjs_require(stmt: &Stmt, unresolved_mark: Mark) -> Option<CjsRequireKind> {
     match stmt {
         // Bare require: require('foo');
         Stmt::Expr(expr_stmt) => {
             if let Expr::Call(call) = expr_stmt.expr.as_ref() {
-                if let Some(source) = is_require_call(call) {
+                if let Some(source) = is_require_call(call, unresolved_mark) {
                     return Some(CjsRequireKind::Bare { source });
                 }
             }
@@ -1393,14 +1435,14 @@ fn try_classify_cjs_require(stmt: &Stmt) -> Option<CjsRequireKind> {
                     let local = binding.id.clone();
                     // var foo = require('bar')
                     if let Expr::Call(call) = init.as_ref() {
-                        if let Some(source) = is_require_call(call) {
+                        if let Some(source) = is_require_call(call, unresolved_mark) {
                             return Some(CjsRequireKind::Default { local, source });
                         }
                     }
                     // var foo = require('bar').baz or require('bar').default
                     if let Expr::Member(member) = init.as_ref() {
                         if let Expr::Call(call) = member.obj.as_ref() {
-                            if let Some(source) = is_require_call(call) {
+                            if let Some(source) = is_require_call(call, unresolved_mark) {
                                 if let Some(prop) = is_ident_prop(&member.prop) {
                                     if prop.as_ref() == "default" {
                                         return Some(CjsRequireKind::DefaultProp { local, source });
@@ -1422,7 +1464,7 @@ fn try_classify_cjs_require(stmt: &Stmt) -> Option<CjsRequireKind> {
                 Pat::Object(obj_pat) => {
                     // var { a, b: c } = require('foo')
                     if let Expr::Call(call) = init.as_ref() {
-                        if let Some(source) = is_require_call(call) {
+                        if let Some(source) = is_require_call(call, unresolved_mark) {
                             let mut specifiers: Vec<(Atom, Ident)> = Vec::new();
                             for prop in &obj_pat.props {
                                 match prop {
@@ -1478,14 +1520,14 @@ fn extract_binding_ident(pat: &Pat) -> Option<Ident> {
 // ============================================================
 
 /// Check if call is `require('...')` and return the source string
-fn is_require_call(call: &CallExpr) -> Option<String> {
+fn is_require_call(call: &CallExpr, unresolved_mark: Mark) -> Option<String> {
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
     let Expr::Ident(id) = callee.as_ref() else {
         return None;
     };
-    if id.sym.as_ref() != "require" {
+    if !is_unresolved_ident(id, "require", unresolved_mark) {
         return None;
     }
     if call.args.len() != 1 {
@@ -1524,19 +1566,19 @@ fn is_ident_prop(prop: &MemberProp) -> Option<Atom> {
 }
 
 /// Check if expr is `void N` or `undefined`
-fn is_void_or_undefined(expr: &Expr) -> bool {
+fn is_void_or_undefined(expr: &Expr, unresolved_mark: Mark) -> bool {
     match expr {
         Expr::Unary(unary) if unary.op == UnaryOp::Void => true,
-        Expr::Ident(id) if id.sym.as_ref() == "undefined" => true,
+        Expr::Ident(id) if is_undefined_ident(id, unresolved_mark) => true,
         _ => false,
     }
 }
 
 /// Check if expr is `module.exports`
-fn is_module_exports_expr(expr: &Expr) -> bool {
+fn is_module_exports_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
     if let Expr::Member(MemberExpr { obj, prop, .. }) = expr {
         if let Expr::Ident(id) = obj.as_ref() {
-            if id.sym.as_ref() == "module" {
+            if is_unresolved_ident(id, "module", unresolved_mark) {
                 if let MemberProp::Ident(IdentName { sym, .. }) = prop {
                     return sym.as_ref() == "exports";
                 }
@@ -1544,6 +1586,15 @@ fn is_module_exports_expr(expr: &Expr) -> bool {
         }
     }
     false
+}
+
+fn is_unresolved_ident(id: &Ident, name: &str, unresolved_mark: Mark) -> bool {
+    id.sym.as_ref() == name && id.ctxt.outer() == unresolved_mark
+}
+
+fn is_undefined_ident(id: &Ident, unresolved_mark: Mark) -> bool {
+    id.sym.as_ref() == "undefined"
+        && (id.ctxt.outer() == unresolved_mark || id.ctxt == SyntaxContext::empty())
 }
 
 /// Check if a string is a valid JS identifier
@@ -1569,6 +1620,14 @@ fn make_str(value: &str) -> Str {
 
 fn make_ident(sym: Atom) -> Ident {
     Ident::new_no_ctxt(sym, DUMMY_SP)
+}
+
+fn make_unresolved_ident(sym: Atom, unresolved_mark: Mark) -> Ident {
+    Ident::new(
+        sym,
+        DUMMY_SP,
+        SyntaxContext::empty().apply_mark(unresolved_mark),
+    )
 }
 
 fn wtf8_to_string(value: &swc_core::atoms::Wtf8Atom) -> String {

@@ -483,7 +483,7 @@ fn apply_rules_range_impl(
     run!(UnUseStrict, "UnUseStrict");
     run!(UnAssignmentMerging, "UnAssignmentMerging");
     run!(UnWebpackInterop, "UnWebpackInterop");
-    run!(UnEsm::new(rewrite_level), "UnEsm");
+    run!(UnEsm::new(unresolved_mark, rewrite_level), "UnEsm");
 
     // Stage 3: Structural restoration
     run!(UnTemplateLiteral, "UnTemplateLiteral");
