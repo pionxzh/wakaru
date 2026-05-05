@@ -84,6 +84,13 @@ fn standard_transforms_strict_babel_optional_call_from_optional_member() {
 }
 
 #[test]
+fn does_not_transform_optional_call_with_wrong_context() {
+    let input = r#"(_a = te?.getRootNode) === null || _a === void 0 ? void 0 : _a.call(other)"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn standard_transforms_nested_babel_optional_call_from_lowered_optional_member() {
     let input = r#"(_a = (_b = runtime?.plugin) === null || _b === void 0 ? void 0 : _b.createHook) === null || _a === void 0 ? void 0 : _a.call(_b, "payload")"#;
     let expected = r#"runtime?.plugin?.createHook?.("payload")"#;
@@ -103,6 +110,17 @@ this.handle?.close?.();
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_transform_guarded_optional_call_statement_with_wrong_context() {
+    let input = r#"
+if (!((_a = te?.getRootNode) === null || _a === void 0)) {
+  _a.call(other);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]

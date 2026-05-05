@@ -176,7 +176,8 @@ fn build_optional_call_stmt(
     let (context, call_args) = args.split_first()?;
     let callee = match strip_parens(real_rhs) {
         Expr::OptChain(OptChainExpr { base, .. })
-            if matches!(base.as_ref(), OptChainBase::Member(_)) =>
+            if matches!(base.as_ref(), OptChainBase::Member(_))
+                && optional_call_context_matches_base(real_rhs, context.expr.as_ref()) =>
         {
             real_rhs.clone()
         }
@@ -693,8 +694,7 @@ fn recover_babel_optional_call_callee(real_rhs: &Expr, context: &Expr) -> Option
         }
         Expr::OptChain(OptChainExpr { base, .. }) => match base.as_ref() {
             OptChainBase::Member(MemberExpr { obj, .. })
-                if recover_babel_call_context(obj, context).is_some()
-                    || is_babel_temp_expr(context) =>
+                if recover_babel_call_context(obj, context).is_some() =>
             {
                 Some(real_rhs.clone())
             }
@@ -902,13 +902,6 @@ fn is_generated_member_temp_expr(
     let binding_id = (sym.clone(), *ctxt);
     looks_generated_temp_sym(sym)
         && binding_references.get(&binding_id).copied() == Some(expected_references)
-}
-
-fn is_babel_temp_expr(expr: &Expr) -> bool {
-    let Expr::Ident(Ident { sym, .. }) = strip_parens(expr) else {
-        return false;
-    };
-    is_babel_temp_sym(sym)
 }
 
 fn is_babel_temp_sym(sym: &swc_core::atoms::Atom) -> bool {
