@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, ClassExpr,
-    Decl, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier, JSXElementName,
-    JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleItem, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, Stmt, VarDecl, VarDeclKind,
+    Decl, ExportSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier,
+    JSXElementName, JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleExportName, ModuleItem, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName,
+    Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -1035,6 +1036,7 @@ fn value_position_rename_module(module: &mut Module) {
         return;
     }
     let top_level_bindings = collect_top_level_binding_ids(module);
+    let exported_bindings = collect_exported_binding_ids(module);
 
     let mut classifier = ValuePositionClassifier::new(collector.short_bindings);
     module.visit_with(&mut classifier);
@@ -1061,6 +1063,9 @@ fn value_position_rename_module(module: &mut Module) {
             continue;
         }
         let bid = bids.into_iter().next().unwrap();
+        if exported_bindings.contains(&bid) {
+            continue;
+        }
         let target_atom = target.as_str().into();
         let target_exists_in_nested_scope_only = !top_level_names.contains(&target_atom)
             && existing_bindings.contains(target.as_str())
@@ -1126,6 +1131,32 @@ fn collect_top_level_binding_ids(module: &Module) -> HashSet<BindingId> {
                 collect_decl_binding_ids(&export.decl, &mut ids);
             }
             ModuleItem::Stmt(Stmt::Decl(decl)) => collect_decl_binding_ids(decl, &mut ids),
+            _ => {}
+        }
+    }
+    ids
+}
+
+fn collect_exported_binding_ids(module: &Module) -> HashSet<BindingId> {
+    let mut ids = HashSet::new();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(module_decl) = item else {
+            continue;
+        };
+        match module_decl {
+            ModuleDecl::ExportDecl(export) => {
+                collect_decl_binding_ids(&export.decl, &mut ids);
+            }
+            ModuleDecl::ExportNamed(export) => {
+                for specifier in &export.specifiers {
+                    let ExportSpecifier::Named(named) = specifier else {
+                        continue;
+                    };
+                    if let ModuleExportName::Ident(local) = &named.orig {
+                        ids.insert((local.sym.clone(), local.ctxt));
+                    }
+                }
+            }
             _ => {}
         }
     }

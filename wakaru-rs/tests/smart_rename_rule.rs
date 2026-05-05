@@ -773,6 +773,28 @@ const obj = { Foo: r };
 }
 
 #[test]
+fn value_position_skips_exported_decl_binding() {
+    // Renaming an exported declaration changes the public export name.
+    let input = r#"
+export let Jn = "7.50.0";
+const metadata = {
+    version: Jn
+};
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("export let Jn = "),
+        "should not rename exported declaration binding:\n{}",
+        output
+    );
+    assert!(
+        output.contains("version: Jn"),
+        "should keep exported binding references explicit:\n{}",
+        output
+    );
+}
+
+#[test]
 fn value_position_does_not_rename_to_reserved_keyword() {
     // Key `default` is reserved — should either skip or prefix with `_`.
     let input = r#"
