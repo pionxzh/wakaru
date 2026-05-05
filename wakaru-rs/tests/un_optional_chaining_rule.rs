@@ -289,6 +289,20 @@ fn standard_transforms_loose_eq_babel_assignment_member_access() {
 }
 
 #[test]
+fn standard_transforms_declared_loose_eq_babel_assignment_member_access() {
+    let input = r#"
+var _;
+const x = (_ = K.unhoistableHeaders) == null ? undefined : _.has(A);
+"#;
+    let expected = r#"
+var _;
+const x = K.unhoistableHeaders?.has(A);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn does_not_transform_loose_eq_assignment_method_call() {
     let input = r#"const x = (t = obj.getRootNode) == null ? undefined : t.call(obj)"#;
     let output = apply(input);

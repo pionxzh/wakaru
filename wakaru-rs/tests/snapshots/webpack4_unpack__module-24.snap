@@ -130,7 +130,7 @@ MemoryRouter.propTypes = {
     children: u.node
 };
 const R = (e)=>Children.count(e) === 0;
-class N extends Component {
+export class Route extends Component {
     constructor(...i){
         super(...i);
         this.state = {
@@ -208,7 +208,7 @@ class N extends Component {
         return null;
     }
 }
-N.propTypes = {
+Route.propTypes = {
     computedMatch: u.object,
     path: u.string,
     exact: u.bool,
@@ -222,17 +222,16 @@ N.propTypes = {
     ]),
     location: u.object
 };
-N.contextTypes = {
+Route.contextTypes = {
     router: u.shape({
         history: u.object.isRequired,
         route: u.object.isRequired,
         staticContext: u.object
     })
 };
-N.childContextTypes = {
+Route.childContextTypes = {
     router: u.object.isRequired
 };
-export const Route = N;
 const L = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];

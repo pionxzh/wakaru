@@ -7,7 +7,6 @@ import { a } from "./module-9.js";
 import { a as a_3 } from "./module-12.js";
 export { l as e };
 export { c };
-export { p as d };
 export { h as f };
 export const a = {
     type: "@@redux-saga/CHANNEL_END"
@@ -98,7 +97,7 @@ export function b(e = a.fixed()) {
         }
     };
 }
-function p(e, t = a.none(), n) {
+export function d(e, t = a.none(), n) {
     if (arguments.length > 2) {
         h_2(n, q.func, "Invalid match function passed to eventChannel");
     }
@@ -131,7 +130,7 @@ function p(e, t = a.none(), n) {
     };
 }
 function h(e) {
-    const t = p((t)=>e((e)=>{
+    const t = d((t)=>e((e)=>{
             if (e[c_2]) {
                 t(e);
             } else {

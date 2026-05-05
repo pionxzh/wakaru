@@ -486,7 +486,7 @@ fn try_loose_chain_with_assign(
             &tmp_ident_expr,
             uninitialized_bindings,
             binding_references,
-            2,
+            3,
         ) || is_generated_temp_expr(&tmp_ident_expr, binding_references, 2)
             || is_generated_member_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
             || is_nested_optional_chain_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)

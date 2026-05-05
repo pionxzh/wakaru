@@ -126,7 +126,7 @@ export function d(e, t, ...r) {
         }
     }, "q1", `takeLatest(${a(e)}, ${t.name})`);
 }
-function p(e, t, n, ...s) {
+export function f(e, t, n, ...s) {
     let p;
     let h;
     const m = {
@@ -180,8 +180,7 @@ function p(e, t, n, ...s) {
     }, "q1", `throttle(${a(t)}, ${n.name})`);
 }
 export { m as a };
-export { p as f };
 const h = (e)=>`import { ${e} } from 'redux-saga' has been deprecated in favor of import { ${e} } from 'redux-saga/effects'.\nThe latter will not work with yield*, as helper effects are wrapped automatically for you in fork effect.\nTherefore yield ${e} will return task descriptor to your saga and execute next lines of code.`;
 const m = r.n(b, h("takeEvery"));
 export const c = r.n(d, h("takeLatest"));
-export const e = r.n(p, h("throttle"));
+export const e = r.n(f, h("throttle"));

@@ -10,17 +10,11 @@ export { s as c };
 export { f as d };
 export { h as u };
 export { y as h };
-export { E as w };
 export { x as f };
 export { k as l };
-export { T as g };
-export { S as m };
-export { O as j };
 export { C as y };
 export { R as s };
-export { A as p };
 export { L as k };
-export { I as A };
 export { D as i };
 const i = (e)=>`@@redux-saga/${e}`;
 const a = i("TASK");
@@ -106,7 +100,7 @@ export const v = {
         }
     }
 };
-function E(e, t) {
+export function w(e, t) {
     const n = e.indexOf(t);
     if (n >= 0) {
         e.splice(n, 1);
@@ -134,14 +128,14 @@ function k(e = {}) {
     t.promise = n;
     return t;
 }
-function T(e) {
+export function g(e) {
     const t = [];
     for(let n = 0; n < e; n++){
         t.push(k());
     }
     return t;
 }
-function S(e, t = true) {
+export function m(e, t = true) {
     let n;
     const r = new Promise((r)=>{
         n = setTimeout(()=>r(t), e);
@@ -149,7 +143,7 @@ function S(e, t = true) {
     r[c] = ()=>clearTimeout(n);
     return r;
 }
-function O() {
+export function j() {
     let e;
     let t = true;
     let n;
@@ -200,9 +194,9 @@ export function n(e, t) {
     };
 }
 export const z = (e, t)=>`${e} has been deprecated in favor of ${t}, please update your code`;
-const A = (e)=>new Error(`\n  redux-saga: Error checking hooks detected an inconsistent state. This is likely a bug\n  in redux-saga code and not yours. Thanks for reporting this in the project's github repo.\n  Error: ${e}\n`);
+export const p = (e)=>new Error(`\n  redux-saga: Error checking hooks detected an inconsistent state. This is likely a bug\n  in redux-saga code and not yours. Thanks for reporting this in the project's github repo.\n  Error: ${e}\n`);
 const L = (e, t)=>`${e ? `${e}.` : ""}setContext(props): argument ${t} is not a plain object`;
-const I = (e)=>(t)=>e(Object.defineProperty(t, s, {
+export const A = (e)=>(t)=>e(Object.defineProperty(t, s, {
             value: true
         }));
 const D = function e(t) {

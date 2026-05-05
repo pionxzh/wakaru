@@ -3,12 +3,11 @@ source: tests/webpack4_unpack.rs
 expression: code
 ---
 export { a };
-export { u as c };
 const r = [];
 let o = 0;
 function i(e) {
     try {
-        u();
+        c();
         e();
     } finally{
         l();
@@ -17,11 +16,11 @@ function i(e) {
 function a(e) {
     r.push(e);
     if (!o) {
-        u();
+        c();
         b();
     }
 }
-function u() {
+export function c() {
     o++;
 }
 function l() {

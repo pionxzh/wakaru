@@ -230,7 +230,7 @@ export { A as B };
 }
 
 #[test]
-fn renaming_binding_preserves_unrelated_exported_alias_name() {
+fn renames_into_name_freed_by_export_plan() {
     let input = r#"
 const A = (e) => new Error(e);
 const I = (e) => e;
@@ -239,8 +239,72 @@ export { I as A };
 "#;
     let expected = r#"
 export const p = (e) => new Error(e);
-const I = (e) => e;
-export { I as A };
+export const A = (e) => e;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn renames_into_name_freed_by_later_export_plan() {
+    let input = r#"
+const g = {
+    value() {
+        return 1;
+    }
+};
+function T() {
+    return 2;
+}
+export { T as g };
+export { g as q };
+"#;
+    let expected = r#"
+export const q = {
+    value() {
+        return 1;
+    }
+};
+export function g() {
+    return 2;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn resolves_export_alias_chains_to_real_binding() {
+    let input = r#"
+class N {}
+N.propTypes = {};
+const M = N;
+const A = M;
+export { A as Route };
+"#;
+    let expected = r#"
+export class Route {}
+Route.propTypes = {};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn keeps_object_shorthand_after_export_rename() {
+    let input = r#"
+const w = makeAction("push");
+const S = {
+    push: w
+};
+export { w as push };
+export { S as routerActions };
+"#;
+    let expected = r#"
+export const push = makeAction("push");
+export const routerActions = {
+    push
+};
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);

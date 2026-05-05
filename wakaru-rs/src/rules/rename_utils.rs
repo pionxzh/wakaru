@@ -703,6 +703,25 @@ impl VisitMut for BindingRenamer<'_> {
         }
 
         prop.visit_mut_children_with(self);
+
+        if let Prop::KeyValue(kv) = prop {
+            let (PropName::Ident(key), Expr::Ident(value)) = (&kv.key, kv.value.as_ref()) else {
+                return;
+            };
+            if key.sym != value.sym {
+                return;
+            }
+
+            let Prop::KeyValue(kv_owned) =
+                std::mem::replace(prop, Prop::Shorthand(Default::default()))
+            else {
+                unreachable!()
+            };
+            let Expr::Ident(value) = *kv_owned.value else {
+                unreachable!()
+            };
+            *prop = Prop::Shorthand(value);
+        }
     }
 
     fn visit_mut_object_pat_prop(&mut self, prop: &mut ObjectPatProp) {

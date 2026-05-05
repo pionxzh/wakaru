@@ -90,11 +90,11 @@ export const go = g("go");
 export const goBack = g("goBack");
 export const goForward = g("goForward");
 export const routerActions = {
-    push: push,
-    replace: replace,
-    go: go,
-    goBack: goBack,
-    goForward: goForward
+    push,
+    replace,
+    go,
+    goBack,
+    goForward
 };
 export function routerMiddleware(e) {
     return ()=>(t)=>(n)=>{
