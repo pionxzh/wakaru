@@ -346,6 +346,17 @@ use(n);
 }
 
 #[test]
+fn standard_preserves_observed_underscore_temp_assignment() {
+    let input = r#"
+let _a = 0;
+const x = (_a = obj) == null ? undefined : _a.value;
+use(_a);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn aggressive_rewrites_observable_temp_assignment_pattern() {
     let input = r#"
 let n = 0;

@@ -252,6 +252,7 @@ fn try_ternary_optional_chain(
         // Strict Babel lowering references the temp four times:
         // assignment target, null check left/right, and the final access/call.
         if is_standard_temp_expr(&checked, uninitialized_bindings, binding_references, 4)
+            || is_generated_temp_expr(&checked, binding_references, 3)
             // Generated member/nested-chain temps skip the declaration-site proof, so we only
             // require the three references inside the lowered chain itself.
             || is_generated_member_temp_expr(&checked, &real_rhs, binding_references, 3)
@@ -485,7 +486,8 @@ fn try_loose_chain_with_assign(
             uninitialized_bindings,
             binding_references,
             2,
-        ) || is_generated_member_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
+        ) || is_generated_temp_expr(&tmp_ident_expr, binding_references, 2)
+            || is_generated_member_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
             || is_nested_optional_chain_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
         {
             if let Some(chain) = make_optional_chain_replacing(&tmp_ident_expr, real_rhs, access) {
@@ -851,9 +853,21 @@ fn is_standard_temp_expr(
         return false;
     };
     let binding_id = (sym.clone(), *ctxt);
-    is_babel_temp_sym(sym)
-        || (uninitialized_bindings.contains(&binding_id)
-            && binding_references.get(&binding_id).copied() == Some(expected_references))
+    uninitialized_bindings.contains(&binding_id)
+        && binding_references.get(&binding_id).copied() == Some(expected_references)
+}
+
+fn is_generated_temp_expr(
+    checked: &Expr,
+    binding_references: &HashMap<BindingId, usize>,
+    expected_references: usize,
+) -> bool {
+    let Expr::Ident(Ident { sym, ctxt, .. }) = strip_parens(checked) else {
+        return false;
+    };
+    let binding_id = (sym.clone(), *ctxt);
+    looks_generated_temp_sym(sym)
+        && binding_references.get(&binding_id).copied() == Some(expected_references)
 }
 
 fn is_nested_optional_chain_temp_expr(
