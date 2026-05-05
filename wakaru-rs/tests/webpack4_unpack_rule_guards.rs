@@ -1,7 +1,7 @@
 mod common;
 
 use common::normalize;
-use wakaru_rs::{unpack_webpack4, unpack_webpack4_raw};
+use wakaru_rs::{unpack_raw, unpack_webpack4, unpack_webpack4_raw};
 
 fn raw_modules(source: &str) -> Vec<(String, String)> {
     unpack_webpack4_raw(source).expect("raw webpack4 unpack should succeed")
@@ -13,6 +13,44 @@ fn raw_module(source: &str, filename: &str) -> String {
         .find(|(name, _)| name == filename)
         .map(|(_, code)| normalize(&code))
         .unwrap_or_else(|| panic!("expected module {filename} to exist"))
+}
+
+fn cli_raw_module(source: &str, filename: &str) -> String {
+    unpack_raw(source)
+        .expect("raw unpack should succeed")
+        .into_iter()
+        .find(|(name, _)| name == filename)
+        .map(|(_, code)| normalize(&code))
+        .unwrap_or_else(|| panic!("expected module {filename} to exist"))
+}
+
+#[test]
+fn runtime_getter_exports_become_esm_in_unpack_output() {
+    let source = r#"
+!function(modules) {
+  function __webpack_require__(id) {}
+  __webpack_require__.s = 0;
+  __webpack_require__(0);
+}([
+  function(module, exports, require) {
+    require.r(exports);
+    require.d(exports, "$G", function() { return V; });
+    function V(value) {
+      return value;
+    }
+  }
+]);
+"#;
+
+    let code = cli_raw_module(source, "entry.js");
+    assert!(
+        code.contains("export { V as $G }"),
+        "runtime getter export should become ESM:\n{code}"
+    );
+    assert!(
+        !code.contains("exports.$G"),
+        "synthetic exports assignment should not survive:\n{code}"
+    );
 }
 
 #[test]

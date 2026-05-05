@@ -16,7 +16,7 @@ use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
     apply_default_rules_with_level, apply_rules_between_with_level,
     apply_rules_range_with_observer_with_level, apply_rules_until, rule_names, ImportDedup,
-    RewriteLevel, UnImportRename,
+    RewriteLevel, UnEsm, UnImportRename,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::unpack_bundle;
@@ -272,10 +272,27 @@ pub fn unpack_raw(source: &str) -> Result<Vec<(String, String)>> {
         Some(result) => Ok(result
             .modules
             .into_iter()
-            .map(|module| (module.filename, module.code))
+            .map(|module| {
+                let code = normalize_raw_unpacked_module(&module.code, &module.filename)
+                    .unwrap_or(module.code);
+                (module.filename, code)
+            })
             .collect()),
         None => Ok(vec![("module.js".to_string(), source.to_string())]),
     }
+}
+
+fn normalize_raw_unpacked_module(source: &str, filename: &str) -> Result<String> {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let mut module = parse_js(source, filename, cm.clone())?;
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+        module.visit_mut_with(&mut UnEsm::new(unresolved_mark, RewriteLevel::Standard));
+        module.visit_mut_with(&mut fixer(None));
+        print_js(&module, cm)
+    })
 }
 
 /// Multi-module unpack with cross-module late pass.
