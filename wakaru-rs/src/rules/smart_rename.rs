@@ -3,13 +3,16 @@ use std::collections::{HashMap, HashSet};
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, ClassExpr,
-    Decl, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier, KeyValuePatProp, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, ObjectPat, ObjectPatProp, Param, Pat,
-    Prop, PropName, Stmt, VarDecl,
+    Decl, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier, JSXElementName,
+    JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleItem, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::rename_utils::{rename_bindings, rename_bindings_in_module, BindingId, BindingRename};
+use super::rename_utils::{
+    collect_module_names, rename_bindings, rename_bindings_in_module, rename_causes_shadowing,
+    BindingId, BindingRename,
+};
 use super::ObjShorthand;
 
 pub struct SmartRename;
@@ -24,6 +27,7 @@ impl VisitMut for SmartRename {
         // Runs once at the module level; uses (sym, ctxt) matching so nested
         // bindings are classified correctly without per-scope recursion.
         value_position_rename_module(module);
+        jsx_component_alias_rename_module(module);
     }
 
     fn visit_mut_function(&mut self, func: &mut Function) {
@@ -1030,6 +1034,7 @@ fn value_position_rename_module(module: &mut Module) {
     if collector.short_bindings.is_empty() {
         return;
     }
+    let top_level_bindings = collect_top_level_binding_ids(module);
 
     let mut classifier = ValuePositionClassifier::new(collector.short_bindings);
     module.visit_with(&mut classifier);
@@ -1049,21 +1054,29 @@ fn value_position_rename_module(module: &mut Module) {
     }
 
     let existing_bindings = collector.all_binding_names;
+    let top_level_names = collect_module_names(module);
     let mut renames: Vec<BindingRename> = Vec::new();
     for (target, bids) in by_target {
         if bids.len() > 1 {
             continue;
         }
-        // Skip when the target name is already a binding anywhere in the
-        // module. Property keys are not bindings and never block a rename —
-        // we're renaming a value *to* look like its key.
-        if existing_bindings.contains(target.as_str()) {
+        let bid = bids.into_iter().next().unwrap();
+        let target_atom = target.as_str().into();
+        let target_exists_in_nested_scope_only = !top_level_names.contains(&target_atom)
+            && existing_bindings.contains(target.as_str())
+            && top_level_bindings.contains(&bid);
+        // Property keys are not bindings and never block a rename, but real
+        // bindings that would collide in the top-level scope or shadow a use
+        // site still do.
+        if (!target_exists_in_nested_scope_only && existing_bindings.contains(target.as_str()))
+            || top_level_names.contains(&target_atom)
+            || rename_causes_shadowing(module, &bid, &target_atom)
+        {
             continue;
         }
-        let bid = bids.into_iter().next().unwrap();
         renames.push(BindingRename {
             old: bid,
-            new: target.as_str().into(),
+            new: target_atom,
         });
     }
 
@@ -1087,6 +1100,79 @@ impl BindingCollector {
         if id.sym.chars().count() <= REACT_MINIFIED_THRESHOLD {
             self.short_bindings.insert((id.sym.clone(), id.ctxt), ());
         }
+    }
+}
+
+fn collect_top_level_binding_ids(module: &Module) -> HashSet<BindingId> {
+    let mut ids = HashSet::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+                for spec in &import.specifiers {
+                    match spec {
+                        ImportSpecifier::Default(default) => {
+                            ids.insert((default.local.sym.clone(), default.local.ctxt));
+                        }
+                        ImportSpecifier::Named(named) => {
+                            ids.insert((named.local.sym.clone(), named.local.ctxt));
+                        }
+                        ImportSpecifier::Namespace(namespace) => {
+                            ids.insert((namespace.local.sym.clone(), namespace.local.ctxt));
+                        }
+                    }
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                collect_decl_binding_ids(&export.decl, &mut ids);
+            }
+            ModuleItem::Stmt(Stmt::Decl(decl)) => collect_decl_binding_ids(decl, &mut ids),
+            _ => {}
+        }
+    }
+    ids
+}
+
+fn collect_decl_binding_ids(decl: &Decl, ids: &mut HashSet<BindingId>) {
+    match decl {
+        Decl::Var(var) => {
+            for declarator in &var.decls {
+                collect_pat_binding_ids(&declarator.name, ids);
+            }
+        }
+        Decl::Fn(function) => {
+            ids.insert((function.ident.sym.clone(), function.ident.ctxt));
+        }
+        Decl::Class(class) => {
+            ids.insert((class.ident.sym.clone(), class.ident.ctxt));
+        }
+        _ => {}
+    }
+}
+
+fn collect_pat_binding_ids(pat: &Pat, ids: &mut HashSet<BindingId>) {
+    match pat {
+        Pat::Ident(binding) => {
+            ids.insert((binding.id.sym.clone(), binding.id.ctxt));
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_binding_ids(elem, ids);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => collect_pat_binding_ids(&kv.value, ids),
+                    ObjectPatProp::Assign(assign) => {
+                        ids.insert((assign.key.sym.clone(), assign.key.ctxt));
+                    }
+                    ObjectPatProp::Rest(rest) => collect_pat_binding_ids(&rest.arg, ids),
+                }
+            }
+        }
+        Pat::Assign(assign) => collect_pat_binding_ids(&assign.left, ids),
+        Pat::Rest(rest) => collect_pat_binding_ids(&rest.arg, ids),
+        _ => {}
     }
 }
 
@@ -1307,4 +1393,290 @@ fn key_as_ident_target(key: &PropName) -> Option<String> {
         return None;
     }
     Some(raw)
+}
+
+// ============================================================
+// JSX component alias renames
+//
+// SmartInline can leave a post-JSX alias when a lowercase value must be used
+// as a component tag:
+//
+//   const Tm = sideCar;
+//   return <Tm />;
+//
+// If the alias is a const binding and it is only used as a JSX tag, rename the
+// alias from the source value instead of keeping the minified name:
+//
+//   const SideCar = sideCar;
+//   return <SideCar />;
+// ============================================================
+
+fn jsx_component_alias_rename_module(module: &mut Module) {
+    let mut collector = JsxComponentAliasCollector::default();
+    module.visit_with(&mut collector);
+    if collector.aliases.is_empty() {
+        return;
+    }
+
+    let mut classifier = JsxComponentAliasClassifier::new(collector.aliases);
+    module.visit_with(&mut classifier);
+
+    let mut renames = Vec::new();
+    for (bid, state) in classifier.states {
+        if state.other_uses > 0 || state.jsx_uses == 0 {
+            continue;
+        }
+        if collector.all_binding_names.contains(state.target.as_str()) {
+            continue;
+        }
+        renames.push(BindingRename {
+            old: bid,
+            new: state.target.into(),
+        });
+    }
+
+    rename_bindings_in_module(module, &renames);
+}
+
+#[derive(Default)]
+struct JsxComponentAliasCollector {
+    aliases: HashMap<BindingId, String>,
+    all_binding_names: HashSet<String>,
+}
+
+impl JsxComponentAliasCollector {
+    fn record_binding_name(&mut self, id: &Ident) {
+        self.all_binding_names.insert(id.sym.to_string());
+    }
+
+    fn collect_pat_names(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(binding) => self.record_binding_name(&binding.id),
+            Pat::Array(array) => {
+                for elem in array.elems.iter().flatten() {
+                    self.collect_pat_names(elem);
+                }
+            }
+            Pat::Object(object) => {
+                for prop in &object.props {
+                    match prop {
+                        ObjectPatProp::KeyValue(kv) => self.collect_pat_names(&kv.value),
+                        ObjectPatProp::Assign(assign) => self.record_binding_name(&assign.key),
+                        ObjectPatProp::Rest(rest) => self.collect_pat_names(&rest.arg),
+                    }
+                }
+            }
+            Pat::Assign(assign) => self.collect_pat_names(&assign.left),
+            Pat::Rest(rest) => self.collect_pat_names(&rest.arg),
+            _ => {}
+        }
+    }
+}
+
+impl Visit for JsxComponentAliasCollector {
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        self.record_binding_name(&decl.ident);
+        decl.function.visit_with(self);
+    }
+
+    fn visit_class_decl(&mut self, decl: &ClassDecl) {
+        self.record_binding_name(&decl.ident);
+        decl.class.visit_with(self);
+    }
+
+    fn visit_import_decl(&mut self, decl: &ImportDecl) {
+        for spec in &decl.specifiers {
+            match spec {
+                ImportSpecifier::Default(default) => self.record_binding_name(&default.local),
+                ImportSpecifier::Named(named) => self.record_binding_name(&named.local),
+                ImportSpecifier::Namespace(namespace) => self.record_binding_name(&namespace.local),
+            }
+        }
+    }
+
+    fn visit_var_decl(&mut self, decl: &VarDecl) {
+        for declarator in &decl.decls {
+            self.collect_pat_names(&declarator.name);
+            if decl.kind != VarDeclKind::Const {
+                continue;
+            }
+            let Pat::Ident(binding) = &declarator.name else {
+                continue;
+            };
+            if binding.id.sym.chars().count() > REACT_MINIFIED_THRESHOLD {
+                continue;
+            }
+            let Some(Expr::Ident(source)) = declarator.init.as_deref() else {
+                continue;
+            };
+            if !starts_with_lowercase(source.sym.as_ref()) {
+                continue;
+            }
+            let target = pascalize(source.sym.as_ref());
+            if target == binding.id.sym.as_ref() {
+                continue;
+            }
+            self.aliases
+                .insert((binding.id.sym.clone(), binding.id.ctxt), target);
+        }
+
+        decl.visit_children_with(self);
+    }
+}
+
+struct JsxComponentAliasState {
+    target: String,
+    jsx_uses: usize,
+    other_uses: usize,
+}
+
+struct JsxComponentAliasClassifier {
+    states: HashMap<BindingId, JsxComponentAliasState>,
+}
+
+impl JsxComponentAliasClassifier {
+    fn new(aliases: HashMap<BindingId, String>) -> Self {
+        let states = aliases
+            .into_iter()
+            .map(|(bid, target)| {
+                (
+                    bid,
+                    JsxComponentAliasState {
+                        target,
+                        jsx_uses: 0,
+                        other_uses: 0,
+                    },
+                )
+            })
+            .collect();
+        Self { states }
+    }
+
+    fn record_jsx_use(&mut self, ident: &Ident) {
+        let bid = (ident.sym.clone(), ident.ctxt);
+        if let Some(state) = self.states.get_mut(&bid) {
+            state.jsx_uses += 1;
+        }
+    }
+
+    fn record_other_use(&mut self, ident: &Ident) {
+        let bid = (ident.sym.clone(), ident.ctxt);
+        if let Some(state) = self.states.get_mut(&bid) {
+            state.other_uses += 1;
+        }
+    }
+
+    fn visit_binding_pat_defaults(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Array(array) => {
+                for elem in array.elems.iter().flatten() {
+                    self.visit_binding_pat_defaults(elem);
+                }
+            }
+            Pat::Object(object) => {
+                for prop in &object.props {
+                    match prop {
+                        ObjectPatProp::KeyValue(kv) => self.visit_binding_pat_defaults(&kv.value),
+                        ObjectPatProp::Assign(assign) => {
+                            if let Some(default) = &assign.value {
+                                default.visit_with(self);
+                            }
+                        }
+                        ObjectPatProp::Rest(rest) => self.visit_binding_pat_defaults(&rest.arg),
+                    }
+                }
+            }
+            Pat::Assign(assign) => {
+                self.visit_binding_pat_defaults(&assign.left);
+                assign.right.visit_with(self);
+            }
+            Pat::Rest(rest) => self.visit_binding_pat_defaults(&rest.arg),
+            Pat::Expr(expr) => expr.visit_with(self),
+            Pat::Ident(_) | Pat::Invalid(_) => {}
+        }
+    }
+}
+
+impl Visit for JsxComponentAliasClassifier {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.record_other_use(ident);
+    }
+
+    fn visit_jsx_element_name(&mut self, name: &JSXElementName) {
+        match name {
+            JSXElementName::Ident(ident) => self.record_jsx_use(ident),
+            JSXElementName::JSXMemberExpr(member) => self.visit_jsx_member_expr(member),
+            JSXElementName::JSXNamespacedName(_) => {}
+        }
+    }
+
+    fn visit_jsx_member_expr(&mut self, member: &JSXMemberExpr) {
+        match &member.obj {
+            JSXObject::Ident(ident) => self.record_other_use(ident),
+            JSXObject::JSXMemberExpr(member) => self.visit_jsx_member_expr(member),
+        }
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &swc_core::ecma::ast::VarDeclarator) {
+        self.visit_binding_pat_defaults(&declarator.name);
+        if let Some(init) = &declarator.init {
+            init.visit_with(self);
+        }
+    }
+
+    fn visit_pat(&mut self, pat: &Pat) {
+        self.visit_binding_pat_defaults(pat);
+    }
+
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        decl.function.visit_with(self);
+    }
+
+    fn visit_class_decl(&mut self, decl: &ClassDecl) {
+        decl.class.visit_with(self);
+    }
+
+    fn visit_import_decl(&mut self, _: &ImportDecl) {}
+
+    fn visit_prop_name(&mut self, name: &PropName) {
+        if let PropName::Computed(computed) = name {
+            computed.expr.visit_with(self);
+        }
+    }
+
+    fn visit_member_prop(&mut self, prop: &MemberProp) {
+        if let MemberProp::Computed(computed) = prop {
+            computed.expr.visit_with(self);
+        }
+    }
+}
+
+fn pascalize(input: &str) -> String {
+    let mut output = String::new();
+    let mut capitalize = true;
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if capitalize {
+                output.extend(ch.to_uppercase());
+                capitalize = false;
+            } else {
+                output.push(ch);
+            }
+        } else {
+            capitalize = true;
+        }
+    }
+    if output.is_empty() {
+        "Component".to_string()
+    } else {
+        output
+    }
+}
+
+fn starts_with_lowercase(value: &str) -> bool {
+    value
+        .chars()
+        .next()
+        .map(|ch| ch.is_ascii_lowercase())
+        .unwrap_or(false)
 }

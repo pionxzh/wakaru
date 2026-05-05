@@ -8,6 +8,40 @@ fn apply(input: &str) -> String {
 }
 
 #[test]
+fn jsx_component_alias_uses_source_name() {
+    let input = r#"
+function render(U) {
+  const { sideCar } = U;
+  const Tm = sideCar;
+  return <Tm sideCar={medium} />;
+}
+"#;
+    let expected = r#"
+function render(U) {
+  const { sideCar } = U;
+  const SideCar = sideCar;
+  return <SideCar sideCar={medium} />;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn jsx_component_alias_keeps_other_uses() {
+    let input = r#"
+function render(U) {
+  const { sideCar } = U;
+  const Tm = sideCar;
+  use(Tm);
+  return <Tm sideCar={medium} />;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn object_destructuring_rename_shorthand() {
     // { key: alias } where alias ≤2 chars → rename alias→key and convert to shorthand
     let input = r#"
@@ -638,6 +672,45 @@ use(error);
     assert!(
         output.contains("(t)"),
         "t should not be renamed when target binding exists:\n{}",
+        output
+    );
+}
+
+#[test]
+fn value_position_allows_target_name_in_unrelated_inner_scope() {
+    let input = r#"
+const tW = makeSideCar();
+const obj = { sideCar: tW };
+function render(U) {
+    const { sideCar } = U;
+    return sideCar;
+}
+"#;
+    let expected = r#"
+const sideCar = makeSideCar();
+const obj = { sideCar };
+function render(U) {
+    const { sideCar } = U;
+    return sideCar;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn value_position_skips_when_target_would_shadow_use() {
+    let input = r#"
+const tW = makeSideCar();
+function render(U) {
+    const { sideCar } = U;
+    return { sideCar: tW };
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("const tW = makeSideCar()"),
+        "rename would be captured by inner sideCar binding:\n{}",
         output
     );
 }

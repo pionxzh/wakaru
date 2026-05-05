@@ -152,6 +152,24 @@ function Foo() {}
 }
 
 #[test]
+fn renames_lowercase_member_alias_component_from_property_name() {
+    let input = r#"
+function render(U) {
+  const tm = U.sideCar;
+  return React.createElement(tm, null);
+}
+"#;
+    let expected = r#"
+function render(U) {
+  const SideCar = U.sideCar;
+  return <SideCar />;
+}
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
 fn renames_components_from_display_name() {
     let input = r#"
 var t = () => React.createElement("div", null);

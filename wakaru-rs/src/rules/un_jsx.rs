@@ -689,7 +689,7 @@ fn collect_lowercase_component_renames_from_stmts(
 struct LowercaseComponentRenameCollector<'a> {
     unresolved_mark: Mark,
     used_names: &'a mut HashSet<String>,
-    eligible_bindings: HashSet<BindingId>,
+    eligible_bindings: HashMap<BindingId, Option<String>>,
     renames: Vec<ScopedRename>,
 }
 
@@ -707,10 +707,14 @@ impl Visit for LowercaseComponentRenameCollector<'_> {
                         && ident.ctxt.outer() != self.unresolved_mark
                         && self
                             .eligible_bindings
-                            .contains(&(ident.sym.clone(), ident.ctxt))
+                            .contains_key(&(ident.sym.clone(), ident.ctxt))
                     {
-                        let new_name =
-                            generate_unique_name(self.used_names, pascalize(ident.sym.as_ref()));
+                        let target_name = self
+                            .eligible_bindings
+                            .get(&(ident.sym.clone(), ident.ctxt))
+                            .and_then(Clone::clone)
+                            .unwrap_or_else(|| pascalize(ident.sym.as_ref()));
+                        let new_name = generate_unique_name(self.used_names, target_name);
                         self.renames.push(ScopedRename {
                             old: (ident.sym.clone(), ident.ctxt),
                             new: new_name.into(),
@@ -747,35 +751,30 @@ impl VisitMut for ScopedRenamer {
 
 #[derive(Default)]
 struct EligibleComponentBindingCollector {
-    bindings: HashSet<BindingId>,
+    bindings: HashMap<BindingId, Option<String>>,
     include_all_const_bindings: bool,
 }
 
 impl Visit for EligibleComponentBindingCollector {
     fn visit_fn_decl(&mut self, decl: &swc_core::ecma::ast::FnDecl) {
-        self.bindings
-            .insert((decl.ident.sym.clone(), decl.ident.ctxt));
+        self.record(&decl.ident, None);
     }
 
     fn visit_class_decl(&mut self, decl: &swc_core::ecma::ast::ClassDecl) {
-        self.bindings
-            .insert((decl.ident.sym.clone(), decl.ident.ctxt));
+        self.record(&decl.ident, None);
     }
 
     fn visit_import_decl(&mut self, decl: &ImportDecl) {
         for specifier in &decl.specifiers {
             match specifier {
                 ImportSpecifier::Named(named) => {
-                    self.bindings
-                        .insert((named.local.sym.clone(), named.local.ctxt));
+                    self.record(&named.local, None);
                 }
                 ImportSpecifier::Default(default) => {
-                    self.bindings
-                        .insert((default.local.sym.clone(), default.local.ctxt));
+                    self.record(&default.local, None);
                 }
                 ImportSpecifier::Namespace(namespace) => {
-                    self.bindings
-                        .insert((namespace.local.sym.clone(), namespace.local.ctxt));
+                    self.record(&namespace.local, None);
                 }
             }
         }
@@ -792,7 +791,15 @@ impl Visit for EligibleComponentBindingCollector {
                 continue;
             }
             if declarator.init.is_some() {
-                self.add_pat(&declarator.name);
+                if let Pat::Ident(binding) = &declarator.name {
+                    let hint = declarator
+                        .init
+                        .as_deref()
+                        .and_then(component_name_hint_from_expr);
+                    self.record(&binding.id, hint);
+                } else {
+                    self.add_pat(&declarator.name);
+                }
             }
         }
     }
@@ -813,6 +820,10 @@ impl Visit for EligibleComponentBindingCollector {
 }
 
 impl EligibleComponentBindingCollector {
+    fn record(&mut self, ident: &Ident, hint: Option<String>) {
+        self.bindings.insert((ident.sym.clone(), ident.ctxt), hint);
+    }
+
     fn add_param(&mut self, param: &Param) {
         self.add_pat(&param.pat);
     }
@@ -820,8 +831,7 @@ impl EligibleComponentBindingCollector {
     fn add_pat(&mut self, pat: &Pat) {
         match pat {
             Pat::Ident(binding) => {
-                self.bindings
-                    .insert((binding.id.sym.clone(), binding.id.ctxt));
+                self.record(&binding.id, None);
             }
             Pat::Array(array) => {
                 for elem in array.elems.iter().flatten() {
@@ -832,8 +842,7 @@ impl EligibleComponentBindingCollector {
                 for prop in &object.props {
                     match prop {
                         swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
-                            self.bindings
-                                .insert((assign.key.sym.clone(), assign.key.ctxt));
+                            self.record(&assign.key, None);
                         }
                         swc_core::ecma::ast::ObjectPatProp::KeyValue(key_value) => {
                             self.add_pat(&key_value.value);
@@ -853,16 +862,29 @@ impl EligibleComponentBindingCollector {
 
 fn collect_eligible_component_bindings_from_module_items(
     items: &[ModuleItem],
-) -> HashSet<BindingId> {
+) -> HashMap<BindingId, Option<String>> {
     let mut collector = EligibleComponentBindingCollector::default();
     items.visit_with(&mut collector);
     collector.bindings
 }
 
-fn collect_eligible_component_bindings_from_stmts(stmts: &[Stmt]) -> HashSet<BindingId> {
+fn collect_eligible_component_bindings_from_stmts(
+    stmts: &[Stmt],
+) -> HashMap<BindingId, Option<String>> {
     let mut collector = EligibleComponentBindingCollector::default();
     stmts.visit_with(&mut collector);
     collector.bindings
+}
+
+fn component_name_hint_from_expr(expr: &Expr) -> Option<String> {
+    let Expr::Member(member) = expr else {
+        return None;
+    };
+    let MemberProp::Ident(prop) = &member.prop else {
+        return None;
+    };
+    let name = prop.sym.as_ref();
+    starts_with_lowercase(name).then(|| pascalize(name))
 }
 
 fn get_pragma(callee: &Callee) -> Option<&'static str> {
