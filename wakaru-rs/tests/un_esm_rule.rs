@@ -162,6 +162,20 @@ exports.foo = 1;
 }
 
 #[test]
+fn export_dedup_preserves_dropped_rhs_evaluation() {
+    let input = r#"
+exports.foo = sideEffect1();
+exports.foo = sideEffect2();
+"#;
+    let expected = r#"
+sideEffect1();
+export const foo = sideEffect2();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn non_top_level_require_unchanged() {
     // VarDeclToLetConst converts var to const since bar is never reassigned.
     let input = r#"

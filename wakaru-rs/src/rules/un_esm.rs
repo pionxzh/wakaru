@@ -439,7 +439,7 @@ impl VisitMut for UnEsm {
                 Classified::CjsRequire(_) => {}     // skip, replaced by import
                 Classified::CjsExport { kind } => {
                     if drop_set.contains(&idx) {
-                        // drop
+                        new_body.extend(build_dropped_export_side_effect_items(kind));
                     } else {
                         new_body.extend(build_export_items(kind));
                     }
@@ -1160,6 +1160,24 @@ fn build_export_items(kind: CjsExportKind) -> Vec<ModuleItem> {
         CjsExportKind::Named { is_void: true, .. } => vec![], // should have been dropped
         CjsExportKind::SelfRef => vec![],
     }
+}
+
+fn build_dropped_export_side_effect_items(kind: CjsExportKind) -> Vec<ModuleItem> {
+    let expr = match kind {
+        CjsExportKind::ModuleExportsDefault { expr }
+        | CjsExportKind::NamedDefault { expr }
+        | CjsExportKind::Named {
+            expr,
+            is_void: false,
+            ..
+        } => expr,
+        CjsExportKind::Named { is_void: true, .. } | CjsExportKind::SelfRef => return vec![],
+    };
+
+    vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr,
+    }))]
 }
 
 // ============================================================
