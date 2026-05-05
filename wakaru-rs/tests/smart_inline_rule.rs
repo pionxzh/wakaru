@@ -265,6 +265,28 @@ if (Ju !== null) {
 }
 
 #[test]
+fn no_inline_ident_snapshot_across_side_effectful_call() {
+    let input = r#"
+let foo = 1;
+function mutate() {
+    foo = 2;
+}
+const t = foo;
+mutate();
+returnValue(t);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("const t = foo"),
+        "temp snapshot must remain across side-effectful call: {output}"
+    );
+    assert!(
+        output.contains("returnValue(t)"),
+        "use should still reference the temp snapshot: {output}"
+    );
+}
+
+#[test]
 fn no_inline_when_source_ident_reassigned_in_finally() {
     // Pattern: var n = Nu; Nu = ku; ... finally { (Nu = n) === xu }
     // n captures old Nu before mutation — must not inline to Nu
@@ -289,6 +311,25 @@ bar(t);
 "#;
     let expected = r#"
 bar(foo);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn inline_ident_snapshot_across_unrelated_local_assignment() {
+    let input = r#"
+function f() {
+  const t = foo;
+  flag = true;
+  return t;
+}
+"#;
+    let expected = r#"
+function f() {
+  flag = true;
+  return foo;
+}
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);

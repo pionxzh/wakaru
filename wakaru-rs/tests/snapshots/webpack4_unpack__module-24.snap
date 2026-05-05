@@ -130,7 +130,7 @@ MemoryRouter.propTypes = {
     children: u.node
 };
 const R = (e)=>Children.count(e) === 0;
-export class Route extends Component {
+class N extends Component {
     constructor(...i){
         super(...i);
         this.state = {
@@ -208,7 +208,7 @@ export class Route extends Component {
         return null;
     }
 }
-Route.propTypes = {
+N.propTypes = {
     computedMatch: u.object,
     path: u.string,
     exact: u.bool,
@@ -222,16 +222,17 @@ Route.propTypes = {
     ]),
     location: u.object
 };
-Route.contextTypes = {
+N.contextTypes = {
     router: u.shape({
         history: u.object.isRequired,
         route: u.object.isRequired,
         staticContext: u.object
     })
 };
-Route.childContextTypes = {
+N.childContextTypes = {
     router: u.object.isRequired
 };
+export const Route = N;
 const L = Object.assign || function(e) {
     for(let t = 1; t < arguments.length; t++){
         const n = arguments[t];
@@ -247,7 +248,7 @@ export const NavLink = (e)=>{
     const { to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, "aria-current": aria_current, ...rest } = e;
     const p = (to === undefined ? "undefined" : typeof to) === "object" ? to.pathname : to;
     const h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
-    return <A path={h} exact={exact} strict={strict} location={location} children={(e)=>{
+    return <Route path={h} exact={exact} strict={strict} location={location} children={(e)=>{
         const { location, match } = e;
         const o = !!(isActive ? isActive(match, location) : match);
         return <Link {...L({

@@ -491,7 +491,7 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
         .into_iter()
         .filter(|(name, init)| {
             if let Expr::Ident(src_id) = init.as_ref() {
-                !is_ident_mutated_after_def(&src_id.sym, name, &stmts)
+                is_ident_alias_safe_to_inline(&src_id.sym, name, &stmts)
             } else {
                 true
             }
@@ -523,6 +523,116 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
     }
 
     result
+}
+
+fn is_ident_alias_safe_to_inline(src_sym: &Atom, temp_name: &Atom, stmts: &[Stmt]) -> bool {
+    if is_ident_mutated_after_def(src_sym, temp_name, stmts) {
+        return false;
+    }
+
+    let Some((def_idx, use_idx)) = find_def_and_single_use_stmt(temp_name, stmts) else {
+        return false;
+    };
+    if use_idx <= def_idx + 1 {
+        return true;
+    }
+
+    !stmts[def_idx + 1..use_idx]
+        .iter()
+        .any(stmt_has_top_level_side_effect)
+}
+
+fn find_def_and_single_use_stmt(temp_name: &Atom, stmts: &[Stmt]) -> Option<(usize, usize)> {
+    let def_idx = stmts.iter().position(|s| {
+        if let Stmt::Decl(Decl::Var(var)) = s {
+            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
+                if let Pat::Ident(bi) = &var.decls[0].name {
+                    return &bi.id.sym == temp_name;
+                }
+            }
+        }
+        false
+    })?;
+
+    let mut use_idx = None;
+    for (idx, stmt) in stmts.iter().enumerate() {
+        if idx == def_idx {
+            continue;
+        }
+        let mut counts = HashMap::new();
+        counts.insert(temp_name.clone(), 0);
+        count_top_level_ident_uses_in_stmt(stmt, &mut counts);
+        let count = counts.get(temp_name).copied().unwrap_or(0);
+        if count > 0 {
+            if use_idx.is_some() || count > 1 {
+                return None;
+            }
+            use_idx = Some(idx);
+        }
+    }
+
+    Some((def_idx, use_idx?))
+}
+
+fn stmt_has_top_level_side_effect(stmt: &Stmt) -> bool {
+    use swc_core::ecma::ast::{
+        AssignExpr, AssignTarget, AwaitExpr, CallExpr, NewExpr, SimpleAssignTarget, UnaryExpr,
+        UpdateExpr,
+    };
+
+    struct SideEffectFinder {
+        found: bool,
+    }
+
+    impl Visit for SideEffectFinder {
+        fn visit_call_expr(&mut self, _: &CallExpr) {
+            self.found = true;
+        }
+
+        fn visit_new_expr(&mut self, _: &NewExpr) {
+            self.found = true;
+        }
+
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if !matches!(
+                &assign.left,
+                AssignTarget::Simple(SimpleAssignTarget::Ident(_))
+            ) {
+                self.found = true;
+            }
+            assign.right.visit_with(self);
+        }
+
+        fn visit_update_expr(&mut self, update: &UpdateExpr) {
+            if !matches!(update.arg.as_ref(), Expr::Ident(_)) {
+                self.found = true;
+            }
+        }
+
+        fn visit_await_expr(&mut self, _: &AwaitExpr) {
+            self.found = true;
+        }
+
+        fn visit_yield_expr(&mut self, _: &swc_core::ecma::ast::YieldExpr) {
+            self.found = true;
+        }
+
+        fn visit_unary_expr(&mut self, unary: &UnaryExpr) {
+            if unary.op == swc_core::ecma::ast::UnaryOp::Delete {
+                self.found = true;
+            } else {
+                unary.visit_children_with(self);
+            }
+        }
+
+        fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+        fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+        fn visit_class(&mut self, _: &swc_core::ecma::ast::Class) {}
+    }
+
+    let mut finder = SideEffectFinder { found: false };
+    stmt.visit_with(&mut finder);
+    finder.found
 }
 
 /// Check if `src_sym` is mutated after the definition of `temp_name`.
