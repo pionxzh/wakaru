@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, BindingIdent, BlockStmtOrExpr, ComputedPropName, Decl, Expr, ExprStmt, Ident,
-    KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectPat,
-    ObjectPatProp, Pat, PropName, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ArrayPat, BindingIdent, BlockStmtOrExpr, Callee, ComputedPropName, Decl, Expr, ExprStmt, Ident,
+    ImportSpecifier, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleExportName,
+    ModuleItem, Number, ObjectPat, ObjectPatProp, Pat, PropName, Stmt, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -13,11 +14,15 @@ use super::RewriteLevel;
 
 pub struct SmartInline {
     level: RewriteLevel,
+    use_state_bindings: HashSet<BindingKey>,
 }
 
 impl SmartInline {
     pub fn new(level: RewriteLevel) -> Self {
-        Self { level }
+        Self {
+            level,
+            use_state_bindings: HashSet::new(),
+        }
     }
 }
 
@@ -29,6 +34,11 @@ impl Default for SmartInline {
 
 impl VisitMut for SmartInline {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        let previous_use_state_bindings = std::mem::replace(
+            &mut self.use_state_bindings,
+            collect_use_state_bindings(module),
+        );
+
         // Step 0a: Inline zero-param arrow ident wrappers (const X = () => Y) globally.
         // These are often produced by `require.n` rewriting and used inside nested functions,
         // so they need cross-boundary inlining before per-stmt processing.
@@ -51,7 +61,7 @@ impl VisitMut for SmartInline {
             })
             .collect();
 
-        let new_stmts = process_stmts(stmts, self.level);
+        let new_stmts = process_stmts(stmts, self.level, &self.use_state_bindings);
 
         // Rebuild module body
         let mut new_body = Vec::new();
@@ -75,11 +85,12 @@ impl VisitMut for SmartInline {
         module.body = new_body;
 
         module.visit_mut_children_with(self);
+        self.use_state_bindings = previous_use_state_bindings;
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         let taken = std::mem::take(stmts);
-        *stmts = process_stmts(taken, self.level);
+        *stmts = process_stmts(taken, self.level, &self.use_state_bindings);
         stmts.visit_mut_children_with(self);
     }
 }
@@ -88,7 +99,11 @@ impl VisitMut for SmartInline {
 // Main processing pipeline per statement list
 // ============================================================
 
-fn process_stmts(stmts: Vec<Stmt>, level: RewriteLevel) -> Vec<Stmt> {
+fn process_stmts(
+    stmts: Vec<Stmt>,
+    level: RewriteLevel,
+    use_state_bindings: &HashSet<BindingKey>,
+) -> Vec<Stmt> {
     // Pass 0: inline builtin global aliases (const x = Math.floor → replace x with Math.floor)
     let stmts = inline_builtin_aliases_stmts(stmts);
     if level < RewriteLevel::Standard {
@@ -96,9 +111,12 @@ fn process_stmts(stmts: Vec<Stmt>, level: RewriteLevel) -> Vec<Stmt> {
     }
     // Pass 1: inline single-use const declarations (temp vars)
     let stmts = inline_temp_vars(stmts);
+    // Pass 1b: recover the React useState tuple pattern without making generic
+    // numeric property reads iterable.
+    let stmts = fold_use_state_tuple_reads(stmts, use_state_bindings);
     // Pass 2: group consecutive property / array accesses into destructuring
 
-    group_destructuring(stmts)
+    group_destructuring(stmts, level)
 }
 
 // ============================================================
@@ -842,7 +860,259 @@ fn is_builtin_global(name: &str) -> bool {
     )
 }
 
-fn group_destructuring(stmts: Vec<Stmt>) -> Vec<Stmt> {
+fn collect_use_state_bindings(module: &Module) -> HashSet<BindingKey> {
+    struct UseStateBindingCollector {
+        bindings: HashSet<BindingKey>,
+    }
+
+    impl Visit for UseStateBindingCollector {
+        fn visit_import_specifier(&mut self, specifier: &ImportSpecifier) {
+            if let ImportSpecifier::Named(named) = specifier {
+                let imported = named.imported.as_ref().map(import_name_atom);
+                if imported.as_ref().unwrap_or(&named.local.sym) == "useState" {
+                    self.bindings
+                        .insert((named.local.sym.clone(), named.local.ctxt));
+                }
+            }
+        }
+
+        fn visit_object_pat_prop(&mut self, prop: &ObjectPatProp) {
+            match prop {
+                ObjectPatProp::Assign(assign) => {
+                    if assign.key.id.sym == "useState" {
+                        self.bindings
+                            .insert((assign.key.id.sym.clone(), assign.key.id.ctxt));
+                    }
+                }
+                ObjectPatProp::KeyValue(key_value) => {
+                    if prop_name_atom(&key_value.key).as_deref() == Some("useState") {
+                        if let Some(binding) = direct_binding_ident_from_pat(&key_value.value) {
+                            self.bindings
+                                .insert((binding.id.sym.clone(), binding.id.ctxt));
+                        }
+                    }
+                    key_value.value.visit_with(self);
+                }
+                ObjectPatProp::Rest(rest) => {
+                    rest.visit_with(self);
+                }
+            }
+        }
+    }
+
+    let mut collector = UseStateBindingCollector {
+        bindings: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.bindings
+}
+
+fn import_name_atom(name: &ModuleExportName) -> Atom {
+    match name {
+        ModuleExportName::Ident(ident) => ident.sym.clone(),
+        ModuleExportName::Str(value) => value.value.as_str().unwrap_or_default().into(),
+    }
+}
+
+fn prop_name_atom(prop: &PropName) -> Option<Atom> {
+    match prop {
+        PropName::Ident(ident) => Some(ident.sym.clone()),
+        PropName::Str(value) => Some(value.value.as_str()?.into()),
+        _ => None,
+    }
+}
+
+fn direct_binding_ident_from_pat(pat: &Pat) -> Option<&BindingIdent> {
+    match pat {
+        Pat::Ident(binding) => Some(binding),
+        Pat::Assign(assign) => direct_binding_ident_from_pat(&assign.left),
+        _ => None,
+    }
+}
+
+fn fold_use_state_tuple_reads(
+    stmts: Vec<Stmt>,
+    use_state_bindings: &HashSet<BindingKey>,
+) -> Vec<Stmt> {
+    let mut result = Vec::with_capacity(stmts.len());
+    let mut i = 0;
+
+    while i < stmts.len() {
+        if let Some(stmt) = try_fold_use_state_tuple_at(&stmts, i, use_state_bindings) {
+            result.push(stmt);
+            i += 3;
+        } else {
+            result.push(stmts[i].clone());
+            i += 1;
+        }
+    }
+
+    result
+}
+
+fn try_fold_use_state_tuple_at(
+    stmts: &[Stmt],
+    start: usize,
+    use_state_bindings: &HashSet<BindingKey>,
+) -> Option<Stmt> {
+    let [decl_stmt, first_read, second_read, rest @ ..] = stmts.get(start..)? else {
+        return None;
+    };
+
+    let (tuple, init) = try_extract_const_ident_init(decl_stmt)?;
+    if !is_use_state_tuple_init_expr(&init, use_state_bindings) {
+        return None;
+    }
+
+    let Some((first_obj, first_index, Some(first_binding))) = try_extract_index_access(first_read)
+    else {
+        return None;
+    };
+    let Some((second_obj, second_index, Some(second_binding))) =
+        try_extract_index_access(second_read)
+    else {
+        return None;
+    };
+
+    if first_index != 0 || second_index != 1 {
+        return None;
+    }
+    if !same_ident(&first_obj, &tuple.id) || !same_ident(&second_obj, &tuple.id) {
+        return None;
+    }
+    if ident_is_referenced_in_stmts(&tuple.id, rest) {
+        return None;
+    }
+
+    Some(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        kind: VarDeclKind::Const,
+        declare: false,
+        decls: vec![VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Array(ArrayPat {
+                span: DUMMY_SP,
+                elems: vec![
+                    Some(Pat::Ident(first_binding)),
+                    Some(Pat::Ident(second_binding)),
+                ],
+                optional: false,
+                type_ann: None,
+            }),
+            init: Some(init),
+            definite: false,
+        }],
+    }))))
+}
+
+fn try_extract_const_ident_init(stmt: &Stmt) -> Option<(BindingIdent, Box<Expr>)> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
+        return None;
+    }
+    let decl = &var.decls[0];
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    Some((binding.clone(), decl.init.clone()?))
+}
+
+fn is_use_state_tuple_init_expr(expr: &Expr, use_state_bindings: &HashSet<BindingKey>) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+
+    if is_direct_use_state_call(call, use_state_bindings) {
+        return true;
+    }
+
+    if call.args.len() != 2 {
+        return false;
+    }
+    let Expr::Lit(Lit::Num(length)) = call.args[1].expr.as_ref() else {
+        return false;
+    };
+    if length.value != 2.0 {
+        return false;
+    }
+
+    is_direct_use_state_call_expr(call.args[0].expr.as_ref(), use_state_bindings)
+}
+
+fn is_direct_use_state_call_expr(expr: &Expr, use_state_bindings: &HashSet<BindingKey>) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    is_direct_use_state_call(call, use_state_bindings)
+}
+
+fn is_direct_use_state_call(
+    call: &swc_core::ecma::ast::CallExpr,
+    use_state_bindings: &HashSet<BindingKey>,
+) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+
+    match callee.as_ref() {
+        Expr::Ident(id) => use_state_bindings.contains(&(id.sym.clone(), id.ctxt)),
+        Expr::Member(member) => match &member.prop {
+            MemberProp::Ident(prop) => prop.sym == "useState",
+            MemberProp::Computed(ComputedPropName { expr, .. }) => {
+                let Expr::Lit(Lit::Str(value)) = expr.as_ref() else {
+                    return false;
+                };
+                value.value == "useState"
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn ident_is_referenced_in_stmts(id: &Ident, stmts: &[Stmt]) -> bool {
+    struct IdentRefFinder<'a> {
+        target: &'a Ident,
+        found: bool,
+    }
+
+    impl Visit for IdentRefFinder<'_> {
+        fn visit_ident(&mut self, id: &Ident) {
+            if same_ident(id, self.target) {
+                self.found = true;
+            }
+        }
+
+        fn visit_member_prop(&mut self, prop: &MemberProp) {
+            if let MemberProp::Computed(computed) = prop {
+                computed.visit_with(self);
+            }
+        }
+
+        fn visit_prop_name(&mut self, _: &PropName) {}
+    }
+
+    let mut finder = IdentRefFinder {
+        target: id,
+        found: false,
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+        if finder.found {
+            return true;
+        }
+    }
+    false
+}
+
+fn same_ident(a: &Ident, b: &Ident) -> bool {
+    a.sym == b.sym && a.ctxt == b.ctxt
+}
+
+fn group_destructuring(stmts: Vec<Stmt>, level: RewriteLevel) -> Vec<Stmt> {
     // Scan for groups of consecutive `const t = obj.prop` / `const t = obj[n]`
     // where `obj` is a plain identifier.
     // Group by the obj name, emit destructuring when group is "flushed".
@@ -875,7 +1145,7 @@ fn group_destructuring(stmts: Vec<Stmt>) -> Vec<Stmt> {
             // than `defineProperty(...)` and destructuring can break `this` binding.
             if is_builtin_global(&obj_name.sym) {
                 if let Some((obj, acc)) = current_obj.take() {
-                    flush_group(&mut result, obj, acc);
+                    flush_group(&mut result, obj, acc, level);
                 }
                 result.push(stmts[i].clone());
                 i += 1;
@@ -890,7 +1160,7 @@ fn group_destructuring(stmts: Vec<Stmt>) -> Vec<Stmt> {
                 }
                 _ => {
                     if let Some((obj, acc)) = current_obj.take() {
-                        flush_group(&mut result, obj, acc);
+                        flush_group(&mut result, obj, acc, level);
                     }
                     current_obj = Some((obj_name, vec![access]));
                 }
@@ -901,14 +1171,14 @@ fn group_destructuring(stmts: Vec<Stmt>) -> Vec<Stmt> {
 
         // Non-matching statement: flush current group
         if let Some((obj, acc)) = current_obj.take() {
-            flush_group(&mut result, obj, acc);
+            flush_group(&mut result, obj, acc, level);
         }
         result.push(stmts[i].clone());
         i += 1;
     }
 
     if let Some((obj, acc)) = current_obj.take() {
-        flush_group(&mut result, obj, acc);
+        flush_group(&mut result, obj, acc, level);
     }
 
     result
@@ -989,7 +1259,7 @@ fn try_extract_index_access(stmt: &Stmt) -> Option<(Ident, usize, Option<Binding
 }
 
 /// Determine if accesses are all Property or all Index type
-fn flush_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<AccessKind>) {
+fn flush_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<AccessKind>, level: RewriteLevel) {
     if accesses.len() < 2 {
         // Not worth destructuring — emit individually
         for acc in accesses {
@@ -1008,7 +1278,13 @@ fn flush_group(result: &mut Vec<Stmt>, obj: Ident, accesses: Vec<AccessKind>) {
     if all_prop {
         flush_property_group(result, obj, accesses);
     } else if all_idx {
-        flush_index_group(result, obj, accesses);
+        if level >= RewriteLevel::Aggressive {
+            flush_index_group(result, obj, accesses);
+        } else {
+            for acc in accesses {
+                result.push(acc_to_stmt(&obj, acc));
+            }
+        }
     } else {
         // Mixed — emit individually
         for acc in accesses {

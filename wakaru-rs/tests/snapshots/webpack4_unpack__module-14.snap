@@ -27,7 +27,12 @@ export function parse(e, t) {
             u += d[1];
         } else {
             const h = e[a];
-            const [, , m, y, v, b, g, w] = n;
+            const m = n[2];
+            const y = n[3];
+            const v = n[4];
+            const b = n[5];
+            const g = n[6];
+            const w = n[7];
             if (u) {
                 r.push(u);
                 u = "";

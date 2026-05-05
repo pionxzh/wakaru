@@ -35,7 +35,9 @@ function u(e, t, n = "iterator") {
             a(t);
         }
         const r = e[u]();
-        const [l, c, s] = r;
+        const l = r[0];
+        const c = r[1];
+        const s = r[2];
         a = s;
         if ((u = l) === i) {
             return o;

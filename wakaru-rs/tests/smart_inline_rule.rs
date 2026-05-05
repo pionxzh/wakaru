@@ -111,8 +111,19 @@ const c = arr[2];
     let expected = r#"
 const [a, b, c] = arr;
 "#;
-    let output = apply(input);
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_does_not_group_array_destructuring() {
+    let input = r#"
+const a = arr[0];
+const b = arr[1];
+const c = arr[2];
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -135,8 +146,120 @@ const c = arr[2];
     let expected = r#"
 const [a, , c] = arr;
 "#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_folds_use_state_tuple_reads() {
+    let input = r#"
+const { useState } = React;
+function Component() {
+    const pair = useState(0);
+    const count = pair[0];
+    const setCount = pair[1];
+    return count;
+}
+"#;
+    let expected = r#"
+const { useState } = React;
+function Component() {
+    const [count, setCount] = useState(0);
+    return count;
+}
+"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_folds_member_use_state_tuple_reads() {
+    let input = r#"
+function Component() {
+    const pair = React.useState(false);
+    const open = pair[0];
+    const setOpen = pair[1];
+    return open;
+}
+"#;
+    let expected = r#"
+function Component() {
+    const [open, setOpen] = React.useState(false);
+    return open;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_folds_length_two_helper_wrapped_use_state_tuple_reads() {
+    let input = r#"
+function Component() {
+    const pair = helper(React.useState(false), 2);
+    const open = pair[0];
+    const setOpen = pair[1];
+    return open;
+}
+"#;
+    let expected = r#"
+function Component() {
+    const [open, setOpen] = helper(React.useState(false), 2);
+    return open;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_does_not_fold_local_function_named_use_state() {
+    let input = r#"
+function useState(value) {
+    return {
+        0: value,
+        1: function () {}
+    };
+}
+function Component() {
+    const pair = useState(0);
+    const count = pair[0];
+    const setCount = pair[1];
+    return count;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_does_not_fold_nested_destructured_use_state_property() {
+    let input = r#"
+const { useState: { value } } = React;
+function Component() {
+    const pair = value(0);
+    const count = pair[0];
+    const setCount = pair[1];
+    return count;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn use_state_tuple_keeps_temp_when_reused() {
+    let input = r#"
+const { useState } = React;
+function Component() {
+    const pair = useState(0);
+    const count = pair[0];
+    const setCount = pair[1];
+    console.log(pair);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]

@@ -4598,7 +4598,8 @@ const ba = {
     useResponder,
     useDeferredValue (e, t) {
         const n = ta(e);
-        const [r, o] = n;
+        const r = n[0];
+        const o = n[1];
         aa(()=>{
             const ReactCurrentBatchConfig_suspense = ReactCurrentBatchConfig.suspense;
             ReactCurrentBatchConfig.suspense = t === undefined ? null : t;
@@ -4643,7 +4644,8 @@ const ga = {
     useResponder,
     useDeferredValue (e, t) {
         const n = Zi(Ji);
-        const [r, o] = n;
+        const r = n[0];
+        const o = n[1];
         ua(()=>{
             const ReactCurrentBatchConfig_suspense = ReactCurrentBatchConfig.suspense;
             ReactCurrentBatchConfig.suspense = t === undefined ? null : t;
@@ -4688,7 +4690,8 @@ const wa = {
     useResponder,
     useDeferredValue (e, t) {
         const n = ea(Ji);
-        const [r, o] = n;
+        const r = n[0];
+        const o = n[1];
         ua(()=>{
             const ReactCurrentBatchConfig_suspense = ReactCurrentBatchConfig.suspense;
             ReactCurrentBatchConfig.suspense = t === undefined ? null : t;
