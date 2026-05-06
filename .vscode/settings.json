@@ -1,0 +1,9 @@
+{
+  "prettier.enable": false,
+  "markdown.extension.toc.omittedFromToc": {
+    "packages/unminify/README.md": [
+      "## Table of Contents"
+    ]
+  },
+  "markdown.extension.toc.levels": "2..3"
+}
