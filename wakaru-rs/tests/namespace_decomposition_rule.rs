@@ -938,3 +938,88 @@ Fragment;
 "#;
     assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
 }
+
+// ── JSX member expression decomposition ───────────────────────────
+
+#[test]
+fn jsx_lowercase_member_prevents_decomposition() {
+    let target_facts = facts_for(r#"export function a() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    // <u.a> uses a lowercase prop — decomposing to <a> would produce an
+    // HTML anchor element instead of a component reference.
+    let input = r#"
+import u from "./mod.js";
+const x = <u.a />;
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(
+        normalize(&output).contains("import u from"),
+        "lowercase JSX member should prevent decomposition, got: {output}"
+    );
+}
+
+#[test]
+fn jsx_member_expr_decomposes() {
+    let target_facts = facts_for(
+        r#"
+export function Switch() {}
+export function Route() {}
+"#,
+    );
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./module-24.js", target_facts);
+
+    let input = r#"
+import o from "./module-24.js";
+const a = <o.Switch><o.Route exact path="/" /></o.Switch>;
+"#;
+    let expected = r#"
+import { Route, Switch } from "./module-24.js";
+const a = <Switch><Route exact path="/" /></Switch>;
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+#[test]
+fn jsx_member_expr_bare_usage_prevents_decomposition() {
+    let target_facts = facts_for(r#"export function Switch() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import o from "./mod.js";
+const a = <o.Switch />;
+doSomething(o);
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(
+        normalize(&output).contains("import o from"),
+        "bare usage should prevent decomposition, got: {output}"
+    );
+}
+
+#[test]
+fn jsx_member_expr_with_expression_member_access() {
+    let target_facts = facts_for(
+        r#"
+export function Switch() {}
+export function createStore() {}
+"#,
+    );
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import o from "./mod.js";
+const a = <o.Switch />;
+const b = o.createStore();
+"#;
+    let expected = r#"
+import { Switch, createStore } from "./mod.js";
+const a = <Switch />;
+const b = createStore();
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}

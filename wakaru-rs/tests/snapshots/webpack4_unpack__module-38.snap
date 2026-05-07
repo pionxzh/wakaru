@@ -1,9 +1,10 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 109
 expression: code
 ---
 import "./module-3.js";
-import o from "./module-24.js";
+import { Route, Switch } from "./module-24.js";
 import i from "./module-37.js";
-const a = <o.Switch><o.Route exact path="/" component={i.FrontPage}/></o.Switch>;
+const a = <Switch><Route exact path="/" component={i.FrontPage}/></Switch>;
 export default a;

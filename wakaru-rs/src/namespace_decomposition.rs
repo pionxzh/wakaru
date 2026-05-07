@@ -16,8 +16,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, CatchClause, Expr, Function, Ident, ImportDecl, ImportNamedSpecifier,
-    ImportSpecifier, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem,
-    Param, Pat, SimpleAssignTarget, UnaryExpr, UnaryOp, UpdateExpr,
+    ImportSpecifier, JSXElementName, JSXObject, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleExportName, ModuleItem, Param, Pat, SimpleAssignTarget, UnaryExpr, UnaryOp, UpdateExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -480,6 +480,35 @@ impl Visit for UsageAnalyzer<'_> {
             prop.visit_with(self);
         }
     }
+
+    fn visit_jsx_element_name(&mut self, name: &JSXElementName) {
+        match name {
+            JSXElementName::JSXMemberExpr(member) => match &member.obj {
+                JSXObject::Ident(obj) if self.is_target(obj) => {
+                    // Only decompose uppercase props — lowercase JSX names are
+                    // intrinsic HTML elements (<a> ≠ component <ns.a>).
+                    // For lowercase, fall through so visit_ident marks unsafe.
+                    let is_component = member
+                        .prop
+                        .sym
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_uppercase());
+                    if is_component {
+                        self.accessed_props.insert(member.prop.sym.clone());
+                        return;
+                    }
+                    name.visit_children_with(self);
+                }
+                _ => {
+                    name.visit_children_with(self);
+                }
+            },
+            _ => {
+                name.visit_children_with(self);
+            }
+        }
+    }
 }
 
 /// Apply the decomposition rewrites.
@@ -628,6 +657,22 @@ impl VisitMut for UsageRewriter<'_> {
         };
         if let Some((local_name, local_ctxt)) = prop_map.get(&prop.sym) {
             *expr = Expr::Ident(Ident::new(local_name.clone(), DUMMY_SP, *local_ctxt));
+        }
+    }
+
+    fn visit_mut_jsx_element_name(&mut self, name: &mut JSXElementName) {
+        let JSXElementName::JSXMemberExpr(member) = name else {
+            return;
+        };
+        let JSXObject::Ident(obj) = &member.obj else {
+            return;
+        };
+        let key = (obj.sym.clone(), obj.ctxt);
+        let Some(prop_map) = self.decomp_map.get(&key) else {
+            return;
+        };
+        if let Some((local_name, local_ctxt)) = prop_map.get(&member.prop.sym) {
+            *name = JSXElementName::Ident(Ident::new(local_name.clone(), DUMMY_SP, *local_ctxt));
         }
     }
 

@@ -1,5 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 109
 expression: code
 ---
 import * as r from "./module-50.js";

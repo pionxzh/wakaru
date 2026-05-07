@@ -1,11 +1,12 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 109
 expression: code
 ---
 import "./module-3.js";
 import * as o from "./module-49.js";
-import i from "./module-23.js";
-import a from "./module-18.js";
+import { Provider } from "./module-23.js";
+import { ConnectedRouter } from "./module-18.js";
 import U from "./module-39.js";
 import l from "./module-34.js";
-o.render(<i.Provider store={l}><a.ConnectedRouter history={l.history}><U/></a.ConnectedRouter></i.Provider>, document.getElementById("app"));
+o.render(<Provider store={l}><ConnectedRouter history={l.history}><U/></ConnectedRouter></Provider>, document.getElementById("app"));
