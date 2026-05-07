@@ -19,6 +19,7 @@ pub(crate) enum BabelHelperKind {
     SlicedToArray,
     ClassCallCheck,
     PossibleConstructorReturn,
+    AssertThisInitialized,
 }
 
 /// Known import paths for Babel runtime helpers.
@@ -366,6 +367,9 @@ fn detect_helper_from_fn(func: &Function, has_sub_helpers: bool) -> Option<Babel
     }
     if is_possible_constructor_return_fn(func) {
         return Some(BabelHelperKind::PossibleConstructorReturn);
+    }
+    if is_assert_this_initialized_fn(func) {
+        return Some(BabelHelperKind::AssertThisInitialized);
     }
     None
 }
@@ -939,6 +943,94 @@ fn is_possible_constructor_return_fn(func: &Function) -> bool {
     // For the 2-stmt form (ternary), accept any return expression since
     // the ternary encodes the param1/param2 choice internally
     true
+}
+
+// ---------------------------------------------------------------------------
+// _assertThisInitialized
+//
+// function p(e) {
+//     if (e === undefined) {
+//         throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+//     }
+//     return e;
+// }
+//
+// Key signal: 1 param, throws ReferenceError with the Babel-specific message,
+// returns param. We match on the error message text to avoid false positives.
+// ---------------------------------------------------------------------------
+
+fn is_assert_this_initialized_fn(func: &Function) -> bool {
+    if func.params.len() != 1 {
+        return false;
+    }
+    let Pat::Ident(param) = &func.params[0].pat else {
+        return false;
+    };
+
+    let body = match func.body.as_ref() {
+        Some(b) => b,
+        None => return false,
+    };
+
+    if body.stmts.len() != 2 {
+        return false;
+    }
+
+    // First statement: if (...) { throw new ReferenceError("this hasn't been initialised...") }
+    let Stmt::If(if_stmt) = &body.stmts[0] else {
+        return false;
+    };
+    if if_stmt.alt.is_some() {
+        return false;
+    }
+
+    let throw_expr = match if_stmt.cons.as_ref() {
+        Stmt::Throw(throw) => Some(&*throw.arg),
+        Stmt::Block(block) if block.stmts.len() == 1 => match &block.stmts[0] {
+            Stmt::Throw(throw) => Some(&*throw.arg),
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some(throw_expr) = throw_expr else {
+        return false;
+    };
+    if !is_new_reference_error_with_babel_message(throw_expr) {
+        return false;
+    }
+
+    // Second statement: return param
+    let Stmt::Return(ReturnStmt {
+        arg: Some(ret_arg), ..
+    }) = &body.stmts[1]
+    else {
+        return false;
+    };
+    is_same_ident(ret_arg, &param.id.sym, param.id.ctxt)
+}
+
+fn is_new_reference_error_with_babel_message(expr: &Expr) -> bool {
+    let Expr::New(new_expr) = expr else {
+        return false;
+    };
+    let Expr::Ident(id) = new_expr.callee.as_ref() else {
+        return false;
+    };
+    if id.sym.as_ref() != "ReferenceError" {
+        return false;
+    }
+    let Some(args) = &new_expr.args else {
+        return false;
+    };
+    if args.len() != 1 {
+        return false;
+    }
+    let Expr::Lit(Lit::Str(s)) = args[0].expr.as_ref() else {
+        return false;
+    };
+    s.value
+        .as_str()
+        .is_some_and(|v| v.contains("this hasn't been initialised"))
 }
 
 fn is_new_reference_error(expr: &Expr) -> bool {

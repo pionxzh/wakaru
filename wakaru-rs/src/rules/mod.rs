@@ -17,6 +17,7 @@ mod smart_inline;
 mod smart_rename;
 mod un_argument_spread;
 mod un_array_concat_spread;
+mod un_assert_this_initialized;
 mod un_assignment_merging;
 mod un_async_await;
 mod un_bracket_notation;
@@ -100,6 +101,7 @@ pub use smart_inline::SmartInline;
 pub use smart_rename::SmartRename;
 pub use un_argument_spread::UnArgumentSpread;
 pub use un_array_concat_spread::UnArrayConcatSpread;
+pub use un_assert_this_initialized::UnAssertThisInitialized;
 pub use un_assignment_merging::UnAssignmentMerging;
 pub use un_async_await::UnAsyncAwait;
 pub use un_bracket_notation::UnBracketNotation;
@@ -270,6 +272,7 @@ pub fn rule_names() -> &'static [&'static str] {
         "UnDefineProperty",
         "UnClassCallCheck",
         "UnPossibleConstructorReturn",
+        "UnAssertThisInitialized",
         "UnTypeofPolyfill",
         "UnCurlyBraces",
         "UnEsmoduleFlag",
@@ -474,6 +477,7 @@ fn apply_rules_range_impl(
     run!(UnDefineProperty, "UnDefineProperty");
     run!(UnClassCallCheck, "UnClassCallCheck");
     run!(UnPossibleConstructorReturn, "UnPossibleConstructorReturn");
+    run!(UnAssertThisInitialized, "UnAssertThisInitialized");
     run!(UnTypeofPolyfill, "UnTypeofPolyfill");
     // UnEsm prerequisites: add braces (enables assignment splitting), remove __esModule
     // flag, strip "use strict", split chained assignments, resolve webpack interop

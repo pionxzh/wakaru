@@ -1,5 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
+assertion_line: 109
 expression: code
 ---
 import { Children, Component, forwardRef } from "./module-50.js";
@@ -48,12 +49,6 @@ export function createProvider(e = "store") {
     return r;
 }
 export const Provider = createProvider();
-function p(e) {
-    if (e === undefined) {
-        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-    }
-    return e;
-}
 function m(e, t) {
     if (e == null) {
         return {};
@@ -200,7 +195,7 @@ export function connectAdvanced(e, t = {}) {
                 this.renderCount = 0;
                 this.store = e[_] || t[_];
                 this.propsMode = Boolean(e[_]);
-                this.setWrappedInstance = this.setWrappedInstance.bind(p(p(this)));
+                this.setWrappedInstance = this.setWrappedInstance.bind(this);
                 _b(this.store, `Could not find "${_}" in either the context or props of "${r}". Either wrap the root component in a <Provider>, or explicitly pass "${_}" as a prop to "${r}".`);
                 this.initSelector();
                 this.initSubscription();
