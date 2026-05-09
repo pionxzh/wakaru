@@ -76,5 +76,8 @@ npx --yes webpack-cli@5 --config webpack5-dynamic-min.config.cjs 2>/dev/null
 echo "  wp5-var-inject:    Global access (uses __webpack_require__.g, no var injection)"
 npx --yes webpack-cli@5 --config webpack5-var-inject.config.cjs 2>/dev/null
 
+echo "  wp5-require-o:     Split initial chunk startup via __webpack_require__.O"
+npx --yes webpack-cli@5 --config webpack5-require-o.config.cjs 2>/dev/null
+
 echo ""
 echo "Done. Outputs in dist/*/"

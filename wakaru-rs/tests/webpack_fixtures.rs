@@ -295,6 +295,28 @@ fn wp5_require_s_entry() {
     );
 }
 
+#[test]
+fn wp5_require_o_entry() {
+    let source = fixture("wp5-require-o/bundle.js");
+    assert!(
+        source.contains(".O(void 0") && source.contains("=>"),
+        "wp5-require-o fixture should contain webpack's require.O arrow startup"
+    );
+
+    let pairs = unpack_fixture("wp5-require-o/bundle.js");
+    assert_eq!(
+        pairs.len(),
+        1,
+        "wp5-require-o: {}",
+        filenames(&pairs).join(", ")
+    );
+    assert!(
+        pairs.iter().any(|(_, code)| code.contains("entry:")),
+        "wp5-require-o: expected extracted entry module, got {:?}",
+        filenames(&pairs)
+    );
+}
+
 // ========================================================================
 // Path traversal (hand-crafted)
 // ========================================================================

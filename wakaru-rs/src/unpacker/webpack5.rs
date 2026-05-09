@@ -2,9 +2,10 @@ use anyhow::anyhow;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
-    ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, Expr,
-    ExprStmt, FnExpr, Function, Ident, IdentName, Lit, MemberExpr, MemberProp, Module, ModuleItem,
-    ObjectLit, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, VarDecl, VarDeclarator,
+    ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmtOrExpr, CallExpr,
+    Callee, Expr, ExprStmt, FnExpr, Function, Ident, IdentName, Lit, MemberExpr, MemberProp,
+    Module, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt,
+    VarDecl, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 
@@ -381,9 +382,11 @@ fn extract_webpack5_modules(
         false
     };
 
-    // Fallback: scan bootstrap for `__webpack_require__(__webpack_require__.s = <id>)`
+    // Fallback: scan bootstrap for entry-module startup calls.
     if !has_trailing_entry {
-        if let Some(entry_id) = find_require_s_entry(bootstrap_body) {
+        if let Some(entry_id) =
+            find_require_s_entry(bootstrap_body).or_else(|| find_require_o_entry(bootstrap_body))
+        {
             for module in &mut modules {
                 if module.id == entry_id {
                     module.is_entry = true;
@@ -666,6 +669,121 @@ fn find_require_s_in_expr(expr: &Expr) -> Option<String> {
     }
 }
 
+/// Scan the bootstrap body for webpack 5 runtime startup:
+/// `require.O(void 0, [chunkId], function() { return require(<id>); })`.
+fn find_require_o_entry(body: &swc_core::ecma::ast::BlockStmt) -> Option<String> {
+    for stmt in &body.stmts {
+        if let Some(id) = find_require_o_in_stmt(stmt) {
+            return Some(id);
+        }
+    }
+    None
+}
+
+fn find_require_o_in_stmt(stmt: &Stmt) -> Option<String> {
+    match stmt {
+        Stmt::Expr(ExprStmt { expr, .. }) => find_require_o_in_expr(expr),
+        Stmt::Decl(swc_core::ecma::ast::Decl::Var(var_decl)) => {
+            for decl in &var_decl.decls {
+                if let Some(init) = &decl.init {
+                    if let Some(id) = find_require_o_in_expr(init) {
+                        return Some(id);
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn find_require_o_in_expr(expr: &Expr) -> Option<String> {
+    match strip_parens(expr) {
+        Expr::Call(call) => extract_require_o_entry_call(call),
+        Expr::Assign(assign) => find_require_o_in_expr(&assign.right),
+        Expr::Seq(seq) => seq
+            .exprs
+            .iter()
+            .find_map(|expr| find_require_o_in_expr(expr)),
+        _ => None,
+    }
+}
+
+fn extract_require_o_entry_call(call: &CallExpr) -> Option<String> {
+    let require_sym = extract_require_o_callee_sym(&call.callee)?;
+    if call.args.len() < 3 {
+        return None;
+    }
+    extract_require_call_from_callback(&call.args[2].expr, require_sym)
+}
+
+fn extract_require_o_callee_sym(callee: &Callee) -> Option<&Atom> {
+    let Callee::Expr(callee_expr) = callee else {
+        return None;
+    };
+    let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else {
+        return None;
+    };
+    let MemberProp::Ident(prop_ident) = prop else {
+        return None;
+    };
+    if prop_ident.sym.as_ref() != "O" {
+        return None;
+    }
+    let Expr::Ident(require_ident) = &**obj else {
+        return None;
+    };
+    Some(&require_ident.sym)
+}
+
+fn extract_require_call_from_callback(expr: &Expr, require_sym: &Atom) -> Option<String> {
+    match strip_parens(expr) {
+        Expr::Fn(fn_expr) => {
+            let body = fn_expr.function.body.as_ref()?;
+            extract_require_call_from_body(body, require_sym)
+        }
+        Expr::Arrow(arrow) => match &*arrow.body {
+            BlockStmtOrExpr::BlockStmt(body) => extract_require_call_from_body(body, require_sym),
+            BlockStmtOrExpr::Expr(expr) => extract_require_call_id(expr, require_sym),
+        },
+        _ => None,
+    }
+}
+
+fn extract_require_call_from_body(
+    body: &swc_core::ecma::ast::BlockStmt,
+    require_sym: &Atom,
+) -> Option<String> {
+    if body.stmts.len() != 1 {
+        return None;
+    }
+    let Stmt::Return(ret) = &body.stmts[0] else {
+        return None;
+    };
+    let arg = ret.arg.as_ref()?;
+    extract_require_call_id(arg, require_sym)
+}
+
+fn extract_require_call_id(expr: &Expr, require_sym: &Atom) -> Option<String> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee_expr) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(callee_ident) = &**callee_expr else {
+        return None;
+    };
+    if &callee_ident.sym != require_sym || call.args.len() != 1 {
+        return None;
+    }
+    match &*call.args[0].expr {
+        Expr::Lit(Lit::Num(n)) => Some(format!("{}", n.value as i64)),
+        Expr::Lit(Lit::Str(s)) => Some(s.value.as_str().unwrap_or("unknown").to_string()),
+        _ => None,
+    }
+}
+
 fn extract_getter_value(expr: &Expr) -> Option<Box<Expr>> {
     match expr {
         Expr::Fn(fn_expr) => {
@@ -819,6 +937,44 @@ mod tests {
             entry_modules.contains(&"2"),
             "expected module '2' to be marked as entry, entries: {:?}",
             entry_modules
+        );
+    }
+
+    #[test]
+    fn detects_wp5_require_o_entry() {
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/webpack-gen/dist/wp5-require-o/bundle.js"
+        ))
+        .expect("failed to read wp5-require-o fixture");
+
+        assert!(
+            source.contains(".O(void 0") && source.contains("=>"),
+            "fixture should reproduce webpack 5 require.O arrow startup:\n{source}"
+        );
+
+        let result = detect_and_extract(&source).expect("wp5 require.O startup should be detected");
+        let entry_modules: Vec<&str> = result
+            .modules
+            .iter()
+            .filter(|m| m.is_entry)
+            .map(|m| m.id.as_str())
+            .collect();
+
+        assert!(
+            entry_modules.len() == 1,
+            "expected require.O callback target to be marked as entry"
+        );
+        let entry_id = entry_modules[0];
+        let entry = result
+            .modules
+            .iter()
+            .find(|module| module.id == entry_id)
+            .expect("entry id should refer to an extracted module");
+        assert!(
+            entry.code.contains("entry:"),
+            "entry marker should come from require-o-entry.js:\n{}",
+            entry.code
         );
     }
 
