@@ -1,6 +1,5 @@
 ---
 source: tests/webpack4_unpack.rs
-assertion_line: 109
 expression: code
 ---
 import { Children, Component, forwardRef } from "./module-50.js";
@@ -500,18 +499,18 @@ export const connect = ((e = {})=>{
     const { connectHOC = connectAdvanced, mapStateToPropsFactories = D, mapDispatchToPropsFactories = I, mergePropsFactories = z, selectorFactory = H } = e;
     return (e, t, n, o = {})=>{
         const { pure = true, areStatesEqual = $, areOwnPropsEqual = R, areStatePropsEqual = R, areMergedPropsEqual = R, ...rest } = o;
-        const k = W(e, mapStateToPropsFactories, "mapStateToProps");
-        const T = W(t, mapDispatchToPropsFactories, "mapDispatchToProps");
-        const S = W(n, mergePropsFactories, "mergeProps");
+        const initMapStateToProps = W(e, mapStateToPropsFactories, "mapStateToProps");
+        const initMapDispatchToProps = W(t, mapDispatchToPropsFactories, "mapDispatchToProps");
+        const initMergeProps = W(n, mergePropsFactories, "mergeProps");
         return connectHOC(selectorFactory, a_2({
             methodName: "connect",
             getDisplayName (e) {
                 return `Connect(${e})`;
             },
             shouldHandleStateChanges: Boolean(e),
-            initMapStateToProps: k,
-            initMapDispatchToProps: T,
-            initMergeProps: S,
+            initMapStateToProps,
+            initMapDispatchToProps,
+            initMergeProps,
             pure,
             areStatesEqual,
             areOwnPropsEqual,

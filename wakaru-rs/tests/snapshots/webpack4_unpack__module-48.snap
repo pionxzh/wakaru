@@ -1181,12 +1181,12 @@ const kt = new Map;
 const Tt = [];
 const St = "mousedown mouseup touchcancel touchend touchstart auxclick dblclick pointercancel pointerdown pointerup dragend dragstart drop compositionend compositionstart keydown keypress keyup input textInput close cancel copy cut paste click change contextmenu reset submit".split(" ");
 const Ot = "focus blur dragenter dragleave mouseover mouseout pointerover pointerout gotpointercapture lostpointercapture".split(" ");
-function Ct(blockedOn, topLevelType, n, container, o) {
+function Ct(blockedOn, topLevelType, n, container, nativeEvent) {
     return {
         blockedOn,
         topLevelType,
         eventSystemFlags: 32 | n,
-        nativeEvent: o,
+        nativeEvent,
         container
     };
 }

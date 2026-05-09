@@ -1,6 +1,5 @@
 ---
 source: tests/webpack4_unpack.rs
-assertion_line: 109
 expression: code
 ---
 import r from "./module-4.js";
@@ -552,14 +551,14 @@ export class Switch extends Component {
         Children.forEach(children, (t)=>{
             if (r == null && isValidElement(t)) {
                 const i = t.props;
-                const { path: u, exact: l, strict: c, sensitive: s, from: f } = i;
-                const d = u || f;
+                const { path: u, exact: exact, strict: strict, sensitive: sensitive, from: f } = i;
+                const path = u || f;
                 o = t;
                 r = a(n.pathname, {
-                    path: d,
-                    exact: l,
-                    strict: c,
-                    sensitive: s
+                    path,
+                    exact,
+                    strict,
+                    sensitive
                 }, route.match);
             }
         });

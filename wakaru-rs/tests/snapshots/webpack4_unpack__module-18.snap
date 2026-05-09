@@ -1,6 +1,5 @@
 ---
 source: tests/webpack4_unpack.rs
-assertion_line: 109
 expression: code
 ---
 import * as r from "./module-50.js";
@@ -24,10 +23,10 @@ export function routerReducer(e = s, t = {}) {
 export class ConnectedRouter extends r.Component {
     constructor(...i){
         super(...i);
-        this.handleLocationChange = (e)=>{
+        this.handleLocationChange = (payload)=>{
             r.store.dispatch({
                 type: LOCATION_CHANGE,
-                payload: e
+                payload
             });
         };
     }
@@ -76,12 +75,12 @@ export const createMatchSelector = (e)=>{
     };
 };
 export const CALL_HISTORY_METHOD = "@@router/CALL_HISTORY_METHOD";
-function g(e) {
-    return (...n)=>({
+function g(method) {
+    return (...args)=>({
             type: CALL_HISTORY_METHOD,
             payload: {
-                method: e,
-                args: n
+                method,
+                args
             }
         });
 }

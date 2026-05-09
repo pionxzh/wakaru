@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, ClassExpr,
@@ -1035,7 +1036,6 @@ fn value_position_rename_module(module: &mut Module) {
     if collector.short_bindings.is_empty() {
         return;
     }
-    let top_level_bindings = collect_top_level_binding_ids(module);
     let exported_bindings = collect_exported_binding_ids(module);
 
     let mut classifier = ValuePositionClassifier::new(collector.short_bindings);
@@ -1055,34 +1055,63 @@ fn value_position_rename_module(module: &mut Module) {
         by_target.entry(target).or_default().push(bid);
     }
 
-    let existing_bindings = collector.all_binding_names;
     let top_level_names = collect_module_names(module);
+
+    // Collect eligible candidates, sorted by target name for deterministic
+    // output (HashMap iteration order is random).
+    let mut candidates: Vec<(String, BindingId)> = by_target
+        .into_iter()
+        .filter_map(|(target, bids)| {
+            if bids.len() > 1 {
+                return None;
+            }
+            let bid = bids.into_iter().next().unwrap();
+            if exported_bindings.contains(&bid) {
+                return None;
+            }
+            Some((target, bid))
+        })
+        .collect();
+    candidates.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+    // Two-pass assignment: first reserve direct (unsuffixed) target names so
+    // a later suffix fallback never steals another binding's natural target.
     let mut renames: Vec<BindingRename> = Vec::new();
-    for (target, bids) in by_target {
-        if bids.len() > 1 {
-            continue;
-        }
-        let bid = bids.into_iter().next().unwrap();
-        if exported_bindings.contains(&bid) {
-            continue;
-        }
-        let target_atom = target.as_str().into();
-        let target_exists_in_nested_scope_only = !top_level_names.contains(&target_atom)
-            && existing_bindings.contains(target.as_str())
-            && top_level_bindings.contains(&bid);
-        // Property keys are not bindings and never block a rename, but real
-        // bindings that would collide in the top-level scope or shadow a use
-        // site still do.
-        if (!target_exists_in_nested_scope_only && existing_bindings.contains(target.as_str()))
-            || top_level_names.contains(&target_atom)
-            || rename_causes_shadowing(module, &bid, &target_atom)
+    let mut committed_names: HashSet<String> = HashSet::new();
+    let mut needs_suffix: Vec<(String, BindingId)> = Vec::new();
+
+    for (target, bid) in candidates {
+        let atom: Atom = target.as_str().into();
+        if !top_level_names.contains(&atom)
+            && !rename_causes_shadowing(module, &bid, &atom)
         {
-            continue;
+            committed_names.insert(target.clone());
+            renames.push(BindingRename {
+                old: bid,
+                new: atom,
+            });
+        } else {
+            needs_suffix.push((target, bid));
         }
-        renames.push(BindingRename {
-            old: bid,
-            new: target_atom,
-        });
+    }
+
+    for (target, bid) in needs_suffix {
+        let final_name = (1..=10)
+            .map(|i| format!("{target}_{i}"))
+            .find(|candidate| {
+                let atom: Atom = candidate.as_str().into();
+                !committed_names.contains(candidate.as_str())
+                    && !top_level_names.contains(&atom)
+                    && !rename_causes_shadowing(module, &bid, &atom)
+            });
+
+        if let Some(name) = final_name {
+            committed_names.insert(name.clone());
+            renames.push(BindingRename {
+                old: bid,
+                new: name.as_str().into(),
+            });
+        }
     }
 
     if renames.is_empty() {
@@ -1096,45 +1125,14 @@ fn value_position_rename_module(module: &mut Module) {
 #[derive(Default)]
 struct BindingCollector {
     short_bindings: HashMap<BindingId, ()>,
-    all_binding_names: HashSet<String>,
 }
 
 impl BindingCollector {
     fn record(&mut self, id: &Ident) {
-        self.all_binding_names.insert(id.sym.to_string());
         if id.sym.chars().count() <= REACT_MINIFIED_THRESHOLD {
             self.short_bindings.insert((id.sym.clone(), id.ctxt), ());
         }
     }
-}
-
-fn collect_top_level_binding_ids(module: &Module) -> HashSet<BindingId> {
-    let mut ids = HashSet::new();
-    for item in &module.body {
-        match item {
-            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
-                for spec in &import.specifiers {
-                    match spec {
-                        ImportSpecifier::Default(default) => {
-                            ids.insert((default.local.sym.clone(), default.local.ctxt));
-                        }
-                        ImportSpecifier::Named(named) => {
-                            ids.insert((named.local.sym.clone(), named.local.ctxt));
-                        }
-                        ImportSpecifier::Namespace(namespace) => {
-                            ids.insert((namespace.local.sym.clone(), namespace.local.ctxt));
-                        }
-                    }
-                }
-            }
-            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
-                collect_decl_binding_ids(&export.decl, &mut ids);
-            }
-            ModuleItem::Stmt(Stmt::Decl(decl)) => collect_decl_binding_ids(decl, &mut ids),
-            _ => {}
-        }
-    }
-    ids
 }
 
 fn collect_exported_binding_ids(module: &Module) -> HashSet<BindingId> {

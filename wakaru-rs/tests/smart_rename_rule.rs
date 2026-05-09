@@ -660,9 +660,7 @@ export default { Foo: longName };
 }
 
 #[test]
-fn value_position_skips_when_target_is_existing_binding() {
-    // `error` is already a binding — skip rather than emit `error_1`, which
-    // would be strictly worse than the original `t`.
+fn value_position_uses_suffix_when_target_is_existing_binding() {
     let input = r#"
 const error = "taken";
 const f = (t) => ({ error: t });
@@ -670,8 +668,31 @@ use(error);
 "#;
     let output = apply(input);
     assert!(
-        output.contains("(t)"),
-        "t should not be renamed when target binding exists:\n{}",
+        output.contains("(error_1)"),
+        "t should be renamed to error_1 when target binding exists:\n{}",
+        output
+    );
+}
+
+#[test]
+fn value_position_suffix_does_not_steal_natural_target() {
+    // `t` wants `error` (blocked by top-level) → fallback `error_1`.
+    // `n` wants `error_1` directly — the two-pass allocator must let `n`
+    // claim `error_1` first, then give `t` the next available suffix.
+    let input = r#"
+const error = "taken";
+const f = (t, n) => ({ error: t, error_1: n });
+use(error);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("error_1)") || output.contains("error_1,"),
+        "n should keep its natural target error_1:\n{}",
+        output
+    );
+    assert!(
+        output.contains("error_2"),
+        "t should get error_2 since error_1 is taken:\n{}",
         output
     );
 }
@@ -699,7 +720,7 @@ function render(U) {
 }
 
 #[test]
-fn value_position_skips_when_target_would_shadow_use() {
+fn value_position_uses_suffix_when_target_would_shadow_use() {
     let input = r#"
 const tW = makeSideCar();
 function render(U) {
@@ -709,8 +730,13 @@ function render(U) {
 "#;
     let output = apply(input);
     assert!(
-        output.contains("const tW = makeSideCar()"),
-        "rename would be captured by inner sideCar binding:\n{}",
+        output.contains("const sideCar_1 = makeSideCar()"),
+        "rename should use suffix when target would shadow:\n{}",
+        output
+    );
+    assert!(
+        output.contains("sideCar: sideCar_1"),
+        "property should use suffixed name:\n{}",
         output
     );
 }
@@ -734,6 +760,26 @@ use({ $$typeof: f });
     assert!(
         output.contains("const f = 2"),
         "shared target must not be applied:\n{}",
+        output
+    );
+}
+
+#[test]
+fn value_position_allows_original_name_in_sibling_scope() {
+    let input = r#"
+function h(e, t) {
+    const { initFoo } = t;
+    return initFoo;
+}
+const connect = (e, t) => {
+    const k = makeFoo(e, t);
+    return setup({ initFoo: k });
+};
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("const initFoo = makeFoo"),
+        "should use original name when conflict is in sibling scope:\n{}",
         output
     );
 }
