@@ -1,11 +1,20 @@
+use std::collections::HashMap;
+
 use swc_core::atoms::Atom;
+use swc_core::common::Mark;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignPatProp, BindingIdent, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr,
-    ExprStmt, FnExpr, Ident, KeyValuePatProp, Lit, MemberExpr, MemberProp, ObjectPat,
-    ObjectPatProp, Pat, PropName, RestPat, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ArrowExpr, AssignPat, AssignPatProp, BinaryOp, BindingIdent, BlockStmtOrExpr, Bool, CallExpr,
+    Callee, CondExpr, Decl, Expr, ExprStmt, FnExpr, Ident, KeyValuePatProp, Lit, MemberExpr,
+    MemberProp, ObjectPat, ObjectPatProp, Pat, PropName, RestPat, Stmt, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+
+use super::babel_helper_utils::{
+    collect_helpers_of_kind, helpers_with_remaining_refs, remove_helper_declarations,
+    BabelHelperKind, BindingKey,
+};
 
 /// Convert inline `_objectWithoutPropertiesLoose` IIFEs to object rest destructuring.
 ///
@@ -20,32 +29,47 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 /// // →
 /// const { a, b, ...rest } = obj;
 /// ```
-pub struct UnObjectRest;
+pub struct UnObjectRest {
+    unresolved_mark: Mark,
+}
+
+impl UnObjectRest {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
 
 impl VisitMut for UnObjectRest {
     fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
-        module.visit_mut_children_with(self);
+        // Collect named OWP helpers (function declarations detected by babel_helper_utils)
+        let named_helpers =
+            collect_helpers_of_kind(module, BabelHelperKind::ObjectWithoutProperties);
+
+        // Process inner scopes first (function bodies, etc.) with helpers available
+        let mut processor = ObjectRestProcessor {
+            named_helpers: &named_helpers,
+            unresolved_mark: self.unresolved_mark,
+        };
+        module.visit_mut_children_with(&mut processor);
+
         // Process module-level statements
         let mut new_body = Vec::with_capacity(module.body.len());
-        // Collect stmts for backward scanning
         let mut recent_stmts: Vec<Stmt> = Vec::new();
 
         for item in std::mem::take(&mut module.body) {
             let ModuleItem::Stmt(ref stmt) = item else {
-                // Non-stmt items flush the scan window
                 recent_stmts.clear();
                 new_body.push(item);
                 continue;
             };
 
-            if let Some((rest_binding, source, excluded_keys, before, after)) =
-                try_extract_owp_iife(stmt)
-            {
-                // Absorb "before" declarators from same var decl as prop accesses
+            let extraction = try_extract_owp_iife(stmt)
+                .or_else(|| try_extract_owp_named_call(stmt, &named_helpers));
+
+            if let Some((rest_binding, source, excluded_keys, before, after)) = extraction {
                 let mut inline_accesses = declarators_to_accesses(&before, &source, &excluded_keys);
-                // Also scan backward from preceding stmts
                 let (absorbed, mut preceding_accesses) =
-                    scan_preceding(&recent_stmts, &source, &excluded_keys);
+                    scan_preceding(&recent_stmts, &source, &excluded_keys, self.unresolved_mark);
                 for _ in 0..absorbed {
                     recent_stmts.pop();
                     new_body.pop();
@@ -61,7 +85,6 @@ impl VisitMut for UnObjectRest {
                 );
                 recent_stmts.push(new_stmt.clone());
                 new_body.push(ModuleItem::Stmt(new_stmt));
-                // Emit remaining "after" declarators
                 if !after.is_empty() {
                     let after_stmt = Stmt::Decl(Decl::Var(Box::new(VarDecl {
                         span: DUMMY_SP,
@@ -80,21 +103,40 @@ impl VisitMut for UnObjectRest {
             new_body.push(item);
         }
         module.body = new_body;
-    }
 
+        // Remove named helper declarations if all call sites were replaced
+        if !named_helpers.is_empty() {
+            let remaining = helpers_with_remaining_refs(module, &named_helpers);
+            let safe: HashMap<BindingKey, BabelHelperKind> = named_helpers
+                .into_iter()
+                .filter(|(key, _)| !remaining.contains(key))
+                .collect();
+            if !safe.is_empty() {
+                remove_helper_declarations(&mut module.body, &safe);
+            }
+        }
+    }
+}
+
+struct ObjectRestProcessor<'a> {
+    named_helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    unresolved_mark: Mark,
+}
+
+impl VisitMut for ObjectRestProcessor<'_> {
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
 
         let mut new_stmts = Vec::with_capacity(stmts.len());
 
         for stmt in stmts.iter() {
-            // Debug: count how many stmts have OWP IIFEs
-            if let Some((rest_binding, source, excluded_keys, before, after)) =
-                try_extract_owp_iife(stmt)
-            {
+            let extraction = try_extract_owp_iife(stmt)
+                .or_else(|| try_extract_owp_named_call(stmt, self.named_helpers));
+
+            if let Some((rest_binding, source, excluded_keys, before, after)) = extraction {
                 let mut inline_accesses = declarators_to_accesses(&before, &source, &excluded_keys);
                 let (absorbed, mut preceding_accesses) =
-                    scan_preceding(&new_stmts, &source, &excluded_keys);
+                    scan_preceding(&new_stmts, &source, &excluded_keys, self.unresolved_mark);
                 for _ in 0..absorbed {
                     new_stmts.pop();
                 }
@@ -138,6 +180,13 @@ enum PrecedingAccess {
         binding: Atom,
         ctxt: SyntaxContext,
     },
+    /// Two-statement pair: `const tmp = source.prop; const x = tmp === undefined ? def : tmp`
+    PropAccessWithDefault {
+        prop: Atom,
+        binding: Atom,
+        ctxt: SyntaxContext,
+        default_value: Box<Expr>,
+    },
     /// `source.prop;` — bare access (no binding)
     BareAccess { _prop: Atom },
 }
@@ -179,6 +228,88 @@ fn try_extract_owp_iife(
     let before = var.decls[..owp_idx].to_vec();
     let after = var.decls[owp_idx + 1..].to_vec();
     Some((binding.clone(), source, excluded_keys, before, after))
+}
+
+/// Try to extract a named OWP helper call from a statement.
+/// Matches: `const rest = helperName(source, ["key1", "key2"])`
+fn try_extract_owp_named_call(
+    stmt: &Stmt,
+    helpers: &HashMap<BindingKey, BabelHelperKind>,
+) -> Option<(
+    BindingIdent,
+    Box<Expr>,
+    Vec<Atom>,
+    Vec<VarDeclarator>,
+    Vec<VarDeclarator>,
+)> {
+    if helpers.is_empty() {
+        return None;
+    }
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+
+    let owp_idx = var.decls.iter().position(|decl| {
+        let Pat::Ident(_) = &decl.name else {
+            return false;
+        };
+        let Some(init) = &decl.init else {
+            return false;
+        };
+        extract_named_owp_args(init, helpers).is_some()
+    })?;
+
+    let decl = &var.decls[owp_idx];
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    let init = decl.init.as_ref()?;
+    let (source, excluded_keys) = extract_named_owp_args(init, helpers)?;
+
+    let before = var.decls[..owp_idx].to_vec();
+    let after = var.decls[owp_idx + 1..].to_vec();
+    Some((binding.clone(), source, excluded_keys, before, after))
+}
+
+/// Extract (source, excluded_keys) from a call to a known named OWP helper.
+fn extract_named_owp_args(
+    expr: &Expr,
+    helpers: &HashMap<BindingKey, BabelHelperKind>,
+) -> Option<(Box<Expr>, Vec<Atom>)> {
+    let Expr::Call(CallExpr {
+        callee: Callee::Expr(callee),
+        args,
+        ..
+    }) = expr
+    else {
+        return None;
+    };
+    let Expr::Ident(id) = callee.as_ref() else {
+        return None;
+    };
+    let key = (id.sym.clone(), id.ctxt);
+    if !helpers.contains_key(&key) {
+        return None;
+    }
+    if args.len() != 2 || args[0].spread.is_some() || args[1].spread.is_some() {
+        return None;
+    }
+    let Expr::Array(arr) = args[1].expr.as_ref() else {
+        return None;
+    };
+    let mut keys: Vec<Atom> = Vec::new();
+    for elem in &arr.elems {
+        let Some(elem) = elem else { return None };
+        if elem.spread.is_some() {
+            return None;
+        }
+        let Expr::Lit(Lit::Str(s)) = elem.expr.as_ref() else {
+            return None;
+        };
+        let key_str = s.value.as_str()?;
+        keys.push(Atom::from(key_str));
+    }
+    Some((args[0].expr.clone(), keys))
 }
 
 /// Check if an expression is an OWP IIFE call, returning (source, excluded_keys).
@@ -275,6 +406,7 @@ fn scan_preceding(
     preceding: &[Stmt],
     source: &Expr,
     excluded_keys: &[Atom],
+    unresolved_mark: Mark,
 ) -> (usize, Vec<PrecedingAccess>) {
     let source_name = match source {
         Expr::Ident(id) => &id.sym,
@@ -283,15 +415,35 @@ fn scan_preceding(
 
     let mut absorbed = 0;
     let mut accesses = Vec::new();
+    let mut idx = preceding.len();
 
-    // Walk backward from end
-    for stmt in preceding.iter().rev() {
+    while idx > 0 {
+        idx -= 1;
+        let stmt = &preceding[idx];
+
         if let Some(access) = try_match_preceding(stmt, source_name, excluded_keys) {
             absorbed += 1;
             accesses.push(access);
-        } else {
-            break; // stop at first non-matching statement
+            continue;
         }
+
+        // Two-statement pair: ternary default (current) + extraction (previous)
+        if idx > 0 {
+            if let Some(access) = try_match_default_pair(
+                &preceding[idx - 1],
+                stmt,
+                source_name,
+                excluded_keys,
+                unresolved_mark,
+            ) {
+                absorbed += 2;
+                idx -= 1;
+                accesses.push(access);
+                continue;
+            }
+        }
+
+        break;
     }
 
     accesses.reverse();
@@ -429,6 +581,174 @@ fn try_match_preceding(
     None
 }
 
+/// Try to match a two-statement pair:
+///   extraction: `const tmp = source.prop`
+///   default:    one of these forms:
+///     - `const x = tmp === undefined ? defaultVal : tmp`  (ternary)
+///     - `const x = tmp === undefined || tmp`              (boolean default true)
+///     - `const x = tmp !== undefined && tmp`              (boolean default false)
+fn try_match_default_pair(
+    extraction_stmt: &Stmt,
+    default_stmt: &Stmt,
+    source_name: &Atom,
+    excluded_keys: &[Atom],
+    unresolved_mark: Mark,
+) -> Option<PrecedingAccess> {
+    // 1. Parse the default stmt
+    let (final_binding, tmp_name, default_value) =
+        extract_default_assignment(default_stmt, unresolved_mark)?;
+
+    // 2. Parse the extraction stmt: const tmp = source.prop
+    let Stmt::Decl(Decl::Var(extract_var)) = extraction_stmt else {
+        return None;
+    };
+    if extract_var.decls.len() != 1 {
+        return None;
+    }
+    let extract_decl = &extract_var.decls[0];
+    let Pat::Ident(extract_binding) = &extract_decl.name else {
+        return None;
+    };
+    if extract_binding.id.sym != tmp_name {
+        return None;
+    }
+    let Some(extract_init) = &extract_decl.init else {
+        return None;
+    };
+    let Expr::Member(MemberExpr { obj, prop, .. }) = extract_init.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(obj_id) = obj.as_ref() else {
+        return None;
+    };
+    if obj_id.sym != *source_name {
+        return None;
+    }
+    let prop_name = member_prop_atom(prop)?;
+    if !excluded_keys.contains(&prop_name) {
+        return None;
+    }
+
+    match default_value {
+        None => Some(PrecedingAccess::PropAccess {
+            prop: prop_name,
+            binding: final_binding.id.sym.clone(),
+            ctxt: final_binding.id.ctxt,
+        }),
+        Some(def) => Some(PrecedingAccess::PropAccessWithDefault {
+            prop: prop_name,
+            binding: final_binding.id.sym.clone(),
+            ctxt: final_binding.id.ctxt,
+            default_value: def,
+        }),
+    }
+}
+
+/// Extract a default-value assignment from a var declaration.
+/// Returns (final_binding, tmp_variable_name, default_expr_or_none).
+///
+/// Matches three forms:
+/// 1. `const x = tmp === undefined ? defaultVal : tmp` → Some(defaultVal)
+///    (when defaultVal is `undefined` itself → None, since destructuring
+///    naturally produces undefined for missing properties)
+/// 2. `const x = tmp === undefined || tmp` → Some(true)
+/// 3. `const x = tmp !== undefined && tmp` → Some(false)
+fn extract_default_assignment(
+    stmt: &Stmt,
+    unresolved_mark: Mark,
+) -> Option<(BindingIdent, Atom, Option<Box<Expr>>)> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let decl = &var.decls[0];
+    let Pat::Ident(final_binding) = &decl.name else {
+        return None;
+    };
+    let Some(init) = &decl.init else {
+        return None;
+    };
+
+    match init.as_ref() {
+        // Form 1: tmp === undefined ? defaultVal : tmp
+        Expr::Cond(CondExpr {
+            test, cons, alt, ..
+        }) => {
+            let (tmp_name, _) = match_undefined_check(test, BinaryOp::EqEqEq, unresolved_mark)?;
+            if !matches!(alt.as_ref(), Expr::Ident(id) if id.sym == tmp_name) {
+                return None;
+            }
+            let default_value = if matches!(cons.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "undefined" && (id.ctxt.outer() == unresolved_mark || id.ctxt == SyntaxContext::empty()))
+            {
+                None
+            } else {
+                Some(cons.clone())
+            };
+            Some((final_binding.clone(), tmp_name, default_value))
+        }
+        // Form 2: tmp === undefined || tmp  →  default true
+        Expr::Bin(bin) if bin.op == BinaryOp::LogicalOr => {
+            let (tmp_name, _) =
+                match_undefined_check(&bin.left, BinaryOp::EqEqEq, unresolved_mark)?;
+            if !matches!(bin.right.as_ref(), Expr::Ident(id) if id.sym == tmp_name) {
+                return None;
+            }
+            let default_value = Box::new(Expr::Lit(Lit::Bool(Bool {
+                span: DUMMY_SP,
+                value: true,
+            })));
+            Some((final_binding.clone(), tmp_name, Some(default_value)))
+        }
+        // Form 3: tmp !== undefined && tmp  →  default false
+        Expr::Bin(bin) if bin.op == BinaryOp::LogicalAnd => {
+            let (tmp_name, _) =
+                match_undefined_check(&bin.left, BinaryOp::NotEqEq, unresolved_mark)?;
+            if !matches!(bin.right.as_ref(), Expr::Ident(id) if id.sym == tmp_name) {
+                return None;
+            }
+            let default_value = Box::new(Expr::Lit(Lit::Bool(Bool {
+                span: DUMMY_SP,
+                value: false,
+            })));
+            Some((final_binding.clone(), tmp_name, Some(default_value)))
+        }
+        _ => None,
+    }
+}
+
+/// Match `tmp === undefined` or `tmp !== undefined` (with a specific operator).
+/// Returns the tmp variable name and its SyntaxContext.
+fn match_undefined_check(
+    expr: &Expr,
+    expected_op: BinaryOp,
+    unresolved_mark: Mark,
+) -> Option<(Atom, SyntaxContext)> {
+    let Expr::Bin(bin) = expr else { return None };
+    if bin.op != expected_op {
+        return None;
+    }
+    let Expr::Ident(tmp) = bin.left.as_ref() else {
+        return None;
+    };
+    // Verify `undefined` is the global, not a shadowed local binding.
+    // Accept both resolver-stamped globals (outer == unresolved_mark) and
+    // synthesized identifiers from RemoveVoid (SyntaxContext::empty).
+    let Expr::Ident(undef_id) = bin.right.as_ref() else {
+        return None;
+    };
+    if undef_id.sym.as_ref() != "undefined" {
+        return None;
+    }
+    let is_global =
+        undef_id.ctxt.outer() == unresolved_mark || undef_id.ctxt == SyntaxContext::empty();
+    if !is_global {
+        return None;
+    }
+    Some((tmp.sym.clone(), tmp.ctxt))
+}
+
 fn build_rest_destructuring(
     rest_binding: &BindingIdent,
     source: &Expr,
@@ -440,6 +760,8 @@ fn build_rest_destructuring(
     // Preserving the original SyntaxContext is critical so that downstream SmartRename
     // can match the destructuring binding to the body references via BindingRenamer.
     let mut key_to_binding: std::collections::HashMap<Atom, (Atom, SyntaxContext)> =
+        std::collections::HashMap::new();
+    let mut key_to_default: std::collections::HashMap<Atom, Box<Expr>> =
         std::collections::HashMap::new();
     for access in merged {
         match access {
@@ -455,6 +777,15 @@ fn build_rest_destructuring(
             } => {
                 key_to_binding.insert(prop.clone(), (binding.clone(), *ctxt));
             }
+            PrecedingAccess::PropAccessWithDefault {
+                prop,
+                binding,
+                ctxt,
+                default_value,
+            } => {
+                key_to_binding.insert(prop.clone(), (binding.clone(), *ctxt));
+                key_to_default.insert(prop.clone(), default_value.clone());
+            }
             PrecedingAccess::BareAccess { .. } => {
                 // No binding — key will be included as shorthand (unused)
             }
@@ -468,18 +799,34 @@ fn build_rest_destructuring(
     let mut props: Vec<ObjectPatProp> = Vec::new();
     for key in excluded_keys {
         if let Some((binding, ctxt)) = key_to_binding.get(key) {
-            if *binding == *key && is_valid_ident(key) {
-                // Shorthand: { key } — only when key is a valid identifier
+            let default_expr = key_to_default.get(key);
+            let is_shorthand = *binding == *key && is_valid_ident(key);
+
+            if is_shorthand {
+                // Shorthand: { key } or { key = default }
                 props.push(ObjectPatProp::Assign(AssignPatProp {
                     span: DUMMY_SP,
                     key: BindingIdent {
                         id: Ident::new(key.clone(), DUMMY_SP, *ctxt),
                         type_ann: None,
                     },
-                    value: None,
+                    value: default_expr.cloned(),
+                }));
+            } else if let Some(def) = default_expr {
+                // Aliased with default: { key: binding = default }
+                props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
+                    key: make_prop_name(key),
+                    value: Box::new(Pat::Assign(AssignPat {
+                        span: DUMMY_SP,
+                        left: Box::new(Pat::Ident(BindingIdent {
+                            id: Ident::new(binding.clone(), DUMMY_SP, *ctxt),
+                            type_ann: None,
+                        })),
+                        right: def.clone(),
+                    })),
                 }));
             } else {
-                // Aliased: { key: binding } — preserve original SyntaxContext
+                // Aliased without default: { key: binding }
                 props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
                     key: make_prop_name(key),
                     value: Box::new(Pat::Ident(BindingIdent {
@@ -489,8 +836,7 @@ fn build_rest_destructuring(
                 }));
             }
         } else {
-            // Not in preceding — generate a `_key` alias, avoiding collisions with
-            // existing bindings in scope and other generated aliases.
+            // Not in preceding — generate a `_key` alias
             let base = format!("_{}", key);
             let alias = find_non_conflicting_alias(&base, scope_names, &used_aliases);
             used_aliases.insert(alias.clone());

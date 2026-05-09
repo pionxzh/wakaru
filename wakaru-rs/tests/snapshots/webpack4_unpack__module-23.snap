@@ -6,7 +6,7 @@ expression: code
 import { Children, Component, forwardRef } from "./module-50.js";
 import u from "./module-1.js";
 import { a as a_2 } from "./module-7.js";
-import _y from "./module-32.js";
+import y from "./module-32.js";
 import _b from "./module-5.js";
 import { isValidElementType } from "./module-43.js";
 import { bindActionCreators } from "./module-11.js";
@@ -49,22 +49,6 @@ export function createProvider(e = "store") {
     return r;
 }
 export const Provider = createProvider();
-function m(e, t) {
-    if (e == null) {
-        return {};
-    }
-    let n;
-    let r;
-    const o = {};
-    const i = Object.keys(e);
-    for(r = 0; r < i.length; r++){
-        n = i[r];
-        if (!(t.indexOf(n) >= 0)) {
-            o[n] = e[n];
-        }
-    }
-    return o;
-}
 const E = null;
 const x = {
     notify () {}
@@ -142,47 +126,27 @@ function C() {}
 export function connectAdvanced(e, t = {}) {
     let n;
     let r;
-    const a = t;
-    const a_getDisplayName = a.getDisplayName;
-    const l = a_getDisplayName === undefined ? (e)=>`ConnectAdvanced(${e})` : a_getDisplayName;
-    const a_methodName = a.methodName;
-    const d = a_methodName === undefined ? "connectAdvanced" : a_methodName;
-    const a_renderCountProp = a.renderCountProp;
-    const b = a_renderCountProp === undefined ? undefined : a_renderCountProp;
-    const a_shouldHandleStateChanges = a.shouldHandleStateChanges;
-    const x = a_shouldHandleStateChanges === undefined || a_shouldHandleStateChanges;
-    const a_storeKey = a.storeKey;
-    const _ = a_storeKey === undefined ? "store" : a_storeKey;
-    const a_withRef = a.withRef;
-    const R = a_withRef !== undefined && a_withRef;
-    const N = m(a, [
-        "getDisplayName",
-        "methodName",
-        "renderCountProp",
-        "shouldHandleStateChanges",
-        "storeKey",
-        "withRef"
-    ]);
-    const M = `${_}Subscription`;
+    const { getDisplayName = (e)=>`ConnectAdvanced(${e})`, methodName = "connectAdvanced", renderCountProp, shouldHandleStateChanges = true, storeKey = "store", withRef = false, ...rest } = t;
+    const M = `${storeKey}Subscription`;
     const A = S++;
     n = {};
-    n[_] = s;
+    n[storeKey] = s;
     n[M] = c;
     const L = n;
     r = {};
     r[M] = c;
     const I = r;
     return function(T1) {
-        _b(isValidElementType(T1), `You must pass a component to the function returned by ${d}. Instead received ${JSON.stringify(T1)}`);
+        _b(isValidElementType(T1), `You must pass a component to the function returned by ${methodName}. Instead received ${JSON.stringify(T1)}`);
         const n = T1.displayName || T1.name || "Component";
-        const r = l(n);
-        const a = a_2({}, N, {
-            getDisplayName: l,
-            methodName: d,
-            renderCountProp: b,
-            shouldHandleStateChanges: x,
-            storeKey: _,
-            withRef: R,
+        const r = getDisplayName(n);
+        const a = a_2({}, rest, {
+            getDisplayName,
+            methodName,
+            renderCountProp,
+            shouldHandleStateChanges,
+            storeKey,
+            withRef,
             displayName: r,
             wrappedComponentName: n,
             WrappedComponent: T1
@@ -193,10 +157,10 @@ export function connectAdvanced(e, t = {}) {
                 this.version = A;
                 this.state = {};
                 this.renderCount = 0;
-                this.store = e[_] || t[_];
-                this.propsMode = Boolean(e[_]);
+                this.store = e[storeKey] || t[storeKey];
+                this.propsMode = Boolean(e[storeKey]);
                 this.setWrappedInstance = this.setWrappedInstance.bind(this);
-                _b(this.store, `Could not find "${_}" in either the context or props of "${r}". Either wrap the root component in a <Provider>, or explicitly pass "${_}" as a prop to "${r}".`);
+                _b(this.store, `Could not find "${storeKey}" in either the context or props of "${r}". Either wrap the root component in a <Provider>, or explicitly pass "${storeKey}" as a prop to "${r}".`);
                 this.initSelector();
                 this.initSubscription();
             }
@@ -208,7 +172,7 @@ export function connectAdvanced(e, t = {}) {
                 return e;
             }
             componentDidMount() {
-                if (x) {
+                if (shouldHandleStateChanges) {
                     this.subscription.trySubscribe();
                     this.selector.run(this.props);
                     if (this.selector.shouldComponentUpdate) {
@@ -233,7 +197,7 @@ export function connectAdvanced(e, t = {}) {
                 this.selector.shouldComponentUpdate = false;
             }
             getWrappedInstance() {
-                _b(R, `To access the wrapped instance, you need to specify { withRef: true } in the options argument of the ${d}() call.`);
+                _b(withRef, `To access the wrapped instance, you need to specify { withRef: true } in the options argument of the ${methodName}() call.`);
                 return this.wrappedInstance;
             }
             setWrappedInstance(e) {
@@ -262,7 +226,7 @@ export function connectAdvanced(e, t = {}) {
                 this.selector.run(this.props);
             }
             initSubscription() {
-                if (x) {
+                if (shouldHandleStateChanges) {
                     const e = (this.propsMode ? this.props : this.context)[M];
                     this.subscription = new k(this.store, e, this.onStateChange.bind(this));
                     this.notifyNestedSubs = this.subscription.notifyNestedSubs.bind(this.subscription);
@@ -285,15 +249,15 @@ export function connectAdvanced(e, t = {}) {
                 return Boolean(this.subscription) && this.subscription.isSubscribed();
             }
             addExtraProps(e) {
-                if (!(R || b || this.propsMode && this.subscription)) {
+                if (!(withRef || renderCountProp || this.propsMode && this.subscription)) {
                     return e;
                 }
                 const t = a_2({}, e);
-                if (R) {
+                if (withRef) {
                     t.ref = this.setWrappedInstance;
                 }
-                if (b) {
-                    t[b] = this.renderCount++;
+                if (renderCountProp) {
+                    t[renderCountProp] = this.renderCount++;
                 }
                 if (this.propsMode && this.subscription) {
                     t[M] = this.subscription;
@@ -318,7 +282,7 @@ export function connectAdvanced(e, t = {}) {
         u.childContextTypes = I;
         u.contextTypes = L;
         u.propTypes = L;
-        return _y(u, T1);
+        return y(u, T1);
     };
 }
 const hasOwnProperty = Object.prototype.hasOwnProperty;
@@ -512,16 +476,11 @@ function U(e, t, n, r, o) {
     };
 }
 function H(e, t) {
-    const { initMapStateToProps, initMapDispatchToProps, initMergeProps } = t;
-    const i = m(t, [
-        "initMapStateToProps",
-        "initMapDispatchToProps",
-        "initMergeProps"
-    ]);
-    const a = initMapStateToProps(e, i);
-    const u = initMapDispatchToProps(e, i);
-    const l = initMergeProps(e, i);
-    return (i.pure ? U : q)(a, u, l, e, i);
+    const { initMapStateToProps, initMapDispatchToProps, initMergeProps, ...rest } = t;
+    const a = initMapStateToProps(e, rest);
+    const u = initMapDispatchToProps(e, rest);
+    const l = initMergeProps(e, rest);
+    return (rest.pure ? U : q)(a, u, l, e, rest);
 }
 function W(e, t, n) {
     for(let r = t.length - 1; r >= 0; r--){
@@ -540,24 +499,7 @@ function $(e, t) {
 export const connect = ((e = {})=>{
     const { connectHOC = connectAdvanced, mapStateToPropsFactories = D, mapDispatchToPropsFactories = I, mergePropsFactories = z, selectorFactory = H } = e;
     return (e, t, n, o = {})=>{
-        const a = o;
-        const a_pure = a.pure;
-        const s = a_pure === undefined || a_pure;
-        const a_areStatesEqual = a.areStatesEqual;
-        const p = a_areStatesEqual === undefined ? $ : a_areStatesEqual;
-        const a_areOwnPropsEqual = a.areOwnPropsEqual;
-        const v = a_areOwnPropsEqual === undefined ? R : a_areOwnPropsEqual;
-        const a_areStatePropsEqual = a.areStatePropsEqual;
-        const g = a_areStatePropsEqual === undefined ? R : a_areStatePropsEqual;
-        const a_areMergedPropsEqual = a.areMergedPropsEqual;
-        const E = a_areMergedPropsEqual === undefined ? R : a_areMergedPropsEqual;
-        const x = m(a, [
-            "pure",
-            "areStatesEqual",
-            "areOwnPropsEqual",
-            "areStatePropsEqual",
-            "areMergedPropsEqual"
-        ]);
+        const { pure = true, areStatesEqual = $, areOwnPropsEqual = R, areStatePropsEqual = R, areMergedPropsEqual = R, ...rest } = o;
         const k = W(e, mapStateToPropsFactories, "mapStateToProps");
         const T = W(t, mapDispatchToPropsFactories, "mapDispatchToProps");
         const S = W(n, mergePropsFactories, "mergeProps");
@@ -570,11 +512,11 @@ export const connect = ((e = {})=>{
             initMapStateToProps: k,
             initMapDispatchToProps: T,
             initMergeProps: S,
-            pure: s,
-            areStatesEqual: p,
-            areOwnPropsEqual: v,
-            areStatePropsEqual: g,
-            areMergedPropsEqual: E
-        }, x));
+            pure,
+            areStatesEqual,
+            areOwnPropsEqual,
+            areStatePropsEqual,
+            areMergedPropsEqual
+        }, rest));
     };
 })();

@@ -472,7 +472,7 @@ fn apply_rules_range_impl(
     run!(UnInteropRequireWildcard, "UnInteropRequireWildcard");
     run!(UnToConsumableArray, "UnToConsumableArray");
     run!(UnObjectSpread, "UnObjectSpread");
-    run!(UnObjectRest, "UnObjectRest");
+    run!(UnObjectRest::new(unresolved_mark), "UnObjectRest");
     run!(UnSlicedToArray, "UnSlicedToArray");
     run!(UnDefineProperty, "UnDefineProperty");
     run!(UnClassCallCheck, "UnClassCallCheck");

@@ -62,7 +62,7 @@ const rest = ((e, t) => {
 use(x, rest);
 "#;
     // Test rule in isolation to verify alias handling
-    let rule_output = render_rule(input, |_| UnObjectRest);
+    let rule_output = render_rule(input, UnObjectRest::new);
     assert!(
         rule_output.contains("a: x"),
         "rule should emit aliased destructuring {{ a: x }}: {rule_output}"
@@ -113,7 +113,7 @@ const f = (e) => {
     use(t, n, d, p);
 };
 "#;
-    let rule_output = render_rule(input, |_| UnObjectRest);
+    let rule_output = render_rule(input, UnObjectRest::new);
     assert!(
         !rule_output.contains("indexOf"),
         "IIFE should be removed: {rule_output}"
@@ -145,7 +145,7 @@ const f = (e) => {
     use(to, exact, strict, d);
 };
 "#;
-    let rule_output = render_rule(input, |_| UnObjectRest);
+    let rule_output = render_rule(input, UnObjectRest::new);
     assert!(
         !rule_output.contains("indexOf"),
         "IIFE should be removed: {rule_output}"
@@ -172,7 +172,7 @@ const f = (e) => {
     use(to, ariaCurrent, d);
 };
 "#;
-    let rule_output = render_rule(input, |_| UnObjectRest);
+    let rule_output = render_rule(input, UnObjectRest::new);
     assert!(
         !rule_output.contains("indexOf"),
         "IIFE should be removed: {rule_output}"
@@ -201,7 +201,7 @@ const f = (e) => {
     use(to, d);
 };
 "#;
-    let rule_output = render_rule(input, |_| UnObjectRest);
+    let rule_output = render_rule(input, UnObjectRest::new);
     assert!(
         !rule_output.contains("indexOf"),
         "IIFE should be removed even with shadowed param: {rule_output}"
@@ -293,5 +293,529 @@ const rest = function(e, t) {
         !result.contains("replace: _replace,") && !result.contains("replace: _replace }"),
         "must not use bare _replace (collides with existing binding):\n{}",
         result
+    );
+}
+
+// ── Named function helper (non-IIFE) ─────────────────────────────
+
+#[test]
+fn named_owp_helper_basic() {
+    let input = r#"
+function m(e, t) {
+    if (e == null) return {};
+    var n = {};
+    var i = Object.keys(e);
+    for (var r = 0; r < i.length; r++) {
+        if (!(t.indexOf(i[r]) >= 0)) {
+            n[i[r]] = e[i[r]];
+        }
+    }
+    return n;
+}
+const x = props.a;
+const rest = m(props, ["a", "b"]);
+use(x, rest);
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("function m"),
+        "helper should be removed: {output}"
+    );
+    assert!(output.contains("...rest"), "should have rest: {output}");
+}
+
+#[test]
+fn named_owp_helper_with_preceding_destructuring() {
+    let input = r#"
+function m(e, t) {
+    if (e == null) return {};
+    var n = {};
+    var i = Object.keys(e);
+    for (var r = 0; r < i.length; r++) {
+        if (!(t.indexOf(i[r]) >= 0)) {
+            n[i[r]] = e[i[r]];
+        }
+    }
+    return n;
+}
+const { to, exact } = props;
+const rest = m(props, ["to", "exact", "strict"]);
+use(to, exact, rest);
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("function m"),
+        "helper should be removed: {output}"
+    );
+    assert!(output.contains("...rest"), "should have rest: {output}");
+    assert!(
+        output.contains("to") && output.contains("exact"),
+        "should preserve named bindings: {output}"
+    );
+}
+
+#[test]
+fn named_owp_helper_multiple_call_sites() {
+    let input = r#"
+function m(e, t) {
+    if (e == null) return {};
+    var n = {};
+    var i = Object.keys(e);
+    for (var r = 0; r < i.length; r++) {
+        if (!(t.indexOf(i[r]) >= 0)) {
+            n[i[r]] = e[i[r]];
+        }
+    }
+    return n;
+}
+const rest1 = m(a, ["x"]);
+const rest2 = m(b, ["y", "z"]);
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("function m"),
+        "helper should be removed when all call sites replaced: {output}"
+    );
+    assert!(
+        output.contains("...rest1") && output.contains("...rest2"),
+        "both rest destructurings should be present: {output}"
+    );
+}
+
+#[test]
+fn named_owp_helper_absorbs_default_pairs() {
+    // Two-statement pattern: extraction + ternary default → destructuring with default
+    let input = r#"
+function m(e, t) {
+    if (e == null) return {};
+    var n = {};
+    var i = Object.keys(e);
+    for (var r = 0; r < i.length; r++) {
+        if (!(t.indexOf(i[r]) >= 0)) {
+            n[i[r]] = e[i[r]];
+        }
+    }
+    return n;
+}
+const a = t;
+const a_name = a.name;
+const x = a_name === undefined ? "default" : a_name;
+const a_value = a.value;
+const y = a_value === undefined ? 42 : a_value;
+const rest = m(a, ["name", "value"]);
+use(x, y, rest);
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("function m"),
+        "helper should be removed: {output}"
+    );
+    assert!(output.contains("...rest"), "should have rest: {output}");
+    assert!(
+        output.contains("= \"default\"") || output.contains("= 'default'"),
+        "should have default value for name: {output}"
+    );
+    assert!(
+        output.contains("= 42"),
+        "should have default value: {output}"
+    );
+}
+
+#[test]
+fn named_owp_helper_undefined_default_omitted() {
+    // When default is `undefined`, no explicit default is needed in destructuring
+    let input = r#"
+function m(e, t) {
+    if (e == null) return {};
+    var n = {};
+    var i = Object.keys(e);
+    for (var r = 0; r < i.length; r++) {
+        if (!(t.indexOf(i[r]) >= 0)) {
+            n[i[r]] = e[i[r]];
+        }
+    }
+    return n;
+}
+const a_prop = obj.prop;
+const x = a_prop === undefined ? undefined : a_prop;
+const rest = m(obj, ["prop"]);
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("undefined"),
+        "undefined default should be omitted: {output}"
+    );
+    assert!(output.contains("...rest"), "should have rest: {output}");
+}
+
+#[test]
+fn iife_absorbs_default_pairs() {
+    let input = r#"
+const a_name = props.name;
+const x = a_name === undefined ? "default" : a_name;
+const a_value = props.value;
+const y = a_value === undefined ? 42 : a_value;
+const rest = ((e, t) => {
+    const n = {};
+    for (const r in e) {
+        t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+    }
+    return n;
+})(props, ["name", "value"]);
+use(x, y, rest);
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("indexOf"),
+        "IIFE should be removed: {output}"
+    );
+    assert!(output.contains("...rest"), "should have rest: {output}");
+    assert!(
+        output.contains("= \"default\"") || output.contains("= 'default'"),
+        "should have default for name: {output}"
+    );
+    assert!(
+        output.contains("= 42"),
+        "should have default for value: {output}"
+    );
+}
+
+#[test]
+fn iife_absorbs_boolean_defaults() {
+    let input = r#"
+const a_enabled = props.enabled;
+const x = a_enabled === undefined || a_enabled;
+const a_hidden = props.hidden;
+const y = a_hidden !== undefined && a_hidden;
+const rest = ((e, t) => {
+    const n = {};
+    for (const r in e) {
+        t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+    }
+    return n;
+})(props, ["enabled", "hidden"]);
+use(x, y, rest);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("= true"),
+        "should have boolean default true: {output}"
+    );
+    assert!(
+        output.contains("= false"),
+        "should have boolean default false: {output}"
+    );
+    assert!(output.contains("...rest"), "should have rest: {output}");
+}
+
+#[test]
+fn named_owp_helper_boolean_default_true() {
+    // `tmp === undefined || tmp` is Babel's transpilation of `{ prop = true }`
+    let input = r#"
+function m(e, t) {
+    if (e == null) return {};
+    var n = {};
+    var i = Object.keys(e);
+    for (var r = 0; r < i.length; r++) {
+        if (!(t.indexOf(i[r]) >= 0)) {
+            n[i[r]] = e[i[r]];
+        }
+    }
+    return n;
+}
+const a_enabled = obj.enabled;
+const x = a_enabled === undefined || a_enabled;
+const rest = m(obj, ["enabled"]);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("= true"),
+        "should recover boolean default true: {output}"
+    );
+    assert!(output.contains("...rest"), "should have rest: {output}");
+}
+
+#[test]
+fn named_owp_helper_boolean_default_false() {
+    // `tmp !== undefined && tmp` is Babel's transpilation of `{ prop = false }`
+    let input = r#"
+function m(e, t) {
+    if (e == null) return {};
+    var n = {};
+    var i = Object.keys(e);
+    for (var r = 0; r < i.length; r++) {
+        if (!(t.indexOf(i[r]) >= 0)) {
+            n[i[r]] = e[i[r]];
+        }
+    }
+    return n;
+}
+const a_withRef = obj.withRef;
+const R = a_withRef !== undefined && a_withRef;
+const rest = m(obj, ["withRef"]);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("= false"),
+        "should recover boolean default false: {output}"
+    );
+    assert!(output.contains("...rest"), "should have rest: {output}");
+}
+
+#[test]
+fn named_owp_helper_inside_function_body() {
+    // Named helper defined at module level, called inside a function
+    let input = r#"
+function m(e, t) {
+    if (e == null) return {};
+    var n = {};
+    var i = Object.keys(e);
+    for (var r = 0; r < i.length; r++) {
+        if (!(t.indexOf(i[r]) >= 0)) {
+            n[i[r]] = e[i[r]];
+        }
+    }
+    return n;
+}
+export function foo(t = {}) {
+    const a_name = t.name;
+    const x = a_name === undefined ? "default" : a_name;
+    const rest = m(t, ["name"]);
+    use(x, rest);
+}
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("function m"),
+        "helper should be removed: {output}"
+    );
+    assert!(
+        output.contains("...rest"),
+        "should have rest inside function: {output}"
+    );
+    assert!(
+        output.contains("= \"default\"") || output.contains("= 'default'"),
+        "should have default value: {output}"
+    );
+}
+
+#[test]
+fn named_owp_helper_decompiled_object_keys_form() {
+    // Exact shape from webpack4 module-23 after Stage 1 normalization:
+    // separate temp vars, key assigned in loop, copy uses temp var
+    let input = r#"
+function m(e, t) {
+    if (e == null) {
+        return {};
+    }
+    let n;
+    let r;
+    const o = {};
+    const i = Object.keys(e);
+    for(r = 0; r < i.length; r++){
+        n = i[r];
+        if (!(t.indexOf(n) >= 0)) {
+            o[n] = e[n];
+        }
+    }
+    return o;
+}
+const rest = m(obj, ["a"]);
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("function m"),
+        "decompiled Object.keys form should be detected: {output}"
+    );
+    assert!(output.contains("...rest"), "should have rest: {output}");
+}
+
+#[test]
+fn named_owp_helper_minified_or_guard_object_keys_form() {
+    let input = r#"
+function m(e, t) {
+    if (e == null) {
+        return {};
+    }
+    let n;
+    let r;
+    const o = {};
+    const i = Object.keys(e);
+    for(r = 0; r < i.length; r++){
+        n = i[r];
+        t.indexOf(n) >= 0 || (o[n] = e[n]);
+    }
+    return o;
+}
+const rest = m(obj, ["a"]);
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("function m"),
+        "minified Object.keys OR form should be detected: {output}"
+    );
+    assert!(output.contains("...rest"), "should have rest: {output}");
+}
+
+#[test]
+fn named_owp_helper_for_in_variant() {
+    // The for-in + hasOwnProperty variant as a named function
+    let input = r#"
+function m(e, t) {
+    var n = {};
+    for (var r in e) {
+        t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+    }
+    return n;
+}
+const rest = m(obj, ["a"]);
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("function m"),
+        "for-in variant helper should be removed: {output}"
+    );
+    assert!(output.contains("...rest"), "should have rest: {output}");
+}
+
+#[test]
+fn named_owp_helper_for_in_requires_guarded_copy() {
+    let input = r#"
+function m(e, t) {
+    var n = {};
+    for (var r in e) {
+        t.indexOf(r);
+        Object.prototype.hasOwnProperty.call(e, r);
+    }
+    return n;
+}
+const rest = m(obj, ["a"]);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("function m"),
+        "non-copying for-in loop must not be treated as OWP: {output}"
+    );
+}
+
+#[test]
+fn named_owp_helper_for_in_rejects_unguarded_copy() {
+    let input = r#"
+function m(e, t) {
+    var n = {};
+    for (var r in e) {
+        t.indexOf(r);
+        Object.prototype.hasOwnProperty.call(e, r);
+        n[r] = e[r];
+    }
+    return n;
+}
+const rest = m(obj, ["a"]);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("function m"),
+        "unguarded for-in copy must not be treated as OWP: {output}"
+    );
+}
+
+#[test]
+fn named_owp_helper_for_requires_copy() {
+    let input = r#"
+function m(e, t) {
+    var n = {};
+    for (var r = 0; r < 1; r++) {
+        t.indexOf("a");
+    }
+    return n;
+}
+const rest = m(obj, ["a"]);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("function m"),
+        "regular for loop without accumulator copy must not be treated as OWP: {output}"
+    );
+}
+
+#[test]
+fn named_owp_helper_for_rejects_unguarded_copy() {
+    let input = r#"
+function m(e, t) {
+    var n = {};
+    for (var r = 0; r < 1; r++) {
+        t.indexOf(r);
+        n[r] = e[r];
+    }
+    return n;
+}
+const rest = m(obj, ["a"]);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("function m"),
+        "regular for loop with unguarded copy must not be treated as OWP: {output}"
+    );
+}
+
+#[test]
+fn named_owp_helper_for_rejects_inverted_if_guard() {
+    let input = r#"
+function m(e, t) {
+    var n = {};
+    var i = Object.keys(e);
+    for (var r = 0; r < i.length; r++) {
+        if (t.indexOf(i[r]) >= 0) {
+            n[i[r]] = e[i[r]];
+        }
+    }
+    return n;
+}
+const rest = m(obj, ["a"]);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("function m"),
+        "copying excluded keys must not be treated as object rest: {output}"
+    );
+}
+
+#[test]
+fn named_owp_helper_for_rejects_inverted_or_guard() {
+    let input = r#"
+function m(e, t) {
+    if (e == null) return {};
+    var n = {};
+    var i = Object.keys(e);
+    for (var r = 0; r < i.length; r++) {
+        t.indexOf(i[r]) < 0 || (n[i[r]] = e[i[r]]);
+    }
+    return n;
+}
+const rest = m(obj, ["a"]);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("function m"),
+        "OR guard that copies excluded keys must not be treated as object rest: {output}"
+    );
+}
+
+#[test]
+fn named_owp_helper_for_in_rejects_inverted_guarded_copy() {
+    let input = r#"
+function m(e, t) {
+    var n = {};
+    for (var r in e) {
+        Object.prototype.hasOwnProperty.call(e, r) && t.indexOf(r) >= 0 && (n[r] = e[r]);
+    }
+    return n;
+}
+const rest = m(obj, ["a"]);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("function m"),
+        "for-in helper copying excluded keys must not be treated as object rest: {output}"
     );
 }

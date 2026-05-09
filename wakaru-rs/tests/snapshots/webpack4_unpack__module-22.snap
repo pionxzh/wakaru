@@ -1,6 +1,6 @@
 ---
 source: tests/webpack4_unpack.rs
-assertion_line: 108
+assertion_line: 109
 expression: code
 ---
 import o, { q } from "./module-0.js";
@@ -668,9 +668,7 @@ export const CANCEL = o.a;
 export const detach = u.i;
 export { E as effects };
 export default ((e = {})=>{
-    const e_context = e.context;
-    const n = e_context === undefined ? {} : e_context;
-    const { context: _context, ...rest } = e;
+    const { context = {}, ...rest } = e;
     const { sagaMonitor, logger, onError } = rest;
     if (q.func(rest)) {
         throw new Error("Saga middleware no longer accept Generator functions. Use sagaMiddleware.run instead");
@@ -689,7 +687,7 @@ export default ((e = {})=>{
         const f = i.c();
         f.emit = (rest.emitter || o.o)(f.emit);
         c.run = runSaga.bind(null, {
-            context: n,
+            context,
             subscribe: f.subscribe,
             dispatch,
             getState,
@@ -711,7 +709,7 @@ export default ((e = {})=>{
     };
     c.setContext = (e)=>{
         o.h(e, q.object, o.k("sagaMiddleware", e));
-        o.v.assign(n, e);
+        o.v.assign(context, e);
     };
     return c;
 });

@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BinaryOp, BlockStmtOrExpr, Callee, Decl, Expr, Function, IfStmt, Lit, MemberProp, Module,
-    ModuleItem, Pat, ReturnStmt, Stmt, VarDeclarator,
+    BinaryOp, BlockStmtOrExpr, Callee, Decl, Expr, ForHead, Function, IfStmt, Lit, MemberProp,
+    Module, ModuleItem, Pat, ReturnStmt, Stmt, UnaryOp, VarDeclarator,
 };
+use swc_core::ecma::visit::{Visit, VisitWith};
 
 pub(crate) type BindingKey = (Atom, SyntaxContext);
 
@@ -20,6 +21,7 @@ pub(crate) enum BabelHelperKind {
     ClassCallCheck,
     PossibleConstructorReturn,
     AssertThisInitialized,
+    ObjectWithoutProperties,
 }
 
 /// Known import paths for Babel runtime helpers.
@@ -53,6 +55,13 @@ const OBJECT_SPREAD_PATHS: &[&str] = &[
 const SLICED_TO_ARRAY_PATHS: &[&str] = &[
     "@babel/runtime/helpers/slicedToArray",
     "@babel/runtime/helpers/esm/slicedToArray",
+];
+
+const OBJECT_WITHOUT_PROPERTIES_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/objectWithoutProperties",
+    "@babel/runtime/helpers/esm/objectWithoutProperties",
+    "@babel/runtime/helpers/objectWithoutPropertiesLoose",
+    "@babel/runtime/helpers/esm/objectWithoutPropertiesLoose",
 ];
 
 /// Scan module-level declarations for helper functions.
@@ -340,6 +349,9 @@ fn detect_helper_from_require(expr: &Expr) -> Option<BabelHelperKind> {
     if SLICED_TO_ARRAY_PATHS.contains(&path) {
         return Some(BabelHelperKind::SlicedToArray);
     }
+    if OBJECT_WITHOUT_PROPERTIES_PATHS.contains(&path) {
+        return Some(BabelHelperKind::ObjectWithoutProperties);
+    }
     None
 }
 
@@ -370,6 +382,9 @@ fn detect_helper_from_fn(func: &Function, has_sub_helpers: bool) -> Option<Babel
     }
     if is_assert_this_initialized_fn(func) {
         return Some(BabelHelperKind::AssertThisInitialized);
+    }
+    if is_object_without_properties_fn(func) {
+        return Some(BabelHelperKind::ObjectWithoutProperties);
     }
     None
 }
@@ -433,6 +448,9 @@ fn detect_helper_from_arrow(
         }
         if is_sliced_to_array_fn(&func, has_sub_helpers) {
             return Some(BabelHelperKind::SlicedToArray);
+        }
+        if is_object_without_properties_fn(&func) {
+            return Some(BabelHelperKind::ObjectWithoutProperties);
         }
         // Note: extends has 0 params and uses `arguments`, which arrows can't do.
     }
@@ -1041,6 +1059,778 @@ fn is_new_reference_error(expr: &Expr) -> bool {
         return false;
     };
     id.sym.as_ref() == "ReferenceError"
+}
+
+// ---------------------------------------------------------------------------
+// _objectWithoutProperties / _objectWithoutPropertiesLoose
+//
+// Both variants take (source, excluded_keys_array) and return a new object
+// with the excluded keys filtered out. Two body shapes exist:
+//
+// Variant A (for-in + hasOwnProperty):
+//   var t = {}; for (var k in s) { excl.indexOf(k)...; t[k] = s[k]; } return t;
+//
+// Variant B (Object.keys + for loop):
+//   if (s == null) return {};
+//   var t = {}; var keys = Object.keys(s);
+//   for (i = 0; i < keys.length; i++) { excl.indexOf(...)...; t[k] = s[k]; }
+//   return t;
+//
+// Key signal: 2 params, body uses `.indexOf` on the second param,
+// initializes an empty object, and returns it.
+// ---------------------------------------------------------------------------
+
+fn is_object_without_properties_fn(func: &Function) -> bool {
+    if func.params.len() != 2 {
+        return false;
+    }
+    let Pat::Ident(param1) = &func.params[0].pat else {
+        return false;
+    };
+    let Pat::Ident(param2) = &func.params[1].pat else {
+        return false;
+    };
+
+    let body = match func.body.as_ref() {
+        Some(b) => b,
+        None => return false,
+    };
+
+    if body.stmts.len() < 3 {
+        return false;
+    }
+
+    // Find the accumulator: the variable initialized with `{}`.
+    // Check both top-level statements and for-loop init expressions,
+    // since minified code often has `for(var o={},i=Object.keys(e),...)`
+    let Some((accum_sym, accum_ctxt)) = find_empty_object_accumulator(&body.stmts)
+        .or_else(|| find_accumulator_in_for_init(&body.stmts))
+    else {
+        return false;
+    };
+
+    // Last statement must return the accumulator
+    let returns_accum = matches!(
+        body.stmts.last(),
+        Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. }))
+            if matches!(arg.as_ref(), Expr::Ident(id) if id.sym == accum_sym && id.ctxt == accum_ctxt)
+    );
+    if !returns_accum {
+        return false;
+    }
+
+    // Match known Babel loop shapes. Two variants:
+    //
+    // Variant A (for-in + hasOwnProperty):
+    //   for (var k in source) {
+    //       excluded.indexOf(k) >= 0 || Object.prototype.hasOwnProperty.call(source, k) && (accum[k] = source[k]);
+    //   }
+    //
+    // Variant B (Object.keys + for loop with indexOf on param2 in loop body):
+    //   for (var o={},i=Object.keys(e),r=0; r<i.length; r++) {
+    //       ... if (!(t.indexOf(n) >= 0)) { o[n] = e[n]; } ...
+    //   }
+    //
+    // For variant B, the accumulator may be in the for-init (minified form)
+    // rather than a separate statement. The indexOf + accumulator-return is
+    // sufficient because the for-init accumulator is a very specific pattern.
+    for stmt in &body.stmts {
+        match stmt {
+            Stmt::ForIn(f)
+                if for_in_loop_has_owp_shape(
+                    f,
+                    (&param1.id.sym, param1.id.ctxt),
+                    (&param2.id.sym, param2.id.ctxt),
+                    (&accum_sym, accum_ctxt),
+                ) =>
+            {
+                return true;
+            }
+            Stmt::For(f) => {
+                let mut checker = GuardedCopyInIfChecker::new(
+                    (&param1.id.sym, param1.id.ctxt),
+                    (&param2.id.sym, param2.id.ctxt),
+                    (&accum_sym, accum_ctxt),
+                );
+                f.body.visit_with(&mut checker);
+                if checker.found {
+                    return true;
+                }
+                // Minified form: expression-level || guard instead of if-statement.
+                // e.g. `t.indexOf(n) >= 0 || (o[n] = e[n])`
+                if for_body_has_or_guarded_copy(
+                    &f.body,
+                    (&param1.id.sym, param1.id.ctxt),
+                    (&param2.id.sym, param2.id.ctxt),
+                    (&accum_sym, accum_ctxt),
+                ) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    false
+}
+
+/// Find the binding (name + context) of the variable initialized with `{}`.
+fn find_empty_object_accumulator(stmts: &[Stmt]) -> Option<(Atom, SyntaxContext)> {
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Pat::Ident(bi) = &decl.name else {
+                continue;
+            };
+            if let Some(init) = &decl.init {
+                if matches!(init.as_ref(), Expr::Object(obj) if obj.props.is_empty()) {
+                    return Some((bi.id.sym.clone(), bi.id.ctxt));
+                }
+            }
+        }
+    }
+    None
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum ComputedKey {
+    Ident(Atom, SyntaxContext),
+    Member {
+        obj: Atom,
+        obj_ctxt: SyntaxContext,
+        prop: Atom,
+        prop_ctxt: SyntaxContext,
+    },
+}
+
+struct GuardedCopyInIfChecker<'a> {
+    param1_sym: &'a Atom,
+    param1_ctxt: SyntaxContext,
+    param2_sym: &'a Atom,
+    param2_ctxt: SyntaxContext,
+    accum_sym: &'a Atom,
+    accum_ctxt: SyntaxContext,
+    found: bool,
+}
+
+impl<'a> GuardedCopyInIfChecker<'a> {
+    fn new(
+        param1: (&'a Atom, SyntaxContext),
+        param2: (&'a Atom, SyntaxContext),
+        accum: (&'a Atom, SyntaxContext),
+    ) -> Self {
+        Self {
+            param1_sym: param1.0,
+            param1_ctxt: param1.1,
+            param2_sym: param2.0,
+            param2_ctxt: param2.1,
+            accum_sym: accum.0,
+            accum_ctxt: accum.1,
+            found: false,
+        }
+    }
+}
+
+impl Visit for GuardedCopyInIfChecker<'_> {
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_if_stmt(&mut self, if_stmt: &IfStmt) {
+        let included_keys = index_guard_keys_for_polarity(
+            &if_stmt.test,
+            self.param2_sym,
+            self.param2_ctxt,
+            GuardPolarity::Included,
+        );
+        if !included_keys.is_empty()
+            && stmt_contains_matching_copy(
+                &if_stmt.cons,
+                (self.param1_sym, self.param1_ctxt),
+                (self.accum_sym, self.accum_ctxt),
+                &included_keys,
+            )
+        {
+            self.found = true;
+            return;
+        }
+
+        let excluded_keys = index_guard_keys_for_polarity(
+            &if_stmt.test,
+            self.param2_sym,
+            self.param2_ctxt,
+            GuardPolarity::Excluded,
+        );
+        if !excluded_keys.is_empty() {
+            if let Some(alt) = &if_stmt.alt {
+                if stmt_contains_matching_copy(
+                    alt,
+                    (self.param1_sym, self.param1_ctxt),
+                    (self.accum_sym, self.accum_ctxt),
+                    &excluded_keys,
+                ) {
+                    self.found = true;
+                    return;
+                }
+            }
+        }
+
+        if_stmt.visit_children_with(self);
+    }
+}
+
+/// Find accumulator inside a for-loop's init (e.g. `for(var o={},i=Object.keys(e);...)`).
+fn find_accumulator_in_for_init(stmts: &[Stmt]) -> Option<(Atom, SyntaxContext)> {
+    for stmt in stmts {
+        let Stmt::For(for_stmt) = stmt else { continue };
+        let Some(swc_core::ecma::ast::VarDeclOrExpr::VarDecl(var)) = &for_stmt.init else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Pat::Ident(bi) = &decl.name else {
+                continue;
+            };
+            if let Some(init) = &decl.init {
+                if matches!(init.as_ref(), Expr::Object(obj) if obj.props.is_empty()) {
+                    return Some((bi.id.sym.clone(), bi.id.ctxt));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn for_in_loop_has_owp_shape(
+    for_in: &swc_core::ecma::ast::ForInStmt,
+    param1: (&Atom, SyntaxContext),
+    param2: (&Atom, SyntaxContext),
+    accum: (&Atom, SyntaxContext),
+) -> bool {
+    let Some(loop_key) = for_in_key(&for_in.left) else {
+        return false;
+    };
+    let Expr::Ident(source) = for_in.right.as_ref() else {
+        return false;
+    };
+    if source.sym != *param1.0 || source.ctxt != param1.1 {
+        return false;
+    }
+
+    for_in_body_has_canonical_expr(&for_in.body, param1, param2, accum, loop_key)
+}
+
+fn for_in_key(left: &ForHead) -> Option<ComputedKey> {
+    match left {
+        ForHead::VarDecl(var) => {
+            if var.decls.len() != 1 || var.decls[0].init.is_some() {
+                return None;
+            }
+            let Pat::Ident(binding) = &var.decls[0].name else {
+                return None;
+            };
+            Some(ComputedKey::Ident(binding.id.sym.clone(), binding.id.ctxt))
+        }
+        ForHead::Pat(pat) => {
+            let Pat::Ident(binding) = pat.as_ref() else {
+                return None;
+            };
+            Some(ComputedKey::Ident(binding.id.sym.clone(), binding.id.ctxt))
+        }
+        _ => None,
+    }
+}
+
+fn copy_key_from_source_to_accum(
+    assign: &swc_core::ecma::ast::AssignExpr,
+    source_sym: &Atom,
+    source_ctxt: SyntaxContext,
+    accum_sym: &Atom,
+    accum_ctxt: SyntaxContext,
+) -> Option<ComputedKey> {
+    use swc_core::ecma::ast::{AssignTarget, SimpleAssignTarget};
+
+    let AssignTarget::Simple(SimpleAssignTarget::Member(left)) = &assign.left else {
+        return None;
+    };
+    let Expr::Ident(left_obj) = left.obj.as_ref() else {
+        return None;
+    };
+    if left_obj.sym != *accum_sym || left_obj.ctxt != accum_ctxt {
+        return None;
+    }
+    let left_key = computed_member_key(&left.prop)?;
+
+    let Expr::Member(right) = assign.right.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(right_obj) = right.obj.as_ref() else {
+        return None;
+    };
+    if right_obj.sym != *source_sym || right_obj.ctxt != source_ctxt {
+        return None;
+    }
+    let right_key = computed_member_key(&right.prop)?;
+    if left_key == right_key {
+        Some(left_key)
+    } else {
+        None
+    }
+}
+
+fn computed_ident_key(prop: &MemberProp) -> Option<(Atom, SyntaxContext)> {
+    let MemberProp::Computed(computed) = prop else {
+        return None;
+    };
+    let Expr::Ident(id) = computed.expr.as_ref() else {
+        return None;
+    };
+    Some((id.sym.clone(), id.ctxt))
+}
+
+fn computed_member_key(prop: &MemberProp) -> Option<ComputedKey> {
+    let MemberProp::Computed(computed) = prop else {
+        return None;
+    };
+    computed_key_expr(computed.expr.as_ref())
+}
+
+fn computed_key_expr(expr: &Expr) -> Option<ComputedKey> {
+    match expr {
+        Expr::Ident(id) => Some(ComputedKey::Ident(id.sym.clone(), id.ctxt)),
+        Expr::Member(member) => {
+            let Expr::Ident(obj) = member.obj.as_ref() else {
+                return None;
+            };
+            let (prop, prop_ctxt) = computed_ident_key(&member.prop)?;
+            Some(ComputedKey::Member {
+                obj: obj.sym.clone(),
+                obj_ctxt: obj.ctxt,
+                prop,
+                prop_ctxt,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn is_has_own_property_call(
+    call: &swc_core::ecma::ast::CallExpr,
+    source_sym: &Atom,
+    source_ctxt: SyntaxContext,
+    required_key: &Option<ComputedKey>,
+) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(call_member) = callee.as_ref() else {
+        return false;
+    };
+    if !matches!(&call_member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "call") {
+        return false;
+    }
+    let Expr::Member(has_own_member) = call_member.obj.as_ref() else {
+        return false;
+    };
+    if !matches!(&has_own_member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "hasOwnProperty")
+    {
+        return false;
+    }
+    if call.args.len() < 2 {
+        return false;
+    }
+    let Expr::Ident(source) = call.args[0].expr.as_ref() else {
+        return false;
+    };
+    if source.sym != *source_sym || source.ctxt != source_ctxt {
+        return false;
+    }
+    let Some(key) = computed_key_expr(call.args[1].expr.as_ref()) else {
+        return false;
+    };
+    required_key
+        .as_ref()
+        .is_none_or(|required| *required == key)
+}
+
+fn for_in_body_has_canonical_expr(
+    body: &Stmt,
+    param1: (&Atom, SyntaxContext),
+    param2: (&Atom, SyntaxContext),
+    accum: (&Atom, SyntaxContext),
+    loop_key: ComputedKey,
+) -> bool {
+    // Shape 1 (expression): indexOf(k) >= 0 || hasOwn.call(e, k) && (accum[k] = e[k])
+    let mut checker = OrGuardChecker {
+        param1,
+        param2,
+        accum,
+        required_key: Some(loop_key.clone()),
+        require_has_own: true,
+        found: false,
+    };
+    body.visit_with(&mut checker);
+    if checker.found {
+        return true;
+    }
+
+    // Shape 2 (if-statement): if (hasOwn && indexOf < 0) { accum[k] = source[k]; }
+    let mut if_checker = GuardedCopyInIfChecker::new(
+        (param1.0, param1.1),
+        (param2.0, param2.1),
+        (accum.0, accum.1),
+    );
+    body.visit_with(&mut if_checker);
+    if if_checker.found {
+        return stmt_has_has_own_property_call(body, param1.0, param1.1, &Some(loop_key));
+    }
+    false
+}
+
+/// Check for `excluded.indexOf(key) >= 0 || (accum[key] = source[key])` patterns
+/// in expression statements (minified OWP form without if-statements).
+fn for_body_has_or_guarded_copy(
+    body: &Stmt,
+    param1: (&Atom, SyntaxContext),
+    param2: (&Atom, SyntaxContext),
+    accum: (&Atom, SyntaxContext),
+) -> bool {
+    let mut checker = OrGuardChecker {
+        param1,
+        param2,
+        accum,
+        required_key: None,
+        require_has_own: false,
+        found: false,
+    };
+    body.visit_with(&mut checker);
+    checker.found
+}
+
+struct OrGuardChecker<'a> {
+    param1: (&'a Atom, SyntaxContext),
+    param2: (&'a Atom, SyntaxContext),
+    accum: (&'a Atom, SyntaxContext),
+    required_key: Option<ComputedKey>,
+    require_has_own: bool,
+    found: bool,
+}
+
+impl Visit for OrGuardChecker<'_> {
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_bin_expr(&mut self, bin: &swc_core::ecma::ast::BinExpr) {
+        if bin.op == BinaryOp::LogicalOr {
+            let index_keys = index_guard_keys_for_polarity(
+                &bin.left,
+                self.param2.0,
+                self.param2.1,
+                GuardPolarity::Excluded,
+            );
+            let index_keys = filter_required_key(index_keys, &self.required_key);
+            if !index_keys.is_empty() {
+                let mut copy_collector = CopyKeyCollector::new(self.param1, self.accum);
+                bin.right.visit_with(&mut copy_collector);
+                let has_copy = keys_have_match(&copy_collector.keys, &index_keys);
+                let has_required_has_own = !self.require_has_own
+                    || expr_has_has_own_property_call(
+                        &bin.right,
+                        self.param1.0,
+                        self.param1.1,
+                        &self.required_key,
+                    );
+                if has_copy && has_required_has_own {
+                    self.found = true;
+                    return;
+                }
+            }
+        }
+        bin.visit_children_with(self);
+    }
+}
+
+struct CopyKeyCollector<'a> {
+    param1_sym: &'a Atom,
+    param1_ctxt: SyntaxContext,
+    accum_sym: &'a Atom,
+    accum_ctxt: SyntaxContext,
+    keys: Vec<ComputedKey>,
+}
+
+impl<'a> CopyKeyCollector<'a> {
+    fn new(param1: (&'a Atom, SyntaxContext), accum: (&'a Atom, SyntaxContext)) -> Self {
+        Self {
+            param1_sym: param1.0,
+            param1_ctxt: param1.1,
+            accum_sym: accum.0,
+            accum_ctxt: accum.1,
+            keys: Vec::new(),
+        }
+    }
+}
+
+impl Visit for CopyKeyCollector<'_> {
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
+        if let Some(key) = copy_key_from_source_to_accum(
+            assign,
+            self.param1_sym,
+            self.param1_ctxt,
+            self.accum_sym,
+            self.accum_ctxt,
+        ) {
+            self.keys.push(key);
+        }
+        assign.visit_children_with(self);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GuardPolarity {
+    Excluded,
+    Included,
+}
+
+fn index_guard_keys_for_polarity(
+    expr: &Expr,
+    param2_sym: &Atom,
+    param2_ctxt: SyntaxContext,
+    wanted: GuardPolarity,
+) -> Vec<ComputedKey> {
+    index_guard_keys(expr, param2_sym, param2_ctxt)
+        .into_iter()
+        .filter_map(|(key, polarity)| (polarity == wanted).then_some(key))
+        .collect()
+}
+
+fn index_guard_keys(
+    expr: &Expr,
+    param2_sym: &Atom,
+    param2_ctxt: SyntaxContext,
+) -> Vec<(ComputedKey, GuardPolarity)> {
+    match unparen_expr(expr) {
+        Expr::Unary(unary) if unary.op == UnaryOp::Bang => {
+            index_guard_keys(unary.arg.as_ref(), param2_sym, param2_ctxt)
+                .into_iter()
+                .map(|(key, polarity)| (key, flip_guard_polarity(polarity)))
+                .collect()
+        }
+        Expr::Bin(bin) if bin.op == BinaryOp::LogicalAnd => {
+            let mut keys = index_guard_keys(&bin.left, param2_sym, param2_ctxt);
+            keys.extend(index_guard_keys(&bin.right, param2_sym, param2_ctxt));
+            keys
+        }
+        Expr::Bin(bin) => match_index_guard_bin(bin, param2_sym, param2_ctxt)
+            .into_iter()
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn match_index_guard_bin(
+    bin: &swc_core::ecma::ast::BinExpr,
+    param2_sym: &Atom,
+    param2_ctxt: SyntaxContext,
+) -> Option<(ComputedKey, GuardPolarity)> {
+    if let Some(key) = key_from_index_of_call(&bin.left, param2_sym, param2_ctxt) {
+        return polarity_for_index_literal_compare(bin.op, &bin.right)
+            .map(|polarity| (key, polarity));
+    }
+    if let Some(key) = key_from_index_of_call(&bin.right, param2_sym, param2_ctxt) {
+        return polarity_for_literal_index_compare(bin.op, &bin.left)
+            .map(|polarity| (key, polarity));
+    }
+    None
+}
+
+fn key_from_index_of_call(
+    expr: &Expr,
+    param2_sym: &Atom,
+    param2_ctxt: SyntaxContext,
+) -> Option<ComputedKey> {
+    let Expr::Call(call) = unparen_expr(expr) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return None;
+    };
+    if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "indexOf") {
+        return None;
+    }
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return None;
+    };
+    if obj.sym != *param2_sym || obj.ctxt != param2_ctxt {
+        return None;
+    }
+    let first_arg = call.args.first()?;
+    computed_key_expr(first_arg.expr.as_ref())
+}
+
+fn polarity_for_index_literal_compare(op: BinaryOp, right: &Expr) -> Option<GuardPolarity> {
+    if is_number_literal(right, 0.0) {
+        match op {
+            BinaryOp::GtEq => Some(GuardPolarity::Excluded),
+            BinaryOp::Lt => Some(GuardPolarity::Included),
+            _ => None,
+        }
+    } else if is_number_literal(right, -1.0) {
+        match op {
+            BinaryOp::Gt | BinaryOp::NotEq | BinaryOp::NotEqEq => Some(GuardPolarity::Excluded),
+            BinaryOp::LtEq | BinaryOp::EqEq | BinaryOp::EqEqEq => Some(GuardPolarity::Included),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+fn polarity_for_literal_index_compare(op: BinaryOp, left: &Expr) -> Option<GuardPolarity> {
+    if is_number_literal(left, 0.0) {
+        match op {
+            BinaryOp::LtEq => Some(GuardPolarity::Excluded),
+            BinaryOp::Gt => Some(GuardPolarity::Included),
+            _ => None,
+        }
+    } else if is_number_literal(left, -1.0) {
+        match op {
+            BinaryOp::Lt | BinaryOp::NotEq | BinaryOp::NotEqEq => Some(GuardPolarity::Excluded),
+            BinaryOp::GtEq | BinaryOp::EqEq | BinaryOp::EqEqEq => Some(GuardPolarity::Included),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+fn is_number_literal(expr: &Expr, expected: f64) -> bool {
+    match unparen_expr(expr) {
+        Expr::Lit(Lit::Num(num)) => num.value == expected,
+        Expr::Unary(unary) if unary.op == UnaryOp::Minus => {
+            matches!(unary.arg.as_ref(), Expr::Lit(Lit::Num(num)) if -num.value == expected)
+        }
+        _ => false,
+    }
+}
+
+fn unparen_expr(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => unparen_expr(&paren.expr),
+        _ => expr,
+    }
+}
+
+fn flip_guard_polarity(polarity: GuardPolarity) -> GuardPolarity {
+    match polarity {
+        GuardPolarity::Excluded => GuardPolarity::Included,
+        GuardPolarity::Included => GuardPolarity::Excluded,
+    }
+}
+
+fn filter_required_key(
+    keys: Vec<ComputedKey>,
+    required_key: &Option<ComputedKey>,
+) -> Vec<ComputedKey> {
+    keys.into_iter()
+        .filter(|key| required_key.as_ref().is_none_or(|required| required == key))
+        .collect()
+}
+
+fn keys_have_match(copy_keys: &[ComputedKey], guard_keys: &[ComputedKey]) -> bool {
+    copy_keys
+        .iter()
+        .any(|copy_key| guard_keys.iter().any(|guard_key| guard_key == copy_key))
+}
+
+fn stmt_contains_matching_copy(
+    stmt: &Stmt,
+    param1: (&Atom, SyntaxContext),
+    accum: (&Atom, SyntaxContext),
+    guard_keys: &[ComputedKey],
+) -> bool {
+    let mut copy_collector = CopyKeyCollector::new(param1, accum);
+    stmt.visit_with(&mut copy_collector);
+    keys_have_match(&copy_collector.keys, guard_keys)
+}
+
+fn expr_has_has_own_property_call(
+    expr: &Expr,
+    source_sym: &Atom,
+    source_ctxt: SyntaxContext,
+    required_key: &Option<ComputedKey>,
+) -> bool {
+    struct HasOwnCollector<'a> {
+        source_sym: &'a Atom,
+        source_ctxt: SyntaxContext,
+        required_key: &'a Option<ComputedKey>,
+        found: bool,
+    }
+
+    impl Visit for HasOwnCollector<'_> {
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            if is_has_own_property_call(call, self.source_sym, self.source_ctxt, self.required_key)
+            {
+                self.found = true;
+                return;
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut collector = HasOwnCollector {
+        source_sym,
+        source_ctxt,
+        required_key,
+        found: false,
+    };
+    expr.visit_with(&mut collector);
+    collector.found
+}
+
+fn stmt_has_has_own_property_call(
+    stmt: &Stmt,
+    source_sym: &Atom,
+    source_ctxt: SyntaxContext,
+    required_key: &Option<ComputedKey>,
+) -> bool {
+    struct HasOwnCollector<'a> {
+        source_sym: &'a Atom,
+        source_ctxt: SyntaxContext,
+        required_key: &'a Option<ComputedKey>,
+        found: bool,
+    }
+
+    impl Visit for HasOwnCollector<'_> {
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            if is_has_own_property_call(call, self.source_sym, self.source_ctxt, self.required_key)
+            {
+                self.found = true;
+                return;
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut collector = HasOwnCollector {
+        source_sym,
+        source_ctxt,
+        required_key,
+        found: false,
+    };
+    stmt.visit_with(&mut collector);
+    collector.found
 }
 
 fn is_extends_fn(func: &Function) -> bool {
