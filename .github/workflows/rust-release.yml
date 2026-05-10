@@ -3,7 +3,7 @@ name: Rust Release
 on:
   push:
     tags:
-      - "v*-next.*"
+      - "v*"
 
 permissions:
   contents: write
@@ -110,7 +110,7 @@ jobs:
             cp artifacts/$pkg/* "$PKG_DIR/"
             cd "$PKG_DIR"
             npm version "$VERSION" --no-git-tag-version --allow-same-version
-            npm publish --tag next --access public
+            npm publish --tag latest --access public
             cd "$GITHUB_WORKSPACE"
           done
 
@@ -127,4 +127,4 @@ jobs:
             }
             require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
-          npm publish --tag next --access public
+          npm publish --tag latest --access public

@@ -1,48 +1,74 @@
+<div align="center">
+
 # Wakaru
 
-[![codecov][CodecovBadge]][CodecovRepo]
-[![Telegram-group](https://img.shields.io/badge/Telegram-group-blue)](https://t.me/wakarujs)
+**Unpack. Unminify. Understand.**
 
-Wakaru is a fast JavaScript decompiler and bundle splitter. It turns minified, bundled, and transpiled JavaScript back into readable modern JavaScript.
+Fast JavaScript decompiler and bundle splitter for modern frontend.
 
-The current rewrite is written in Rust with the SWC AST ecosystem.
+[![CI](https://img.shields.io/github/actions/workflow/status/pionxzh/wakaru/rust-ci.yml?branch=main&label=CI)](https://github.com/pionxzh/wakaru/actions/workflows/rust-ci.yml)
+[![npm](https://img.shields.io/npm/v/@wakaru/cli?label=npm)](https://www.npmjs.com/package/@wakaru/cli)
+[![Telegram](https://img.shields.io/badge/Telegram-group-blue)](https://t.me/wakarujs)
 
-> Early access: the Rust CLI is published on the `next` npm tag. The previous
-> TypeScript CLI remains available on the `latest` npm tag for production use.
+</div>
+
+## Before / After
+
+Minified code goes in:
+
+```js
+var a = void 0;
+var b = !0 ? 1 : 2;
+exports.foo = function(x) { return x === null || x === void 0 ? void 0 : x.bar; };
+```
+
+Clean code comes out:
+
+```js
+const a = undefined;
+const b = 1;
+export function foo(x) {
+  return x?.bar;
+}
+```
+
+## Quick Start
+
+```bash
+npx @wakaru/cli input.js -o output.js               # decompile a file
+npx @wakaru/cli bundle.js --unpack -o out/          # unpack and decompile a bundle
+```
+
+
+## Features
+
+- ✅ Bundle splitting — webpack 4/5, esbuild, Bun, Browserify
+- ✅ Transpiler & minifier recovery — Terser, Babel, SWC, TypeScript
+- ✅ Source map support for better names & import deduplication
+- ✅ Rewrite levels: `minimal` | `standard` | `aggressive`
+
+
+## Why Wakaru?
+
+Production JavaScript is hard to read because multiple tools have transformed it:
+
+- **Bundlers** collapse many modules into one file and inject runtime wrappers
+- **Transpilers** downgrade modern syntax and insert helper functions
+- **Minifiers** erase names, fold constants, and compress control flow
+
+Wakaru handles all three in a single command — feed it a bundle, get back readable modules.
+
 
 ## Install
 
-### npm
-
 ```bash
-npx @wakaru/cli@next input.js
+npm install -g @wakaru/cli
 ```
 
-Or install globally:
+Or pre-built binaries from [GitHub Releases](https://github.com/pionxzh/wakaru/releases).
 
-```bash
-npm install -g @wakaru/cli@next
-```
 
-### Pre-built binaries
-
-Download a binary from [GitHub Releases](https://github.com/pionxzh/wakaru/releases).
-
-| Platform | Archive |
-|----------|---------|
-| Linux x64 | `wakaru-linux-x64.tar.gz` |
-| macOS ARM64 | `wakaru-darwin-arm64.tar.gz` |
-| Windows x64 | `wakaru-win32-x64.zip` |
-
-### Build from source
-
-```bash
-git clone https://github.com/pionxzh/wakaru.git
-cd wakaru
-cargo install --path crates/cli
-```
-
-## Usage
+## CLI Reference
 
 ### Decompile a single file
 
@@ -50,139 +76,90 @@ cargo install --path crates/cli
 wakaru input.js -o output.js
 ```
 
-Without `-o`, Wakaru prints the decompiled output to stdout.
-
-Wakaru also accepts stdin:
+Without `-o`, output goes to stdout. Stdin is also supported:
 
 ```bash
 cat input.js | wakaru > output.js
-wakaru - -o output.js
 ```
 
 ### Unpack a bundle
 
 ```bash
 wakaru bundle.js --unpack -o out/
+wakaru bundle.js --unpack --raw -o out/    # raw split, no readability transforms
 ```
 
-This splits a supported bundle into readable module files under `out/`. The
-output directory is required for unpacking.
-
-For raw splitter output before the readability pipeline:
-
-```bash
-wakaru bundle.js --unpack --raw -o out/
-```
-
-### Use a source map
+### Source maps
 
 ```bash
 wakaru input.js --source-map input.js.map -o output.js
-wakaru bundle.js --unpack --source-map bundle.js.map -o out/
 ```
 
-Source maps are used for identifier recovery and import deduplication.
-`--sourcemap` is also accepted as an alias.
+Source maps enable identifier recovery and import deduplication.
 
-### Extract original sources from a source map
+### Extract original sources
 
 ```bash
 wakaru extract input.js.map -o src/
 ```
 
-This writes files embedded in the source map's `sourcesContent` to disk. The
-generated JavaScript file is not needed for this operation. If the source map
-does not contain `sourcesContent`, extraction cannot recover the original files.
+Writes files embedded in the source map's `sourcesContent` to disk.
 
 ### Rewrite level
 
+Wakaru offers three rewrite levels so you can choose the right tradeoff for your use case:
+
+| Level | When to use |
+|-------|-------------|
+| `minimal` | You need near-zero semantic changes — only safe, obvious transforms. Good for auditing or diffing where behavioral fidelity matters most. |
+| `standard` | Default. Balanced readability and correctness for most use cases. |
+| `aggressive` | You just want to read the code. Enables stronger intent-recovery heuristics that produce cleaner output but may alter edge-case behavior. |
+
 ```bash
 wakaru input.js --level minimal
-wakaru input.js --level standard
+wakaru input.js --level standard      # default
 wakaru input.js --level aggressive
 ```
 
-`standard` is the default. `minimal` keeps rewrites conservative, while
-`aggressive` enables stronger intent-recovery heuristics that may be less
-appropriate for edge-case-sensitive code.
-
 ### Overwrite protection
 
-Wakaru refuses to overwrite existing output files and refuses to write into
-non-empty output directories unless `--force` is passed.
+Wakaru refuses to overwrite existing files unless `--force` is passed.
 
-```bash
-wakaru input.js -o output.js --force
-wakaru bundle.js --unpack -o out/ --force
-```
+## Contributing
 
-## Supported Inputs
+Every kind of contribution is welcome.
 
-Wakaru detects these bundle formats automatically when unpacking:
+Some areas where help is especially useful:
 
-| Format | Support |
-|--------|---------|
-| webpack 4 | yes |
-| webpack 5 | yes |
-| Browserify | yes |
-| esbuild | yes |
-| Bun | partial — scope-hoisted ESM namespace output |
+- Share real-world bundles that Wakaru doesn't handle well
+- Report missing helper detection or false positives
+- Report semantic or correctness issues
 
-Bun support currently reuses the esbuild-style scope-hoisted ESM unpacker. It
-works when Bun emits namespace export boundaries such as `__export(ns, ...)`.
-Fully flattened Bun output without module boundaries is kept as a single module
-unless a source map is used.
+When reporting a bug, please include: the input code, the command you ran, the current output, and what you expected instead.
 
-Wakaru also restores common output patterns from:
+<details>
+<summary>Development setup</summary>
 
-- Terser
-- Babel
-- SWC
-- TypeScript
+1. Fork the repo and create your branch from `main`
+2. Install a stable Rust toolchain
+3. Run `cargo test` to verify everything passes
+4. Make your changes and add tests
 
-## What It Does
-
-Wakaru runs a pipeline of AST transforms to undo common bundler, minifier, and
-transpiler output:
-
-- Splits bundles into individual modules
-- Restores `import` / `export` from CommonJS patterns
-- Removes common bundler interop wrappers
-- Simplifies sequence expressions and indirect calls
-- Restores booleans, `undefined`, numeric literals, and template literals
-- Promotes `var` to `let` / `const` where safe
-- Recovers arrow functions, shorthand properties, optional chaining, JSX,
-  default parameters, object spread, rest parameters, and related syntax
-- Uses source maps to recover original identifier names when available
-
-## Development
-
-The Rust workspace lives at the repo root with three crates under `crates/`: `core`, `cli`, and `wasm`.
+Before submitting a PR:
 
 ```bash
 cargo test
+cargo clippy -- -D warnings
 ```
 
-Useful docs:
+This project uses [Conventional Commits](https://www.conventionalcommits.org/). Please mention the issue number in the commit message or PR description.
 
-- [`architecture.md`](./docs/architecture.md)
-- [`testing.md`](./docs/testing.md)
-- [`helper-detection.md`](./docs/helper-detection.md)
-- [`debugging.md`](./docs/debugging.md)
+Docs: [`architecture.md`](./docs/architecture.md) | [`testing.md`](./docs/testing.md) | [`helper-detection.md`](./docs/helper-detection.md)
 
-The legacy TypeScript implementation is preserved on the `legacy-ts` branch
-during the transition period.
-
-## Legal Disclaimer
-
-Usage of `wakaru` for attacking targets without prior mutual consent is illegal.
-It is the end user's responsibility to obey all applicable local, state, and
-federal laws. Developers assume no liability and are not responsible for misuse
-or damage caused by this program.
+</details>
 
 ## License
 
 [Apache-2.0](./LICENSE)
 
-[CodecovBadge]: https://img.shields.io/codecov/c/github/pionxzh/wakaru
-[CodecovRepo]: https://codecov.io/gh/pionxzh/wakaru
+<sub>Usage of wakaru for attacking targets without prior mutual consent is illegal. End users are responsible for complying with all applicable laws.</sub>

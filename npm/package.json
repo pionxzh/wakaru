@@ -1,6 +1,6 @@
 {
   "name": "@wakaru/cli",
-  "version": "0.2.0-next.1",
+  "version": "1.0.0",
   "description": "Fast JavaScript decompiler and bundle splitter (Rust)",
   "author": "Pionxzh",
   "license": "Apache-2.0",
@@ -26,8 +26,8 @@
     "rust"
   ],
   "optionalDependencies": {
-    "@wakaru/cli-darwin-arm64": "0.2.0-next.1",
-    "@wakaru/cli-linux-x64": "0.2.0-next.1",
-    "@wakaru/cli-win32-x64": "0.2.0-next.1"
+    "@wakaru/cli-darwin-arm64": "1.0.0",
+    "@wakaru/cli-linux-x64": "1.0.0",
+    "@wakaru/cli-win32-x64": "1.0.0"
   }
 }
