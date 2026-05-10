@@ -22,14 +22,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: wakaru-rs
       - name: Format check
-        working-directory: wakaru-rs
         run: cargo fmt --check
       - name: Clippy
-        working-directory: wakaru-rs
         run: cargo clippy -- -D warnings
       - name: Test
-        working-directory: wakaru-rs
         run: cargo test

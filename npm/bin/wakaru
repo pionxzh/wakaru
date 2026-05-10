@@ -1,0 +1,49 @@
+#!/usr/bin/env node
+
+const { platform, arch } = process;
+const { spawnSync } = require("child_process");
+
+const PLATFORMS = {
+  darwin: {
+    arm64: "@wakaru/cli-darwin-arm64/wakaru",
+  },
+  linux: {
+    x64: "@wakaru/cli-linux-x64/wakaru",
+  },
+  win32: {
+    x64: "@wakaru/cli-win32-x64/wakaru.exe",
+  },
+};
+
+const binPath = PLATFORMS?.[platform]?.[arch];
+
+if (!binPath) {
+  console.error(
+    `Unsupported platform: ${platform}-${arch}. ` +
+      `Supported: darwin-arm64, linux-x64, win32-x64.`
+  );
+  process.exit(1);
+}
+
+let resolvedPath;
+try {
+  resolvedPath = require.resolve(binPath);
+} catch {
+  console.error(
+    `Could not find the wakaru binary for ${platform}-${arch}.\n` +
+      `The platform package may not have been installed correctly.\n` +
+      `Try reinstalling: npm install @wakaru/cli@next`
+  );
+  process.exit(1);
+}
+
+const result = spawnSync(resolvedPath, process.argv.slice(2), {
+  stdio: "inherit",
+  shell: false,
+});
+
+if (result.error) {
+  throw result.error;
+}
+
+process.exitCode = result.status;

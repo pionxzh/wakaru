@@ -4,12 +4,10 @@
 
 1. Fork the repo and create your branch from `main`.
 2. Install a stable Rust toolchain.
-3. Run `cargo test` from `wakaru-rs/`.
+3. Run `cargo test`
 4. Make your changes.
 
 ## Checks
-
-Rust commands should be run from `wakaru-rs/`.
 
 ```bash
 cargo test

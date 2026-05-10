@@ -1,0 +1,23 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.2.0-next.1"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+wakaru-core = { path = "crates/core" }
+anyhow = "1.0"
+sourcemap = "9"
+swc_core = { version = "56", features = [
+  "common",
+  "ecma_ast",
+  "ecma_codegen",
+  "ecma_parser",
+  "ecma_parser_typescript",
+  "ecma_transforms",
+  "ecma_utils",
+  "ecma_visit",
+] }

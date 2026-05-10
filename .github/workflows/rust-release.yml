@@ -39,17 +39,14 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: wakaru-rs
 
       - name: Build
-        working-directory: wakaru-rs
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} -p wakaru-cli
 
       - name: Package (unix)
         if: runner.os != 'Windows'
         run: |
-          cd wakaru-rs/target/${{ matrix.target }}/release
+          cd target/${{ matrix.target }}/release
           tar czf ${{ matrix.archive }} ${{ matrix.artifact }}
           mv ${{ matrix.archive }} ${{ github.workspace }}/
 
@@ -57,18 +54,18 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path "wakaru-rs/target/${{ matrix.target }}/release/${{ matrix.artifact }}" -DestinationPath "${{ matrix.archive }}"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/${{ matrix.artifact }}" -DestinationPath "${{ matrix.archive }}"
 
       - name: Prepare platform npm package
         shell: bash
         run: |
-          cp "wakaru-rs/target/${{ matrix.target }}/release/${{ matrix.artifact }}" \
-             "wakaru-rs/npm/platforms/${{ matrix.npm-pkg }}/"
+          cp "target/${{ matrix.target }}/release/${{ matrix.artifact }}" \
+             "npm/platforms/${{ matrix.npm-pkg }}/"
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.npm-pkg }}
-          path: wakaru-rs/npm/platforms/${{ matrix.npm-pkg }}/
+          path: npm/platforms/${{ matrix.npm-pkg }}/
 
       - uses: actions/upload-artifact@v7
         with:
@@ -109,7 +106,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           for pkg in cli-darwin-arm64 cli-linux-x64 cli-win32-x64; do
-            PKG_DIR="wakaru-rs/npm/platforms/$pkg"
+            PKG_DIR="npm/platforms/$pkg"
             cp artifacts/$pkg/* "$PKG_DIR/"
             cd "$PKG_DIR"
             npm version "$VERSION" --no-git-tag-version --allow-same-version
@@ -120,7 +117,7 @@ jobs:
       - name: Publish main package
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          cd wakaru-rs/npm
+          cd npm
           # Update version and optionalDependencies versions
           node -e "
             const pkg = require('./package.json');

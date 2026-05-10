@@ -29,7 +29,7 @@ tsconfig.tsbuildinfo
 .turbo
 
 !testcases/**/dist
-!wakaru-rs/tests/fixtures/**/dist
+!crates/core/tests/bundles/**/dist
 
 # Local workspace
 .claude/

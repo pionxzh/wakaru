@@ -1,0 +1,17 @@
+[package]
+name = "wakaru-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Wakaru CLI — fast JavaScript decompiler and bundle splitter"
+
+[[bin]]
+name = "wakaru"
+path = "src/main.rs"
+
+[dependencies]
+wakaru-core = { workspace = true, features = ["parallel"] }
+anyhow.workspace = true
+clap = { version = "4.5", features = ["derive"] }
+rayon = "1.11"
+sourcemap.workspace = true

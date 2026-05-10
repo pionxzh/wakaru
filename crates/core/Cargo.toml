@@ -1,0 +1,23 @@
+[package]
+name = "wakaru-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Wakaru core — JavaScript decompiler and bundle splitter"
+
+[lib]
+name = "wakaru_core"
+
+[features]
+default = []
+parallel = ["dep:rayon"]
+
+[dependencies]
+anyhow.workspace = true
+rayon = { version = "1.11", optional = true }
+similar = "2"
+sourcemap.workspace = true
+swc_core.workspace = true
+
+[dev-dependencies]
+insta = "1"

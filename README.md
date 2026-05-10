@@ -38,8 +38,8 @@ Download a binary from [GitHub Releases](https://github.com/pionxzh/wakaru/relea
 
 ```bash
 git clone https://github.com/pionxzh/wakaru.git
-cd wakaru/wakaru-rs
-cargo install --path .
+cd wakaru
+cargo install --path crates/cli
 ```
 
 ## Usage
@@ -157,19 +157,18 @@ transpiler output:
 
 ## Development
 
-Rust crate and CLI sources live in [`wakaru-rs/`](./wakaru-rs/).
+The Rust workspace lives at the repo root with three crates under `crates/`: `core`, `cli`, and `wasm`.
 
 ```bash
-cd wakaru-rs
 cargo test
 ```
 
 Useful docs:
 
-- [`architecture.md`](./wakaru-rs/docs/architecture.md)
-- [`testing.md`](./wakaru-rs/docs/testing.md)
-- [`helper-detection.md`](./wakaru-rs/docs/helper-detection.md)
-- [`debugging.md`](./wakaru-rs/docs/debugging.md)
+- [`architecture.md`](./docs/architecture.md)
+- [`testing.md`](./docs/testing.md)
+- [`helper-detection.md`](./docs/helper-detection.md)
+- [`debugging.md`](./docs/debugging.md)
 
 The legacy TypeScript implementation is preserved on the `legacy-ts` branch
 during the transition period.
