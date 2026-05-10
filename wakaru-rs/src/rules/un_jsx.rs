@@ -8,7 +8,8 @@ use swc_core::ecma::ast::{
     JSXAttrValue, JSXClosingElement, JSXClosingFragment, JSXElement, JSXElementChild,
     JSXElementName, JSXExpr, JSXExprContainer, JSXFragment, JSXMemberExpr, JSXNamespacedName,
     JSXObject, JSXOpeningElement, JSXOpeningFragment, JSXSpreadChild, JSXText, KeyValueProp, Lit,
-    MemberExpr, MemberProp, Module, ModuleItem, Number, ObjectLit, Param, Pat, Prop, PropName,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, Number, ObjectLit,
+    Param, Pat, Prop, PropName,
     PropOrSpread, SpreadElement, Stmt, Str, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -38,6 +39,7 @@ pub struct UnJsx {
     pending_stmts: Vec<Vec<Stmt>>,
     used_names: Vec<HashSet<String>>,
     string_consts: Vec<HashMap<BindingId, Str>>,
+    import_pragmas: HashMap<BindingId, &'static str>,
 }
 
 impl UnJsx {
@@ -52,11 +54,13 @@ impl UnJsx {
             pending_stmts: Vec::new(),
             used_names: Vec::new(),
             string_consts: Vec::new(),
+            import_pragmas: HashMap::new(),
         }
     }
 
     fn process_module_items(&mut self, items: &mut Vec<ModuleItem>) {
-        let renames = collect_module_renames(items, self.unresolved_mark);
+        self.import_pragmas = collect_import_pragmas(items);
+        let renames = collect_module_renames(items, self.unresolved_mark, &self.import_pragmas);
         if !renames.is_empty() {
             let mut renamer = ScopedRenamer::new(renames);
             for item in items.iter_mut() {
@@ -84,7 +88,7 @@ impl UnJsx {
     }
 
     fn process_stmts(&mut self, stmts: &mut Vec<Stmt>) {
-        let renames = collect_stmt_renames(stmts, self.unresolved_mark);
+        let renames = collect_stmt_renames(stmts, self.unresolved_mark, &self.import_pragmas);
         if !renames.is_empty() {
             let mut renamer = ScopedRenamer::new(renames);
             for stmt in stmts.iter_mut() {
@@ -112,7 +116,7 @@ impl UnJsx {
     }
 
     fn convert_call(&mut self, call: &CallExpr) -> Option<Expr> {
-        let pragma = get_pragma(&call.callee)?;
+        let pragma = get_pragma(&call.callee, &self.import_pragmas)?;
         if call.args.len() < 2 {
             return None;
         }
@@ -562,7 +566,48 @@ fn collect_string_consts_from_stmts(stmts: &[Stmt]) -> HashMap<BindingId, Str> {
     collector.values
 }
 
-fn collect_module_renames(items: &[ModuleItem], unresolved_mark: Mark) -> Vec<ScopedRename> {
+fn collect_import_pragmas(items: &[ModuleItem]) -> HashMap<BindingId, &'static str> {
+    let mut map = HashMap::new();
+    for item in items {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        let src = wtf8_to_string(&import.src.value);
+        if !matches!(
+            src.as_str(),
+            "react/jsx-runtime" | "react/jsx-dev-runtime"
+        ) {
+            continue;
+        }
+        for spec in &import.specifiers {
+            let ImportSpecifier::Named(named) = spec else {
+                continue;
+            };
+            let imported_name = match &named.imported {
+                Some(ModuleExportName::Ident(id)) => id.sym.to_string(),
+                Some(ModuleExportName::Str(s)) => wtf8_to_string(&s.value),
+                None => continue,
+            };
+            let pragma: Option<&'static str> = match imported_name.as_str() {
+                "jsx" => Some("jsx"),
+                "jsxs" => Some("jsxs"),
+                "jsxDEV" => Some("jsxDEV"),
+                "jsxsDEV" => Some("jsxsDEV"),
+                _ => None,
+            };
+            if let Some(pragma) = pragma {
+                map.insert((named.local.sym.clone(), named.local.ctxt), pragma);
+            }
+        }
+    }
+    map
+}
+
+fn collect_module_renames(
+    items: &[ModuleItem],
+    unresolved_mark: Mark,
+    import_pragmas: &HashMap<BindingId, &'static str>,
+) -> Vec<ScopedRename> {
     let used_names = collect_names_in_module_items(items);
     let mut name_registry = used_names;
     let mut renames = collect_display_name_renames_from_module_items(items, &mut name_registry);
@@ -570,11 +615,16 @@ fn collect_module_renames(items: &[ModuleItem], unresolved_mark: Mark) -> Vec<Sc
         items,
         unresolved_mark,
         &mut name_registry,
+        import_pragmas,
     ));
     renames
 }
 
-fn collect_stmt_renames(stmts: &[Stmt], unresolved_mark: Mark) -> Vec<ScopedRename> {
+fn collect_stmt_renames(
+    stmts: &[Stmt],
+    unresolved_mark: Mark,
+    import_pragmas: &HashMap<BindingId, &'static str>,
+) -> Vec<ScopedRename> {
     let used_names = collect_names_in_stmts(stmts);
     let mut name_registry = used_names;
     let mut renames = collect_display_name_renames_from_stmts(stmts, &mut name_registry);
@@ -582,6 +632,7 @@ fn collect_stmt_renames(stmts: &[Stmt], unresolved_mark: Mark) -> Vec<ScopedRena
         stmts,
         unresolved_mark,
         &mut name_registry,
+        import_pragmas,
     ));
     renames
 }
@@ -658,12 +709,14 @@ fn collect_lowercase_component_renames_from_module_items(
     items: &[ModuleItem],
     unresolved_mark: Mark,
     used_names: &mut HashSet<String>,
+    import_pragmas: &HashMap<BindingId, &'static str>,
 ) -> Vec<ScopedRename> {
     let eligible_bindings = collect_eligible_component_bindings_from_module_items(items);
     let mut visitor = LowercaseComponentRenameCollector {
         unresolved_mark,
         used_names,
         eligible_bindings,
+        import_pragmas,
         renames: Vec::new(),
     };
     items.visit_with(&mut visitor);
@@ -674,12 +727,14 @@ fn collect_lowercase_component_renames_from_stmts(
     stmts: &[Stmt],
     unresolved_mark: Mark,
     used_names: &mut HashSet<String>,
+    import_pragmas: &HashMap<BindingId, &'static str>,
 ) -> Vec<ScopedRename> {
     let eligible_bindings = collect_eligible_component_bindings_from_stmts(stmts);
     let mut visitor = LowercaseComponentRenameCollector {
         unresolved_mark,
         used_names,
         eligible_bindings,
+        import_pragmas,
         renames: Vec::new(),
     };
     stmts.visit_with(&mut visitor);
@@ -690,12 +745,13 @@ struct LowercaseComponentRenameCollector<'a> {
     unresolved_mark: Mark,
     used_names: &'a mut HashSet<String>,
     eligible_bindings: HashMap<BindingId, Option<String>>,
+    import_pragmas: &'a HashMap<BindingId, &'static str>,
     renames: Vec<ScopedRename>,
 }
 
 impl Visit for LowercaseComponentRenameCollector<'_> {
     fn visit_call_expr(&mut self, call: &CallExpr) {
-        let Some(_) = get_pragma(&call.callee) else {
+        let Some(_) = get_pragma(&call.callee, self.import_pragmas) else {
             call.visit_children_with(self);
             return;
         };
@@ -887,21 +943,29 @@ fn component_name_hint_from_expr(expr: &Expr) -> Option<String> {
     starts_with_lowercase(name).then(|| pascalize(name))
 }
 
-fn get_pragma(callee: &Callee) -> Option<&'static str> {
+fn get_pragma(
+    callee: &Callee,
+    import_pragmas: &HashMap<BindingId, &'static str>,
+) -> Option<&'static str> {
     let Callee::Expr(expr) = callee else {
         return None;
     };
     match expr.as_ref() {
-        Expr::Ident(ident) => match ident.sym.as_ref() {
-            CLASSIC_PRAGMA => Some(CLASSIC_PRAGMA),
-            "jsx" => Some("jsx"),
-            "jsxs" => Some("jsxs"),
-            "_jsx" => Some("_jsx"),
-            "_jsxs" => Some("_jsxs"),
-            "jsxDEV" => Some("jsxDEV"),
-            "jsxsDEV" => Some("jsxsDEV"),
-            _ => None,
-        },
+        Expr::Ident(ident) => {
+            if let Some(pragma) = import_pragmas.get(&(ident.sym.clone(), ident.ctxt)) {
+                return Some(*pragma);
+            }
+            match ident.sym.as_ref() {
+                CLASSIC_PRAGMA => Some(CLASSIC_PRAGMA),
+                "jsx" => Some("jsx"),
+                "jsxs" => Some("jsxs"),
+                "_jsx" => Some("_jsx"),
+                "_jsxs" => Some("_jsxs"),
+                "jsxDEV" => Some("jsxDEV"),
+                "jsxsDEV" => Some("jsxsDEV"),
+                _ => None,
+            }
+        }
         Expr::Member(member) => {
             let Expr::Ident(object) = member.obj.as_ref() else {
                 return None;

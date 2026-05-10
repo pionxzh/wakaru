@@ -194,3 +194,48 @@ var y = window.document.createElement("div", attrs);
 
     assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), input);
 }
+
+#[test]
+fn converts_aliased_import_pragmas() {
+    let input = r#"
+import { jsx as t, jsxs as l } from "react/jsx-runtime";
+
+function App() {
+  return l("div", {
+    children: [
+      t("span", { children: "hello" }),
+      t("span", { children: "world" })
+    ]
+  });
+}
+"#;
+    let expected = r#"
+import { jsx as t, jsxs as l } from "react/jsx-runtime";
+
+function App() {
+  return <div><span>hello</span><span>world</span></div>;
+}
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn converts_aliased_dev_runtime_pragmas() {
+    let input = r#"
+import { jsxDEV as d } from "react/jsx-dev-runtime";
+
+function App() {
+  return d("div", { className: "app", children: "hello" });
+}
+"#;
+    let expected = r#"
+import { jsxDEV as d } from "react/jsx-dev-runtime";
+
+function App() {
+  return <div className="app">hello</div>;
+}
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
