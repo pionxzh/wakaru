@@ -18,18 +18,18 @@ Minified code goes in:
 
 ```js
 var a = void 0;
-var b = !0 ? 1 : 2;
-exports.foo = function(x) { return x === null || x === void 0 ? void 0 : x.bar; };
+var b = !1;
+var c = x === null || x === void 0 ? void 0 : x.bar;
+exports.greet = function(e) { return "Hello, ".concat(e, "!"); };
 ```
 
 Clean code comes out:
 
 ```js
-const a = undefined;
-const b = 1;
-export function foo(x) {
-  return x?.bar;
-}
+let a;
+const b = false;
+const c = x?.bar;
+export const greet = (e) => `Hello, ${e}!`;
 ```
 
 ## Quick Start
