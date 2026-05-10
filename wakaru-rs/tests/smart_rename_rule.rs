@@ -893,3 +893,19 @@ use(obj, inner(2));
         output
     );
 }
+
+#[test]
+fn value_position_rename_from_jsx_attr() {
+    let input = r#"
+function render(c) {
+  return <EContext.Provider value={c}>{children}</EContext.Provider>;
+}
+"#;
+    let expected = r#"
+function render(value) {
+  return <EContext.Provider value={value}>{children}</EContext.Provider>;
+}
+"#;
+
+    assert_eq_normalized(&apply(input), expected);
+}

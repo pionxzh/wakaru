@@ -5,7 +5,8 @@ use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, ClassExpr,
     Decl, ExportSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier,
-    JSXElementName, JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
+    JSXAttr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElementName, JSXExpr, JSXExprContainer,
+    JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
     ModuleDecl, ModuleExportName, ModuleItem, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName,
     Stmt, VarDecl, VarDeclKind,
 };
@@ -1333,6 +1334,31 @@ impl Visit for ValuePositionClassifier {
             return;
         }
         prop.visit_children_with(self);
+    }
+
+    fn visit_jsx_attr_or_spread(&mut self, attr: &JSXAttrOrSpread) {
+        // Treat `<Foo name={x} />` the same as `{ name: x }` for
+        // value-position renaming so JSX attrs also provide rename hints.
+        let JSXAttrOrSpread::JSXAttr(JSXAttr {
+            name: JSXAttrName::Ident(name),
+            value: Some(JSXAttrValue::JSXExprContainer(JSXExprContainer {
+                expr: JSXExpr::Expr(expr),
+                ..
+            })),
+            ..
+        }) = attr
+        else {
+            attr.visit_children_with(self);
+            return;
+        };
+        if let Expr::Ident(id) = expr.as_ref() {
+            let bid = (id.sym.clone(), id.ctxt);
+            if self.states.contains_key(&bid) {
+                self.record_value_use(&bid, name.sym.to_string());
+                return;
+            }
+        }
+        expr.visit_with(self);
     }
 
     fn visit_ident(&mut self, id: &Ident) {

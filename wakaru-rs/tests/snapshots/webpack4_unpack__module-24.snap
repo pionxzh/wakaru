@@ -81,8 +81,8 @@ export class Link extends Component {
         b(to !== undefined, 'You must specify the "to" property');
         const history = this.context.router.history;
         const i = typeof to === "string" ? createLocation(to, null, null, history.location) : to;
-        const u = history.createHref(i);
-        return <a {...rest} onClick={this.handleClick} href={u} ref={innerRef}/>;
+        const href = history.createHref(i);
+        return <a {...rest} onClick={this.handleClick} href={href} ref={innerRef}/>;
     }
 }
 Link.propTypes = {
@@ -492,7 +492,7 @@ export class StaticRouter extends Component {
     render() {
         const props = this.props;
         const { basename, context: _context, location, ...rest } = props;
-        const o = {
+        const history = {
             createHref: this.createHref,
             action: "POP",
             location: ((basename_1, t)=>{
@@ -516,7 +516,7 @@ export class StaticRouter extends Component {
             listen: this.handleListen,
             block: this.handleBlock
         };
-        return <s.a {...rest} history={o}/>;
+        return <s.a {...rest} history={history}/>;
     }
 }
 StaticRouter.propTypes = {
@@ -552,10 +552,10 @@ export class Switch extends Component {
             if (r == null && isValidElement(t)) {
                 const i = t.props;
                 const { path: u, exact: exact, strict: strict, sensitive: sensitive, from: f } = i;
-                const path = u || f;
+                const d = u || f;
                 o = t;
                 r = a(n.pathname, {
-                    path,
+                    path: d,
                     exact,
                     strict,
                     sensitive
