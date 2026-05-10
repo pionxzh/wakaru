@@ -29,7 +29,7 @@ pub use rules::{
     RewriteLevel,
 };
 pub use sourcemap_rename::{extract_sources, parse_sourcemap};
-pub use unpacker::{unpack_webpack4, UnpackResult, UnpackedModule};
+pub use unpacker::{scope_hoist, unpack_webpack4, UnpackResult, UnpackedModule};
 
 /// Unpack a webpack4 bundle and return the raw (pre-decompile-rules) module code.
 /// Each element is `(filename, code)`. Returns `None` if the source is not recognized

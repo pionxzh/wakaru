@@ -1,5 +1,6 @@
 pub mod browserify;
 pub mod esbuild;
+pub mod scope_hoist;
 pub mod webpack4;
 pub mod webpack5;
 

@@ -17,6 +17,14 @@ enum CliRewriteLevel {
     Aggressive,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum UnpackMode {
+    /// Auto-detect bundle format, with heuristic fallback for scope-hoisted bundles.
+    Auto,
+    /// Structural detection only (webpack, browserify, esbuild). No heuristic fallback.
+    Strict,
+}
+
 impl From<CliRewriteLevel> for RewriteLevel {
     fn from(value: CliRewriteLevel) -> Self {
         match value {
@@ -48,11 +56,15 @@ struct Cli {
     #[arg(short, long)]
     output: Option<PathBuf>,
 
-    /// Unpack a supported bundle into readable module files.
+    /// Unpack a bundle into readable module files.
     ///
     /// Requires --output, which is treated as the output directory.
-    #[arg(short, long)]
-    unpack: bool,
+    ///
+    /// Modes:
+    ///   --unpack / --unpack=auto    Auto-detect + heuristic fallback for scope-hoisted bundles
+    ///   --unpack=strict             Structural detection only (no heuristic fallback)
+    #[arg(short, long, value_enum, num_args = 0..=1, default_missing_value = "auto")]
+    unpack: Option<UnpackMode>,
 
     /// With --unpack, write raw unpacker output before the decompiler rule pipeline.
     #[arg(long, requires = "unpack")]
@@ -154,25 +166,27 @@ fn main() -> Result<()> {
 }
 
 fn run_default(cli: Cli) -> Result<()> {
-    if cli.unpack && cli.output.is_none() {
+    if cli.unpack.is_some() && cli.output.is_none() {
         bail!("--unpack requires -o/--output to choose an output directory");
     }
 
     let (input, filename) = read_input(cli.input.as_ref())?;
 
+    let heuristic_split = !matches!(cli.unpack, Some(UnpackMode::Strict));
     let options = DecompileOptions {
         filename,
         sourcemap_path: cli.sourcemap.map(|p| p.to_string_lossy().into_owned()),
         level: cli.level.into(),
+        heuristic_split,
         ..Default::default()
     };
 
-    if cli.unpack {
+    if cli.unpack.is_some() {
         let out_dir = cli.output.expect("checked above");
         ensure_output_dir(&out_dir, cli.force)?;
 
         let pairs = if cli.raw {
-            unpack_raw(&input)?
+            unpack_raw(&input, &options)?
         } else {
             unpack(&input, options)?
         };

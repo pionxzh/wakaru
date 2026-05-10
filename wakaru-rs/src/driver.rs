@@ -19,7 +19,7 @@ use crate::rules::{
     RewriteLevel, UnEsm, UnImportRename,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
-use crate::unpacker::unpack_bundle;
+use crate::unpacker::{scope_hoist, unpack_bundle};
 
 #[derive(Debug, Clone)]
 pub struct DecompileOptions {
@@ -34,6 +34,9 @@ pub struct DecompileOptions {
     pub dead_code_elimination: bool,
     /// Controls how aggressively wakaru recovers likely original source patterns.
     pub level: RewriteLevel,
+    /// When true and no bundle format is detected, attempt heuristic splitting
+    /// of scope-hoisted bundles (Rollup/Vite/flat esbuild).
+    pub heuristic_split: bool,
 }
 
 impl Default for DecompileOptions {
@@ -43,6 +46,7 @@ impl Default for DecompileOptions {
             sourcemap_path: None,
             dead_code_elimination: true,
             level: RewriteLevel::Standard,
+            heuristic_split: false,
         }
     }
 }
@@ -253,8 +257,20 @@ pub fn format_trace_events(events: &[RuleTraceEvent]) -> String {
 pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, String)>> {
     match unpack_bundle(source) {
         Some(result) => unpack_multi_module(result.modules, options),
+        None if options.heuristic_split => {
+            match scope_hoist::split_scope_hoisted(source) {
+                Some(result) if result.modules.len() > 1 => {
+                    let mut opts = options.clone();
+                    opts.dead_code_elimination = false;
+                    unpack_multi_module(result.modules, opts)
+                }
+                _ => {
+                    let code = decompile(source, options)?;
+                    Ok(vec![("module.js".to_string(), code)])
+                }
+            }
+        }
         None => {
-            // Not a recognized bundle — treat as a single module
             let code = decompile(source, options)?;
             Ok(vec![("module.js".to_string(), code)])
         }
@@ -267,8 +283,16 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, St
 /// Some detectors still do minimal runtime normalization during extraction so
 /// their output can be parsed as standalone modules, but cross-module analysis
 /// and the normal rule pipeline are skipped.
-pub fn unpack_raw(source: &str) -> Result<Vec<(String, String)>> {
-    match unpack_bundle(source) {
+pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<Vec<(String, String)>> {
+    let result = unpack_bundle(source).or_else(|| {
+        if options.heuristic_split {
+            let r = scope_hoist::split_scope_hoisted(source)?;
+            if r.modules.len() > 1 { Some(r) } else { None }
+        } else {
+            None
+        }
+    });
+    match result {
         Some(result) => Ok(result
             .modules
             .into_iter()

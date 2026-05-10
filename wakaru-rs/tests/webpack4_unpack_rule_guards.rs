@@ -1,7 +1,7 @@
 mod common;
 
 use common::normalize;
-use wakaru_rs::{unpack_raw, unpack_webpack4, unpack_webpack4_raw};
+use wakaru_rs::{unpack_raw, unpack_webpack4, unpack_webpack4_raw, DecompileOptions};
 
 fn raw_modules(source: &str) -> Vec<(String, String)> {
     unpack_webpack4_raw(source).expect("raw webpack4 unpack should succeed")
@@ -16,7 +16,7 @@ fn raw_module(source: &str, filename: &str) -> String {
 }
 
 fn cli_raw_module(source: &str, filename: &str) -> String {
-    unpack_raw(source)
+    unpack_raw(source, &DecompileOptions::default())
         .expect("raw unpack should succeed")
         .into_iter()
         .find(|(name, _)| name == filename)

@@ -44,7 +44,7 @@ fn webpack4_raw_unpack_extracts_modules_without_pipeline() {
     let source = fs::read_to_string(source_path)
         .expect("failed to read webpack4 testcase — make sure the testcases are present");
 
-    let pairs = unpack_raw(&source).expect("raw unpack should succeed");
+    let pairs = unpack_raw(&source, &DecompileOptions::default()).expect("raw unpack should succeed");
 
     assert!(
         pairs.len() >= 50,

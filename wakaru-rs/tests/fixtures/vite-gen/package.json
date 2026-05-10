@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "devDependencies": {
+    "vite": "^6.3.5"
+  }
+}

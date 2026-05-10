@@ -21,7 +21,8 @@ fn unpack_fixture(path: &str) -> Vec<(String, String)> {
 
 fn unpack_fixture_raw(path: &str) -> Vec<(String, String)> {
     let source = fixture(path);
-    unpack_raw(&source).unwrap_or_else(|_| panic!("unpack_raw should succeed for {path}"))
+    unpack_raw(&source, &DecompileOptions::default())
+        .unwrap_or_else(|_| panic!("unpack_raw should succeed for {path}"))
 }
 
 fn filenames(pairs: &[(String, String)]) -> Vec<&str> {
