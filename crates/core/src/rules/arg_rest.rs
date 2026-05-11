@@ -1,5 +1,5 @@
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt, Callee, Constructor,
     Expr, Function, Ident, Lit, MemberExpr, MemberProp, Number, Param, ParamOrTsParamProp, Pat,
@@ -8,6 +8,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::RewriteLevel;
+
+type BindingId = (Atom, SyntaxContext);
 
 /// Replaces `arguments[N]` / `arguments.length` patterns with a rest parameter
 /// `...args` and rewrites safe accesses to use `args`.
@@ -361,6 +363,7 @@ struct ArgumentsChecker {
     has_any: bool,
     has_unsafe: bool,
     fixed_param_count: usize,
+    allowed_loop_indices: Vec<BindingId>,
 }
 
 impl ArgumentsChecker {
@@ -369,7 +372,23 @@ impl ArgumentsChecker {
             has_any: false,
             has_unsafe: false,
             fixed_param_count,
+            allowed_loop_indices: Vec::new(),
         }
+    }
+
+    fn is_safe_arguments_index(&self, expr: &Expr) -> bool {
+        if self.fixed_param_count == 0 {
+            return extract_numeric_index(expr).is_some()
+                || matches!(
+                    expr,
+                    Expr::Ident(id)
+                        if self
+                            .allowed_loop_indices
+                            .contains(&(id.sym.clone(), id.ctxt))
+                );
+        }
+
+        is_safe_arguments_index(expr, self.fixed_param_count)
     }
 }
 
@@ -377,6 +396,13 @@ impl Visit for ArgumentsChecker {
     fn visit_stmt(&mut self, stmt: &Stmt) {
         if detect_copy_var_name_from_stmt(stmt, self.fixed_param_count).is_some() {
             self.has_any = true;
+            return;
+        }
+
+        if let Some(index_sym) = arguments_length_loop_index(stmt) {
+            self.allowed_loop_indices.push(index_sym);
+            stmt.visit_children_with(self);
+            self.allowed_loop_indices.pop();
             return;
         }
 
@@ -390,8 +416,7 @@ impl Visit for ArgumentsChecker {
                 // arguments[expr] — any subscript access is safe; the rest array
                 // supports arbitrary indexing the same way when there are no
                 // fixed params. With fixed params, only proven tail indexes are safe.
-                MemberProp::Computed(computed)
-                    if is_safe_arguments_index(computed.expr.as_ref(), self.fixed_param_count) => {}
+                MemberProp::Computed(computed) if self.is_safe_arguments_index(&computed.expr) => {}
                 // arguments.length — safe only in parameter-less functions
                 MemberProp::Ident(i) if i.sym == "length" && self.fixed_param_count == 0 => {}
                 // arguments.callee, arguments.anything_else — unsafe
@@ -422,6 +447,62 @@ impl Visit for ArgumentsChecker {
 
 fn is_arguments_ident(expr: &Expr) -> bool {
     matches!(expr, Expr::Ident(id) if id.sym == "arguments")
+}
+
+fn arguments_length_loop_index(stmt: &Stmt) -> Option<BindingId> {
+    let Stmt::For(for_stmt) = stmt else {
+        return None;
+    };
+
+    let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else {
+        return None;
+    };
+    if init.decls.len() != 1 {
+        return None;
+    }
+
+    let decl = &init.decls[0];
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    if !matches!(decl.init.as_deref(), Some(expr) if is_number(expr, 0)) {
+        return None;
+    }
+
+    let index = (binding.id.sym.clone(), binding.id.ctxt);
+    if !matches_arguments_length_loop_test(for_stmt.test.as_deref(), &index) {
+        return None;
+    }
+    if !matches_loop_index_update(for_stmt.update.as_deref(), &index) {
+        return None;
+    }
+
+    Some(index)
+}
+
+fn matches_arguments_length_loop_test(test: Option<&Expr>, index: &BindingId) -> bool {
+    let Some(Expr::Bin(bin)) = test else {
+        return false;
+    };
+    if bin.op != BinaryOp::Lt {
+        return false;
+    }
+    if !matches!(bin.left.as_ref(), Expr::Ident(id) if id.sym == index.0 && id.ctxt == index.1) {
+        return false;
+    }
+    let Expr::Member(member) = bin.right.as_ref() else {
+        return false;
+    };
+    is_arguments_ident(&member.obj)
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "length")
+}
+
+fn matches_loop_index_update(update: Option<&Expr>, index: &BindingId) -> bool {
+    let Some(Expr::Update(update)) = update else {
+        return false;
+    };
+    update.op == UpdateOp::PlusPlus
+        && matches!(update.arg.as_ref(), Expr::Ident(id) if id.sym == index.0 && id.ctxt == index.1)
 }
 
 // ============================================================

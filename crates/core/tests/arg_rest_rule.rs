@@ -87,6 +87,34 @@ function get(i) {
 }
 
 #[test]
+fn parameterless_variable_index_without_length_guard_not_converted() {
+    let input = r#"
+function get() {
+    var i = chooseIndex();
+    return arguments[i];
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn shadowed_loop_index_is_not_treated_as_length_guarded() {
+    let input = r#"
+function get() {
+    for (var i = 0; i < arguments.length; i++) {
+        {
+            let i = chooseIndex();
+            return arguments[i];
+        }
+    }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn function_with_params_not_converted() {
     // Accessing the fixed-parameter prefix through `arguments` is still unsafe.
     let input = r#"
