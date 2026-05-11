@@ -1,4 +1,4 @@
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BinExpr, BinaryOp, CondExpr, Expr, Lit, MemberProp, SimpleAssignTarget,
     UnaryOp,
@@ -104,10 +104,10 @@ fn extract_not_null_check(expr: &Expr) -> Option<NullCheckResult> {
     let right_val = extract_not_undefined_single(right)?;
 
     // Check for assignment pattern: left_val may be `(tmp = real_expr)`
-    if let Some((tmp_sym, real_rhs)) = extract_assign_parts(&left_val) {
+    if let Some((tmp_sym, tmp_ctxt, real_rhs)) = extract_assign_parts(&left_val) {
         // right side must reference `tmp`
         if let Expr::Ident(ri) = &*right_val {
-            if ri.sym == tmp_sym {
+            if ri.sym == tmp_sym && ri.ctxt == tmp_ctxt {
                 return Some(NullCheckResult {
                     value: Box::new(Expr::Ident(ri.clone())),
                     real_value: Some(real_rhs.clone()),
@@ -144,10 +144,10 @@ fn extract_null_check(expr: &Expr) -> Option<NullCheckResult> {
     let right_val = extract_undefined_single(right)?;
 
     // Check for assignment pattern: left_val may be `(tmp = real_expr)`
-    if let Some((tmp_sym, real_rhs)) = extract_assign_parts(&left_val) {
+    if let Some((tmp_sym, tmp_ctxt, real_rhs)) = extract_assign_parts(&left_val) {
         // right side must reference `tmp`
         if let Expr::Ident(ri) = &*right_val {
-            if ri.sym == tmp_sym {
+            if ri.sym == tmp_sym && ri.ctxt == tmp_ctxt {
                 return Some(NullCheckResult {
                     value: Box::new(Expr::Ident(ri.clone())),
                     real_value: Some(real_rhs.clone()),
@@ -269,8 +269,8 @@ fn strip_parens(expr: &Expr) -> &Expr {
     }
 }
 
-/// If `expr` is `(tmp = real_expr)` (parens allowed), return `(tmp_sym, &real_expr)`.
-fn extract_assign_parts(expr: &Expr) -> Option<(swc_core::atoms::Atom, &Box<Expr>)> {
+/// If `expr` is `(tmp = real_expr)` (parens allowed), return `(tmp_sym, tmp_ctxt, &real_expr)`.
+fn extract_assign_parts(expr: &Expr) -> Option<(swc_core::atoms::Atom, SyntaxContext, &Box<Expr>)> {
     let Expr::Assign(assign) = strip_parens(expr) else {
         return None;
     };
@@ -280,12 +280,12 @@ fn extract_assign_parts(expr: &Expr) -> Option<(swc_core::atoms::Atom, &Box<Expr
     let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = &assign.left else {
         return None;
     };
-    Some((id.id.sym.clone(), &assign.right))
+    Some((id.id.sym.clone(), id.id.ctxt, &assign.right))
 }
 
 pub(crate) fn exprs_structurally_equal(a: &Expr, b: &Expr) -> bool {
     match (a, b) {
-        (Expr::Ident(ai), Expr::Ident(bi)) => ai.sym == bi.sym,
+        (Expr::Ident(ai), Expr::Ident(bi)) => ai.sym == bi.sym && ai.ctxt == bi.ctxt,
         (Expr::This(_), Expr::This(_)) => true,
         (Expr::Member(am), Expr::Member(bm)) => {
             exprs_structurally_equal(&am.obj, &bm.obj) && member_props_equal(&am.prop, &bm.prop)
@@ -311,4 +311,59 @@ fn make_nullish_coalescing(value: Box<Expr>, fallback: Box<Expr>) -> Expr {
         left: value,
         right: fallback,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use swc_core::common::{Mark, GLOBALS};
+    use swc_core::ecma::ast::{ComputedPropName, Ident};
+
+    fn ident(sym: &str, ctxt: SyntaxContext) -> Expr {
+        Expr::Ident(Ident::new(sym.into(), DUMMY_SP, ctxt))
+    }
+
+    #[test]
+    fn structural_expr_equality_distinguishes_identifier_contexts() {
+        GLOBALS.set(&Default::default(), || {
+            let first_ctxt = SyntaxContext::empty().apply_mark(Mark::new());
+            let second_ctxt = SyntaxContext::empty().apply_mark(Mark::new());
+
+            assert!(exprs_structurally_equal(
+                &ident("tmp", first_ctxt),
+                &ident("tmp", first_ctxt)
+            ));
+            assert!(!exprs_structurally_equal(
+                &ident("tmp", first_ctxt),
+                &ident("tmp", second_ctxt)
+            ));
+        });
+    }
+
+    #[test]
+    fn structural_member_equality_distinguishes_computed_identifier_contexts() {
+        GLOBALS.set(&Default::default(), || {
+            let first_ctxt = SyntaxContext::empty().apply_mark(Mark::new());
+            let second_ctxt = SyntaxContext::empty().apply_mark(Mark::new());
+
+            let first = Expr::Member(swc_core::ecma::ast::MemberExpr {
+                span: DUMMY_SP,
+                obj: Box::new(ident("obj", SyntaxContext::empty())),
+                prop: MemberProp::Computed(ComputedPropName {
+                    span: DUMMY_SP,
+                    expr: Box::new(ident("key", first_ctxt)),
+                }),
+            });
+            let second = Expr::Member(swc_core::ecma::ast::MemberExpr {
+                span: DUMMY_SP,
+                obj: Box::new(ident("obj", SyntaxContext::empty())),
+                prop: MemberProp::Computed(ComputedPropName {
+                    span: DUMMY_SP,
+                    expr: Box::new(ident("key", second_ctxt)),
+                }),
+            });
+
+            assert!(!exprs_structurally_equal(&first, &second));
+        });
+    }
 }
