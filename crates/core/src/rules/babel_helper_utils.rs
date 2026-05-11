@@ -8,6 +8,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+use super::match_context::MatchContext;
+
 pub(crate) type BindingKey = (Atom, SyntaxContext);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -797,13 +799,7 @@ fn is_to_consumable_array_fn(func: &Function, has_sub_helpers: bool) -> bool {
 // ---------------------------------------------------------------------------
 
 fn is_class_call_check_fn(func: &Function) -> bool {
-    if func.params.len() != 2 {
-        return false;
-    }
-    let Pat::Ident(param1) = &func.params[0].pat else {
-        return false;
-    };
-    let Pat::Ident(param2) = &func.params[1].pat else {
+    let Some(ctx) = MatchContext::from_params(func, &["instance", "constructor"]) else {
         return false;
     };
 
@@ -812,7 +808,6 @@ fn is_class_call_check_fn(func: &Function) -> bool {
         None => return false,
     };
 
-    // Body: single `if` statement
     if body.stmts.len() != 1 {
         return false;
     }
@@ -820,11 +815,24 @@ fn is_class_call_check_fn(func: &Function) -> bool {
         return false;
     };
 
-    // Test: !(param1 instanceof param2)
-    let Expr::Unary(unary) = if_stmt.test.as_ref() else {
+    if !matches_negated_instanceof(&ctx, &if_stmt.test, "instance", "constructor") {
+        return false;
+    }
+
+    matches_throw_type_error(&if_stmt.cons)
+}
+
+/// Match `!(left instanceof right)` with optional parens around the instanceof.
+fn matches_negated_instanceof(
+    ctx: &MatchContext,
+    expr: &Expr,
+    left: &str,
+    right: &str,
+) -> bool {
+    let Expr::Unary(unary) = expr else {
         return false;
     };
-    if unary.op != swc_core::ecma::ast::UnaryOp::Bang {
+    if unary.op != UnaryOp::Bang {
         return false;
     }
     let inner = match unary.arg.as_ref() {
@@ -832,43 +840,31 @@ fn is_class_call_check_fn(func: &Function) -> bool {
         other => other,
     };
     let Expr::Bin(bin) = inner else { return false };
-    if bin.op != BinaryOp::InstanceOf {
-        return false;
-    }
+    bin.op == BinaryOp::InstanceOf
+        && ctx.is_binding(&bin.left, left)
+        && ctx.is_binding(&bin.right, right)
+}
 
-    // Verify operands are the function's two parameters
-    if !is_same_ident(&bin.left, &param1.id.sym, param1.id.ctxt) {
-        return false;
-    }
-    if !is_same_ident(&bin.right, &param2.id.sym, param2.id.ctxt) {
-        return false;
-    }
-
-    // Consequent: throw new TypeError(...)
-    match if_stmt.cons.as_ref() {
-        Stmt::Throw(throw) => {
-            if let Expr::New(new_expr) = throw.arg.as_ref() {
-                if let Expr::Ident(id) = new_expr.callee.as_ref() {
-                    return id.sym.as_ref() == "TypeError";
-                }
-            }
-            false
-        }
-        Stmt::Block(block) => {
-            if block.stmts.len() != 1 {
-                return false;
-            }
+/// Match `throw new TypeError(...)` — bare or wrapped in a block.
+fn matches_throw_type_error(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Throw(throw) => is_new_type_error(&throw.arg),
+        Stmt::Block(block) if block.stmts.len() == 1 => {
             if let Stmt::Throw(throw) = &block.stmts[0] {
-                if let Expr::New(new_expr) = throw.arg.as_ref() {
-                    if let Expr::Ident(id) = new_expr.callee.as_ref() {
-                        return id.sym.as_ref() == "TypeError";
-                    }
-                }
+                is_new_type_error(&throw.arg)
+            } else {
+                false
             }
-            false
         }
         _ => false,
     }
+}
+
+fn is_new_type_error(expr: &Expr) -> bool {
+    let Expr::New(new_expr) = expr else {
+        return false;
+    };
+    matches!(new_expr.callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "TypeError")
 }
 
 // ---------------------------------------------------------------------------
@@ -2160,4 +2156,144 @@ fn is_babel_helper_or_chain(expr: &Expr) -> bool {
         }
     }
     call_count >= 3
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use swc_core::common::{
+        sync::Lrc, FileName, Globals, SourceMap, GLOBALS,
+    };
+    use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+
+    fn parse_first_function(code: &str) -> Function {
+        let cm: Lrc<SourceMap> = Default::default();
+        let fm = cm.new_source_file(Lrc::new(FileName::Anon), code.to_string());
+        let lexer = Lexer::new(
+            Syntax::Es(EsSyntax::default()),
+            Default::default(),
+            StringInput::from(&*fm),
+            None,
+        );
+        let mut parser = Parser::new_from(lexer);
+        let module = parser.parse_module().expect("failed to parse");
+        for item in &module.body {
+            if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
+                return *fn_decl.function.clone();
+            }
+        }
+        panic!("no function declaration found in source");
+    }
+
+    #[test]
+    fn class_call_check_canonical() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    if (!(a instanceof b)) {
+                        throw new TypeError("Cannot call a class as a function");
+                    }
+                }"#,
+            );
+            assert!(is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_no_block_wrapping() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    if (!(a instanceof b))
+                        throw new TypeError("Cannot call a class as a function");
+                }"#,
+            );
+            assert!(is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_with_parens() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    if (!(a instanceof b)) {
+                        throw new TypeError("Cannot call a class as a function");
+                    }
+                }"#,
+            );
+            assert!(is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_rejects_wrong_param_count() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a) {
+                    if (!(a instanceof Foo)) {
+                        throw new TypeError("nope");
+                    }
+                }"#,
+            );
+            assert!(!is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_rejects_swapped_operands() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    if (!(b instanceof a)) {
+                        throw new TypeError("nope");
+                    }
+                }"#,
+            );
+            assert!(!is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_rejects_non_instanceof() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    if (!(a === b)) {
+                        throw new TypeError("nope");
+                    }
+                }"#,
+            );
+            assert!(!is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_rejects_no_throw() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    if (!(a instanceof b)) {
+                        console.log("bad");
+                    }
+                }"#,
+            );
+            assert!(!is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_rejects_multiple_stmts() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    var x = 1;
+                    if (!(a instanceof b)) {
+                        throw new TypeError("nope");
+                    }
+                }"#,
+            );
+            assert!(!is_class_call_check_fn(&f));
+        });
+    }
 }

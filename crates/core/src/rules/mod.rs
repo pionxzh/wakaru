@@ -7,6 +7,7 @@ mod dead_imports;
 mod exponent;
 mod flip_comparisons;
 mod import_dedup;
+pub(crate) mod match_context;
 mod obj_method_shorthand;
 mod obj_shorthand;
 mod object_assign_spread;
