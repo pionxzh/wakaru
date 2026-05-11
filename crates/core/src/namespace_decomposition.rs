@@ -23,6 +23,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{ExportKind, ModuleFactsMap};
 
+const MAX_SYNTHETIC_NAME_ATTEMPTS: usize = 10_000;
+
 /// A single property to decompose: maps the exported name to its local alias.
 #[derive(Debug, Clone)]
 struct DecompProp {
@@ -271,13 +273,13 @@ fn find_decomposition_candidates(
 /// Generate a safe alias for a name that collides with existing bindings.
 /// Appends `_1`, `_2`, etc. until a unique name is found.
 fn synthesize_alias(name: &Atom, existing: &HashSet<Atom>) -> Atom {
-    for i in 1.. {
+    for i in 1..=MAX_SYNTHETIC_NAME_ATTEMPTS {
         let candidate: Atom = format!("{name}_{i}").into();
         if !existing.contains(&candidate) {
             return candidate;
         }
     }
-    unreachable!()
+    panic!("could not synthesize alias for `{name}` after {MAX_SYNTHETIC_NAME_ATTEMPTS} attempts")
 }
 
 /// Collects all binding names in the module, at every scope depth.
@@ -682,5 +684,17 @@ impl VisitMut for UsageRewriter<'_> {
         if let MemberProp::Computed(prop) = prop {
             prop.visit_mut_with(self);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn synthesize_alias_uses_next_available_suffix() {
+        let existing = HashSet::from([Atom::from("value_1"), Atom::from("value_2")]);
+
+        assert_eq!(synthesize_alias(&Atom::from("value"), &existing), "value_3");
     }
 }

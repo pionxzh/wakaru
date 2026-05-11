@@ -55,6 +55,7 @@ impl VisitMut for SmartRename {
 // ============================================================
 
 const REACT_MINIFIED_THRESHOLD: usize = 2;
+const MAX_SYNTHETIC_NAME_ATTEMPTS: usize = 10_000;
 
 fn react_rename_module(module: &mut Module) {
     let all_names = collect_names_in_module(&module.body);
@@ -489,13 +490,15 @@ fn find_non_conflicting_name(base: &str, used_names: &HashSet<String>) -> String
     if !used_names.contains(&base) {
         return base;
     }
-    for i in 1.. {
+    for i in 1..=MAX_SYNTHETIC_NAME_ATTEMPTS {
         let candidate = format!("{}_{}", base, i);
         if !used_names.contains(&candidate) {
             return candidate;
         }
     }
-    unreachable!()
+    panic!(
+        "could not find non-conflicting name for `{base}` after {MAX_SYNTHETIC_NAME_ATTEMPTS} attempts"
+    )
 }
 
 fn is_reserved_keyword(name: &str) -> bool {
@@ -1868,4 +1871,20 @@ fn starts_with_lowercase(value: &str) -> bool {
         .next()
         .map(|ch| ch.is_ascii_lowercase())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_non_conflicting_name_uses_next_available_suffix() {
+        let used_names = HashSet::from([
+            "rest".to_string(),
+            "rest_1".to_string(),
+            "rest_2".to_string(),
+        ]);
+
+        assert_eq!(find_non_conflicting_name("rest", &used_names), "rest_3");
+    }
 }
