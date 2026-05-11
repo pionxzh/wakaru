@@ -1,0 +1,10 @@
+---
+source: crates/core/tests/un_class_call_check_rule.rs
+expression: output
+---
+export function Foo() {
+    !((e, Foo_1)=>{
+        console.log(e, Foo_1);
+    })(this, Foo);
+    this.x = 1;
+}

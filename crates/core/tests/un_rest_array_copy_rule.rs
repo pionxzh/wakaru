@@ -86,8 +86,7 @@ function t(...args) {
 }
 "#;
     let output = apply(input);
-    // `other` is not a rest param — loop should remain
-    assert!(output.contains("for"), "loop was wrongly removed: {output}");
+    insta::assert_snapshot!(output);
 }
 
 #[test]

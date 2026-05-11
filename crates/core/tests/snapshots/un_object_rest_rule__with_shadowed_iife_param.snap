@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/un_object_rest_rule.rs
+expression: rule_output
+---
+const f = (e)=>{
+    const { to, extra: _extra, ...d } = e;
+    use(to, d);
+};

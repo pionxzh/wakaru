@@ -271,7 +271,7 @@ fn member_init_rename_skips_long_names() {
 const myVar = obj.prop;
 "#;
     let output = apply(input);
-    assert!(output.contains("myVar"), "should not rename long names");
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -281,10 +281,7 @@ fn member_init_rename_skips_both_short() {
 const x = q.y;
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("const x"),
-        "should not rename when both obj and prop are short"
-    );
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -318,10 +315,7 @@ const d = useRef();
 use(d);
 "#;
     let output = normalize(&apply(input));
-    assert!(
-        !output.contains("const dRef = useRef();\nuse(d);"),
-        "partial rename left stale use site:\n{output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -334,10 +328,7 @@ function inner(t) {
 use(t);
 "#;
     let output = normalize(&apply(input));
-    assert!(
-        output.contains("function inner(t)"),
-        "shadowed parameter was renamed across scope:\n{output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -354,22 +345,7 @@ function createElement() {
 use(l);
 "#;
     let output = normalize(&apply(input));
-    assert!(
-        output.contains("export const LContext = o.createContext(null);"),
-        "top-level React rename was not applied:\n{output}"
-    );
-    assert!(
-        output.contains("let l = arguments.length - 2;"),
-        "shadowed local was incorrectly renamed:\n{output}"
-    );
-    assert!(
-        output.contains("return l;"),
-        "shadowed local use was incorrectly renamed:\n{output}"
-    );
-    assert!(
-        output.contains("use(LContext);"),
-        "outer use site was not renamed:\n{output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 // ============================================================
@@ -384,21 +360,7 @@ const At = Symbol.for("react.portal");
 console.log(ul, At);
 "#;
     let result = apply(input);
-    assert!(
-        result.contains("SYMBOL_REACT_ELEMENT"),
-        "should rename to SYMBOL_REACT_ELEMENT, got:\n{}",
-        result
-    );
-    assert!(
-        result.contains("SYMBOL_REACT_PORTAL"),
-        "should rename to SYMBOL_REACT_PORTAL, got:\n{}",
-        result
-    );
-    assert!(
-        !result.contains("const ul "),
-        "old name should be gone, got:\n{}",
-        result
-    );
+    insta::assert_snapshot!(result);
 }
 
 #[test]
@@ -408,11 +370,7 @@ const Ac = Symbol.for("react.forward_ref");
 console.log(Ac);
 "#;
     let result = apply(input);
-    assert!(
-        result.contains("SYMBOL_REACT_FORWARD_REF"),
-        "should rename, got:\n{}",
-        result
-    );
+    insta::assert_snapshot!(result);
 }
 
 #[test]
@@ -422,11 +380,7 @@ const reactElement = Symbol.for("react.element");
 console.log(reactElement);
 "#;
     let result = apply(input);
-    assert!(
-        result.contains("reactElement"),
-        "should keep long name as-is, got:\n{}",
-        result
-    );
+    assert_eq_normalized(&result, input);
 }
 
 #[test]
@@ -438,11 +392,7 @@ function init() {
 }
 "#;
     let result = apply(input);
-    assert!(
-        result.contains("SYMBOL_REACT_ELEMENT"),
-        "should rename inside function scope, got:\n{}",
-        result
-    );
+    insta::assert_snapshot!(result);
 }
 
 // ============================================================
@@ -456,16 +406,7 @@ const { foo, bar, ...d } = obj;
 console.log(d);
 "#;
     let result = apply(input);
-    assert!(
-        result.contains("...rest"),
-        "should rename ...d to ...rest, got:\n{}",
-        result
-    );
-    assert!(
-        result.contains("console.log(rest)"),
-        "should rename reference, got:\n{}",
-        result
-    );
+    insta::assert_snapshot!(result);
 }
 
 #[test]
@@ -475,11 +416,7 @@ const { foo, ...remaining } = obj;
 console.log(remaining);
 "#;
     let result = apply(input);
-    assert!(
-        result.contains("...remaining"),
-        "should keep long name, got:\n{}",
-        result
-    );
+    assert_eq_normalized(&result, input);
 }
 
 #[test]
@@ -490,12 +427,8 @@ const { foo, ...d } = obj;
 console.log(rest, d);
 "#;
     let result = apply(input);
-    // `rest` is taken, so it should use `rest_1` or similar
-    assert!(
-        !result.contains("...d "),
-        "should rename ...d, got:\n{}",
-        result
-    );
+    // `rest` is taken, so ...d gets a suffixed name
+    insta::assert_snapshot!(result);
 }
 
 #[test]
@@ -506,11 +439,7 @@ function foo({ name, ...r }) {
 }
 "#;
     let result = apply(input);
-    assert!(
-        result.contains("...rest"),
-        "should rename ...r to ...rest in params, got:\n{}",
-        result
-    );
+    insta::assert_snapshot!(result);
 }
 
 #[test]
@@ -520,12 +449,7 @@ fn rest_pattern_does_not_collide_with_other_params() {
 const fn2 = ({ name, ...r }, rest) => r;
 "#;
     let result = apply(input);
-    // Should not produce duplicate `rest` params
-    assert!(
-        !result.contains("...rest }, rest"),
-        "must not create duplicate rest param:\n{}",
-        result
-    );
+    insta::assert_snapshot!(result);
 }
 
 // ============================================================
@@ -607,26 +531,7 @@ function outer() {
 }
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("function e()"),
-        "outer e must not be renamed:\n{}",
-        output
-    );
-    assert!(
-        output.contains("function t()"),
-        "outer t must not be renamed:\n{}",
-        output
-    );
-    assert!(
-        output.contains("array: e"),
-        "value e should stay:\n{}",
-        output
-    );
-    assert!(
-        output.contains("shape: t"),
-        "value t should stay:\n{}",
-        output
-    );
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -638,11 +543,7 @@ r();
 const obj = { Foo: r };
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("import r from"),
-        "should not rename when non-value use exists:\n{}",
-        output
-    );
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -652,11 +553,7 @@ import longName from "./m.js";
 export default { Foo: longName };
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("import longName from"),
-        "long names must not be renamed:\n{}",
-        output
-    );
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -667,11 +564,7 @@ const f = (t) => ({ error: t });
 use(error);
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("(error_1)"),
-        "t should be renamed to error_1 when target binding exists:\n{}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -685,16 +578,7 @@ const f = (t, n) => ({ error: t, error_1: n });
 use(error);
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("error_1)") || output.contains("error_1,"),
-        "n should keep its natural target error_1:\n{}",
-        output
-    );
-    assert!(
-        output.contains("error_2"),
-        "t should get error_2 since error_1 is taken:\n{}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -729,16 +613,7 @@ function render(U) {
 }
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("const sideCar_1 = makeSideCar()"),
-        "rename should use suffix when target would shadow:\n{}",
-        output
-    );
-    assert!(
-        output.contains("sideCar: sideCar_1"),
-        "property should use suffixed name:\n{}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -752,16 +627,7 @@ use({ $$typeof: s });
 use({ $$typeof: f });
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("const s = 1"),
-        "shared target must not be applied:\n{}",
-        output
-    );
-    assert!(
-        output.contains("const f = 2"),
-        "shared target must not be applied:\n{}",
-        output
-    );
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -777,11 +643,7 @@ const connect = (e, t) => {
 };
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("const initFoo = makeFoo"),
-        "should use original name when conflict is in sibling scope:\n{}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -795,11 +657,7 @@ const handler = (e) => ({
 use(handler);
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("(payload)"),
-        "should rename even when target is a property key elsewhere:\n{}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -811,11 +669,7 @@ export { r };
 const obj = { Foo: r };
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("const r = "),
-        "should not rename when referenced by export:\n{}",
-        output
-    );
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -828,16 +682,7 @@ const metadata = {
 };
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("export let Jn = "),
-        "should not rename exported declaration binding:\n{}",
-        output
-    );
-    assert!(
-        output.contains("version: Jn"),
-        "should keep exported binding references explicit:\n{}",
-        output
-    );
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -848,12 +693,7 @@ import r from "./m.js";
 export default { default: r };
 "#;
     let output = apply(input);
-    // Must not produce `import default from ...` (invalid).
-    assert!(
-        !output.contains("import default from"),
-        "must not emit reserved keyword as binding name:\n{}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -864,11 +704,7 @@ const k = "Foo";
 export default { [k]: r };
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("import r from"),
-        "must not rename via computed key:\n{}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -882,16 +718,7 @@ function inner(t) { return t + 1; }
 use(obj, inner(2));
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("function inner(t)"),
-        "inner parameter must not be renamed:\n{}",
-        output
-    );
-    assert!(
-        output.contains("const count = 1"),
-        "outer binding must be renamed to `count`:\n{}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]

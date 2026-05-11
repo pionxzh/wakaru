@@ -1,0 +1,11 @@
+---
+source: crates/core/tests/un_inline_interop_rule.rs
+expression: output
+---
+const x = (()=>{
+    const e = 42;
+    const a = e + 1;
+    const b = a * 2;
+    return b;
+})();
+console.log(x);

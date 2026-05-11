@@ -1,0 +1,7 @@
+---
+source: crates/core/tests/smart_rename_rule.rs
+expression: result
+---
+const SYMBOL_REACT_ELEMENT = Symbol.for("react.element");
+const SYMBOL_REACT_PORTAL = Symbol.for("react.portal");
+console.log(SYMBOL_REACT_ELEMENT, SYMBOL_REACT_PORTAL);

@@ -1,0 +1,7 @@
+---
+source: crates/core/tests/un_to_consumable_array_rule.rs
+expression: output
+---
+const x = [
+    ...a
+];

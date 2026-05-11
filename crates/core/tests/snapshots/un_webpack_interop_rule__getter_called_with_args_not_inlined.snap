@@ -1,0 +1,7 @@
+---
+source: crates/core/tests/un_webpack_interop_rule.rs
+expression: output
+---
+var _lib = require("./lib");
+var _lib2 = ()=>_lib && _lib.__esModule ? _lib.default : _lib;
+console.log(_lib2("unexpected"));

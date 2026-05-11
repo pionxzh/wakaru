@@ -1,0 +1,5 @@
+---
+source: crates/core/tests/un_sliced_to_array_rule.rs
+expression: output
+---
+const x = expr[0];

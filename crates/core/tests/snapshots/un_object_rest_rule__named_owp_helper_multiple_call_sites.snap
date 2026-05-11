@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/un_object_rest_rule.rs
+expression: output
+---
+const { x, ...rest1 } = a;
+const { y, z, ...rest2 } = b;

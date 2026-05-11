@@ -73,7 +73,7 @@ fn decompile_parses_jsx_in_js_files() {
     )
     .expect("jsx in .js should parse");
 
-    assert!(output.contains("<div"));
+    insta::assert_snapshot!(output);
 }
 
 fn bundled_fixture_paths() -> Vec<PathBuf> {

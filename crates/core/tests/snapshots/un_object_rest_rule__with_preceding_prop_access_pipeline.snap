@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/un_object_rest_rule.rs
+expression: pipeline_output
+---
+const { a, b, ...rest } = props;
+use(a, rest);

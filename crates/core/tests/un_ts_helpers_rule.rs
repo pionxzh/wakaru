@@ -14,16 +14,7 @@ export function foo() {
 }
 "#;
     let output = render(input);
-    // The helper decl should be removed
-    assert!(
-        !output.contains("this.__awaiter"),
-        "helper decl should be removed"
-    );
-    // The function should become async
-    assert!(
-        output.contains("async"),
-        "function should be async: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -40,10 +31,9 @@ function foo() {
 }
 "#;
     let output = render(input);
-    // The helper decl should be removed
     assert!(
-        !output.contains("this.__generator"),
-        "helper decl should be removed"
+        output.trim().is_empty(),
+        "__generator alias declaration and call should be removed: {output}"
     );
 }
 
@@ -56,10 +46,7 @@ function foo() {
 }
 "#;
     let output = render(input);
-    assert!(
-        output.contains("someOtherThing"),
-        "non-helper should be preserved"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -74,14 +61,9 @@ function foo(Y) {
 }
 "#;
     let output = render(input);
-    // Inner `Y` params/vars should NOT become `__assign`
     assert!(
-        !output.contains("function foo(__assign)"),
-        "param should not be renamed: {output}"
-    );
-    assert!(
-        !output.contains("let __assign"),
-        "inner let should not be renamed: {output}"
+        output.trim().is_empty(),
+        "helper declaration should be removed without touching shadowed locals: {output}"
     );
 }
 
@@ -92,14 +74,5 @@ let Y = this && this.__assign || function() { return Object.assign.apply(Object,
 const x = Y({}, { a: 1 });
 "#;
     let output = render(input);
-    // Helper decl should be removed
-    assert!(
-        !output.contains("this.__assign"),
-        "helper decl should be removed"
-    );
-    // The call should use __assign
-    assert!(
-        output.contains("__assign"),
-        "call should use canonical name: {output}"
-    );
+    insta::assert_snapshot!(output);
 }

@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/smart_rename_rule.rs
+expression: result
+---
+function init() {
+    const SYMBOL_REACT_ELEMENT = Symbol.for("react.element");
+    return SYMBOL_REACT_ELEMENT;
+}

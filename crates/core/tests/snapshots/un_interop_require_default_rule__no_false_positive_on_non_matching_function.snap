@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/un_interop_require_default_rule.rs
+expression: output
+---
+function notAHelper(obj) {
+    return obj.foo;
+}
+const _a = notAHelper(require("a"));

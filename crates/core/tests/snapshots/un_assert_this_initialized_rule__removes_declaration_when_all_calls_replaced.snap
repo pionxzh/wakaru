@@ -1,0 +1,5 @@
+---
+source: crates/core/tests/un_assert_this_initialized_rule.rs
+expression: output
+---
+const x = this;

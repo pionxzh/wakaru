@@ -131,10 +131,7 @@ fn object_method_value_not_converted_to_arrow() {
 ({foo: function() {}});
 "#;
     let output = apply(input);
-    assert!(
-        !output.contains("=>"),
-        "object method became arrow: {output}"
-    );
+    assert_eq_normalized(&output, input);
 }
 
 #[test]

@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/un_object_rest_rule.rs
+expression: output
+---
+const { replace: _replace, to: _to, ...rest } = props;
+use(rest);

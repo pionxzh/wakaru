@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/smart_rename_rule.rs
+expression: result
+---
+const SYMBOL_REACT_FORWARD_REF = Symbol.for("react.forward_ref");
+console.log(SYMBOL_REACT_FORWARD_REF);

@@ -278,21 +278,7 @@ if ((typeof exports.default === "function" || typeof exports.default === "object
 }
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("export const Foo = 1"),
-        "should promote getter return binding A to export const Foo: {}",
-        output
-    );
-    assert!(
-        output.contains("export const Bar = 2"),
-        "should promote getter return binding B to export const Bar: {}",
-        output
-    );
-    assert!(
-        !output.contains("Object.defineProperty") && !output.contains("exports.default"),
-        "webpack export helper and compat block should be removed: {}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -306,21 +292,7 @@ function i(t, e = null) {
 }
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("export const APP_NAME = \"Revenue Console\""),
-        "should promote direct require.d getter to named export: {}",
-        output
-    );
-    assert!(
-        output.contains("export function readSetting"),
-        "should promote direct require.d function getter to named export: {}",
-        output
-    );
-    assert!(
-        !output.contains("require.d"),
-        "direct webpack export helper should be removed: {}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -336,21 +308,7 @@ function i(t, e = null) {
 }
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("export const APP_NAME = \"Revenue Console\""),
-        "should promote direct require.d getter map to named export: {}",
-        output
-    );
-    assert!(
-        output.contains("export function readSetting"),
-        "should promote direct require.d getter map function to named export: {}",
-        output
-    );
-    assert!(
-        !output.contains("require.d"),
-        "direct webpack export getter map should be removed: {}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -376,16 +334,7 @@ if (flag) {
 }
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("export const Foo = 1"),
-        "getter export should still be converted: {}",
-        output
-    );
-    assert!(
-        output.contains("if (flag)") && output.contains("Object.assign(exports.default, exports)"),
-        "unrelated guarded block must remain: {}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -442,29 +391,7 @@ var a = 0;
 exports.a = function(x) { return a + x; };
 "#;
     let output = apply(input);
-    // Export should use `a` as the exported name
-    assert!(
-        output.contains("export const a"),
-        "export should use the name `a`: {}",
-        output
-    );
-    // The local counter should be renamed to avoid collision
-    assert!(
-        !output.contains("let a =") && !output.contains("var a ="),
-        "local binding should be renamed to avoid collision: {}",
-        output
-    );
-    // The renamed local should still be referenced in the function body.
-    assert!(
-        output.contains("_a + x"),
-        "function body should reference renamed local: {}",
-        output
-    );
-    assert!(
-        !output.contains("=>a + x"),
-        "function body must not accidentally reference the export binding: {}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -475,21 +402,7 @@ function f(_a) { return a + _a; }
 exports.a = function(x) { return a + f(x); };
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("const _a2 = 0") || output.contains("let _a2 = 0"),
-        "top-level local should avoid nested `_a`: {}",
-        output
-    );
-    assert!(
-        output.contains("return _a2 + _a"),
-        "nested function should keep references distinct: {}",
-        output
-    );
-    assert!(
-        output.contains("export const a"),
-        "export should keep the clean name `a`: {}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -500,21 +413,8 @@ var { a } = obj;
 exports.a = function(x) { return a + x; };
 "#;
     let output = render_pipeline_until(input, "UnEsm");
-    assert!(
-        output.contains("a: _a"),
-        "destructuring should preserve property `a` while renaming local: {}",
-        output
-    );
-    assert!(
-        !output.contains("{ _a }"),
-        "destructuring must not read property `_a`: {}",
-        output
-    );
-    assert!(
-        output.contains("export const a"),
-        "export should keep the clean name `a`: {}",
-        output
-    );
+    // Destructuring must produce `{ a: _a }`, not `{ _a }` — the property key stays `a`.
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -525,17 +425,7 @@ var b = 0;
 exports.a = function(x) { return b + x; };
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("export const a"),
-        "should produce clean export: {}",
-        output
-    );
-    // VarDeclToLetConst may promote var→const, so just check `b` is still there
-    assert!(
-        output.contains("b = 0"),
-        "unrelated local should be unchanged: {}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -546,14 +436,7 @@ var s = exports.history = createBrowserHistory();
 use(s);
 "#;
     let output = apply(input);
-    assert!(
-        !output.contains("exports.history"),
-        "exports.history should be converted to ESM: {output}"
-    );
-    assert!(
-        output.contains("history"),
-        "should have history export: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 // ============================================================
@@ -567,14 +450,7 @@ let i;
 export default (i = require("./a.js"), require("./b.js"), i.foo);
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("import"),
-        "require in sequence should become import: {output}"
-    );
-    assert!(
-        !output.contains("require("),
-        "no require() should remain: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -583,14 +459,7 @@ fn hoist_require_call_invocation() {
 export default require("./factory.js")();
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("import"),
-        "require()() should become import + call: {output}"
-    );
-    assert!(
-        !output.contains("require("),
-        "no require() should remain: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -601,18 +470,7 @@ const a = (i = require("./react.js")) && i.__esModule ? i : { default: i };
 console.log(a);
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("import"),
-        "inline interop should become import: {output}"
-    );
-    assert!(
-        !output.contains("require("),
-        "no require() should remain: {output}"
-    );
-    assert!(
-        !output.contains("__esModule"),
-        "__esModule check should be removed: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -637,8 +495,5 @@ fn plain_export_default_require_not_hoisted() {
 export default require("./module.js");
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("require(") || output.contains("import"),
-        "should keep some form of the require: {output}"
-    );
+    insta::assert_snapshot!(output);
 }

@@ -84,10 +84,7 @@ var _objectSpread2 = require("@babel/runtime/helpers/objectSpread2");
 var x = _objectSpread2(target, { a: 1 });
 "#;
     let output = render(input);
-    assert!(
-        output.contains("_objectSpread2"),
-        "should not transform with real target"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -97,10 +94,7 @@ var _extends = require("@babel/runtime/helpers/extends");
 var x = _extends(target, source);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("_extends"),
-        "should not transform _extends with real target"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -110,10 +104,7 @@ var _objectSpread2 = require("@babel/runtime/helpers/objectSpread2");
 var x = _objectSpread2({}, y);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("_objectSpread2"),
-        "helper should be removed"
-    );
+    insta::assert_snapshot!(output);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,10 +224,7 @@ function _extends() {
 var x = _extends(target, source);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("_extends"),
-        "should not transform with real target"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -279,10 +267,7 @@ var f = Object.assign || function(e) {
 var x = f(target, source);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("f(target"),
-        "should not transform with real target"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -295,10 +280,7 @@ function init() {
 var x = init();
 "#;
     let output = render(input);
-    assert!(
-        output.contains("init"),
-        "should not detect unrelated function as extends"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -315,8 +297,5 @@ function copyProps(target) {
 var x = copyProps({}, source);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("copyProps"),
-        "should not detect descriptor utility as objectSpread"
-    );
+    insta::assert_snapshot!(output);
 }

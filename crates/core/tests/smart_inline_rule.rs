@@ -377,14 +377,7 @@ if (Ju !== null) {
 }
 "#;
     let output = apply(input);
-    assert!(
-        !output.contains("Ju.forEach"),
-        "must not inline e→Ju when Ju is mutated between def and use: {output}"
-    );
-    assert!(
-        output.contains("e.forEach"),
-        "temp var e should be preserved: {output}"
-    );
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -399,14 +392,7 @@ mutate();
 returnValue(t);
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("const t = foo"),
-        "temp snapshot must remain across side-effectful call: {output}"
-    );
-    assert!(
-        output.contains("returnValue(t)"),
-        "use should still reference the temp snapshot: {output}"
-    );
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -419,10 +405,7 @@ Nu = ku;
 try { doWork(); } finally { Nu = n; check(Nu); }
 "#;
     let output = apply(input);
-    assert!(
-        output.contains("const n = Nu"),
-        "temp var n should be preserved when Nu is mutated: {output}"
-    );
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -578,16 +561,7 @@ try {
 "#;
     let output = apply_pipeline(input);
     // r must be preserved — inlining would produce M = M (self-assignment)
-    assert!(
-        output.contains("const r = M") || output.contains("const r = initial"),
-        "should keep the temp var, got:\n{}",
-        output
-    );
-    assert!(
-        !output.contains("M = M"),
-        "must not produce M = M, got:\n{}",
-        output
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -599,16 +573,11 @@ e = second;
 const u = e;
 console.log(u);
 "#;
+    let expected = r#"
+let e = first;
+e = second;
+console.log(e);
+"#;
     let output = apply(input);
-    // u should be inlined since e is not mutated after const u = e
-    assert!(
-        !output.contains("const u = "),
-        "should inline u, got:\n{}",
-        output
-    );
-    assert!(
-        output.contains("console.log(e)"),
-        "u should be replaced with e, got:\n{}",
-        output
-    );
+    assert_eq_normalized(&output, expected);
 }

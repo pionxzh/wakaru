@@ -15,18 +15,7 @@ p.propTypes = {};
 export const BrowserRouter = p;
 "#;
     let output = render(input);
-    assert!(
-        output.contains("class BrowserRouter"),
-        "class should be renamed: {output}"
-    );
-    assert!(
-        !output.contains("class p "),
-        "old name should be gone: {output}"
-    );
-    assert!(
-        !output.contains("export const BrowserRouter = "),
-        "export const alias should be removed: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -40,15 +29,7 @@ var h = p;
 export const BrowserRouter = h;
 "#;
     let output = render(input);
-    assert!(
-        output.contains("BrowserRouter"),
-        "should contain BrowserRouter: {output}"
-    );
-    // h should be inlined away, class should be renamed
-    assert!(
-        !output.contains("var h"),
-        "alias should be removed: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -66,14 +47,7 @@ export const Foo = p;
 export const Bar = y;
 "#;
     let output = render(input);
-    assert!(
-        output.contains("class Foo"),
-        "p should become Foo: {output}"
-    );
-    assert!(
-        output.contains("class Bar"),
-        "y should become Bar: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -98,14 +72,7 @@ fn webpack4_module_24_renames_classes() {
         .find(|(name, _)| name == "module-24.js")
         .expect("module-24 should exist");
 
-    assert!(
-        !code.contains("export const BrowserRouter = p"),
-        "BrowserRouter should be inlined as export class, not export const = p"
-    );
-    assert!(
-        code.contains("BrowserRouter"),
-        "BrowserRouter export should exist"
-    );
+    insta::assert_snapshot!(code);
 }
 
 #[test]
@@ -121,16 +88,5 @@ console.log(h);
 export { h as BrowserRouter };
 "#;
     let output = render(input);
-    assert!(
-        output.contains("BrowserRouter"),
-        "should contain BrowserRouter: {output}"
-    );
-    assert!(
-        !output.contains("console.log(h)"),
-        "h should be renamed, not left dangling: {output}"
-    );
-    assert!(
-        output.contains("console.log(BrowserRouter)"),
-        "h should become BrowserRouter: {output}"
-    );
+    insta::assert_snapshot!(output);
 }

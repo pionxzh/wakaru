@@ -1,0 +1,12 @@
+---
+source: crates/core/tests/un_es6_class_rule.rs
+expression: result
+---
+class Foo {
+    instance() {
+        return 1;
+    }
+    static staticMethod() {
+        return 2;
+    }
+}

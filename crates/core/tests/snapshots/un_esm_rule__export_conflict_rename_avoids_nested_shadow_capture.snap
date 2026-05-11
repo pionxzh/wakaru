@@ -1,0 +1,9 @@
+---
+source: crates/core/tests/un_esm_rule.rs
+expression: output
+---
+const _a2 = 0;
+function f(_a) {
+    return _a2 + _a;
+}
+export const a = (x)=>_a2 + f(x);

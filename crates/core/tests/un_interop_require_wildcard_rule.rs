@@ -38,10 +38,7 @@ console.log(ns.default);
 "#;
     let output = render(input);
     // Non-require arg must NOT be unwrapped — helper synthesizes namespace object
-    assert!(
-        output.contains(".default"),
-        "should preserve .default for non-require wrapped binding"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -51,8 +48,5 @@ var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWild
 var _a = _interopRequireWildcard(require("a"));
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("_interopRequireWildcard"),
-        "helper declaration should be removed"
-    );
+    insta::assert_snapshot!(output);
 }

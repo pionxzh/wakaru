@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/un_esm_rule.rs
+expression: output
+---
+import _i from "./react.js";
+let i;
+i = _i;
+console.log(i);

@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/un_to_consumable_array_rule.rs
+expression: output
+---
+function choose(arr) {
+    return parse(arr) || normalize(arr) || fallback(arr) || die();
+}
+const x = choose(items);

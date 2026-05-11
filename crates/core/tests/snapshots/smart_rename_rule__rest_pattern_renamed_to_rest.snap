@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/smart_rename_rule.rs
+expression: result
+---
+const { foo, bar, ...rest } = obj;
+console.log(rest);

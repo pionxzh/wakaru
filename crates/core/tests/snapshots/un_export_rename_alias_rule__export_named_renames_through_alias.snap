@@ -1,0 +1,10 @@
+---
+source: crates/core/tests/un_export_rename_alias_rule.rs
+expression: output
+---
+class p {
+    render() {
+        return 42;
+    }
+}
+export const BrowserRouter = p;

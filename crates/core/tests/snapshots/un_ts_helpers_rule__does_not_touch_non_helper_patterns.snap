@@ -1,0 +1,5 @@
+---
+source: crates/core/tests/un_ts_helpers_rule.rs
+expression: output
+---
+const V = someOtherThing || fallback;

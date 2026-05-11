@@ -1,0 +1,20 @@
+---
+source: crates/core/tests/un_object_rest_rule.rs
+expression: output
+---
+function m(e, t) {
+    if (e == null) {
+        return {};
+    }
+    const n = {};
+    const i = Object.keys(e);
+    for(let r = 0; r < i.length; r++){
+        if (!(t.indexOf(i[r]) < 0)) {
+            n[i[r]] = e[i[r]];
+        }
+    }
+    return n;
+}
+const rest = m(obj, [
+    "a"
+]);

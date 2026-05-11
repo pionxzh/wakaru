@@ -1,0 +1,5 @@
+---
+source: crates/core/tests/un_array_concat_spread_rule.rs
+expression: output
+---
+const x = e.call(this, ...args);

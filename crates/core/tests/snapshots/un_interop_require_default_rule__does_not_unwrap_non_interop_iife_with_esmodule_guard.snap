@@ -1,0 +1,12 @@
+---
+source: crates/core/tests/un_interop_require_default_rule.rs
+expression: output
+---
+const x = ((input_1)=>{
+    if (input_1 && input_1.__esModule) {
+        return input_1;
+    }
+    sideEffect(input_1);
+    return fallback;
+})(input);
+console.log(x);

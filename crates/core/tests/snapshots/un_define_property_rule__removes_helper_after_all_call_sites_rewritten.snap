@@ -1,0 +1,7 @@
+---
+source: crates/core/tests/un_define_property_rule.rs
+expression: output
+---
+const obj = {};
+obj["k"] = 1;
+console.log(obj);

@@ -1,0 +1,5 @@
+---
+source: crates/core/tests/un_spread_array_literal_rule.rs
+expression: output
+---
+const x = fn(...arr);

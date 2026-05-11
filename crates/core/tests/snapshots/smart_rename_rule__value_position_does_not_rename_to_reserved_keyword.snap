@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/smart_rename_rule.rs
+expression: output
+---
+import r from "./m.js";
+export default {
+    default: r
+};

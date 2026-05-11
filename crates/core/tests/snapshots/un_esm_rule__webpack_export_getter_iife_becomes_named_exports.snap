@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/un_esm_rule.rs
+expression: output
+---
+export const Foo = 1;
+export const Bar = 2;

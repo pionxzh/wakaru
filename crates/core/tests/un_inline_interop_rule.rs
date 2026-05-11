@@ -63,8 +63,5 @@ const x = ((e) => {
 console.log(x);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("__esModule"),
-        "should not introduce __esModule"
-    );
+    insta::assert_snapshot!(output);
 }

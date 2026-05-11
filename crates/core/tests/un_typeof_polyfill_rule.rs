@@ -51,14 +51,7 @@ var x = (y === undefined ? "undefined" : o(y)) === "object";
     // (y === undefined ? "undefined" : typeof y) === "object"
     // which could be further simplified but that's another rule's job
     let output = render(input);
-    assert!(
-        output.contains("typeof y"),
-        "should replace o(y) with typeof y"
-    );
-    assert!(
-        !output.contains("Symbol"),
-        "should remove polyfill declaration"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -73,10 +66,7 @@ const o = typeof Symbol == "function" && typeof Symbol.iterator == "symbol" ? (e
 var x = o(y);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("Symbol"),
-        "polyfill declaration should be removed"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -87,8 +77,5 @@ const o = typeof window != "undefined" ? (e) => e.toString() : (e) => String(e);
 var x = o(y);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("o(y)") || output.contains("o("),
-        "should not transform unrelated conditional"
-    );
+    insta::assert_snapshot!(output);
 }

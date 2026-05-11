@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/un_object_rest_rule.rs
+expression: result
+---
+const _replace = sentinel;
+const { replace: _replace_1, ...rest } = props;

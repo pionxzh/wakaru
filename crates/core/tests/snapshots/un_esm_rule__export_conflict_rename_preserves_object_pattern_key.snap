@@ -1,0 +1,11 @@
+---
+source: crates/core/tests/un_esm_rule.rs
+expression: output
+---
+var obj = {
+    a: 1
+};
+var { a: _a } = obj;
+export const a = function(x) {
+    return _a + x;
+};

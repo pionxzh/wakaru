@@ -1,0 +1,5 @@
+---
+source: crates/core/tests/noop_pipeline.rs
+expression: output
+---
+const view = <div className="ok"/>;

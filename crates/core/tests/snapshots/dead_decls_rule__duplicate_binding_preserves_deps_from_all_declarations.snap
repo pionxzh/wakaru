@@ -1,0 +1,12 @@
+---
+source: crates/core/tests/dead_decls_rule.rs
+expression: output
+---
+var a = ()=>b();
+function a() {
+    return 1;
+}
+function b() {
+    return 2;
+}
+export const x = a();

@@ -1,0 +1,16 @@
+---
+source: crates/core/tests/un_object_rest_rule.rs
+expression: output
+---
+function m(e, t) {
+    const n = {};
+    for(const r in e){
+        t.indexOf(r);
+        Object.prototype.hasOwnProperty.call(e, r);
+        n[r] = e[r];
+    }
+    return n;
+}
+const rest = m(obj, [
+    "a"
+]);

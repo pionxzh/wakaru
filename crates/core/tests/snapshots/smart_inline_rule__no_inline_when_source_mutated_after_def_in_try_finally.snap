@@ -1,0 +1,11 @@
+---
+source: crates/core/tests/smart_inline_rule.rs
+expression: output
+---
+const M = initial;
+const r = M;
+try {
+    M = newValue;
+} finally{
+    M = r;
+}

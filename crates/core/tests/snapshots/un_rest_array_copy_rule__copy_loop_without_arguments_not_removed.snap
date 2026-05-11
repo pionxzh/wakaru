@@ -1,0 +1,10 @@
+---
+source: crates/core/tests/un_rest_array_copy_rule.rs
+expression: output
+---
+function t(...args) {
+    for(let o = other.length, i = Array(o), a = 0; a < o; a++){
+        i[a] = other[a];
+    }
+    return i;
+}

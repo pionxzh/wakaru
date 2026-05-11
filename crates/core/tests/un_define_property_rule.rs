@@ -78,11 +78,7 @@ _defineProperty(obj, "k", 1);
 console.log(obj);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("function _defineProperty"),
-        "helper should be removed when all call sites are rewritten; got:\n{output}"
-    );
-    assert!(output.contains(r#"obj["k"] = 1"#), "got:\n{output}");
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -100,18 +96,7 @@ const obj = {};
 a(obj, "k", 1);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("function a(e, t, n)"),
-        "helper-shaped function should be preserved without full descriptor shape; got:\n{output}"
-    );
-    assert!(
-        output.contains("Object.defineProperty"),
-        "defineProperty call should be preserved without full descriptor shape; got:\n{output}"
-    );
-    assert!(
-        !output.contains(r#"obj["k"] = 1"#),
-        "call site should not be rewritten without full descriptor shape; got:\n{output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -152,12 +137,5 @@ console.log(result);
 "#;
     // `a` must still be called somehow; helper not removed (still referenced).
     let output = render(input);
-    assert!(
-        output.contains("function a(e, t, n)"),
-        "helper must be kept when a call isn't a rewritable statement; got:\n{output}"
-    );
-    assert!(
-        output.contains("a({}, \"k\", 1)") || output.contains("a({}, 'k', 1)"),
-        "original call should be preserved; got:\n{output}"
-    );
+    insta::assert_snapshot!(output);
 }

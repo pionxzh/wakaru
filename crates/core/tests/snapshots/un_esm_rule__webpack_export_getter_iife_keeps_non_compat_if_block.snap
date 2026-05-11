@@ -1,0 +1,12 @@
+---
+source: crates/core/tests/un_esm_rule.rs
+expression: output
+---
+export const Foo = 1;
+if (flag) {
+    Object.defineProperty(exports.default, "__esModule", {
+        value: true
+    });
+    Object.assign(exports.default, exports);
+    module.exports = exports.default;
+}

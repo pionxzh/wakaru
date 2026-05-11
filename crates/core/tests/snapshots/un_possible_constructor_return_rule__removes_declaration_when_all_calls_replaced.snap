@@ -1,0 +1,5 @@
+---
+source: crates/core/tests/un_possible_constructor_return_rule.rs
+expression: output
+---
+const x = Parent.call(this);

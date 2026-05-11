@@ -1,0 +1,17 @@
+---
+source: crates/core/tests/un_define_property_rule.rs
+expression: output
+---
+function a(e, t, n) {
+    if (t in e) {
+        Object.defineProperty(e, t, {
+            value: n,
+            writable: true
+        });
+    } else {
+        e[t] = n;
+    }
+    return e;
+}
+const obj = {};
+a(obj, "k", 1);

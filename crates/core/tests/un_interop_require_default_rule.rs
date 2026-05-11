@@ -120,14 +120,7 @@ function _interopRequireDefault(obj) {
 var _a = _interopRequireDefault(require("a"));
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("_interopRequireDefault"),
-        "helper declaration should be removed"
-    );
-    assert!(
-        !output.contains("__esModule"),
-        "__esModule check should be removed"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -139,15 +132,12 @@ function notAHelper(obj) {
 var _a = notAHelper(require("a"));
 "#;
     let output = render(input);
-    // Should still contain the function — not detected as helper
-    assert!(
-        output.contains("notAHelper"),
-        "should not remove non-helper function"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
 fn skips_default_rewrite_for_reassigned_binding() {
+    // _a is reassigned, so _a.default must NOT be rewritten to _a
     let input = r#"
 function _interopRequireDefault(obj) {
     return obj && obj.__esModule ? obj : { default: obj };
@@ -157,11 +147,7 @@ _a = other;
 console.log(_a.default);
 "#;
     let output = render(input);
-    // _a is reassigned, so _a.default must NOT be rewritten to _a
-    assert!(
-        output.contains(".default"),
-        "should preserve .default for reassigned binding"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -192,14 +178,7 @@ const x = ((e) => {
 console.log(x);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("sideEffect"),
-        "side effect must not be dropped: {output}"
-    );
-    assert!(
-        output.contains("fallback"),
-        "alternate return path must not be dropped: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -216,13 +195,5 @@ const o = ((e) => {
 console.log(o.Component);
 "#;
     let output = render(input);
-    // IIFE should be unwrapped, but .Component should NOT be stripped
-    assert!(
-        !output.contains("__esModule"),
-        "wildcard IIFE should be unwrapped: {output}"
-    );
-    assert!(
-        output.contains("Component"),
-        "named export access should be preserved: {output}"
-    );
+    insta::assert_snapshot!(output);
 }

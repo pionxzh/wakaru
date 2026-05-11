@@ -1,0 +1,5 @@
+---
+source: crates/core/tests/un_esm_rule.rs
+expression: output
+---
+export default require("./module.js");

@@ -1,0 +1,9 @@
+---
+source: crates/core/tests/smart_rename_rule.rs
+expression: output
+---
+const { gql } = n;
+function inner(t) {
+    return t;
+}
+use(gql);

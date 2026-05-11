@@ -1,0 +1,16 @@
+---
+source: crates/core/tests/un_export_rename_alias_rule.rs
+expression: output
+---
+export class Foo {
+    render() {
+        return 1;
+    }
+}
+Foo.propTypes = {};
+export class Bar {
+    render() {
+        return 2;
+    }
+}
+Bar.propTypes = {};

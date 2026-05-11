@@ -1,0 +1,11 @@
+---
+source: crates/core/tests/un_assert_this_initialized_rule.rs
+expression: output
+---
+function validate(e) {
+    if (e === null) {
+        throw new Error("invalid");
+    }
+    return e;
+}
+export const x = validate(obj);

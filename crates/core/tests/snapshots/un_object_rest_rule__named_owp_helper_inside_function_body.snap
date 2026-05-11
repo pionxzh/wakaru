@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/un_object_rest_rule.rs
+expression: output
+---
+export function foo(t = {}) {
+    const { name = "default", ...rest } = t;
+    use(name, rest);
+}

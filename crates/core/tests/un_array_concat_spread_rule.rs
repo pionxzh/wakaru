@@ -66,8 +66,7 @@ fn simplifies_spread_over_concat_pattern() {
 const x = e.call(...[this].concat(args));
 "#;
     let output = render(input);
-    assert!(!output.contains(".concat("), "concat should be eliminated");
-    assert!(output.contains("...args"), "spread should be preserved");
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -77,8 +76,5 @@ fn preserves_variable_concat() {
 const x = arr.concat(other);
 "#;
     let output = render(input);
-    assert!(
-        output.contains(".concat("),
-        "should not transform variable.concat()"
-    );
+    insta::assert_snapshot!(output);
 }

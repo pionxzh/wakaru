@@ -1,0 +1,14 @@
+---
+source: crates/core/tests/un_object_rest_rule.rs
+expression: output
+---
+function m(e, t) {
+    const n = {};
+    for(let r = 0; r < 1; r++){
+        t.indexOf("a");
+    }
+    return n;
+}
+const rest = m(obj, [
+    "a"
+]);

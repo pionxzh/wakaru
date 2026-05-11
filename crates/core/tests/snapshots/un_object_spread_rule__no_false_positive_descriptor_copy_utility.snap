@@ -1,0 +1,15 @@
+---
+source: crates/core/tests/un_object_spread_rule.rs
+expression: output
+---
+function copyProps(target) {
+    for(let i = 1; i < arguments.length; i++){
+        const source = arguments[i];
+        Object.defineProperty(target, "meta", {
+            value: source,
+            enumerable: false
+        });
+    }
+    return target;
+}
+const x = copyProps({}, source);

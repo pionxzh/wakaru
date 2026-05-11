@@ -1,0 +1,9 @@
+---
+source: crates/core/tests/smart_rename_rule.rs
+expression: output
+---
+import r from "./m.js";
+const k = "Foo";
+export default {
+    [k]: r
+};

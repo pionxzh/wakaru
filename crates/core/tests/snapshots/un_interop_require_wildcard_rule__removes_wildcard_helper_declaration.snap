@@ -1,0 +1,5 @@
+---
+source: crates/core/tests/un_interop_require_wildcard_rule.rs
+expression: output
+---
+import "a";

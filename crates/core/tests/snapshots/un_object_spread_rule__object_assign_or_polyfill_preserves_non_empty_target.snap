@@ -1,0 +1,16 @@
+---
+source: crates/core/tests/un_object_spread_rule.rs
+expression: output
+---
+const f = Object.assign || function(e) {
+    for(let t = 1; t < arguments.length; t++){
+        const n = arguments[t];
+        for(const r in n){
+            if (Object.prototype.hasOwnProperty.call(n, r)) {
+                e[r] = n[r];
+            }
+        }
+    }
+    return e;
+};
+const x = f(target, source);

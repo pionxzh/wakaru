@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/un_object_spread_rule.rs
+expression: output
+---
+function init() {
+    return Object.create(null);
+}
+const x = init();

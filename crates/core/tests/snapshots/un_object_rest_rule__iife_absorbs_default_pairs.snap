@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/un_object_rest_rule.rs
+expression: output
+---
+const { name = "default", value = 42, ...rest } = props;
+use(name, value, rest);

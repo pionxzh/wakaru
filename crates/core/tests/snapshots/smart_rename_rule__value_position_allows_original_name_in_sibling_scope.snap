@@ -1,0 +1,14 @@
+---
+source: crates/core/tests/smart_rename_rule.rs
+expression: output
+---
+function h(e, t) {
+    const { initFoo } = t;
+    return initFoo;
+}
+const connect = (e, t)=>{
+    const initFoo = makeFoo(e, t);
+    return setup({
+        initFoo
+    });
+};

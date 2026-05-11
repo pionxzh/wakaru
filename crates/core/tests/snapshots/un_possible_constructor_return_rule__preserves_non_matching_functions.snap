@@ -1,0 +1,11 @@
+---
+source: crates/core/tests/un_possible_constructor_return_rule.rs
+expression: output
+---
+function validate(self, call) {
+    if (!self) {
+        throw new Error("invalid self");
+    }
+    return call;
+}
+const x = validate(obj, fn());

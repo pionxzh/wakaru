@@ -1,0 +1,7 @@
+---
+source: crates/core/tests/dead_decls_rule.rs
+expression: output
+---
+function _dead() {}
+var _dead = sideEffect();
+export const x = 2;

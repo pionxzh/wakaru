@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/un_to_consumable_array_rule.rs
+expression: output
+---
+import _toConsumableArray from "@babel/runtime/helpers/toConsumableArray";
+const x = _toConsumableArray(a, b);

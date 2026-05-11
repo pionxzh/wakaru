@@ -1,0 +1,7 @@
+---
+source: crates/core/tests/un_sliced_to_array_rule.rs
+expression: output
+---
+const _ref = pair;
+const key = _ref[0];
+const value = _ref[1];

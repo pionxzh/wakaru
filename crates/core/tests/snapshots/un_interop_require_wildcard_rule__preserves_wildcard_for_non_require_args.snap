@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/un_interop_require_wildcard_rule.rs
+expression: output
+---
+const ns = _interopRequireWildcard(factory());
+console.log(ns.default);

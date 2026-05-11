@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/un_iife_rule.rs
+expression: output
+---
+((globalPoly_1, r)=>{
+    const o = g(globalPoly_1, r);
+    exports.a = o;
+})(globalPoly, amdPoly(module));

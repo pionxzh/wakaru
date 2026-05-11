@@ -122,18 +122,7 @@ class Foo {
 }
 "#;
     let output = render(input);
-    assert!(
-        output.contains("this._x = 1"),
-        "inlined __init body should be present: {output}"
-    );
-    assert!(
-        !output.contains("__init()"),
-        "__init method should be removed: {output}"
-    );
-    assert!(
-        output.contains("__init2"),
-        "__init2 should be kept (not inlined): {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]

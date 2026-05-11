@@ -187,10 +187,7 @@ var _dead = sideEffect();
 export const x = 2;
 "#;
     let output = render(input);
-    assert!(
-        output.contains("sideEffect"),
-        "side-effectful var declarator must survive: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -202,8 +199,6 @@ function b() { return 2; }
 export const x = a();
 "#;
     let output = render(input);
-    assert!(
-        output.contains("function b"),
-        "b must survive because a's var init calls it: {output}"
-    );
+    // b must survive — a's var init (`() => b()`) still references it
+    insta::assert_snapshot!(output);
 }

@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/un_object_rest_rule.rs
+expression: rule_output
+---
+const { a: x, b: _b, ...rest } = props;
+use(x, rest);

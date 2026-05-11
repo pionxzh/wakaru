@@ -1,0 +1,7 @@
+---
+source: crates/core/tests/un_object_spread_rule.rs
+expression: output
+---
+const x = {
+    ...y
+};

@@ -73,10 +73,7 @@ function p(e) {
 var x = p(this);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("ReferenceError"),
-        "helper should be removed, got: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -91,10 +88,7 @@ function validate(e) {
 export var x = validate(obj);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("validate"),
-        "should not transform non-matching function, got: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -110,8 +104,5 @@ function check(e) {
 export var x = check(obj);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("check"),
-        "should not transform non-Babel ReferenceError, got: {output}"
-    );
+    insta::assert_snapshot!(output);
 }

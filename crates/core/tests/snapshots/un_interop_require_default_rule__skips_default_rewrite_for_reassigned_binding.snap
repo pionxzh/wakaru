@@ -1,0 +1,7 @@
+---
+source: crates/core/tests/un_interop_require_default_rule.rs
+expression: output
+---
+import _a from "a";
+_a = other;
+console.log(_a.default);

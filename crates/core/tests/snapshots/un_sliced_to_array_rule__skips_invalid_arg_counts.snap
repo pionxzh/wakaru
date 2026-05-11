@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/un_sliced_to_array_rule.rs
+expression: output
+---
+import _slicedToArray from "@babel/runtime/helpers/slicedToArray";
+_slicedToArray();
+_slicedToArray(a);
+_slicedToArray(a, 2, 3);

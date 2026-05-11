@@ -1,0 +1,12 @@
+---
+source: crates/core/tests/smart_rename_rule.rs
+expression: output
+---
+const count = 1;
+const obj = {
+    count
+};
+function inner(t) {
+    return t + 1;
+}
+use(obj, inner(2));

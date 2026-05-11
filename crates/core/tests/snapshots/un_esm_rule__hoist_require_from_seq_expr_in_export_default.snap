@@ -1,0 +1,9 @@
+---
+source: crates/core/tests/un_esm_rule.rs
+expression: output
+---
+import _i from "./a.js";
+import "./b.js";
+let i;
+i = _i;
+export default i.foo;

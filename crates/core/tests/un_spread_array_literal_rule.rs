@@ -41,10 +41,7 @@ fn preserves_spread_over_non_literal() {
 const x = fn(...arr);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("...arr"),
-        "should preserve spread over non-literal"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]

@@ -18,11 +18,7 @@ const rest = ((e, t) => {
 })(props, ["a", "b"]);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("indexOf"),
-        "IIFE should be removed: {output}"
-    );
-    assert!(output.contains("...rest"), "should have rest: {output}");
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -63,17 +59,11 @@ use(x, rest);
 "#;
     // Test rule in isolation to verify alias handling
     let rule_output = render_rule(input, UnObjectRest::new);
-    assert!(
-        rule_output.contains("a: x"),
-        "rule should emit aliased destructuring {{ a: x }}: {rule_output}"
-    );
+    insta::assert_snapshot!("with_preceding_prop_access_rule", rule_output);
 
     // Full pipeline: SmartInline runs after and may inline x
     let pipeline_output = render(input);
-    assert!(
-        !pipeline_output.contains("indexOf"),
-        "IIFE should be removed: {pipeline_output}"
-    );
+    insta::assert_snapshot!("with_preceding_prop_access_pipeline", pipeline_output);
 }
 
 #[test]
@@ -91,11 +81,7 @@ const rest = ((e, t) => {
 use(rest);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("indexOf"),
-        "IIFE should be removed: {output}"
-    );
-    assert!(output.contains("...rest"), "should have rest: {output}");
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -114,19 +100,7 @@ const f = (e) => {
 };
 "#;
     let rule_output = render_rule(input, UnObjectRest::new);
-    assert!(
-        !rule_output.contains("indexOf"),
-        "IIFE should be removed: {rule_output}"
-    );
-    assert!(
-        rule_output.contains("...d"),
-        "should have rest destructuring: {rule_output}"
-    );
-    // t and n should be absorbed into the rest destructuring
-    assert!(
-        rule_output.contains("to: t") || rule_output.contains("to,"),
-        "should have 'to' in destructuring: {rule_output}"
-    );
+    insta::assert_snapshot!(rule_output);
 }
 
 #[test]
@@ -146,14 +120,7 @@ const f = (e) => {
 };
 "#;
     let rule_output = render_rule(input, UnObjectRest::new);
-    assert!(
-        !rule_output.contains("indexOf"),
-        "IIFE should be removed: {rule_output}"
-    );
-    assert!(
-        rule_output.contains("...d"),
-        "should have rest destructuring: {rule_output}"
-    );
+    insta::assert_snapshot!(rule_output);
 }
 
 #[test]
@@ -173,16 +140,7 @@ const f = (e) => {
 };
 "#;
     let rule_output = render_rule(input, UnObjectRest::new);
-    assert!(
-        !rule_output.contains("indexOf"),
-        "IIFE should be removed: {rule_output}"
-    );
-    // The preceding destructuring should be absorbed
-    let destructuring_count = rule_output.matches("= e").count();
-    assert_eq!(
-        destructuring_count, 1,
-        "should have exactly one destructuring from e: {rule_output}"
-    );
+    insta::assert_snapshot!(rule_output);
 }
 
 #[test]
@@ -202,10 +160,7 @@ const f = (e) => {
 };
 "#;
     let rule_output = render_rule(input, UnObjectRest::new);
-    assert!(
-        !rule_output.contains("indexOf"),
-        "IIFE should be removed even with shadowed param: {rule_output}"
-    );
+    insta::assert_snapshot!(rule_output);
 }
 
 #[test]
@@ -220,14 +175,7 @@ const rest = ((e, t) => {
 use(rest);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("sideEffect"),
-        "side effect must not be dropped: {output}"
-    );
-    assert!(
-        output.contains("fallback"),
-        "fallback return must not be dropped: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -245,12 +193,7 @@ const rest = ((e, t) => {
 use(replace, rest);
 "#;
     let output = render(input);
-    // Should NOT produce `const { replace, ...rest } = props` since `replace` already exists
-    let replace_count = output.matches("const replace").count();
-    assert!(
-        replace_count <= 1,
-        "should not duplicate const replace: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -283,17 +226,7 @@ const rest = function(e, t) {
 }(props, ["replace"]);
 "#;
     let result = render(input);
-    // Should use _replace_1 (or similar) to avoid colliding with existing _replace
-    assert!(
-        result.contains("_replace_1") || result.contains("_replace_2"),
-        "should generate a non-colliding alias, got:\n{}",
-        result
-    );
-    assert!(
-        !result.contains("replace: _replace,") && !result.contains("replace: _replace }"),
-        "must not use bare _replace (collides with existing binding):\n{}",
-        result
-    );
+    insta::assert_snapshot!(result);
 }
 
 // ── Named function helper (non-IIFE) ─────────────────────────────
@@ -317,11 +250,7 @@ const rest = m(props, ["a", "b"]);
 use(x, rest);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("function m"),
-        "helper should be removed: {output}"
-    );
-    assert!(output.contains("...rest"), "should have rest: {output}");
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -343,15 +272,7 @@ const rest = m(props, ["to", "exact", "strict"]);
 use(to, exact, rest);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("function m"),
-        "helper should be removed: {output}"
-    );
-    assert!(output.contains("...rest"), "should have rest: {output}");
-    assert!(
-        output.contains("to") && output.contains("exact"),
-        "should preserve named bindings: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -372,14 +293,7 @@ const rest1 = m(a, ["x"]);
 const rest2 = m(b, ["y", "z"]);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("function m"),
-        "helper should be removed when all call sites replaced: {output}"
-    );
-    assert!(
-        output.contains("...rest1") && output.contains("...rest2"),
-        "both rest destructurings should be present: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -406,19 +320,7 @@ const rest = m(a, ["name", "value"]);
 use(x, y, rest);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("function m"),
-        "helper should be removed: {output}"
-    );
-    assert!(output.contains("...rest"), "should have rest: {output}");
-    assert!(
-        output.contains("= \"default\"") || output.contains("= 'default'"),
-        "should have default value for name: {output}"
-    );
-    assert!(
-        output.contains("= 42"),
-        "should have default value: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -441,11 +343,7 @@ const x = a_prop === undefined ? undefined : a_prop;
 const rest = m(obj, ["prop"]);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("undefined"),
-        "undefined default should be omitted: {output}"
-    );
-    assert!(output.contains("...rest"), "should have rest: {output}");
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -465,19 +363,7 @@ const rest = ((e, t) => {
 use(x, y, rest);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("indexOf"),
-        "IIFE should be removed: {output}"
-    );
-    assert!(output.contains("...rest"), "should have rest: {output}");
-    assert!(
-        output.contains("= \"default\"") || output.contains("= 'default'"),
-        "should have default for name: {output}"
-    );
-    assert!(
-        output.contains("= 42"),
-        "should have default for value: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -497,15 +383,7 @@ const rest = ((e, t) => {
 use(x, y, rest);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("= true"),
-        "should have boolean default true: {output}"
-    );
-    assert!(
-        output.contains("= false"),
-        "should have boolean default false: {output}"
-    );
-    assert!(output.contains("...rest"), "should have rest: {output}");
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -528,11 +406,7 @@ const x = a_enabled === undefined || a_enabled;
 const rest = m(obj, ["enabled"]);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("= true"),
-        "should recover boolean default true: {output}"
-    );
-    assert!(output.contains("...rest"), "should have rest: {output}");
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -555,11 +429,7 @@ const R = a_withRef !== undefined && a_withRef;
 const rest = m(obj, ["withRef"]);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("= false"),
-        "should recover boolean default false: {output}"
-    );
-    assert!(output.contains("...rest"), "should have rest: {output}");
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -585,18 +455,7 @@ export function foo(t = {}) {
 }
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("function m"),
-        "helper should be removed: {output}"
-    );
-    assert!(
-        output.contains("...rest"),
-        "should have rest inside function: {output}"
-    );
-    assert!(
-        output.contains("= \"default\"") || output.contains("= 'default'"),
-        "should have default value: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -623,11 +482,7 @@ function m(e, t) {
 const rest = m(obj, ["a"]);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("function m"),
-        "decompiled Object.keys form should be detected: {output}"
-    );
-    assert!(output.contains("...rest"), "should have rest: {output}");
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -650,11 +505,7 @@ function m(e, t) {
 const rest = m(obj, ["a"]);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("function m"),
-        "minified Object.keys OR form should be detected: {output}"
-    );
-    assert!(output.contains("...rest"), "should have rest: {output}");
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -671,11 +522,7 @@ function m(e, t) {
 const rest = m(obj, ["a"]);
 "#;
     let output = render(input);
-    assert!(
-        !output.contains("function m"),
-        "for-in variant helper should be removed: {output}"
-    );
-    assert!(output.contains("...rest"), "should have rest: {output}");
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -692,10 +539,7 @@ function m(e, t) {
 const rest = m(obj, ["a"]);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("function m"),
-        "non-copying for-in loop must not be treated as OWP: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -713,10 +557,7 @@ function m(e, t) {
 const rest = m(obj, ["a"]);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("function m"),
-        "unguarded for-in copy must not be treated as OWP: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -732,10 +573,7 @@ function m(e, t) {
 const rest = m(obj, ["a"]);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("function m"),
-        "regular for loop without accumulator copy must not be treated as OWP: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -752,10 +590,7 @@ function m(e, t) {
 const rest = m(obj, ["a"]);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("function m"),
-        "regular for loop with unguarded copy must not be treated as OWP: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -774,10 +609,7 @@ function m(e, t) {
 const rest = m(obj, ["a"]);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("function m"),
-        "copying excluded keys must not be treated as object rest: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -795,10 +627,7 @@ function m(e, t) {
 const rest = m(obj, ["a"]);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("function m"),
-        "OR guard that copies excluded keys must not be treated as object rest: {output}"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -814,8 +643,5 @@ function m(e, t) {
 const rest = m(obj, ["a"]);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("function m"),
-        "for-in helper copying excluded keys must not be treated as object rest: {output}"
-    );
+    insta::assert_snapshot!(output);
 }

@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/un_object_spread_rule.rs
+expression: output
+---
+import _objectSpread2 from "@babel/runtime/helpers/objectSpread2";
+const x = _objectSpread2(target, {
+    a: 1
+});

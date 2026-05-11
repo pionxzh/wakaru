@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/smart_rename_rule.rs
+expression: output
+---
+const dRef = useRef();
+use(dRef);

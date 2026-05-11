@@ -1,0 +1,13 @@
+---
+source: crates/core/tests/un_es6_class_rule.rs
+expression: output
+---
+class Child extends Base {
+    constructor(){
+        super();
+        function inner(e) {
+            return e.call(this);
+        }
+        this.inner = inner;
+    }
+}

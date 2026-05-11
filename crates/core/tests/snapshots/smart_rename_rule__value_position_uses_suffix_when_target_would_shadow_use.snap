@@ -1,0 +1,11 @@
+---
+source: crates/core/tests/smart_rename_rule.rs
+expression: output
+---
+const sideCar_1 = makeSideCar();
+function render(U) {
+    const { sideCar } = U;
+    return {
+        sideCar: sideCar_1
+    };
+}

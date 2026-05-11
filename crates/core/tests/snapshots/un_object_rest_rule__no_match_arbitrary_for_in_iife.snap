@@ -1,0 +1,14 @@
+---
+source: crates/core/tests/un_object_rest_rule.rs
+expression: output
+---
+const rest = ((props_1, t)=>{
+    const n = {};
+    for(const r in props_1){
+        sideEffect(r);
+    }
+    return fallback;
+})(props, [
+    "a"
+]);
+use(rest);

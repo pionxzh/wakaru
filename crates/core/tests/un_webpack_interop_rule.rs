@@ -97,10 +97,7 @@ var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
 console.log(_lib2("unexpected"));
 "#;
     let output = render(input);
-    assert!(
-        output.contains("_lib2"),
-        "getter should be kept when called with args"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -111,10 +108,7 @@ var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
 var ref = _lib2;
 "#;
     let output = render(input);
-    assert!(
-        output.contains("_lib2"),
-        "getter should be kept when used as a value"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]
@@ -125,10 +119,7 @@ var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
 console.log(_lib2.b);
 "#;
     let output = render(input);
-    assert!(
-        output.contains("_lib2"),
-        "getter should be kept when accessed with .b (not .a)"
-    );
+    insta::assert_snapshot!(output);
 }
 
 // ── Non-require base → no match ────────────────────────────────────
@@ -141,10 +132,7 @@ var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
 console.log(_lib2());
 "#;
     let output = render(input);
-    assert!(
-        output.contains("_lib2"),
-        "getter should be kept when base is not a require() call"
-    );
+    insta::assert_snapshot!(output);
 }
 
 // ── Mixed safe and unsafe usage → getter is kept ───────────────────
@@ -158,10 +146,7 @@ console.log(_lib2());
 var ref = _lib2;
 "#;
     let output = render(input);
-    assert!(
-        output.contains("_lib2"),
-        "getter should be kept with mixed safe/unsafe usage"
-    );
+    insta::assert_snapshot!(output);
 }
 
 // ── Computed property access forms ─────────────────────────────────
@@ -204,10 +189,7 @@ var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
 console.log(_lib2());
 "#;
     let output = render(input);
-    assert!(
-        output.contains("_lib2"),
-        "getter should be kept when no require() bindings exist"
-    );
+    insta::assert_snapshot!(output);
 }
 
 #[test]

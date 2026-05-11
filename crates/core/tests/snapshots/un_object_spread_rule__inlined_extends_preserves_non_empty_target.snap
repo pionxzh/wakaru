@@ -1,0 +1,19 @@
+---
+source: crates/core/tests/un_object_spread_rule.rs
+expression: output
+---
+function _extends() {
+    _extends = Object.assign || function(target) {
+        for(let i = 1; i < arguments.length; i++){
+            const source = arguments[i];
+            for(const key in source){
+                if (Object.prototype.hasOwnProperty.call(source, key)) {
+                    target[key] = source[key];
+                }
+            }
+        }
+        return target;
+    };
+    return _extends.apply(this, arguments);
+}
+const x = _extends(target, source);

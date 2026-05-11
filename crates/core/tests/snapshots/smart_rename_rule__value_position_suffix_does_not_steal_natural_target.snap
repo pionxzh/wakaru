@@ -1,0 +1,10 @@
+---
+source: crates/core/tests/smart_rename_rule.rs
+expression: output
+---
+const error = "taken";
+const f = (error_2, error_1)=>({
+        error: error_2,
+        error_1
+    });
+use(error);
