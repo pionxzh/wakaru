@@ -199,6 +199,31 @@ fn trace_can_include_unchanged_rules() {
 }
 
 #[test]
+fn trace_includes_unchanged_remove_void_when_requested() {
+    let events = trace_pipeline(
+        "const undefined = 1;",
+        RuleTraceOptions {
+            stop_after: Some("RemoveVoid".to_string()),
+            only_changed: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        events.iter().map(|event| event.rule).collect::<Vec<_>>(),
+        vec![
+            "SimplifySequence",
+            "FlipComparisons",
+            "UnTypeofStrict",
+            "RemoveVoid"
+        ]
+    );
+    assert!(events
+        .iter()
+        .any(|event| event.rule == "RemoveVoid" && !event.changed));
+}
+
+#[test]
 fn trace_supports_rule_ranges() {
     let events = trace_pipeline(
         "const x = void 0;",

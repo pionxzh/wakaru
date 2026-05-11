@@ -451,8 +451,10 @@ fn apply_rules_range_impl(
     if !started && start_from == Some("RemoveVoid") {
         started = true;
     }
-    if started && RemoveVoid::should_run(module) {
-        module.visit_mut_with(&mut RemoveVoid);
+    if started {
+        if RemoveVoid::should_run(module) {
+            module.visit_mut_with(&mut RemoveVoid);
+        }
         if let Some(observer) = observer.as_deref_mut() {
             observer("RemoveVoid", module);
         }
