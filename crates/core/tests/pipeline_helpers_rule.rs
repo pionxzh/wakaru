@@ -130,6 +130,10 @@ fn rule_names_contains_key_rules() {
         names.contains(&"UnWebpackInterop2"),
         "missing UnWebpackInterop2 (second pass)"
     );
+    assert!(
+        names.contains(&"UnParameters2"),
+        "missing UnParameters2 (second pass)"
+    );
     // First element should be SimplifySequence
     assert_eq!(names[0], "SimplifySequence");
     // Last element should be UnReturn
@@ -296,4 +300,21 @@ fn trace_rejects_unknown_rule_names() {
     .expect_err("unknown trace rule should fail");
 
     assert!(err.to_string().contains("NoSuchRule"));
+}
+
+#[test]
+fn trace_accepts_un_parameters_second_pass() {
+    trace_rules(
+        "function fn(a) { return a; }",
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            ..Default::default()
+        },
+        RuleTraceOptions {
+            start_from: Some("UnParameters2".to_string()),
+            stop_after: Some("UnParameters2".to_string()),
+            only_changed: false,
+        },
+    )
+    .expect("UnParameters2 should be accepted as a trace rule");
 }

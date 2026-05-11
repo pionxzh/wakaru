@@ -319,6 +319,7 @@ pub fn rule_names() -> &'static [&'static str] {
         "UnImportRename",
         "UnExportRename",
         "UnDestructuring",
+        "UnParameters2",
         "SmartInline",
         "UnIife2",
         "SmartRename",
