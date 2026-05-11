@@ -41,7 +41,8 @@ pub fn unpack(
         heuristic_split: heuristic_split.unwrap_or(true),
         ..Default::default()
     };
-    let pairs = wakaru_core::unpack(source, options).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let pairs =
+        wakaru_core::unpack(source, options).map_err(|e| JsValue::from_str(&e.to_string()))?;
     let modules: Vec<WakaruModule> = pairs
         .into_iter()
         .map(|(filename, code)| WakaruModule { filename, code })

@@ -26,7 +26,10 @@ fn split_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult
     // Phase 1: collect top-level items with metadata.
     let items = collect_top_level_items(body);
 
-    let decl_count = items.iter().filter(|i| !i.declared_names.is_empty()).count();
+    let decl_count = items
+        .iter()
+        .filter(|i| !i.declared_names.is_empty())
+        .count();
     if decl_count < MIN_DECLARATIONS {
         return None;
     }
@@ -96,7 +99,9 @@ fn unwrap_iife(module: &Module) -> Option<Vec<ModuleItem>> {
 fn debug_clusters(source: &str) -> Vec<(Vec<String>, bool)> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let module = super::parse_es_module(source, "bundle.js", cm).ok().unwrap();
+        let module = super::parse_es_module(source, "bundle.js", cm)
+            .ok()
+            .unwrap();
         let items = collect_top_level_items(&module.body);
         let graph = build_reference_graph(&items);
         let mut uf = UnionFind::new(items.len());
@@ -822,7 +827,9 @@ enum ExportPromotion {
 fn try_promote_export(item: &ModuleItem, exported: &HashSet<Atom>) -> ExportPromotion {
     match item {
         // `function foo() {}` → `export function foo() {}`
-        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) if exported.contains(&fn_decl.ident.sym) => {
+        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl)))
+            if exported.contains(&fn_decl.ident.sym) =>
+        {
             let names = vec![fn_decl.ident.sym.clone()];
             let new_item = ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
                 span: Default::default(),
@@ -922,7 +929,9 @@ fn make_import_stmt(names: &[&Atom], from: &str) -> ModuleItem {
 }
 
 fn make_export_stmt(names: &[&Atom]) -> ModuleItem {
-    use swc_core::ecma::ast::{ExportNamedSpecifier, ExportSpecifier, ModuleExportName, NamedExport};
+    use swc_core::ecma::ast::{
+        ExportNamedSpecifier, ExportSpecifier, ModuleExportName, NamedExport,
+    };
     let specifiers = names
         .iter()
         .map(|name| {
@@ -1288,7 +1297,10 @@ mod tests {
             console.log(k);
         "#;
         let n = count_modules(input);
-        assert!(n >= 2, "expected at least 2 modules with minified names, got {n}");
+        assert!(
+            n >= 2,
+            "expected at least 2 modules with minified names, got {n}"
+        );
     }
 
     #[test]
@@ -1325,7 +1337,10 @@ mod tests {
             ),
         ] {
             let input = two_group_fixture(b1);
-            assert_does_not_split(&input, &format!("{name} should leave later a5() as a top-level ref"));
+            assert_does_not_split(
+                &input,
+                &format!("{name} should leave later a5() as a top-level ref"),
+            );
         }
     }
 
@@ -1345,10 +1360,7 @@ mod tests {
     #[test]
     fn binding_pattern_defaults_reference_top_level() {
         for (name, b1) in [
-            (
-                "parameter default",
-                "function b1(x = a5()) { return x; }",
-            ),
+            ("parameter default", "function b1(x = a5()) { return x; }"),
             (
                 "destructured parameter default",
                 "function b1({x = a5()} = {}) { return x; }",

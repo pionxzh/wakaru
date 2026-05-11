@@ -251,19 +251,17 @@ pub fn format_trace_events(events: &[RuleTraceEvent]) -> String {
 pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, String)>> {
     match unpack_bundle(source) {
         Some(result) => unpack_multi_module(result.modules, options),
-        None if options.heuristic_split => {
-            match scope_hoist::split_scope_hoisted(source) {
-                Some(result) if result.modules.len() > 1 => {
-                    let mut opts = options.clone();
-                    opts.dead_code_elimination = false;
-                    unpack_multi_module(result.modules, opts)
-                }
-                _ => {
-                    let code = decompile(source, options)?;
-                    Ok(vec![("module.js".to_string(), code)])
-                }
+        None if options.heuristic_split => match scope_hoist::split_scope_hoisted(source) {
+            Some(result) if result.modules.len() > 1 => {
+                let mut opts = options.clone();
+                opts.dead_code_elimination = false;
+                unpack_multi_module(result.modules, opts)
             }
-        }
+            _ => {
+                let code = decompile(source, options)?;
+                Ok(vec![("module.js".to_string(), code)])
+            }
+        },
         None => {
             let code = decompile(source, options)?;
             Ok(vec![("module.js".to_string(), code)])
@@ -281,7 +279,11 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<Vec<(Strin
     let result = unpack_bundle(source).or_else(|| {
         if options.heuristic_split {
             let r = scope_hoist::split_scope_hoisted(source)?;
-            if r.modules.len() > 1 { Some(r) } else { None }
+            if r.modules.len() > 1 {
+                Some(r)
+            } else {
+                None
+            }
         } else {
             None
         }

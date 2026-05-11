@@ -6,9 +6,9 @@ use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, ClassExpr,
     Decl, ExportSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier,
     JSXAttr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElementName, JSXExpr, JSXExprContainer,
-    JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
-    ModuleDecl, ModuleExportName, ModuleItem, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName,
-    Stmt, VarDecl, VarDeclKind,
+    JSXMemberExpr, JSXObject, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleExportName, ModuleItem, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, Stmt,
+    VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -1083,9 +1083,7 @@ fn value_position_rename_module(module: &mut Module) {
 
     for (target, bid) in candidates {
         let atom: Atom = target.as_str().into();
-        if !top_level_names.contains(&atom)
-            && !rename_causes_shadowing(module, &bid, &atom)
-        {
+        if !top_level_names.contains(&atom) && !rename_causes_shadowing(module, &bid, &atom) {
             committed_names.insert(target.clone());
             renames.push(BindingRename {
                 old: bid,
@@ -1097,14 +1095,12 @@ fn value_position_rename_module(module: &mut Module) {
     }
 
     for (target, bid) in needs_suffix {
-        let final_name = (1..=10)
-            .map(|i| format!("{target}_{i}"))
-            .find(|candidate| {
-                let atom: Atom = candidate.as_str().into();
-                !committed_names.contains(candidate.as_str())
-                    && !top_level_names.contains(&atom)
-                    && !rename_causes_shadowing(module, &bid, &atom)
-            });
+        let final_name = (1..=10).map(|i| format!("{target}_{i}")).find(|candidate| {
+            let atom: Atom = candidate.as_str().into();
+            !committed_names.contains(candidate.as_str())
+                && !top_level_names.contains(&atom)
+                && !rename_causes_shadowing(module, &bid, &atom)
+        });
 
         if let Some(name) = final_name {
             committed_names.insert(name.clone());
@@ -1341,10 +1337,11 @@ impl Visit for ValuePositionClassifier {
         // value-position renaming so JSX attrs also provide rename hints.
         let JSXAttrOrSpread::JSXAttr(JSXAttr {
             name: JSXAttrName::Ident(name),
-            value: Some(JSXAttrValue::JSXExprContainer(JSXExprContainer {
-                expr: JSXExpr::Expr(expr),
-                ..
-            })),
+            value:
+                Some(JSXAttrValue::JSXExprContainer(JSXExprContainer {
+                    expr: JSXExpr::Expr(expr),
+                    ..
+                })),
             ..
         }) = attr
         else {

@@ -9,8 +9,8 @@ use swc_core::ecma::ast::{
     JSXElementName, JSXExpr, JSXExprContainer, JSXFragment, JSXMemberExpr, JSXNamespacedName,
     JSXObject, JSXOpeningElement, JSXOpeningFragment, JSXSpreadChild, JSXText, KeyValueProp, Lit,
     MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, Number, ObjectLit,
-    Param, Pat, Prop, PropName,
-    PropOrSpread, SpreadElement, Stmt, Str, VarDecl, VarDeclKind, VarDeclarator,
+    Param, Pat, Prop, PropName, PropOrSpread, SpreadElement, Stmt, Str, VarDecl, VarDeclKind,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -573,10 +573,7 @@ fn collect_import_pragmas(items: &[ModuleItem]) -> HashMap<BindingId, &'static s
             continue;
         };
         let src = wtf8_to_string(&import.src.value);
-        if !matches!(
-            src.as_str(),
-            "react/jsx-runtime" | "react/jsx-dev-runtime"
-        ) {
+        if !matches!(src.as_str(), "react/jsx-runtime" | "react/jsx-dev-runtime") {
             continue;
         }
         for spec in &import.specifiers {

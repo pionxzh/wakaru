@@ -125,7 +125,8 @@ console.log(greet(), add(1, 2));
 export { ns_a, ns_b };
 "#;
     // Use raw unpack first to verify extraction without pipeline interference
-    let raw_pairs = unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    let raw_pairs =
+        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
     let raw_names: Vec<&str> = raw_pairs.iter().map(|(n, _)| n.as_str()).collect();
 
     // 5 factory modules + 2 scope-hoisted modules + entry.js
@@ -193,7 +194,8 @@ var value = 42;
 console.log("entry", value);
 export { ns_a, ns_b };
 "#;
-    let raw_pairs = unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    let raw_pairs =
+        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
 
     // The entry `console.log("entry", value)` references `value` from ns_b.
     // In minified output there is no structural marker to distinguish it
@@ -227,7 +229,8 @@ __export(a, { y: () => y2 });
 var y2 = 2;
 console.log(x, y2);
 "#;
-    let raw_pairs = unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    let raw_pairs =
+        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
     let raw_names: Vec<&str> = raw_pairs.iter().map(|(n, _)| n.as_str()).collect();
 
     assert!(
