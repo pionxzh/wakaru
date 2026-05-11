@@ -400,20 +400,20 @@ fn detect_helper_from_arrow(
         let Pat::Ident(param) = &arrow.params[0] else {
             return None;
         };
-        let param_sym = &param.id.sym;
-        let param_ctxt = param.id.ctxt;
+        let mut ctx = MatchContext::new();
+        ctx.declare("obj", param.id.sym.clone(), param.id.ctxt);
 
         match &*arrow.body {
             BlockStmtOrExpr::BlockStmt(block) => {
-                if matches_ternary_return_block(&block.stmts, param_sym, param_ctxt) {
+                if matches_ternary_return_block(&block.stmts, &ctx) {
                     return Some(BabelHelperKind::InteropRequireDefault);
                 }
-                if matches_if_return_form(&block.stmts, param_sym, param_ctxt) {
+                if matches_if_return_form(&block.stmts, &ctx) {
                     return Some(BabelHelperKind::InteropRequireDefault);
                 }
             }
             BlockStmtOrExpr::Expr(expr) => {
-                if matches_ternary_expr(expr, param_sym, param_ctxt) {
+                if matches_ternary_expr(expr, &ctx) {
                     return Some(BabelHelperKind::InteropRequireDefault);
                 }
             }
@@ -467,65 +467,40 @@ fn detect_helper_from_arrow(
 /// Match: function(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 /// Or:   function(obj) { if (obj && obj.__esModule) return obj; return { default: obj }; }
 fn is_interop_require_default_fn(func: &Function) -> bool {
-    if func.params.len() != 1 {
-        return false;
-    }
-    let Pat::Ident(param) = &func.params[0].pat else {
+    let Some(ctx) = MatchContext::from_params(func, &["obj"]) else {
         return false;
     };
-    let param_sym = &param.id.sym;
-    let param_ctxt = param.id.ctxt;
 
     let body = match func.body.as_ref() {
         Some(b) => b,
         None => return false,
     };
 
-    // Ternary form: return P && P.__esModule ? P : { default: P }
-    if matches_ternary_return_block(&body.stmts, param_sym, param_ctxt) {
-        return true;
-    }
-    // If-return form: if (P && P.__esModule) return P; return { default: P }
-    if matches_if_return_form(&body.stmts, param_sym, param_ctxt) {
-        return true;
-    }
-
-    false
+    matches_ternary_return_block(&body.stmts, &ctx)
+        || matches_if_return_form(&body.stmts, &ctx)
 }
 
-/// Matches a block with a single return statement containing the ternary pattern.
-fn matches_ternary_return_block(
-    stmts: &[Stmt],
-    param_sym: &Atom,
-    param_ctxt: SyntaxContext,
-) -> bool {
+fn matches_ternary_return_block(stmts: &[Stmt], ctx: &MatchContext) -> bool {
     if stmts.len() != 1 {
         return false;
     }
     let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = &stmts[0] else {
         return false;
     };
-    matches_ternary_expr(arg, param_sym, param_ctxt)
+    matches_ternary_expr(arg, ctx)
 }
 
-/// Matches: P && P.__esModule ? P : { default: P }
-fn matches_ternary_expr(expr: &Expr, param_sym: &Atom, param_ctxt: SyntaxContext) -> bool {
+/// Matches: obj && obj.__esModule ? obj : { default: obj }
+fn matches_ternary_expr(expr: &Expr, ctx: &MatchContext) -> bool {
     let Expr::Cond(cond) = expr else { return false };
 
-    // test: P && P.__esModule
-    if !matches_esmodule_test(&cond.test, param_sym, param_ctxt) {
-        return false;
-    }
-    // cons: P
-    if !is_same_ident(&cond.cons, param_sym, param_ctxt) {
-        return false;
-    }
-    // alt: { default: P }
-    matches_default_object(&cond.alt, param_sym, param_ctxt)
+    matches_esmodule_test(&cond.test, ctx)
+        && ctx.is_binding(&cond.cons, "obj")
+        && matches_default_object(&cond.alt, ctx)
 }
 
-/// Matches: if (P && P.__esModule) return P; return { default: P };
-fn matches_if_return_form(stmts: &[Stmt], param_sym: &Atom, param_ctxt: SyntaxContext) -> bool {
+/// Matches: if (obj && obj.__esModule) return obj; return { default: obj };
+fn matches_if_return_form(stmts: &[Stmt], ctx: &MatchContext) -> bool {
     if stmts.len() != 2 {
         return false;
     }
@@ -539,43 +514,37 @@ fn matches_if_return_form(stmts: &[Stmt], param_sym: &Atom, param_ctxt: SyntaxCo
         return false;
     };
 
-    if !matches_esmodule_test(test, param_sym, param_ctxt) {
+    if !matches_esmodule_test(test, ctx) {
         return false;
     }
 
-    // cons: { return P; } or return P;
-    let cons_return = extract_single_return(cons);
-    let Some(cons_arg) = cons_return else {
+    let Some(cons_arg) = extract_single_return(cons) else {
         return false;
     };
-    if !is_same_ident(cons_arg, param_sym, param_ctxt) {
+    if !ctx.is_binding(cons_arg, "obj") {
         return false;
     }
 
-    // second stmt: return { default: P }
     let Stmt::Return(ReturnStmt {
         arg: Some(alt_arg), ..
     }) = &stmts[1]
     else {
         return false;
     };
-    matches_default_object(alt_arg, param_sym, param_ctxt)
+    matches_default_object(alt_arg, ctx)
 }
 
-/// Matches: P && P.__esModule
-fn matches_esmodule_test(expr: &Expr, param_sym: &Atom, param_ctxt: SyntaxContext) -> bool {
+/// Matches: obj && obj.__esModule
+fn matches_esmodule_test(expr: &Expr, ctx: &MatchContext) -> bool {
     let Expr::Bin(bin) = expr else { return false };
     if bin.op != BinaryOp::LogicalAnd {
         return false;
     }
-    if !is_same_ident(&bin.left, param_sym, param_ctxt) {
-        return false;
-    }
-    matches_member_prop(&bin.right, param_sym, param_ctxt, "__esModule")
+    ctx.is_binding(&bin.left, "obj") && ctx.is_member_of(&bin.right, "obj", "__esModule")
 }
 
-/// Matches: { default: P } (an object literal with a single `default` property)
-fn matches_default_object(expr: &Expr, param_sym: &Atom, param_ctxt: SyntaxContext) -> bool {
+/// Matches: { default: obj }
+fn matches_default_object(expr: &Expr, ctx: &MatchContext) -> bool {
     let Expr::Object(obj) = expr else {
         return false;
     };
@@ -589,7 +558,6 @@ fn matches_default_object(expr: &Expr, param_sym: &Atom, param_ctxt: SyntaxConte
         return false;
     };
 
-    // key must be "default"
     let key_is_default = match &kv.key {
         swc_core::ecma::ast::PropName::Ident(id) => id.sym.as_ref() == "default",
         swc_core::ecma::ast::PropName::Str(s) => s.value.as_str() == Some("default"),
@@ -599,26 +567,7 @@ fn matches_default_object(expr: &Expr, param_sym: &Atom, param_ctxt: SyntaxConte
         return false;
     }
 
-    is_same_ident(&kv.value, param_sym, param_ctxt)
-}
-
-fn is_same_ident(expr: &Expr, sym: &Atom, ctxt: SyntaxContext) -> bool {
-    matches!(expr, Expr::Ident(id) if id.sym == *sym && id.ctxt == ctxt)
-}
-
-fn matches_member_prop(
-    expr: &Expr,
-    obj_sym: &Atom,
-    obj_ctxt: SyntaxContext,
-    prop_name: &str,
-) -> bool {
-    let Expr::Member(member) = expr else {
-        return false;
-    };
-    if !is_same_ident(&member.obj, obj_sym, obj_ctxt) {
-        return false;
-    }
-    is_member_prop_name(&member.prop, prop_name)
+    ctx.is_binding(&kv.value, "obj")
 }
 
 fn is_member_prop_name(prop: &MemberProp, name: &str) -> bool {
@@ -881,13 +830,7 @@ fn is_new_type_error(expr: &Expr) -> bool {
 // ---------------------------------------------------------------------------
 
 fn is_possible_constructor_return_fn(func: &Function) -> bool {
-    if func.params.len() != 2 {
-        return false;
-    }
-    let Pat::Ident(param1) = &func.params[0].pat else {
-        return false;
-    };
-    let Pat::Ident(param2) = &func.params[1].pat else {
+    let Some(ctx) = MatchContext::from_params(func, &["self", "call"]) else {
         return false;
     };
 
@@ -896,66 +839,44 @@ fn is_possible_constructor_return_fn(func: &Function) -> bool {
         None => return false,
     };
 
-    // Need at least 2 statements
     if body.stmts.len() < 2 {
         return false;
     }
 
-    // First statement: if (!param1) { throw new ReferenceError(...) }
+    // First statement: if (!self) { throw new ReferenceError(...) }
     let Stmt::If(first_if) = &body.stmts[0] else {
         return false;
     };
-    // Test should negate the first param specifically
     let Expr::Unary(unary) = first_if.test.as_ref() else {
         return false;
     };
-    if unary.op != swc_core::ecma::ast::UnaryOp::Bang {
+    if unary.op != UnaryOp::Bang {
         return false;
     }
-    // Verify the guard negates param1
-    if !is_same_ident(&unary.arg, &param1.id.sym, param1.id.ctxt) {
+    if !ctx.is_binding(&unary.arg, "self") {
         return false;
     }
-    // Consequent should throw ReferenceError
-    match first_if.cons.as_ref() {
-        Stmt::Throw(throw) => {
-            if !is_new_reference_error(&throw.arg) {
-                return false;
-            }
-        }
-        Stmt::Block(block) => {
-            if block.stmts.len() != 1 {
-                return false;
-            }
-            if let Stmt::Throw(throw) = &block.stmts[0] {
-                if !is_new_reference_error(&throw.arg) {
-                    return false;
-                }
-            } else {
-                return false;
-            }
-        }
-        _ => return false,
+    let Some(throw_expr) = extract_throw_arg(&first_if.cons) else {
+        return false;
+    };
+    if !is_new_reference_error(throw_expr) {
+        return false;
     }
 
     // Last statement must be a return.
-    // 3-stmt form: if-throw, if-return-self, return-param2
-    // 2-stmt form: if-throw, return-ternary (minified: `return !t || ... ? e : t`)
-    let last = body.stmts.last().unwrap();
+    // 3-stmt form: if-throw, if-return-self, return-call
+    // 2-stmt form: if-throw, return-ternary
     let Stmt::Return(ReturnStmt {
         arg: Some(ret_arg), ..
-    }) = last
+    }) = body.stmts.last().unwrap()
     else {
         return false;
     };
 
-    // For the 3-stmt form, verify last return is param2
     if body.stmts.len() >= 3 {
-        return is_same_ident(ret_arg, &param2.id.sym, param2.id.ctxt);
+        return ctx.is_binding(ret_arg, "call");
     }
 
-    // For the 2-stmt form (ternary), accept any return expression since
-    // the ternary encodes the param1/param2 choice internally
     true
 }
 
@@ -974,10 +895,7 @@ fn is_possible_constructor_return_fn(func: &Function) -> bool {
 // ---------------------------------------------------------------------------
 
 fn is_assert_this_initialized_fn(func: &Function) -> bool {
-    if func.params.len() != 1 {
-        return false;
-    }
-    let Pat::Ident(param) = &func.params[0].pat else {
+    let Some(ctx) = MatchContext::from_params(func, &["self"]) else {
         return false;
     };
 
@@ -998,14 +916,7 @@ fn is_assert_this_initialized_fn(func: &Function) -> bool {
         return false;
     }
 
-    let throw_expr = match if_stmt.cons.as_ref() {
-        Stmt::Throw(throw) => Some(&*throw.arg),
-        Stmt::Block(block) if block.stmts.len() == 1 => match &block.stmts[0] {
-            Stmt::Throw(throw) => Some(&*throw.arg),
-            _ => None,
-        },
-        _ => None,
-    };
+    let throw_expr = extract_throw_arg(&if_stmt.cons);
     let Some(throw_expr) = throw_expr else {
         return false;
     };
@@ -1013,14 +924,26 @@ fn is_assert_this_initialized_fn(func: &Function) -> bool {
         return false;
     }
 
-    // Second statement: return param
+    // Second statement: return self
     let Stmt::Return(ReturnStmt {
         arg: Some(ret_arg), ..
     }) = &body.stmts[1]
     else {
         return false;
     };
-    is_same_ident(ret_arg, &param.id.sym, param.id.ctxt)
+    ctx.is_binding(ret_arg, "self")
+}
+
+/// Extract the throw argument from a bare throw or a block-wrapped throw.
+fn extract_throw_arg(stmt: &Stmt) -> Option<&Expr> {
+    match stmt {
+        Stmt::Throw(throw) => Some(&*throw.arg),
+        Stmt::Block(block) if block.stmts.len() == 1 => match &block.stmts[0] {
+            Stmt::Throw(throw) => Some(&*throw.arg),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn is_new_reference_error_with_babel_message(expr: &Expr) -> bool {
@@ -1881,34 +1804,26 @@ fn is_extends_polyfill_fn(expr: &Expr) -> bool {
         _ => return false,
     };
 
-    if func.params.len() != 1 {
+    let Some(ctx) = MatchContext::from_params(func, &["target"]) else {
         return false;
-    }
+    };
 
     let body = match func.body.as_ref() {
         Some(b) => b,
         None => return false,
     };
 
-    let Pat::Ident(param) = &func.params[0].pat else {
-        return false;
-    };
-
-    // Must reference `arguments` (the for loop iterates arguments[i])
     let mut markers = BodyMarkerState::default();
     scan_stmts_for_markers(&body.stmts, &mut markers);
     if !markers.has_arguments_ref {
         return false;
     }
 
-    // Last stmt should return the param
-    if let Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. })) = body.stmts.last() {
-        if is_same_ident(arg, &param.id.sym, param.id.ctxt) {
-            return true;
-        }
-    }
-
-    false
+    matches!(
+        body.stmts.last(),
+        Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. }))
+            if ctx.is_binding(arg, "target")
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1924,25 +1839,18 @@ fn is_extends_polyfill_fn(expr: &Expr) -> bool {
 // ---------------------------------------------------------------------------
 
 fn is_object_spread_fn(func: &Function) -> bool {
-    if func.params.len() != 1 {
+    let Some(ctx) = MatchContext::from_params(func, &["target"]) else {
         return false;
-    }
+    };
 
     let body = match func.body.as_ref() {
         Some(b) => b,
         None => return false,
     };
 
-    let Pat::Ident(param) = &func.params[0].pat else {
-        return false;
-    };
-
     let mut markers = BodyMarkerState::default();
     scan_stmts_for_markers(&body.stmts, &mut markers);
 
-    // Must reference `arguments` and have BOTH property descriptor methods.
-    // Real objectSpread2 uses both Object.defineProperty and
-    // Object.getOwnPropertyDescriptor(s); a generic utility typically has only one.
     if !markers.has_arguments_ref {
         return false;
     }
@@ -1950,14 +1858,11 @@ fn is_object_spread_fn(func: &Function) -> bool {
         return false;
     }
 
-    // Last stmt should return the param
-    if let Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. })) = body.stmts.last() {
-        if is_same_ident(arg, &param.id.sym, param.id.ctxt) {
-            return true;
-        }
-    }
-
-    false
+    matches!(
+        body.stmts.last(),
+        Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. }))
+            if ctx.is_binding(arg, "target")
+    )
 }
 
 // ---------------------------------------------------------------------------
