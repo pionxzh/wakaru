@@ -396,6 +396,27 @@ returnValue(t);
 }
 
 #[test]
+fn inline_when_only_shadowed_source_ident_is_mutated() {
+    let input = r#"
+let foo = value;
+const t = foo;
+function mutate(foo) {
+    foo = other;
+}
+consume(t);
+"#;
+    let expected = r#"
+let foo = value;
+function mutate(foo) {
+    foo = other;
+}
+consume(foo);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn no_inline_when_source_ident_reassigned_in_finally() {
     // Pattern: var n = Nu; Nu = ku; ... finally { (Nu = n) === xu }
     // n captures old Nu before mutation — must not inline to Nu
