@@ -1,6 +1,6 @@
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
-use swc_core::ecma::ast::{Expr, Function, Lit, MemberProp, Pat};
+use swc_core::ecma::ast::{Expr, Function, Ident, Lit, MemberProp, Pat};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Binding {
@@ -54,8 +54,16 @@ impl MatchContext {
         matches!(expr, Expr::Ident(id) if id.sym == binding.sym && id.ctxt == binding.ctxt)
     }
 
+    /// Check if an `Ident` node matches the named binding slot.
+    /// Use when you already have an extracted `&Ident` rather than an `&Expr`.
+    pub fn is_ident(&self, ident: &Ident, name: &str) -> bool {
+        let Some(binding) = self.get(name) else {
+            return false;
+        };
+        ident.sym == binding.sym && ident.ctxt == binding.ctxt
+    }
+
     /// Check if `expr` is `<binding>.prop_name`.
-    #[allow(dead_code)]
     pub fn is_member_of(&self, expr: &Expr, name: &str, prop_name: &str) -> bool {
         let Expr::Member(member) = expr else {
             return false;
