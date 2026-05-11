@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
@@ -459,11 +459,13 @@ fn get_or_insert<'a>(
     map: &'a mut HashMap<String, SourceEntry>,
     src: String,
 ) -> &'a mut SourceEntry {
-    if !map.contains_key(&src) {
-        order.push(src.clone());
-        map.insert(src.clone(), SourceEntry::default());
+    match map.entry(src.clone()) {
+        Entry::Occupied(entry) => entry.into_mut(),
+        Entry::Vacant(entry) => {
+            order.push(src);
+            entry.insert(SourceEntry::default())
+        }
     }
-    map.get_mut(&src).unwrap()
 }
 
 fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
@@ -2225,5 +2227,24 @@ fn collect_pat_names(pat: &Pat, names: &mut HashSet<Atom>) {
         Pat::Assign(a) => collect_pat_names(&a.left, names),
         Pat::Rest(r) => collect_pat_names(&r.arg, names),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_or_insert_records_source_order_once() {
+        let mut order = Vec::new();
+        let mut map = HashMap::new();
+
+        get_or_insert(&mut order, &mut map, "react".to_string());
+        get_or_insert(&mut order, &mut map, "react".to_string());
+        get_or_insert(&mut order, &mut map, "lodash".to_string());
+
+        assert_eq!(order, vec!["react", "lodash"]);
+        assert!(map.contains_key("react"));
+        assert!(map.contains_key("lodash"));
     }
 }
