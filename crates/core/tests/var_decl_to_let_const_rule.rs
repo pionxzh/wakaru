@@ -126,6 +126,47 @@ function factory() {
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn duplicate_function_and_var_binding_stays_var() {
+    let input = r#"
+function _dead() {}
+var _dead = sideEffect();
+use(_dead);
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn duplicate_for_head_and_var_binding_stays_var() {
+    let input = r#"
+function f(xs) {
+    var fns = [];
+    for (var i = 0; i < xs.length; i++) {
+        fns.push(function() {
+            return i;
+        });
+    }
+    var i = 10;
+    return fns[0]();
+}
+"#;
+    let expected = r#"
+function f(xs) {
+    const fns = [];
+    for (var i = 0; i < xs.length; i++) {
+        fns.push(function() {
+            return i;
+        });
+    }
+    var i = 10;
+    return fns[0]();
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
 // --- multi-variable declarations ---
 
 #[test]

@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, Class, Expr, ForHead, ForInStmt, ForOfStmt,
-    ForStmt, Function, Ident, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt, UpdateExpr,
-    VarDecl, VarDeclKind,
+    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, Class, Decl, Expr, ForHead, ForInStmt,
+    ForOfStmt, ForStmt, Function, Ident, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt,
+    UpdateExpr, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -39,7 +39,8 @@ impl VisitMut for VarDeclToLetConst {
 
         // Detect vars declared inside inner blocks that are referenced outside — those
         // must stay as `var` to preserve the hoisting-based access.
-        let must_stay_var = collect_block_escaping_vars_module(&module.body);
+        let mut must_stay_var = collect_block_escaping_vars_module(&module.body);
+        must_stay_var.extend(collect_duplicate_decl_bindings_module(&module.body));
 
         // Convert all var decls in module (recursively through blocks, stopping at function boundaries)
         let mut converter = VarConverter {
@@ -69,7 +70,8 @@ impl VisitMut for VarDeclToLetConst {
         body.stmts.iter().for_each(|s| s.visit_with(&mut collector));
         let assigned = collector.assigned;
 
-        let must_stay_var = collect_block_escaping_vars_stmts(&body.stmts);
+        let mut must_stay_var = collect_block_escaping_vars_stmts(&body.stmts);
+        must_stay_var.extend(collect_duplicate_decl_bindings_stmts(&body.stmts));
 
         let mut converter = VarConverter {
             assigned: &assigned,
@@ -154,6 +156,73 @@ fn collect_binding_ids_from_pat(pat: &Pat, out: &mut HashSet<BindingId>) {
         Pat::Assign(a) => collect_binding_ids_from_pat(&a.left, out),
         _ => {}
     }
+}
+
+fn collect_duplicate_decl_bindings_module(items: &[ModuleItem]) -> HashSet<BindingId> {
+    let mut collector = ScopeDeclBindingCounter::default();
+    for item in items {
+        item.visit_with(&mut collector);
+    }
+    collector.duplicates()
+}
+
+fn collect_duplicate_decl_bindings_stmts(stmts: &[Stmt]) -> HashSet<BindingId> {
+    let mut collector = ScopeDeclBindingCounter::default();
+    for stmt in stmts {
+        stmt.visit_with(&mut collector);
+    }
+    collector.duplicates()
+}
+
+#[derive(Default)]
+struct ScopeDeclBindingCounter {
+    counts: HashMap<BindingId, usize>,
+}
+
+impl ScopeDeclBindingCounter {
+    fn record(&mut self, id: BindingId) {
+        *self.counts.entry(id).or_insert(0) += 1;
+    }
+
+    fn duplicates(self) -> HashSet<BindingId> {
+        self.counts
+            .into_iter()
+            .filter_map(|(id, count)| (count > 1).then_some(id))
+            .collect()
+    }
+}
+
+impl Visit for ScopeDeclBindingCounter {
+    fn visit_decl(&mut self, decl: &Decl) {
+        match decl {
+            Decl::Var(var) if var.kind == VarDeclKind::Var => {
+                self.visit_var_decl(var);
+            }
+            Decl::Fn(function) => {
+                self.record((function.ident.sym.clone(), function.ident.ctxt));
+            }
+            Decl::Class(class) => {
+                self.record((class.ident.sym.clone(), class.ident.ctxt));
+            }
+            _ => {}
+        }
+    }
+
+    fn visit_var_decl(&mut self, var: &VarDecl) {
+        if var.kind == VarDeclKind::Var {
+            for d in &var.decls {
+                let mut ids = HashSet::new();
+                collect_binding_ids_from_pat(&d.name, &mut ids);
+                for id in ids {
+                    self.record(id);
+                }
+            }
+        }
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    fn visit_class(&mut self, _: &Class) {}
 }
 
 // ============================================================
