@@ -64,6 +64,7 @@ fn try_convert_to_arrow(fn_expr: &mut FnExpr) -> Option<ArrowExpr> {
     if let Some(ident) = &fn_expr.ident {
         let mut name_checker = HasIdentRef {
             sym: ident.sym.clone(),
+            ctxt: ident.ctxt,
             found: false,
         };
         body.visit_with(&mut name_checker);
@@ -215,12 +216,13 @@ impl Visit for HasArguments {
 
 struct HasIdentRef {
     sym: swc_core::atoms::Atom,
+    ctxt: SyntaxContext,
     found: bool,
 }
 
 impl Visit for HasIdentRef {
     fn visit_ident(&mut self, id: &Ident) {
-        if id.sym == self.sym {
+        if id.sym == self.sym && id.ctxt == self.ctxt {
             self.found = true;
         }
     }

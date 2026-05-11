@@ -137,6 +137,28 @@ f = function fact(n) { return n * fact(n - 1); };
 }
 
 #[test]
+fn named_function_expr_with_shadowed_name_converted() {
+    let input = r#"
+f = function fact() {
+    function inner(fact) {
+        return fact;
+    }
+    return inner(1);
+};
+"#;
+    let expected = r#"
+f = () => {
+    function inner(fact) {
+        return fact;
+    }
+    return inner(1);
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn object_method_value_not_converted_to_arrow() {
     // Object method values may use `this`; the obj-method shorthand rule handles
     // them separately. Arrow conversion must not fire here.
