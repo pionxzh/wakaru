@@ -1,5 +1,6 @@
 ---
-source: tests/webpack4_unpack.rs
+source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-export default require("./module-45.js")();
+import _default from "./module-45.js";
+export default _default();

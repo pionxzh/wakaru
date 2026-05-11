@@ -4,12 +4,12 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt,
-    BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, ExportDefaultExpr, ExportNamedSpecifier,
-    ExportSpecifier, Expr, ExprStmt, ForHead, ForInStmt, Ident, IdentName, ImportDecl,
-    ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, Lit, MemberExpr, MemberProp,
-    Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, Pat, Prop,
-    PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt, Str, UnaryOp, VarDecl,
-    VarDeclKind, VarDeclarator,
+    BlockStmtOrExpr, CallExpr, Callee, CondExpr, Decl, ExportDecl, ExportDefaultExpr,
+    ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, ForHead, ForInStmt, Ident, IdentName,
+    ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier, Lit, MemberExpr,
+    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, ObjectPatProp, Pat,
+    Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Str, UnaryOp,
+    VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
@@ -123,6 +123,8 @@ impl VisitMut for UnEsm {
         if self.level < RewriteLevel::Standard {
             return;
         }
+        // Phase -1: hoist require() calls out of complex expressions
+        hoist_embedded_requires(module, self.unresolved_mark);
         // Phase 0: split compound `var s = exports.X = expr` →
         //          `var s = expr; exports.X = s;`
         split_compound_exports(module, self.unresolved_mark);
@@ -1219,6 +1221,385 @@ fn build_dropped_export_side_effect_items(kind: CjsExportKind) -> Vec<ModuleItem
         span: DUMMY_SP,
         expr,
     }))]
+}
+
+// ============================================================
+// Pre-pass: hoist require() calls out of complex expressions
+// ============================================================
+
+/// Hoists `require()` calls embedded inside sequence expressions and other
+/// compound expressions into standalone statements so the classification
+/// phase can convert them to ES imports.
+///
+/// Handles these patterns:
+///
+/// 1. `export default (i = require("./a.js"), require("./b.js"), expr)`
+///    → `const i = require("./a.js"); require("./b.js"); export default expr;`
+///
+/// 2. `const a = (i = require("./a.js")) && i.__esModule ? i : { default: i }`
+///    → `const i = require("./a.js"); const a = i;`
+///    (inline conditional interop)
+fn hoist_embedded_requires(module: &mut Module, unresolved_mark: Mark) {
+    let mut new_body = Vec::with_capacity(module.body.len());
+    let mut used_names = collect_all_declared_names(module);
+
+    for item in std::mem::take(&mut module.body) {
+        match &item {
+            // Pattern 1: export default (seq_expr with require calls)
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export_default)) => {
+                // Unwrap parens
+                let expr = strip_parens_ref(&export_default.expr);
+                if let Expr::Seq(seq) = expr {
+                    if seq_has_require_call(&seq.exprs, unresolved_mark) {
+                        let (hoisted, final_expr) =
+                            hoist_requires_from_seq(&seq.exprs, unresolved_mark, &mut used_names);
+                        new_body.extend(hoisted);
+                        new_body.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(
+                            ExportDefaultExpr {
+                                span: export_default.span,
+                                expr: final_expr,
+                            },
+                        )));
+                        continue;
+                    }
+                }
+                // Pattern: export default require("...")(args) — require then call
+                // (Don't hoist plain `export default require("...")` — it's a valid
+                // re-export that namespace_decomposition can see through.)
+                if let Expr::Call(outer_call) = expr {
+                    if let Callee::Expr(callee) = &outer_call.callee {
+                        if let Expr::Call(inner_call) = strip_parens_ref(callee) {
+                            if is_require_call(inner_call, unresolved_mark).is_some() {
+                                let local = make_ident(fresh_prefixed_name(
+                                    &Atom::from("default"),
+                                    &mut used_names,
+                                ));
+                                new_body.push(make_require_var_item(
+                                    local.clone(),
+                                    Box::new(Expr::Call(inner_call.clone())),
+                                ));
+                                let new_call = CallExpr {
+                                    callee: Callee::Expr(Box::new(Expr::Ident(local))),
+                                    args: outer_call.args.clone(),
+                                    span: outer_call.span,
+                                    ctxt: outer_call.ctxt,
+                                    type_args: outer_call.type_args.clone(),
+                                };
+                                new_body.push(ModuleItem::ModuleDecl(
+                                    ModuleDecl::ExportDefaultExpr(ExportDefaultExpr {
+                                        span: export_default.span,
+                                        expr: Box::new(Expr::Call(new_call)),
+                                    }),
+                                ));
+                                continue;
+                            }
+                        }
+                    }
+                }
+                new_body.push(item);
+            }
+
+            // Pattern 2: const a = (i = require("./a.js")) && i.__esModule ? i : { default: i }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) if var_decl.decls.len() == 1 => {
+                let decl = &var_decl.decls[0];
+                if let Some(init) = &decl.init {
+                    if let Some((require_local, source_expr)) =
+                        try_extract_inline_conditional_interop(init, unresolved_mark)
+                    {
+                        let (import_local, assign_after_require) =
+                            import_local_for_assignment(require_local.clone(), &mut used_names);
+                        new_body.push(make_require_var_item(import_local.clone(), source_expr));
+                        if let Some(assign) = assign_after_require {
+                            new_body.push(assign);
+                        }
+                        // Emit: const <binding> = <require_local>;
+                        let new_decl = VarDeclarator {
+                            init: Some(Box::new(Expr::Ident(require_local))),
+                            ..decl.clone()
+                        };
+                        new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+                            decls: vec![new_decl],
+                            ..*var_decl.clone()
+                        })))));
+                        continue;
+                    }
+                }
+                new_body.push(item);
+            }
+
+            _ => new_body.push(item),
+        }
+    }
+
+    module.body = new_body;
+}
+
+/// Check if any expression in a sequence contains a require() call.
+fn seq_has_require_call(exprs: &[Box<Expr>], unresolved_mark: Mark) -> bool {
+    exprs
+        .iter()
+        .any(|expr| expr_contains_require(expr, unresolved_mark))
+}
+
+fn expr_contains_require(expr: &Expr, unresolved_mark: Mark) -> bool {
+    match expr {
+        Expr::Call(call) => {
+            is_require_call(call, unresolved_mark).is_some()
+                || match &call.callee {
+                    Callee::Expr(callee) => expr_contains_require(callee, unresolved_mark),
+                    _ => false,
+                }
+        }
+        Expr::Assign(assign) => expr_contains_require(&assign.right, unresolved_mark),
+        Expr::Paren(paren) => expr_contains_require(&paren.expr, unresolved_mark),
+        Expr::Member(member) => expr_contains_require(&member.obj, unresolved_mark),
+        _ => false,
+    }
+}
+
+/// Hoist require() calls from a sequence expression.
+///
+/// For `(i = require("./a.js"), require("./b.js"), expr)`:
+///   - `i = require("./a.js")` → `const i = require("./a.js");` (hoisted)
+///   - `require("./b.js")` → `require("./b.js");` (hoisted as bare)
+///   - `expr` → returned as the remaining expression
+///
+/// Returns (hoisted_items, final_expression).
+fn hoist_requires_from_seq(
+    exprs: &[Box<Expr>],
+    unresolved_mark: Mark,
+    used_names: &mut HashSet<Atom>,
+) -> (Vec<ModuleItem>, Box<Expr>) {
+    let mut hoisted = Vec::new();
+    let mut remaining = Vec::new();
+
+    for expr in exprs {
+        let expr_ref = strip_parens_ref(expr);
+
+        // require("...") → bare import side-effect
+        if let Expr::Call(call) = expr_ref {
+            if is_require_call(call, unresolved_mark).is_some() {
+                hoisted.push(ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: expr.clone(),
+                })));
+                continue;
+            }
+        }
+
+        // i = require("...") → const i = require("...")
+        if let Expr::Assign(assign) = expr_ref {
+            if assign.op == AssignOp::Assign {
+                if let Some(target_ident) = simple_assign_target_ident(&assign.left) {
+                    let right = strip_parens_ref(&assign.right);
+                    if let Expr::Call(call) = right {
+                        if is_require_call(call, unresolved_mark).is_some() {
+                            let (import_local, assign_after_require) =
+                                import_local_for_assignment(target_ident.clone(), used_names);
+                            hoisted.push(make_require_var_item(import_local, assign.right.clone()));
+                            if let Some(assign) = assign_after_require {
+                                hoisted.push(assign);
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Assignments whose right side contains require() deeper in the tree:
+        // - c = i = require("...") → const c = i = require("...");
+        // - a = (i = require("...")).lib → const a = (i = require("...")).lib;
+        if let Expr::Assign(assign) = expr_ref {
+            if assign.op == AssignOp::Assign {
+                if let Some(outer_ident) = simple_assign_target_ident(&assign.left) {
+                    if expr_contains_require(&assign.right, unresolved_mark) {
+                        let (import_local, assign_after_require) =
+                            import_local_for_assignment(outer_ident.clone(), used_names);
+                        hoisted.push(make_var_item(import_local, assign.right.clone()));
+                        if let Some(assign) = assign_after_require {
+                            hoisted.push(assign);
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
+
+        remaining.push(expr.clone());
+    }
+
+    let final_expr = if remaining.is_empty() {
+        Box::new(Expr::Ident(make_ident(Atom::from("undefined"))))
+    } else if remaining.len() == 1 {
+        remaining.into_iter().next().unwrap()
+    } else {
+        Box::new(Expr::Seq(SeqExpr {
+            span: DUMMY_SP,
+            exprs: remaining,
+        }))
+    };
+
+    (hoisted, final_expr)
+}
+
+/// Match `(i = require("...")) && i.__esModule ? i : { default: i }`
+/// Returns (require_local_ident, require_source_expr).
+fn try_extract_inline_conditional_interop(
+    expr: &Expr,
+    unresolved_mark: Mark,
+) -> Option<(Ident, Box<Expr>)> {
+    let expr = strip_parens_ref(expr);
+
+    // Must be: <test> ? <cons> : <alt>
+    let Expr::Cond(CondExpr {
+        test, cons, alt, ..
+    }) = expr
+    else {
+        return None;
+    };
+
+    // test must be: (i = require("...")) && i.__esModule
+    // or: i && i.__esModule (where i was assigned in an outer sequence)
+    let test = strip_parens_ref(test);
+    let Expr::Bin(bin) = test else {
+        return None;
+    };
+    if bin.op != BinaryOp::LogicalAnd {
+        return None;
+    }
+
+    // Right side must be: X.__esModule
+    let right = strip_parens_ref(&bin.right);
+    let Expr::Member(member) = right else {
+        return None;
+    };
+    let Expr::Ident(member_obj) = strip_parens_ref(&member.obj) else {
+        return None;
+    };
+    let MemberProp::Ident(IdentName { sym, .. }) = &member.prop else {
+        return None;
+    };
+    if sym.as_ref() != "__esModule" {
+        return None;
+    }
+
+    // Left side of && must contain the require assignment
+    let left = strip_parens_ref(&bin.left);
+
+    // Pattern: (i = require("..."))
+    if let Expr::Assign(assign) = left {
+        if assign.op == AssignOp::Assign {
+            if let Some(target) = simple_assign_target_ident(&assign.left) {
+                let right_inner = strip_parens_ref(&assign.right);
+                if let Expr::Call(call) = right_inner {
+                    if is_require_call(call, unresolved_mark).is_some() {
+                        // Verify every interop branch refers to the same assigned binding.
+                        if member_obj.sym == target.sym
+                            && member_obj.ctxt == target.ctxt
+                            && is_same_ident_ref(cons, &target)
+                            && matches_default_object_for_ident(alt, &target)
+                        {
+                            return Some((target, assign.right.clone()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn simple_assign_target_ident(target: &AssignTarget) -> Option<Ident> {
+    if let AssignTarget::Simple(SimpleAssignTarget::Ident(bi)) = target {
+        Some(bi.id.clone())
+    } else {
+        None
+    }
+}
+
+fn strip_parens_ref(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_parens_ref(&paren.expr),
+        _ => expr,
+    }
+}
+
+fn is_same_ident_ref(expr: &Expr, ident: &Ident) -> bool {
+    let expr = strip_parens_ref(expr);
+    if let Expr::Ident(id) = expr {
+        id.sym == ident.sym && id.ctxt == ident.ctxt
+    } else {
+        false
+    }
+}
+
+fn matches_default_object_for_ident(expr: &Expr, ident: &Ident) -> bool {
+    let Expr::Object(obj) = strip_parens_ref(expr) else {
+        return false;
+    };
+    if obj.props.len() != 1 {
+        return false;
+    }
+    let PropOrSpread::Prop(prop) = &obj.props[0] else {
+        return false;
+    };
+    let Prop::KeyValue(kv) = prop.as_ref() else {
+        return false;
+    };
+    let key_is_default = match &kv.key {
+        PropName::Ident(id) => id.sym.as_ref() == "default",
+        PropName::Str(s) => s.value.as_str() == Some("default"),
+        _ => false,
+    };
+    key_is_default && is_same_ident_ref(&kv.value, ident)
+}
+
+fn import_local_for_assignment(
+    target: Ident,
+    used_names: &mut HashSet<Atom>,
+) -> (Ident, Option<ModuleItem>) {
+    if used_names.insert(target.sym.clone()) {
+        return (target, None);
+    }
+
+    let temp = make_ident(fresh_prefixed_name(&target.sym, used_names));
+    let assign = ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left: AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
+                id: target,
+                type_ann: None,
+            })),
+            right: Box::new(Expr::Ident(temp.clone())),
+        })),
+    }));
+    (temp, Some(assign))
+}
+
+fn make_require_var_item(local: Ident, require_expr: Box<Expr>) -> ModuleItem {
+    make_var_item(local, require_expr)
+}
+
+fn make_var_item(local: Ident, init: Box<Expr>) -> ModuleItem {
+    ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        kind: VarDeclKind::Const,
+        declare: false,
+        decls: vec![VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Ident(BindingIdent {
+                id: local,
+                type_ann: None,
+            }),
+            init: Some(init),
+            definite: false,
+        }],
+    }))))
 }
 
 // ============================================================

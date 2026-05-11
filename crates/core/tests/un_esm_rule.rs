@@ -555,3 +555,90 @@ use(s);
         "should have history export: {output}"
     );
 }
+
+// ============================================================
+// Require hoisting from complex expressions
+// ============================================================
+
+#[test]
+fn hoist_require_from_seq_expr_in_export_default() {
+    let input = r#"
+let i;
+export default (i = require("./a.js"), require("./b.js"), i.foo);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("import"),
+        "require in sequence should become import: {output}"
+    );
+    assert!(
+        !output.contains("require("),
+        "no require() should remain: {output}"
+    );
+}
+
+#[test]
+fn hoist_require_call_invocation() {
+    let input = r#"
+export default require("./factory.js")();
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("import"),
+        "require()() should become import + call: {output}"
+    );
+    assert!(
+        !output.contains("require("),
+        "no require() should remain: {output}"
+    );
+}
+
+#[test]
+fn inline_conditional_interop_to_import() {
+    let input = r#"
+let i;
+const a = (i = require("./react.js")) && i.__esModule ? i : { default: i };
+console.log(a);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("import"),
+        "inline interop should become import: {output}"
+    );
+    assert!(
+        !output.contains("require("),
+        "no require() should remain: {output}"
+    );
+    assert!(
+        !output.contains("__esModule"),
+        "__esModule check should be removed: {output}"
+    );
+}
+
+#[test]
+fn inline_conditional_interop_rejects_mismatched_shape() {
+    let input = r#"
+let i;
+let j;
+const a = (i = require("./react.js")) && j.__esModule ? i : { default: j };
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("require(\"./react.js\")") && output.contains("j.__esModule"),
+        "mismatched inline conditional should not be hoisted as Babel interop: {output}"
+    );
+}
+
+#[test]
+fn plain_export_default_require_not_hoisted() {
+    // export default require("...") should NOT be hoisted — it's a valid re-export
+    // that namespace_decomposition can see through.
+    let input = r#"
+export default require("./module.js");
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("require(") || output.contains("import"),
+        "should keep some form of the require: {output}"
+    );
+}
