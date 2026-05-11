@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::anyhow;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, SyntaxContext, GLOBALS};
@@ -14,6 +16,7 @@ use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use crate::rules::apply_default_rules;
+use crate::unpacker::webpack4::RequireIdRewriter;
 use crate::unpacker::{UnpackResult, UnpackedModule};
 
 struct Webpack5RuntimeNormalizer {
@@ -298,7 +301,7 @@ fn extract_modules_from_object(
     modules_object: &ObjectLit,
     cm: Lrc<SourceMap>,
 ) -> Option<Vec<UnpackedModule>> {
-    let mut modules = Vec::new();
+    let mut module_entries = Vec::new();
 
     for prop in &modules_object.props {
         let (module_id, factory, body_stmts) = extract_module_from_prop(prop)?;
@@ -307,13 +310,23 @@ fn extract_modules_from_object(
         } else {
             format!("module-{module_id}.js")
         };
+        module_entries.push((module_id, factory, body_stmts, filename));
+    }
 
-        let code = emit_webpack5_module(&factory, body_stmts, cm.clone())?;
+    let id_to_filename: HashMap<usize, String> = module_entries
+        .iter()
+        .filter_map(|(id, _, _, filename)| id.parse::<usize>().ok().map(|n| (n, filename.clone())))
+        .collect();
+
+    let mut modules = Vec::new();
+
+    for (module_id, factory, body_stmts, filename) in &module_entries {
+        let code = emit_webpack5_module(factory, body_stmts.clone(), cm.clone(), &id_to_filename)?;
         modules.push(UnpackedModule {
-            id: module_id,
+            id: module_id.clone(),
             is_entry: false,
             code,
-            filename,
+            filename: filename.clone(),
         });
     }
 
@@ -338,8 +351,9 @@ fn extract_webpack5_modules(
     }
 
     let modules_object = modules_object?;
-    let mut modules = Vec::new();
 
+    // First pass: collect all module IDs and build the id_to_filename map
+    let mut module_entries = Vec::new();
     for prop in &modules_object.props {
         let (module_id, factory, body_stmts) = extract_module_from_prop(prop)?;
         let filename = if module_id.contains('/') || module_id.contains('.') {
@@ -347,13 +361,24 @@ fn extract_webpack5_modules(
         } else {
             format!("module-{module_id}.js")
         };
+        module_entries.push((module_id, factory, body_stmts, filename));
+    }
 
-        let code = emit_webpack5_module(&factory, body_stmts, cm.clone())?;
+    let id_to_filename: HashMap<usize, String> = module_entries
+        .iter()
+        .filter_map(|(id, _, _, filename)| id.parse::<usize>().ok().map(|n| (n, filename.clone())))
+        .collect();
+
+    // Second pass: emit modules with require(N) rewriting
+    let mut modules = Vec::new();
+
+    for (module_id, factory, body_stmts, filename) in &module_entries {
+        let code = emit_webpack5_module(factory, body_stmts.clone(), cm.clone(), &id_to_filename)?;
         modules.push(UnpackedModule {
-            id: module_id,
+            id: module_id.clone(),
             is_entry: false,
             code,
-            filename,
+            filename: filename.clone(),
         });
     }
 
@@ -510,6 +535,7 @@ fn emit_webpack5_module(
     factory: &Function,
     body_stmts: Vec<Stmt>,
     cm: Lrc<SourceMap>,
+    id_to_filename: &HashMap<usize, String>,
 ) -> Option<String> {
     let mut synthetic_module = build_module_from_stmts(body_stmts);
 
@@ -541,6 +567,14 @@ fn emit_webpack5_module(
 
     let exports_sym = Atom::from("exports");
     let require_sym = Atom::from("require");
+
+    let mut id_rewriter = RequireIdRewriter {
+        require_sym: require_sym.clone(),
+        unresolved_mark,
+        id_to_filename,
+    };
+    synthetic_module.visit_mut_with(&mut id_rewriter);
+
     let mut normalizer = Webpack5RuntimeNormalizer {
         require_sym,
         exports_sym,

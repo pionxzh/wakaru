@@ -1,6 +1,59 @@
 use wakaru_core::{unpack, DecompileOptions};
 
 #[test]
+fn webpack5_chunk_rewrites_numeric_require() {
+    // When modules within the same chunk reference each other by numeric ID,
+    // require(N) should become require("./module-N.js") so un_esm can convert to import.
+    let source = r#"
+(self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([
+  [0],
+  {
+    100: function(module, exports, require) {
+      "use strict";
+      require.r(exports);
+      require.d(exports, {
+        helper: function() { return helper; }
+      });
+      function helper() { return 42; }
+    },
+    200: function(module, exports, require) {
+      "use strict";
+      require.r(exports);
+      var h = require(100);
+      exports.default = h.helper();
+    }
+  }
+]);
+"#;
+
+    let pairs = unpack(
+        source,
+        DecompileOptions {
+            filename: "chunk.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack5 chunk should unpack");
+
+    let mod_200 = pairs
+        .iter()
+        .find(|(name, _)| name == "module-200.js")
+        .expect("module-200.js should exist");
+
+    // require(100) should be rewritten to an import from ./module-100.js
+    assert!(
+        !mod_200.1.contains("require(100)"),
+        "module-200 should not have raw require(100), got:\n{}",
+        mod_200.1
+    );
+    assert!(
+        mod_200.1.contains("./module-100.js"),
+        "module-200 should reference ./module-100.js, got:\n{}",
+        mod_200.1
+    );
+}
+
+#[test]
 fn webpack5_chunk_unpacks_modules() {
     let source = r#"
 (self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([

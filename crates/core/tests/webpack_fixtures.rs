@@ -357,3 +357,65 @@ fn wp5_cjs_dev_snapshots() {
         insta::assert_snapshot!(snap_name, code);
     }
 }
+
+// ========================================================================
+// Webpack 5 — numeric require rewriting
+// ========================================================================
+
+#[test]
+fn wp5_numeric_require_rewritten() {
+    // Webpack5 production bundles use numeric module IDs.
+    // require(N) calls between modules in the same bundle should be
+    // rewritten to require("./module-N.js") so un_esm can convert to imports.
+    let source = r#"
+(() => {
+  var __webpack_modules__ = ({
+    10: (function(module, exports, require) {
+      "use strict";
+      require.r(exports);
+      require.d(exports, { "greet": function() { return greet; } });
+      function greet(name) { return "Hello, " + name; }
+    }),
+    20: (function(module, exports, require) {
+      "use strict";
+      require.r(exports);
+      var g = require(10);
+      console.log(g.greet("world"));
+    })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var cachedModule = __webpack_module_cache__[moduleId];
+    if (cachedModule !== undefined) return cachedModule.exports;
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__(20);
+})();
+"#;
+    let pairs = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("wp5 numeric bundle should unpack");
+
+    let mod_20 = pairs
+        .iter()
+        .find(|(name, _)| name == "module-20.js")
+        .expect("module-20.js should exist");
+
+    assert!(
+        !mod_20.1.contains("require(10)"),
+        "require(10) should be rewritten, got:\n{}",
+        mod_20.1
+    );
+    assert!(
+        mod_20.1.contains("./module-10.js"),
+        "should reference ./module-10.js, got:\n{}",
+        mod_20.1
+    );
+}

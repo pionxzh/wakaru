@@ -186,10 +186,10 @@ impl WebpackRuntimeNormalizer {
 
 /// Rewrites `require(N)` calls (where N is a numeric literal) to `require("./filename.js")`.
 /// This lets un-esm convert them to proper ES import statements.
-struct RequireIdRewriter<'a> {
-    require_sym: Atom,
-    unresolved_mark: Mark,
-    id_to_filename: &'a std::collections::HashMap<usize, String>,
+pub(crate) struct RequireIdRewriter<'a> {
+    pub(crate) require_sym: Atom,
+    pub(crate) unresolved_mark: Mark,
+    pub(crate) id_to_filename: &'a std::collections::HashMap<usize, String>,
 }
 
 impl VisitMut for RequireIdRewriter<'_> {
