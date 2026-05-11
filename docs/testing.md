@@ -1,5 +1,9 @@
 # Testing
 
+See also: [Debugging](debugging.md) for investigating test failures and
+snapshot regressions, [Architecture](architecture.md) for pipeline stage
+ordering.
+
 ## Running Tests
 
 ```bash
@@ -21,20 +25,22 @@ cargo insta review
 
 ## Test Organization
 
+All test files live under `crates/core/tests/`.
+
 **Default: add your test to the existing test file for the rule you're changing.** Do not create a new file unless you're adding a new rule. Each rule has a corresponding test file.
 
-- `tests/*_rule.rs` — Per-rule unit tests. One file per rule (e.g., `un_iife_rule.rs`, `smart_inline_rule.rs`).
-- `tests/noop_pipeline.rs` — Stability tests: inputs that should pass through unchanged.
-- `tests/webpack4_unpack.rs` — Pipeline snapshot tests for webpack4 bundles (post-rules).
-- `tests/webpack4_unpack_raw.rs` — Pipeline snapshot tests for webpack4 (pre-rules, after unpacker normalization).
-- `tests/bundle_unpack.rs` — Pipeline snapshot tests for webpack5 + browserify bundles.
-- `tests/esbuild_unpack.rs` — esbuild bundle detection and unpack tests.
-- `tests/webpack5_chunk_unpack.rs` — webpack5 chunk splitting tests.
-- `tests/facts_rule.rs` — Cross-module fact extraction tests.
-- `tests/pipeline_helpers_rule.rs` — Transpiler helper detection + restoration pipeline tests.
-- `tests/decompile_options_rule.rs` — Tests for `DecompileOptions` configuration.
-- `tests/common/mod.rs` — Shared test helpers (see below).
-- `tests/snapshots/` — Insta snapshot files (auto-generated, committed).
+- `*_rule.rs` -- Per-rule unit tests. One file per rule (e.g., `un_iife_rule.rs`, `smart_inline_rule.rs`).
+- `noop_pipeline.rs` -- Stability tests: inputs that should pass through unchanged.
+- `webpack4_unpack.rs` -- Pipeline snapshot tests for webpack4 bundles (post-rules).
+- `webpack4_unpack_raw.rs` -- Pipeline snapshot tests for webpack4 (pre-rules, after unpacker normalization).
+- `bundle_unpack.rs` -- Pipeline snapshot tests for webpack5 + browserify bundles.
+- `esbuild_unpack.rs` -- esbuild bundle detection and unpack tests.
+- `webpack5_chunk_unpack.rs` -- webpack5 chunk splitting tests.
+- `facts_rule.rs` -- Cross-module fact extraction tests.
+- `pipeline_helpers_rule.rs` -- Transpiler helper detection + restoration pipeline tests.
+- `decompile_options_rule.rs` -- Tests for `DecompileOptions` configuration.
+- `common/mod.rs` -- Shared test helpers (see below).
+- `snapshots/` -- Insta snapshot files (auto-generated, committed).
 
 ## Writing Tests
 
@@ -59,7 +65,7 @@ fn my_feature_test() {
 ```rust
 mod common;
 use common::{assert_eq_normalized, render_rule};
-use wakaru_rs::rules::UnDoubleNegation;
+use wakaru_core::rules::UnDoubleNegation;
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnDoubleNegation)
@@ -81,7 +87,7 @@ fn apply(input: &str) -> String {
 }
 ```
 
-## Test Helpers (`tests/common/mod.rs`)
+## Test Helpers (`crates/core/tests/common/mod.rs`)
 
 | Helper | Purpose |
 |---|---|
@@ -95,7 +101,28 @@ fn apply(input: &str) -> String {
 | `normalize(input)` | Parse + re-emit to normalize whitespace |
 | `assert_eq_normalized(actual, expected)` | Compare after normalizing both sides |
 
+## Snapshot Testing Workflow
+
+Tests use [insta](https://insta.rs/) for snapshot testing. Snapshots are
+committed as `.snap` files under `crates/core/tests/snapshots/`.
+
+**Reviewing snapshot changes:**
+
+```bash
+# After making changes, run tests — new/changed snapshots are written as .snap.new files
+cargo test
+
+# Review each changed snapshot interactively (accept/reject)
+cargo insta review
+
+# Or accept all changes at once (use when you trust the diff)
+INSTA_UPDATE=always cargo test
+```
+
+**When snapshots change unexpectedly:** see the "Snapshot Layers" section in
+[debugging.md](debugging.md) for how to trace the cause.
+
 ## Test Pitfalls
 
-- Don't use bare literal expression statements as test inputs (e.g. `65536;`) — `SimplifySequence` drops them as dead code. Use `const x = 65536;` instead.
-- When a test uses `render()` (full pipeline), other rules may transform the input before your rule runs. If your test fails unexpectedly, use `render_rule()` to isolate, or `render_pipeline_until()` to stop at a specific point.
+- Don't use bare literal expression statements as test inputs (e.g. `65536;`) -- `SimplifySequence` drops them as dead code. Use `const x = 65536;` instead.
+- When a test uses `render()` (full pipeline), other rules may transform the input before your rule runs. If your test fails unexpectedly, use `render_rule()` to isolate, or `render_pipeline_until()` to stop at a specific point. See [debugging.md](debugging.md) for more investigation workflows.

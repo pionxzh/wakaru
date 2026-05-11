@@ -1,5 +1,9 @@
 # Cross-Module Fact System
 
+See also: [Architecture](architecture.md) for the multi-module pipeline design,
+[Rule dependency inventory](rule-dependency-inventory.md) for where fact-reading
+rules fit in the pipeline.
+
 ## What it is
 
 A barrier-and-read mechanism that lets Phase 2 rules read import/export shape
@@ -19,7 +23,7 @@ written observations, no merge step.
 ## Shape
 
 Multi-module unpack runs in two parallel phases with a single barrier between
-them (`src/driver.rs::unpack_multi_module`):
+them (`crates/core/src/driver.rs::unpack_multi_module`):
 
 ```
 Phase 1 (per module, parallel):
@@ -42,7 +46,7 @@ Phase 1 AST would break downstream ctxt-sensitive rules.
 
 ## Facts
 
-`src/facts.rs`:
+`crates/core/src/facts.rs`:
 
 - `ImportFact { local, source, kind: Default | Namespace | Named(imported) }`
 - `ExportFact { exported, local, kind: Default | Named }`
@@ -63,13 +67,13 @@ these structures. No mutation, no shared state.
 
 ## Adding a new fact-reading rule
 
-1. Put the rule in `src/` as a free function taking
+1. Put the rule in `crates/core/src/` as a free function taking
    `(&mut Module, &ModuleFactsMap)`.
 2. Call it from `unpack_multi_module` between `apply_rules_until("UnEsm")` and
    `apply_rules_between("UnTemplateLiteral", …)`.
 3. Do all AST mutation locally to the module — never write back to
    `ModuleFactsMap`.
-4. Add unit tests following `tests/namespace_decomposition_rule.rs` (use
+4. Add unit tests following `crates/core/tests/namespace_decomposition_rule.rs` (use
    `facts_for(source)` to synthesize a target module's facts).
 
 ### Gotchas when synthesizing new idents

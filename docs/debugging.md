@@ -2,6 +2,35 @@
 
 This document collects workflow notes for investigating rule and snapshot regressions.
 
+See also: [Testing](testing.md) for test helpers and patterns,
+[Rule dependency inventory](rule-dependency-inventory.md) for pipeline ordering
+and confirmed dependency chains.
+
+## Quick Reference
+
+```bash
+# Trace all rules on a single file (shows diffs for each rule that changes output)
+cargo run -- debug trace path/to/module.js
+
+# Trace a specific range of rules
+cargo run -- debug trace path/to/module.js --from RemoveVoid --until UnEsm
+
+# Run all tests
+cargo test
+
+# Run a specific test file
+cargo test --test my_rule_rule
+
+# Update all snapshots after an intentional change
+INSTA_UPDATE=always cargo test
+
+# Review snapshot diffs interactively
+cargo insta review
+
+# Run with backtrace (useful for infinite recursion / panics)
+RUST_BACKTRACE=1 cargo test -- --nocapture
+```
+
 ## Rule Trace
 
 Use the rule trace CLI before manually bisecting with `apply_rules_between`.
@@ -56,6 +85,32 @@ unpacker or webpack normalization first.
   the AST shape before your rule runs.
 - **`cargo test` hangs:** Likely infinite recursion. Run with
   `RUST_BACKTRACE=1 cargo test -- --nocapture`.
+
+## Using render_pipeline_until and render_pipeline_between
+
+When `debug trace` points to a rule but you need to write a focused test or
+narrow down which rule in a range is causing a regression, use the pipeline
+helper functions from `crates/core/tests/common/mod.rs` (documented in
+[testing.md](testing.md)):
+
+- **`render_pipeline_until(source, "RuleName")`** -- runs the pipeline from the
+  start through the named rule (inclusive), then emits. Use this to see the
+  cumulative output at a specific point in the pipeline.
+
+- **`render_pipeline_between(source, "Start", "Stop")`** -- runs only the rules
+  from `Start` through `Stop` (inclusive). Use this to isolate a narrow range
+  when you suspect one of several adjacent rules.
+
+Example workflow for a regression:
+
+1. Run `debug trace` to find which rule introduced the regression.
+2. Write a test using `render_pipeline_until` to capture the output just before
+   that rule, confirming the input is what you expect.
+3. Use `render_pipeline_between` to run only the suspect rule (or a small range)
+   and verify the regression in isolation.
+4. If the issue is a pipeline ordering problem, consult
+   [rule-dependency-inventory.md](rule-dependency-inventory.md) for confirmed
+   dependency chains and known fragile orderings.
 
 ## Fixture Repo
 

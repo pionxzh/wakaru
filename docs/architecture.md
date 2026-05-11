@@ -39,7 +39,7 @@ Two main operations:
 
 ## Components
 
-### Unpackers (`src/unpacker/`)
+### Unpackers (`crates/core/src/unpacker/`)
 
 Each unpacker detects a specific bundle format and extracts individual modules as raw JS strings. Detection is attempted in order — first match wins:
 
@@ -52,7 +52,7 @@ Each unpacker detects a specific bundle format and extracts individual modules a
 
 Unpackers emit raw module code. They do NOT run transformation rules — that's the driver's job. Webpack4 is the exception: it applies webpack-specific normalization (param rename, `require()` rewriting, runtime helper removal) before emitting, because those transforms are tightly coupled to the webpack format.
 
-### Driver (`src/driver.rs`)
+### Driver (`crates/core/src/driver.rs`)
 
 Orchestrates the full pipeline.
 
@@ -82,7 +82,7 @@ Runs the pipeline with an observer that captures per-rule before/after snapshots
 
 **`format_trace_events(events)`** — renders trace events as git-style unified diffs.
 
-### Rules pipeline (`src/rules/`)
+### Rules pipeline (`crates/core/src/rules/`)
 
 ~60 transformation rules, each implementing SWC's `VisitMut` trait. Applied in a fixed order by `apply_default_rules()`. Order matters — some rules depend on earlier ones having run.
 
@@ -205,7 +205,7 @@ Without this guard, a rule matching `e` (a webpack param name) would also rename
 > webpack factory-param use case our approach is simpler and equally correct.
 > If a more general rename feature is ever needed, migrate to `rename_with_config()`.
 
-### Source map pipeline (`src/sourcemap_rename.rs`)
+### Source map pipeline (`crates/core/src/sourcemap_rename.rs`)
 
 Optional enhancement when `--sourcemap` is provided. Runs **after** the rules pipeline for two reasons:
 1. Rules detect patterns by minified names (`require`, `__generator`, `__esModule`). Renaming first would break pattern detection.
@@ -225,58 +225,79 @@ Name recovery works by:
 
 This works even when the `names` array is empty (common in esbuild output).
 
-## Multi-module pipeline (`driver.rs`)
+## Multi-module pipeline (`crates/core/src/driver.rs`)
 
 When unpacking bundles, the driver runs a two-phase pipeline:
 
 1. **Phase 1 (parallel):** Parse each module → run Stage 1+2 → extract import/export facts → discard AST
 2. **Phase 2 (parallel):** Parse each module again → run Stage 1+2 → cross-module late pass (re-export consolidation, namespace decomposition) → run Stage 3+ → emit
 
-The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g., converting `ns.foo` to `import { foo }`). Facts are extracted in `facts.rs` and consumed by `namespace_decomposition.rs` and `reexport_consolidation.rs`.
+The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g., converting `ns.foo` to `import { foo }`). Facts are extracted in `crates/core/src/facts.rs` and consumed by `crates/core/src/namespace_decomposition.rs` and `crates/core/src/reexport_consolidation.rs`. See [fact-system.md](fact-system.md) for details.
 
 Stage 1+2 runs twice per module — once for fact collection, once for the real pipeline. This is necessary because SWC's `SyntaxContext` must remain continuous across the entire pipeline (re-parsing creates fresh contexts that break rename rules).
 
 ## File structure
 
 ```
-src/
-  lib.rs                      — public API exports
-  main.rs                     — CLI entry point (clap)
-  driver.rs                   — decompile() and unpack() orchestration
-  facts.rs                    — post-Stage-2 cross-module fact extraction
-  sourcemap_rename.rs         — source-map-driven name recovery
-  namespace_decomposition.rs  — cross-module namespace-to-named-import rewrite
-  reexport_consolidation.rs   — cross-module re-export consolidation
-  rules/
-    mod.rs                    — apply_default_rules() pipeline ordering
-    babel_helper_utils.rs     — shared helper detection (body shape + import path)
-    rename_utils.rs           — shared binding rename utilities
-    *.rs                      — one file per transformation rule
-  unpacker/
-    mod.rs                    — unpack_bundle() dispatch
-    webpack4.rs               — webpack4 splitter + normalization
-    webpack5.rs               — webpack5 splitter
-    browserify.rs             — browserify splitter
-    esbuild.rs                — esbuild splitter
-  utils/
-    matcher.rs                — AST helper predicates
+crates/
+  cli/
+    src/
+      main.rs                       — CLI entry point (clap)
 
-tests/
-  common/mod.rs               — test helpers (see docs/testing.md)
-  *_rule.rs                   — per-rule unit tests
-  webpack4_unpack.rs          — pipeline snapshot tests (post-rules)
-  webpack4_unpack_raw.rs      — pipeline snapshot tests (pre-rules)
-  esbuild_unpack.rs           — esbuild detection tests
-  bundle_unpack.rs            — webpack5 + browserify tests
-  noop_pipeline.rs            — stability tests
-  snapshots/                  — insta snapshot files
+  core/
+    src/
+      lib.rs                        — public API exports
+      driver.rs                     — decompile() and unpack() orchestration
+      facts.rs                      — post-Stage-2 cross-module fact extraction
+      sourcemap_rename.rs           — source-map-driven name recovery
+      namespace_decomposition.rs    — cross-module namespace-to-named-import rewrite
+      reexport_consolidation.rs     — cross-module re-export consolidation
+      rules/
+        mod.rs                      — apply_default_rules() pipeline ordering
+        babel_helper_utils.rs       — shared helper detection (body shape + import path)
+        rename_utils.rs             — shared binding rename utilities
+        *.rs                        — one file per transformation rule
+      unpacker/
+        mod.rs                      — unpack_bundle() dispatch
+        webpack4.rs                 — webpack4 splitter + normalization
+        webpack5.rs                 — webpack5 splitter
+        browserify.rs               — browserify splitter
+        esbuild.rs                  — esbuild splitter
+        scope_hoist.rs              — esbuild/Bun scope-hoisted ESM extraction
+      utils/
+        matcher.rs                  — AST helper predicates
+    tests/
+      common/mod.rs                 — test helpers (see docs/testing.md)
+      *_rule.rs                     — per-rule unit tests
+      webpack4_unpack.rs            — pipeline snapshot tests (post-rules)
+      webpack4_unpack_raw.rs        — pipeline snapshot tests (pre-rules)
+      esbuild_unpack.rs             — esbuild detection tests
+      bundle_unpack.rs              — webpack5 + browserify tests
+      noop_pipeline.rs              — stability tests
+      snapshots/                    — insta snapshot files
+
+  wasm/
+    src/
+      lib.rs                        — wasm-bindgen entry point (decompile + unpack)
 
 docs/
-  architecture.md             — this file
-  helper-detection.md         — transpiler helper detection design
-  debugging.md                — rule tracing, snapshot debugging, fixture workflow
-  testing.md                  — test patterns, helpers, organization
+  architecture.md                   — this file
+  testing.md                        — test patterns, helpers, organization
+  debugging.md                      — rule tracing, snapshot debugging, fixture workflow
+  helper-detection.md               — transpiler helper detection design
+  fact-system.md                    — cross-module fact system
+  rule-dependency-inventory.md      — rule dependency relationships
+  proposals/
+    skip-unless.md                  — deferred performance proposal
 ```
+
+## Related docs
+
+- [Testing](testing.md) -- test patterns, helpers, and organization
+- [Debugging](debugging.md) -- rule tracing, snapshot debugging, fixture workflow
+- [Helper detection](helper-detection.md) -- transpiler helper detection design
+- [Fact system](fact-system.md) -- cross-module fact system
+- [Rule dependency inventory](rule-dependency-inventory.md) -- rule dependency relationships and experimental validation
 
 ## References
 

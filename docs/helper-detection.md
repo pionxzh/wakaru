@@ -1,6 +1,9 @@
 # Helper Detection Design
 
 Design notes for detecting and restoring transpiler runtime helpers in wakaru.
+See [architecture.md](architecture.md) for overall pipeline structure and
+[rule-dependency-inventory.md](rule-dependency-inventory.md) for where helper
+rules sit in the pipeline ordering.
 
 ## Problem
 
@@ -11,7 +14,7 @@ Transpilers (Babel, TypeScript/tslib, SWC) inject runtime helper functions to po
 3. **Hoisted** into a shared webpack module — accessed via numeric `require(42)`, name lost entirely
 4. **Minified** — parameter and function names are mangled, but the body structure is preserved
 
-The JS wakaru handles case 1 (match by import path). wakaru should handle all four.
+The TS wakaru handles case 1 (match by import path) and case 3 (top level declaration, matching with regex). Rust wakaru should handle all four.
 
 ## Approach: match by function body shape
 
@@ -32,7 +35,7 @@ The essential shape is always: single param, conditional on `__esModule`, return
 
 ## What we decided NOT to do
 
-These ideas were explored (via Grok brainstorm + Codex review) and rejected:
+These ideas were explored and rejected:
 
 - **Custom IR layer** — SWC's AST is already high-level (has CallExpr, AwaitExpr, YieldExpr, etc.). A second IR would duplicate representation and debugging cost without solving the actual problems. We already do generator-to-async restoration directly on SWC AST in `un_async_await.rs`.
 
@@ -40,7 +43,7 @@ These ideas were explored (via Grok brainstorm + Codex review) and rejected:
 
 - **Version auto-detect via runtime strings** — Bundled code often strips version markers, and inlined helpers erase them entirely. Designing around version gating would fail on real-world bundles.
 
-- **Configurable pass graphs / incremental re-analysis** — Premature optimization. The current linear pipeline in `rules/mod.rs` is simple and works.
+- **Configurable pass graphs / incremental re-analysis** — Premature optimization. The current linear pipeline in `crates/core/src/rules/mod.rs` is simple and works.
 
 ## Architecture
 
