@@ -72,8 +72,17 @@ fn transform_module_items(items: &mut Vec<ModuleItem>) {
             continue;
         }
         if let Some(candidate) = fn_decl_map.get(&i) {
-            let class_decl = build_class_decl(candidate, &item);
-            items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
+            if let ModuleItem::Stmt(stmt) = &item {
+                if let Some(class_decl) = build_class_decl(candidate, stmt) {
+                    items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
+                    continue;
+                }
+            }
+            debug_assert!(
+                false,
+                "class candidate did not point to a function declaration"
+            );
+            items.push(item);
         } else {
             items.push(item);
         }
@@ -100,8 +109,15 @@ fn transform_stmts(stmts: &mut Vec<Stmt>) {
             continue;
         }
         if let Some(candidate) = fn_decl_map.get(&i) {
-            let class_decl = build_class_decl(candidate, &ModuleItem::Stmt(stmt));
-            stmts.push(Stmt::Decl(Decl::Class(class_decl)));
+            if let Some(class_decl) = build_class_decl(candidate, &stmt) {
+                stmts.push(Stmt::Decl(Decl::Class(class_decl)));
+            } else {
+                debug_assert!(
+                    false,
+                    "class candidate did not point to a function declaration"
+                );
+                stmts.push(stmt);
+            }
         } else {
             stmts.push(stmt);
         }
@@ -227,11 +243,10 @@ fn find_candidates(stmts: &[Option<&Stmt>]) -> Vec<ClassCandidate> {
 }
 
 /// Build a ClassDecl from a candidate and the original FnDecl statement.
-fn build_class_decl(candidate: &ClassCandidate, original_item: &ModuleItem) -> ClassDecl {
+fn build_class_decl(candidate: &ClassCandidate, original_stmt: &Stmt) -> Option<ClassDecl> {
     // Extract the function from the original item
-    let fn_decl = match original_item {
-        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(f))) => f,
-        _ => panic!("expected FnDecl"),
+    let Stmt::Decl(Decl::Fn(fn_decl)) = original_stmt else {
+        return None;
     };
 
     let mut members = Vec::new();
@@ -245,7 +260,7 @@ fn build_class_decl(candidate: &ClassCandidate, original_item: &ModuleItem) -> C
     // Add collected methods
     members.extend(candidate.members.iter().cloned());
 
-    ClassDecl {
+    Some(ClassDecl {
         ident: fn_decl.ident.clone(),
         declare: false,
         class: Box::new(Class {
@@ -259,7 +274,7 @@ fn build_class_decl(candidate: &ClassCandidate, original_item: &ModuleItem) -> C
             super_type_params: None,
             implements: vec![],
         }),
-    }
+    })
 }
 
 // ============================================================
@@ -813,4 +828,24 @@ impl VisitMut for ParentCallRewriter<'_> {
     // Don't descend into nested functions/arrows
     fn visit_mut_function(&mut self, _: &mut Function) {}
     fn visit_mut_arrow_expr(&mut self, _: &mut swc_core::ecma::ast::ArrowExpr) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_class_decl_returns_none_for_non_function_statement() {
+        let candidate = ClassCandidate {
+            fn_decl_idx: 0,
+            _name: "Foo".into(),
+            super_class: None,
+            super_class_name: None,
+            consumed_indices: HashSet::new(),
+            members: Vec::new(),
+        };
+        let stmt = Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span: DUMMY_SP });
+
+        assert!(build_class_decl(&candidate, &stmt).is_none());
+    }
 }
