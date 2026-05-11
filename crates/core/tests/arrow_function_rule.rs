@@ -85,6 +85,19 @@ const obj = { fn: function() { return this.x; } };
 }
 
 #[test]
+fn function_with_this_in_nested_arrow_not_converted() {
+    // Nested arrows capture `this` from the function expression, so converting
+    // the outer function would change the arrow's `this` binding.
+    let input = r#"
+const fn = function() {
+    return () => this.x;
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn function_with_arguments_converted_via_arg_rest() {
     // ArgRest rewrites arguments[N] → args[N] first, then ArrowFunction can convert.
     // Arrow functions have no own `arguments`, but after ArgRest runs that is no

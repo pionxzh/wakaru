@@ -189,9 +189,8 @@ impl Visit for HasThisOrArguments {
     // Don't recurse into nested functions — they have their own this/arguments
     fn visit_function(&mut self, _: &Function) {}
 
-    // Don't recurse into arrow expressions either (they capture this from outer,
-    // but they don't have their own `arguments`)
-    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    // Recurse into arrow expressions because they capture both `this` and
+    // `arguments` from this function.
 }
 
 // ============================================================
@@ -208,7 +207,6 @@ impl Visit for HasArguments {
     }
 
     fn visit_function(&mut self, _: &Function) {}
-    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
 }
 
 // ============================================================
