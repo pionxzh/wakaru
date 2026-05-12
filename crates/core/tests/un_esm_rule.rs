@@ -374,10 +374,11 @@ fn compound_assign_not_transformed() {
 }
 
 #[test]
-fn bracket_notation_module_not_transformed() {
-    // module["exports"] = 1 should NOT be transformed
+fn bracket_notation_module_exports_transformed() {
+    // module["exports"] is normalized to module.exports by UnBracketNotation,
+    // then converted to ESM by UnEsm
     let input = r#"module["exports"] = 1;"#;
-    let expected = r#"module["exports"] = 1;"#;
+    let expected = "export default 1;";
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
