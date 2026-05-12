@@ -2,8 +2,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt, Callee, Constructor,
-    Expr, Function, Ident, Lit, MemberExpr, MemberProp, Number, Param, ParamOrTsParamProp, Pat,
-    RestPat, SimpleAssignTarget, Stmt, UpdateOp, VarDeclOrExpr,
+    Decl, Expr, Function, Ident, Lit, MemberExpr, MemberProp, Number, Param, ParamOrTsParamProp,
+    Pat, RestPat, SimpleAssignTarget, Stmt, UpdateOp, VarDeclKind, VarDeclOrExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -364,6 +364,8 @@ struct ArgumentsChecker {
     has_unsafe: bool,
     fixed_param_count: usize,
     allowed_loop_indices: Vec<BindingId>,
+    arguments_length_aliases: Vec<BindingId>,
+    zero_initialized_indices: Vec<BindingId>,
 }
 
 impl ArgumentsChecker {
@@ -373,6 +375,8 @@ impl ArgumentsChecker {
             has_unsafe: false,
             fixed_param_count,
             allowed_loop_indices: Vec::new(),
+            arguments_length_aliases: Vec::new(),
+            zero_initialized_indices: Vec::new(),
         }
     }
 
@@ -385,6 +389,18 @@ impl ArgumentsChecker {
                         if self
                             .allowed_loop_indices
                             .contains(&(id.sym.clone(), id.ctxt))
+                )
+                || matches!(
+                    expr,
+                    Expr::Update(update)
+                        if update.op == UpdateOp::PlusPlus
+                            && matches!(
+                                update.arg.as_ref(),
+                                Expr::Ident(id)
+                                    if self
+                                        .allowed_loop_indices
+                                        .contains(&(id.sym.clone(), id.ctxt))
+                            )
                 );
         }
 
@@ -394,12 +410,22 @@ impl ArgumentsChecker {
 
 impl Visit for ArgumentsChecker {
     fn visit_stmt(&mut self, stmt: &Stmt) {
+        if let Some(alias) = arguments_length_alias_from_stmt(stmt) {
+            self.arguments_length_aliases.push(alias);
+        }
+        self.zero_initialized_indices
+            .extend(zero_initialized_bindings_from_stmt(stmt));
+
         if detect_copy_var_name_from_stmt(stmt, self.fixed_param_count).is_some() {
             self.has_any = true;
             return;
         }
 
-        if let Some(index_sym) = arguments_length_loop_index(stmt) {
+        if let Some(index_sym) = guarded_arguments_length_loop_index(
+            stmt,
+            &self.arguments_length_aliases,
+            &self.zero_initialized_indices,
+        ) {
             self.allowed_loop_indices.push(index_sym);
             stmt.visit_children_with(self);
             self.allowed_loop_indices.pop();
@@ -449,38 +475,108 @@ fn is_arguments_ident(expr: &Expr) -> bool {
     matches!(expr, Expr::Ident(id) if id.sym == "arguments")
 }
 
-fn arguments_length_loop_index(stmt: &Stmt) -> Option<BindingId> {
-    let Stmt::For(for_stmt) = stmt else {
+fn arguments_length_alias_from_stmt(stmt: &Stmt) -> Option<BindingId> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
-
-    let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else {
-        return None;
-    };
-    if init.decls.len() != 1 {
+    if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
         return None;
     }
 
-    let decl = &init.decls[0];
+    let decl = &var.decls[0];
     let Pat::Ident(binding) = &decl.name else {
         return None;
     };
-    if !matches!(decl.init.as_deref(), Some(expr) if is_number(expr, 0)) {
+    let Expr::Member(member) = decl.init.as_deref()? else {
         return None;
+    };
+    if is_arguments_ident(&member.obj)
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "length")
+    {
+        return Some((binding.id.sym.clone(), binding.id.ctxt));
     }
 
-    let index = (binding.id.sym.clone(), binding.id.ctxt);
-    if !matches_arguments_length_loop_test(for_stmt.test.as_deref(), &index) {
-        return None;
-    }
-    if !matches_loop_index_update(for_stmt.update.as_deref(), &index) {
-        return None;
-    }
-
-    Some(index)
+    None
 }
 
-fn matches_arguments_length_loop_test(test: Option<&Expr>, index: &BindingId) -> bool {
+fn zero_initialized_bindings_from_stmt(stmt: &Stmt) -> Vec<BindingId> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return Vec::new();
+    };
+
+    var.decls
+        .iter()
+        .filter_map(|decl| {
+            let Pat::Ident(binding) = &decl.name else {
+                return None;
+            };
+            if matches!(decl.init.as_deref(), Some(expr) if is_number(expr, 0)) {
+                return Some((binding.id.sym.clone(), binding.id.ctxt));
+            }
+            None
+        })
+        .collect()
+}
+
+fn guarded_arguments_length_loop_index(
+    stmt: &Stmt,
+    length_aliases: &[BindingId],
+    zero_initialized_indices: &[BindingId],
+) -> Option<BindingId> {
+    match stmt {
+        Stmt::For(for_stmt) => arguments_length_for_loop_index(for_stmt, length_aliases),
+        Stmt::While(while_stmt) => {
+            arguments_length_while_loop_index(while_stmt, length_aliases, zero_initialized_indices)
+        }
+        _ => None,
+    }
+}
+
+fn arguments_length_for_loop_index(
+    for_stmt: &swc_core::ecma::ast::ForStmt,
+    length_aliases: &[BindingId],
+) -> Option<BindingId> {
+    let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else {
+        return None;
+    };
+
+    let mut local_length_aliases = length_aliases.to_vec();
+    let mut index_candidates = Vec::new();
+    for decl in &init.decls {
+        let Pat::Ident(binding) = &decl.name else {
+            continue;
+        };
+        let binding_id = (binding.id.sym.clone(), binding.id.ctxt);
+        match decl.init.as_deref() {
+            Some(expr) if is_number(expr, 0) => index_candidates.push(binding_id),
+            Some(expr) if is_arguments_length_expr(expr) => local_length_aliases.push(binding_id),
+            _ => {}
+        }
+    }
+
+    index_candidates.into_iter().find(|index| {
+        matches_arguments_length_loop_test(for_stmt.test.as_deref(), index, &local_length_aliases)
+            && (for_stmt.update.is_none()
+                || matches_loop_index_update(for_stmt.update.as_deref(), index))
+    })
+}
+
+fn arguments_length_while_loop_index(
+    while_stmt: &swc_core::ecma::ast::WhileStmt,
+    length_aliases: &[BindingId],
+    zero_initialized_indices: &[BindingId],
+) -> Option<BindingId> {
+    zero_initialized_indices.iter().find_map(|index| {
+        matches_arguments_length_loop_test(Some(while_stmt.test.as_ref()), index, length_aliases)
+            .then_some(index.clone())
+    })
+}
+
+fn matches_arguments_length_loop_test(
+    test: Option<&Expr>,
+    index: &BindingId,
+    length_aliases: &[BindingId],
+) -> bool {
     let Some(Expr::Bin(bin)) = test else {
         return false;
     };
@@ -490,11 +586,8 @@ fn matches_arguments_length_loop_test(test: Option<&Expr>, index: &BindingId) ->
     if !matches!(bin.left.as_ref(), Expr::Ident(id) if id.sym == index.0 && id.ctxt == index.1) {
         return false;
     }
-    let Expr::Member(member) = bin.right.as_ref() else {
-        return false;
-    };
-    is_arguments_ident(&member.obj)
-        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "length")
+    is_arguments_length_expr(bin.right.as_ref())
+        || is_binding_ident(bin.right.as_ref(), length_aliases)
 }
 
 fn matches_loop_index_update(update: Option<&Expr>, index: &BindingId) -> bool {
@@ -503,6 +596,18 @@ fn matches_loop_index_update(update: Option<&Expr>, index: &BindingId) -> bool {
     };
     update.op == UpdateOp::PlusPlus
         && matches!(update.arg.as_ref(), Expr::Ident(id) if id.sym == index.0 && id.ctxt == index.1)
+}
+
+fn is_arguments_length_expr(expr: &Expr) -> bool {
+    let Expr::Member(member) = expr else {
+        return false;
+    };
+    is_arguments_ident(&member.obj)
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "length")
+}
+
+fn is_binding_ident(expr: &Expr, bindings: &[BindingId]) -> bool {
+    matches!(expr, Expr::Ident(id) if bindings.contains(&(id.sym.clone(), id.ctxt)))
 }
 
 // ============================================================

@@ -115,6 +115,102 @@ function get() {
 }
 
 #[test]
+fn length_guarded_post_increment_index_becomes_rest_args() {
+    let input = r#"
+function join() {
+    var out = "";
+    for (var i = 0; i < arguments.length;) {
+        out += arguments[i++];
+    }
+    return out;
+}
+"#;
+    let expected = r#"
+function join(...args) {
+    var out = "";
+    for (var i = 0; i < args.length;) {
+        out += args[i++];
+    }
+    return out;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn cached_arguments_length_loop_index_becomes_rest_args() {
+    let input = r#"
+function join() {
+    const len = arguments.length;
+    var out = "";
+    for (var i = 0; i < len; i++) {
+        out += arguments[i];
+    }
+    return out;
+}
+"#;
+    let expected = r#"
+function join(...args) {
+    const len = args.length;
+    var out = "";
+    for (var i = 0; i < len; i++) {
+        out += args[i];
+    }
+    return out;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn while_loop_with_length_guarded_post_increment_index_becomes_rest_args() {
+    let input = r#"
+function join() {
+    var out = "";
+    let i = 0;
+    while (i < arguments.length) {
+        out += arguments[i++];
+    }
+    return out;
+}
+"#;
+    let expected = r#"
+function join(...args) {
+    var out = "";
+    let i = 0;
+    while (i < args.length) {
+        out += args[i++];
+    }
+    return out;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn for_loop_init_arguments_length_alias_becomes_rest_args() {
+    let input = r#"
+function join() {
+    var out = "";
+    for (var i = 0, len = arguments.length; i < len; i++) {
+        out += arguments[i];
+    }
+    return out;
+}
+"#;
+    let expected = r#"
+function join(...args) {
+    var out = "";
+    for (var i = 0, len = args.length; i < len; i++) {
+        out += args[i];
+    }
+    return out;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn function_with_params_not_converted() {
     // Accessing the fixed-parameter prefix through `arguments` is still unsafe.
     let input = r#"

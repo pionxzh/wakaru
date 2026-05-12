@@ -147,6 +147,30 @@ const obj = {
 }
 
 #[test]
+fn keeps_computed_constructor_method() {
+    let input = r#"
+class C {
+    ["constructor"]() {
+        return 1;
+    }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn keeps_computed_proto_object_key() {
+    let input = r#"
+const obj = {
+    ["__proto__"]: value,
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn transforms_bracket_in_assignment_targets() {
     let input = r##"
 this["innerHTML"] = '';
