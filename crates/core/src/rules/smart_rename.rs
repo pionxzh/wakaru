@@ -26,6 +26,7 @@ impl VisitMut for SmartRename {
         destructuring_rename_module(module);
         member_init_rename_module(module);
         symbol_for_rename_module(module);
+        sentry_component_rename_module(module);
         module.visit_mut_children_with(self);
         // Runs once at the module level; uses (sym, ctxt) matching so nested
         // bindings are classified correctly without per-scope recursion.
@@ -1445,6 +1446,142 @@ fn key_as_ident_target(key: &PropName) -> Option<String> {
         return None;
     }
     Some(raw)
+}
+
+// ============================================================
+// Sentry component annotation rename: Sentry's Babel plugin
+// (`@sentry/babel-plugin-component-annotate`) injects
+// `data-sentry-component="OriginalName"` onto JSX elements.
+// When the enclosing function has a minified name, use the
+// annotation to recover the original component name.
+// ============================================================
+
+const SENTRY_ATTR_NAMES: &[&str] = &["data-sentry-component", "dataSentryComponent"];
+
+fn sentry_component_rename_module(module: &mut Module) {
+    let mut collector = SentryComponentCollector::default();
+    module.visit_with(&mut collector);
+    if collector.candidates.is_empty() {
+        return;
+    }
+
+    let mut used_names = collect_module_names(module);
+
+    let mut renames = Vec::new();
+    for (bid, target) in collector.candidates {
+        if bid.0.as_ref() == target.as_str() {
+            continue;
+        }
+        if bid.0.chars().count() > REACT_MINIFIED_THRESHOLD {
+            continue;
+        }
+        if !is_valid_js_ident(&target) {
+            continue;
+        }
+        if !target.starts_with(|c: char| c.is_ascii_uppercase()) {
+            continue;
+        }
+        let atom: Atom = target.as_str().into();
+        if used_names.contains(&atom) {
+            continue;
+        }
+        if rename_causes_shadowing(module, &bid, &atom) {
+            continue;
+        }
+        used_names.insert(atom.clone());
+        renames.push(BindingRename {
+            old: bid,
+            new: atom,
+        });
+    }
+
+    if !renames.is_empty() {
+        rename_bindings_in_module(module, &renames);
+    }
+}
+
+#[derive(Default)]
+struct SentryComponentCollector {
+    current_fn_binding: Option<BindingId>,
+    candidates: Vec<(BindingId, String)>,
+}
+
+impl SentryComponentCollector {
+    fn extract_sentry_component_name(attrs: &[JSXAttrOrSpread]) -> Option<String> {
+        for attr in attrs {
+            let JSXAttrOrSpread::JSXAttr(JSXAttr {
+                name: JSXAttrName::Ident(name),
+                value: Some(JSXAttrValue::Str(s)),
+                ..
+            }) = attr
+            else {
+                continue;
+            };
+            if SENTRY_ATTR_NAMES.contains(&name.sym.as_ref()) {
+                if let Some(val) = s.value.as_str() {
+                    if !val.is_empty() {
+                        return Some(val.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+impl Visit for SentryComponentCollector {
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        let prev = self.current_fn_binding.take();
+        self.current_fn_binding = Some((decl.ident.sym.clone(), decl.ident.ctxt));
+        decl.function.visit_with(self);
+        self.current_fn_binding = prev;
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &swc_core::ecma::ast::VarDeclarator) {
+        let Pat::Ident(binding) = &declarator.name else {
+            declarator.visit_children_with(self);
+            return;
+        };
+        let Some(init) = &declarator.init else {
+            return;
+        };
+        match init.as_ref() {
+            Expr::Fn(_) | Expr::Arrow(_) => {
+                let prev = self.current_fn_binding.take();
+                self.current_fn_binding = Some((binding.id.sym.clone(), binding.id.ctxt));
+                init.visit_with(self);
+                self.current_fn_binding = prev;
+            }
+            _ => {
+                declarator.visit_children_with(self);
+            }
+        }
+    }
+
+    fn visit_jsx_opening_element(&mut self, elem: &swc_core::ecma::ast::JSXOpeningElement) {
+        if let Some(bid) = &self.current_fn_binding {
+            if let Some(name) = Self::extract_sentry_component_name(&elem.attrs) {
+                self.candidates.push((bid.clone(), name));
+            }
+        }
+        elem.visit_children_with(self);
+    }
+
+    fn visit_export_default_decl(&mut self, decl: &swc_core::ecma::ast::ExportDefaultDecl) {
+        match &decl.decl {
+            swc_core::ecma::ast::DefaultDecl::Fn(fn_expr) => {
+                if let Some(ident) = &fn_expr.ident {
+                    let prev = self.current_fn_binding.take();
+                    self.current_fn_binding = Some((ident.sym.clone(), ident.ctxt));
+                    fn_expr.function.visit_with(self);
+                    self.current_fn_binding = prev;
+                } else {
+                    decl.visit_children_with(self);
+                }
+            }
+            _ => decl.visit_children_with(self),
+        }
+    }
 }
 
 // ============================================================

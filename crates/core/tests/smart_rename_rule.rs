@@ -736,3 +736,168 @@ function render(value) {
 
     assert_eq_normalized(&apply(input), expected);
 }
+
+// ============================================================
+// Sentry data-sentry-component renames
+// ============================================================
+
+#[test]
+fn sentry_component_renames_function_decl() {
+    let input = r#"
+function a() {
+  return <div data-sentry-component="MyComponent">Hello</div>;
+}
+"#;
+    let expected = r#"
+function MyComponent() {
+  return <div data-sentry-component="MyComponent">Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sentry_component_renames_arrow_in_const() {
+    let input = r#"
+const a = () => <div data-sentry-component="MyComponent" />;
+"#;
+    let expected = r#"
+const MyComponent = () => <div data-sentry-component="MyComponent" />;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sentry_component_renames_fn_expr_in_const() {
+    let input = r#"
+const a = function() {
+  return <div data-sentry-component="MyComponent" />;
+};
+"#;
+    let expected = r#"
+const MyComponent = function() {
+  return <div data-sentry-component="MyComponent" />;
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sentry_component_skips_already_named() {
+    let input = r#"
+function MyComponent() {
+  return <div data-sentry-component="MyComponent">Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn sentry_component_skips_non_minified_name() {
+    let input = r#"
+function abc() {
+  return <div data-sentry-component="MyComponent">Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn sentry_component_skips_conflict() {
+    let input = r#"
+const MyComponent = "taken";
+function a() {
+  return <div data-sentry-component="MyComponent">Hello</div>;
+}
+use(MyComponent);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn sentry_component_skips_duplicate_target() {
+    let input = r#"
+function a() {
+  return <div data-sentry-component="Shared">Hello</div>;
+}
+function b() {
+  return <span data-sentry-component="Shared">World</span>;
+}
+"#;
+    let expected = r#"
+function Shared() {
+  return <div data-sentry-component="Shared">Hello</div>;
+}
+function b() {
+  return <span data-sentry-component="Shared">World</span>;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sentry_component_camel_case_variant() {
+    let input = r#"
+const a = () => <div dataSentryComponent="NativeComponent" />;
+"#;
+    let expected = r#"
+const NativeComponent = () => <div dataSentryComponent="NativeComponent" />;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sentry_component_nested_components() {
+    let input = r#"
+function a() {
+  function b() {
+    return <span data-sentry-component="Inner">nested</span>;
+  }
+  return <div data-sentry-component="Outer">{b()}</div>;
+}
+"#;
+    let expected = r#"
+function Outer() {
+  function Inner() {
+    return <span data-sentry-component="Inner">nested</span>;
+  }
+  return <div data-sentry-component="Outer">{Inner()}</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sentry_component_export_default_named() {
+    let input = r#"
+export default function a() {
+  return <div data-sentry-component="MyPage" />;
+}
+"#;
+    let expected = r#"
+export default function MyPage() {
+  return <div data-sentry-component="MyPage" />;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sentry_component_skips_lowercase_name() {
+    let input = r#"
+function a() {
+  return <div data-sentry-component="div">Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn sentry_component_skips_invalid_ident() {
+    let input = r#"
+function a() {
+  return <div data-sentry-component="my-component">Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
