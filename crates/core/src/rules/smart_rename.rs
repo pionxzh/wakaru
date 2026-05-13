@@ -1355,7 +1355,12 @@ impl Visit for ValuePositionClassifier {
         if let Expr::Ident(id) = expr.as_ref() {
             let bid = (id.sym.clone(), id.ctxt);
             if self.states.contains_key(&bid) {
-                self.record_value_use(&bid, name.sym.to_string());
+                let target = name.sym.to_string();
+                if is_valid_js_ident(&target) && !is_reserved_keyword(&target) {
+                    self.record_value_use(&bid, target);
+                } else {
+                    self.record_other_use(&bid);
+                }
                 return;
             }
         }

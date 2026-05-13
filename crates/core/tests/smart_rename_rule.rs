@@ -737,6 +737,17 @@ function render(value) {
     assert_eq_normalized(&apply(input), expected);
 }
 
+#[test]
+fn value_position_does_not_rename_from_invalid_jsx_attr_name() {
+    let input = r#"
+function render(U) {
+  return <div data-state={U}>{children}</div>;
+}
+"#;
+
+    assert_eq_normalized(&apply(input), input);
+}
+
 // ============================================================
 // Sentry data-sentry-component renames
 // ============================================================
