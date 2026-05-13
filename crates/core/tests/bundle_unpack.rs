@@ -7,7 +7,7 @@ fn webpack5_unpack_extracts_multiple_modules() {
     let source_path = "../../testcases/webpack5/dist/index.js";
     let source = fs::read_to_string(source_path).expect("failed to read webpack5 testcase");
 
-    let pairs = unpack(
+    let output = unpack(
         &source,
         DecompileOptions {
             filename: source_path.to_string(),
@@ -15,6 +15,12 @@ fn webpack5_unpack_extracts_multiple_modules() {
         },
     )
     .expect("webpack5 unpack should succeed");
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let pairs = output.modules;
 
     assert!(
         pairs.len() > 1,
@@ -33,7 +39,7 @@ fn browserify_unpack_extracts_multiple_modules() {
     let source_path = "../../testcases/browserify/dist/index.js";
     let source = fs::read_to_string(source_path).expect("failed to read browserify testcase");
 
-    let pairs = unpack(
+    let output = unpack(
         &source,
         DecompileOptions {
             filename: source_path.to_string(),
@@ -41,6 +47,12 @@ fn browserify_unpack_extracts_multiple_modules() {
         },
     )
     .expect("browserify unpack should succeed");
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let pairs = output.modules;
 
     assert!(
         pairs.len() > 1,

@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
@@ -48,6 +49,58 @@ impl Default for DecompileOptions {
             dead_code_elimination: true,
             level: RewriteLevel::Standard,
             heuristic_split: false,
+        }
+    }
+}
+
+/// Result of an unpack operation: the extracted modules plus any non-fatal
+/// warnings (e.g. per-module parse failures that fell back to raw code).
+#[derive(Debug, Clone, Default)]
+pub struct UnpackOutput {
+    pub modules: Vec<(String, String)>,
+    pub warnings: Vec<UnpackWarning>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnpackWarning {
+    pub filename: String,
+    pub kind: UnpackWarningKind,
+    pub message: String,
+}
+
+impl UnpackWarning {
+    fn new(
+        filename: impl Into<String>,
+        kind: UnpackWarningKind,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            filename: filename.into(),
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for UnpackWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.filename, self.message)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnpackWarningKind {
+    RawNormalizationFailed,
+    FactCollectionParseFailed,
+    DecompileFailed,
+}
+
+impl UnpackWarningKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RawNormalizationFailed => "raw_normalization_failed",
+            Self::FactCollectionParseFailed => "fact_collection_parse_failed",
+            Self::DecompileFailed => "decompile_failed",
         }
     }
 }
@@ -248,7 +301,7 @@ pub fn format_trace_events(events: &[RuleTraceEvent]) -> String {
     out
 }
 
-pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, String)>> {
+pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
     match detect_bundle(source, &options.filename)? {
         Some(result) => unpack_multi_module(result.modules, options),
         None if options.heuristic_split => match scope_hoist::split_scope_hoisted(source) {
@@ -259,12 +312,18 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, St
             }
             _ => {
                 let code = decompile(source, options)?;
-                Ok(vec![("module.js".to_string(), code)])
+                Ok(UnpackOutput {
+                    modules: vec![("module.js".to_string(), code)],
+                    warnings: Vec::new(),
+                })
             }
         },
         None => {
             let code = decompile(source, options)?;
-            Ok(vec![("module.js".to_string(), code)])
+            Ok(UnpackOutput {
+                modules: vec![("module.js".to_string(), code)],
+                warnings: Vec::new(),
+            })
         }
     }
 }
@@ -275,7 +334,10 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, St
 /// Some detectors still do minimal runtime normalization during extraction so
 /// their output can be parsed as standalone modules, but cross-module analysis
 /// and the normal rule pipeline are skipped.
-pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<Vec<(String, String)>> {
+///
+/// Like [`unpack_multi_module`], individual module parse failures fall back to
+/// raw code and are reported via `UnpackOutput::warnings`.
+pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutput> {
     let result = detect_bundle(source, &options.filename)?.or_else(|| {
         if options.heuristic_split {
             let r = scope_hoist::split_scope_hoisted(source)?;
@@ -289,16 +351,32 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<Vec<(Strin
         }
     });
     match result {
-        Some(result) => Ok(result
-            .modules
-            .into_iter()
-            .map(|module| {
-                let code = normalize_raw_unpacked_module(&module.code, &module.filename)
-                    .unwrap_or(module.code);
-                (module.filename, code)
-            })
-            .collect()),
-        None => Ok(vec![("module.js".to_string(), source.to_string())]),
+        Some(result) => {
+            let mut warnings = Vec::new();
+            let modules = result
+                .modules
+                .into_iter()
+                .map(|module| {
+                    let code = match normalize_raw_unpacked_module(&module.code, &module.filename) {
+                        Ok(normalized) => normalized,
+                        Err(e) => {
+                            warnings.push(UnpackWarning::new(
+                                module.filename.clone(),
+                                UnpackWarningKind::RawNormalizationFailed,
+                                format!("raw normalization failed, preserving unparsed code: {e}"),
+                            ));
+                            module.code
+                        }
+                    };
+                    (module.filename, code)
+                })
+                .collect();
+            Ok(UnpackOutput { modules, warnings })
+        }
+        None => Ok(UnpackOutput {
+            modules: vec![("module.js".to_string(), source.to_string())],
+            warnings: Vec::new(),
+        }),
     }
 }
 
@@ -347,11 +425,22 @@ fn normalize_raw_unpacked_module(source: &str, filename: &str) -> Result<String>
 /// This is necessary because SWC's SyntaxContext must remain continuous across the entire
 /// pipeline (re-parsing creates fresh contexts that break rename rules).
 ///
+/// # Best-effort semantics
+///
+/// Individual extracted modules that fail to parse are preserved as raw code
+/// rather than aborting the entire unpack. The extraction process can
+/// produce module bodies that are not valid standalone JS (e.g. incomplete
+/// slicing, runtime wrapper residue). Hard-failing on those would discard
+/// all other successfully extracted modules, which is worse for both
+/// interactive and automated users. Failures are reported via
+/// `UnpackOutput::warnings` so callers can surface them without silent
+/// swallowing.
+///
 /// When the `parallel` feature is enabled, both phases run via rayon `par_iter`.
 fn unpack_multi_module(
     modules: Vec<crate::unpacker::UnpackedModule>,
     options: DecompileOptions,
-) -> Result<Vec<(String, String)>> {
+) -> Result<UnpackOutput> {
     // Parse the sourcemap once before the loop.
     let parsed_sourcemap = options
         .sourcemap
@@ -361,20 +450,35 @@ fn unpack_multi_module(
 
     // Phase 1: collect facts. Run Stage 1+2 on each module and extract
     // import/export facts. The AST is discarded — only facts survive the barrier.
-    let collect_facts = |unpacked: &crate::unpacker::UnpackedModule| {
-        let facts = GLOBALS.set(&Default::default(), || {
-            let cm: Lrc<SourceMap> = Default::default();
-            let Ok(mut module) = parse_js(&unpacked.code, &unpacked.filename, cm) else {
-                return crate::facts::ModuleFacts::default();
-            };
-            let unresolved_mark = Mark::new();
-            let top_level_mark = Mark::new();
-            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-            apply_rules_until(&mut module, unresolved_mark, "UnEsm");
-            collect_module_facts(&module)
-        });
-        (unpacked.filename.clone(), facts)
-    };
+    let collect_facts =
+        |unpacked: &crate::unpacker::UnpackedModule| -> (
+            String,
+            crate::facts::ModuleFacts,
+            Option<UnpackWarning>,
+        ) {
+            let (facts, warning) = GLOBALS.set(&Default::default(), || {
+                let cm: Lrc<SourceMap> = Default::default();
+                let mut module = match parse_js(&unpacked.code, &unpacked.filename, cm) {
+                    Ok(module) => module,
+                    Err(e) => {
+                        return (
+                            crate::facts::ModuleFacts::default(),
+                            Some(UnpackWarning::new(
+                                unpacked.filename.clone(),
+                                UnpackWarningKind::FactCollectionParseFailed,
+                                format!("parse failed during fact collection, using empty facts: {e}"),
+                            )),
+                        );
+                    }
+                };
+                let unresolved_mark = Mark::new();
+                let top_level_mark = Mark::new();
+                module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+                apply_rules_until(&mut module, unresolved_mark, "UnEsm");
+                (collect_module_facts(&module), None)
+            });
+            (unpacked.filename.clone(), facts, warning)
+        };
 
     #[cfg(feature = "parallel")]
     let phase1: Vec<_> = modules.par_iter().map(collect_facts).collect();
@@ -382,8 +486,12 @@ fn unpack_multi_module(
     let phase1: Vec<_> = modules.iter().map(collect_facts).collect();
 
     let mut module_facts = ModuleFactsMap::new();
-    for (filename, facts) in phase1 {
+    let mut warnings = Vec::new();
+    for (filename, facts, warning) in phase1 {
         module_facts.insert(&filename, facts);
+        if let Some(w) = warning {
+            warnings.push(w);
+        }
     }
 
     // Phase 2: full pipeline with late pass. Each module runs the entire
@@ -392,9 +500,9 @@ fn unpack_multi_module(
     let facts_ref = &module_facts;
     let sm_ref = &parsed_sourcemap;
 
-    let decompile_module = |unpacked: crate::unpacker::UnpackedModule| {
-        let code = GLOBALS
-            .set(&Default::default(), || {
+    let decompile_module =
+        |unpacked: crate::unpacker::UnpackedModule| -> (String, String, Option<UnpackWarning>) {
+            match GLOBALS.set(&Default::default(), || {
                 let cm: Lrc<SourceMap> = Default::default();
                 let mut module = parse_js(&unpacked.code, &unpacked.filename, cm.clone())?;
                 let unresolved_mark = Mark::new();
@@ -427,17 +535,34 @@ fn unpack_multi_module(
 
                 module.visit_mut_with(&mut fixer(None));
                 print_js(&module, cm)
-            })
-            .unwrap_or(unpacked.code);
-        (unpacked.filename, code)
-    };
+            }) {
+                Ok(code) => (unpacked.filename, code, None),
+                Err(e) => (
+                    unpacked.filename.clone(),
+                    unpacked.code,
+                    Some(UnpackWarning::new(
+                        unpacked.filename,
+                        UnpackWarningKind::DecompileFailed,
+                        format!("decompile failed, preserving raw code: {e}"),
+                    )),
+                ),
+            }
+        };
 
     #[cfg(feature = "parallel")]
-    let pairs: Vec<(String, String)> = modules.into_par_iter().map(decompile_module).collect();
+    let triples: Vec<_> = modules.into_par_iter().map(decompile_module).collect();
     #[cfg(not(feature = "parallel"))]
-    let pairs: Vec<(String, String)> = modules.into_iter().map(decompile_module).collect();
+    let triples: Vec<_> = modules.into_iter().map(decompile_module).collect();
 
-    Ok(pairs)
+    let mut modules = Vec::with_capacity(triples.len());
+    for (filename, code, warning) in triples {
+        modules.push((filename, code));
+        if let Some(w) = warning {
+            warnings.push(w);
+        }
+    }
+
+    Ok(UnpackOutput { modules, warnings })
 }
 
 pub(crate) fn parse_js(source: &str, filename: &str, cm: Lrc<SourceMap>) -> Result<Module> {
@@ -531,7 +656,7 @@ mod tests {
 
     #[test]
     fn unpack_raw_preserves_unparseable_extracted_modules() {
-        let pairs = unpack_raw(
+        let result = unpack_raw(
             "const = ;",
             &DecompileOptions {
                 heuristic_split: false,
@@ -539,7 +664,7 @@ mod tests {
             },
         );
 
-        assert!(pairs.is_err(), "invalid top-level input should still fail");
+        assert!(result.is_err(), "invalid top-level input should still fail");
 
         let modules = vec![UnpackedModule {
             id: "1".to_string(),
@@ -547,11 +672,30 @@ mod tests {
             code: "const = ;".to_string(),
             filename: "module-1.js".to_string(),
         }];
-        let result = unpack_multi_module(modules, DecompileOptions::default())
+        let output = unpack_multi_module(modules, DecompileOptions::default())
             .expect("unparseable extracted modules should be preserved as raw code");
         assert_eq!(
-            result,
+            output.modules,
             vec![("module-1.js".to_string(), "const = ;".to_string())]
+        );
+        assert!(
+            !output.warnings.is_empty(),
+            "should warn about unparseable module"
+        );
+        let warning_kinds = output
+            .warnings
+            .iter()
+            .map(|warning| {
+                assert_eq!(warning.filename, "module-1.js");
+                warning.kind
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            warning_kinds,
+            vec![
+                UnpackWarningKind::FactCollectionParseFailed,
+                UnpackWarningKind::DecompileFailed
+            ]
         );
     }
 
@@ -574,7 +718,7 @@ mod tests {
 
     #[test]
     fn unpack_preserves_typescript_single_file_fallback() {
-        let pairs = unpack(
+        let output = unpack(
             "const value: number = 1;",
             DecompileOptions {
                 filename: "input.ts".to_string(),
@@ -583,12 +727,12 @@ mod tests {
         )
         .expect("valid TypeScript should fall back to single-file decompile");
 
-        assert_eq!(pairs.len(), 1);
-        assert_eq!(pairs[0].0, "module.js");
+        assert_eq!(output.modules.len(), 1);
+        assert_eq!(output.modules[0].0, "module.js");
         assert!(
-            pairs[0].1.contains("const value"),
+            output.modules[0].1.contains("const value"),
             "expected TypeScript input to decompile, got: {}",
-            pairs[0].1
+            output.modules[0].1
         );
     }
 }

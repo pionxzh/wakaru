@@ -1,5 +1,22 @@
 use wakaru_core::{unpack, DecompileOptions};
 
+fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: filename.to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    output.modules
+}
+
 #[test]
 fn webpack5_chunk_rewrites_numeric_require() {
     // When modules within the same chunk reference each other by numeric ID,
@@ -26,14 +43,7 @@ fn webpack5_chunk_rewrites_numeric_require() {
 ]);
 "#;
 
-    let pairs = unpack(
-        source,
-        DecompileOptions {
-            filename: "chunk.js".to_string(),
-            ..Default::default()
-        },
-    )
-    .expect("webpack5 chunk should unpack");
+    let pairs = expect_unpack(source, "chunk.js");
 
     let mod_200 = pairs
         .iter()
@@ -85,14 +95,7 @@ fn webpack5_chunk_unpacks_modules() {
 ]);
 "#;
 
-    let pairs = unpack(
-        source,
-        DecompileOptions {
-            filename: "chunk.js".to_string(),
-            ..Default::default()
-        },
-    )
-    .expect("webpack5 chunk unpack should succeed");
+    let pairs = expect_unpack(source, "chunk.js");
 
     assert_eq!(
         pairs.len(),
@@ -145,14 +148,7 @@ fn webpack5_chunk_with_string_keys() {
 ]);
 "#;
 
-    let pairs = unpack(
-        source,
-        DecompileOptions {
-            filename: "chunk.js".to_string(),
-            ..Default::default()
-        },
-    )
-    .expect("webpack5 chunk with string keys should unpack");
+    let pairs = expect_unpack(source, "chunk.js");
 
     assert_eq!(pairs.len(), 1);
     assert!(
@@ -182,14 +178,7 @@ fn webpack5_chunk_with_webpack4_style_require_d() {
 ]);
 "#;
 
-    let pairs = unpack(
-        source,
-        DecompileOptions {
-            filename: "chunk.js".to_string(),
-            ..Default::default()
-        },
-    )
-    .expect("webpack5 chunk with wp4 require.d should unpack");
+    let pairs = expect_unpack(source, "chunk.js");
 
     assert_eq!(pairs.len(), 1);
     assert!(
@@ -213,14 +202,7 @@ fn webpack5_chunk_with_window_base() {
 ]);
 "#;
 
-    let pairs = unpack(
-        source,
-        DecompileOptions {
-            filename: "chunk.js".to_string(),
-            ..Default::default()
-        },
-    )
-    .expect("webpack5 chunk with window base should unpack");
+    let pairs = expect_unpack(source, "chunk.js");
 
     assert_eq!(pairs.len(), 1);
 }

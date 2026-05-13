@@ -2,6 +2,34 @@ use wakaru_core::unpack;
 use wakaru_core::unpack_raw;
 use wakaru_core::DecompileOptions;
 
+fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: filename.to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    output.modules
+}
+
+fn expect_unpack_raw(source: &str) -> Vec<(String, String)> {
+    let output =
+        unpack_raw(source, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    output.modules
+}
+
 /// Minimal synthetic esbuild bundle: two lazy modules + entry code.
 fn make_bundle(helper: &str, helper_name: &str) -> String {
     format!(
@@ -31,14 +59,7 @@ console.log(mod_a_val);
 fn esbuild_detects_minified_lazy_helper() {
     // esbuild's minified __esm: (q, K) => () => (q && (K = q(q = 0)), K)
     let bundle = make_bundle("(q,K)=>()=>(q&&(K=q(q=0)),K)", "y");
-    let pairs = unpack(
-        &bundle,
-        DecompileOptions {
-            filename: "bundle.js".to_string(),
-            ..Default::default()
-        },
-    )
-    .expect("unpack should succeed");
+    let pairs = expect_unpack(&bundle, "bundle.js");
 
     // Should split into factory modules + entry
     assert!(
@@ -65,14 +86,7 @@ fn esbuild_detects_minified_cjs_helper() {
         "(q,K)=>()=>(K||q((K={exports:{}}).exports,K),K.exports)",
         "m",
     );
-    let pairs = unpack(
-        &bundle,
-        DecompileOptions {
-            filename: "bundle.js".to_string(),
-            ..Default::default()
-        },
-    )
-    .expect("unpack should succeed");
+    let pairs = expect_unpack(&bundle, "bundle.js");
 
     assert!(pairs.len() >= 6, "expected ≥6 modules, got {}", pairs.len());
     assert!(
@@ -84,14 +98,7 @@ fn esbuild_detects_minified_cjs_helper() {
 #[test]
 fn esbuild_factory_code_is_non_empty() {
     let bundle = make_bundle("(q,K)=>()=>(q&&(K=q(q=0)),K)", "y");
-    let pairs = unpack(
-        &bundle,
-        DecompileOptions {
-            filename: "bundle.js".to_string(),
-            ..Default::default()
-        },
-    )
-    .expect("unpack should succeed");
+    let pairs = expect_unpack(&bundle, "bundle.js");
 
     for (name, code) in &pairs {
         assert!(!code.trim().is_empty(), "module {name} has empty code");
@@ -125,8 +132,7 @@ console.log(greet(), add(1, 2));
 export { ns_a, ns_b };
 "#;
     // Use raw unpack first to verify extraction without pipeline interference
-    let raw_pairs =
-        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    let raw_pairs = expect_unpack_raw(bundle);
     let raw_names: Vec<&str> = raw_pairs.iter().map(|(n, _)| n.as_str()).collect();
 
     // 5 factory modules + 2 scope-hoisted modules + entry.js
@@ -194,8 +200,7 @@ var value = 42;
 console.log("entry", value);
 export { ns_a, ns_b };
 "#;
-    let raw_pairs =
-        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    let raw_pairs = expect_unpack_raw(bundle);
 
     // The entry `console.log("entry", value)` references `value` from ns_b.
     // In minified output there is no structural marker to distinguish it
@@ -221,8 +226,7 @@ function read(obj) { return obj.value; }
 var value = "entry";
 export { ns_a, value };
 "#;
-    let raw_pairs =
-        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    let raw_pairs = expect_unpack_raw(bundle);
 
     let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
     assert!(
@@ -245,8 +249,7 @@ export var value = read();
 function read() { return "module"; }
 export { ns_a };
 "#;
-    let raw_pairs =
-        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    let raw_pairs = expect_unpack_raw(bundle);
 
     let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
     assert!(
@@ -275,8 +278,7 @@ function read() {
 function helper() { return "entry"; }
 export { ns_a, helper };
 "#;
-    let raw_pairs =
-        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    let raw_pairs = expect_unpack_raw(bundle);
 
     let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
     assert!(
@@ -302,8 +304,7 @@ function read() { return "module"; }
 })();
 export { ns_a };
 "#;
-    let raw_pairs =
-        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    let raw_pairs = expect_unpack_raw(bundle);
 
     let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
     assert!(
@@ -326,8 +327,7 @@ var source = { value: "module" };
 export var { value } = source;
 export { ns_a };
 "#;
-    let raw_pairs =
-        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    let raw_pairs = expect_unpack_raw(bundle);
 
     let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
     assert!(
@@ -358,8 +358,7 @@ __export(a, { y: () => y2 });
 var y2 = 2;
 console.log(x, y2);
 "#;
-    let raw_pairs =
-        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    let raw_pairs = expect_unpack_raw(bundle);
     let raw_names: Vec<&str> = raw_pairs.iter().map(|(n, _)| n.as_str()).collect();
 
     assert!(
@@ -381,14 +380,7 @@ var a = y(() => { x = 1; });
 var b = y(() => { z = 2; });
 a(); b();
 "#;
-    let pairs = unpack(
-        bundle,
-        DecompileOptions {
-            filename: "bundle.js".to_string(),
-            ..Default::default()
-        },
-    )
-    .expect("unpack should succeed");
+    let pairs = expect_unpack(bundle, "bundle.js");
 
     // Falls through to single-module path
     assert_eq!(
@@ -414,14 +406,7 @@ helper(api, { greet: () => greet });
 function greet() { return "hello"; }
 console.log(api.greet());
 "#;
-    let pairs = unpack(
-        code,
-        DecompileOptions {
-            filename: "app.js".to_string(),
-            ..Default::default()
-        },
-    )
-    .expect("unpack should succeed");
+    let pairs = expect_unpack(code, "app.js");
 
     assert_eq!(
         pairs.len(),

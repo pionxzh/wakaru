@@ -16,8 +16,15 @@ fn raw_module(source: &str, filename: &str) -> String {
 }
 
 fn cli_raw_module(source: &str, filename: &str) -> String {
-    unpack_raw(source, &DecompileOptions::default())
-        .expect("raw unpack should succeed")
+    let output =
+        unpack_raw(source, &DecompileOptions::default()).expect("raw unpack should succeed");
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    output
+        .modules
         .into_iter()
         .find(|(name, _)| name == filename)
         .map(|(_, code)| normalize(&code))

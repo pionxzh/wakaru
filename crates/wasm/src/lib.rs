@@ -12,6 +12,19 @@ struct WakaruModule {
     code: String,
 }
 
+#[derive(Serialize)]
+struct WakaruUnpackResult {
+    modules: Vec<WakaruModule>,
+    warnings: Vec<WakaruWarning>,
+}
+
+#[derive(Serialize)]
+struct WakaruWarning {
+    filename: String,
+    kind: &'static str,
+    message: String,
+}
+
 #[wasm_bindgen(js_name = "decompile")]
 pub fn decompile(
     source: &str,
@@ -41,13 +54,25 @@ pub fn unpack(
         heuristic_split: heuristic_split.unwrap_or(true),
         ..Default::default()
     };
-    let pairs =
+    let output =
         wakaru_core::unpack(source, options).map_err(|e| JsValue::from_str(&e.to_string()))?;
-    let modules: Vec<WakaruModule> = pairs
-        .into_iter()
-        .map(|(filename, code)| WakaruModule { filename, code })
-        .collect();
-    serde_wasm_bindgen::to_value(&modules).map_err(|e| JsValue::from_str(&e.to_string()))
+    let result = WakaruUnpackResult {
+        modules: output
+            .modules
+            .into_iter()
+            .map(|(filename, code)| WakaruModule { filename, code })
+            .collect(),
+        warnings: output
+            .warnings
+            .into_iter()
+            .map(|warning| WakaruWarning {
+                filename: warning.filename,
+                kind: warning.kind.as_str(),
+                message: warning.message,
+            })
+            .collect(),
+    };
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 #[wasm_bindgen(js_name = "ruleNames")]
@@ -77,11 +102,27 @@ export function decompile(
     sourcemap?: Uint8Array,
 ): string;
 
+export interface WakaruUnpackResult {
+    modules: WakaruModule[];
+    warnings: WakaruWarning[];
+}
+
+export type WakaruWarningKind =
+    | "raw_normalization_failed"
+    | "fact_collection_parse_failed"
+    | "decompile_failed";
+
+export interface WakaruWarning {
+    filename: string;
+    kind: WakaruWarningKind;
+    message: string;
+}
+
 export function unpack(
     source: string,
     level?: "minimal" | "standard" | "aggressive",
     heuristicSplit?: boolean,
-): WakaruModule[];
+): WakaruUnpackResult;
 
 export function ruleNames(): string[];
 "#;

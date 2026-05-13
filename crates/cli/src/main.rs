@@ -187,11 +187,17 @@ fn run_default(cli: Cli) -> Result<()> {
         let out_dir = cli.output.expect("checked above");
         ensure_output_dir(&out_dir, cli.force)?;
 
-        let pairs = if cli.raw {
+        let output = if cli.raw {
             unpack_raw(&input, &options)?
         } else {
             unpack(&input, options)?
         };
+
+        for warning in &output.warnings {
+            eprintln!("warning: {warning}");
+        }
+
+        let pairs = output.modules;
 
         // Resolve output paths (serial — deduplication needs mutable seen set).
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -220,10 +226,9 @@ fn run_default(cli: Cli) -> Result<()> {
             fs::write(path, code).with_context(|| format!("failed to write {}", path.display()))
         })?;
 
-        for (path, _) in &resolved {
-            eprintln!("wrote {}", path.display());
+        if io::stderr().is_terminal() {
+            eprintln!("total: {} module(s)", resolved.len());
         }
-        eprintln!("total: {} module(s)", resolved.len());
     } else {
         let output = decompile(&input, options)?;
 
@@ -260,10 +265,12 @@ fn run_extract(args: ExtractArgs, force: bool) -> Result<()> {
         written += 1;
     }
 
-    eprintln!(
-        "extracted {written} source file(s) to {}",
-        args.output.display()
-    );
+    if io::stderr().is_terminal() {
+        eprintln!(
+            "extracted {written} source file(s) to {}",
+            args.output.display()
+        );
+    }
     Ok(())
 }
 

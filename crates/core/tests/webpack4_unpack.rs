@@ -8,7 +8,7 @@ fn webpack4_unpack_extracts_modules() {
     let source = fs::read_to_string(source_path)
         .expect("failed to read webpack4 testcase — make sure the testcases are present");
 
-    let pairs = unpack(
+    let output = unpack(
         &source,
         DecompileOptions {
             filename: source_path.to_string(),
@@ -16,6 +16,12 @@ fn webpack4_unpack_extracts_modules() {
         },
     )
     .expect("unpack should succeed");
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let pairs = output.modules;
 
     // Must extract at least 50 modules
     assert!(
@@ -44,8 +50,14 @@ fn webpack4_raw_unpack_extracts_modules_without_pipeline() {
     let source = fs::read_to_string(source_path)
         .expect("failed to read webpack4 testcase — make sure the testcases are present");
 
-    let pairs =
+    let output =
         unpack_raw(&source, &DecompileOptions::default()).expect("raw unpack should succeed");
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let pairs = output.modules;
 
     assert!(
         pairs.len() >= 50,
@@ -62,7 +74,7 @@ fn webpack4_raw_unpack_extracts_modules_without_pipeline() {
         "raw unpack should not produce empty modules"
     );
 
-    let decompiled_pairs = unpack(
+    let decompiled_output = unpack(
         &source,
         DecompileOptions {
             filename: source_path.to_string(),
@@ -70,6 +82,12 @@ fn webpack4_raw_unpack_extracts_modules_without_pipeline() {
         },
     )
     .expect("decompiled unpack should succeed");
+    assert!(
+        decompiled_output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        decompiled_output.warnings
+    );
+    let decompiled_pairs = decompiled_output.modules;
 
     assert!(
         pairs
@@ -91,7 +109,7 @@ fn webpack4_unpack_snapshots() {
     let source = fs::read_to_string(source_path)
         .expect("failed to read webpack4 testcase — make sure the testcases are present");
 
-    let mut pairs = unpack(
+    let output = unpack(
         &source,
         DecompileOptions {
             filename: source_path.to_string(),
@@ -100,6 +118,12 @@ fn webpack4_unpack_snapshots() {
         },
     )
     .expect("unpack should succeed");
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let mut pairs = output.modules;
 
     // Sort for stable snapshot order
     pairs.sort_by(|(a, _), (b, _)| a.cmp(b));

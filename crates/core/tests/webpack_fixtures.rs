@@ -9,14 +9,20 @@ fn fixture(path: &str) -> String {
 
 fn unpack_fixture(path: &str) -> Vec<(String, String)> {
     let source = fixture(path);
-    unpack(
+    let output = unpack(
         &source,
         DecompileOptions {
             filename: path.to_string(),
             ..Default::default()
         },
     )
-    .unwrap_or_else(|_| panic!("unpack should succeed for {path}"))
+    .unwrap_or_else(|_| panic!("unpack should succeed for {path}"));
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings for {path}: {:?}",
+        output.warnings
+    );
+    output.modules
 }
 
 fn filenames(pairs: &[(String, String)]) -> Vec<&str> {
@@ -144,7 +150,7 @@ fn wp4_dynamic_main_bundle() {
 #[test]
 fn wp4_dynamic_chunk() {
     let source = fixture("wp4-dynamic/0.bundle.js");
-    let pairs = unpack(
+    let output = unpack(
         &source,
         DecompileOptions {
             filename: "0.bundle.js".to_string(),
@@ -152,6 +158,12 @@ fn wp4_dynamic_chunk() {
         },
     )
     .expect("wp4 JSONP chunk should unpack");
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let pairs = output.modules;
     assert_eq!(
         pairs.len(),
         1,
@@ -163,7 +175,7 @@ fn wp4_dynamic_chunk() {
 #[test]
 fn wp4_dynamic_min_chunk() {
     let source = fixture("wp4-dynamic-min/1.bundle.js");
-    let pairs = unpack(
+    let output = unpack(
         &source,
         DecompileOptions {
             filename: "1.bundle.js".to_string(),
@@ -171,6 +183,12 @@ fn wp4_dynamic_min_chunk() {
         },
     )
     .expect("wp4 minified JSONP chunk should unpack");
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let pairs = output.modules;
     assert_eq!(
         pairs.len(),
         1,
@@ -394,7 +412,7 @@ fn wp5_numeric_require_rewritten() {
   __webpack_require__(20);
 })();
 "#;
-    let pairs = unpack(
+    let output = unpack(
         source,
         DecompileOptions {
             filename: "bundle.js".to_string(),
@@ -402,6 +420,12 @@ fn wp5_numeric_require_rewritten() {
         },
     )
     .expect("wp5 numeric bundle should unpack");
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let pairs = output.modules;
 
     let mod_20 = pairs
         .iter()

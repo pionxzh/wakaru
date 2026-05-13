@@ -9,20 +9,32 @@ fn fixture(path: &str) -> String {
 
 fn unpack_fixture(path: &str) -> Vec<(String, String)> {
     let source = fixture(path);
-    unpack(
+    let output = unpack(
         &source,
         DecompileOptions {
             filename: path.to_string(),
             ..Default::default()
         },
     )
-    .unwrap_or_else(|_| panic!("unpack should succeed for {path}"))
+    .unwrap_or_else(|_| panic!("unpack should succeed for {path}"));
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings for {path}: {:?}",
+        output.warnings
+    );
+    output.modules
 }
 
 fn unpack_fixture_raw(path: &str) -> Vec<(String, String)> {
     let source = fixture(path);
-    unpack_raw(&source, &DecompileOptions::default())
-        .unwrap_or_else(|_| panic!("unpack_raw should succeed for {path}"))
+    let output = unpack_raw(&source, &DecompileOptions::default())
+        .unwrap_or_else(|_| panic!("unpack_raw should succeed for {path}"));
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings for {path}: {:?}",
+        output.warnings
+    );
+    output.modules
 }
 
 fn filenames(pairs: &[(String, String)]) -> Vec<&str> {

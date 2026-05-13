@@ -58,7 +58,7 @@ fn webpack4_module_24_renames_classes() {
         return;
     };
 
-    let pairs = unpack(
+    let output = unpack(
         &source,
         DecompileOptions {
             filename: source_path.to_string(),
@@ -66,6 +66,12 @@ fn webpack4_module_24_renames_classes() {
         },
     )
     .expect("unpack should succeed");
+    assert!(
+        output.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let pairs = output.modules;
 
     let (_, code) = pairs
         .iter()
