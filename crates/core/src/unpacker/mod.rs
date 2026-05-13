@@ -66,11 +66,7 @@ pub(crate) fn parse_es_module(
         .collect();
 
     match (parsed, parser_errors.is_empty()) {
-        (Ok(module), true) => Ok(module),
-        (Ok(_), false) => Err(anyhow::anyhow!(
-            "failed to parse {filename}: {}",
-            parser_errors.join("; ")
-        )),
+        (Ok(module), _) => Ok(module),
         (Err(error), true) => Err(anyhow::anyhow!("failed to parse {filename}: {error:?}")),
         (Err(error), false) => Err(anyhow::anyhow!(
             "failed to parse {filename}: {error:?}; {}",

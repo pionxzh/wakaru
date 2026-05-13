@@ -141,6 +141,22 @@ fn rule_names_contains_key_rules() {
 }
 
 #[test]
+fn rule_names_matches_trace_execution_order() {
+    let events = trace_pipeline(
+        "const x = 1;",
+        RuleTraceOptions {
+            only_changed: false,
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(
+        events.iter().map(|event| event.rule).collect::<Vec<_>>(),
+        wakaru_core::rule_names()
+    );
+}
+
+#[test]
 fn trace_reports_changed_rules_only_by_default() {
     let events = trace_pipeline(
         "const x = void 0;",

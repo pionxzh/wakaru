@@ -78,10 +78,7 @@ fn transform_module_items(items: &mut Vec<ModuleItem>) {
                     continue;
                 }
             }
-            debug_assert!(
-                false,
-                "class candidate did not point to a function declaration"
-            );
+            debug_assert_candidate_points_to_function_decl(&item);
             items.push(item);
         } else {
             items.push(item);
@@ -112,16 +109,27 @@ fn transform_stmts(stmts: &mut Vec<Stmt>) {
             if let Some(class_decl) = build_class_decl(candidate, &stmt) {
                 stmts.push(Stmt::Decl(Decl::Class(class_decl)));
             } else {
-                debug_assert!(
-                    false,
-                    "class candidate did not point to a function declaration"
-                );
+                debug_assert_stmt_is_function_decl(&stmt);
                 stmts.push(stmt);
             }
         } else {
             stmts.push(stmt);
         }
     }
+}
+
+fn debug_assert_candidate_points_to_function_decl(item: &ModuleItem) {
+    debug_assert!(
+        matches!(item, ModuleItem::Stmt(Stmt::Decl(Decl::Fn(_)))),
+        "class candidate did not point to a function declaration"
+    );
+}
+
+fn debug_assert_stmt_is_function_decl(stmt: &Stmt) {
+    debug_assert!(
+        matches!(stmt, Stmt::Decl(Decl::Fn(_))),
+        "class candidate did not point to a function declaration"
+    );
 }
 
 /// Find all class candidates in a list of statements.
