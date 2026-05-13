@@ -10,10 +10,10 @@ and confirmed dependency chains.
 
 ```bash
 # Trace all rules on a single file (shows diffs for each rule that changes output)
-cargo run -- debug trace path/to/module.js
+cargo run -p wakaru-cli -- debug trace path/to/module.js
 
 # Trace a specific range of rules
-cargo run -- debug trace path/to/module.js --from RemoveVoid --until UnEsm
+cargo run -p wakaru-cli -- debug trace path/to/module.js --from RemoveVoid --until UnEsm
 
 # Run all tests
 cargo test
@@ -40,17 +40,17 @@ rendered code. Rules that ran but left the output unchanged (with `--all`)
 show up as a single `=== RuleName (unchanged) ===` header.
 
 ```bash
-cargo run -- debug trace path/to/module.js
+cargo run -p wakaru-cli -- debug trace path/to/module.js
 ```
 
 Useful options:
 
 ```bash
 # Include rules that ran but did not change rendered output
-cargo run -- debug trace path/to/module.js --all
+cargo run -p wakaru-cli -- debug trace path/to/module.js --all
 
 # Trace only a range of rules
-cargo run -- debug trace path/to/module.js --from RemoveVoid --until UnEsm
+cargo run -p wakaru-cli -- debug trace path/to/module.js --from RemoveVoid --until UnEsm
 ```
 
 Rule names are the names returned by `rule_names()`, for example

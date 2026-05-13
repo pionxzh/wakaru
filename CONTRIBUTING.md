@@ -166,7 +166,7 @@ For the full testing guide (snapshot workflows, test organization, all available
 When a rule is not working as expected, start with the rule trace CLI:
 
 ```bash
-cargo run -- debug trace path/to/input.js
+cargo run -p wakaru-cli -- debug trace path/to/input.js
 ```
 
 This prints a git-style diff for each rule that changes the output, making it easy to see where transformations happen (or fail to happen).
@@ -175,10 +175,10 @@ Useful options:
 
 ```bash
 # Show all rules, including ones that did not change output
-cargo run -- debug trace path/to/input.js --all
+cargo run -p wakaru-cli -- debug trace path/to/input.js --all
 
 # Trace only a range of rules
-cargo run -- debug trace path/to/input.js --from RemoveVoid --until UnEsm
+cargo run -p wakaru-cli -- debug trace path/to/input.js --from RemoveVoid --until UnEsm
 ```
 
 Common symptoms and what to check:
@@ -208,7 +208,7 @@ Order matters because rules depend on earlier ones having run. For example:
 When placing a new rule, consider:
 - What AST shape does your rule expect? Place it after the rule that produces that shape.
 - Will your rule's output be consumed by a later rule? Make sure it runs first.
-- Use `cargo run -- debug trace` on real-world samples to verify your rule fires at the right point.
+- Use `cargo run -p wakaru-cli -- debug trace` on real-world samples to verify your rule fires at the right point.
 - Run the full test suite and review any snapshot changes to catch ordering issues.
 
 For the full list of rule dependencies, see [docs/rule-dependency-inventory.md](docs/rule-dependency-inventory.md).
