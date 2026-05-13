@@ -293,10 +293,11 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<Vec<(Strin
             .modules
             .into_iter()
             .map(|module| {
-                let code = normalize_raw_unpacked_module(&module.code, &module.filename)?;
-                Ok((module.filename, code))
+                let code = normalize_raw_unpacked_module(&module.code, &module.filename)
+                    .unwrap_or(module.code);
+                (module.filename, code)
             })
-            .collect::<Result<Vec<_>>>()?),
+            .collect()),
         None => Ok(vec![("module.js".to_string(), source.to_string())]),
     }
 }
@@ -360,26 +361,28 @@ fn unpack_multi_module(
 
     // Phase 1: collect facts. Run Stage 1+2 on each module and extract
     // import/export facts. The AST is discarded — only facts survive the barrier.
-    let collect_facts = |unpacked: &crate::unpacker::UnpackedModule| -> Result<_> {
-        let facts: Result<crate::facts::ModuleFacts> = GLOBALS.set(&Default::default(), || {
+    let collect_facts = |unpacked: &crate::unpacker::UnpackedModule| {
+        let facts = GLOBALS.set(&Default::default(), || {
             let cm: Lrc<SourceMap> = Default::default();
-            let mut module = parse_js(&unpacked.code, &unpacked.filename, cm)?;
+            let Ok(mut module) = parse_js(&unpacked.code, &unpacked.filename, cm) else {
+                return crate::facts::ModuleFacts::default();
+            };
             let unresolved_mark = Mark::new();
             let top_level_mark = Mark::new();
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
             apply_rules_until(&mut module, unresolved_mark, "UnEsm");
-            Ok(collect_module_facts(&module))
+            collect_module_facts(&module)
         });
-        Ok((unpacked.filename.clone(), facts?))
+        (unpacked.filename.clone(), facts)
     };
 
     #[cfg(feature = "parallel")]
-    let phase1: Result<Vec<_>> = modules.par_iter().map(collect_facts).collect();
+    let phase1: Vec<_> = modules.par_iter().map(collect_facts).collect();
     #[cfg(not(feature = "parallel"))]
-    let phase1: Result<Vec<_>> = modules.iter().map(collect_facts).collect();
+    let phase1: Vec<_> = modules.iter().map(collect_facts).collect();
 
     let mut module_facts = ModuleFactsMap::new();
-    for (filename, facts) in phase1? {
+    for (filename, facts) in phase1 {
         module_facts.insert(&filename, facts);
     }
 
@@ -389,52 +392,52 @@ fn unpack_multi_module(
     let facts_ref = &module_facts;
     let sm_ref = &parsed_sourcemap;
 
-    let decompile_module = |unpacked: crate::unpacker::UnpackedModule| -> Result<_> {
-        let filename = unpacked.filename;
-        let code = GLOBALS.set(&Default::default(), || {
-            let cm: Lrc<SourceMap> = Default::default();
-            let mut module = parse_js(&unpacked.code, &filename, cm.clone())?;
-            let unresolved_mark = Mark::new();
-            let top_level_mark = Mark::new();
-            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+    let decompile_module = |unpacked: crate::unpacker::UnpackedModule| {
+        let code = GLOBALS
+            .set(&Default::default(), || {
+                let cm: Lrc<SourceMap> = Default::default();
+                let mut module = parse_js(&unpacked.code, &unpacked.filename, cm.clone())?;
+                let unresolved_mark = Mark::new();
+                let top_level_mark = Mark::new();
+                module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-            // Stage 1+2
-            apply_rules_until(&mut module, unresolved_mark, "UnEsm");
+                // Stage 1+2
+                apply_rules_until(&mut module, unresolved_mark, "UnEsm");
 
-            // Late pass at the barrier
-            run_reexport_consolidation(&mut module, facts_ref);
-            run_namespace_decomposition(&mut module, facts_ref);
+                // Late pass at the barrier
+                run_reexport_consolidation(&mut module, facts_ref);
+                run_namespace_decomposition(&mut module, facts_ref);
 
-            // Stage 3+
-            apply_rules_between_with_level(
-                &mut module,
-                unresolved_mark,
-                "UnTemplateLiteral",
-                "UnReturn",
-                options.dead_code_elimination,
-                options.level,
-            );
+                // Stage 3+
+                apply_rules_between_with_level(
+                    &mut module,
+                    unresolved_mark,
+                    "UnTemplateLiteral",
+                    "UnReturn",
+                    options.dead_code_elimination,
+                    options.level,
+                );
 
-            // Source-map-enhanced passes
-            if let Some(sm) = sm_ref {
-                module.visit_mut_with(&mut ImportDedup);
-                apply_sourcemap_renames(&mut module, sm, &cm, unresolved_mark);
-                module.visit_mut_with(&mut UnImportRename);
-            }
+                // Source-map-enhanced passes
+                if let Some(sm) = sm_ref {
+                    module.visit_mut_with(&mut ImportDedup);
+                    apply_sourcemap_renames(&mut module, sm, &cm, unresolved_mark);
+                    module.visit_mut_with(&mut UnImportRename);
+                }
 
-            module.visit_mut_with(&mut fixer(None));
-            print_js(&module, cm)
-        })?;
-        Ok((filename, code))
+                module.visit_mut_with(&mut fixer(None));
+                print_js(&module, cm)
+            })
+            .unwrap_or(unpacked.code);
+        (unpacked.filename, code)
     };
 
     #[cfg(feature = "parallel")]
-    let pairs: Result<Vec<(String, String)>> =
-        modules.into_par_iter().map(decompile_module).collect();
+    let pairs: Vec<(String, String)> = modules.into_par_iter().map(decompile_module).collect();
     #[cfg(not(feature = "parallel"))]
-    let pairs: Result<Vec<(String, String)>> = modules.into_iter().map(decompile_module).collect();
+    let pairs: Vec<(String, String)> = modules.into_iter().map(decompile_module).collect();
 
-    pairs
+    Ok(pairs)
 }
 
 pub(crate) fn parse_js(source: &str, filename: &str, cm: Lrc<SourceMap>) -> Result<Module> {
@@ -527,31 +530,28 @@ mod tests {
     }
 
     #[test]
-    fn normalize_raw_unpacked_module_propagates_parse_errors() {
-        let err = normalize_raw_unpacked_module("const = ;", "module-1.js")
-            .expect_err("raw normalization should fail on invalid module code");
-
-        assert!(
-            err.to_string().contains("module-1.js"),
-            "error should include module filename: {err}"
+    fn unpack_raw_preserves_unparseable_extracted_modules() {
+        let pairs = unpack_raw(
+            "const = ;",
+            &DecompileOptions {
+                heuristic_split: false,
+                ..Default::default()
+            },
         );
-    }
 
-    #[test]
-    fn unpack_multi_module_propagates_module_parse_errors() {
+        assert!(pairs.is_err(), "invalid top-level input should still fail");
+
         let modules = vec![UnpackedModule {
             id: "1".to_string(),
             is_entry: false,
             code: "const = ;".to_string(),
             filename: "module-1.js".to_string(),
         }];
-
-        let err = unpack_multi_module(modules, DecompileOptions::default())
-            .expect_err("invalid unpacked module should fail");
-
-        assert!(
-            err.to_string().contains("module-1.js"),
-            "error should include module filename: {err}"
+        let result = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("unparseable extracted modules should be preserved as raw code");
+        assert_eq!(
+            result,
+            vec![("module-1.js".to_string(), "const = ;".to_string())]
         );
     }
 
