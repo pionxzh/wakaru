@@ -8,6 +8,7 @@ const PLATFORMS = {
     arm64: "@wakaru/cli-darwin-arm64/wakaru",
   },
   linux: {
+    arm64: "@wakaru/cli-linux-arm64/wakaru",
     x64: "@wakaru/cli-linux-x64/wakaru",
   },
   win32: {
@@ -20,7 +21,7 @@ const binPath = PLATFORMS?.[platform]?.[arch];
 if (!binPath) {
   console.error(
     `Unsupported platform: ${platform}-${arch}. ` +
-      `Supported: darwin-arm64, linux-x64, win32-x64.`
+      `Supported: darwin-arm64, linux-arm64, linux-x64, win32-x64.`
   );
   process.exit(1);
 }

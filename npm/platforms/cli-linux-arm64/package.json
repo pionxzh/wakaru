@@ -1,0 +1,20 @@
+{
+  "name": "@wakaru/cli-linux-arm64",
+  "version": "1.0.0",
+  "description": "Wakaru CLI binary for Linux ARM64",
+  "author": "Pionxzh",
+  "license": "Apache-2.0",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "bin": {
+    "wakaru": "./wakaru"
+  },
+  "files": ["wakaru"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pionxzh/wakaru.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
