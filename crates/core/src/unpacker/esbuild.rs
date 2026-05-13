@@ -1,14 +1,17 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, SourceMap, GLOBALS};
+use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprStmt, ForInStmt, Module,
-    ModuleItem, ObjectLit, Pat, Stmt, Str, VarDeclarator,
+    ArrowExpr, BindingIdent, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, Decl, Expr, ExprStmt,
+    FnDecl, ForInStmt, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, PropName, Stmt, Str,
+    VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
+use swc_core::ecma::transforms::base::resolver;
+use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
-use crate::unpacker::{UnpackResult, UnpackedModule};
+use crate::unpacker::{module_item_declared_binding_ids, BindingId, UnpackResult, UnpackedModule};
 
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
@@ -19,6 +22,9 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
 }
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+    let mut analysis_module = module.clone();
+    analysis_module.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
+
     // Phase 1: find the lazy-helper variables (esbuild's __commonJS / __esm equivalents).
     let helper_syms = collect_helper_syms(module);
 
@@ -37,12 +43,17 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     // needs corroboration: the namespace must appear in an ESM export
     // declaration (e.g. `export { math_exports as math }`), which is
     // always true for esbuild but not for coincidental helper code.
-    let has_scope_hoisted = detect_export_helper(&module.body)
-        .map(|helper| {
-            let boundaries = collect_scope_hoisted_boundaries(&module.body, &helper);
+    let has_scope_hoisted = detect_export_helper(&analysis_module.body)
+        .map(|(_, helper)| {
+            let refs = build_item_binding_infos(&analysis_module.body);
+            let boundaries = collect_scope_hoisted_boundaries(&analysis_module.body, &helper);
             match boundaries.len() {
                 0 => false,
-                1 => namespace_is_module_exported(&module.body, &boundaries[0].ns_atom),
+                1 => namespace_is_module_exported(
+                    &analysis_module.body,
+                    &refs,
+                    &boundaries[0].ns_binding,
+                ),
                 _ => true,
             }
         })
@@ -74,10 +85,16 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         .filter(|item| !is_helper_or_factory_item(item, &helper_syms, &factory_syms))
         .cloned()
         .collect();
+    let analysis_entry_items: Vec<ModuleItem> = analysis_module
+        .body
+        .iter()
+        .filter(|item| !is_helper_or_factory_item(item, &helper_syms, &factory_syms))
+        .cloned()
+        .collect();
 
     // Phase 5: split scope-hoisted modules out of the entry items.
     let (scope_hoisted_modules, remaining_entry) =
-        extract_scope_hoisted_modules(&entry_items, cm.clone());
+        extract_scope_hoisted_modules(&analysis_entry_items, &entry_items, cm.clone());
     modules.extend(scope_hoisted_modules);
 
     if !remaining_entry.is_empty() {
@@ -358,18 +375,22 @@ fn is_helper_or_factory_item(
 /// Extract scope-hoisted modules from entry items.
 /// Returns (extracted_modules, remaining_entry_items).
 fn extract_scope_hoisted_modules(
-    items: &[ModuleItem],
+    analysis_items: &[ModuleItem],
+    source_items: &[ModuleItem],
     cm: Lrc<SourceMap>,
 ) -> (Vec<UnpackedModule>, Vec<ModuleItem>) {
+    debug_assert_eq!(analysis_items.len(), source_items.len());
+
     // Step 1: find the __export helper binding.
-    let Some(export_helper) = detect_export_helper(items) else {
-        return (vec![], items.to_vec());
+    let Some((export_helper_index, export_helper)) = detect_export_helper(analysis_items) else {
+        return (vec![], source_items.to_vec());
     };
+    let item_infos = build_item_binding_infos(analysis_items);
 
     // Step 2: find all (namespace_decl_index, export_call_index, ns_atom) triples.
-    let boundaries = collect_scope_hoisted_boundaries(items, &export_helper);
+    let boundaries = collect_scope_hoisted_boundaries(analysis_items, &export_helper);
     if boundaries.is_empty() {
-        return (vec![], items.to_vec());
+        return (vec![], source_items.to_vec());
     }
 
     // Step 3: partition items into per-module groups.
@@ -382,9 +403,7 @@ fn extract_scope_hoisted_modules(
 
     // Also mark the __export helper declaration as consumed so it doesn't
     // appear in every extracted module or the remaining entry.
-    if let Some(idx) = find_export_helper_index(items, &export_helper) {
-        consumed.insert(idx);
-    }
+    consumed.insert(export_helper_index);
 
     for (bi, boundary) in boundaries.iter().enumerate() {
         // Module range: from the namespace decl to just before the next namespace decl.
@@ -393,7 +412,8 @@ fn extract_scope_hoisted_modules(
             boundaries[bi + 1].ns_decl_index
         } else {
             find_last_module_end(
-                items,
+                analysis_items,
+                &item_infos,
                 boundary.export_call_index + 1,
                 &boundary.exported_bindings,
             )
@@ -401,7 +421,7 @@ fn extract_scope_hoisted_modules(
 
         // Collect items for this module (skip the ns decl and __export call themselves).
         let mut body_items: Vec<ModuleItem> = Vec::new();
-        for (i, item) in items.iter().enumerate().take(end).skip(start) {
+        for (i, item) in source_items.iter().enumerate().take(end).skip(start) {
             if i == boundary.ns_decl_index || i == boundary.export_call_index {
                 consumed.insert(i);
                 continue;
@@ -434,7 +454,7 @@ fn extract_scope_hoisted_modules(
     }
 
     // Remaining: items not consumed by any module.
-    let remaining: Vec<ModuleItem> = items
+    let remaining: Vec<ModuleItem> = source_items
         .iter()
         .enumerate()
         .filter(|(i, _)| !consumed.contains(i))
@@ -446,15 +466,16 @@ fn extract_scope_hoisted_modules(
 
 struct ScopeHoistedBoundary {
     ns_atom: Atom,
+    ns_binding: BindingId,
     ns_decl_index: usize,
     export_call_index: usize,
-    exported_bindings: HashSet<Atom>,
+    exported_bindings: HashSet<BindingId>,
 }
 
 /// Detect the `__export` helper: an arrow with 2 params whose body is a
 /// single for-in loop (iterating over the second param).
-fn detect_export_helper(items: &[ModuleItem]) -> Option<Atom> {
-    for item in items {
+fn detect_export_helper(items: &[ModuleItem]) -> Option<(usize, BindingId)> {
+    for (index, item) in items.iter().enumerate() {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
             continue;
         };
@@ -462,7 +483,7 @@ fn detect_export_helper(items: &[ModuleItem]) -> Option<Atom> {
             let Pat::Ident(bi) = &decl.name else { continue };
             let Some(init) = &decl.init else { continue };
             if is_export_helper(init) {
-                return Some(bi.id.sym.clone());
+                return Some((index, (bi.id.sym.clone(), bi.id.ctxt)));
             }
         }
     }
@@ -492,44 +513,30 @@ fn same_param_ident(pat: &Pat, sym: &Atom) -> bool {
     matches!(pat, Pat::Ident(bi) if bi.id.sym == *sym)
 }
 
-/// Find the item index of the __export helper declaration.
-fn find_export_helper_index(items: &[ModuleItem], helper_sym: &Atom) -> Option<usize> {
-    items.iter().position(|item| {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
-            return false;
-        };
-        var.decls.iter().any(|d| {
-            let Pat::Ident(bi) = &d.name else {
-                return false;
-            };
-            bi.id.sym == *helper_sym
-        })
-    })
-}
-
 /// Find all namespace + __export call pairs.
 /// Pattern: `var NS = {};` at index i, `__export(NS, { ... })` at index i+1.
 fn collect_scope_hoisted_boundaries(
     items: &[ModuleItem],
-    export_helper: &Atom,
+    export_helper: &BindingId,
 ) -> Vec<ScopeHoistedBoundary> {
     let mut boundaries = Vec::new();
 
     for i in 0..items.len().saturating_sub(1) {
         // Check: var NS = {};
-        let Some(ns_atom) = extract_empty_object_decl(&items[i]) else {
+        let Some(ns_binding) = extract_empty_object_decl(&items[i]) else {
             continue;
         };
 
         // Check: __export(NS, { ... }) at i+1
-        if !is_export_call(&items[i + 1], export_helper, &ns_atom) {
+        if !is_export_call(&items[i + 1], export_helper, &ns_binding) {
             continue;
         }
 
         let exported_bindings = extract_export_bindings(&items[i + 1]);
 
         boundaries.push(ScopeHoistedBoundary {
-            ns_atom,
+            ns_atom: ns_binding.0.clone(),
+            ns_binding,
             ns_decl_index: i,
             export_call_index: i + 1,
             exported_bindings,
@@ -541,15 +548,21 @@ fn collect_scope_hoisted_boundaries(
 
 /// Check if a namespace atom appears in any ESM export declaration.
 /// e.g. `export { math_exports as math }` contains the ident `math_exports`.
-fn namespace_is_module_exported(items: &[ModuleItem], ns_atom: &Atom) -> bool {
-    items.iter().any(|item| {
+fn namespace_is_module_exported(
+    items: &[ModuleItem],
+    item_infos: &[ItemBindingInfo],
+    ns_binding: &BindingId,
+) -> bool {
+    items.iter().enumerate().any(|(i, item)| {
         matches!(item, ModuleItem::ModuleDecl(_))
-            && items_reference_name(std::slice::from_ref(item), ns_atom)
+            && item_infos
+                .get(i)
+                .is_some_and(|info| info.references.contains(ns_binding))
     })
 }
 
 /// Extract the binding atoms from `__export(NS, { key: () => binding, ... })`.
-fn extract_export_bindings(item: &ModuleItem) -> HashSet<Atom> {
+fn extract_export_bindings(item: &ModuleItem) -> HashSet<BindingId> {
     let mut bindings = HashSet::new();
     let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
         return bindings;
@@ -576,15 +589,15 @@ fn extract_export_bindings(item: &ModuleItem) -> HashSet<Atom> {
         };
         if let BlockStmtOrExpr::Expr(body_expr) = &*arrow.body {
             if let Expr::Ident(id) = &**body_expr {
-                bindings.insert(id.sym.clone());
+                bindings.insert((id.sym.clone(), id.ctxt));
             }
         }
     }
     bindings
 }
 
-/// Extract the binding atom from `var X = {};` (single declarator, empty object init).
-fn extract_empty_object_decl(item: &ModuleItem) -> Option<Atom> {
+/// Extract the binding from `var X = {};` (single declarator, empty object init).
+fn extract_empty_object_decl(item: &ModuleItem) -> Option<BindingId> {
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
         return None;
     };
@@ -604,11 +617,11 @@ fn extract_empty_object_decl(item: &ModuleItem) -> Option<Atom> {
     if !props.is_empty() {
         return None;
     }
-    Some(bi.id.sym.clone())
+    Some((bi.id.sym.clone(), bi.id.ctxt))
 }
 
 /// Check if an item is `__export(NS, { ... })`.
-fn is_export_call(item: &ModuleItem, export_helper: &Atom, ns_atom: &Atom) -> bool {
+fn is_export_call(item: &ModuleItem, export_helper: &BindingId, ns_binding: &BindingId) -> bool {
     let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
         return false;
     };
@@ -621,14 +634,15 @@ fn is_export_call(item: &ModuleItem, export_helper: &Atom, ns_atom: &Atom) -> bo
     let Expr::Ident(callee_id) = &**callee else {
         return false;
     };
-    if callee_id.sym != *export_helper || call.args.len() != 2 {
+    if callee_id.sym != export_helper.0 || callee_id.ctxt != export_helper.1 || call.args.len() != 2
+    {
         return false;
     }
     // First arg must be the namespace ident.
     let Expr::Ident(first_arg) = &*call.args[0].expr else {
         return false;
     };
-    if first_arg.sym != *ns_atom {
+    if first_arg.sym != ns_binding.0 || first_arg.ctxt != ns_binding.1 {
         return false;
     }
     // Second arg must be an object literal (the export map).
@@ -648,19 +662,22 @@ fn is_export_call(item: &ModuleItem, export_helper: &Atom, ns_atom: &Atom) -> bo
 ///            declarations, or ModuleDecls.
 fn find_last_module_end(
     items: &[ModuleItem],
+    item_infos: &[ItemBindingInfo],
     from: usize,
-    exported_bindings: &HashSet<Atom>,
+    exported_bindings: &HashSet<BindingId>,
 ) -> usize {
     // Phase 1: find the last item that declares an exported binding.
     let mut last_export_idx = None;
     for (i, item) in items.iter().enumerate().skip(from) {
-        if matches!(item, ModuleItem::ModuleDecl(_)) {
+        if is_module_boundary_item(item) {
             break;
         }
-        if let Some(names) = item_declared_names(item) {
-            if names.iter().any(|n| exported_bindings.contains(n)) {
-                last_export_idx = Some(i);
-            }
+        if item_infos[i]
+            .declared
+            .iter()
+            .any(|binding| exported_bindings.contains(binding))
+        {
+            last_export_idx = Some(i);
         }
     }
 
@@ -672,24 +689,25 @@ fn find_last_module_end(
     // referenced by the module code collected so far. This captures private
     // helpers that esbuild emits after the exported functions that call them.
     let mut end = last + 1;
-    let mut module_bindings: HashSet<Atom> = exported_bindings.clone();
+    let mut module_bindings: HashSet<BindingId> = exported_bindings.clone();
     while end < items.len() {
         let item = &items[end];
-        if matches!(item, ModuleItem::ModuleDecl(_)) {
+        if is_module_boundary_item(item) {
             break;
         }
-        let Some(names) = item_declared_names(item) else {
+        let declared = &item_infos[end].declared;
+        if declared.is_empty() {
             break;
         };
-        if !names
+        if !declared
             .iter()
-            .any(|n| items_reference_name(&items[from..end], n))
+            .any(|binding| items_reference_binding(&item_infos[from..end], binding))
         {
             break;
         }
 
-        for n in &names {
-            module_bindings.insert(n.clone());
+        for binding in declared {
+            module_bindings.insert(binding.clone());
         }
         end += 1;
     }
@@ -700,95 +718,158 @@ fn find_last_module_end(
     // globals/literals, declarations, or ModuleDecls.
     for (i, item) in items.iter().enumerate().skip(end) {
         match item {
-            ModuleItem::ModuleDecl(_) => return i,
-            ModuleItem::Stmt(Stmt::Expr(expr_stmt)) => {
-                if !expr_references_any_binding(&expr_stmt.expr, &module_bindings) {
+            item if is_module_boundary_item(item) => return i,
+            ModuleItem::Stmt(Stmt::Expr(_)) => {
+                if !item_infos[i]
+                    .references
+                    .iter()
+                    .any(|binding| module_bindings.contains(binding))
+                {
                     return i;
                 }
             }
-            ModuleItem::Stmt(Stmt::Decl(_)) => return i,
+            ModuleItem::Stmt(Stmt::Decl(_)) | ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(_)) => {
+                return i;
+            }
             _ => return i,
         }
     }
     items.len()
 }
 
-/// Check if any item in the slice references `name` as an identifier.
-fn items_reference_name(items: &[ModuleItem], name: &Atom) -> bool {
-    use swc_core::ecma::visit::{Visit, VisitWith};
-
-    struct NameFinder<'a> {
-        name: &'a Atom,
-        found: bool,
-    }
-
-    impl Visit for NameFinder<'_> {
-        fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
-            if ident.sym == *self.name {
-                self.found = true;
-            }
-        }
-    }
-
-    let mut finder = NameFinder { name, found: false };
-    for item in items {
-        item.visit_with(&mut finder);
-        if finder.found {
-            return true;
-        }
-    }
-    false
+fn is_module_boundary_item(item: &ModuleItem) -> bool {
+    // `export var/function/class ...` can still belong to the current
+    // scope-hoisted module; imports and re-export declarations start a
+    // separate module boundary.
+    matches!(item, ModuleItem::ModuleDecl(decl) if !matches!(decl, ModuleDecl::ExportDecl(_)))
 }
 
-/// Check if an expression references any binding from the given set.
-fn expr_references_any_binding(expr: &Expr, bindings: &HashSet<Atom>) -> bool {
-    use swc_core::ecma::visit::{Visit, VisitWith};
-
-    struct BindingRefFinder<'a> {
-        bindings: &'a HashSet<Atom>,
-        found: bool,
-    }
-
-    impl Visit for BindingRefFinder<'_> {
-        fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
-            if self.bindings.contains(&ident.sym) {
-                self.found = true;
-            }
-        }
-    }
-
-    let mut finder = BindingRefFinder {
-        bindings,
-        found: false,
-    };
-    expr.visit_with(&mut finder);
-    finder.found
+fn items_reference_binding(item_infos: &[ItemBindingInfo], binding: &BindingId) -> bool {
+    item_infos
+        .iter()
+        .any(|info| info.references.contains(binding))
 }
 
-/// Extract all declared binding names from a statement.
-fn item_declared_names(item: &ModuleItem) -> Option<Vec<Atom>> {
-    match item {
-        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(f))) => Some(vec![f.ident.sym.clone()]),
-        ModuleItem::Stmt(Stmt::Decl(Decl::Class(c))) => Some(vec![c.ident.sym.clone()]),
-        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-            let names: Vec<Atom> = var
-                .decls
-                .iter()
-                .filter_map(|d| {
-                    if let Pat::Ident(bi) = &d.name {
-                        Some(bi.id.sym.clone())
-                    } else {
-                        None
+#[derive(Default)]
+struct ItemBindingInfo {
+    declared: HashSet<BindingId>,
+    references: HashSet<BindingId>,
+}
+
+fn build_item_binding_infos(items: &[ModuleItem]) -> Vec<ItemBindingInfo> {
+    let top_level_bindings: HashSet<BindingId> = items
+        .iter()
+        .flat_map(module_item_declared_binding_ids)
+        .collect();
+
+    items
+        .iter()
+        .map(|item| {
+            let mut collector = TopLevelRefCollector {
+                top_level_bindings: &top_level_bindings,
+                references: HashSet::new(),
+            };
+            item.visit_with(&mut collector);
+            ItemBindingInfo {
+                declared: module_item_declared_binding_ids(item).into_iter().collect(),
+                references: collector.references,
+            }
+        })
+        .collect()
+}
+
+struct TopLevelRefCollector<'a> {
+    top_level_bindings: &'a HashSet<BindingId>,
+    references: HashSet<BindingId>,
+}
+
+impl TopLevelRefCollector<'_> {
+    fn visit_binding_pat_defaults(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Array(array) => {
+                for elem in array.elems.iter().flatten() {
+                    self.visit_binding_pat_defaults(elem);
+                }
+            }
+            Pat::Object(object) => {
+                for prop in &object.props {
+                    match prop {
+                        swc_core::ecma::ast::ObjectPatProp::KeyValue(kv) => {
+                            self.visit_binding_pat_defaults(&kv.value);
+                        }
+                        swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
+                            if let Some(value) = &assign.value {
+                                value.visit_with(self);
+                            }
+                        }
+                        swc_core::ecma::ast::ObjectPatProp::Rest(rest) => {
+                            self.visit_binding_pat_defaults(&rest.arg);
+                        }
                     }
-                })
-                .collect();
-            if names.is_empty() {
-                None
-            } else {
-                Some(names)
+                }
             }
+            Pat::Assign(assign) => {
+                assign.right.visit_with(self);
+                self.visit_binding_pat_defaults(&assign.left);
+            }
+            Pat::Rest(rest) => self.visit_binding_pat_defaults(&rest.arg),
+            _ => {}
         }
-        _ => None,
+    }
+}
+
+impl Visit for TopLevelRefCollector<'_> {
+    fn visit_binding_ident(&mut self, _: &BindingIdent) {}
+
+    fn visit_pat(&mut self, pat: &Pat) {
+        self.visit_binding_pat_defaults(pat);
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        self.visit_binding_pat_defaults(&declarator.name);
+        if let Some(init) = &declarator.init {
+            init.visit_with(self);
+        }
+    }
+
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        decl.function.visit_with(self);
+    }
+
+    fn visit_class_decl(&mut self, decl: &ClassDecl) {
+        decl.class.visit_with(self);
+    }
+
+    fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+        let binding = (ident.sym.clone(), ident.ctxt);
+        if self.top_level_bindings.contains(&binding) {
+            self.references.insert(binding);
+        }
+    }
+
+    fn visit_member_expr(&mut self, expr: &swc_core::ecma::ast::MemberExpr) {
+        expr.obj.visit_with(self);
+        if let swc_core::ecma::ast::MemberProp::Computed(c) = &expr.prop {
+            c.visit_with(self);
+        }
+    }
+
+    fn visit_member_prop(&mut self, prop: &swc_core::ecma::ast::MemberProp) {
+        if let swc_core::ecma::ast::MemberProp::Computed(c) = prop {
+            c.visit_with(self);
+        }
+    }
+
+    fn visit_prop_name(&mut self, name: &PropName) {
+        if let PropName::Computed(c) = name {
+            c.visit_with(self);
+        }
+    }
+
+    fn visit_super_prop(&mut self, prop: &swc_core::ecma::ast::SuperProp) {
+        if let swc_core::ecma::ast::SuperProp::Computed(c) = prop {
+            c.visit_with(self);
+        }
     }
 }
 

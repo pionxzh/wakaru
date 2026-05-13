@@ -208,6 +208,135 @@ export { ns_a, ns_b };
 }
 
 #[test]
+fn esbuild_member_property_does_not_extend_scope_module() {
+    let bundle = r#"
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { read: () => read });
+function read(obj) { return obj.value; }
+var value = "entry";
+export { ns_a, value };
+"#;
+    let raw_pairs =
+        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+
+    let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
+    assert!(
+        !ns_a_code.contains("value = \"entry\""),
+        "member property name should not pull unrelated value binding into ns_a: {ns_a_code}"
+    );
+}
+
+#[test]
+fn esbuild_export_decl_extends_last_scope_module() {
+    let bundle = r#"
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { value: () => value });
+export var value = read();
+function read() { return "module"; }
+export { ns_a };
+"#;
+    let raw_pairs =
+        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+
+    let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
+    assert!(
+        ns_a_code.contains("export var value") && ns_a_code.contains("function read"),
+        "export declarations should count as module declarations and include referenced helpers: {ns_a_code}"
+    );
+}
+
+#[test]
+fn esbuild_shadowed_name_does_not_extend_last_scope_module() {
+    let bundle = r#"
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { read: () => read });
+function read() {
+    function inner() {
+        let helper = "local";
+        return helper;
+    }
+    return inner();
+}
+function helper() { return "entry"; }
+export { ns_a, helper };
+"#;
+    let raw_pairs =
+        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+
+    let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
+    assert!(
+        !ns_a_code.contains("function helper"),
+        "shadowed local helper should not pull top-level helper into ns_a: {ns_a_code}"
+    );
+}
+
+#[test]
+fn esbuild_shadowed_trailing_expr_does_not_extend_last_scope_module() {
+    let bundle = r#"
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { read: () => read });
+function read() { return "module"; }
+(function() {
+    let read = "entry";
+    console.log(read);
+})();
+export { ns_a };
+"#;
+    let raw_pairs =
+        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+
+    let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
+    assert!(
+        !ns_a_code.contains("console.log"),
+        "shadowed trailing expression should stay out of ns_a: {ns_a_code}"
+    );
+}
+
+#[test]
+fn esbuild_destructured_export_decl_extends_last_scope_module() {
+    let bundle = r#"
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { value: () => value });
+var source = { value: "module" };
+export var { value } = source;
+export { ns_a };
+"#;
+    let raw_pairs =
+        unpack_raw(bundle, &DecompileOptions::default()).expect("unpack_raw should succeed");
+
+    let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
+    assert!(
+        ns_a_code.contains("export var { value }"),
+        "destructured export declarations should count as module declarations: {ns_a_code}"
+    );
+}
+
+#[test]
 fn esbuild_scope_hoisted_duplicate_namespace_names() {
     let bundle = r#"
 var y = (q,K) => () => (q && (K = q(q = 0)), K);

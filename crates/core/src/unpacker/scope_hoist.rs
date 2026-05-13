@@ -6,7 +6,7 @@ use swc_core::ecma::ast::*;
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use super::{UnpackResult, UnpackedModule};
+use super::{module_item_declared_names, UnpackResult, UnpackedModule};
 
 const MIN_DECLARATIONS: usize = 10;
 
@@ -145,7 +145,7 @@ struct TopLevelItem {
 fn collect_top_level_items(body: &[ModuleItem]) -> Vec<TopLevelItem> {
     body.iter()
         .map(|item| {
-            let declared_names = item_declared_names(item);
+            let declared_names = module_item_declared_names(item);
             let referenced_names = item_referenced_names(item, &declared_names);
             let is_module_decl = matches!(item, ModuleItem::ModuleDecl(_));
             TopLevelItem {
@@ -155,41 +155,6 @@ fn collect_top_level_items(body: &[ModuleItem]) -> Vec<TopLevelItem> {
             }
         })
         .collect()
-}
-
-fn item_declared_names(item: &ModuleItem) -> Vec<Atom> {
-    match item {
-        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(f))) => vec![f.ident.sym.clone()],
-        ModuleItem::Stmt(Stmt::Decl(Decl::Class(c))) => vec![c.ident.sym.clone()],
-        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => var
-            .decls
-            .iter()
-            .filter_map(|d| {
-                if let Pat::Ident(bi) = &d.name {
-                    Some(bi.id.sym.clone())
-                } else {
-                    None
-                }
-            })
-            .collect(),
-        ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => match &export.decl {
-            Decl::Fn(f) => vec![f.ident.sym.clone()],
-            Decl::Class(c) => vec![c.ident.sym.clone()],
-            Decl::Var(var) => var
-                .decls
-                .iter()
-                .filter_map(|d| {
-                    if let Pat::Ident(bi) = &d.name {
-                        Some(bi.id.sym.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-            _ => vec![],
-        },
-        _ => vec![],
-    }
 }
 
 fn item_referenced_names(item: &ModuleItem, own_names: &[Atom]) -> HashSet<Atom> {
@@ -250,6 +215,24 @@ impl Visit for RefCollector<'_> {
     fn visit_class_decl(&mut self, decl: &ClassDecl) {
         self.block_bindings.insert(decl.ident.sym.clone());
         decl.class.visit_with(self);
+    }
+
+    fn visit_fn_expr(&mut self, expr: &FnExpr) {
+        let outer = self.block_bindings.clone();
+        if let Some(ident) = &expr.ident {
+            self.block_bindings.insert(ident.sym.clone());
+        }
+        expr.function.visit_with(self);
+        self.block_bindings = outer;
+    }
+
+    fn visit_class_expr(&mut self, expr: &ClassExpr) {
+        let outer = self.block_bindings.clone();
+        if let Some(ident) = &expr.ident {
+            self.block_bindings.insert(ident.sym.clone());
+        }
+        expr.class.visit_with(self);
+        self.block_bindings = outer;
     }
 
     fn visit_function(&mut self, f: &Function) {
@@ -333,10 +316,22 @@ impl Visit for RefCollector<'_> {
         }
     }
 
+    fn visit_super_prop(&mut self, prop: &SuperProp) {
+        if let SuperProp::Computed(c) = prop {
+            c.visit_with(self);
+        }
+    }
+
+    fn visit_jsx_member_expr(&mut self, expr: &JSXMemberExpr) {
+        expr.obj.visit_with(self);
+    }
+
     fn visit_prop(&mut self, prop: &Prop) {
         match prop {
             Prop::Shorthand(ident) => {
-                self.refs.insert(ident.sym.clone());
+                if !self.own_names.contains(&ident.sym) && !self.is_local(&ident.sym) {
+                    self.refs.insert(ident.sym.clone());
+                }
             }
             Prop::KeyValue(kv) => {
                 if let PropName::Computed(c) = &kv.key {
@@ -1322,6 +1317,93 @@ mod tests {
             let input = two_group_fixture(b1);
             assert_splits(&input, &format!("{name} should not merge groups"));
         }
+    }
+
+    #[test]
+    fn shorthand_local_shadow_does_not_create_false_ref() {
+        let input = two_group_fixture(
+            r#"
+            function b1() {
+                const a5 = 10;
+                return { a5 };
+            }
+            "#,
+        );
+
+        assert_splits(
+            &input,
+            "shorthand property should respect local binding shadows",
+        );
+    }
+
+    #[test]
+    fn named_function_expression_shadow_does_not_create_false_ref() {
+        let input = two_group_fixture(
+            r#"
+            function b1() {
+                const fn = function a5() {
+                    return a5;
+                };
+                return fn();
+            }
+            "#,
+        );
+
+        assert_splits(
+            &input,
+            "named function expression should bind its own name locally",
+        );
+    }
+
+    #[test]
+    fn named_class_expression_shadow_does_not_create_false_ref() {
+        let input = two_group_fixture(
+            r#"
+            function b1() {
+                const C = class a5 {
+                    method() {
+                        return a5;
+                    }
+                };
+                return C;
+            }
+            "#,
+        );
+
+        assert_splits(
+            &input,
+            "named class expression should bind its own name locally",
+        );
+    }
+
+    #[test]
+    fn static_super_property_does_not_create_false_ref() {
+        let input = two_group_fixture(
+            r#"
+            function b1() {
+                return class extends Base {
+                    method() {
+                        return super.a5;
+                    }
+                };
+            }
+            "#,
+        );
+
+        assert_splits(&input, "static super property should not reference a5");
+    }
+
+    #[test]
+    fn jsx_member_property_does_not_create_false_ref() {
+        let input = two_group_fixture(
+            r#"
+            function b1() {
+                return <Foo.a5 />;
+            }
+            "#,
+        );
+
+        assert_splits(&input, "jsx member property should not reference a5");
     }
 
     #[test]

@@ -4,8 +4,9 @@ pub mod scope_hoist;
 pub mod webpack4;
 pub mod webpack5;
 
-use swc_core::common::{sync::Lrc, FileName, SourceMap, GLOBALS};
-use swc_core::ecma::ast::Module;
+use swc_core::atoms::Atom;
+use swc_core::common::{sync::Lrc, FileName, SourceMap, SyntaxContext, GLOBALS};
+use swc_core::ecma::ast::{Decl, Module, ModuleDecl, ModuleItem, Pat, Stmt, VarDecl};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 
 pub struct UnpackedModule {
@@ -18,6 +19,8 @@ pub struct UnpackedModule {
 pub struct UnpackResult {
     pub modules: Vec<UnpackedModule>,
 }
+
+pub(crate) type BindingId = (Atom, SyntaxContext);
 
 pub fn unpack_bundle(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
@@ -54,6 +57,67 @@ pub(crate) fn parse_es_module(
     parser
         .parse_module()
         .map_err(|e| anyhow::anyhow!("parse error: {e:?}"))
+}
+
+pub(crate) fn module_item_declared_names(item: &ModuleItem) -> Vec<Atom> {
+    module_item_declared_binding_ids(item)
+        .into_iter()
+        .map(|(sym, _)| sym)
+        .collect()
+}
+
+pub(crate) fn module_item_declared_binding_ids(item: &ModuleItem) -> Vec<BindingId> {
+    match item {
+        ModuleItem::Stmt(Stmt::Decl(decl)) => decl_declared_names(decl),
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => decl_declared_names(&export.decl),
+        _ => vec![],
+    }
+}
+
+fn decl_declared_names(decl: &Decl) -> Vec<BindingId> {
+    match decl {
+        Decl::Fn(f) => vec![(f.ident.sym.clone(), f.ident.ctxt)],
+        Decl::Class(c) => vec![(c.ident.sym.clone(), c.ident.ctxt)],
+        Decl::Var(var) => var_declared_names(var),
+        _ => vec![],
+    }
+}
+
+fn var_declared_names(var: &VarDecl) -> Vec<BindingId> {
+    let mut ids = Vec::new();
+    for decl in &var.decls {
+        collect_pat_binding_ids(&decl.name, &mut ids);
+    }
+    ids
+}
+
+fn collect_pat_binding_ids(pat: &Pat, out: &mut Vec<BindingId>) {
+    match pat {
+        Pat::Ident(bi) => out.push((bi.id.sym.clone(), bi.id.ctxt)),
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_binding_ids(elem, out);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    swc_core::ecma::ast::ObjectPatProp::KeyValue(kv) => {
+                        collect_pat_binding_ids(&kv.value, out);
+                    }
+                    swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
+                        out.push((assign.key.sym.clone(), assign.key.ctxt));
+                    }
+                    swc_core::ecma::ast::ObjectPatProp::Rest(rest) => {
+                        collect_pat_binding_ids(&rest.arg, out);
+                    }
+                }
+            }
+        }
+        Pat::Rest(rest) => collect_pat_binding_ids(&rest.arg, out),
+        Pat::Assign(assign) => collect_pat_binding_ids(&assign.left, out),
+        _ => {}
+    }
 }
 
 pub fn unpack_webpack4(source: &str) -> Option<UnpackResult> {
