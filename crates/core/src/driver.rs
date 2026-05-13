@@ -20,7 +20,7 @@ use crate::rules::{
     RewriteLevel, UnEsm, UnImportRename,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
-use crate::unpacker::{scope_hoist, unpack_bundle};
+use crate::unpacker::{scope_hoist, try_unpack_bundle, UnpackResult};
 
 #[derive(Debug, Clone)]
 pub struct DecompileOptions {
@@ -128,7 +128,7 @@ pub fn trace_rules(
     validate_trace_rule_name("trace start rule", trace_options.start_from.as_deref())?;
     validate_trace_rule_name("trace stop rule", trace_options.stop_after.as_deref())?;
 
-    if unpack_bundle(source).is_some() {
+    if detect_bundle(source, &options.filename)?.is_some() {
         return Err(anyhow!(
             "rule tracing currently supports single-file inputs only; use normal decompile or unpack for bundles"
         ));
@@ -249,7 +249,7 @@ pub fn format_trace_events(events: &[RuleTraceEvent]) -> String {
 }
 
 pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, String)>> {
-    match unpack_bundle(source) {
+    match detect_bundle(source, &options.filename)? {
         Some(result) => unpack_multi_module(result.modules, options),
         None if options.heuristic_split => match scope_hoist::split_scope_hoisted(source) {
             Some(result) if result.modules.len() > 1 => {
@@ -276,7 +276,7 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<Vec<(String, St
 /// their output can be parsed as standalone modules, but cross-module analysis
 /// and the normal rule pipeline are skipped.
 pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<Vec<(String, String)>> {
-    let result = unpack_bundle(source).or_else(|| {
+    let result = detect_bundle(source, &options.filename)?.or_else(|| {
         if options.heuristic_split {
             let r = scope_hoist::split_scope_hoisted(source)?;
             if r.modules.len() > 1 {
@@ -298,6 +298,27 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<Vec<(Strin
             })
             .collect::<Result<Vec<_>>>()?),
         None => Ok(vec![("module.js".to_string(), source.to_string())]),
+    }
+}
+
+fn detect_bundle(source: &str, filename: &str) -> Result<Option<UnpackResult>> {
+    match try_unpack_bundle(source) {
+        Ok(result) => Ok(result),
+        Err(bundle_parse_error) => {
+            // Bundle detection intentionally parses only ES/JSX. Preserve the
+            // single-file fallback for valid inputs that use filename-driven
+            // syntax such as TypeScript.
+            let input_parse_result = GLOBALS.set(&Default::default(), || {
+                let cm: Lrc<SourceMap> = Default::default();
+                parse_js(source, filename, cm)
+            });
+            match input_parse_result {
+                Ok(_) => Ok(None),
+                Err(input_parse_error) => Err(anyhow!(
+                    "{input_parse_error}; bundle detection also failed: {bundle_parse_error}"
+                )),
+            }
+        }
     }
 }
 
@@ -533,6 +554,43 @@ mod tests {
         assert!(
             err.to_string().contains("module-1.js"),
             "error should include module filename: {err}"
+        );
+    }
+
+    #[test]
+    fn unpack_propagates_invalid_input_parse_errors() {
+        let err = unpack(
+            "const = ;",
+            DecompileOptions {
+                filename: "broken.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect_err("invalid source should fail");
+
+        assert!(
+            err.to_string().contains("broken.js"),
+            "error should include input filename: {err}"
+        );
+    }
+
+    #[test]
+    fn unpack_preserves_typescript_single_file_fallback() {
+        let pairs = unpack(
+            "const value: number = 1;",
+            DecompileOptions {
+                filename: "input.ts".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("valid TypeScript should fall back to single-file decompile");
+
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, "module.js");
+        assert!(
+            pairs[0].1.contains("const value"),
+            "expected TypeScript input to decompile, got: {}",
+            pairs[0].1
         );
     }
 }

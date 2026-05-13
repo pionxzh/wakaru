@@ -23,15 +23,19 @@ pub struct UnpackResult {
 pub(crate) type BindingId = (Atom, SyntaxContext);
 
 pub fn unpack_bundle(source: &str) -> Option<UnpackResult> {
+    try_unpack_bundle(source).ok().flatten()
+}
+
+pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let module = parse_es_module(source, "bundle.js", cm.clone()).ok()?;
+        let module = parse_es_module(source, "bundle.js", cm.clone())?;
 
-        webpack5::detect_from_module(&module, cm.clone())
+        Ok(webpack5::detect_from_module(&module, cm.clone())
             .or_else(|| webpack4::detect_from_module(&module, cm.clone()))
             .or_else(|| webpack5::detect_chunk_from_module(&module, cm.clone()))
             .or_else(|| browserify::detect_from_module(&module, cm.clone()))
-            .or_else(|| esbuild::detect_from_module(&module, cm))
+            .or_else(|| esbuild::detect_from_module(&module, cm)))
     })
 }
 
@@ -54,9 +58,25 @@ pub(crate) fn parse_es_module(
         None,
     );
     let mut parser = Parser::new_from(lexer);
-    parser
-        .parse_module()
-        .map_err(|e| anyhow::anyhow!("parse error: {e:?}"))
+    let parsed = parser.parse_module();
+    let parser_errors: Vec<String> = parser
+        .take_errors()
+        .into_iter()
+        .map(|error| format!("{error:?}"))
+        .collect();
+
+    match (parsed, parser_errors.is_empty()) {
+        (Ok(module), true) => Ok(module),
+        (Ok(_), false) => Err(anyhow::anyhow!(
+            "failed to parse {filename}: {}",
+            parser_errors.join("; ")
+        )),
+        (Err(error), true) => Err(anyhow::anyhow!("failed to parse {filename}: {error:?}")),
+        (Err(error), false) => Err(anyhow::anyhow!(
+            "failed to parse {filename}: {error:?}; {}",
+            parser_errors.join("; ")
+        )),
+    }
 }
 
 pub(crate) fn module_item_declared_names(item: &ModuleItem) -> Vec<Atom> {
@@ -126,4 +146,27 @@ pub fn unpack_webpack4(source: &str) -> Option<UnpackResult> {
 
 pub fn unpack_webpack4_raw(source: &str) -> Option<UnpackResult> {
     webpack4::detect_and_extract_raw(source)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_unpack_bundle_distinguishes_parse_errors_from_non_bundles() {
+        let err = match try_unpack_bundle("const = ;") {
+            Ok(_) => panic!("invalid source should fail to parse"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("bundle.js"),
+            "error should include parser filename: {err}"
+        );
+
+        let result = try_unpack_bundle("const value = 1;").expect("valid source should parse");
+        assert!(
+            result.is_none(),
+            "valid non-bundle source should return None"
+        );
+    }
 }
