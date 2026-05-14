@@ -11,7 +11,7 @@ license = "Apache-2.0"
 wakaru-core = { path = "crates/core" }
 anyhow = "1.0"
 sourcemap = "9"
-swc_core = { version = "56", features = [
+swc_core = { version = "65", features = [
   "common",
   "ecma_ast",
   "ecma_codegen",
