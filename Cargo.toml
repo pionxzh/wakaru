@@ -21,3 +21,13 @@ swc_core = { version = "65", features = [
   "ecma_utils",
   "ecma_visit",
 ] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev-release]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
