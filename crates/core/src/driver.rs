@@ -54,7 +54,7 @@ impl Default for DecompileOptions {
         Self {
             filename: String::new(),
             sourcemap: None,
-            dead_code_elimination: true,
+            dead_code_elimination: false,
             level: RewriteLevel::Standard,
             heuristic_split: false,
             diagnostics: false,

@@ -2,4 +2,4 @@
 source: crates/core/tests/un_interop_require_wildcard_rule.rs
 expression: output
 ---
-import "a";
+import * as _a from "a";

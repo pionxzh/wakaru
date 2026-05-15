@@ -150,9 +150,14 @@ fn rule_names_matches_trace_execution_order() {
         },
     );
 
+    let expected: Vec<&str> = wakaru_core::rule_names()
+        .iter()
+        .copied()
+        .filter(|&name| name != "DeadImports" && name != "DeadDecls")
+        .collect();
     assert_eq!(
         events.iter().map(|event| event.rule).collect::<Vec<_>>(),
-        wakaru_core::rule_names()
+        expected
     );
 }
 

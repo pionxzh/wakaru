@@ -19,7 +19,8 @@ export const value = 2;
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"
 import unused from "./x.js";
@@ -30,7 +31,7 @@ export const value = 2;
 }
 
 #[test]
-fn dead_code_elimination_remains_enabled_by_default() {
+fn dead_code_elimination_is_off_by_default() {
     let input = r#"
 import unused from "./x.js";
 function helper() { return 1; }
@@ -44,7 +45,37 @@ export const value = 2;
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("import unused"),
+        "default should preserve unused imports: {output}"
+    );
+    assert!(
+        output.contains("function helper"),
+        "default should preserve unused functions: {output}"
+    );
+}
+
+#[test]
+fn dead_code_elimination_opt_in_removes_dead_code() {
+    let input = r#"
+import unused from "./x.js";
+function helper() { return 1; }
+export const value = 2;
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            dead_code_elimination: true,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"
 import "./x.js";
@@ -65,7 +96,8 @@ fn minimal_disables_loose_optional_chaining_recovery() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     assert_eq_normalized(&output, input);
 }
@@ -82,7 +114,8 @@ fn standard_keeps_loose_optional_chaining_recovery_enabled() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"const x = U?.name;"#;
     assert_eq_normalized(&output, expected);
@@ -101,7 +134,8 @@ fn standard_keeps_babel_strict_optional_chaining_assignment_recovery() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"const x = e.ownerDocument?.defaultView;"#;
     assert_eq_normalized(&output, expected);
@@ -120,7 +154,8 @@ fn aggressive_enables_non_babel_strict_optional_chaining_assignment_recovery() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"const x = e.ownerDocument?.defaultView;"#;
     assert_eq_normalized(&output, expected);
@@ -138,7 +173,8 @@ fn aggressive_enables_loose_optional_chaining_assignment_recovery() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"const x = e.ownerDocument?.defaultView;"#;
     assert_eq_normalized(&output, expected);
@@ -160,7 +196,8 @@ bar(t);
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"
 const t = foo;
@@ -185,7 +222,8 @@ bar(t);
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"
 bar(foo);
@@ -210,7 +248,8 @@ fn minimal_disables_iife_param_rewrites() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"((i, s, O) => s.createElement(O))(window, document, 'script');"#;
     assert_eq_normalized(&output, expected.trim());
@@ -233,7 +272,8 @@ fn standard_keeps_iife_param_rewrites() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"
 ((window_1, document_1) => {
@@ -261,7 +301,8 @@ function fn() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     assert_eq_normalized(&output, input.trim());
 }
@@ -286,7 +327,8 @@ function fn() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"
 function fn() {
@@ -314,7 +356,8 @@ function fn() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"
 function fn() {
@@ -338,7 +381,8 @@ fn minimal_disables_argument_spread_recovery() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     assert_eq_normalized(&output, input);
 }
@@ -356,7 +400,8 @@ fn standard_keeps_argument_spread_recovery() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"fn(...args);"#;
     assert_eq_normalized(&output, expected);
@@ -380,7 +425,8 @@ function foo(a) {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"
 function foo(a) {
@@ -409,7 +455,8 @@ function foo(a) {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"
 function foo(a, b = true) {
@@ -437,7 +484,8 @@ function foo(options) {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     assert_eq_normalized(&output, input.trim());
 }
@@ -460,7 +508,8 @@ function foo(options) {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"
 function foo(options = {}) {
@@ -483,7 +532,8 @@ fn minimal_disables_esm_reconstruction() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     assert_eq_normalized(&output, input);
 }
@@ -501,7 +551,8 @@ fn standard_keeps_esm_reconstruction() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"export default 1;"#;
     assert_eq_normalized(&output, expected);
@@ -520,7 +571,8 @@ fn minimal_disables_type_constructor_recovery() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     assert_eq_normalized(&output, input);
 }
@@ -538,7 +590,8 @@ fn standard_keeps_type_constructor_recovery() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"Number(x);"#;
     assert_eq_normalized(&output, expected);
@@ -561,7 +614,8 @@ function foo() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     assert_eq_normalized(&output, input.trim());
 }
@@ -583,7 +637,8 @@ function foo() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"
 function foo(...args) {
@@ -606,7 +661,8 @@ fn minimal_disables_for_of_recovery() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     assert_eq_normalized(&output, input);
 }
@@ -624,7 +680,8 @@ fn standard_keeps_for_of_recovery() {
             ..Default::default()
         },
     )
-    .expect("decompile should succeed").code;
+    .expect("decompile should succeed")
+    .code;
 
     let expected = r#"for (const x of items) { console.log(x); }"#;
     assert_eq_normalized(&output, expected);

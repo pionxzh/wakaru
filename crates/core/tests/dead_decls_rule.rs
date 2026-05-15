@@ -1,6 +1,20 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use common::assert_eq_normalized;
+use wakaru_core::{decompile, DecompileOptions};
+
+fn render_with_dce(source: &str) -> String {
+    decompile(
+        source,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            dead_code_elimination: true,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code
+}
 
 // ── Unreferenced function declarations ──────────────────────────
 
@@ -13,7 +27,7 @@ export const x = 2;
     let expected = r#"
 export const x = 2;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -26,7 +40,7 @@ export const x = helper();
 function helper() { return 1; }
 export const x = helper();
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -38,7 +52,7 @@ export const x = 2;
     let expected = r#"
 export const x = 2;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -49,7 +63,7 @@ export function helper() { return 1; }
     let expected = r#"
 export function helper() { return 1; }
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 // ── Unreferenced variable declarations (function/arrow init) ────
@@ -63,7 +77,7 @@ export const x = 2;
     let expected = r#"
 export const x = 2;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -75,7 +89,7 @@ export const x = 2;
     let expected = r#"
 export const x = 2;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -88,7 +102,7 @@ export const x = helper();
 const helper = ()=>1;
 export const x = helper();
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 // ── Non-function inits are NOT candidates ───────────────────────
@@ -103,7 +117,7 @@ export const x = 2;
 const _UNUSED = "hello";
 export const x = 2;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -116,7 +130,7 @@ export const x = 2;
 const _result = sideEffect();
 export const x = 2;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 // ── Multi-declarator handling ───────────────────────────────────
@@ -131,7 +145,7 @@ export const x = alive();
 const alive = ()=>2;
 export const x = alive();
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 // ── Iterative removal (chain of dead references) ────────────────
@@ -146,7 +160,7 @@ export const x = 2;
     let expected = r#"
 export const x = 2;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 // ── Exported variable declarations are kept ─────────────────────
@@ -159,7 +173,7 @@ export const helper = () => 1;
     let expected = r#"
 export const helper = ()=>1;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 // ── Mutual recursion ────────────────────────────────────────────
@@ -174,7 +188,7 @@ export const x = 2;
     let expected = r#"
 export const x = 2;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 // ── Duplicate binding safety ────────────────────────────────────
@@ -186,7 +200,7 @@ function _dead() {}
 var _dead = sideEffect();
 export const x = 2;
 "#;
-    let output = render(input);
+    let output = render_with_dce(input);
     insta::assert_snapshot!(output);
 }
 
@@ -198,7 +212,7 @@ function a() { return 1; }
 function b() { return 2; }
 export const x = a();
 "#;
-    let output = render(input);
+    let output = render_with_dce(input);
     // b must survive — a's var init (`() => b()`) still references it
     insta::assert_snapshot!(output);
 }

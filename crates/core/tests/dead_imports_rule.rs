@@ -1,6 +1,20 @@
 mod common;
 
-use common::{assert_eq_normalized, render};
+use common::assert_eq_normalized;
+use wakaru_core::{decompile, DecompileOptions};
+
+fn render_with_dce(source: &str) -> String {
+    decompile(
+        source,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            dead_code_elimination: true,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code
+}
 
 // Verify that dead imports are stripped to side-effect-only form after the
 // full pipeline has run. This runs via the default rules pipeline.
@@ -15,7 +29,7 @@ const a = 1;
 import "./x.js";
 const a = 1;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -28,7 +42,7 @@ console.log(r);
 import r from "./x.js";
 console.log(r);
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -41,7 +55,7 @@ console.log(a);
 import { a } from "./x.js";
 console.log(a);
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -55,7 +69,7 @@ console.log(R, a);
 import R, { a } from "./x.js";
 console.log(R, a);
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -68,7 +82,7 @@ console.log(ns.foo);
 import * as ns from "./x.js";
 console.log(ns.foo);
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -81,7 +95,7 @@ const a = 1;
 import "./x.js";
 const a = 1;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -95,7 +109,7 @@ const a = 1;
 import "./x.js";
 const a = 1;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -109,7 +123,7 @@ console.log(existsSync);
 import { existsSync } from "fs";
 console.log(existsSync);
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -123,7 +137,7 @@ const e = <Foo/>;
 import Foo from "./x.js";
 const e = <Foo/>;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -137,7 +151,7 @@ const e = <r.Switch/>;
 import r from "./x.js";
 const e = <r.Switch/>;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }
 
 #[test]
@@ -150,5 +164,5 @@ const c = 1;
 import "./x.js";
 const c = 1;
 "#;
-    assert_eq_normalized(&render(input), expected.trim());
+    assert_eq_normalized(&render_with_dce(input), expected.trim());
 }

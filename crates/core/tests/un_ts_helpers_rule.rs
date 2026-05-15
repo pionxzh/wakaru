@@ -32,8 +32,8 @@ function foo() {
 "#;
     let output = render(input);
     assert!(
-        output.trim().is_empty(),
-        "__generator alias declaration and call should be removed: {output}"
+        !output.contains("__generator"),
+        "__generator alias should be removed: {output}"
     );
 }
 
@@ -62,8 +62,8 @@ function foo(Y) {
 "#;
     let output = render(input);
     assert!(
-        output.trim().is_empty(),
-        "helper declaration should be removed without touching shadowed locals: {output}"
+        !output.contains("__assign"),
+        "__assign alias should be removed without touching shadowed locals: {output}"
     );
 }
 

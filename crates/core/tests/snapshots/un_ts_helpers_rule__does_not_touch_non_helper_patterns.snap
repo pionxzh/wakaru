@@ -3,3 +3,6 @@ source: crates/core/tests/un_ts_helpers_rule.rs
 expression: output
 ---
 const V = someOtherThing || fallback;
+function foo() {
+    return V(1, 2, 3);
+}
