@@ -22,7 +22,8 @@ fn decompile_handles_existing_bundled_fixtures() {
                 ..Default::default()
             },
         )
-        .expect("decompile should succeed");
+        .expect("decompile should succeed")
+        .code;
         assert!(
             !output.trim().is_empty(),
             "output should not be empty for {}",
@@ -49,7 +50,8 @@ fn decompile_output_is_stable_for_noop_pipeline() {
             ..Default::default()
         },
     )
-    .expect("first decompile should succeed");
+    .expect("first decompile should succeed")
+    .code;
     let twice = decompile(
         &once,
         DecompileOptions {
@@ -57,7 +59,8 @@ fn decompile_output_is_stable_for_noop_pipeline() {
             ..Default::default()
         },
     )
-    .expect("second decompile should succeed");
+    .expect("second decompile should succeed")
+    .code;
 
     assert_eq!(common::normalize(&once), common::normalize(&twice));
 }
@@ -71,7 +74,8 @@ fn decompile_parses_jsx_in_js_files() {
             ..Default::default()
         },
     )
-    .expect("jsx in .js should parse");
+    .expect("jsx in .js should parse")
+    .code;
 
     insta::assert_snapshot!(output);
 }

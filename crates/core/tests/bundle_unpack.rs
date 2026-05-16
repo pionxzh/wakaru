@@ -16,7 +16,7 @@ fn webpack5_unpack_extracts_multiple_modules() {
     )
     .expect("webpack5 unpack should succeed");
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings: {:?}",
         output.warnings
     );
@@ -48,7 +48,7 @@ fn browserify_unpack_extracts_multiple_modules() {
     )
     .expect("browserify unpack should succeed");
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings: {:?}",
         output.warnings
     );

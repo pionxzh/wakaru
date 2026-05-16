@@ -25,12 +25,18 @@ struct WakaruWarning {
     message: String,
 }
 
+#[derive(Serialize)]
+struct WakaruDecompileResult {
+    code: String,
+    warnings: Vec<WakaruWarning>,
+}
+
 #[wasm_bindgen(js_name = "decompile")]
 pub fn decompile(
     source: &str,
     level: Option<String>,
     sourcemap: Option<Vec<u8>>,
-) -> Result<String, JsValue> {
+) -> Result<JsValue, JsValue> {
     let level = parse_level(level.as_deref());
     let options = wakaru_core::DecompileOptions {
         filename: "input.js".to_string(),
@@ -38,7 +44,21 @@ pub fn decompile(
         level,
         ..Default::default()
     };
-    wakaru_core::decompile(source, options).map_err(|e| JsValue::from_str(&e.to_string()))
+    let output =
+        wakaru_core::decompile(source, options).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let result = WakaruDecompileResult {
+        code: output.code,
+        warnings: output
+            .warnings
+            .into_iter()
+            .map(|warning| WakaruWarning {
+                filename: warning.filename,
+                kind: warning.kind.as_str(),
+                message: warning.message,
+            })
+            .collect(),
+    };
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 #[wasm_bindgen(js_name = "unpack")]
@@ -96,11 +116,16 @@ export interface WakaruModule {
     code: string;
 }
 
+export interface WakaruDecompileResult {
+    code: string;
+    warnings: WakaruWarning[];
+}
+
 export function decompile(
     source: string,
     level?: "minimal" | "standard" | "aggressive",
     sourcemap?: Uint8Array,
-): string;
+): WakaruDecompileResult;
 
 export interface WakaruUnpackResult {
     modules: WakaruModule[];
@@ -110,7 +135,8 @@ export interface WakaruUnpackResult {
 export type WakaruWarningKind =
     | "raw_normalization_failed"
     | "fact_collection_parse_failed"
-    | "decompile_failed";
+    | "decompile_failed"
+    | "tdz_violation";
 
 export interface WakaruWarning {
     filename: string;

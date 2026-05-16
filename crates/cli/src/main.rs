@@ -232,14 +232,18 @@ fn run_default(cli: Cli) -> Result<()> {
     } else {
         let output = decompile(&input, options)?;
 
+        for warning in &output.warnings {
+            eprintln!("warning: {warning}");
+        }
+
         match cli.output {
             Some(path) => {
                 ensure_output_file(&path, cli.force)?;
-                fs::write(&path, output)
+                fs::write(&path, &output.code)
                     .with_context(|| format!("failed to write {}", path.display()))?;
             }
             None => {
-                print!("{output}");
+                print!("{}", output.code);
             }
         }
     }

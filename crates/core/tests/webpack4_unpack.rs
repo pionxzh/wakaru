@@ -17,7 +17,7 @@ fn webpack4_unpack_extracts_modules() {
     )
     .expect("unpack should succeed");
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings: {:?}",
         output.warnings
     );
@@ -53,7 +53,7 @@ fn webpack4_raw_unpack_extracts_modules_without_pipeline() {
     let output =
         unpack_raw(&source, &DecompileOptions::default()).expect("raw unpack should succeed");
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings: {:?}",
         output.warnings
     );
@@ -83,7 +83,7 @@ fn webpack4_raw_unpack_extracts_modules_without_pipeline() {
     )
     .expect("decompiled unpack should succeed");
     assert!(
-        decompiled_output.warnings.is_empty(),
+        !decompiled_output.has_errors(),
         "unexpected warnings: {:?}",
         decompiled_output.warnings
     );
@@ -119,7 +119,7 @@ fn webpack4_unpack_snapshots() {
     )
     .expect("unpack should succeed");
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings: {:?}",
         output.warnings
     );

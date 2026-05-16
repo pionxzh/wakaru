@@ -10,7 +10,7 @@ fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
     )
     .expect("unpack should succeed");
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings: {:?}",
         output.warnings
     );

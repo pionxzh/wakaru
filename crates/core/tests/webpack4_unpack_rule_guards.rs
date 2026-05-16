@@ -19,7 +19,7 @@ fn cli_raw_module(source: &str, filename: &str) -> String {
     let output =
         unpack_raw(source, &DecompileOptions::default()).expect("raw unpack should succeed");
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings: {:?}",
         output.warnings
     );

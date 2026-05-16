@@ -12,7 +12,7 @@ fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
     )
     .expect("unpack should succeed");
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings: {:?}",
         output.warnings
     );
@@ -23,7 +23,7 @@ fn expect_unpack_raw(source: &str) -> Vec<(String, String)> {
     let output =
         unpack_raw(source, &DecompileOptions::default()).expect("unpack_raw should succeed");
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings: {:?}",
         output.warnings
     );

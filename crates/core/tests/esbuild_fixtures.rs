@@ -18,7 +18,7 @@ fn unpack_fixture(path: &str) -> Vec<(String, String)> {
     )
     .unwrap_or_else(|_| panic!("unpack should succeed for {path}"));
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings for {path}: {:?}",
         output.warnings
     );
@@ -30,7 +30,7 @@ fn unpack_fixture_raw(path: &str) -> Vec<(String, String)> {
     let output = unpack_raw(&source, &DecompileOptions::default())
         .unwrap_or_else(|_| panic!("unpack_raw should succeed for {path}"));
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings for {path}: {:?}",
         output.warnings
     );

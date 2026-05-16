@@ -19,6 +19,7 @@ pub fn render_pipeline(source: &str) -> String {
         },
     )
     .expect("decompile should succeed")
+    .code
 }
 
 #[allow(dead_code)]

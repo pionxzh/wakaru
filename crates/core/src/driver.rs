@@ -93,6 +93,7 @@ pub enum UnpackWarningKind {
     RawNormalizationFailed,
     FactCollectionParseFailed,
     DecompileFailed,
+    TdzViolation,
 }
 
 impl UnpackWarningKind {
@@ -101,8 +102,31 @@ impl UnpackWarningKind {
             Self::RawNormalizationFailed => "raw_normalization_failed",
             Self::FactCollectionParseFailed => "fact_collection_parse_failed",
             Self::DecompileFailed => "decompile_failed",
+            Self::TdzViolation => "tdz_violation",
         }
     }
+
+    /// Diagnostic warnings signal potential issues in transform output
+    /// (e.g. TDZ violations) but do not indicate data loss or parse failure.
+    pub fn is_diagnostic(self) -> bool {
+        matches!(self, Self::TdzViolation)
+    }
+}
+
+impl UnpackOutput {
+    /// True when there are non-diagnostic warnings (parse failures, decompile
+    /// errors). Diagnostic warnings like TDZ violations are excluded.
+    pub fn has_errors(&self) -> bool {
+        self.warnings.iter().any(|w| !w.kind.is_diagnostic())
+    }
+}
+
+/// Result of a single-file decompile: the output code plus any non-fatal
+/// warnings (e.g. TDZ violations detected after transformation).
+#[derive(Debug, Clone, Default)]
+pub struct DecompileOutput {
+    pub code: String,
+    pub warnings: Vec<UnpackWarning>,
 }
 
 #[derive(Debug, Clone)]
@@ -135,7 +159,7 @@ pub struct RuleTraceEvent {
     pub after: String,
 }
 
-pub fn decompile(source: &str, options: DecompileOptions) -> Result<String> {
+pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOutput> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let mut module = parse_js(source, &options.filename, cm.clone())?;
@@ -167,9 +191,12 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<String> {
             module.visit_mut_with(&mut UnImportRename);
         }
 
+        let warnings = collect_tdz_warnings(&module, &options.filename);
+
         module.visit_mut_with(&mut fixer(None));
 
-        print_js(&module, cm)
+        let code = print_js(&module, cm)?;
+        Ok(DecompileOutput { code, warnings })
     })
 }
 
@@ -311,18 +338,18 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
                 unpack_multi_module(result.modules, opts)
             }
             _ => {
-                let code = decompile(source, options)?;
+                let output = decompile(source, options)?;
                 Ok(UnpackOutput {
-                    modules: vec![("module.js".to_string(), code)],
-                    warnings: Vec::new(),
+                    modules: vec![("module.js".to_string(), output.code)],
+                    warnings: output.warnings,
                 })
             }
         },
         None => {
-            let code = decompile(source, options)?;
+            let output = decompile(source, options)?;
             Ok(UnpackOutput {
-                modules: vec![("module.js".to_string(), code)],
-                warnings: Vec::new(),
+                modules: vec![("module.js".to_string(), output.code)],
+                warnings: output.warnings,
             })
         }
     }
@@ -501,7 +528,7 @@ fn unpack_multi_module(
     let sm_ref = &parsed_sourcemap;
 
     let decompile_module =
-        |unpacked: crate::unpacker::UnpackedModule| -> (String, String, Option<UnpackWarning>) {
+        |unpacked: crate::unpacker::UnpackedModule| -> (String, String, Vec<UnpackWarning>) {
             match GLOBALS.set(&Default::default(), || {
                 let cm: Lrc<SourceMap> = Default::default();
                 let mut module = parse_js(&unpacked.code, &unpacked.filename, cm.clone())?;
@@ -533,18 +560,21 @@ fn unpack_multi_module(
                     module.visit_mut_with(&mut UnImportRename);
                 }
 
+                let tdz_warnings = collect_tdz_warnings(&module, &unpacked.filename);
+
                 module.visit_mut_with(&mut fixer(None));
-                print_js(&module, cm)
+                let code = print_js(&module, cm)?;
+                Ok::<_, anyhow::Error>((code, tdz_warnings))
             }) {
-                Ok(code) => (unpacked.filename, code, None),
+                Ok((code, tdz_warnings)) => (unpacked.filename, code, tdz_warnings),
                 Err(e) => (
                     unpacked.filename.clone(),
                     unpacked.code,
-                    Some(UnpackWarning::new(
+                    vec![UnpackWarning::new(
                         unpacked.filename,
                         UnpackWarningKind::DecompileFailed,
                         format!("decompile failed, preserving raw code: {e}"),
-                    )),
+                    )],
                 ),
             }
         };
@@ -555,11 +585,9 @@ fn unpack_multi_module(
     let triples: Vec<_> = modules.into_iter().map(decompile_module).collect();
 
     let mut modules = Vec::with_capacity(triples.len());
-    for (filename, code, warning) in triples {
+    for (filename, code, module_warnings) in triples {
         modules.push((filename, code));
-        if let Some(w) = warning {
-            warnings.push(w);
-        }
+        warnings.extend(module_warnings);
     }
 
     Ok(UnpackOutput { modules, warnings })
@@ -636,6 +664,19 @@ fn detect_syntax(filename: &str) -> Syntax {
             ..Default::default()
         }),
     }
+}
+
+fn collect_tdz_warnings(module: &Module, filename: &str) -> Vec<UnpackWarning> {
+    crate::tdz_check::check_tdz(module)
+        .into_iter()
+        .map(|v| {
+            UnpackWarning::new(
+                filename,
+                UnpackWarningKind::TdzViolation,
+                format!("reference to `{}` before declaration", v.name),
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

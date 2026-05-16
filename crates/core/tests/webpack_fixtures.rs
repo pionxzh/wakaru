@@ -18,7 +18,7 @@ fn unpack_fixture(path: &str) -> Vec<(String, String)> {
     )
     .unwrap_or_else(|_| panic!("unpack should succeed for {path}"));
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings for {path}: {:?}",
         output.warnings
     );
@@ -159,7 +159,7 @@ fn wp4_dynamic_chunk() {
     )
     .expect("wp4 JSONP chunk should unpack");
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings: {:?}",
         output.warnings
     );
@@ -184,7 +184,7 @@ fn wp4_dynamic_min_chunk() {
     )
     .expect("wp4 minified JSONP chunk should unpack");
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings: {:?}",
         output.warnings
     );
@@ -421,7 +421,7 @@ fn wp5_numeric_require_rewritten() {
     )
     .expect("wp5 numeric bundle should unpack");
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings: {:?}",
         output.warnings
     );

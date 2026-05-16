@@ -12,12 +12,14 @@ pub mod namespace_decomposition;
 pub mod reexport_consolidation;
 pub mod rules;
 pub mod sourcemap_rename;
+pub mod tdz_check;
 pub mod unpacker;
 pub mod utils;
 
 pub use driver::{
     decompile, format_trace_events, trace_rules, unpack, unpack_raw, DecompileOptions,
-    RuleTraceEvent, RuleTraceOptions, UnpackOutput, UnpackWarning, UnpackWarningKind,
+    DecompileOutput, RuleTraceEvent, RuleTraceOptions, UnpackOutput, UnpackWarning,
+    UnpackWarningKind,
 };
 pub use facts::{
     collect_module_facts, ExportFact, ExportKind, ImportFact, ImportKind, ModuleFacts,
@@ -29,6 +31,7 @@ pub use rules::{
     RewriteLevel,
 };
 pub use sourcemap_rename::{extract_source_entries, parse_sourcemap, resolve_source_path};
+pub use tdz_check::{check_tdz, TdzViolation};
 pub use unpacker::{scope_hoist, unpack_webpack4, UnpackResult, UnpackedModule};
 
 /// Unpack a webpack4 bundle and return the raw (pre-decompile-rules) module code.

@@ -67,7 +67,7 @@ fn webpack4_module_24_renames_classes() {
     )
     .expect("unpack should succeed");
     assert!(
-        output.warnings.is_empty(),
+        !output.has_errors(),
         "unexpected warnings: {:?}",
         output.warnings
     );
