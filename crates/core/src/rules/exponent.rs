@@ -1,5 +1,5 @@
-use swc_core::common::DUMMY_SP;
-use swc_core::ecma::ast::{BinExpr, BinaryOp, Callee, Expr, MemberProp};
+use swc_core::ecma::ast::{BinaryOp, Callee, Expr, MemberProp};
+use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 /// Converts `Math.pow(a, b)` → `a ** b`.
@@ -46,11 +46,6 @@ impl VisitMut for Exponent {
         let b = *call_owned.args.pop().unwrap().expr;
         let a = *call_owned.args.pop().unwrap().expr;
 
-        *expr = Expr::Bin(BinExpr {
-            span: DUMMY_SP,
-            op: BinaryOp::Exp,
-            left: Box::new(a),
-            right: Box::new(b),
-        });
+        *expr = a.make_bin(BinaryOp::Exp, b);
     }
 }

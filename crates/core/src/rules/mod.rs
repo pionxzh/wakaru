@@ -5,6 +5,7 @@ mod babel_helper_utils;
 mod dead_decls;
 mod dead_imports;
 mod exponent;
+pub(crate) mod expr_utils;
 mod flip_comparisons;
 mod import_dedup;
 pub(crate) mod match_context;
@@ -453,7 +454,7 @@ fn apply_rules_range_impl(
     }
     if started {
         if RemoveVoid::should_run(module) {
-            module.visit_mut_with(&mut RemoveVoid);
+            module.visit_mut_with(&mut RemoveVoid::new(unresolved_mark));
         }
         if let Some(observer) = observer.as_deref_mut() {
             observer("RemoveVoid", module);
@@ -498,7 +499,10 @@ fn apply_rules_range_impl(
     run!(UnWhileLoop, "UnWhileLoop");
     run!(UnTypeConstructor::new(rewrite_level), "UnTypeConstructor");
     run!(UnBuiltinPrototype, "UnBuiltinPrototype");
-    run!(UnArgumentSpread::new(rewrite_level), "UnArgumentSpread");
+    run!(
+        UnArgumentSpread::new(unresolved_mark, rewrite_level),
+        "UnArgumentSpread"
+    );
     run!(UnArrayConcatSpread, "UnArrayConcatSpread");
     run!(UnSpreadArrayLiteral, "UnSpreadArrayLiteral");
     run!(
@@ -506,8 +510,14 @@ fn apply_rules_range_impl(
         "ObjectAssignSpread"
     );
     run!(UnVariableMerging, "UnVariableMerging");
-    run!(UnNullishCoalescing, "UnNullishCoalescing");
-    run!(UnOptionalChaining::new(rewrite_level), "UnOptionalChaining");
+    run!(
+        UnNullishCoalescing::new(unresolved_mark),
+        "UnNullishCoalescing"
+    );
+    run!(
+        UnOptionalChaining::new(unresolved_mark, rewrite_level),
+        "UnOptionalChaining"
+    );
 
     // Stage 4: Complex pattern restoration
     run!(UnIife::new(rewrite_level), "UnIife");
@@ -521,7 +531,7 @@ fn apply_rules_range_impl(
         UnJsx::new_with_level(unresolved_mark, rewrite_level),
         "UnJsx"
     );
-    run!(UnEs6Class, "UnEs6Class");
+    run!(UnEs6Class::new(unresolved_mark), "UnEs6Class");
     run!(UnClassFields, "UnClassFields");
     run!(UnTsHelpers, "UnTsHelpers");
     run!(UnAsyncAwait, "UnAsyncAwait");
@@ -529,8 +539,8 @@ fn apply_rules_range_impl(
     run!(UnWebpackInterop, "UnWebpackInterop2");
 
     // Stage 5: Modernization
-    run!(UnThenCatch, "UnThenCatch");
-    run!(UnUndefinedInit, "UnUndefinedInit");
+    run!(UnThenCatch::new(unresolved_mark), "UnThenCatch");
+    run!(UnUndefinedInit::new(unresolved_mark), "UnUndefinedInit");
     run!(VarDeclToLetConst, "VarDeclToLetConst");
     run!(ObjShorthand, "ObjShorthand");
     run!(ObjMethodShorthand, "ObjMethodShorthand");
@@ -550,7 +560,7 @@ fn apply_rules_range_impl(
     run!(UnWebpackObjectGetters, "UnWebpackObjectGetters");
     run!(UnImportRename, "UnImportRename");
     run!(UnExportRename, "UnExportRename");
-    run!(UnDestructuring, "UnDestructuring");
+    run!(UnDestructuring::new(unresolved_mark), "UnDestructuring");
     // UnDestructuring can expose `param === undefined ? {} : param` initializers.
     run!(
         UnParameters::new(unresolved_mark, rewrite_level),
@@ -559,7 +569,7 @@ fn apply_rules_range_impl(
     run!(SmartInline::new(rewrite_level), "SmartInline");
     // Second UnIife pass: simplify any (() => expr)() patterns created by SmartInline inlining
     run!(UnIife::new(rewrite_level), "UnIife2");
-    run!(SmartRename, "SmartRename");
+    run!(SmartRename::new(unresolved_mark), "SmartRename");
     // Optional final DCE pass. Tests that focus on structural restoration can
     // disable this to avoid coupling fixture baselines to late cleanup.
     if dead_code_elimination {

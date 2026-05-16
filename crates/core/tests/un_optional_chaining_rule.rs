@@ -8,7 +8,9 @@ fn apply(input: &str) -> String {
 }
 
 fn apply_with_level(input: &str, level: RewriteLevel) -> String {
-    render_rule(input, |_| UnOptionalChaining::new(level))
+    render_rule(input, |unresolved_mark| {
+        UnOptionalChaining::new(unresolved_mark, level)
+    })
 }
 
 #[test]

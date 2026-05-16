@@ -1,9 +1,18 @@
+use swc_core::common::{Mark, SyntaxContext};
 use swc_core::ecma::ast::{BindingIdent, Expr, Ident, Lit, Module, UnaryExpr, UnaryOp};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-pub struct RemoveVoid;
+pub struct RemoveVoid {
+    unresolved_ctxt: SyntaxContext,
+}
 
 impl RemoveVoid {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self {
+            unresolved_ctxt: SyntaxContext::empty().apply_mark(unresolved_mark),
+        }
+    }
+
     pub fn should_run(module: &Module) -> bool {
         let mut detector = UndefinedBindingDetector { found: false };
         module.visit_with(&mut detector);
@@ -17,7 +26,7 @@ impl VisitMut for RemoveVoid {
 
         if let Expr::Unary(UnaryExpr { op, arg, span }) = expr {
             if *op == UnaryOp::Void && is_numeric_literal(strip_parens(arg)) {
-                *expr = Expr::Ident(Ident::new_no_ctxt("undefined".into(), *span));
+                *expr = Expr::Ident(Ident::new("undefined".into(), *span, self.unresolved_ctxt));
             }
         }
     }

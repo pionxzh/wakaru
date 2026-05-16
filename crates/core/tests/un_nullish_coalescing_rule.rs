@@ -4,7 +4,9 @@ use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::UnNullishCoalescing;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnNullishCoalescing)
+    render_rule(input, |unresolved_mark| {
+        UnNullishCoalescing::new(unresolved_mark)
+    })
 }
 
 #[test]

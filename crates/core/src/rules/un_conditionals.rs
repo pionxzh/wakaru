@@ -3,6 +3,7 @@ use swc_core::ecma::ast::{
     BinExpr, BinaryOp, BlockStmt, Expr, ExprStmt, IfStmt, ModuleItem, ReturnStmt, Stmt, UnaryExpr,
     UnaryOp,
 };
+use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 pub struct UnConditionals;
@@ -85,12 +86,7 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
             if !is_action_expr(&right) {
                 return vec![Stmt::Expr(ExprStmt {
                     span,
-                    expr: Box::new(Expr::Bin(BinExpr {
-                        span: DUMMY_SP,
-                        op: BinaryOp::LogicalAnd,
-                        left,
-                        right,
-                    })),
+                    expr: Box::new((*left).make_bin(BinaryOp::LogicalAnd, *right)),
                 })];
             }
             vec![Stmt::If(IfStmt {
@@ -110,12 +106,7 @@ fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
             if !is_action_expr(&right) {
                 return vec![Stmt::Expr(ExprStmt {
                     span,
-                    expr: Box::new(Expr::Bin(BinExpr {
-                        span: DUMMY_SP,
-                        op: BinaryOp::LogicalOr,
-                        left,
-                        right,
-                    })),
+                    expr: Box::new((*left).make_bin(BinaryOp::LogicalOr, *right)),
                 })];
             }
             vec![Stmt::If(IfStmt {

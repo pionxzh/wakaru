@@ -2,6 +2,7 @@ use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     BinExpr, BinaryOp, CallExpr, Callee, Expr, Lit, MemberExpr, MemberProp, Tpl, TplElement,
 };
+use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 pub struct UnTemplateLiteral;
@@ -151,12 +152,7 @@ fn rebuild_add_chain(exprs: &[&Expr]) -> Box<Expr> {
     debug_assert!(!exprs.is_empty());
     let mut acc = Box::new((*exprs[0]).clone());
     for e in &exprs[1..] {
-        acc = Box::new(Expr::Bin(BinExpr {
-            span: DUMMY_SP,
-            op: BinaryOp::Add,
-            left: acc,
-            right: Box::new((*e).clone()),
-        }));
+        acc = Box::new((*acc).make_bin(BinaryOp::Add, (*e).clone()));
     }
     acc
 }

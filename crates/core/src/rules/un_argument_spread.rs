@@ -1,24 +1,27 @@
-use swc_core::common::DUMMY_SP;
-use swc_core::ecma::ast::{
-    CallExpr, Callee, Expr, ExprOrSpread, Ident, Lit, MemberProp, UnaryExpr, UnaryOp,
-};
+use swc_core::common::{Mark, DUMMY_SP};
+use swc_core::ecma::ast::{CallExpr, Callee, Expr, ExprOrSpread, Lit, MemberProp};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::RewriteLevel;
 
 pub struct UnArgumentSpread {
+    unresolved_mark: Mark,
     level: RewriteLevel,
 }
 
 impl UnArgumentSpread {
-    pub fn new(level: RewriteLevel) -> Self {
-        Self { level }
+    pub fn new(unresolved_mark: Mark, level: RewriteLevel) -> Self {
+        Self {
+            unresolved_mark,
+            level,
+        }
     }
 }
 
 impl Default for UnArgumentSpread {
     fn default() -> Self {
-        Self::new(RewriteLevel::Standard)
+        Self::new(Mark::new(), RewriteLevel::Standard)
     }
 }
 
@@ -47,14 +50,14 @@ impl VisitMut for UnArgumentSpread {
             return;
         };
 
-        match try_convert_apply(call) {
+        match try_convert_apply(call, self.unresolved_mark) {
             Ok(new_expr) => *expr = new_expr,
             Err(original_call) => *expr = Expr::Call(original_call),
         }
     }
 }
 
-fn try_convert_apply(call: CallExpr) -> Result<Expr, CallExpr> {
+fn try_convert_apply(call: CallExpr, unresolved_mark: Mark) -> Result<Expr, CallExpr> {
     // callee must be a member expression ending in `.apply`
     let callee_member = match &call.callee {
         Callee::Expr(e) => match e.as_ref() {
@@ -94,7 +97,7 @@ fn try_convert_apply(call: CallExpr) -> Result<Expr, CallExpr> {
     // The callee's object is a member expression AND first arg equals the outer object.
     // e.g. callee = obj.fn.apply, callee_obj = obj.fn (Member), first_arg should = obj
     if let Expr::Member(callee_member_obj) = callee_obj {
-        if exprs_equal(first_arg, &callee_member_obj.obj) {
+        if exprs_structurally_equal(first_arg, &callee_member_obj.obj) {
             return Ok(make_spread_call(call));
         }
         // obj.fn.apply(null/undefined, ...) — Babel spread artifact for standalone
@@ -106,7 +109,9 @@ fn try_convert_apply(call: CallExpr) -> Result<Expr, CallExpr> {
     }
 
     // Pattern 1: callee obj is not a member expression, first arg must be null/undefined
-    if is_null_or_undefined(first_arg) {
+    if matches!(first_arg, Expr::Lit(Lit::Null(_)))
+        || is_unresolved_undefined(first_arg, unresolved_mark)
+    {
         return Ok(make_spread_call(call));
     }
 
@@ -146,54 +151,4 @@ fn make_spread_call(call: CallExpr) -> Expr {
         }],
         type_args,
     })
-}
-
-fn is_null_or_undefined(expr: &Expr) -> bool {
-    match expr {
-        Expr::Lit(Lit::Null(_)) => true,
-        Expr::Ident(Ident { sym, .. }) if sym.as_ref() == "undefined" => true,
-        Expr::Unary(UnaryExpr {
-            op: UnaryOp::Void,
-            arg,
-            ..
-        }) => matches!(
-            arg.as_ref(),
-            Expr::Lit(Lit::Num(n)) if n.value == 0.0
-        ),
-        _ => false,
-    }
-}
-
-fn exprs_equal(a: &Expr, b: &Expr) -> bool {
-    match (a, b) {
-        (Expr::Ident(ai), Expr::Ident(bi)) => ai.sym == bi.sym,
-        (Expr::This(_), Expr::This(_)) => true,
-        (Expr::Member(am), Expr::Member(bm)) => {
-            exprs_equal(&am.obj, &bm.obj) && member_props_equal(&am.prop, &bm.prop)
-        }
-        (Expr::Array(aa), Expr::Array(ab)) => {
-            // Two array literals are equal only if both are empty
-            aa.elems.is_empty() && ab.elems.is_empty()
-        }
-        (Expr::Lit(la), Expr::Lit(lb)) => lits_equal(la, lb),
-        _ => false,
-    }
-}
-
-fn member_props_equal(a: &MemberProp, b: &MemberProp) -> bool {
-    match (a, b) {
-        (MemberProp::Ident(ai), MemberProp::Ident(bi)) => ai.sym == bi.sym,
-        (MemberProp::Computed(ac), MemberProp::Computed(bc)) => exprs_equal(&ac.expr, &bc.expr),
-        _ => false,
-    }
-}
-
-fn lits_equal(a: &Lit, b: &Lit) -> bool {
-    match (a, b) {
-        (Lit::Str(as_), Lit::Str(bs)) => as_.value == bs.value,
-        (Lit::Num(an), Lit::Num(bn)) => an.value == bn.value,
-        (Lit::Bool(ab), Lit::Bool(bb)) => ab.value == bb.value,
-        (Lit::Null(_), Lit::Null(_)) => true,
-        _ => false,
-    }
 }
