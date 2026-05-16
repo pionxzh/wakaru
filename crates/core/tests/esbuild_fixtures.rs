@@ -321,3 +321,115 @@ fn bun_minified_without_namespace_boundaries_remains_single_module() {
         filenames(&raw)
     );
 }
+
+#[test]
+fn cross_module_references_get_import_export_synthesis() {
+    let raw = unpack_fixture_raw("es-cross-ref/bundle.js");
+    let names = filenames(&raw);
+
+    assert!(
+        raw.len() >= 4,
+        "es-cross-ref: expected math, format, greet, and entry modules, got {names:?}"
+    );
+
+    let math = code_containing(&raw, "3.14159");
+    let format = code_containing(&raw, "formatSum");
+    let greet = code_containing(&raw, "greetWithMath");
+    let entry = module_code(&raw, "entry");
+
+    // math module should export its bindings.
+    assert!(
+        math.contains("export"),
+        "math module should have export statements:\n{math}"
+    );
+
+    // format module references add, multiply, PI from math → should import them.
+    assert!(
+        format.contains("import") && format.contains("add"),
+        "format module should import add from math:\n{format}"
+    );
+    assert!(
+        format.contains("export") && format.contains("formatSum"),
+        "format module should export formatSum:\n{format}"
+    );
+
+    // greet module references formatSum from format → should import it.
+    assert!(
+        greet.contains("import") && greet.contains("formatSum"),
+        "greet module should import formatSum from format:\n{greet}"
+    );
+    assert!(
+        greet.contains("export") && greet.contains("greetWithMath"),
+        "greet module should export greetWithMath:\n{greet}"
+    );
+
+    // Entry retains namespace re-exports with restored namespace decls
+    // and imports so that `export { math_exports as math }` resolves.
+    assert!(
+        entry.contains("export"),
+        "entry should have namespace export statements:\n{entry}"
+    );
+    assert!(
+        entry.contains("math_exports") && entry.contains("format_exports"),
+        "entry should keep namespace variables for re-exports:\n{entry}"
+    );
+    assert!(
+        entry.contains("import"),
+        "entry should import bindings needed by namespace re-exports:\n{entry}"
+    );
+}
+
+#[test]
+fn bun_minified_cross_module_references_get_import_export_synthesis() {
+    let raw = unpack_fixture_raw("bun-cross-ref-min/bundle.js");
+    let names = filenames(&raw);
+
+    assert!(
+        raw.len() >= 4,
+        "bun-cross-ref-min: expected math, format, greet, and entry, got {names:?}"
+    );
+
+    let math = code_containing(&raw, "3.14159");
+    // The format module (u.js) references l, a, x from math — should import them.
+    let format = module_code(&raw, "u.js");
+
+    assert!(
+        math.contains("export"),
+        "Bun math module should have export statements:\n{math}"
+    );
+    assert!(
+        format.contains("import"),
+        "Bun format module should import from math:\n{format}"
+    );
+    assert!(
+        format.contains("export"),
+        "Bun format module should export its bindings:\n{format}"
+    );
+
+    // No non-entry module should be an orphan (no exports).
+    for (filename, code) in &raw {
+        if filename == "entry.js" {
+            continue;
+        }
+        assert!(
+            code.contains("export"),
+            "Bun {filename} should have export statement:\n{code}"
+        );
+    }
+}
+
+#[test]
+fn cross_module_references_no_orphaned_chunks() {
+    let raw = unpack_fixture_raw("es-cross-ref/bundle.js");
+
+    // Every non-entry module should have at least an export statement.
+    for (filename, code) in &raw {
+        if filename == "entry.js" {
+            continue;
+        }
+        assert!(
+            code.contains("export"),
+            "{filename} should have export statement:\n{code}"
+        );
+    }
+}

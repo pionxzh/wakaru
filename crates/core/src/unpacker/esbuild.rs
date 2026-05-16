@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::ast::{
-    ArrowExpr, BindingIdent, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, Decl, Expr, ExprStmt,
-    FnDecl, ForInStmt, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, PropName, Stmt, Str,
-    VarDeclarator,
+    ArrowExpr, BindingIdent, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, Decl, ExportDecl,
+    ExportNamedSpecifier, ExportSpecifier, Expr, ExprStmt, FnDecl, ForInStmt, Ident, ImportDecl,
+    ImportNamedSpecifier, ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem,
+    NamedExport, ObjectLit, Pat, PropName, Stmt, Str, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::transforms::base::resolver;
@@ -66,15 +67,21 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     let factory_syms: HashSet<Atom> = factories.iter().map(|f| f.var_name.clone()).collect();
 
     // Phase 3: emit each factory as an individual module.
+    // Dedup factory filenames with the same case-insensitive probe loop used
+    // by the CLI, so that the names the scope-hoisted pass seeds from already
+    // reflect any CLI-level renames (e.g. `a.js` + `A.js` → `a.js` + `A_2.js`).
     let mut modules: Vec<UnpackedModule> = Vec::new();
+    let mut global_seen: HashSet<String> = HashSet::new();
+    global_seen.insert("entry.js".to_string());
 
     for factory in factories {
-        let code = emit_stmts(factory.body_stmts, factory.filename.clone(), cm.clone());
+        let filename = dedup_filename(&factory.filename, &mut global_seen);
+        let code = emit_stmts(factory.body_stmts, filename.clone(), cm.clone());
         modules.push(UnpackedModule {
             id: factory.var_name.to_string(),
             is_entry: false,
             code,
-            filename: factory.filename,
+            filename,
         });
     }
 
@@ -93,8 +100,12 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         .collect();
 
     // Phase 5: split scope-hoisted modules out of the entry items.
-    let (scope_hoisted_modules, remaining_entry) =
-        extract_scope_hoisted_modules(&analysis_entry_items, &entry_items, cm.clone());
+    let (scope_hoisted_modules, remaining_entry) = extract_scope_hoisted_modules(
+        &analysis_entry_items,
+        &entry_items,
+        &mut global_seen,
+        cm.clone(),
+    );
     modules.extend(scope_hoisted_modules);
 
     if !remaining_entry.is_empty() {
@@ -372,11 +383,31 @@ fn is_helper_or_factory_item(
 // the top-level items into per-module groups.
 // ---------------------------------------------------------------------------
 
+/// Metadata collected during the first pass over scope-hoisted boundaries.
+struct ScopeModuleMeta {
+    body_indices: Vec<usize>,
+    exported_atoms: HashSet<Atom>,
+    declared_bindings: HashSet<BindingId>,
+    referenced_bindings: HashSet<BindingId>,
+    filename: String,
+    id: String,
+}
+
 /// Extract scope-hoisted modules from entry items.
 /// Returns (extracted_modules, remaining_entry_items).
+///
+/// After partitioning items into per-module groups, this function
+/// synthesizes ES import/export statements so that cross-module
+/// references (which the bundler resolved via direct bindings) are
+/// represented as standard module edges.
+///
+/// `seen_lower` is the shared case-insensitive filename set, already
+/// populated by factory modules.  Scope-hoisted filenames are probed
+/// against it so they never collide with factories or each other.
 fn extract_scope_hoisted_modules(
     analysis_items: &[ModuleItem],
     source_items: &[ModuleItem],
+    seen_lower: &mut HashSet<String>,
     cm: Lrc<SourceMap>,
 ) -> (Vec<UnpackedModule>, Vec<ModuleItem>) {
     debug_assert_eq!(analysis_items.len(), source_items.len());
@@ -393,20 +424,16 @@ fn extract_scope_hoisted_modules(
         return (vec![], source_items.to_vec());
     }
 
-    // Step 3: partition items into per-module groups.
-    // Items before the first boundary → remaining entry.
-    // Items between consecutive boundaries → one module each.
-    // Items after the last module's range → remaining entry (tail).
-    let mut modules = Vec::new();
+    // Step 3 (pass 1): partition items and collect per-module metadata.
+    let mut metas: Vec<ScopeModuleMeta> = Vec::new();
     let mut consumed: HashSet<usize> = HashSet::new();
-    let mut seen_names: HashMap<String, usize> = HashMap::new();
 
-    // Also mark the __export helper declaration as consumed so it doesn't
-    // appear in every extracted module or the remaining entry.
     consumed.insert(export_helper_index);
 
+    // Track consumed namespace bindings so we can restore them for the entry.
+    let mut consumed_ns: Vec<(usize, usize, &ScopeHoistedBoundary)> = Vec::new();
+
     for (bi, boundary) in boundaries.iter().enumerate() {
-        // Module range: from the namespace decl to just before the next namespace decl.
         let start = boundary.ns_decl_index;
         let end = if bi + 1 < boundaries.len() {
             boundaries[bi + 1].ns_decl_index
@@ -419,47 +446,205 @@ fn extract_scope_hoisted_modules(
             )
         };
 
-        // Collect items for this module (skip the ns decl and __export call themselves).
-        let mut body_items: Vec<ModuleItem> = Vec::new();
-        for (i, item) in source_items.iter().enumerate().take(end).skip(start) {
+        let mut body_indices: Vec<usize> = Vec::new();
+        let mut declared_bindings: HashSet<BindingId> = HashSet::new();
+        let mut referenced_bindings: HashSet<BindingId> = HashSet::new();
+
+        for (i, info) in item_infos.iter().enumerate().take(end).skip(start) {
+            consumed.insert(i);
             if i == boundary.ns_decl_index || i == boundary.export_call_index {
-                consumed.insert(i);
                 continue;
             }
-            consumed.insert(i);
-            body_items.push(item.clone());
+            body_indices.push(i);
+            declared_bindings.extend(info.declared.iter().cloned());
+            referenced_bindings.extend(info.references.iter().cloned());
         }
 
-        if body_items.is_empty() {
+        consumed_ns.push((boundary.ns_decl_index, boundary.export_call_index, boundary));
+
+        if body_indices.is_empty() {
             continue;
         }
 
-        let base_name = boundary.ns_atom.to_string();
-        let count = seen_names.entry(base_name.clone()).or_insert(0);
-        *count += 1;
-        let unique_name = if *count == 1 {
-            base_name
-        } else {
-            format!("{}_{}", base_name, count)
-        };
+        let exported_atoms: HashSet<Atom> = boundary
+            .exported_bindings
+            .iter()
+            .map(|(atom, _)| atom.clone())
+            .collect();
 
-        let filename = format!("{unique_name}.js");
-        let code = emit_items(body_items, filename.clone(), cm.clone());
-        modules.push(UnpackedModule {
-            id: unique_name,
-            is_entry: false,
-            code,
+        let base_name = boundary.ns_atom.to_string();
+        let filename = dedup_filename(&format!("{base_name}.js"), seen_lower);
+        let id = filename
+            .strip_suffix(".js")
+            .unwrap_or(&filename)
+            .to_string();
+
+        metas.push(ScopeModuleMeta {
+            body_indices,
+            exported_atoms,
+            declared_bindings,
+            referenced_bindings,
             filename,
+            id,
         });
     }
 
-    // Remaining: items not consumed by any module.
-    let remaining: Vec<ModuleItem> = source_items
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !consumed.contains(i))
-        .map(|(_, item)| item.clone())
+    // Build binding → module index map for all scope-hoisted modules.
+    let mut binding_to_module: HashMap<BindingId, usize> = HashMap::new();
+    for (mi, meta) in metas.iter().enumerate() {
+        for binding in &meta.declared_bindings {
+            binding_to_module.insert(binding.clone(), mi);
+        }
+    }
+
+    // Collect remaining entry references early so they feed into the
+    // effective-export expansion below.
+    let remaining_indices: Vec<usize> = (0..source_items.len())
+        .filter(|i| !consumed.contains(i))
         .collect();
+
+    let mut entry_referenced: HashSet<BindingId> = HashSet::new();
+    for &i in &remaining_indices {
+        entry_referenced.extend(item_infos[i].references.iter().cloned());
+    }
+    for &(ns_idx, call_idx, _) in &consumed_ns {
+        entry_referenced.extend(item_infos[ns_idx].references.iter().cloned());
+        entry_referenced.extend(item_infos[call_idx].references.iter().cloned());
+    }
+
+    // Expand export sets: the T8-registered exports are the module's public
+    // API, but the bundler's scope hoisting lets other modules directly
+    // reference private helpers too.  Any declared binding referenced from
+    // outside (by another module OR by the entry) must be exported.
+    let mut effective_exports: Vec<HashSet<Atom>> =
+        metas.iter().map(|m| m.exported_atoms.clone()).collect();
+    for (mi, meta) in metas.iter().enumerate() {
+        for ref_binding in &meta.referenced_bindings {
+            if meta.declared_bindings.contains(ref_binding) {
+                continue;
+            }
+            if let Some(&source_mi) = binding_to_module.get(ref_binding) {
+                if source_mi != mi {
+                    effective_exports[source_mi].insert(ref_binding.0.clone());
+                }
+            }
+        }
+    }
+    for ref_binding in &entry_referenced {
+        if let Some(&source_mi) = binding_to_module.get(ref_binding) {
+            effective_exports[source_mi].insert(ref_binding.0.clone());
+        }
+    }
+
+    // Step 4 (pass 2): emit each module with synthesized imports/exports.
+    let mut modules = Vec::new();
+
+    for (mi, meta) in metas.iter().enumerate() {
+        let mut module_items: Vec<ModuleItem> = Vec::new();
+        let exports = &effective_exports[mi];
+
+        // Synthesize imports from other scope-hoisted modules.
+        let mut imports_by_source: HashMap<usize, Vec<Atom>> = HashMap::new();
+        for ref_binding in &meta.referenced_bindings {
+            if meta.declared_bindings.contains(ref_binding) {
+                continue;
+            }
+            if let Some(&source_mi) = binding_to_module.get(ref_binding) {
+                if source_mi != mi {
+                    imports_by_source
+                        .entry(source_mi)
+                        .or_default()
+                        .push(ref_binding.0.clone());
+                }
+            }
+        }
+        let mut import_sources: Vec<usize> = imports_by_source.keys().copied().collect();
+        import_sources.sort();
+        for source_mi in import_sources {
+            let names = imports_by_source.get_mut(&source_mi).unwrap();
+            names.sort();
+            names.dedup();
+            module_items.push(make_scope_import_stmt(names, &metas[source_mi].filename));
+        }
+
+        // Body items with export promotion for exported bindings.
+        let mut remaining_exports = exports.clone();
+        for &i in &meta.body_indices {
+            let item = &source_items[i];
+            if remaining_exports.is_empty() {
+                module_items.push(item.clone());
+                continue;
+            }
+            match try_promote_scope_export(item, &remaining_exports) {
+                ScopeExportPromotion::Promoted(new_item, promoted) => {
+                    module_items.push(new_item);
+                    for name in &promoted {
+                        remaining_exports.remove(name);
+                    }
+                }
+                ScopeExportPromotion::None => {
+                    module_items.push(item.clone());
+                }
+            }
+        }
+        if !remaining_exports.is_empty() {
+            let mut names: Vec<Atom> = remaining_exports.into_iter().collect();
+            names.sort();
+            module_items.push(make_scope_export_stmt(&names));
+        }
+
+        let code = emit_items(module_items, meta.filename.clone(), cm.clone());
+        modules.push(UnpackedModule {
+            id: meta.id.clone(),
+            is_entry: false,
+            code,
+            filename: meta.filename.clone(),
+        });
+    }
+
+    // Restore consumed namespace decls + __export calls whose namespace
+    // binding is still referenced by the remaining entry (e.g. the entry
+    // has `export { math_exports as math }` but `var math_exports = {}`
+    // was consumed).  Re-inserting them keeps the namespace object alive;
+    // importing the individual bindings ensures the __export getters
+    // resolve correctly.
+    let mut restored_items: Vec<ModuleItem> = Vec::new();
+    let mut need_export_helper = false;
+    for &(ns_idx, call_idx, boundary) in &consumed_ns {
+        if !entry_referenced.contains(&boundary.ns_binding) {
+            continue;
+        }
+        need_export_helper = true;
+        restored_items.push(source_items[ns_idx].clone());
+        restored_items.push(source_items[call_idx].clone());
+    }
+    if need_export_helper {
+        restored_items.insert(0, source_items[export_helper_index].clone());
+    }
+
+    let mut entry_imports: HashMap<usize, Vec<Atom>> = HashMap::new();
+    for ref_binding in &entry_referenced {
+        if let Some(&source_mi) = binding_to_module.get(ref_binding) {
+            entry_imports
+                .entry(source_mi)
+                .or_default()
+                .push(ref_binding.0.clone());
+        }
+    }
+
+    let mut remaining: Vec<ModuleItem> = Vec::new();
+    if !entry_imports.is_empty() {
+        let mut import_sources: Vec<usize> = entry_imports.keys().copied().collect();
+        import_sources.sort();
+        for source_mi in import_sources {
+            let names = entry_imports.get_mut(&source_mi).unwrap();
+            names.sort();
+            names.dedup();
+            remaining.push(make_scope_import_stmt(names, &metas[source_mi].filename));
+        }
+    }
+    remaining.extend(restored_items);
+    remaining.extend(remaining_indices.iter().map(|&i| source_items[i].clone()));
 
     (modules, remaining)
 }
@@ -870,6 +1055,141 @@ impl Visit for TopLevelRefCollector<'_> {
         if let swc_core::ecma::ast::SuperProp::Computed(c) = prop {
             c.visit_with(self);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Import / export synthesis for scope-hoisted modules
+// ---------------------------------------------------------------------------
+
+fn make_scope_import_stmt(names: &[Atom], from: &str) -> ModuleItem {
+    let specifiers = names
+        .iter()
+        .map(|name| {
+            ImportSpecifier::Named(ImportNamedSpecifier {
+                span: Default::default(),
+                local: Ident::new(name.clone(), Default::default(), Default::default()),
+                imported: None,
+                is_type_only: false,
+            })
+        })
+        .collect();
+    ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
+        span: Default::default(),
+        specifiers,
+        src: Box::new(Str {
+            span: Default::default(),
+            value: format!("./{from}").into(),
+            raw: None,
+        }),
+        type_only: false,
+        with: None,
+        phase: Default::default(),
+    }))
+}
+
+fn make_scope_export_stmt(names: &[Atom]) -> ModuleItem {
+    let specifiers = names
+        .iter()
+        .map(|name| {
+            ExportSpecifier::Named(ExportNamedSpecifier {
+                span: Default::default(),
+                orig: ModuleExportName::Ident(Ident::new(
+                    name.clone(),
+                    Default::default(),
+                    Default::default(),
+                )),
+                exported: None,
+                is_type_only: false,
+            })
+        })
+        .collect();
+    ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
+        span: Default::default(),
+        specifiers,
+        src: None,
+        type_only: false,
+        with: None,
+    }))
+}
+
+enum ScopeExportPromotion {
+    Promoted(ModuleItem, Vec<Atom>),
+    None,
+}
+
+fn try_promote_scope_export(item: &ModuleItem, exported: &HashSet<Atom>) -> ScopeExportPromotion {
+    match item {
+        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl)))
+            if exported.contains(&fn_decl.ident.sym) =>
+        {
+            let names = vec![fn_decl.ident.sym.clone()];
+            let new_item = ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                span: Default::default(),
+                decl: Decl::Fn(fn_decl.clone()),
+            }));
+            ScopeExportPromotion::Promoted(new_item, names)
+        }
+        ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl)))
+            if exported.contains(&class_decl.ident.sym) =>
+        {
+            let names = vec![class_decl.ident.sym.clone()];
+            let new_item = ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                span: Default::default(),
+                decl: Decl::Class(class_decl.clone()),
+            }));
+            ScopeExportPromotion::Promoted(new_item, names)
+        }
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
+            let all_exported = var_decl
+                .decls
+                .iter()
+                .all(|d| matches!(&d.name, Pat::Ident(bi) if exported.contains(&bi.id.sym)));
+            if !all_exported {
+                return ScopeExportPromotion::None;
+            }
+            let names: Vec<Atom> = var_decl
+                .decls
+                .iter()
+                .filter_map(|d| {
+                    if let Pat::Ident(bi) = &d.name {
+                        Some(bi.id.sym.clone())
+                    } else {
+                        Option::None
+                    }
+                })
+                .collect();
+            if names.is_empty() {
+                return ScopeExportPromotion::None;
+            }
+            let new_item = ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                span: Default::default(),
+                decl: Decl::Var(var_decl.clone()),
+            }));
+            ScopeExportPromotion::Promoted(new_item, names)
+        }
+        _ => ScopeExportPromotion::None,
+    }
+}
+
+/// Case-insensitive filename dedup matching the CLI's `deduplicate_path` logic.
+/// Probes `filename`, then `{stem}_2.{ext}`, `{stem}_3.{ext}`, ... until a
+/// name not in `seen` is found.  Inserts the winner and returns it.
+fn dedup_filename(filename: &str, seen: &mut HashSet<String>) -> String {
+    if seen.insert(filename.to_ascii_lowercase()) {
+        return filename.to_string();
+    }
+    let (stem, ext) = match filename.rfind('.') {
+        Some(i) => (&filename[..i], &filename[i + 1..]),
+        None => (filename, "js"),
+    };
+    let mut n = 2u32;
+    loop {
+        let candidate = format!("{stem}_{n}.{ext}");
+        if seen.insert(candidate.to_ascii_lowercase()) {
+            return candidate;
+        }
+        n += 1;
     }
 }
 

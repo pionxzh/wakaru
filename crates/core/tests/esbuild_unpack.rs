@@ -372,6 +372,111 @@ console.log(x, y2);
 }
 
 #[test]
+fn scope_module_skips_factory_owned_suffixes() {
+    // Factories own `a.js` (from `var a = y(...)`) and the scope boundary
+    // also uses namespace atom `a`.  The counter-based dedup used to assign
+    // `a_2.js` which shadows the CLI-deduped factory `a_2.js` when the
+    // CLI separately deduplicates `a.js` → `a_2.js`.  The probe loop must
+    // skip all taken names.
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var a = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var a = {};
+__export(a, { greet: () => greet });
+function greet() { return "hello"; }
+export { a };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+    let raw_names: Vec<&str> = raw_pairs.iter().map(|(n, _)| n.as_str()).collect();
+
+    // Factory gets `a.js`. Scope module must NOT also claim `a.js`;
+    // it should get `a_2.js` (or higher if `a_2.js` is also taken).
+    let scope_module = raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("greet"))
+        .expect("should find scope module containing greet");
+    assert_ne!(
+        scope_module.0, "a.js",
+        "scope module should not shadow factory a.js: {raw_names:?}"
+    );
+
+    // The scope module's filename must exist in the raw output (not orphaned).
+    assert!(
+        raw_names.contains(&scope_module.0.as_str()),
+        "scope module filename {} should be in output: {raw_names:?}",
+        scope_module.0
+    );
+}
+
+#[test]
+fn scope_module_skips_cli_deduped_factory_suffixes() {
+    // Factories `a` and `A` produce raw filenames `a.js` and `A.js`.
+    // The CLI case-dedup turns them into `a.js` and `A_2.js`.
+    // A scope module with namespace `A_2` must not claim `A_2.js`;
+    // it should probe past it to `A_2_2.js`.
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var a = y(() => { v1 = 1; });
+var A = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var c = {};
+__export(c, { use: () => use });
+function use() { return greet(); }
+var A_2 = {};
+__export(A_2, { greet: () => greet });
+function greet() { return "hello"; }
+export { c, A_2 };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+    let raw_names: Vec<&str> = raw_pairs.iter().map(|(n, _)| n.as_str()).collect();
+
+    // The scope module exporting `greet` must not shadow the CLI-deduped
+    // factory `A_2.js`.
+    let greet_module = raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function greet()"))
+        .expect("should find scope module declaring greet");
+
+    assert_ne!(
+        greet_module.0.to_ascii_lowercase(),
+        "a_2.js",
+        "scope module should not shadow CLI-deduped factory A_2.js: {raw_names:?}"
+    );
+
+    // The `c` module imports greet — verify its import target matches greet's actual filename.
+    let c_module = raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function use()"))
+        .expect("should find scope module declaring use");
+    let import_target = c_module
+        .1
+        .lines()
+        .find(|l| l.contains("import") && l.contains("greet"))
+        .unwrap_or("");
+    assert!(
+        import_target.contains(&greet_module.0),
+        "c module should import greet from {}, but import line is: {import_target}",
+        greet_module.0
+    );
+}
+
+#[test]
 fn small_file_with_few_factories_is_not_detected() {
     // Only 2 factories — below the threshold of 5, so we should NOT detect as esbuild.
     let bundle = r#"
