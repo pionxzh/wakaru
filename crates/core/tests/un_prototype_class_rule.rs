@@ -304,3 +304,198 @@ class Foo {
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
+
+// ============================================================
+// Pre-reference relocation (contiguous prelude only)
+// ============================================================
+
+#[test]
+fn test_pre_ref_module_exports() {
+    let input = r#"
+module.exports = Foo;
+function Foo(x) { this.x = x; }
+Foo.prototype.getX = function() { return this.x; };
+"#;
+    let expected = r#"
+class Foo {
+    constructor(x) { this.x = x; }
+    getX() { return this.x; }
+}
+module.exports = Foo;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_pre_ref_esbuild_commonjs_param() {
+    let input = r#"
+fn4.exports = Foo;
+Foo.className = "ReflectionObject";
+function Foo(x) { this.x = x; }
+Foo.prototype.getX = function() { return this.x; };
+"#;
+    let expected = r#"
+class Foo {
+    constructor(x) { this.x = x; }
+    getX() { return this.x; }
+}
+fn4.exports = Foo;
+Foo.className = "ReflectionObject";
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_pre_ref_exports_default() {
+    let input = r#"
+exports.default = Foo;
+function Foo(x) { this.x = x; }
+Foo.prototype.getX = function() { return this.x; };
+"#;
+    let expected = r#"
+class Foo {
+    constructor(x) { this.x = x; }
+    getX() { return this.x; }
+}
+exports.default = Foo;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_pre_ref_with_gap() {
+    // Real esbuild pattern: export + className at top, const/let in between,
+    // fn decl much later. Safe patterns are relocated regardless of distance.
+    let input = r#"
+fn4.exports = Foo;
+Foo.className = "ReflectionObject";
+const x = 1;
+const y = 2;
+function Foo(x) { this.x = x; }
+Foo.prototype.getX = function() { return this.x; };
+"#;
+    let expected = r#"
+const x = 1;
+const y = 2;
+class Foo {
+    constructor(x) { this.x = x; }
+    getX() { return this.x; }
+}
+fn4.exports = Foo;
+Foo.className = "ReflectionObject";
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_pre_ref_export_with_gap() {
+    let input = r#"
+module.exports = Foo;
+sideEffect();
+function Foo(x) { this.x = x; }
+Foo.prototype.getX = function() { return this.x; };
+"#;
+    let expected = r#"
+sideEffect();
+class Foo {
+    constructor(x) { this.x = x; }
+    getX() { return this.x; }
+}
+module.exports = Foo;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_pre_ref_arbitrary_call_skips() {
+    let input = r#"
+use(Foo);
+function Foo(x) { this.x = x; }
+Foo.prototype.getX = function() { return this.x; };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn test_pre_ref_call_in_lhs_skips() {
+    let input = r#"
+getTarget().value = Foo;
+function Foo(x) { this.x = x; }
+Foo.prototype.getX = function() { return this.x; };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn test_pre_ref_bare_ident_assignment_skips() {
+    let input = r#"
+x = Foo;
+function Foo(x) { this.x = x; }
+Foo.prototype.getX = function() { return this.x; };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn test_pre_ref_mixed_safe_and_unsafe_skips() {
+    let input = r#"
+module.exports = Foo;
+console.log(Foo);
+function Foo(x) { this.x = x; }
+Foo.prototype.getX = function() { return this.x; };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+// ============================================================
+// Chained inheritance (protobuf.js codegen pattern)
+// ============================================================
+
+#[test]
+fn test_chained_inheritance_with_classname() {
+    let input = r#"
+mod1.exports = Foo;
+((Foo.prototype = Object.create(Bar.prototype)).constructor = Foo).className = "Root";
+function Foo(x) {
+    Bar.call(this, x);
+}
+Foo.prototype.getX = function() { return this.x; };
+"#;
+    let expected = r#"
+class Foo extends Bar {
+    constructor(x) {
+        super(x);
+    }
+    getX() { return this.x; }
+}
+mod1.exports = Foo;
+Foo.className = "Root";
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_chained_inheritance_without_classname() {
+    let input = r#"
+mod1.exports = Foo;
+(Foo.prototype = Object.create(Bar.prototype)).constructor = Foo;
+function Foo(x) {
+    Bar.call(this, x);
+}
+Foo.prototype.getX = function() { return this.x; };
+"#;
+    let expected = r#"
+class Foo extends Bar {
+    constructor(x) {
+        super(x);
+    }
+    getX() { return this.x; }
+}
+mod1.exports = Foo;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}

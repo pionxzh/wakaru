@@ -893,14 +893,29 @@ impl Visit for DuplicateDeclarationCollector {
         var_decl.visit_children_with(self);
     }
 
-    // Stop at block boundaries: let/const are block-scoped, so bindings
-    // in nested blocks are in separate scopes and cannot conflict with
-    // each other or with the parent scope.
-    fn visit_block_stmt(&mut self, _: &swc_core::ecma::ast::BlockStmt) {}
+    fn visit_block_stmt(&mut self, block: &swc_core::ecma::ast::BlockStmt) {
+        let mut child = DuplicateDeclarationCollector::default();
+        block.visit_children_with(&mut child);
+        self.duplicates.extend(child.duplicates);
+    }
 
-    fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
-    fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
-    fn visit_class(&mut self, _: &swc_core::ecma::ast::Class) {}
+    fn visit_function(&mut self, func: &swc_core::ecma::ast::Function) {
+        let mut child = DuplicateDeclarationCollector::default();
+        func.visit_children_with(&mut child);
+        self.duplicates.extend(child.duplicates);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
+        let mut child = DuplicateDeclarationCollector::default();
+        arrow.visit_children_with(&mut child);
+        self.duplicates.extend(child.duplicates);
+    }
+
+    fn visit_class(&mut self, class: &swc_core::ecma::ast::Class) {
+        let mut child = DuplicateDeclarationCollector::default();
+        class.visit_children_with(&mut child);
+        self.duplicates.extend(child.duplicates);
+    }
 }
 
 fn verify_output_parses(code: &str, filename: &str) -> Vec<UnpackWarning> {
@@ -1122,6 +1137,48 @@ mod tests {
         assert!(
             output.has_errors(),
             "duplicate declarations should be error-severity diagnostics"
+        );
+    }
+
+    #[test]
+    fn diagnostics_duplicate_declarations_inside_block() {
+        let output = decompile(
+            "{ const x = 1; const x = 2; }",
+            DecompileOptions {
+                diagnostics: true,
+                filename: "block-dup.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("decompile should succeed");
+        assert!(
+            output
+                .warnings
+                .iter()
+                .any(|w| w.kind == UnpackWarningKind::DuplicateDeclaration),
+            "should detect duplicate declarations inside block: {:?}",
+            output.warnings
+        );
+    }
+
+    #[test]
+    fn diagnostics_no_false_positive_across_block_scopes() {
+        let output = decompile(
+            "{ const x = 1; } { const x = 2; }",
+            DecompileOptions {
+                diagnostics: true,
+                filename: "separate-scopes.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("decompile should succeed");
+        assert!(
+            !output
+                .warnings
+                .iter()
+                .any(|w| w.kind == UnpackWarningKind::DuplicateDeclaration),
+            "separate block scopes should not report duplicate: {:?}",
+            output.warnings
         );
     }
 

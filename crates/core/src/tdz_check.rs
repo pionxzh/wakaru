@@ -326,8 +326,6 @@ fn collect_pat_ids_with_pos(
     }
 }
 
-
-
 /// Like `visit_pat_expressions` + `collect_pat_ids`, but interleaved:
 /// visit each property's default, then mark that property's binding as declared,
 /// before processing the next. This matches JS sequential evaluation of defaults.
@@ -353,9 +351,7 @@ fn visit_pat_expressions_and_declare(pat: &Pat, checker: &mut OrderedScopeChecke
                         if let Some(default) = &a.value {
                             default.visit_with(checker);
                         }
-                        checker
-                            .declared
-                            .insert((a.key.sym.clone(), a.key.ctxt));
+                        checker.declared.insert((a.key.sym.clone(), a.key.ctxt));
                     }
                     ObjectPatProp::Rest(r) => {
                         visit_pat_expressions_and_declare(&r.arg, checker);

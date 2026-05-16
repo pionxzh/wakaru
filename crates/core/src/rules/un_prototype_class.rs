@@ -33,13 +33,19 @@ struct ClassCandidate {
     /// Index of the `function Foo() {}` declaration in the statement list.
     fn_decl_idx: usize,
     /// The constructor function name (e.g., "Foo").
-    _name: Atom,
+    name: Atom,
     /// Super class expression, if inheritance is detected.
     super_class: Option<Box<Expr>>,
     /// Super class name for `Parent.call(this, ...)` → `super(...)` rewriting.
     super_class_name: Option<Atom>,
     /// Indices of statements consumed by this class (prototype methods, inheritance, etc.).
     consumed_indices: HashSet<usize>,
+    /// Statements before the fn decl that reference the function name (in order).
+    /// Relocated to after the class declaration to avoid TDZ.
+    pre_ref_indices: Vec<usize>,
+    /// className value extracted from chained inheritance (e.g., "Root").
+    /// Emitted as `Foo.className = "Root"` after the class declaration.
+    class_name_value: Option<Atom>,
     /// Collected class members.
     members: Vec<ClassMember>,
 }
@@ -59,29 +65,41 @@ fn transform_module_items(items: &mut Vec<ModuleItem>) {
         return;
     }
 
-    let all_consumed: HashSet<usize> = candidates
+    let mut all_consumed: HashSet<usize> = candidates
         .iter()
         .flat_map(|c| c.consumed_indices.iter().copied())
         .collect();
+    // Pre-ref statements are also skipped at their original position (relocated after class).
+    let all_pre_refs: HashSet<usize> = candidates
+        .iter()
+        .flat_map(|c| c.pre_ref_indices.iter().copied())
+        .collect();
+    all_consumed.extend(&all_pre_refs);
     let fn_decl_map: HashMap<usize, &ClassCandidate> =
         candidates.iter().map(|c| (c.fn_decl_idx, c)).collect();
 
-    let old = std::mem::take(items);
-    for (i, item) in old.into_iter().enumerate() {
+    let old: Vec<ModuleItem> = std::mem::take(items);
+    for (i, item) in old.iter().enumerate() {
         if all_consumed.contains(&i) {
             continue;
         }
         if let Some(candidate) = fn_decl_map.get(&i) {
-            if let ModuleItem::Stmt(stmt) = &item {
+            if let ModuleItem::Stmt(stmt) = item {
                 if let Some(class_decl) = build_class_decl(candidate, stmt) {
                     items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
+                    for &pre_idx in &candidate.pre_ref_indices {
+                        items.push(old[pre_idx].clone());
+                    }
+                    if let Some(cn) = &candidate.class_name_value {
+                        items.push(ModuleItem::Stmt(make_class_name_stmt(&candidate.name, cn)));
+                    }
                     continue;
                 }
             }
-            debug_assert_candidate_points_to_function_decl(&item);
-            items.push(item);
+            debug_assert_candidate_points_to_function_decl(item);
+            items.push(item.clone());
         } else {
-            items.push(item);
+            items.push(item.clone());
         }
     }
 }
@@ -93,27 +111,38 @@ fn transform_stmts(stmts: &mut Vec<Stmt>) {
         return;
     }
 
-    let all_consumed: HashSet<usize> = candidates
+    let mut all_consumed: HashSet<usize> = candidates
         .iter()
         .flat_map(|c| c.consumed_indices.iter().copied())
         .collect();
+    let all_pre_refs: HashSet<usize> = candidates
+        .iter()
+        .flat_map(|c| c.pre_ref_indices.iter().copied())
+        .collect();
+    all_consumed.extend(&all_pre_refs);
     let fn_decl_map: HashMap<usize, &ClassCandidate> =
         candidates.iter().map(|c| (c.fn_decl_idx, c)).collect();
 
-    let old = std::mem::take(stmts);
-    for (i, stmt) in old.into_iter().enumerate() {
+    let old: Vec<Stmt> = std::mem::take(stmts);
+    for (i, stmt) in old.iter().enumerate() {
         if all_consumed.contains(&i) {
             continue;
         }
         if let Some(candidate) = fn_decl_map.get(&i) {
-            if let Some(class_decl) = build_class_decl(candidate, &stmt) {
+            if let Some(class_decl) = build_class_decl(candidate, stmt) {
                 stmts.push(Stmt::Decl(Decl::Class(class_decl)));
+                for &pre_idx in &candidate.pre_ref_indices {
+                    stmts.push(old[pre_idx].clone());
+                }
+                if let Some(cn) = &candidate.class_name_value {
+                    stmts.push(make_class_name_stmt(&candidate.name, cn));
+                }
             } else {
-                debug_assert_stmt_is_function_decl(&stmt);
-                stmts.push(stmt);
+                debug_assert_stmt_is_function_decl(stmt);
+                stmts.push(stmt.clone());
             }
         } else {
-            stmts.push(stmt);
+            stmts.push(stmt.clone());
         }
     }
 }
@@ -176,19 +205,57 @@ fn find_candidates(stmts: &[Option<&Stmt>]) -> Vec<ClassCandidate> {
             continue;
         }
 
-        // Class declarations are NOT hoisted, unlike function declarations.
-        // If the function name is referenced before its declaration, converting
-        // to a class would create a TDZ violation.
-        if is_referenced_before(stmts, *fn_idx, name) {
+        // Collect pre-reference statements. Each must be either:
+        // - A safe-to-relocate pattern (export alias, static string prop)
+        // - A chained inheritance expression (consumed, super class extracted)
+        // Any other reference to the name → skip candidate entirely.
+        let mut pre_ref_indices: Vec<usize> = Vec::new();
+        let mut pre_consumed_indices: HashSet<usize> = HashSet::new();
+        let mut pre_super_class: Option<Box<Expr>> = None;
+        let mut pre_super_class_name: Option<Atom> = None;
+        let mut pre_class_name_value: Option<Atom> = None;
+        let mut has_unsafe_pre_ref = false;
+
+        for (i, slot) in stmts.iter().enumerate().take(*fn_idx) {
+            if globally_consumed.contains(&i) {
+                continue;
+            }
+            let Some(stmt) = slot else { continue };
+            if !references_name(stmt, name) {
+                continue;
+            }
+
+            // Try chained inheritance pattern first:
+            // ((Foo.prototype = Object.create(Bar.prototype)).constructor = Foo).className = "X"
+            if let Some((sc, sn, cn)) = extract_chained_inheritance(stmt, name) {
+                pre_super_class = Some(sc);
+                pre_super_class_name = sn;
+                if let Some(v) = cn {
+                    pre_class_name_value = Some(v);
+                }
+                pre_consumed_indices.insert(i);
+                continue;
+            }
+
+            if !is_safe_to_relocate(stmt, name) {
+                has_unsafe_pre_ref = true;
+                break;
+            }
+            pre_ref_indices.push(i);
+        }
+
+        if has_unsafe_pre_ref {
             continue;
         }
 
         let mut candidate = ClassCandidate {
             fn_decl_idx: *fn_idx,
-            _name: (*name).clone(),
-            super_class: None,
-            super_class_name: None,
-            consumed_indices: HashSet::new(),
+            name: (*name).clone(),
+            super_class: pre_super_class,
+            super_class_name: pre_super_class_name,
+            consumed_indices: pre_consumed_indices,
+            pre_ref_indices,
+            class_name_value: pre_class_name_value,
             members: Vec::new(),
         };
 
@@ -215,25 +282,30 @@ fn find_candidates(stmts: &[Option<&Stmt>]) -> Vec<ClassCandidate> {
             }
 
             // Foo.prototype = Object.create(Bar.prototype) — inheritance
-            if let Some(super_expr) = extract_object_create_inheritance(stmt, name) {
-                candidate.super_class_name = match super_expr.as_ref() {
-                    Expr::Ident(id) => Some(id.sym.clone()),
-                    _ => None,
-                };
-                candidate.super_class = Some(super_expr);
-                candidate.consumed_indices.insert(i);
-                continue;
+            // Skip if already found via chained pre-reference.
+            if candidate.super_class.is_none() {
+                if let Some(super_expr) = extract_object_create_inheritance(stmt, name) {
+                    candidate.super_class_name = match super_expr.as_ref() {
+                        Expr::Ident(id) => Some(id.sym.clone()),
+                        _ => None,
+                    };
+                    candidate.super_class = Some(super_expr);
+                    candidate.consumed_indices.insert(i);
+                    continue;
+                }
             }
 
             // util.inherits(Foo, Bar) or inherits(Foo, Bar) — inheritance
-            if let Some(super_expr) = extract_util_inherits(stmt, name) {
-                candidate.super_class_name = match super_expr.as_ref() {
-                    Expr::Ident(id) => Some(id.sym.clone()),
-                    _ => None,
-                };
-                candidate.super_class = Some(super_expr);
-                candidate.consumed_indices.insert(i);
-                continue;
+            if candidate.super_class.is_none() {
+                if let Some(super_expr) = extract_util_inherits(stmt, name) {
+                    candidate.super_class_name = match super_expr.as_ref() {
+                        Expr::Ident(id) => Some(id.sym.clone()),
+                        _ => None,
+                    };
+                    candidate.super_class = Some(super_expr);
+                    candidate.consumed_indices.insert(i);
+                    continue;
+                }
             }
 
             // Object.defineProperty(Foo.prototype, "name", { get/set })
@@ -257,8 +329,8 @@ fn find_candidates(stmts: &[Option<&Stmt>]) -> Vec<ClassCandidate> {
     candidates
 }
 
-/// Check if `name` is referenced in any statement before index `fn_idx`.
-fn is_referenced_before(stmts: &[Option<&Stmt>], fn_idx: usize, name: &Atom) -> bool {
+/// Check if a statement references `name` (excluding nested function bodies).
+fn references_name(stmt: &Stmt, name: &Atom) -> bool {
     struct NameRefFinder<'a> {
         name: &'a str,
         found: bool,
@@ -273,18 +345,170 @@ fn is_referenced_before(stmts: &[Option<&Stmt>], fn_idx: usize, name: &Atom) -> 
         fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
     }
 
-    for item in stmts.iter().take(fn_idx) {
-        let Some(stmt) = item else { continue };
-        let mut finder = NameRefFinder {
-            name: name.as_ref(),
-            found: false,
-        };
-        stmt.visit_with(&mut finder);
-        if finder.found {
-            return true;
-        }
+    let mut finder = NameRefFinder {
+        name: name.as_ref(),
+        found: false,
+    };
+    stmt.visit_with(&mut finder);
+    finder.found
+}
+
+/// Check if a pre-reference statement is safe to relocate after the class.
+/// Exactly three patterns are allowed:
+///   1. `<ident>.exports = Foo`  (e.g., `module.exports = Foo`, `fn4.exports = Foo`)
+///   2. `exports.<ident> = Foo`  (e.g., `exports.default = Foo`)
+///   3. `Foo.<ident> = <expr>` (static property/method, e.g., `Foo.className = "X"`,
+///      `Foo.fromJSON = (K, _) => ...`)
+fn is_safe_to_relocate(stmt: &Stmt, name: &Atom) -> bool {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return false;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return false;
+    };
+    if assign.op != AssignOp::Assign {
+        return false;
     }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else {
+        return false;
+    };
+    let Expr::Ident(obj) = lhs.obj.as_ref() else {
+        return false;
+    };
+    let MemberProp::Ident(prop) = &lhs.prop else {
+        return false;
+    };
+
+    // Pattern 1: <ident>.exports = Foo
+    if prop.sym.as_ref() == "exports" && &obj.sym != name {
+        return matches!(assign.right.as_ref(), Expr::Ident(id) if &id.sym == name);
+    }
+
+    // Pattern 2: exports.<ident> = Foo
+    if obj.sym.as_ref() == "exports" {
+        return matches!(assign.right.as_ref(), Expr::Ident(id) if &id.sym == name);
+    }
+
+    // Pattern 3: Foo.<ident> = <expr> (static property/method assignment)
+    if &obj.sym == name {
+        return true;
+    }
+
     false
+}
+
+fn unwrap_paren(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(p) => unwrap_paren(&p.expr),
+        _ => expr,
+    }
+}
+
+/// Recognize protobuf.js-style chained inheritance expressions before the fn decl.
+/// This is NOT a standard transpiler pattern — it's specific to protobuf.js codegen:
+///   `((Foo.prototype = Object.create(Bar.prototype)).constructor = Foo).className = "X"`
+///   `(Foo.prototype = Object.create(Bar.prototype)).constructor = Foo`
+/// Returns (super_class, super_class_name, class_name_value).
+fn extract_chained_inheritance(
+    stmt: &Stmt,
+    ctor_name: &Atom,
+) -> Option<(Box<Expr>, Option<Atom>, Option<Atom>)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    extract_chained_inheritance_expr(expr, ctor_name)
+}
+
+fn extract_chained_inheritance_expr(
+    expr: &Expr,
+    ctor_name: &Atom,
+) -> Option<(Box<Expr>, Option<Atom>, Option<Atom>)> {
+    let expr = unwrap_paren(expr);
+    let Expr::Assign(assign) = expr else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else {
+        return None;
+    };
+    let MemberProp::Ident(prop) = &lhs.prop else {
+        return None;
+    };
+
+    match prop.sym.as_ref() {
+        "className" => {
+            let Expr::Lit(swc_core::ecma::ast::Lit::Str(s)) = assign.right.as_ref() else {
+                return None;
+            };
+            let (sc, sn, _) =
+                extract_chained_inheritance_expr(unwrap_paren(lhs.obj.as_ref()), ctor_name)?;
+            Some((sc, sn, Some(Atom::from(s.value.as_str().unwrap_or("")))))
+        }
+        "constructor" => {
+            let Expr::Ident(rhs) = assign.right.as_ref() else {
+                return None;
+            };
+            if &rhs.sym != ctor_name {
+                return None;
+            }
+            extract_chained_inheritance_expr(unwrap_paren(lhs.obj.as_ref()), ctor_name)
+        }
+        "prototype" => {
+            let Expr::Ident(obj) = lhs.obj.as_ref() else {
+                return None;
+            };
+            if &obj.sym != ctor_name {
+                return None;
+            }
+            let Expr::Call(call) = assign.right.as_ref() else {
+                return None;
+            };
+            let Callee::Expr(callee) = &call.callee else {
+                return None;
+            };
+            if !is_object_create(callee) {
+                return None;
+            }
+            if call.args.is_empty() {
+                return None;
+            }
+            let super_class = extract_super_from_create_arg(&call.args[0].expr)?;
+            let super_name = match super_class.as_ref() {
+                Expr::Ident(id) => Some(id.sym.clone()),
+                _ => None,
+            };
+            Some((super_class, super_name, None))
+        }
+        _ => None,
+    }
+}
+
+/// Synthesize `Foo.className = "X"` statement.
+fn make_class_name_stmt(name: &Atom, class_name_value: &Atom) -> Stmt {
+    use swc_core::ecma::ast::{AssignExpr, Ident, MemberExpr, Str};
+    Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left: AssignTarget::Simple(SimpleAssignTarget::Member(MemberExpr {
+                span: DUMMY_SP,
+                obj: Box::new(Expr::Ident(Ident::new(
+                    name.clone(),
+                    DUMMY_SP,
+                    Default::default(),
+                ))),
+                prop: MemberProp::Ident(IdentName::new("className".into(), DUMMY_SP)),
+            })),
+            right: Box::new(Expr::Lit(swc_core::ecma::ast::Lit::Str(Str {
+                span: DUMMY_SP,
+                value: class_name_value.as_str().into(),
+                raw: None,
+            }))),
+        })),
+    })
 }
 
 /// Build a ClassDecl from a candidate and the original FnDecl statement.
@@ -883,10 +1107,12 @@ mod tests {
     fn build_class_decl_returns_none_for_non_function_statement() {
         let candidate = ClassCandidate {
             fn_decl_idx: 0,
-            _name: "Foo".into(),
+            name: "Foo".into(),
             super_class: None,
             super_class_name: None,
             consumed_indices: HashSet::new(),
+            pre_ref_indices: Vec::new(),
+            class_name_value: None,
             members: Vec::new(),
         };
         let stmt = Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span: DUMMY_SP });
