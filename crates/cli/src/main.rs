@@ -83,6 +83,10 @@ struct Cli {
     #[arg(long, default_value = "standard", value_enum)]
     level: CliRewriteLevel,
 
+    /// Run post-transform diagnostic checks and print results to stderr.
+    #[arg(long)]
+    diagnostics: bool,
+
     /// Overwrite existing output files or non-empty output directories.
     #[arg(long, global = true)]
     force: bool,
@@ -180,6 +184,7 @@ fn run_default(cli: Cli) -> Result<()> {
         sourcemap: sourcemap_bytes,
         level: cli.level.into(),
         heuristic_split,
+        diagnostics: cli.diagnostics,
         ..Default::default()
     };
 
@@ -193,9 +198,8 @@ fn run_default(cli: Cli) -> Result<()> {
             unpack(&input, options)?
         };
 
-        for warning in &output.warnings {
-            eprintln!("warning: {warning}");
-        }
+        print_warnings(&output.warnings);
+        let has_errors = output.has_errors();
 
         let pairs = output.modules;
 
@@ -229,12 +233,15 @@ fn run_default(cli: Cli) -> Result<()> {
         if io::stderr().is_terminal() {
             eprintln!("total: {} module(s)", resolved.len());
         }
+
+        if has_errors {
+            bail!("diagnostics reported errors");
+        }
     } else {
         let output = decompile(&input, options)?;
 
-        for warning in &output.warnings {
-            eprintln!("warning: {warning}");
-        }
+        print_warnings(&output.warnings);
+        let has_errors = output.has_errors();
 
         match cli.output {
             Some(path) => {
@@ -246,9 +253,24 @@ fn run_default(cli: Cli) -> Result<()> {
                 print!("{}", output.code);
             }
         }
+
+        if has_errors {
+            bail!("diagnostics reported errors");
+        }
     }
 
     Ok(())
+}
+
+fn print_warnings(warnings: &[wakaru_core::UnpackWarning]) {
+    for warning in warnings {
+        let label = if warning.kind.is_error() {
+            "error"
+        } else {
+            "warning"
+        };
+        eprintln!("{label}: {warning}");
+    }
 }
 
 fn run_extract(args: ExtractArgs, force: bool) -> Result<()> {

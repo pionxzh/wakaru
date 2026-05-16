@@ -4,9 +4,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{BytePos, SyntaxContext};
 use swc_core::ecma::ast::{
     ArrowExpr, BlockStmt, BlockStmtOrExpr, Class, ClassDecl, ClassMember, Decl, FnDecl, Function,
-    Ident,
-    ImportDecl, ImportSpecifier, Key, MemberProp, Module, ModuleDecl, ModuleItem, NamedExport,
-    ObjectPatProp, Pat, PropName, Stmt, VarDecl, VarDeclKind,
+    Ident, ImportDecl, ImportSpecifier, Key, MemberProp, Module, ModuleDecl, ModuleItem,
+    NamedExport, ObjectPatProp, Pat, PropName, Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -223,11 +222,9 @@ impl Visit for OrderedScopeChecker<'_> {
                         }
                     }
                 }
-                ClassMember::PrivateProp(prop) => {
-                    if prop.is_static {
-                        if let Some(value) = &prop.value {
-                            value.visit_with(self);
-                        }
+                ClassMember::PrivateProp(prop) if prop.is_static => {
+                    if let Some(value) = &prop.value {
+                        value.visit_with(self);
                     }
                 }
                 ClassMember::StaticBlock(block) => {
@@ -416,10 +413,7 @@ mod tests {
             let top_level_mark = Mark::new();
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-            check_tdz(&module)
-                .into_iter()
-                .map(|v| v.name)
-                .collect()
+            check_tdz(&module).into_iter().map(|v| v.name).collect()
         })
     }
 
@@ -455,9 +449,7 @@ mod tests {
 
     #[test]
     fn nested_function_capture_no_false_positive() {
-        assert!(
-            violation_names("function foo() { return x; }\nlet x = 1;\nfoo();").is_empty()
-        );
+        assert!(violation_names("function foo() { return x; }\nlet x = 1;\nfoo();").is_empty());
     }
 
     #[test]
@@ -568,24 +560,17 @@ function outer() {
 
     #[test]
     fn import_binding_is_hoisted() {
-        assert!(
-            violation_names("console.log(foo);\nimport foo from './foo';").is_empty()
-        );
+        assert!(violation_names("console.log(foo);\nimport foo from './foo';").is_empty());
     }
 
     #[test]
     fn export_function_decl_is_hoisted() {
-        assert!(
-            violation_names("foo();\nexport function foo() {}").is_empty()
-        );
+        assert!(violation_names("foo();\nexport function foo() {}").is_empty());
     }
 
     #[test]
     fn class_expr_heritage_tdz() {
-        assert_eq!(
-            violation_names("let C = class extends C {};"),
-            vec!["C"]
-        );
+        assert_eq!(violation_names("let C = class extends C {};"), vec!["C"]);
     }
 
     #[test]
@@ -606,9 +591,7 @@ function outer() {
 
     #[test]
     fn class_instance_field_no_false_positive() {
-        assert!(
-            violation_names("class Foo { x = bar; }\nlet bar = 1;").is_empty()
-        );
+        assert!(violation_names("class Foo { x = bar; }\nlet bar = 1;").is_empty());
     }
 
     #[test]
@@ -621,8 +604,6 @@ function outer() {
 
     #[test]
     fn computed_pattern_key_after_decl_is_fine() {
-        assert!(
-            violation_names("const x = 'key';\nconst { [x]: y } = obj;").is_empty()
-        );
+        assert!(violation_names("const x = 'key';\nconst { [x]: y } = obj;").is_empty());
     }
 }

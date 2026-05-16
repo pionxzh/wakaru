@@ -1,13 +1,18 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
-use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, GLOBALS};
-use swc_core::ecma::ast::Module;
+use swc_core::atoms::Atom;
+use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Spanned, GLOBALS};
+use swc_core::ecma::ast::{
+    BindingIdent, ClassDecl, ImportDecl, ImportSpecifier, Module, ObjectPatProp, Pat, VarDecl,
+    VarDeclKind,
+};
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax, TsSyntax};
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
-use swc_core::ecma::visit::VisitMutWith;
+use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -39,6 +44,9 @@ pub struct DecompileOptions {
     /// When true and no bundle format is detected, attempt heuristic splitting
     /// of scope-hoisted bundles (Rollup/Vite/flat esbuild).
     pub heuristic_split: bool,
+    /// Run post-transform diagnostic checks (lexical use-before-declaration,
+    /// output parse verification). Results are returned as warnings.
+    pub diagnostics: bool,
 }
 
 impl Default for DecompileOptions {
@@ -49,6 +57,7 @@ impl Default for DecompileOptions {
             dead_code_elimination: true,
             level: RewriteLevel::Standard,
             heuristic_split: false,
+            diagnostics: false,
         }
     }
 }
@@ -93,7 +102,11 @@ pub enum UnpackWarningKind {
     RawNormalizationFailed,
     FactCollectionParseFailed,
     DecompileFailed,
+    InputParseRecovered,
     TdzViolation,
+    DuplicateDeclaration,
+    OutputParseRecovered,
+    OutputParseFailed,
 }
 
 impl UnpackWarningKind {
@@ -102,14 +115,22 @@ impl UnpackWarningKind {
             Self::RawNormalizationFailed => "raw_normalization_failed",
             Self::FactCollectionParseFailed => "fact_collection_parse_failed",
             Self::DecompileFailed => "decompile_failed",
+            Self::InputParseRecovered => "input_parse_recovered",
             Self::TdzViolation => "tdz_violation",
+            Self::DuplicateDeclaration => "duplicate_declaration",
+            Self::OutputParseRecovered => "output_parse_recovered",
+            Self::OutputParseFailed => "output_parse_failed",
         }
     }
 
     /// Diagnostic warnings signal potential issues in transform output
-    /// (e.g. TDZ violations) but do not indicate data loss or parse failure.
+    /// but do not indicate data loss or parse failure during unpack.
     pub fn is_diagnostic(self) -> bool {
-        matches!(self, Self::TdzViolation)
+        matches!(self, Self::InputParseRecovered | Self::TdzViolation)
+    }
+
+    pub fn is_error(self) -> bool {
+        !self.is_diagnostic()
     }
 }
 
@@ -117,7 +138,7 @@ impl UnpackOutput {
     /// True when there are non-diagnostic warnings (parse failures, decompile
     /// errors). Diagnostic warnings like TDZ violations are excluded.
     pub fn has_errors(&self) -> bool {
-        self.warnings.iter().any(|w| !w.kind.is_diagnostic())
+        self.warnings.iter().any(|w| w.kind.is_error())
     }
 }
 
@@ -127,6 +148,12 @@ impl UnpackOutput {
 pub struct DecompileOutput {
     pub code: String,
     pub warnings: Vec<UnpackWarning>,
+}
+
+impl DecompileOutput {
+    pub fn has_errors(&self) -> bool {
+        self.warnings.iter().any(|w| w.kind.is_error())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -162,7 +189,8 @@ pub struct RuleTraceEvent {
 pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOutput> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let mut module = parse_js(source, &options.filename, cm.clone())?;
+        let parsed = parse_js_with_recovery(source, &options.filename, cm.clone())?;
+        let mut module = parsed.module;
 
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
@@ -191,11 +219,26 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOut
             module.visit_mut_with(&mut UnImportRename);
         }
 
-        let warnings = collect_tdz_warnings(&module, &options.filename);
+        let mut warnings = if options.diagnostics {
+            let mut warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
+            warnings.extend(collect_tdz_warnings(&module, &options.filename));
+            warnings.extend(collect_duplicate_declaration_warnings(
+                &module,
+                &options.filename,
+            ));
+            warnings
+        } else {
+            Vec::new()
+        };
 
         module.visit_mut_with(&mut fixer(None));
 
         let code = print_js(&module, cm)?;
+
+        if options.diagnostics {
+            warnings.extend(verify_output_parses(&code, &options.filename));
+        }
+
         Ok(DecompileOutput { code, warnings })
     })
 }
@@ -531,7 +574,9 @@ fn unpack_multi_module(
         |unpacked: crate::unpacker::UnpackedModule| -> (String, String, Vec<UnpackWarning>) {
             match GLOBALS.set(&Default::default(), || {
                 let cm: Lrc<SourceMap> = Default::default();
-                let mut module = parse_js(&unpacked.code, &unpacked.filename, cm.clone())?;
+                let parsed =
+                    parse_js_with_recovery(&unpacked.code, &unpacked.filename, cm.clone())?;
+                let mut module = parsed.module;
                 let unresolved_mark = Mark::new();
                 let top_level_mark = Mark::new();
                 module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
@@ -560,13 +605,28 @@ fn unpack_multi_module(
                     module.visit_mut_with(&mut UnImportRename);
                 }
 
-                let tdz_warnings = collect_tdz_warnings(&module, &unpacked.filename);
+                let mut diag_warnings = if options.diagnostics {
+                    let mut warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
+                    warnings.extend(collect_tdz_warnings(&module, &unpacked.filename));
+                    warnings.extend(collect_duplicate_declaration_warnings(
+                        &module,
+                        &unpacked.filename,
+                    ));
+                    warnings
+                } else {
+                    Vec::new()
+                };
 
                 module.visit_mut_with(&mut fixer(None));
                 let code = print_js(&module, cm)?;
-                Ok::<_, anyhow::Error>((code, tdz_warnings))
+
+                if options.diagnostics {
+                    diag_warnings.extend(verify_output_parses(&code, &unpacked.filename));
+                }
+
+                Ok::<_, anyhow::Error>((code, diag_warnings))
             }) {
-                Ok((code, tdz_warnings)) => (unpacked.filename, code, tdz_warnings),
+                Ok((code, diag_warnings)) => (unpacked.filename, code, diag_warnings),
                 Err(e) => (
                     unpacked.filename.clone(),
                     unpacked.code,
@@ -593,7 +653,39 @@ fn unpack_multi_module(
     Ok(UnpackOutput { modules, warnings })
 }
 
+#[derive(Debug, Clone)]
+struct ParsedModule {
+    module: Module,
+    recoverable_errors: Vec<ParseDiagnostic>,
+}
+
+#[derive(Debug, Clone)]
+struct ParseDiagnostic {
+    filename: String,
+    line: usize,
+    column: usize,
+    message: String,
+}
+
+impl fmt::Display for ParseDiagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{}:{}: {}",
+            self.filename, self.line, self.column, self.message
+        )
+    }
+}
+
 pub(crate) fn parse_js(source: &str, filename: &str, cm: Lrc<SourceMap>) -> Result<Module> {
+    Ok(parse_js_with_recovery(source, filename, cm)?.module)
+}
+
+fn parse_js_with_recovery(
+    source: &str,
+    filename: &str,
+    cm: Lrc<SourceMap>,
+) -> Result<ParsedModule> {
     let syntax = detect_syntax(filename);
     let fm = cm.new_source_file(
         FileName::Custom(filename.to_string()).into(),
@@ -603,18 +695,33 @@ pub(crate) fn parse_js(source: &str, filename: &str, cm: Lrc<SourceMap>) -> Resu
     let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
     let mut parser = Parser::new_from(lexer);
     let parsed = parser.parse_module();
-    let parser_errors: Vec<String> = parser
+    let parser_errors: Vec<ParseDiagnostic> = parser
         .take_errors()
         .into_iter()
-        .map(|error| format!("{error:?}"))
+        .map(|error| {
+            let loc = cm.lookup_char_pos(error.span().lo());
+            ParseDiagnostic {
+                filename: filename.to_string(),
+                line: loc.line,
+                column: loc.col_display + 1,
+                message: format!("{:?}", error.kind()),
+            }
+        })
         .collect();
 
     match (parsed, parser_errors.is_empty()) {
-        (Ok(module), _) => Ok(module),
+        (Ok(module), _) => Ok(ParsedModule {
+            module,
+            recoverable_errors: parser_errors,
+        }),
         (Err(error), true) => Err(anyhow!("failed to parse {filename}: {error:?}")),
         (Err(error), false) => Err(anyhow!(
             "failed to parse {filename}: {error:?}; {}",
-            parser_errors.join("; ")
+            parser_errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
         )),
     }
 }
@@ -677,6 +784,138 @@ fn collect_tdz_warnings(module: &Module, filename: &str) -> Vec<UnpackWarning> {
             )
         })
         .collect()
+}
+
+fn collect_input_parse_warnings(errors: &[ParseDiagnostic]) -> Vec<UnpackWarning> {
+    errors
+        .iter()
+        .map(|error| {
+            UnpackWarning::new(
+                &error.filename,
+                UnpackWarningKind::InputParseRecovered,
+                format!("input parse recovered from parser error: {error}"),
+            )
+        })
+        .collect()
+}
+
+fn collect_duplicate_declaration_warnings(module: &Module, filename: &str) -> Vec<UnpackWarning> {
+    let mut collector = DuplicateDeclarationCollector::default();
+    module.visit_with(&mut collector);
+    collector
+        .duplicates
+        .into_iter()
+        .map(|name| {
+            UnpackWarning::new(
+                filename,
+                UnpackWarningKind::DuplicateDeclaration,
+                format!("duplicate lexical declaration `{name}`"),
+            )
+        })
+        .collect()
+}
+
+#[derive(Default)]
+struct DuplicateDeclarationCollector {
+    seen: HashMap<(Atom, swc_core::common::SyntaxContext), ()>,
+    duplicates: Vec<Atom>,
+}
+
+impl DuplicateDeclarationCollector {
+    fn record_binding(&mut self, binding: &BindingIdent) {
+        let key = (binding.id.sym.clone(), binding.id.ctxt);
+        if self.seen.insert(key, ()).is_some() && !self.duplicates.contains(&binding.id.sym) {
+            self.duplicates.push(binding.id.sym.clone());
+        }
+    }
+
+    fn record_pat(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(binding) => self.record_binding(binding),
+            Pat::Array(array) => {
+                for elem in array.elems.iter().flatten() {
+                    self.record_pat(elem);
+                }
+            }
+            Pat::Object(object) => {
+                for prop in &object.props {
+                    match prop {
+                        ObjectPatProp::KeyValue(kv) => self.record_pat(&kv.value),
+                        ObjectPatProp::Assign(assign) => {
+                            self.record_binding(&assign.key);
+                        }
+                        ObjectPatProp::Rest(rest) => self.record_pat(&rest.arg),
+                    }
+                }
+            }
+            Pat::Rest(rest) => self.record_pat(&rest.arg),
+            Pat::Assign(assign) => self.record_pat(&assign.left),
+            Pat::Expr(_) | Pat::Invalid(_) => {}
+        }
+    }
+}
+
+impl Visit for DuplicateDeclarationCollector {
+    fn visit_class_decl(&mut self, class_decl: &ClassDecl) {
+        self.record_binding(&BindingIdent {
+            id: class_decl.ident.clone(),
+            type_ann: None,
+        });
+        class_decl.class.visit_with(self);
+    }
+
+    fn visit_import_decl(&mut self, import_decl: &ImportDecl) {
+        for specifier in &import_decl.specifiers {
+            match specifier {
+                ImportSpecifier::Named(named) => self.record_binding(&BindingIdent {
+                    id: named.local.clone(),
+                    type_ann: None,
+                }),
+                ImportSpecifier::Default(default) => self.record_binding(&BindingIdent {
+                    id: default.local.clone(),
+                    type_ann: None,
+                }),
+                ImportSpecifier::Namespace(namespace) => self.record_binding(&BindingIdent {
+                    id: namespace.local.clone(),
+                    type_ann: None,
+                }),
+            }
+        }
+    }
+
+    fn visit_var_decl(&mut self, var_decl: &VarDecl) {
+        if var_decl.kind == VarDeclKind::Var {
+            return;
+        }
+        for decl in &var_decl.decls {
+            self.record_pat(&decl.name);
+        }
+        var_decl.visit_children_with(self);
+    }
+}
+
+fn verify_output_parses(code: &str, filename: &str) -> Vec<UnpackWarning> {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        match parse_js_with_recovery(code, filename, cm) {
+            Ok(parsed) => parsed
+                .recoverable_errors
+                .into_iter()
+                .map(|error| {
+                    UnpackWarning::new(
+                        filename,
+                        UnpackWarningKind::OutputParseRecovered,
+                        format!("emitted output parse recovered from parser error: {error}"),
+                    )
+                })
+                .collect(),
+            Err(e) => vec![UnpackWarning::new(
+                filename,
+                UnpackWarningKind::OutputParseFailed,
+                format!("emitted output failed to parse: {e}"),
+            )],
+        }
+    })
 }
 
 #[cfg(test)]
@@ -774,6 +1013,125 @@ mod tests {
             output.modules[0].1.contains("const value"),
             "expected TypeScript input to decompile, got: {}",
             output.modules[0].1
+        );
+    }
+
+    #[test]
+    fn diagnostics_off_by_default() {
+        let output = decompile("console.log(x);\nlet x = 1;", DecompileOptions::default())
+            .expect("decompile should succeed");
+        assert!(
+            output.warnings.is_empty(),
+            "default decompile should produce no diagnostic warnings"
+        );
+    }
+
+    #[test]
+    fn diagnostics_opt_in_reports_tdz() {
+        let output = decompile(
+            "console.log(x);\nlet x = 1;",
+            DecompileOptions {
+                diagnostics: true,
+                ..Default::default()
+            },
+        )
+        .expect("decompile should succeed");
+        assert!(
+            output
+                .warnings
+                .iter()
+                .any(|w| w.kind == UnpackWarningKind::TdzViolation),
+            "diagnostics should report TDZ violation"
+        );
+    }
+
+    #[test]
+    fn diagnostics_opt_in_reports_recovered_input_parse_errors() {
+        let output = decompile(
+            "label: label: break label;",
+            DecompileOptions {
+                diagnostics: true,
+                filename: "duplicate-label.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("recovered input parse should still decompile");
+        assert!(
+            output
+                .warnings
+                .iter()
+                .any(|w| w.kind == UnpackWarningKind::InputParseRecovered),
+            "diagnostics should report recovered input parse error: {:?}",
+            output.warnings
+        );
+    }
+
+    #[test]
+    fn diagnostics_opt_in_reports_recovered_output_parse_errors() {
+        let output = decompile(
+            "label: label: break label;",
+            DecompileOptions {
+                diagnostics: true,
+                filename: "duplicate-label.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("recovered output parse should still return emitted code");
+        assert!(
+            output
+                .warnings
+                .iter()
+                .any(|w| w.kind == UnpackWarningKind::OutputParseRecovered),
+            "diagnostics should report recovered output parse error: {:?}",
+            output.warnings
+        );
+        assert!(
+            output.has_errors(),
+            "recovered output parse errors should be error-severity diagnostics"
+        );
+    }
+
+    #[test]
+    fn diagnostics_opt_in_reports_duplicate_lexical_declarations() {
+        let output = decompile(
+            "let a = 1;\nlet a = 2;",
+            DecompileOptions {
+                diagnostics: true,
+                filename: "duplicate.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("duplicate declarations should still return emitted code");
+        assert!(
+            output
+                .warnings
+                .iter()
+                .any(|w| w.kind == UnpackWarningKind::DuplicateDeclaration),
+            "diagnostics should report duplicate declaration: {:?}",
+            output.warnings
+        );
+        assert!(
+            output.has_errors(),
+            "duplicate declarations should be error-severity diagnostics"
+        );
+    }
+
+    #[test]
+    fn diagnostics_valid_output_no_parse_warning() {
+        let output = decompile(
+            "const x = 1;",
+            DecompileOptions {
+                diagnostics: true,
+                ..Default::default()
+            },
+        )
+        .expect("decompile should succeed");
+        assert!(
+            !output.warnings.iter().any(|w| matches!(
+                w.kind,
+                UnpackWarningKind::OutputParseRecovered | UnpackWarningKind::OutputParseFailed
+            )),
+            "valid output should not produce parse warning"
         );
     }
 }

@@ -36,12 +36,14 @@ pub fn decompile(
     source: &str,
     level: Option<String>,
     sourcemap: Option<Vec<u8>>,
+    diagnostics: Option<bool>,
 ) -> Result<JsValue, JsValue> {
     let level = parse_level(level.as_deref());
     let options = wakaru_core::DecompileOptions {
         filename: "input.js".to_string(),
         sourcemap,
         level,
+        diagnostics: diagnostics.unwrap_or(false),
         ..Default::default()
     };
     let output =
@@ -66,12 +68,14 @@ pub fn unpack(
     source: &str,
     level: Option<String>,
     heuristic_split: Option<bool>,
+    diagnostics: Option<bool>,
 ) -> Result<JsValue, JsValue> {
     let level = parse_level(level.as_deref());
     let options = wakaru_core::DecompileOptions {
         filename: "input.js".to_string(),
         level,
         heuristic_split: heuristic_split.unwrap_or(true),
+        diagnostics: diagnostics.unwrap_or(false),
         ..Default::default()
     };
     let output =
@@ -125,6 +129,7 @@ export function decompile(
     source: string,
     level?: "minimal" | "standard" | "aggressive",
     sourcemap?: Uint8Array,
+    diagnostics?: boolean,
 ): WakaruDecompileResult;
 
 export interface WakaruUnpackResult {
@@ -136,7 +141,8 @@ export type WakaruWarningKind =
     | "raw_normalization_failed"
     | "fact_collection_parse_failed"
     | "decompile_failed"
-    | "tdz_violation";
+    | "tdz_violation"
+    | "output_parse_failed";
 
 export interface WakaruWarning {
     filename: string;
@@ -148,6 +154,7 @@ export function unpack(
     source: string,
     level?: "minimal" | "standard" | "aggressive",
     heuristicSplit?: boolean,
+    diagnostics?: boolean,
 ): WakaruUnpackResult;
 
 export function ruleNames(): string[];
