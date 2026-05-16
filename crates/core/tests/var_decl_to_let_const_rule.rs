@@ -283,6 +283,154 @@ if (true) {
     assert_eq_normalized(&output, expected);
 }
 
+// --- use-before-declaration (var hoisting) ---
+
+#[test]
+fn var_used_before_declaration_stays_var() {
+    // `var` hoists, so referencing before the declaration is valid.
+    // Converting to let/const would create a TDZ violation.
+    let input = r#"
+foo(x);
+var x = 1;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn export_default_before_var_declaration_stays_var() {
+    // export default references `o` before its declaration — `o` must stay var.
+    // `r` is declared before its use (in `var o = r`), so it converts to const.
+    let input = r#"
+export default o;
+var r = { a: 1 };
+var o = r;
+"#;
+    let expected = r#"
+export default o;
+const r = { a: 1 };
+var o = r;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn var_after_return_in_function_stays_var() {
+    // Unreachable var still hoists; references before it rely on hoisting.
+    let input = r#"
+function foo(t) {
+    r = t;
+    return r;
+    var r;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn var_self_reference_in_initializer_stays_var() {
+    // TypeScript enum IIFE pattern: `var Foo = ((q) => { ... })(Foo || {})`
+    // The self-reference `Foo || {}` relies on var hoisting (Foo is undefined).
+    let input = r#"
+var Sjq = ((q) => {
+    q.A = "a";
+    return q;
+})(Sjq || {});
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn for_loop_head_self_reference_stays_var() {
+    // `var i = i || 0` relies on hoisting (i is undefined), converting to
+    // `let i = i || 0` would throw in TDZ.
+    let input = r#"
+for (var i = i || 0; i < 1; i++) {}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn destructuring_default_self_reference_stays_var() {
+    // `var { a = a } = {}` — the default `a` references the hoisted binding.
+    let input = r#"
+var { a = a } = {};
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn destructuring_default_forward_reference_keeps_referenced_var() {
+    // `b` in the default references a later var — `b` must stay var (hoisted).
+    // `a` can safely convert since `b` remains hoisted.
+    let input = r#"
+var { a = b } = {};
+var b = 1;
+"#;
+    let expected = r#"
+const { a = b } = {};
+var b = 1;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn nested_for_head_self_reference_stays_var() {
+    // For-head self-references must be caught even when nested inside
+    // another compound statement (if/block/etc).
+    let input = r#"
+if (cond) {
+    for (var i = i || 0; i < 1; i++) {}
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn ref_in_earlier_block_to_later_var_stays_var() {
+    // Reference inside a block to a later function-scoped var.
+    let input = r#"
+{
+    foo(x);
+}
+var x = 1;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn ref_in_if_body_to_later_var_stays_var() {
+    let input = r#"
+if (cond) foo(x);
+var x = 1;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn var_declared_before_use_converts_normally() {
+    // When the declaration comes first, conversion is safe.
+    let input = r#"
+var x = 1;
+foo(x);
+"#;
+    let expected = r#"
+const x = 1;
+foo(x);
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
 #[test]
 fn known_bug_var_inside_block_used_in_sibling_block_stays_var() {
     let input = r#"

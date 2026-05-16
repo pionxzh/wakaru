@@ -41,6 +41,7 @@ impl VisitMut for VarDeclToLetConst {
         // must stay as `var` to preserve the hoisting-based access.
         let mut must_stay_var = collect_block_escaping_vars_module(&module.body);
         must_stay_var.extend(collect_duplicate_decl_bindings_module(&module.body));
+        must_stay_var.extend(collect_use_before_decl_vars_module(&module.body, &var_ids));
 
         // Convert all var decls in module (recursively through blocks, stopping at function boundaries)
         let mut converter = VarConverter {
@@ -72,6 +73,7 @@ impl VisitMut for VarDeclToLetConst {
 
         let mut must_stay_var = collect_block_escaping_vars_stmts(&body.stmts);
         must_stay_var.extend(collect_duplicate_decl_bindings_stmts(&body.stmts));
+        must_stay_var.extend(collect_use_before_decl_vars_stmts(&body.stmts, &var_ids));
 
         let mut converter = VarConverter {
             assigned: &assigned,
@@ -402,6 +404,363 @@ impl Visit for RefOutsideDeclBlockCollector<'_> {
         self.block_stack.push(block_id);
         block.visit_children_with(self);
         self.block_stack.pop();
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    fn visit_class(&mut self, _: &Class) {}
+}
+
+// ============================================================
+// Use-before-declaration analysis: find vars that are referenced
+// before their `var` declaration in linear statement order.
+// These rely on `var` hoisting and must NOT be converted to let/const.
+// ============================================================
+
+fn collect_use_before_decl_vars_module(
+    items: &[ModuleItem],
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    if var_ids.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut declared_so_far: HashSet<BindingId> = HashSet::new();
+    let mut must_stay: HashSet<BindingId> = HashSet::new();
+
+    for item in items {
+        // For direct var declarations: check refs first (catches self-references).
+        // For compound statements: pre-add their inner vars (excluding for-head vars)
+        // so that refs within the same statement see them as declared.
+        let is_direct_var = matches!(
+            item,
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(v))) if v.kind == VarDeclKind::Var
+        );
+        if !is_direct_var {
+            collect_var_decl_ids_in_module_item_excluding_for_head(item, &mut declared_so_far);
+        }
+        let refs = collect_refs_in_module_item(item, var_ids);
+        for r in &refs {
+            if !declared_so_far.contains(r) {
+                must_stay.insert(r.clone());
+            }
+        }
+        // Always add all vars after (including for-head) for subsequent statements.
+        if is_direct_var {
+            collect_var_decl_ids_in_module_item(item, &mut declared_so_far);
+        } else {
+            collect_for_head_var_ids_in_module_item(item, &mut declared_so_far);
+        }
+    }
+
+    must_stay
+}
+
+fn collect_use_before_decl_vars_stmts(
+    stmts: &[Stmt],
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    if var_ids.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut declared_so_far: HashSet<BindingId> = HashSet::new();
+    let mut must_stay: HashSet<BindingId> = HashSet::new();
+
+    for stmt in stmts {
+        let is_direct_var = matches!(
+            stmt,
+            Stmt::Decl(Decl::Var(v)) if v.kind == VarDeclKind::Var
+        );
+        if !is_direct_var {
+            collect_var_decl_ids_in_stmt_excluding_for_head(stmt, &mut declared_so_far);
+        }
+        let refs = collect_refs_in_stmt(stmt, var_ids);
+        for r in &refs {
+            if !declared_so_far.contains(r) {
+                must_stay.insert(r.clone());
+            }
+        }
+        if is_direct_var {
+            collect_var_decl_ids_in_stmt(stmt, &mut declared_so_far);
+        } else {
+            collect_for_head_var_ids_in_stmt(stmt, &mut declared_so_far);
+        }
+    }
+
+    must_stay
+}
+
+fn collect_refs_in_module_item(
+    item: &ModuleItem,
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    let mut collector = VarRefCollector {
+        var_ids,
+        refs: HashSet::new(),
+    };
+    match item {
+        ModuleItem::Stmt(stmt) => {
+            if let Stmt::Decl(Decl::Var(var)) = stmt {
+                if var.kind == VarDeclKind::Var {
+                    for d in &var.decls {
+                        if let Some(init) = &d.init {
+                            init.visit_with(&mut collector);
+                        }
+                        visit_pat_defaults(&d.name, &mut collector);
+                    }
+                    return collector.refs;
+                }
+            }
+            stmt.visit_with(&mut collector);
+        }
+        ModuleItem::ModuleDecl(decl) => {
+            use swc_core::ecma::ast::{
+                ExportDefaultExpr, ExportSpecifier, ModuleDecl, ModuleExportName,
+            };
+            if let ModuleDecl::ExportDefaultExpr(ExportDefaultExpr { expr, .. }) = decl {
+                expr.visit_with(&mut collector);
+            }
+            if let ModuleDecl::ExportNamed(named) = decl {
+                for spec in &named.specifiers {
+                    if let ExportSpecifier::Named(n) = spec {
+                        if let ModuleExportName::Ident(id) = &n.orig {
+                            let binding = (id.sym.clone(), id.ctxt);
+                            if var_ids.contains(&binding) {
+                                collector.refs.insert(binding);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    collector.refs
+}
+
+fn collect_refs_in_stmt(stmt: &Stmt, var_ids: &HashSet<BindingId>) -> HashSet<BindingId> {
+    let mut collector = VarRefCollector {
+        var_ids,
+        refs: HashSet::new(),
+    };
+    if let Stmt::Decl(Decl::Var(var)) = stmt {
+        if var.kind == VarDeclKind::Var {
+            for d in &var.decls {
+                if let Some(init) = &d.init {
+                    init.visit_with(&mut collector);
+                }
+                visit_pat_defaults(&d.name, &mut collector);
+            }
+            return collector.refs;
+        }
+    }
+    stmt.visit_with(&mut collector);
+    collector.refs
+}
+
+struct VarRefCollector<'a> {
+    var_ids: &'a HashSet<BindingId>,
+    refs: HashSet<BindingId>,
+}
+
+impl Visit for VarRefCollector<'_> {
+    fn visit_ident(&mut self, id: &Ident) {
+        let binding = (id.sym.clone(), id.ctxt);
+        if self.var_ids.contains(&binding) {
+            self.refs.insert(binding);
+        }
+    }
+
+    fn visit_var_decl(&mut self, var: &VarDecl) {
+        if var.kind == VarDeclKind::Var {
+            for d in &var.decls {
+                if let Some(init) = &d.init {
+                    init.visit_with(self);
+                }
+                visit_pat_defaults(&d.name, self);
+            }
+        } else {
+            var.visit_children_with(self);
+        }
+    }
+
+    // For for-loops: only visit the init expression. Test/update/body
+    // always execute after the for-head var is initialized.
+    fn visit_for_stmt(&mut self, stmt: &ForStmt) {
+        if let Some(init) = &stmt.init {
+            init.visit_with(self);
+        }
+    }
+
+    fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        stmt.left.visit_with(self);
+        stmt.right.visit_with(self);
+    }
+
+    fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
+        stmt.left.visit_with(self);
+        stmt.right.visit_with(self);
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    fn visit_class(&mut self, _: &Class) {}
+}
+
+/// Visit default value expressions inside a destructuring pattern.
+fn visit_pat_defaults(pat: &Pat, visitor: &mut VarRefCollector<'_>) {
+    match pat {
+        Pat::Assign(a) => {
+            a.right.visit_with(visitor);
+            visit_pat_defaults(&a.left, visitor);
+        }
+        Pat::Object(op) => {
+            for prop in &op.props {
+                match prop {
+                    swc_core::ecma::ast::ObjectPatProp::KeyValue(kv) => {
+                        if let swc_core::ecma::ast::PropName::Computed(c) = &kv.key {
+                            c.visit_with(visitor);
+                        }
+                        visit_pat_defaults(&kv.value, visitor);
+                    }
+                    swc_core::ecma::ast::ObjectPatProp::Assign(a) => {
+                        if let Some(default) = &a.value {
+                            default.visit_with(visitor);
+                        }
+                    }
+                    swc_core::ecma::ast::ObjectPatProp::Rest(r) => {
+                        visit_pat_defaults(&r.arg, visitor);
+                    }
+                }
+            }
+        }
+        Pat::Array(ap) => {
+            for elem in ap.elems.iter().flatten() {
+                visit_pat_defaults(elem, visitor);
+            }
+        }
+        Pat::Rest(r) => visit_pat_defaults(&r.arg, visitor),
+        _ => {}
+    }
+}
+
+fn collect_var_decl_ids_in_module_item(item: &ModuleItem, out: &mut HashSet<BindingId>) {
+    if let ModuleItem::Stmt(stmt) = item {
+        collect_var_decl_ids_in_stmt(stmt, out);
+    }
+}
+
+/// Collect all var declarations within a statement, recursing into nested blocks
+/// (but not functions/arrows/classes) since `var` hoists to the enclosing scope.
+fn collect_var_decl_ids_in_stmt(stmt: &Stmt, out: &mut HashSet<BindingId>) {
+    let mut collector = ScopeVarIdsCollector::default();
+    stmt.visit_with(&mut collector);
+    out.extend(collector.ids);
+}
+
+/// Pre-add vars excluding for-head declarations. For-head vars may self-reference
+/// in their initializer and must not be pre-declared before ref checking.
+fn collect_var_decl_ids_in_module_item_excluding_for_head(
+    item: &ModuleItem,
+    out: &mut HashSet<BindingId>,
+) {
+    if let ModuleItem::Stmt(stmt) = item {
+        collect_var_decl_ids_in_stmt_excluding_for_head(stmt, out);
+    }
+}
+
+fn collect_var_decl_ids_in_stmt_excluding_for_head(stmt: &Stmt, out: &mut HashSet<BindingId>) {
+    let mut c = ScopeVarIdsExcludingForHeadCollector::default();
+    stmt.visit_with(&mut c);
+    out.extend(c.ids);
+}
+
+/// Like `ScopeVarIdsCollector` but skips var declarations in for-loop heads
+/// at any nesting depth. This ensures nested self-referencing for-heads like
+/// `if (cond) { for (var i = i || 0; ...) {} }` are not pre-declared.
+#[derive(Default)]
+struct ScopeVarIdsExcludingForHeadCollector {
+    ids: HashSet<BindingId>,
+}
+
+impl Visit for ScopeVarIdsExcludingForHeadCollector {
+    fn visit_var_decl(&mut self, var: &VarDecl) {
+        if var.kind == VarDeclKind::Var {
+            for decl in &var.decls {
+                collect_binding_ids_from_pat(&decl.name, &mut self.ids);
+            }
+        }
+    }
+
+    fn visit_for_stmt(&mut self, stmt: &ForStmt) {
+        // Skip the init var — only collect from body.
+        stmt.body.visit_with(self);
+    }
+
+    fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        // Skip the left var — only collect from body.
+        stmt.body.visit_with(self);
+    }
+
+    fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
+        // Skip the left var — only collect from body.
+        stmt.body.visit_with(self);
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+    fn visit_class(&mut self, _: &Class) {}
+}
+
+/// Add only the for-head var ids (called after ref checking for non-direct-var statements).
+fn collect_for_head_var_ids_in_module_item(item: &ModuleItem, out: &mut HashSet<BindingId>) {
+    if let ModuleItem::Stmt(stmt) = item {
+        collect_for_head_var_ids_in_stmt(stmt, out);
+    }
+}
+
+fn collect_for_head_var_ids_in_stmt(stmt: &Stmt, out: &mut HashSet<BindingId>) {
+    let mut c = ForHeadVarIdsCollector { ids: out };
+    stmt.visit_with(&mut c);
+}
+
+/// Collects only the var declarations from for-loop heads at any depth.
+struct ForHeadVarIdsCollector<'a> {
+    ids: &'a mut HashSet<BindingId>,
+}
+
+impl Visit for ForHeadVarIdsCollector<'_> {
+    fn visit_for_stmt(&mut self, stmt: &ForStmt) {
+        if let Some(swc_core::ecma::ast::VarDeclOrExpr::VarDecl(var)) = &stmt.init {
+            if var.kind == VarDeclKind::Var {
+                for d in &var.decls {
+                    collect_binding_ids_from_pat(&d.name, self.ids);
+                }
+            }
+        }
+        stmt.body.visit_with(self);
+    }
+
+    fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        if let ForHead::VarDecl(var) = &stmt.left {
+            if var.kind == VarDeclKind::Var {
+                for d in &var.decls {
+                    collect_binding_ids_from_pat(&d.name, self.ids);
+                }
+            }
+        }
+        stmt.body.visit_with(self);
+    }
+
+    fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
+        if let ForHead::VarDecl(var) = &stmt.left {
+            if var.kind == VarDeclKind::Var {
+                for d in &var.decls {
+                    collect_binding_ids_from_pat(&d.name, self.ids);
+                }
+            }
+        }
+        stmt.body.visit_with(self);
     }
 
     fn visit_function(&mut self, _: &Function) {}
