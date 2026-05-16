@@ -1,13 +1,23 @@
 use swc_core::atoms::Atom;
-use swc_core::ecma::ast::{CallExpr, Callee, Expr, IdentName, MemberExpr, MemberProp};
+use swc_core::common::Mark;
+use swc_core::ecma::ast::{CallExpr, Callee, Expr, IdentName, Lit, MemberExpr, MemberProp};
+use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::un_nullish_coalescing::is_undefined;
+use super::expr_utils::is_unresolved_undefined;
 
 /// Convert `.then(null, errorHandler)` to `.catch(errorHandler)`.
 ///
 /// These are semantically identical but `.catch()` is far more readable.
-pub struct UnThenCatch;
+pub struct UnThenCatch {
+    unresolved_mark: Mark,
+}
+
+impl UnThenCatch {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
 
 impl VisitMut for UnThenCatch {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
@@ -31,7 +41,9 @@ impl VisitMut for UnThenCatch {
         }
 
         let first_arg = &call.args[0];
-        if !is_null_or_undefined(&first_arg.expr) || first_arg.spread.is_some() {
+        if !is_null_or_undefined(&first_arg.expr, self.unresolved_mark)
+            || first_arg.spread.is_some()
+        {
             return;
         }
 
@@ -50,13 +62,13 @@ impl VisitMut for UnThenCatch {
         *expr = Expr::Call(CallExpr {
             span: call.span,
             ctxt: call.ctxt,
-            callee: Callee::Expr(Box::new(new_callee)),
+            callee: new_callee.as_callee(),
             args: vec![second_arg],
             type_args: None,
         });
     }
 }
 
-fn is_null_or_undefined(expr: &Expr) -> bool {
-    matches!(expr, Expr::Lit(swc_core::ecma::ast::Lit::Null(_))) || is_undefined(expr)
+fn is_null_or_undefined(expr: &Expr, unresolved_mark: Mark) -> bool {
+    matches!(expr, Expr::Lit(Lit::Null(_))) || is_unresolved_undefined(expr, unresolved_mark)
 }

@@ -1,12 +1,13 @@
 use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignPat, AssignPatProp, BinaryOp, BindingIdent, Bool, Decl, Expr, ExprOrSpread,
     Ident, IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number,
-    ObjectPat, ObjectPatProp, Pat, PropName, RestPat, Stmt, UnaryOp, VarDecl, VarDeclKind,
-    VarDeclarator,
+    ObjectPat, ObjectPatProp, Pat, PropName, RestPat, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+
+use super::expr_utils::is_unresolved_undefined;
 
 /// Reconstructs destructuring from compiler-lowered ref/temp declarations.
 ///
@@ -14,7 +15,15 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 /// es2015 destructuring pass, rather than guessing from arbitrary property
 /// reads. `SmartInline` remains the later readability heuristic for simpler
 /// adjacent accesses.
-pub struct UnDestructuring;
+pub struct UnDestructuring {
+    unresolved_mark: Mark,
+}
+
+impl UnDestructuring {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
 
 type BindingKey = (Atom, SyntaxContext);
 
@@ -50,16 +59,16 @@ enum PropKey {
 impl VisitMut for UnDestructuring {
     fn visit_mut_module(&mut self, module: &mut Module) {
         module.visit_mut_children_with(self);
-        module.body = process_module_items(std::mem::take(&mut module.body));
+        module.body = process_module_items(std::mem::take(&mut module.body), self.unresolved_mark);
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-        *stmts = process_stmts(std::mem::take(stmts));
+        *stmts = process_stmts(std::mem::take(stmts), self.unresolved_mark);
     }
 }
 
-fn process_module_items(items: Vec<ModuleItem>) -> Vec<ModuleItem> {
+fn process_module_items(items: Vec<ModuleItem>, unresolved_mark: Mark) -> Vec<ModuleItem> {
     let mut result = Vec::with_capacity(items.len());
     let mut stmt_buf = Vec::new();
 
@@ -69,7 +78,7 @@ fn process_module_items(items: Vec<ModuleItem>) -> Vec<ModuleItem> {
             other => {
                 if !stmt_buf.is_empty() {
                     result.extend(
-                        process_stmts(std::mem::take(&mut stmt_buf))
+                        process_stmts(std::mem::take(&mut stmt_buf), unresolved_mark)
                             .into_iter()
                             .map(ModuleItem::Stmt),
                     );
@@ -80,18 +89,22 @@ fn process_module_items(items: Vec<ModuleItem>) -> Vec<ModuleItem> {
     }
 
     if !stmt_buf.is_empty() {
-        result.extend(process_stmts(stmt_buf).into_iter().map(ModuleItem::Stmt));
+        result.extend(
+            process_stmts(stmt_buf, unresolved_mark)
+                .into_iter()
+                .map(ModuleItem::Stmt),
+        );
     }
 
     result
 }
 
-fn process_stmts(stmts: Vec<Stmt>) -> Vec<Stmt> {
+fn process_stmts(stmts: Vec<Stmt>, unresolved_mark: Mark) -> Vec<Stmt> {
     let mut result = Vec::with_capacity(stmts.len());
     let mut i = 0;
 
     while i < stmts.len() {
-        if let Some((stmt, consumed)) = try_reconstruct_group(&stmts, i) {
+        if let Some((stmt, consumed)) = try_reconstruct_group(&stmts, i, unresolved_mark) {
             result.push(stmt);
             i += consumed;
         } else {
@@ -103,11 +116,19 @@ fn process_stmts(stmts: Vec<Stmt>) -> Vec<Stmt> {
     result
 }
 
-fn try_reconstruct_group(stmts: &[Stmt], start: usize) -> Option<(Stmt, usize)> {
-    try_reconstruct_ref_group(stmts, start)
+fn try_reconstruct_group(
+    stmts: &[Stmt],
+    start: usize,
+    unresolved_mark: Mark,
+) -> Option<(Stmt, usize)> {
+    try_reconstruct_ref_group(stmts, start, unresolved_mark)
 }
 
-fn try_reconstruct_ref_group(stmts: &[Stmt], start: usize) -> Option<(Stmt, usize)> {
+fn try_reconstruct_ref_group(
+    stmts: &[Stmt],
+    start: usize,
+    unresolved_mark: Mark,
+) -> Option<(Stmt, usize)> {
     let ref_decl = extract_ref_decl(stmts.get(start)?)?;
     let ref_key = binding_key(&ref_decl.ident);
 
@@ -116,7 +137,9 @@ fn try_reconstruct_ref_group(stmts: &[Stmt], start: usize) -> Option<(Stmt, usiz
     let mut i = start + 1;
 
     while i < stmts.len() {
-        if let Some((access, consumed, temp)) = try_extract_access(stmts, i, &ref_decl.ident.id) {
+        if let Some((access, consumed, temp)) =
+            try_extract_access(stmts, i, &ref_decl.ident.id, unresolved_mark)
+        {
             accesses.push(access);
             if let Some(temp) = temp {
                 removed_temps.push(temp);
@@ -223,8 +246,11 @@ fn try_extract_access(
     stmts: &[Stmt],
     index: usize,
     ref_ident: &Ident,
+    unresolved_mark: Mark,
 ) -> Option<(Access, usize, Option<BindingKey>)> {
-    if let Some((access, temp)) = try_extract_default_access(stmts, index, ref_ident) {
+    if let Some((access, temp)) =
+        try_extract_default_access(stmts, index, ref_ident, unresolved_mark)
+    {
         return Some((access, 2, Some(temp)));
     }
 
@@ -254,12 +280,13 @@ fn try_extract_default_access(
     stmts: &[Stmt],
     index: usize,
     ref_ident: &Ident,
+    unresolved_mark: Mark,
 ) -> Option<(Access, BindingKey)> {
     let (temp, temp_init) = extract_binding_decl(stmts.get(index)?)?;
     let source = extract_source_access(temp_init, ref_ident)?;
 
     let (binding, binding_init) = extract_binding_decl(stmts.get(index + 1)?)?;
-    let default = extract_default_value(binding_init, &temp.id)?;
+    let default = extract_default_value(binding_init, &temp.id, unresolved_mark)?;
     let temp_key = binding_key(&temp);
     if expr_uses_ident(&default, &temp_key) {
         return None;
@@ -357,33 +384,36 @@ fn numeric_index(num: &Number) -> Option<usize> {
     Some(num.value as usize)
 }
 
-fn extract_default_value(expr: &Expr, temp: &Ident) -> Option<Box<Expr>> {
-    extract_ternary_default(expr, temp).or_else(|| extract_boolean_default(expr, temp))
+fn extract_default_value(expr: &Expr, temp: &Ident, unresolved_mark: Mark) -> Option<Box<Expr>> {
+    extract_ternary_default(expr, temp, unresolved_mark)
+        .or_else(|| extract_boolean_default(expr, temp, unresolved_mark))
 }
 
-fn extract_ternary_default(expr: &Expr, temp: &Ident) -> Option<Box<Expr>> {
+fn extract_ternary_default(expr: &Expr, temp: &Ident, unresolved_mark: Mark) -> Option<Box<Expr>> {
     let Expr::Cond(cond) = expr else {
         return None;
     };
-    if !is_undefined_test(&cond.test, temp) || !is_ident_expr(&cond.alt, temp) {
+    if !is_undefined_test(&cond.test, temp, unresolved_mark) || !is_ident_expr(&cond.alt, temp) {
         return None;
     }
     Some(cond.cons.clone())
 }
 
-fn extract_boolean_default(expr: &Expr, temp: &Ident) -> Option<Box<Expr>> {
+fn extract_boolean_default(expr: &Expr, temp: &Ident, unresolved_mark: Mark) -> Option<Box<Expr>> {
     let Expr::Bin(bin) = expr else {
         return None;
     };
 
     match bin.op {
         BinaryOp::LogicalAnd
-            if is_defined_test(&bin.left, temp) && is_ident_expr(&bin.right, temp) =>
+            if is_defined_test(&bin.left, temp, unresolved_mark)
+                && is_ident_expr(&bin.right, temp) =>
         {
             Some(bool_expr(false))
         }
         BinaryOp::LogicalOr
-            if is_undefined_test(&bin.left, temp) && is_ident_expr(&bin.right, temp) =>
+            if is_undefined_test(&bin.left, temp, unresolved_mark)
+                && is_ident_expr(&bin.right, temp) =>
         {
             Some(bool_expr(true))
         }
@@ -398,33 +428,26 @@ fn bool_expr(value: bool) -> Box<Expr> {
     })))
 }
 
-fn is_undefined_test(expr: &Expr, temp: &Ident) -> bool {
+fn is_undefined_test(expr: &Expr, temp: &Ident, unresolved_mark: Mark) -> bool {
     let Expr::Bin(bin) = expr else {
         return false;
     };
     bin.op == BinaryOp::EqEqEq
-        && ((is_ident_expr(&bin.left, temp) && is_undefined_expr(&bin.right))
-            || (is_undefined_expr(&bin.left) && is_ident_expr(&bin.right, temp)))
+        && ((is_ident_expr(&bin.left, temp)
+            && is_unresolved_undefined(&bin.right, unresolved_mark))
+            || (is_unresolved_undefined(&bin.left, unresolved_mark)
+                && is_ident_expr(&bin.right, temp)))
 }
 
-fn is_defined_test(expr: &Expr, temp: &Ident) -> bool {
+fn is_defined_test(expr: &Expr, temp: &Ident, unresolved_mark: Mark) -> bool {
     let Expr::Bin(bin) = expr else {
         return false;
     };
     bin.op == BinaryOp::NotEqEq
-        && ((is_ident_expr(&bin.left, temp) && is_undefined_expr(&bin.right))
-            || (is_undefined_expr(&bin.left) && is_ident_expr(&bin.right, temp)))
-}
-
-fn is_undefined_expr(expr: &Expr) -> bool {
-    match expr {
-        Expr::Ident(id) => id.sym.as_ref() == "undefined",
-        Expr::Unary(unary) => {
-            unary.op == UnaryOp::Void
-                && matches!(unary.arg.as_ref(), Expr::Lit(Lit::Num(num)) if num.value == 0.0)
-        }
-        _ => false,
-    }
+        && ((is_ident_expr(&bin.left, temp)
+            && is_unresolved_undefined(&bin.right, unresolved_mark))
+            || (is_unresolved_undefined(&bin.left, unresolved_mark)
+                && is_ident_expr(&bin.right, temp)))
 }
 
 fn is_ident_expr(expr: &Expr, ident: &Ident) -> bool {
