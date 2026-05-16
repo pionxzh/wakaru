@@ -3,10 +3,10 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    Bool, CallExpr, Callee, Decl, Expr, ExprOrSpread, ExprStmt, Ident, IdentName, KeyValueProp,
-    Lit, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, Stmt, Str,
-    VarDeclarator,
+    Bool, CallExpr, Callee, Decl, Expr, ExprStmt, Ident, IdentName, KeyValueProp, Lit, Module,
+    ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, Stmt, Str, VarDeclarator,
 };
+use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 type BindingId = (Atom, SyntaxContext);
@@ -291,26 +291,22 @@ fn build_define_properties_call(target: BindingId, descriptors: Vec<(String, Box
     Expr::Call(CallExpr {
         span: DUMMY_SP,
         ctxt: Default::default(),
-        callee: Callee::Expr(Box::new(Expr::Member(swc_core::ecma::ast::MemberExpr {
+        callee: Expr::Member(swc_core::ecma::ast::MemberExpr {
             span: DUMMY_SP,
             obj: Box::new(Expr::Ident(Ident::new_no_ctxt("Object".into(), DUMMY_SP))),
             prop: swc_core::ecma::ast::MemberProp::Ident(IdentName::new(
                 "defineProperties".into(),
                 DUMMY_SP,
             )),
-        }))),
+        })
+        .as_callee(),
         args: vec![
-            ExprOrSpread {
-                spread: None,
-                expr: Box::new(Expr::Ident(Ident::new(target.0, DUMMY_SP, target.1))),
-            },
-            ExprOrSpread {
-                spread: None,
-                expr: Box::new(Expr::Object(ObjectLit {
-                    span: DUMMY_SP,
-                    props: descriptor_props,
-                })),
-            },
+            Expr::Ident(Ident::new(target.0, DUMMY_SP, target.1)).as_arg(),
+            Expr::Object(ObjectLit {
+                span: DUMMY_SP,
+                props: descriptor_props,
+            })
+            .as_arg(),
         ],
         type_args: None,
     })

@@ -11,6 +11,7 @@ use swc_core::ecma::ast::{
     Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Str, UnaryOp,
     VarDecl, VarDeclKind, VarDeclarator,
 };
+use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
 use super::rename_utils::{rename_bindings, BindingRename};
@@ -1281,7 +1282,7 @@ fn hoist_embedded_requires(module: &mut Module, unresolved_mark: Mark) {
                                     Box::new(Expr::Call(inner_call.clone())),
                                 ));
                                 let new_call = CallExpr {
-                                    callee: Callee::Expr(Box::new(Expr::Ident(local))),
+                                    callee: Expr::Ident(local).as_callee(),
                                     args: outer_call.args.clone(),
                                     span: outer_call.span,
                                     ctxt: outer_call.ctxt,

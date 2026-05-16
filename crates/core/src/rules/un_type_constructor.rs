@@ -1,8 +1,9 @@
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrayLit, BinExpr, BinaryOp, CallExpr, Callee, Expr, ExprOrSpread, Ident, Lit, Number, Str,
-    UnaryExpr, UnaryOp,
+    ArrayLit, BinExpr, BinaryOp, CallExpr, Expr, ExprOrSpread, Ident, Lit, Number, Str, UnaryExpr,
+    UnaryOp,
 };
+use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::RewriteLevel;
@@ -101,14 +102,8 @@ fn make_call(name: &str, arg: Box<Expr>) -> Expr {
     Expr::Call(CallExpr {
         span: DUMMY_SP,
         ctxt: Default::default(),
-        callee: Callee::Expr(Box::new(Expr::Ident(Ident::new_no_ctxt(
-            name.into(),
-            DUMMY_SP,
-        )))),
-        args: vec![ExprOrSpread {
-            spread: None,
-            expr: arg,
-        }],
+        callee: Expr::Ident(Ident::new_no_ctxt(name.into(), DUMMY_SP)).as_callee(),
+        args: vec![arg.as_arg()],
         type_args: None,
     })
 }

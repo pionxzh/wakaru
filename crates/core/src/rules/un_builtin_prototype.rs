@@ -2,6 +2,7 @@ use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrowExpr, CallExpr, Callee, Expr, FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp, Regex,
 };
+use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 pub struct UnBuiltinPrototype;
@@ -111,7 +112,7 @@ fn try_replace_builtin(call: CallExpr) -> Result<Expr, CallExpr> {
     Ok(Expr::Call(CallExpr {
         span: call.span,
         ctxt: call.ctxt,
-        callee: Callee::Expr(Box::new(new_callee)),
+        callee: new_callee.as_callee(),
         args: call.args,
         type_args: call.type_args,
     }))
