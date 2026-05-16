@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::UnDestructuring;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnDestructuring)
+    render_rule(input, UnDestructuring::new)
 }
 
 #[test]

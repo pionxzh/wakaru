@@ -101,6 +101,17 @@ fn standard_transforms_nested_babel_optional_call_from_lowered_optional_member()
 }
 
 #[test]
+fn does_not_recover_nested_optional_call_with_shadowed_undefined() {
+    let input = r#"
+function f(undefined) {
+  (_a = (_b = runtime?.plugin) === null || _b === undefined ? undefined : _b.createHook) === null || _a === void 0 ? void 0 : _a.call(_b, "payload");
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn standard_transforms_guarded_babel_optional_call_statement() {
     let input = r#"
 if (!((_ = (K = this.handle) === null || K === void 0 ? void 0 : K.close) === null || _ === void 0)) {

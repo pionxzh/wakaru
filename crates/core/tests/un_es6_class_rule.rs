@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::UnEs6Class;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |unresolved_mark| UnEs6Class::new(unresolved_mark))
+    render_rule(input, UnEs6Class::new)
 }
 
 // ============================================================

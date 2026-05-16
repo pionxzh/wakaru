@@ -119,7 +119,7 @@ fn try_optional_call_if_stmt(stmt: &Stmt, unresolved_mark: Mark) -> Option<Stmt>
     } = extract_null_check(strip_parens(arg), unresolved_mark)?;
     let real_rhs = real_value?;
     let call_expr = extract_single_call_expr(cons)?;
-    build_optional_call_stmt(DUMMY_SP, &checked, &real_rhs, call_expr)
+    build_optional_call_stmt(DUMMY_SP, &checked, &real_rhs, call_expr, unresolved_mark)
 }
 
 fn try_optional_call_short_circuit_stmt(stmt: &Stmt, unresolved_mark: Mark) -> Option<Stmt> {
@@ -141,7 +141,13 @@ fn try_optional_call_short_circuit_stmt(stmt: &Stmt, unresolved_mark: Mark) -> O
         real_value,
     } = extract_null_check(left, unresolved_mark)?;
     let real_rhs = real_value?;
-    build_optional_call_stmt(expr_stmt.span, &checked, &real_rhs, right.as_ref())
+    build_optional_call_stmt(
+        expr_stmt.span,
+        &checked,
+        &real_rhs,
+        right.as_ref(),
+        unresolved_mark,
+    )
 }
 
 fn extract_single_call_expr(stmt: &Stmt) -> Option<&Expr> {
@@ -157,6 +163,7 @@ fn build_optional_call_stmt(
     checked: &Expr,
     real_rhs: &Expr,
     call_expr: &Expr,
+    unresolved_mark: Mark,
 ) -> Option<Stmt> {
     let Expr::Call(CallExpr {
         callee: Callee::Expr(callee_expr),
@@ -183,7 +190,7 @@ fn build_optional_call_stmt(
         {
             real_rhs.clone()
         }
-        _ => recover_babel_optional_call_callee(real_rhs, context.expr.as_ref())?,
+        _ => recover_babel_optional_call_callee(real_rhs, context.expr.as_ref(), unresolved_mark)?,
     };
 
     Some(Stmt::Expr(swc_core::ecma::ast::ExprStmt {
@@ -271,7 +278,9 @@ fn try_ternary_optional_chain(
             || is_generated_member_temp_expr(&checked, &real_rhs, binding_references, 3)
             || is_nested_optional_chain_temp_expr(&checked, &real_rhs, binding_references, 3)
         {
-            if let Some(chain) = make_optional_chain_replacing(&checked, &real_rhs, alt) {
+            if let Some(chain) =
+                make_optional_chain_replacing(&checked, &real_rhs, alt, unresolved_mark)
+            {
                 return (level >= RewriteLevel::Standard).then_some(chain);
             }
         }
@@ -280,7 +289,7 @@ fn try_ternary_optional_chain(
         }
         // Assignment form: `checked` is `tmp`, `real_rhs` is the original expr
         // alt must use `tmp` as the object
-        return make_optional_chain_replacing(&checked, &real_rhs, alt);
+        return make_optional_chain_replacing(&checked, &real_rhs, alt, unresolved_mark);
     }
 
     // Plain form
@@ -360,7 +369,12 @@ fn make_optional_chain(base: Expr, access: &Expr) -> Option<Expr> {
 /// Build an optional chain for the assignment temp-var case.
 /// `tmp` is the temp variable expr, `real_rhs` is what it was assigned from.
 /// `access` should use `tmp` as its object; we replace `tmp` with `real_rhs` in the output.
-fn make_optional_chain_replacing(tmp: &Expr, real_rhs: &Expr, access: &Expr) -> Option<Expr> {
+fn make_optional_chain_replacing(
+    tmp: &Expr,
+    real_rhs: &Expr,
+    access: &Expr,
+    unresolved_mark: Mark,
+) -> Option<Expr> {
     match access {
         Expr::Member(MemberExpr { obj, prop, .. }) if exprs_structurally_equal(obj, tmp) => {
             Some(Expr::OptChain(OptChainExpr {
@@ -385,7 +399,12 @@ fn make_optional_chain_replacing(tmp: &Expr, real_rhs: &Expr, access: &Expr) -> 
                 if exprs_structurally_equal(obj, tmp) {
                     if prop.is_ident_with("call") {
                         return make_optional_call_replacing(
-                            real_rhs, args, type_args, *span, *ctxt,
+                            real_rhs,
+                            args,
+                            type_args,
+                            *span,
+                            *ctxt,
+                            unresolved_mark,
                         );
                     }
                     let opt_member = Expr::OptChain(OptChainExpr {
@@ -463,6 +482,7 @@ fn try_loose_eq_optional_chain(
                 level,
                 uninitialized_bindings,
                 binding_references,
+                unresolved_mark,
             )
         }
         // `x != null ? x.prop : undefined`
@@ -478,6 +498,7 @@ fn try_loose_eq_optional_chain(
                 level,
                 uninitialized_bindings,
                 binding_references,
+                unresolved_mark,
             )
         }
         _ => None,
@@ -490,6 +511,7 @@ fn try_loose_chain_with_assign(
     level: RewriteLevel,
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
+    unresolved_mark: Mark,
 ) -> Option<Expr> {
     if let Some((tmp_sym, real_rhs)) = extract_assign_parts(&checked) {
         let tmp_ident_expr = find_ident_by_sym(access, &tmp_sym)?;
@@ -504,14 +526,16 @@ fn try_loose_chain_with_assign(
             || is_generated_member_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
             || is_nested_optional_chain_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
         {
-            if let Some(chain) = make_optional_chain_replacing(&tmp_ident_expr, real_rhs, access) {
+            if let Some(chain) =
+                make_optional_chain_replacing(&tmp_ident_expr, real_rhs, access, unresolved_mark)
+            {
                 return Some(chain);
             }
         }
         if level < RewriteLevel::Aggressive {
             return None;
         }
-        make_optional_chain_replacing(&tmp_ident_expr, real_rhs, access)
+        make_optional_chain_replacing(&tmp_ident_expr, real_rhs, access, unresolved_mark)
     } else {
         make_optional_chain(checked, access)
     }
@@ -652,87 +676,17 @@ fn is_void_or_undefined(expr: &Expr, unresolved_mark: Mark) -> bool {
     is_unresolved_undefined(expr, unresolved_mark)
 }
 
-fn is_void_or_undefined_syntax(expr: &Expr) -> bool {
-    use super::un_nullish_coalescing::is_undefined;
-    is_undefined(expr)
-}
-
-fn extract_null_check_syntax(expr: &Expr) -> Option<NullCheckResult> {
-    use super::un_nullish_coalescing::is_undefined;
-    let Expr::Bin(BinExpr {
-        op: BinaryOp::LogicalOr,
-        left,
-        right,
-        ..
-    }) = expr
-    else {
-        return None;
-    };
-
-    let left_val = extract_null_single(left)?;
-
-    // extract_undefined_single inlined with syntactic check
-    let right_val = {
-        let Expr::Bin(BinExpr {
-            op, left, right, ..
-        }) = &**right
-        else {
-            return None;
-        };
-        if !matches!(op, BinaryOp::EqEqEq | BinaryOp::EqEq) {
-            return None;
-        }
-        if is_undefined(right) {
-            Some(left.clone())
-        } else if is_undefined(left) {
-            Some(right.clone())
-        } else {
-            None
-        }
-    }?;
-
-    if let Some((tmp_sym, real_rhs)) = extract_assign_parts(&left_val) {
-        if let Expr::Ident(ri) = &*right_val {
-            if ri.sym == tmp_sym {
-                return Some(NullCheckResult {
-                    value: Box::new(Expr::Ident(ri.clone())),
-                    real_value: Some(real_rhs.clone()),
-                });
-            }
-        }
-        return None;
-    }
-
-    if !exprs_structurally_equal(&left_val, &right_val) {
-        return None;
-    }
-
-    Some(NullCheckResult {
-        value: left_val,
-        real_value: None,
-    })
-}
-
-fn extract_loose_null_operand_syntax(left: &Box<Expr>, right: &Box<Expr>) -> Option<Expr> {
-    use super::un_nullish_coalescing::is_undefined;
-    if matches!(&**right, Expr::Lit(Lit::Null(_))) || is_undefined(right) {
-        return Some((**left).clone());
-    }
-    if matches!(&**left, Expr::Lit(Lit::Null(_))) || is_undefined(left) {
-        return Some((**right).clone());
-    }
-    None
-}
-
 fn make_optional_call_replacing(
     real_rhs: &Expr,
     args: &[swc_core::ecma::ast::ExprOrSpread],
     type_args: &Option<Box<swc_core::ecma::ast::TsTypeParamInstantiation>>,
     span: swc_core::common::Span,
     ctxt: swc_core::common::SyntaxContext,
+    unresolved_mark: Mark,
 ) -> Option<Expr> {
     let (context, call_args) = args.split_first()?;
-    let recovered_callee = recover_babel_optional_call_callee(real_rhs, context.expr.as_ref())?;
+    let recovered_callee =
+        recover_babel_optional_call_callee(real_rhs, context.expr.as_ref(), unresolved_mark)?;
     Some(Expr::OptChain(OptChainExpr {
         span: DUMMY_SP,
         optional: true,
@@ -774,7 +728,11 @@ fn optional_call_context_matches_base(base: &Expr, context: &Expr) -> bool {
     }
 }
 
-fn recover_babel_optional_call_callee(real_rhs: &Expr, context: &Expr) -> Option<Expr> {
+fn recover_babel_optional_call_callee(
+    real_rhs: &Expr,
+    context: &Expr,
+    unresolved_mark: Mark,
+) -> Option<Expr> {
     match strip_parens(real_rhs) {
         Expr::Member(MemberExpr { obj, prop, .. }) => {
             let recovered_obj = recover_babel_call_context(obj, context)?;
@@ -793,7 +751,7 @@ fn recover_babel_optional_call_callee(real_rhs: &Expr, context: &Expr) -> Option
             _ => None,
         },
         _ => {
-            let recovered = recover_lowered_optional_chain_expr(real_rhs)?;
+            let recovered = recover_lowered_optional_chain_expr(real_rhs, unresolved_mark)?;
             if let Some(expected_context) = recovered.expected_context.as_ref() {
                 if !exprs_structurally_equal(context, expected_context) {
                     return None;
@@ -809,15 +767,19 @@ struct RecoveredLoweredOptionalChain {
     expected_context: Option<Expr>,
 }
 
-fn recover_lowered_optional_chain_expr(expr: &Expr) -> Option<RecoveredLoweredOptionalChain> {
-    if let Some(recovered) = recover_strict_lowered_optional_chain_expr(expr) {
+fn recover_lowered_optional_chain_expr(
+    expr: &Expr,
+    unresolved_mark: Mark,
+) -> Option<RecoveredLoweredOptionalChain> {
+    if let Some(recovered) = recover_strict_lowered_optional_chain_expr(expr, unresolved_mark) {
         return Some(recovered);
     }
-    recover_loose_lowered_optional_chain_expr(expr)
+    recover_loose_lowered_optional_chain_expr(expr, unresolved_mark)
 }
 
 fn recover_strict_lowered_optional_chain_expr(
     expr: &Expr,
+    unresolved_mark: Mark,
 ) -> Option<RecoveredLoweredOptionalChain> {
     let Expr::Cond(CondExpr {
         test, cons, alt, ..
@@ -826,18 +788,18 @@ fn recover_strict_lowered_optional_chain_expr(
         return None;
     };
 
-    if !is_void_or_undefined_syntax(cons) {
+    if !is_void_or_undefined(cons, unresolved_mark) {
         return None;
     }
 
     let NullCheckResult {
         value: checked,
         real_value,
-    } = extract_null_check_syntax(test)?;
+    } = extract_null_check(test, unresolved_mark)?;
 
     let expected_context = Some((*checked).clone());
     let chain = if let Some(real_rhs) = real_value {
-        make_optional_chain_replacing(&checked, &real_rhs, alt)?
+        make_optional_chain_replacing(&checked, &real_rhs, alt, unresolved_mark)?
     } else {
         make_optional_chain(*checked, alt)?
     };
@@ -848,7 +810,10 @@ fn recover_strict_lowered_optional_chain_expr(
     })
 }
 
-fn recover_loose_lowered_optional_chain_expr(expr: &Expr) -> Option<RecoveredLoweredOptionalChain> {
+fn recover_loose_lowered_optional_chain_expr(
+    expr: &Expr,
+    unresolved_mark: Mark,
+) -> Option<RecoveredLoweredOptionalChain> {
     let Expr::Cond(CondExpr {
         test, cons, alt, ..
     }) = strip_parens(expr)
@@ -864,18 +829,18 @@ fn recover_loose_lowered_optional_chain_expr(expr: &Expr) -> Option<RecoveredLow
 
     match op {
         BinaryOp::EqEq => {
-            if !is_void_or_undefined_syntax(cons) {
+            if !is_void_or_undefined(cons, unresolved_mark) {
                 return None;
             }
-            let checked = extract_loose_null_operand_syntax(left, right)?;
-            recover_loose_lowered_optional_chain_parts(checked, alt)
+            let checked = extract_loose_null_operand(left, right, unresolved_mark)?;
+            recover_loose_lowered_optional_chain_parts(checked, alt, unresolved_mark)
         }
         BinaryOp::NotEq => {
-            if !is_void_or_undefined_syntax(alt) {
+            if !is_void_or_undefined(alt, unresolved_mark) {
                 return None;
             }
-            let checked = extract_loose_null_operand_syntax(left, right)?;
-            recover_loose_lowered_optional_chain_parts(checked, cons)
+            let checked = extract_loose_null_operand(left, right, unresolved_mark)?;
+            recover_loose_lowered_optional_chain_parts(checked, cons, unresolved_mark)
         }
         _ => None,
     }
@@ -884,11 +849,17 @@ fn recover_loose_lowered_optional_chain_expr(expr: &Expr) -> Option<RecoveredLow
 fn recover_loose_lowered_optional_chain_parts(
     checked: Expr,
     access: &Expr,
+    unresolved_mark: Mark,
 ) -> Option<RecoveredLoweredOptionalChain> {
     if let Some((tmp_sym, real_rhs)) = extract_assign_parts(&checked) {
         let tmp_ident_expr = find_ident_by_sym(access, &tmp_sym)?;
         Some(RecoveredLoweredOptionalChain {
-            chain: make_optional_chain_replacing(&tmp_ident_expr, real_rhs, access)?,
+            chain: make_optional_chain_replacing(
+                &tmp_ident_expr,
+                real_rhs,
+                access,
+                unresolved_mark,
+            )?,
             expected_context: Some(tmp_ident_expr),
         })
     } else {

@@ -1,6 +1,6 @@
 use swc_core::common::{Mark, SyntaxContext};
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BinExpr, BinaryOp, CondExpr, Expr, Lit, SimpleAssignTarget, UnaryOp,
+    AssignOp, AssignTarget, BinExpr, BinaryOp, CondExpr, Expr, Lit, SimpleAssignTarget,
 };
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -256,22 +256,6 @@ fn extract_undefined_single(expr: &Expr, unresolved_mark: Mark) -> Option<Box<Ex
         return Some(right.clone());
     }
     None
-}
-
-/// Syntactic check for `undefined` or `void 0` without scope analysis.
-/// Use `is_unresolved_undefined` from `expr_utils` when `unresolved_mark` is available.
-pub(crate) fn is_undefined(expr: &Expr) -> bool {
-    if matches!(expr, Expr::Ident(i) if &*i.sym == "undefined") {
-        return true;
-    }
-    if let Expr::Unary(u) = expr {
-        if u.op == UnaryOp::Void {
-            if let Expr::Lit(Lit::Num(n)) = &*u.arg {
-                return n.value == 0.0;
-            }
-        }
-    }
-    false
 }
 
 /// Strip parentheses from an expression.

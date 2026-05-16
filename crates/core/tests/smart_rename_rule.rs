@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, normalize, render_rule};
 use wakaru_core::rules::SmartRename;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| SmartRename)
+    render_rule(input, SmartRename::new)
 }
 
 #[test]

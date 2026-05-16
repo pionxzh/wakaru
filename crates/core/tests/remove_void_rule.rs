@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::RemoveVoid;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |unresolved_mark| RemoveVoid::new(unresolved_mark))
+    render_rule(input, RemoveVoid::new)
 }
 
 #[test]
