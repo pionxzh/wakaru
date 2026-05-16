@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignPatProp, BlockStmtOrExpr, CallExpr, Callee, ClassDecl, ClassExpr,
     Decl, ExportSpecifier, Expr, FnDecl, FnExpr, Function, Ident, ImportDecl, ImportSpecifier,
@@ -12,20 +12,29 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::expr_utils::is_unresolved_ident;
 use super::rename_utils::{
     collect_module_names, rename_bindings, rename_bindings_in_module, rename_causes_shadowing,
     BindingId, BindingRename,
 };
 use super::ObjShorthand;
 
-pub struct SmartRename;
+pub struct SmartRename {
+    unresolved_mark: Mark,
+}
+
+impl SmartRename {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
 
 impl VisitMut for SmartRename {
     fn visit_mut_module(&mut self, module: &mut Module) {
         react_rename_module(module);
         destructuring_rename_module(module);
         member_init_rename_module(module);
-        symbol_for_rename_module(module);
+        symbol_for_rename_module(module, self.unresolved_mark);
         sentry_component_rename_module(module);
         module.visit_mut_children_with(self);
         // Runs once at the module level; uses (sym, ctxt) matching so nested
@@ -38,14 +47,14 @@ impl VisitMut for SmartRename {
         react_rename_function_body(func);
         destructuring_rename_function(func);
         member_init_rename_function(func);
-        symbol_for_rename_function(func);
+        symbol_for_rename_function(func, self.unresolved_mark);
         func.visit_mut_children_with(self);
     }
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         destructuring_rename_arrow(arrow);
         member_init_rename_arrow(arrow);
-        symbol_for_rename_arrow(arrow);
+        symbol_for_rename_arrow(arrow, self.unresolved_mark);
         arrow.visit_mut_children_with(self);
     }
 }
@@ -755,29 +764,29 @@ fn collect_member_init_var_renames(
 // Symbol.for("key") renames: var x = Symbol.for("react.element") → symbol_react_element
 // ============================================================
 
-fn symbol_for_rename_module(module: &mut Module) {
+fn symbol_for_rename_module(module: &mut Module, unresolved_mark: Mark) {
     let all_names = collect_names_in_module(&module.body);
-    let renames = collect_symbol_for_renames_from_module(&module.body, &all_names);
+    let renames = collect_symbol_for_renames_from_module(&module.body, &all_names, unresolved_mark);
     if renames.is_empty() {
         return;
     }
     rename_bindings_in_module(module, &renames);
 }
 
-fn symbol_for_rename_function(func: &mut Function) {
+fn symbol_for_rename_function(func: &mut Function, unresolved_mark: Mark) {
     let Some(body) = &mut func.body else { return };
     let mut all_names = collect_names_in_stmts(&body.stmts);
     for p in &func.params {
         collect_names_in_pat(&p.pat, &mut all_names);
     }
-    let renames = collect_symbol_for_renames_from_stmts(&body.stmts, &all_names);
+    let renames = collect_symbol_for_renames_from_stmts(&body.stmts, &all_names, unresolved_mark);
     if renames.is_empty() {
         return;
     }
     rename_bindings(&mut body.stmts, &renames);
 }
 
-fn symbol_for_rename_arrow(arrow: &mut ArrowExpr) {
+fn symbol_for_rename_arrow(arrow: &mut ArrowExpr, unresolved_mark: Mark) {
     let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_mut() else {
         return;
     };
@@ -786,7 +795,7 @@ fn symbol_for_rename_arrow(arrow: &mut ArrowExpr) {
         collect_names_in_pat(p, &mut all_names);
     }
     let all_names = all_names;
-    let renames = collect_symbol_for_renames_from_stmts(&block.stmts, &all_names);
+    let renames = collect_symbol_for_renames_from_stmts(&block.stmts, &all_names, unresolved_mark);
     if renames.is_empty() {
         return;
     }
@@ -796,17 +805,23 @@ fn symbol_for_rename_arrow(arrow: &mut ArrowExpr) {
 fn collect_symbol_for_renames_from_module(
     body: &[ModuleItem],
     all_names: &HashSet<String>,
+    unresolved_mark: Mark,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
     for item in body {
         match item {
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-                collect_symbol_for_var_renames(var, &mut renames, &mut used_names);
+                collect_symbol_for_var_renames(var, &mut renames, &mut used_names, unresolved_mark);
             }
             ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ed)) => {
                 if let Decl::Var(var) = &ed.decl {
-                    collect_symbol_for_var_renames(var, &mut renames, &mut used_names);
+                    collect_symbol_for_var_renames(
+                        var,
+                        &mut renames,
+                        &mut used_names,
+                        unresolved_mark,
+                    );
                 }
             }
             _ => {}
@@ -818,6 +833,7 @@ fn collect_symbol_for_renames_from_module(
 fn collect_symbol_for_renames_from_stmts(
     stmts: &[Stmt],
     all_names: &HashSet<String>,
+    unresolved_mark: Mark,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -825,7 +841,7 @@ fn collect_symbol_for_renames_from_stmts(
         let Stmt::Decl(Decl::Var(var)) = stmt else {
             continue;
         };
-        collect_symbol_for_var_renames(var, &mut renames, &mut used_names);
+        collect_symbol_for_var_renames(var, &mut renames, &mut used_names, unresolved_mark);
     }
     renames
 }
@@ -834,6 +850,7 @@ fn collect_symbol_for_var_renames(
     var: &VarDecl,
     renames: &mut Vec<BindingRename>,
     used_names: &mut HashSet<String>,
+    unresolved_mark: Mark,
 ) {
     for decl in &var.decls {
         let Pat::Ident(bi) = &decl.name else { continue };
@@ -846,7 +863,7 @@ fn collect_symbol_for_var_renames(
         }
 
         // Match: Symbol.for("string")
-        let Some(key) = extract_symbol_for_key(init) else {
+        let Some(key) = extract_symbol_for_key(init, unresolved_mark) else {
             continue;
         };
 
@@ -872,7 +889,7 @@ fn collect_symbol_for_var_renames(
 }
 
 /// Extract the string key from `Symbol.for("key")`.
-fn extract_symbol_for_key(expr: &Expr) -> Option<String> {
+fn extract_symbol_for_key(expr: &Expr, unresolved_mark: Mark) -> Option<String> {
     let Expr::Call(CallExpr { callee, args, .. }) = expr else {
         return None;
     };
@@ -885,7 +902,7 @@ fn extract_symbol_for_key(expr: &Expr) -> Option<String> {
     let Expr::Ident(obj_id) = obj.as_ref() else {
         return None;
     };
-    if obj_id.sym.as_ref() != "Symbol" {
+    if !is_unresolved_ident(obj_id, "Symbol", unresolved_mark) {
         return None;
     }
     let MemberProp::Ident(prop_id) = prop else {

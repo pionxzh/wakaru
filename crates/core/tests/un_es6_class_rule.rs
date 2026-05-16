@@ -1,47 +1,10 @@
 mod common;
 
-use common::assert_eq_normalized;
-use swc_core::common::GLOBALS;
-use swc_core::ecma::visit::VisitMutWith;
+use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::UnEs6Class;
 
 fn apply(input: &str) -> String {
-    GLOBALS.set(&Default::default(), || {
-        use swc_core::common::{sync::Lrc, FileName, SourceMap};
-        use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
-        use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
-
-        let cm: Lrc<SourceMap> = Default::default();
-        let fm = cm.new_source_file(
-            FileName::Custom("test.js".to_string()).into(),
-            input.to_string(),
-        );
-        let lexer = Lexer::new(
-            Syntax::Es(EsSyntax {
-                jsx: true,
-                ..Default::default()
-            }),
-            Default::default(),
-            StringInput::from(&*fm),
-            None,
-        );
-        let mut parser = Parser::new_from(lexer);
-        let mut module = parser.parse_module().expect("parse failed");
-
-        module.visit_mut_with(&mut UnEs6Class);
-
-        let mut output = Vec::new();
-        {
-            let mut emitter = Emitter {
-                cfg: Config::default().with_minify(false),
-                cm: cm.clone(),
-                comments: None,
-                wr: JsWriter::new(cm, "\n", &mut output, None),
-            };
-            emitter.emit_module(&module).expect("emit failed");
-        }
-        String::from_utf8(output).expect("utf-8")
-    })
+    render_rule(input, |unresolved_mark| UnEs6Class::new(unresolved_mark))
 }
 
 // ============================================================
@@ -263,8 +226,15 @@ var x = (function() {
 }());
 "#;
     // No inner function declaration → not a class
+    // The fixer pass normalizes `(function() { ... }())` → `function() { ... }()`
+    // in variable init positions, so we compare against the fixer-normalized form.
+    let expected = r#"
+var x = function() {
+    return 42;
+}();
+"#;
     let output = apply(input);
-    assert_eq_normalized(&output, input);
+    assert_eq_normalized(&output, expected);
 }
 
 // ============================================================
