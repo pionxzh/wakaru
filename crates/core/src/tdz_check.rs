@@ -152,8 +152,12 @@ impl Visit for OrderedScopeChecker<'_> {
                 if let Some(init) = &decl.init {
                     init.visit_with(self);
                 }
-                visit_pat_expressions(&decl.name, self);
-                collect_pat_ids(&decl.name, &mut self.declared);
+                // Process destructuring properties sequentially: visit each
+                // property's default expression, then mark that binding as
+                // declared before the next property. This matches JS evaluation
+                // order where `let { a = 1, b = a }` is valid (a is available
+                // when b's default runs).
+                visit_pat_expressions_and_declare(&decl.name, self);
             }
         } else {
             var.visit_children_with(self);
@@ -322,63 +326,49 @@ fn collect_pat_ids_with_pos(
     }
 }
 
-fn collect_pat_ids(pat: &Pat, out: &mut HashSet<BindingId>) {
+
+
+/// Like `visit_pat_expressions` + `collect_pat_ids`, but interleaved:
+/// visit each property's default, then mark that property's binding as declared,
+/// before processing the next. This matches JS sequential evaluation of defaults.
+fn visit_pat_expressions_and_declare(pat: &Pat, checker: &mut OrderedScopeChecker<'_>) {
     match pat {
         Pat::Ident(bi) => {
-            out.insert((bi.id.sym.clone(), bi.id.ctxt));
+            checker.declared.insert((bi.id.sym.clone(), bi.id.ctxt));
         }
-        Pat::Array(ap) => {
-            for elem in ap.elems.iter().flatten() {
-                collect_pat_ids(elem, out);
-            }
-        }
-        Pat::Object(op) => {
-            for prop in &op.props {
-                match prop {
-                    ObjectPatProp::KeyValue(kv) => collect_pat_ids(&kv.value, out),
-                    ObjectPatProp::Assign(a) => {
-                        out.insert((a.key.sym.clone(), a.key.ctxt));
-                    }
-                    ObjectPatProp::Rest(r) => collect_pat_ids(&r.arg, out),
-                }
-            }
-        }
-        Pat::Rest(r) => collect_pat_ids(&r.arg, out),
-        Pat::Assign(a) => collect_pat_ids(&a.left, out),
-        _ => {}
-    }
-}
-
-fn visit_pat_expressions(pat: &Pat, visitor: &mut OrderedScopeChecker<'_>) {
-    match pat {
         Pat::Assign(a) => {
-            a.right.visit_with(visitor);
-            visit_pat_expressions(&a.left, visitor);
-        }
-        Pat::Array(ap) => {
-            for elem in ap.elems.iter().flatten() {
-                visit_pat_expressions(elem, visitor);
-            }
+            a.right.visit_with(checker);
+            visit_pat_expressions_and_declare(&a.left, checker);
         }
         Pat::Object(op) => {
             for prop in &op.props {
                 match prop {
                     ObjectPatProp::KeyValue(kv) => {
                         if let PropName::Computed(c) = &kv.key {
-                            c.visit_with(visitor);
+                            c.visit_with(checker);
                         }
-                        visit_pat_expressions(&kv.value, visitor);
+                        visit_pat_expressions_and_declare(&kv.value, checker);
                     }
                     ObjectPatProp::Assign(a) => {
                         if let Some(default) = &a.value {
-                            default.visit_with(visitor);
+                            default.visit_with(checker);
                         }
+                        checker
+                            .declared
+                            .insert((a.key.sym.clone(), a.key.ctxt));
                     }
-                    ObjectPatProp::Rest(r) => visit_pat_expressions(&r.arg, visitor),
+                    ObjectPatProp::Rest(r) => {
+                        visit_pat_expressions_and_declare(&r.arg, checker);
+                    }
                 }
             }
         }
-        Pat::Rest(r) => visit_pat_expressions(&r.arg, visitor),
+        Pat::Array(ap) => {
+            for elem in ap.elems.iter().flatten() {
+                visit_pat_expressions_and_declare(elem, checker);
+            }
+        }
+        Pat::Rest(r) => visit_pat_expressions_and_declare(&r.arg, checker),
         _ => {}
     }
 }
@@ -605,5 +595,24 @@ function outer() {
     #[test]
     fn computed_pattern_key_after_decl_is_fine() {
         assert!(violation_names("const x = 'key';\nconst { [x]: y } = obj;").is_empty());
+    }
+
+    #[test]
+    fn destructuring_default_references_earlier_binding() {
+        // Later defaults can reference earlier bindings in the same pattern.
+        assert!(violation_names(
+            "let { tag = 'x', size = 25, boundary = `${tag}-${size}` } = opts || {};"
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn destructuring_default_self_reference_is_tdz() {
+        assert_eq!(violation_names("let { a = a } = {};"), vec!["a"]);
+    }
+
+    #[test]
+    fn destructuring_assign_default_references_earlier() {
+        assert!(violation_names("let { a = 1, b = a } = {};").is_empty());
     }
 }

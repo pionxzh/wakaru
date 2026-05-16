@@ -559,6 +559,8 @@ fn is_reserved_keyword(name: &str) -> bool {
             | "private"
             | "protected"
             | "public"
+            | "arguments"
+            | "eval"
     )
 }
 
@@ -1103,6 +1105,9 @@ fn value_position_rename_module(module: &mut Module) {
     let mut needs_suffix: Vec<(String, BindingId)> = Vec::new();
 
     for (target, bid) in candidates {
+        if is_reserved_keyword(&target) {
+            continue;
+        }
         let atom: Atom = target.as_str().into();
         if !top_level_names.contains(&atom) && !rename_causes_shadowing(module, &bid, &atom) {
             committed_names.insert(target.clone());

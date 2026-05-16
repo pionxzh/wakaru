@@ -176,6 +176,13 @@ fn find_candidates(stmts: &[Option<&Stmt>]) -> Vec<ClassCandidate> {
             continue;
         }
 
+        // Class declarations are NOT hoisted, unlike function declarations.
+        // If the function name is referenced before its declaration, converting
+        // to a class would create a TDZ violation.
+        if is_referenced_before(stmts, *fn_idx, name) {
+            continue;
+        }
+
         let mut candidate = ClassCandidate {
             fn_decl_idx: *fn_idx,
             _name: (*name).clone(),
@@ -248,6 +255,36 @@ fn find_candidates(stmts: &[Option<&Stmt>]) -> Vec<ClassCandidate> {
     }
 
     candidates
+}
+
+/// Check if `name` is referenced in any statement before index `fn_idx`.
+fn is_referenced_before(stmts: &[Option<&Stmt>], fn_idx: usize, name: &Atom) -> bool {
+    struct NameRefFinder<'a> {
+        name: &'a str,
+        found: bool,
+    }
+    impl Visit for NameRefFinder<'_> {
+        fn visit_ident(&mut self, id: &swc_core::ecma::ast::Ident) {
+            if id.sym.as_ref() == self.name {
+                self.found = true;
+            }
+        }
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+    }
+
+    for item in stmts.iter().take(fn_idx) {
+        let Some(stmt) = item else { continue };
+        let mut finder = NameRefFinder {
+            name: name.as_ref(),
+            found: false,
+        };
+        stmt.visit_with(&mut finder);
+        if finder.found {
+            return true;
+        }
+    }
+    false
 }
 
 /// Build a ClassDecl from a candidate and the original FnDecl statement.

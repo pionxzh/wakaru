@@ -892,6 +892,15 @@ impl Visit for DuplicateDeclarationCollector {
         }
         var_decl.visit_children_with(self);
     }
+
+    // Stop at block boundaries: let/const are block-scoped, so bindings
+    // in nested blocks are in separate scopes and cannot conflict with
+    // each other or with the parent scope.
+    fn visit_block_stmt(&mut self, _: &swc_core::ecma::ast::BlockStmt) {}
+
+    fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+    fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+    fn visit_class(&mut self, _: &swc_core::ecma::ast::Class) {}
 }
 
 fn verify_output_parses(code: &str, filename: &str) -> Vec<UnpackWarning> {
