@@ -291,6 +291,93 @@ Route.propTypes = {};
 }
 
 #[test]
+fn chained_rename_through_occupied_names() {
+    // i→x is blocked because x exists, but x→f resolves to a free name (no binding `f`).
+    // The chain i→x→f should allow both renames.
+    let input = r#"
+export { i as x };
+export { x as f };
+const i = 1;
+const x = 2;
+"#;
+    let expected = r#"
+export const x = 1;
+export const f = 2;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn ineligible_edge_does_not_mark_name_as_freed() {
+    // `longer→x` is ineligible (shorter name), so `longer` is NOT freed.
+    // `i→longer` must not proceed — it would create a duplicate `longer`.
+    // Both renames are blocked; output stays unchanged.
+    let input = r#"
+export { i as longer };
+export { longer as x };
+const i = 1;
+const longer = 2;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn shadowed_edge_does_not_mark_name_as_freed() {
+    // `x→longName` is ineligible (shadowing), so `x` is NOT freed.
+    // `i→x` must not proceed — it would create a duplicate `x`.
+    let input = r#"
+export { i as x };
+export { x as longName };
+const i = 1;
+const x = 2;
+function f() {
+    let longName = 3;
+    return x + longName;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn duplicate_target_does_not_falsely_free_name() {
+    // Both `y→Long` and `x→Long` target the same name. Only one can win,
+    // so `x` must NOT be marked as freed. `i→x` must be blocked.
+    let input = r#"
+export { y as Long };
+export { i as x };
+export { x as Long };
+const i = 1;
+const x = 2;
+const y = 3;
+"#;
+    let expected = r#"
+export { i as x };
+export { x as Long };
+const i = 1;
+const x = 2;
+export const Long = 3;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn swap_cycle_leaves_output_unchanged() {
+    // `a→b` and `b→a` form a cycle. Neither name can be freed.
+    let input = r#"
+export { a as b };
+export { b as a };
+const a = 1;
+const b = 2;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn keeps_object_shorthand_after_export_rename() {
     let input = r#"
 const w = makeAction("push");

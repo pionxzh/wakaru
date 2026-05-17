@@ -68,6 +68,13 @@ fn collect_export_rename_plans(
     _module_names: &std::collections::HashSet<Atom>,
     binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
 ) -> Vec<ExportRenamePlan> {
+    // Compute which names will be freed by export renames.  Given
+    //   export { i as x };  export { x as f };
+    // the name `x` is occupied but will be freed because `x` is itself renamed
+    // to `f`.  We pre-compute the full set of freed names so all renames can be
+    // planned in a single pass without iterative chain-following.
+    let freed_names = compute_freed_names(module, binding_infos);
+
     let mut plans = Vec::new();
 
     let mut changed = true;
@@ -143,11 +150,14 @@ fn collect_export_rename_plans(
                         ModuleExportName::Ident(ident) => ident.sym.clone(),
                         _ => continue,
                     };
-                    // Skip if the export name is shorter than the local name —
-                    // that would replace a more meaningful name with a less meaningful one.
                     if old_name == new_name
                         || new_name.len() < old_name.len()
-                        || name_conflicts_with_unmoved_binding(binding_infos, &plans, &new_name)
+                        || name_conflicts_with_unmoved_binding(
+                            binding_infos,
+                            &plans,
+                            &new_name,
+                            &freed_names,
+                        )
                         || target_name_already_planned(&plans, &new_name, &info.id)
                         || plans
                             .iter()
@@ -171,16 +181,118 @@ fn collect_export_rename_plans(
     plans
 }
 
+/// Compute the set of binding names that will be freed by export renames.
+///
+/// A name is "freed" if it appears as `orig` in `export { orig as exported }`
+/// and the rename chain from `orig` terminates at a name that is either not a
+/// binding or is itself freed (non-cyclically).
+///
+/// Example: `export { i as x }; export { x as f };` with bindings `i`, `x`
+/// but no binding `f`.  Chain: x→f (free).  So `x` is freed, then `i→x` is
+/// also safe.
+fn compute_freed_names(
+    module: &Module,
+    binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
+) -> HashSet<Atom> {
+    // Step 1: collect eligible rename edges (orig → exported).
+    // Only include edges that the planner would actually accept: the exported
+    // name must not be shorter than the orig, and the orig binding must not
+    // already be an `export` declaration.
+    let mut rename_edges: HashMap<Atom, Atom> = HashMap::new();
+    for item in &module.body {
+        if let ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(NamedExport {
+            specifiers,
+            src: None,
+            ..
+        })) = item
+        {
+            for spec in specifiers {
+                if let ExportSpecifier::Named(ExportNamedSpecifier {
+                    orig: ModuleExportName::Ident(orig),
+                    exported: Some(ModuleExportName::Ident(exported)),
+                    ..
+                }) = spec
+                {
+                    if orig.sym == exported.sym || exported.sym.len() < orig.sym.len() {
+                        continue;
+                    }
+                    let Some(info) = binding_infos.get(&orig.sym) else {
+                        continue;
+                    };
+                    if info.exported {
+                        continue;
+                    }
+                    if rename_causes_shadowing(module, &info.id, &exported.sym) {
+                        continue;
+                    }
+                    rename_edges.insert(orig.sym.clone(), exported.sym.clone());
+                }
+            }
+        }
+    }
+
+    // Step 1b: remove edges whose target is claimed by multiple sources.
+    // The planner will reject all but one via `target_name_already_planned`,
+    // but we can't predict which wins, so conservatively drop all of them.
+    let mut target_counts: HashMap<Atom, usize> = HashMap::new();
+    for target in rename_edges.values() {
+        *target_counts.entry(target.clone()).or_default() += 1;
+    }
+    rename_edges.retain(|_, target| target_counts.get(target).copied().unwrap_or(0) <= 1);
+
+    // Step 2: for each edge, follow the chain to see if it terminates at a free
+    // name.  Mark all names along successful chains as freed.
+    let mut freed = HashSet::new();
+    for start in rename_edges.keys() {
+        if freed.contains(start) {
+            continue;
+        }
+        // Walk the chain, collecting visited names
+        let mut chain = Vec::new();
+        let mut cursor = start;
+        let mut visited = HashSet::new();
+        let terminates_free = loop {
+            if !visited.insert(cursor.clone()) {
+                break false; // cycle
+            }
+            chain.push(cursor.clone());
+            match rename_edges.get(cursor) {
+                Some(next) => {
+                    if !binding_infos.contains_key(next) || freed.contains(next) {
+                        break true; // chain reaches a free name
+                    }
+                    cursor = next;
+                }
+                None => break false, // occupant is not being renamed away
+            }
+        };
+        if terminates_free {
+            freed.extend(chain);
+        }
+    }
+
+    freed
+}
+
 fn name_conflicts_with_unmoved_binding(
     binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
     plans: &[ExportRenamePlan],
     new_name: &Atom,
+    freed_names: &HashSet<Atom>,
 ) -> bool {
     let Some(existing) = binding_infos.get(new_name) else {
         return false;
     };
 
-    !plans.iter().any(|plan| plan.old == existing.id)
+    if plans.iter().any(|plan| plan.old == existing.id) {
+        return false;
+    }
+
+    if freed_names.contains(new_name) {
+        return false;
+    }
+
+    true
 }
 
 fn target_name_already_planned(

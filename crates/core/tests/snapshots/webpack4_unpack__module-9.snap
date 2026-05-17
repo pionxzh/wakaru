@@ -1,6 +1,5 @@
 ---
-source: tests/webpack4_unpack.rs
-assertion_line: 108
+source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import { r as isEmpty, u as u_2 } from "./module-0.js";

@@ -1,5 +1,5 @@
 ---
-source: tests/webpack4_unpack.rs
+source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import r from "./module-3.js";
@@ -1885,7 +1885,7 @@ function An(e, t, n) {
 function Ln(e) {
     if (e && e.dispatchConfig.phasedRegistrationNames) {
         const n = [];
-        for(let t = e._targetInst; t;){
+        for(var t = e._targetInst; t;){
             n.push(t);
             t = Nn(t);
         }

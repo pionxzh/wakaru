@@ -1905,144 +1905,6 @@ fn is_babel_helper_or_chain(expr: &Expr) -> bool {
     call_count >= 3
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use swc_core::common::{sync::Lrc, FileName, Globals, SourceMap, GLOBALS};
-    use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
-
-    fn parse_first_function(code: &str) -> Function {
-        let cm: Lrc<SourceMap> = Default::default();
-        let fm = cm.new_source_file(Lrc::new(FileName::Anon), code.to_string());
-        let lexer = Lexer::new(
-            Syntax::Es(EsSyntax::default()),
-            Default::default(),
-            StringInput::from(&*fm),
-            None,
-        );
-        let mut parser = Parser::new_from(lexer);
-        let module = parser.parse_module().expect("failed to parse");
-        for item in &module.body {
-            if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
-                return *fn_decl.function.clone();
-            }
-        }
-        panic!("no function declaration found in source");
-    }
-
-    #[test]
-    fn class_call_check_canonical() {
-        GLOBALS.set(&Globals::new(), || {
-            let f = parse_first_function(
-                r#"function _c(a, b) {
-                    if (!(a instanceof b)) {
-                        throw new TypeError("Cannot call a class as a function");
-                    }
-                }"#,
-            );
-            assert!(is_class_call_check_fn(&f));
-        });
-    }
-
-    #[test]
-    fn class_call_check_no_block_wrapping() {
-        GLOBALS.set(&Globals::new(), || {
-            let f = parse_first_function(
-                r#"function _c(a, b) {
-                    if (!(a instanceof b))
-                        throw new TypeError("Cannot call a class as a function");
-                }"#,
-            );
-            assert!(is_class_call_check_fn(&f));
-        });
-    }
-
-    #[test]
-    fn class_call_check_with_parens() {
-        GLOBALS.set(&Globals::new(), || {
-            let f = parse_first_function(
-                r#"function _c(a, b) {
-                    if (!(a instanceof b)) {
-                        throw new TypeError("Cannot call a class as a function");
-                    }
-                }"#,
-            );
-            assert!(is_class_call_check_fn(&f));
-        });
-    }
-
-    #[test]
-    fn class_call_check_rejects_wrong_param_count() {
-        GLOBALS.set(&Globals::new(), || {
-            let f = parse_first_function(
-                r#"function _c(a) {
-                    if (!(a instanceof Foo)) {
-                        throw new TypeError("nope");
-                    }
-                }"#,
-            );
-            assert!(!is_class_call_check_fn(&f));
-        });
-    }
-
-    #[test]
-    fn class_call_check_rejects_swapped_operands() {
-        GLOBALS.set(&Globals::new(), || {
-            let f = parse_first_function(
-                r#"function _c(a, b) {
-                    if (!(b instanceof a)) {
-                        throw new TypeError("nope");
-                    }
-                }"#,
-            );
-            assert!(!is_class_call_check_fn(&f));
-        });
-    }
-
-    #[test]
-    fn class_call_check_rejects_non_instanceof() {
-        GLOBALS.set(&Globals::new(), || {
-            let f = parse_first_function(
-                r#"function _c(a, b) {
-                    if (!(a === b)) {
-                        throw new TypeError("nope");
-                    }
-                }"#,
-            );
-            assert!(!is_class_call_check_fn(&f));
-        });
-    }
-
-    #[test]
-    fn class_call_check_rejects_no_throw() {
-        GLOBALS.set(&Globals::new(), || {
-            let f = parse_first_function(
-                r#"function _c(a, b) {
-                    if (!(a instanceof b)) {
-                        console.log("bad");
-                    }
-                }"#,
-            );
-            assert!(!is_class_call_check_fn(&f));
-        });
-    }
-
-    #[test]
-    fn class_call_check_rejects_multiple_stmts() {
-        GLOBALS.set(&Globals::new(), || {
-            let f = parse_first_function(
-                r#"function _c(a, b) {
-                    var x = 1;
-                    if (!(a instanceof b)) {
-                        throw new TypeError("nope");
-                    }
-                }"#,
-            );
-            assert!(!is_class_call_check_fn(&f));
-        });
-    }
-}
-
 // ============================================================
 // _inherits helper detection
 // ============================================================
@@ -2180,10 +2042,8 @@ fn body_has_call_super_shape(
                     // Check for param2.apply(param1, ...)
                     if matches!(&m.prop, MemberProp::Ident(p) if p.sym.as_ref() == "apply") {
                         if let Expr::Ident(obj) = m.obj.as_ref() {
-                            if &obj.sym == self.param2_name && call.args.len() >= 1 {
-                                if let Expr::Ident(first_arg) =
-                                    call.args[0].expr.as_ref()
-                                {
+                            if &obj.sym == self.param2_name && !call.args.is_empty() {
+                                if let Expr::Ident(first_arg) = call.args[0].expr.as_ref() {
                                     if &first_arg.sym == self.param1_name {
                                         self.has_param2_apply_param1 = true;
                                     }
@@ -2205,4 +2065,142 @@ fn body_has_call_super_shape(
     };
     body.visit_with(&mut finder);
     finder.has_reflect_construct_3 && finder.has_param2_apply_param1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use swc_core::common::{sync::Lrc, FileName, Globals, SourceMap, GLOBALS};
+    use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+
+    fn parse_first_function(code: &str) -> Function {
+        let cm: Lrc<SourceMap> = Default::default();
+        let fm = cm.new_source_file(Lrc::new(FileName::Anon), code.to_string());
+        let lexer = Lexer::new(
+            Syntax::Es(EsSyntax::default()),
+            Default::default(),
+            StringInput::from(&*fm),
+            None,
+        );
+        let mut parser = Parser::new_from(lexer);
+        let module = parser.parse_module().expect("failed to parse");
+        for item in &module.body {
+            if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
+                return *fn_decl.function.clone();
+            }
+        }
+        panic!("no function declaration found in source");
+    }
+
+    #[test]
+    fn class_call_check_canonical() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    if (!(a instanceof b)) {
+                        throw new TypeError("Cannot call a class as a function");
+                    }
+                }"#,
+            );
+            assert!(is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_no_block_wrapping() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    if (!(a instanceof b))
+                        throw new TypeError("Cannot call a class as a function");
+                }"#,
+            );
+            assert!(is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_with_parens() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    if (!(a instanceof b)) {
+                        throw new TypeError("Cannot call a class as a function");
+                    }
+                }"#,
+            );
+            assert!(is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_rejects_wrong_param_count() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a) {
+                    if (!(a instanceof Foo)) {
+                        throw new TypeError("nope");
+                    }
+                }"#,
+            );
+            assert!(!is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_rejects_swapped_operands() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    if (!(b instanceof a)) {
+                        throw new TypeError("nope");
+                    }
+                }"#,
+            );
+            assert!(!is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_rejects_non_instanceof() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    if (!(a === b)) {
+                        throw new TypeError("nope");
+                    }
+                }"#,
+            );
+            assert!(!is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_rejects_no_throw() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    if (!(a instanceof b)) {
+                        console.log("bad");
+                    }
+                }"#,
+            );
+            assert!(!is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn class_call_check_rejects_multiple_stmts() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _c(a, b) {
+                    var x = 1;
+                    if (!(a instanceof b)) {
+                        throw new TypeError("nope");
+                    }
+                }"#,
+            );
+            assert!(!is_class_call_check_fn(&f));
+        });
+    }
 }

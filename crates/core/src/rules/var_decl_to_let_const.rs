@@ -515,24 +515,13 @@ fn collect_refs_in_module_item(
             stmt.visit_with(&mut collector);
         }
         ModuleItem::ModuleDecl(decl) => {
-            use swc_core::ecma::ast::{
-                ExportDefaultExpr, ExportSpecifier, ModuleDecl, ModuleExportName,
-            };
+            use swc_core::ecma::ast::{ExportDefaultExpr, ModuleDecl};
             if let ModuleDecl::ExportDefaultExpr(ExportDefaultExpr { expr, .. }) = decl {
                 expr.visit_with(&mut collector);
             }
-            if let ModuleDecl::ExportNamed(named) = decl {
-                for spec in &named.specifiers {
-                    if let ExportSpecifier::Named(n) = spec {
-                        if let ModuleExportName::Ident(id) = &n.orig {
-                            let binding = (id.sym.clone(), id.ctxt);
-                            if var_ids.contains(&binding) {
-                                collector.refs.insert(binding);
-                            }
-                        }
-                    }
-                }
-            }
+            // `export { x }` is a live binding re-export — it does not
+            // evaluate `x` at the statement position, so it is not a
+            // use-before-declaration reference.  Skip it.
         }
     }
     collector.refs

@@ -1,6 +1,5 @@
 ---
-source: tests/webpack4_unpack.rs
-assertion_line: 108
+source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import r from "./module-29.js";
@@ -320,7 +319,7 @@ export const cloneElement = function(e, t, n) {
             }
         }
     }
-    const s = arguments.length - 2;
+    var s = arguments.length - 2;
     if (s === 1) {
         o.children = n;
     } else if (s > 1) {

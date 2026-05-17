@@ -701,6 +701,7 @@ fn strip_parens(expr: &Expr) -> &Expr {
 /// `has_super` — true when a super class was discovered (either from IIFE arg or inline inherits)
 ///
 /// Returns None if any statement is unrecognised (conservative — no false positives).
+#[allow(clippy::too_many_arguments)]
 fn parse_class_body(
     stmts: &[Stmt],
     class_name: &str,
@@ -797,7 +798,12 @@ fn parse_class_body(
                 } else {
                     None
                 };
-                let ctor = build_constructor(&fn_decl.function, ctor_super_param, call_super_helpers, unresolved_mark)?;
+                let ctor = build_constructor(
+                    &fn_decl.function,
+                    ctor_super_param,
+                    call_super_helpers,
+                    unresolved_mark,
+                )?;
                 // Omit the constructor if it's empty or is the default derived
                 // constructor: `constructor() { super(...arguments); }`
                 if !is_default_constructor(&ctor) {

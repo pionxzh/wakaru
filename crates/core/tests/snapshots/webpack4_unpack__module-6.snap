@@ -1,5 +1,5 @@
 ---
-source: tests/webpack4_unpack.rs
+source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import { b, c as c_2, h as h_2, p as p_2, q, w } from "./module-0.js";

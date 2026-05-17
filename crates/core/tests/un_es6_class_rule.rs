@@ -1095,6 +1095,12 @@ var Foo = (function(_Bar) {
 "#;
     // Should stay unconverted — no dangling `t` reference
     let output = apply(input);
-    assert!(output.contains("_callSuper"), "should keep _callSuper call when third arg is unsafe");
-    assert!(!output.contains("class Foo"), "should not convert to class when _callSuper rewrite bails");
+    assert!(
+        output.contains("_callSuper"),
+        "should keep _callSuper call when third arg is unsafe"
+    );
+    assert!(
+        !output.contains("class Foo"),
+        "should not convert to class when _callSuper rewrite bails"
+    );
 }
