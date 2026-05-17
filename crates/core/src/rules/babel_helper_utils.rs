@@ -24,6 +24,8 @@ pub(crate) enum BabelHelperKind {
     PossibleConstructorReturn,
     AssertThisInitialized,
     ObjectWithoutProperties,
+    Inherits,
+    CallSuper,
 }
 
 /// Known import paths for Babel runtime helpers.
@@ -64,6 +66,11 @@ const OBJECT_WITHOUT_PROPERTIES_PATHS: &[&str] = &[
     "@babel/runtime/helpers/esm/objectWithoutProperties",
     "@babel/runtime/helpers/objectWithoutPropertiesLoose",
     "@babel/runtime/helpers/esm/objectWithoutPropertiesLoose",
+];
+
+const INHERITS_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/inherits",
+    "@babel/runtime/helpers/esm/inherits",
 ];
 
 /// Scan module-level declarations for helper functions.
@@ -354,6 +361,9 @@ fn detect_helper_from_require(expr: &Expr) -> Option<BabelHelperKind> {
     if OBJECT_WITHOUT_PROPERTIES_PATHS.contains(&path) {
         return Some(BabelHelperKind::ObjectWithoutProperties);
     }
+    if INHERITS_PATHS.contains(&path) {
+        return Some(BabelHelperKind::Inherits);
+    }
     None
 }
 
@@ -387,6 +397,12 @@ fn detect_helper_from_fn(func: &Function, has_sub_helpers: bool) -> Option<Babel
     }
     if is_object_without_properties_fn(func) {
         return Some(BabelHelperKind::ObjectWithoutProperties);
+    }
+    if is_inherits_fn(func) {
+        return Some(BabelHelperKind::Inherits);
+    }
+    if is_call_super_fn(func) {
+        return Some(BabelHelperKind::CallSuper);
     }
     None
 }
@@ -2025,4 +2041,168 @@ mod tests {
             assert!(!is_class_call_check_fn(&f));
         });
     }
+}
+
+// ============================================================
+// _inherits helper detection
+// ============================================================
+
+/// Check if a function body matches the `_inherits` pattern:
+/// 2 params, <=5 stmts, body contains `param1.prototype = Object.create(...)`.
+pub(crate) fn is_inherits_fn(func: &Function) -> bool {
+    if func.params.len() != 2 {
+        return false;
+    }
+    let Pat::Ident(param1) = &func.params[0].pat else {
+        return false;
+    };
+    let body = match &func.body {
+        Some(b) => b,
+        None => return false,
+    };
+    if body.stmts.len() > 5 {
+        return false;
+    }
+    body.stmts
+        .iter()
+        .any(|s| stmt_has_prototype_object_create(s, &param1.id.sym))
+}
+
+/// Check if a statement contains `param.prototype = Object.create(...)`,
+/// including inside comma/sequence expressions.
+fn stmt_has_prototype_object_create(stmt: &Stmt, param_name: &Atom) -> bool {
+    let Stmt::Expr(swc_core::ecma::ast::ExprStmt { expr, .. }) = stmt else {
+        return false;
+    };
+    expr_has_prototype_object_create(expr, param_name)
+}
+
+fn expr_has_prototype_object_create(expr: &Expr, param_name: &Atom) -> bool {
+    match expr {
+        Expr::Assign(assign) if assign.op == swc_core::ecma::ast::AssignOp::Assign => {
+            let swc_core::ecma::ast::AssignTarget::Simple(
+                swc_core::ecma::ast::SimpleAssignTarget::Member(lhs),
+            ) = &assign.left
+            else {
+                return false;
+            };
+            let Expr::Ident(obj) = lhs.obj.as_ref() else {
+                return false;
+            };
+            if &obj.sym != param_name {
+                return false;
+            }
+            if !matches!(&lhs.prop, MemberProp::Ident(n) if n.sym.as_ref() == "prototype") {
+                return false;
+            }
+            is_object_create_call(&assign.right)
+        }
+        Expr::Seq(seq) => seq
+            .exprs
+            .iter()
+            .any(|e| expr_has_prototype_object_create(e, param_name)),
+        _ => false,
+    }
+}
+
+fn is_object_create_call(expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else { return false };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(m) = callee.as_ref() else {
+        return false;
+    };
+    let Expr::Ident(obj) = m.obj.as_ref() else {
+        return false;
+    };
+    obj.sym.as_ref() == "Object"
+        && matches!(&m.prop, MemberProp::Ident(p) if p.sym.as_ref() == "create")
+}
+
+// ============================================================
+// _callSuper helper detection
+// ============================================================
+
+/// Check if a function body matches the `_callSuper` pattern (Babel 7.24+):
+/// 2-3 params, short body (<=3 stmts), contains 3-arg `Reflect.construct` and
+/// `param2.apply(param1, ...)` — the dual-path fallback pattern.
+pub(crate) fn is_call_super_fn(func: &Function) -> bool {
+    if func.params.len() < 2 || func.params.len() > 3 {
+        return false;
+    }
+    let Pat::Ident(param1) = &func.params[0].pat else {
+        return false;
+    };
+    let Pat::Ident(param2) = &func.params[1].pat else {
+        return false;
+    };
+    let body = match &func.body {
+        Some(b) => b,
+        None => return false,
+    };
+    if body.stmts.len() > 3 {
+        return false;
+    }
+    body_has_call_super_shape(body, &param1.id.sym, &param2.id.sym)
+}
+
+/// Check for both `Reflect.construct(_, _, _)` (3-arg form) AND
+/// `param2.apply(param1, ...)` in the body. The dual-path pattern is the
+/// structural hallmark of Babel's `_callSuper` helper:
+/// `_isNR() ? Reflect.construct(o, e||[], ...) : o.apply(t, e)`
+fn body_has_call_super_shape(
+    body: &swc_core::ecma::ast::BlockStmt,
+    param1_name: &Atom,
+    param2_name: &Atom,
+) -> bool {
+    use swc_core::ecma::ast::CallExpr;
+
+    struct Finder<'a> {
+        param1_name: &'a Atom,
+        param2_name: &'a Atom,
+        has_reflect_construct_3: bool,
+        has_param2_apply_param1: bool,
+    }
+    impl Visit for Finder<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Expr::Member(m) = callee.as_ref() {
+                    // Check for Reflect.construct(_, _, _)
+                    if let Expr::Ident(obj) = m.obj.as_ref() {
+                        if obj.sym.as_ref() == "Reflect"
+                            && matches!(&m.prop, MemberProp::Ident(p) if p.sym.as_ref() == "construct")
+                            && call.args.len() == 3
+                        {
+                            self.has_reflect_construct_3 = true;
+                        }
+                    }
+                    // Check for param2.apply(param1, ...)
+                    if matches!(&m.prop, MemberProp::Ident(p) if p.sym.as_ref() == "apply") {
+                        if let Expr::Ident(obj) = m.obj.as_ref() {
+                            if &obj.sym == self.param2_name && call.args.len() >= 1 {
+                                if let Expr::Ident(first_arg) =
+                                    call.args[0].expr.as_ref()
+                                {
+                                    if &first_arg.sym == self.param1_name {
+                                        self.has_param2_apply_param1 = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder {
+        param1_name,
+        param2_name,
+        has_reflect_construct_3: false,
+        has_param2_apply_param1: false,
+    };
+    body.visit_with(&mut finder);
+    finder.has_reflect_construct_3 && finder.has_param2_apply_param1
 }

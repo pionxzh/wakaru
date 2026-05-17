@@ -11,6 +11,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::babel_helper_utils::{is_call_super_fn, is_inherits_fn};
 use super::expr_utils::is_unresolved_ident;
 
 pub struct UnEs6Class {
@@ -27,13 +28,15 @@ impl VisitMut for UnEs6Class {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         // Pre-scan for helpers at module level BEFORE visiting children,
         // so nested scopes (function bodies) can also detect custom helper calls.
-        let inherits_helpers = collect_inherits_helpers_from_items(items, self.unresolved_mark);
+        let inherits_helpers = collect_inherits_helpers_from_items(items);
         let create_class_helpers =
             collect_create_class_helpers_from_items(items, self.unresolved_mark);
+        let call_super_helpers = collect_call_super_helpers_from_items(items);
 
         let mut inner = UnEs6ClassInner {
             inherits_helpers,
             create_class_helpers,
+            call_super_helpers,
             unresolved_mark: self.unresolved_mark,
         };
         items.visit_mut_with(&mut inner);
@@ -41,13 +44,15 @@ impl VisitMut for UnEs6Class {
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         // Non-module context: scan local scope for helpers
-        let inherits_helpers = collect_inherits_helpers_from_stmts(stmts, self.unresolved_mark);
+        let inherits_helpers = collect_inherits_helpers_from_stmts(stmts);
         let create_class_helpers =
             collect_create_class_helpers_from_stmts(stmts, self.unresolved_mark);
+        let call_super_helpers = collect_call_super_helpers_from_stmts(stmts);
 
         let mut inner = UnEs6ClassInner {
             inherits_helpers,
             create_class_helpers,
+            call_super_helpers,
             unresolved_mark: self.unresolved_mark,
         };
         stmts.visit_mut_with(&mut inner);
@@ -58,6 +63,7 @@ impl VisitMut for UnEs6Class {
 struct UnEs6ClassInner {
     inherits_helpers: HashSet<Atom>,
     create_class_helpers: HashSet<Atom>,
+    call_super_helpers: HashSet<Atom>,
     unresolved_mark: Mark,
 }
 
@@ -74,6 +80,7 @@ impl VisitMut for UnEs6ClassInner {
                         var_decl,
                         &self.inherits_helpers,
                         &self.create_class_helpers,
+                        &self.call_super_helpers,
                         self.unresolved_mark,
                     ) {
                         stmts.push(Stmt::Decl(Decl::Class(class_decl)));
@@ -85,13 +92,14 @@ impl VisitMut for UnEs6ClassInner {
                 other => stmts.push(other),
             }
         }
-        // Remove orphaned _createClass helper definitions
         if converted_any {
             remove_orphaned_create_class_helpers(
                 stmts,
                 &self.create_class_helpers,
                 self.unresolved_mark,
             );
+            remove_orphaned_fn_helpers_stmts(stmts, &self.inherits_helpers);
+            remove_orphaned_fn_helpers_stmts(stmts, &self.call_super_helpers);
         }
     }
 
@@ -107,6 +115,7 @@ impl VisitMut for UnEs6ClassInner {
                         var_decl,
                         &self.inherits_helpers,
                         &self.create_class_helpers,
+                        &self.call_super_helpers,
                         self.unresolved_mark,
                     ) {
                         items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
@@ -118,23 +127,24 @@ impl VisitMut for UnEs6ClassInner {
                 other => items.push(other),
             }
         }
-        // Remove orphaned _createClass helper definitions
         if converted_any {
             remove_orphaned_create_class_helpers_module(
                 items,
                 &self.create_class_helpers,
                 self.unresolved_mark,
             );
+            remove_orphaned_fn_helpers_module(items, &self.inherits_helpers);
+            remove_orphaned_fn_helpers_module(items, &self.call_super_helpers);
         }
     }
 }
 
 /// Collect names of functions that match the `_inherits` body shape from statements.
-fn collect_inherits_helpers_from_stmts(stmts: &[Stmt], unresolved_mark: Mark) -> HashSet<Atom> {
+fn collect_inherits_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<Atom> {
     let mut helpers = HashSet::new();
     for stmt in stmts {
         if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
-            if is_inherits_fn(&fn_decl.function, unresolved_mark) {
+            if is_inherits_fn(&fn_decl.function) {
                 helpers.insert(fn_decl.ident.sym.clone());
             }
         }
@@ -143,14 +153,11 @@ fn collect_inherits_helpers_from_stmts(stmts: &[Stmt], unresolved_mark: Mark) ->
 }
 
 /// Collect names of functions that match the `_inherits` body shape from module items.
-fn collect_inherits_helpers_from_items(
-    items: &[ModuleItem],
-    unresolved_mark: Mark,
-) -> HashSet<Atom> {
+fn collect_inherits_helpers_from_items(items: &[ModuleItem]) -> HashSet<Atom> {
     let mut helpers = HashSet::new();
     for item in items {
         if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
-            if is_inherits_fn(&fn_decl.function, unresolved_mark) {
+            if is_inherits_fn(&fn_decl.function) {
                 helpers.insert(fn_decl.ident.sym.clone());
             }
         }
@@ -158,70 +165,30 @@ fn collect_inherits_helpers_from_items(
     helpers
 }
 
-/// Check if a function body matches the `_inherits` pattern:
-/// ```js
-/// function _inherits(e, t) {
-///     e.prototype = Object.create(t.prototype);
-///     e.prototype.constructor = e;
-///     // optional: setPrototypeOf / __proto__
-/// }
-/// ```
-fn is_inherits_fn(func: &Function, unresolved_mark: Mark) -> bool {
-    if func.params.len() != 2 {
-        return false;
+/// Collect names of functions that match the `_callSuper` body shape from statements.
+fn collect_call_super_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<Atom> {
+    let mut helpers = HashSet::new();
+    for stmt in stmts {
+        if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
+            if is_call_super_fn(&fn_decl.function) {
+                helpers.insert(fn_decl.ident.sym.clone());
+            }
+        }
     }
-    let Pat::Ident(param1) = &func.params[0].pat else {
-        return false;
-    };
-    let body = match &func.body {
-        Some(b) => b,
-        None => return false,
-    };
-    // Must contain `param1.prototype = Object.create(...)` — the key signal.
-    // Just checking for any Object.create is too loose (would match utility functions).
-    if body.stmts.len() > 5 {
-        return false;
-    }
-    body.stmts
-        .iter()
-        .any(|s| is_prototype_assign_object_create(s, &param1.id.sym, unresolved_mark))
+    helpers
 }
 
-/// Check if a statement is `param.prototype = Object.create(...)`.
-fn is_prototype_assign_object_create(
-    stmt: &Stmt,
-    param_name: &Atom,
-    unresolved_mark: Mark,
-) -> bool {
-    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
-        return false;
-    };
-    let Expr::Assign(assign) = expr.as_ref() else {
-        return false;
-    };
-    if assign.op != AssignOp::Assign {
-        return false;
+/// Collect names of functions that match the `_callSuper` body shape from module items.
+fn collect_call_super_helpers_from_items(items: &[ModuleItem]) -> HashSet<Atom> {
+    let mut helpers = HashSet::new();
+    for item in items {
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
+            if is_call_super_fn(&fn_decl.function) {
+                helpers.insert(fn_decl.ident.sym.clone());
+            }
+        }
     }
-    // LHS must be `param.prototype`
-    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs)) = &assign.left else {
-        return false;
-    };
-    let Expr::Ident(obj) = lhs.obj.as_ref() else {
-        return false;
-    };
-    if &obj.sym != param_name {
-        return false;
-    }
-    if !matches!(&lhs.prop, MemberProp::Ident(n) if n.sym.as_ref() == "prototype") {
-        return false;
-    }
-    // RHS must contain Object.create(...)
-    let rhs = strip_parens(&assign.right);
-    let Expr::Call(call) = rhs else { return false };
-    let Callee::Expr(callee) = &call.callee else {
-        return false;
-    };
-    is_object_create_callee(callee, unresolved_mark)
+    helpers
 }
 
 // ============================================================
@@ -459,6 +426,68 @@ impl swc_core::ecma::visit::Visit for HelperRefCounter {
     }
 }
 
+/// Remove function declarations from `helpers` that have no remaining references.
+fn remove_orphaned_fn_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<Atom>) {
+    use swc_core::ecma::visit::VisitWith;
+
+    if helpers.is_empty() {
+        return;
+    }
+    let mut counter = HelperRefCounter::new(helpers);
+    for stmt in stmts.iter() {
+        if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
+            if helpers.contains(&fn_decl.ident.sym) {
+                continue;
+            }
+        }
+        stmt.visit_with(&mut counter);
+    }
+    stmts.retain(|stmt| {
+        if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
+            if helpers.contains(&fn_decl.ident.sym) {
+                return counter
+                    .counts
+                    .get(fn_decl.ident.sym.as_ref())
+                    .copied()
+                    .unwrap_or(0)
+                    > 0;
+            }
+        }
+        true
+    });
+}
+
+/// Remove function declarations from `helpers` that have no remaining references (module items).
+fn remove_orphaned_fn_helpers_module(items: &mut Vec<ModuleItem>, helpers: &HashSet<Atom>) {
+    use swc_core::ecma::visit::VisitWith;
+
+    if helpers.is_empty() {
+        return;
+    }
+    let mut counter = HelperRefCounter::new(helpers);
+    for item in items.iter() {
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
+            if helpers.contains(&fn_decl.ident.sym) {
+                continue;
+            }
+        }
+        item.visit_with(&mut counter);
+    }
+    items.retain(|item| {
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
+            if helpers.contains(&fn_decl.ident.sym) {
+                return counter
+                    .counts
+                    .get(fn_decl.ident.sym.as_ref())
+                    .copied()
+                    .unwrap_or(0)
+                    > 0;
+            }
+        }
+        true
+    });
+}
+
 // ============================================================
 // Core transformation
 // ============================================================
@@ -469,6 +498,7 @@ fn try_iife_to_class(
     var: &VarDecl,
     inherits_helpers: &HashSet<Atom>,
     create_class_helpers: &HashSet<Atom>,
+    call_super_helpers: &HashSet<Atom>,
     unresolved_mark: Mark,
 ) -> Option<ClassDecl> {
     // Must be a single declarator
@@ -550,6 +580,7 @@ fn try_iife_to_class(
         inner_param.as_deref(),
         inherits_helpers,
         create_class_helpers,
+        call_super_helpers,
         super_class.is_some(),
         unresolved_mark,
     )?;
@@ -676,6 +707,7 @@ fn parse_class_body(
     super_param: Option<&str>,
     inherits_helpers: &HashSet<Atom>,
     create_class_helpers: &HashSet<Atom>,
+    call_super_helpers: &HashSet<Atom>,
     has_super: bool,
     unresolved_mark: Mark,
 ) -> Option<Vec<ClassMember>> {
@@ -765,7 +797,7 @@ fn parse_class_body(
                 } else {
                     None
                 };
-                let ctor = build_constructor(&fn_decl.function, ctor_super_param, unresolved_mark)?;
+                let ctor = build_constructor(&fn_decl.function, ctor_super_param, call_super_helpers, unresolved_mark)?;
                 // Omit the constructor if it's empty or is the default derived
                 // constructor: `constructor() { super(...arguments); }`
                 if !is_default_constructor(&ctor) {
@@ -1139,8 +1171,8 @@ fn try_parse_create_class(
         return false;
     }
 
-    // Args: (ClassName, [instance methods], [static methods]?)
-    if call.args.len() < 2 || call.args.len() > 3 {
+    // Args: (ClassName) or (ClassName, [instance methods], [static methods]?)
+    if call.args.is_empty() || call.args.len() > 3 {
         return false;
     }
 
@@ -1148,6 +1180,11 @@ fn try_parse_create_class(
     let arg0 = strip_parens(&call.args[0].expr);
     if !matches!(arg0, Expr::Ident(id) if id.sym.as_ref() == ctor_name) {
         return false;
+    }
+
+    // 1-arg form: _createClass(Foo) — just seals prototype, no methods
+    if call.args.len() == 1 {
+        return true;
     }
 
     // Instance methods
@@ -1652,6 +1689,7 @@ fn is_not_null_check(expr: &Expr, name: &str) -> bool {
 fn build_constructor(
     function: &Function,
     super_param: Option<&str>,
+    call_super_helpers: &HashSet<Atom>,
     unresolved_mark: Mark,
 ) -> Option<Constructor> {
     let mut body = function.body.clone()?;
@@ -1670,6 +1708,15 @@ fn build_constructor(
     if let Some(sp) = super_param {
         // Unwrap inline _possibleConstructorReturn IIFEs before super rewriting
         unwrap_inline_pcr_iife(&mut body);
+        // Rewrite `_callSuper(this, Ctor, args)` → `super(...args)` (Babel 7.24+)
+        let mut call_super_rw = CallSuperRewriter {
+            helpers: call_super_helpers,
+            bailed: false,
+        };
+        body.visit_mut_with(&mut call_super_rw);
+        if call_super_rw.bailed {
+            return None;
+        }
         // Rewrite `superParam.call(this, ...)` → `super(...)` in the constructor body
         body.visit_mut_with(&mut SuperCallRewriter {
             super_param_name: sp,
@@ -2063,6 +2110,88 @@ impl VisitMut for SuperCallRewriter<'_> {
 
     fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
 
+    fn visit_mut_class(&mut self, _: &mut Class) {}
+}
+
+/// Rewrite `_callSuper(this, Ctor, args)` → `super(...args)` (Babel 7.24+ helper).
+///
+/// Handles:
+/// - `_callSuper(this, Foo, arguments)` → `super(...arguments)`
+/// - `_callSuper(this, Foo, [a, b])` → `super(a, b)`
+/// - `_callSuper(this, Foo)` → `super()`
+///
+/// Sets `bailed = true` if a call is detected but cannot be safely rewritten.
+struct CallSuperRewriter<'a> {
+    helpers: &'a HashSet<Atom>,
+    bailed: bool,
+}
+
+impl VisitMut for CallSuperRewriter<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        let Expr::Call(call) = expr else { return };
+        let Callee::Expr(callee) = &call.callee else {
+            return;
+        };
+        let Expr::Ident(fn_name) = strip_parens(callee) else {
+            return;
+        };
+        if !self.helpers.contains(&fn_name.sym) {
+            return;
+        }
+        // _callSuper(this, Ctor) or _callSuper(this, Ctor, argsExpr)
+        if call.args.len() < 2 || call.args.len() > 3 {
+            return;
+        }
+        // First arg must be `this`
+        if !matches!(strip_parens(&call.args[0].expr), Expr::This(..)) {
+            return;
+        }
+
+        let super_args = if call.args.len() == 3 {
+            let third = strip_parens(&call.args[2].expr);
+            match third {
+                // _callSuper(this, Foo, arguments) → super(...arguments)
+                Expr::Ident(id) if id.sym.as_ref() == "arguments" => {
+                    vec![ExprOrSpread {
+                        spread: Some(DUMMY_SP),
+                        expr: call.args[2].expr.clone(),
+                    }]
+                }
+                // _callSuper(this, Foo, [a, b]) → super(a, b)
+                Expr::Array(arr) => arr
+                    .elems
+                    .iter()
+                    .filter_map(|e| {
+                        e.as_ref().map(|el| ExprOrSpread {
+                            spread: el.spread,
+                            expr: el.expr.clone(),
+                        })
+                    })
+                    .collect(),
+                // Unknown expression — unsafe to spread (Babel does `e || []`)
+                _ => {
+                    self.bailed = true;
+                    return;
+                }
+            }
+        } else {
+            // _callSuper(this, Foo) → super()
+            vec![]
+        };
+
+        *expr = Expr::Call(CallExpr {
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            callee: Callee::Super(swc_core::ecma::ast::Super { span: DUMMY_SP }),
+            args: super_args,
+            type_args: None,
+        });
+    }
+
+    fn visit_mut_function(&mut self, _: &mut Function) {}
+    fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
     fn visit_mut_class(&mut self, _: &mut Class) {}
 }
 

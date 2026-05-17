@@ -680,11 +680,8 @@ var Foo = (function(t) {
 "#;
     // `super(n, r) || this` is simplified to `super(n, r)`, then alias cleanup converts
     // `o = super(...)` → `super(); this.x = 1`
+    // The orphaned `_inherits` helper `o` is removed after conversion.
     let expected = r#"
-function o(e, t) {
-    e.prototype = Object.create(t.prototype);
-    e.prototype.constructor = e;
-}
 class Foo extends Parent {
     constructor(n, r){
         super(n, r);
@@ -718,10 +715,6 @@ var Foo = (function(t) {
 })(Parent);
 "#;
     let expected = r#"
-function o(e, t) {
-    e.prototype = Object.create(t.prototype);
-    e.prototype.constructor = e;
-}
 class Foo extends Parent {
     constructor(n, r){
         super(n, r);
@@ -916,4 +909,192 @@ var Foo = function() {
 "#;
     let result = render(input);
     insta::assert_snapshot!(result);
+}
+
+// ============================================================
+// _createClass with 1 arg (no methods, just seals prototype)
+// ============================================================
+
+#[test]
+fn test_create_class_one_arg() {
+    let input = r#"
+var Foo = (function(_Bar) {
+    _inherits(t, _Bar);
+    function t() { _Bar.apply(this, arguments); }
+    return _createClass(t);
+}(Bar));
+"#;
+    let expected = r#"
+class Foo extends Bar {
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+// ============================================================
+// _callSuper (Babel 7.24+) → super(...)
+// ============================================================
+
+#[test]
+fn test_call_super_with_arguments() {
+    let input = r#"
+function _callSuper(t, o, e) { return _isNR() ? Reflect.construct(o, e || [], t.constructor) : o.apply(t, e); }
+var Foo = (function(_Bar) {
+    _inherits(t, _Bar);
+    function t() { return _callSuper(this, t, arguments); }
+    return _createClass(t);
+}(Bar));
+"#;
+    let expected = r#"
+class Foo extends Bar {
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_call_super_no_args() {
+    let input = r#"
+function _callSuper(t, o, e) { return _isNR() ? Reflect.construct(o, e || [], t.constructor) : o.apply(t, e); }
+var Foo = (function(_Bar) {
+    _inherits(t, _Bar);
+    function t() { return _callSuper(this, t); }
+    return _createClass(t);
+}(Bar));
+"#;
+    let expected = r#"
+class Foo extends Bar {
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_call_super_with_explicit_args() {
+    let input = r#"
+function _callSuper(t, o, e) { return _isNR() ? Reflect.construct(o, e || [], t.constructor) : o.apply(t, e); }
+var Foo = (function(_Bar) {
+    _inherits(t, _Bar);
+    function t(a, b) {
+        return _callSuper(this, t, [a, b]);
+    }
+    return _createClass(t);
+}(Bar));
+"#;
+    let expected = r#"
+class Foo extends Bar {
+    constructor(a, b) { super(a, b); }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_call_super_unmangled_ctor_name() {
+    // Matches the real-world Babel 7.24+ output where inner function has same name as class
+    let input = r#"
+function _callSuper(t, o, e) { return _isNR() ? Reflect.construct(o, e || [], t.constructor) : o.apply(t, e); }
+var Foo = function(_Bar) {
+    function Foo() {
+        return _callSuper(this, Foo, arguments);
+    }
+    _inherits(Foo, _Bar);
+    return _createClass(Foo);
+}(Bar);
+"#;
+    let expected = r#"
+class Foo extends Bar {
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+// ============================================================
+// Regression: generic Reflect.construct wrapper must NOT be removed
+// ============================================================
+
+#[test]
+fn test_reflect_construct_2arg_not_treated_as_call_super() {
+    // A generic 2-arg Reflect.construct wrapper should not be detected as _callSuper
+    // and must not be removed as an orphaned helper.
+    let input = r#"
+function make(type, args) { return Reflect.construct(type, args); }
+var Foo = (function() {
+    function t() {}
+    t.prototype.run = function() { return make(Array, [1,2,3]); }
+    return t;
+}());
+"#;
+    let expected = r#"
+function make(type, args) { return Reflect.construct(type, args); }
+class Foo {
+    run() { return make(Array, [1,2,3]); }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_reflect_construct_3arg_not_treated_as_call_super() {
+    // A generic 3-arg Reflect.construct wrapper (no .apply fallback) must be preserved.
+    let input = r#"
+function make(type, args, newTarget) { return Reflect.construct(type, args, newTarget); }
+var Foo = (function() {
+    function t() {}
+    t.prototype.run = function() { return make(Array, [1], Array); }
+    return t;
+}());
+"#;
+    let expected = r#"
+function make(type, args, newTarget) { return Reflect.construct(type, args, newTarget); }
+class Foo {
+    run() { return make(Array, [1], Array); }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_construct_or_apply_not_treated_as_call_super() {
+    // A dual-path wrapper with different param flow must be preserved.
+    // param2.apply(param1) is Babel's pattern; type.apply(self) is not.
+    let input = r#"
+function constructOrApply(type, args, self) {
+    return canReflect ? Reflect.construct(type, args, self.constructor) : type.apply(self, args);
+}
+var Foo = (function() {
+    function t() {}
+    t.prototype.run = function() { return constructOrApply(Array, [1], this); }
+    return t;
+}());
+"#;
+    let expected = r#"
+function constructOrApply(type, args, self) {
+    return canReflect ? Reflect.construct(type, args, self.constructor) : type.apply(self, args);
+}
+class Foo {
+    run() { return constructOrApply(Array, [1], this); }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_call_super_unsafe_third_arg_bails_class_conversion() {
+    // When the third arg to _callSuper is not `arguments` or an array literal,
+    // the rewriter cannot safely convert it. The whole IIFE should stay unconverted.
+    let input = r#"
+function _callSuper(t, o, e) { return _isNativeReflectConstruct() ? Reflect.construct(o, e || [], t.constructor) : o.apply(t, e); }
+var Foo = (function(_Bar) {
+    _inherits(t, _Bar);
+    function t(maybeArgs) {
+        return _callSuper(this, t, maybeArgs);
+    }
+    return _createClass(t);
+}(Bar));
+"#;
+    // Should stay unconverted — no dangling `t` reference
+    let output = apply(input);
+    assert!(output.contains("_callSuper"), "should keep _callSuper call when third arg is unsafe");
+    assert!(!output.contains("class Foo"), "should not convert to class when _callSuper rewrite bails");
 }
