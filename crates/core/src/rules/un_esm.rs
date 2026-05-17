@@ -14,6 +14,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
+use super::decl_utils::{collect_decl_names, collect_pat_names};
 use super::rename_utils::{rename_bindings, BindingRename};
 use super::RewriteLevel;
 
@@ -364,7 +365,7 @@ impl VisitMut for UnEsm {
         }
         for c in &classified {
             if let Classified::Keep(ModuleItem::Stmt(Stmt::Decl(decl))) = c {
-                collect_decl_names_into(decl, &mut local_names);
+                collect_decl_names(decl, &mut local_names);
             }
         }
 
@@ -2067,24 +2068,6 @@ fn collect_all_declared_names(module: &Module) -> HashSet<Atom> {
     collector.names
 }
 
-/// Collect binding names introduced by a declaration.
-fn collect_decl_names_into(decl: &Decl, names: &mut HashSet<Atom>) {
-    match decl {
-        Decl::Var(var) => {
-            for d in &var.decls {
-                collect_pat_names(&d.name, names);
-            }
-        }
-        Decl::Fn(f) => {
-            names.insert(f.ident.sym.clone());
-        }
-        Decl::Class(c) => {
-            names.insert(c.ident.sym.clone());
-        }
-        _ => {}
-    }
-}
-
 fn collect_conflicting_import_renames(
     items: &[ModuleItem],
     conflicts: &HashSet<Atom>,
@@ -2201,33 +2184,6 @@ fn rename_export_kind(kind: &mut CjsExportKind, renames: &[BindingRename]) {
             rename_bindings(expr.as_mut(), renames);
         }
         CjsExportKind::SelfRef => {}
-    }
-}
-
-fn collect_pat_names(pat: &Pat, names: &mut HashSet<Atom>) {
-    match pat {
-        Pat::Ident(id) => {
-            names.insert(id.id.sym.clone());
-        }
-        Pat::Array(arr) => {
-            for p in arr.elems.iter().flatten() {
-                collect_pat_names(p, names);
-            }
-        }
-        Pat::Object(obj) => {
-            for prop in &obj.props {
-                match prop {
-                    ObjectPatProp::KeyValue(kv) => collect_pat_names(&kv.value, names),
-                    ObjectPatProp::Assign(a) => {
-                        names.insert(a.key.id.sym.clone());
-                    }
-                    ObjectPatProp::Rest(r) => collect_pat_names(&r.arg, names),
-                }
-            }
-        }
-        Pat::Assign(a) => collect_pat_names(&a.left, names),
-        Pat::Rest(r) => collect_pat_names(&r.arg, names),
-        _ => {}
     }
 }
 

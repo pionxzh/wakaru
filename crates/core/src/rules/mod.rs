@@ -4,6 +4,7 @@ mod arrow_return;
 mod babel_helper_utils;
 mod dead_decls;
 mod dead_imports;
+pub(crate) mod decl_utils;
 mod exponent;
 pub(crate) mod expr_utils;
 mod flip_comparisons;

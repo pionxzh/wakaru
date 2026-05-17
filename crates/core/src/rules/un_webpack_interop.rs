@@ -4,10 +4,11 @@ use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
     BlockStmtOrExpr, Callee, Expr, Ident, IfStmt, Lit, MemberExpr, MemberProp, Module, ModuleItem,
-    ObjectPatProp, Pat, ReturnStmt, Stmt, VarDecl, VarDeclarator,
+    Pat, ReturnStmt, Stmt, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::decl_utils::collect_pat_names;
 use super::rename_utils::{
     binding_replacement_would_be_shadowed, collect_module_names, rename_bindings_in_module,
     BindingRename,
@@ -363,33 +364,6 @@ fn collect_declared_names(module: &Module) -> HashSet<Atom> {
     module.visit_with(&mut collector);
     names.extend(collector.names);
     names
-}
-
-fn collect_pat_names(pat: &Pat, names: &mut HashSet<Atom>) {
-    match pat {
-        Pat::Ident(id) => {
-            names.insert(id.id.sym.clone());
-        }
-        Pat::Array(arr) => {
-            for elem in arr.elems.iter().flatten() {
-                collect_pat_names(elem, names);
-            }
-        }
-        Pat::Object(obj) => {
-            for prop in &obj.props {
-                match prop {
-                    ObjectPatProp::KeyValue(kv) => collect_pat_names(&kv.value, names),
-                    ObjectPatProp::Assign(assign) => {
-                        names.insert(assign.key.id.sym.clone());
-                    }
-                    ObjectPatProp::Rest(rest) => collect_pat_names(&rest.arg, names),
-                }
-            }
-        }
-        Pat::Assign(assign) => collect_pat_names(&assign.left, names),
-        Pat::Rest(rest) => collect_pat_names(&rest.arg, names),
-        _ => {}
-    }
 }
 
 fn fresh_prefixed_name(name: &Atom, used_names: &mut HashSet<Atom>) -> Atom {

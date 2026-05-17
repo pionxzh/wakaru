@@ -7,7 +7,7 @@ use sourcemap::SourceMap;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, Mark, SourceMap as SwcSourceMap};
 use swc_core::ecma::ast::{
-    Decl, ImportSpecifier, MemberProp, Module, ModuleDecl, ModuleItem, Pat, PropName, Stmt,
+    ImportSpecifier, MemberProp, Module, ModuleDecl, ModuleItem, PropName, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -22,6 +22,7 @@ fn compute_line_starts(src: &str) -> Vec<u32> {
     starts
 }
 
+use crate::rules::decl_utils::collect_decl_binding_ids;
 use crate::rules::rename_utils::{rename_bindings_in_module, BindingId, BindingRename};
 
 /// Parse a source map from raw bytes.
@@ -234,51 +235,6 @@ fn collect_module_level_bindings(module: &Module) -> HashSet<BindingId> {
         }
     }
     ids
-}
-
-fn collect_decl_binding_ids(decl: &Decl, ids: &mut HashSet<BindingId>) {
-    match decl {
-        Decl::Var(var) => {
-            for declarator in &var.decls {
-                collect_pat_binding_ids(&declarator.name, ids);
-            }
-        }
-        Decl::Fn(f) => {
-            ids.insert((f.ident.sym.clone(), f.ident.ctxt));
-        }
-        Decl::Class(c) => {
-            ids.insert((c.ident.sym.clone(), c.ident.ctxt));
-        }
-        _ => {}
-    }
-}
-
-fn collect_pat_binding_ids(pat: &Pat, ids: &mut HashSet<BindingId>) {
-    match pat {
-        Pat::Ident(bi) => {
-            ids.insert((bi.id.sym.clone(), bi.id.ctxt));
-        }
-        Pat::Array(arr) => {
-            for elem in arr.elems.iter().flatten() {
-                collect_pat_binding_ids(elem, ids);
-            }
-        }
-        Pat::Object(obj) => {
-            for prop in &obj.props {
-                use swc_core::ecma::ast::ObjectPatProp;
-                match prop {
-                    ObjectPatProp::KeyValue(kv) => collect_pat_binding_ids(&kv.value, ids),
-                    ObjectPatProp::Assign(a) => {
-                        ids.insert((a.key.id.sym.clone(), a.key.id.ctxt));
-                    }
-                    ObjectPatProp::Rest(r) => collect_pat_binding_ids(&r.arg, ids),
-                }
-            }
-        }
-        Pat::Rest(r) => collect_pat_binding_ids(&r.arg, ids),
-        Pat::Assign(a) => collect_pat_binding_ids(&a.left, ids),
-        _ => {}
-    }
 }
 
 // ---------------------------------------------------------------------------

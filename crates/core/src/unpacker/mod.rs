@@ -6,7 +6,7 @@ pub mod webpack5;
 
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap, SyntaxContext, GLOBALS};
-use swc_core::ecma::ast::{Decl, Module, ModuleDecl, ModuleItem, Pat, Stmt, VarDecl};
+use swc_core::ecma::ast::{Decl, Module, ModuleDecl, ModuleItem, Stmt, VarDecl};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 
 pub struct UnpackedModule {
@@ -100,40 +100,15 @@ fn decl_declared_names(decl: &Decl) -> Vec<BindingId> {
 }
 
 fn var_declared_names(var: &VarDecl) -> Vec<BindingId> {
+    use swc_core::ecma::ast::Id;
+    use swc_core::ecma::utils::find_pat_ids;
+
     let mut ids = Vec::new();
     for decl in &var.decls {
-        collect_pat_binding_ids(&decl.name, &mut ids);
+        let pat_ids: Vec<Id> = find_pat_ids(&decl.name);
+        ids.extend(pat_ids);
     }
     ids
-}
-
-fn collect_pat_binding_ids(pat: &Pat, out: &mut Vec<BindingId>) {
-    match pat {
-        Pat::Ident(bi) => out.push((bi.id.sym.clone(), bi.id.ctxt)),
-        Pat::Array(array) => {
-            for elem in array.elems.iter().flatten() {
-                collect_pat_binding_ids(elem, out);
-            }
-        }
-        Pat::Object(object) => {
-            for prop in &object.props {
-                match prop {
-                    swc_core::ecma::ast::ObjectPatProp::KeyValue(kv) => {
-                        collect_pat_binding_ids(&kv.value, out);
-                    }
-                    swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
-                        out.push((assign.key.sym.clone(), assign.key.ctxt));
-                    }
-                    swc_core::ecma::ast::ObjectPatProp::Rest(rest) => {
-                        collect_pat_binding_ids(&rest.arg, out);
-                    }
-                }
-            }
-        }
-        Pat::Rest(rest) => collect_pat_binding_ids(&rest.arg, out),
-        Pat::Assign(assign) => collect_pat_binding_ids(&assign.left, out),
-        _ => {}
-    }
 }
 
 pub fn unpack_webpack4(source: &str) -> Option<UnpackResult> {

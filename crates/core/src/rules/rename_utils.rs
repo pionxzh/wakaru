@@ -10,6 +10,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::decl_utils::{collect_decl_names, collect_pat_names};
+
 pub type BindingId = (Atom, SyntaxContext);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -459,50 +461,6 @@ where
     }
     let mut renamer = BindingRenamer { renames };
     node.visit_mut_with(&mut renamer);
-}
-
-fn collect_decl_names(decl: &Decl, names: &mut HashSet<Atom>) {
-    match decl {
-        Decl::Var(var) => {
-            for declarator in &var.decls {
-                collect_pat_names(&declarator.name, names);
-            }
-        }
-        Decl::Fn(function) => {
-            names.insert(function.ident.sym.clone());
-        }
-        Decl::Class(class) => {
-            names.insert(class.ident.sym.clone());
-        }
-        _ => {}
-    }
-}
-
-fn collect_pat_names(pat: &Pat, names: &mut HashSet<Atom>) {
-    match pat {
-        Pat::Ident(binding) => {
-            names.insert(binding.id.sym.clone());
-        }
-        Pat::Array(array) => {
-            for elem in array.elems.iter().flatten() {
-                collect_pat_names(elem, names);
-            }
-        }
-        Pat::Object(object) => {
-            for prop in &object.props {
-                match prop {
-                    ObjectPatProp::KeyValue(kv) => collect_pat_names(&kv.value, names),
-                    ObjectPatProp::Assign(assign) => {
-                        names.insert(assign.key.id.sym.clone());
-                    }
-                    ObjectPatProp::Rest(rest) => collect_pat_names(&rest.arg, names),
-                }
-            }
-        }
-        Pat::Rest(rest) => collect_pat_names(&rest.arg, names),
-        Pat::Assign(assign) => collect_pat_names(&assign.left, names),
-        _ => {}
-    }
 }
 
 fn block_binds_name(block: &BlockStmt, name: &Atom) -> bool {

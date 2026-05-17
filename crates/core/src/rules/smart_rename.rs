@@ -12,6 +12,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::decl_utils::collect_decl_binding_ids;
 use super::expr_utils::is_unresolved_ident;
 use super::rename_utils::{
     collect_module_names, rename_bindings, rename_bindings_in_module, rename_causes_shadowing,
@@ -1182,50 +1183,6 @@ fn collect_exported_binding_ids(module: &Module) -> HashSet<BindingId> {
         }
     }
     ids
-}
-
-fn collect_decl_binding_ids(decl: &Decl, ids: &mut HashSet<BindingId>) {
-    match decl {
-        Decl::Var(var) => {
-            for declarator in &var.decls {
-                collect_pat_binding_ids(&declarator.name, ids);
-            }
-        }
-        Decl::Fn(function) => {
-            ids.insert((function.ident.sym.clone(), function.ident.ctxt));
-        }
-        Decl::Class(class) => {
-            ids.insert((class.ident.sym.clone(), class.ident.ctxt));
-        }
-        _ => {}
-    }
-}
-
-fn collect_pat_binding_ids(pat: &Pat, ids: &mut HashSet<BindingId>) {
-    match pat {
-        Pat::Ident(binding) => {
-            ids.insert((binding.id.sym.clone(), binding.id.ctxt));
-        }
-        Pat::Array(array) => {
-            for elem in array.elems.iter().flatten() {
-                collect_pat_binding_ids(elem, ids);
-            }
-        }
-        Pat::Object(object) => {
-            for prop in &object.props {
-                match prop {
-                    ObjectPatProp::KeyValue(kv) => collect_pat_binding_ids(&kv.value, ids),
-                    ObjectPatProp::Assign(assign) => {
-                        ids.insert((assign.key.sym.clone(), assign.key.ctxt));
-                    }
-                    ObjectPatProp::Rest(rest) => collect_pat_binding_ids(&rest.arg, ids),
-                }
-            }
-        }
-        Pat::Assign(assign) => collect_pat_binding_ids(&assign.left, ids),
-        Pat::Rest(rest) => collect_pat_binding_ids(&rest.arg, ids),
-        _ => {}
-    }
 }
 
 impl Visit for BindingCollector {
