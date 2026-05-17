@@ -26,6 +26,7 @@ pub(crate) enum BabelHelperKind {
     ObjectWithoutProperties,
     Inherits,
     CallSuper,
+    AsyncToGenerator,
 }
 
 /// Known import paths for Babel runtime helpers.
@@ -71,6 +72,11 @@ const OBJECT_WITHOUT_PROPERTIES_PATHS: &[&str] = &[
 const INHERITS_PATHS: &[&str] = &[
     "@babel/runtime/helpers/inherits",
     "@babel/runtime/helpers/esm/inherits",
+];
+
+const ASYNC_TO_GENERATOR_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/asyncToGenerator",
+    "@babel/runtime/helpers/esm/asyncToGenerator",
 ];
 
 /// Scan module-level declarations for helper functions.
@@ -364,6 +370,9 @@ fn detect_helper_from_require(expr: &Expr) -> Option<BabelHelperKind> {
     if INHERITS_PATHS.contains(&path) {
         return Some(BabelHelperKind::Inherits);
     }
+    if ASYNC_TO_GENERATOR_PATHS.contains(&path) {
+        return Some(BabelHelperKind::AsyncToGenerator);
+    }
     None
 }
 
@@ -403,6 +412,9 @@ fn detect_helper_from_fn(func: &Function, has_sub_helpers: bool) -> Option<Babel
     }
     if is_call_super_fn(func) {
         return Some(BabelHelperKind::CallSuper);
+    }
+    if is_async_to_generator_fn(func) {
+        return Some(BabelHelperKind::AsyncToGenerator);
     }
     None
 }
@@ -1062,6 +1074,65 @@ fn is_object_without_properties_fn(func: &Function) -> bool {
     }
 
     false
+}
+
+/// Detect `_asyncToGenerator`: single param, returns a function that calls
+/// `fn.apply(this, arguments)` and constructs `new Promise(...)`.
+fn is_async_to_generator_fn(func: &Function) -> bool {
+    if func.params.len() != 1 {
+        return false;
+    }
+    let body = match func.body.as_ref() {
+        Some(b) => b,
+        None => return false,
+    };
+    // Body should have a return statement returning a function
+    let has_return_fn = body.stmts.iter().any(|s| {
+        if let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = s {
+            matches!(arg.as_ref(), Expr::Fn(_) | Expr::Arrow(_))
+        } else {
+            false
+        }
+    });
+    if !has_return_fn {
+        return false;
+    }
+    // Look for `new Promise` somewhere in the body
+    let mut finder = AsyncToGenFinder {
+        found_promise: false,
+        found_apply: false,
+    };
+    body.visit_with(&mut finder);
+    finder.found_promise && finder.found_apply
+}
+
+struct AsyncToGenFinder {
+    found_promise: bool,
+    found_apply: bool,
+}
+
+impl Visit for AsyncToGenFinder {
+    fn visit_expr(&mut self, expr: &Expr) {
+        if let Expr::New(new_expr) = expr {
+            if let Expr::Ident(id) = new_expr.callee.as_ref() {
+                if id.sym.as_ref() == "Promise" {
+                    self.found_promise = true;
+                }
+            }
+        }
+        if let Expr::Call(call) = expr {
+            if let Some(callee) = call.callee.as_expr() {
+                if let Expr::Member(member) = callee.as_ref() {
+                    if let MemberProp::Ident(prop) = &member.prop {
+                        if prop.sym.as_ref() == "apply" {
+                            self.found_apply = true;
+                        }
+                    }
+                }
+            }
+        }
+        expr.visit_children_with(self);
+    }
 }
 
 /// Find the binding (name + context) of the variable initialized with `{}`.

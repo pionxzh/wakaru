@@ -1,50 +1,21 @@
 ---
-source: tests/webpack4_unpack.rs
+source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import "./module-22.js";
 import { all, put, take } from "./module-17.js";
 import { fetchDataSuccess, startFetchingData } from "./module-25.js";
 import { FETCH_DATA } from "./module-19.js";
-const a = regeneratorRuntime.mark(l);
-const u = regeneratorRuntime.mark(c);
-function l() {
-    return regeneratorRuntime.wrap((e)=>{
-        while(true){
-            switch(e.prev = e.next){
-                case 0:
-                    e.next = 3;
-                    return take(FETCH_DATA);
-                case 3:
-                    e.next = 5;
-                    return put(startFetchingData());
-                case 5:
-                    e.next = 7;
-                    return put(fetchDataSuccess([]));
-                case 7:
-                    e.next = 0;
-                    break;
-                case 9:
-                case "end":
-                    return e.stop();
-            }
-        }
-    }, a, this);
+function* l() {
+    while(true){
+        yield take(FETCH_DATA);
+        yield put(startFetchingData());
+        yield put(fetchDataSuccess([]));
+    }
 }
-function c() {
-    return regeneratorRuntime.wrap((e)=>{
-        while(true){
-            switch(e.prev = e.next){
-                case 0:
-                    e.next = 2;
-                    return all([
-                        l()
-                    ]);
-                case 2:
-                case "end":
-                    return e.stop();
-            }
-        }
-    }, u, this);
+function* c() {
+    yield all([
+        l()
+    ]);
 }
 export default c;

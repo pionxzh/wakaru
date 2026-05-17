@@ -53,6 +53,7 @@ mod un_optional_chaining;
 mod un_parameters;
 mod un_possible_constructor_return;
 mod un_prototype_class;
+mod un_regenerator;
 mod un_rest_array_copy;
 mod un_return;
 mod un_sliced_to_array;
@@ -137,6 +138,7 @@ pub use un_optional_chaining::UnOptionalChaining;
 pub use un_parameters::UnParameters;
 pub use un_possible_constructor_return::UnPossibleConstructorReturn;
 pub use un_prototype_class::UnPrototypeClass;
+pub use un_regenerator::UnRegenerator;
 pub use un_rest_array_copy::UnRestArrayCopy;
 pub use un_return::UnReturn;
 pub use un_sliced_to_array::UnSlicedToArray;
@@ -302,6 +304,7 @@ pub fn rule_names() -> &'static [&'static str] {
         "UnEs6Class",
         "UnClassFields",
         "UnTsHelpers",
+        "UnRegenerator",
         "UnAsyncAwait",
         "UnWebpackInterop2",
         "UnThenCatch",
@@ -536,6 +539,7 @@ fn apply_rules_range_impl(
     run!(UnEs6Class::new(unresolved_mark), "UnEs6Class");
     run!(UnClassFields, "UnClassFields");
     run!(UnTsHelpers, "UnTsHelpers");
+    run!(UnRegenerator::new(unresolved_mark), "UnRegenerator");
     run!(UnAsyncAwait, "UnAsyncAwait");
     // Second pass: catches interop getters exposed by UnAsyncAwait.
     run!(UnWebpackInterop, "UnWebpackInterop2");
