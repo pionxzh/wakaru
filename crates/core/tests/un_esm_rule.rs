@@ -111,13 +111,14 @@ var { bar } = require('foo');
 
 #[test]
 fn multiple_defaults_separate_imports() {
+    // Two require() calls for the same module produce the same value;
+    // ImportDedup canonicalizes to the first local binding.
     let input = r#"
 var foo = require('foo');
 var bar = require('foo');
 "#;
     let expected = r#"
 import foo from "foo";
-import bar from "foo";
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);

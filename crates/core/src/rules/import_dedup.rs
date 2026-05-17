@@ -2,34 +2,29 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
-use swc_core::ecma::ast::{ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem};
+use swc_core::ecma::ast::{ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem, Str};
 use swc_core::ecma::visit::VisitMut;
 
 use super::rename_utils::{rename_bindings_in_module, BindingId, BindingRename};
 
-// Module source paths are always valid UTF-8 in practice.
-fn src_to_key(src: &swc_core::ecma::ast::Str) -> String {
+fn src_to_key(src: &Str) -> String {
     src.value.as_str().unwrap_or("").to_string()
 }
 
-/// Merges duplicate ESM imports from the same module with the same imported specifier.
+/// Deduplicates and merges ESM imports.
 ///
-/// Bundlers (esbuild, rollup) inline multiple source files into a single output, which
-/// produces repeated imports of the same specifier:
+/// 1. **Dedup**: when the same specifier is imported multiple times from the same
+///    module (common in scope-hoisted bundles), keeps the first binding as canonical,
+///    rewrites all uses of duplicates, and removes redundant specifiers.
 ///
-/// ```js
-/// import { createHash } from "crypto";
-/// import { createHash as createHash_1 } from "crypto";
-/// import { createHash as createHash_2 } from "crypto";
-/// ```
-///
-/// This rule picks the first local binding as canonical, rewrites all uses of the
-/// duplicates to the canonical name, and removes the redundant import declarations.
+/// 2. **Merge**: consolidates separate import statements from the same source module
+///    into a single statement (e.g. three `import ... from "path"` → one).
 pub struct ImportDedup;
 
 impl VisitMut for ImportDedup {
     fn visit_mut_module(&mut self, module: &mut Module) {
         dedup_imports(module);
+        merge_imports(module);
     }
 }
 
@@ -130,4 +125,94 @@ fn dedup_imports(module: &mut Module) {
 
     // Rewrite all uses of duplicate bindings to the canonical local name
     rename_bindings_in_module(module, &renames);
+}
+
+/// Merges separate import statements from the same source into a single statement.
+///
+/// ```js
+/// import { join } from "path";
+/// import { resolve } from "path";
+/// // → import { join, resolve } from "path";
+/// ```
+///
+/// Namespace imports (`import * as ns`) are kept as separate statements since they
+/// cannot be combined with named/default specifiers.
+fn merge_imports(module: &mut Module) {
+    let mut first_import: HashMap<String, usize> = HashMap::new();
+    let mut merged_indices: HashSet<usize> = HashSet::new();
+
+    let import_indices: Vec<usize> = module
+        .body
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| {
+            matches!(item, ModuleItem::ModuleDecl(ModuleDecl::Import(_))).then_some(i)
+        })
+        .collect();
+
+    for &idx in &import_indices {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &module.body[idx] else {
+            continue;
+        };
+
+        let has_namespace = import
+            .specifiers
+            .iter()
+            .any(|s| matches!(s, ImportSpecifier::Namespace(_)));
+        if has_namespace || import.type_only {
+            continue;
+        }
+
+        let src = src_to_key(&import.src);
+
+        let has_default = import
+            .specifiers
+            .iter()
+            .any(|s| matches!(s, ImportSpecifier::Default(_)));
+
+        if let Some(&first_idx) = first_import.get(&src) {
+            let first_has_default = {
+                let ModuleItem::ModuleDecl(ModuleDecl::Import(first)) = &module.body[first_idx]
+                else {
+                    continue;
+                };
+                first
+                    .specifiers
+                    .iter()
+                    .any(|s| matches!(s, ImportSpecifier::Default(_)))
+            };
+
+            // Can't merge two default specifiers into one import statement.
+            if has_default && first_has_default {
+                continue;
+            }
+
+            let specs: Vec<ImportSpecifier> = {
+                let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = &module.body[idx] else {
+                    continue;
+                };
+                import.specifiers.clone()
+            };
+
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(first)) = &mut module.body[first_idx]
+            else {
+                continue;
+            };
+            first.specifiers.extend(specs);
+            merged_indices.insert(idx);
+        } else {
+            first_import.insert(src, idx);
+        }
+    }
+
+    if merged_indices.is_empty() {
+        return;
+    }
+
+    let mut i = 0;
+    module.body.retain(|_| {
+        let keep = !merged_indices.contains(&i);
+        i += 1;
+        keep
+    });
 }

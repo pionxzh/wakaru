@@ -318,6 +318,7 @@ pub fn rule_names() -> &'static [&'static str] {
         "UnForOf",
         "UnWebpackDefineGetters",
         "UnWebpackObjectGetters",
+        "ImportDedup",
         "UnImportRename",
         "UnExportRename",
         "UnDestructuring",
@@ -559,6 +560,7 @@ fn apply_rules_range_impl(
         "UnWebpackDefineGetters"
     );
     run!(UnWebpackObjectGetters, "UnWebpackObjectGetters");
+    run!(ImportDedup, "ImportDedup");
     run!(UnImportRename, "UnImportRename");
     run!(UnExportRename, "UnExportRename");
     run!(UnDestructuring::new(unresolved_mark), "UnDestructuring");
