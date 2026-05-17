@@ -9,7 +9,7 @@ Thank you for your interest in contributing to wakaru! This guide covers the pra
 3. Run `cargo test` from the workspace root to verify everything builds and passes.
 4. Make your changes.
 
-You will also want [cargo-insta](https://insta.rs/) for snapshot management:
+Optionally install [cargo-insta](https://insta.rs/) for interactive snapshot review:
 
 ```bash
 cargo install cargo-insta
@@ -25,12 +25,8 @@ cargo clippy -- -D warnings  # lints
 cargo test              # all tests
 ```
 
-If you changed rule behavior and snapshots need updating:
-
-```bash
-INSTA_UPDATE=always cargo test   # accept all snapshot changes
-cargo insta review               # or review interactively
-```
+Snapshots auto-update when you run `cargo test` (configured in `.cargo/config.toml`).
+Review changes with `git diff` before committing.
 
 ## Project Structure
 

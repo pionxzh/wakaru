@@ -15,13 +15,9 @@ cargo test --test my_rule_rule
 
 # Run a specific test within a file
 cargo test --test smart_inline_rule -- inline_single_use
-
-# Update snapshots after an intentional change
-INSTA_UPDATE=always cargo test
-
-# Review snapshot diffs interactively
-cargo insta review
 ```
+
+Snapshots auto-update on `cargo test` (via `.cargo/config.toml`).
 
 ## Test Organization
 
@@ -106,17 +102,15 @@ fn apply(input: &str) -> String {
 Tests use [insta](https://insta.rs/) for snapshot testing. Snapshots are
 committed as `.snap` files under `crates/core/tests/snapshots/`.
 
-**Reviewing snapshot changes:**
+Snapshots auto-update when you run `cargo test` — this is configured via
+`INSTA_UPDATE=always` in `.cargo/config.toml`. Review changes with `git diff`
+before committing.
+
+To review snapshots interactively instead, install `cargo-insta` and run:
 
 ```bash
-# After making changes, run tests — new/changed snapshots are written as .snap.new files
-cargo test
-
-# Review each changed snapshot interactively (accept/reject)
-cargo insta review
-
-# Or accept all changes at once (use when you trust the diff)
-INSTA_UPDATE=always cargo test
+INSTA_UPDATE=new cargo test   # only write .snap.new files, don't auto-accept
+cargo insta review             # accept/reject each change
 ```
 
 **When snapshots change unexpectedly:** see the "Snapshot Layers" section in

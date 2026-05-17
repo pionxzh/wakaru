@@ -33,10 +33,9 @@ cargo test -p wakaru-core --test my_rule_rule  # one test file
 cargo test -p wakaru-core --test smart_inline_rule -- inline_single_use  # one test
 cargo fmt --check                              # verify Rust formatting
 cargo clippy -p wakaru-core --all-targets -- -D warnings  # lint core changes
-INSTA_UPDATE=always cargo test                 # update snapshots
-cargo insta review                             # review snapshot diffs
 ```
 
+Snapshots auto-update on `cargo test` (configured via `.cargo/config.toml`).
 See `docs/testing.md` for test helpers, patterns, and organization.
 
 ## Developing a Rule

@@ -21,12 +21,6 @@ cargo test
 # Run a specific test file
 cargo test --test my_rule_rule
 
-# Update all snapshots after an intentional change
-INSTA_UPDATE=always cargo test
-
-# Review snapshot diffs interactively
-cargo insta review
-
 # Run with backtrace (useful for infinite recursion / panics)
 RUST_BACKTRACE=1 cargo test -- --nocapture
 ```
