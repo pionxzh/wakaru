@@ -325,8 +325,8 @@ pub fn rule_names() -> &'static [&'static str] {
         "SmartInline",
         "UnIife2",
         "SmartRename",
-        "DeadImports",
         "DeadDecls",
+        "DeadImports",
         "UnReturn",
     ]
 }
@@ -574,12 +574,10 @@ fn apply_rules_range_impl(
     // Optional final DCE pass. Tests that focus on structural restoration can
     // disable this to avoid coupling fixture baselines to late cleanup.
     if dead_code_elimination {
-        // DeadImports runs after all rewrites that might remove usages (JSX,
-        // SmartInline, SmartRename). Strips unreferenced import specifiers;
-        // keeps the import as a side-effect-only declaration when all
-        // specifiers go.
-        run!(DeadImports, "DeadImports");
+        // DeadDecls first: removing dead helpers may leave import specifiers
+        // unreferenced, which DeadImports then cleans up.
         run!(DeadDecls, "DeadDecls");
+        run!(DeadImports, "DeadImports");
     }
     // UnReturn runs last: no downstream rule needs tail `return undefined`, and earlier
     // rules (UnConditionals, SmartInline, etc.) can introduce new ones during restructuring.
