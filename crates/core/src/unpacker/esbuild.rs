@@ -33,7 +33,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     let factories = if helper_syms.is_empty() {
         vec![]
     } else {
-        collect_factories(module, &helper_syms)
+        collect_factories(module, &analysis_module, &helper_syms)
     };
 
     let has_factories = factories.len() >= 5;
@@ -66,24 +66,58 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
 
     let factory_syms: HashSet<Atom> = factories.iter().map(|f| f.var_name.clone()).collect();
 
-    // Phase 3: emit each factory as an individual module.
-    // Dedup factory filenames with the same case-insensitive probe loop used
-    // by the CLI, so that the names the scope-hoisted pass seeds from already
-    // reflect any CLI-level renames (e.g. `a.js` + `A.js` → `a.js` + `A_2.js`).
+    // Phase 3: assign filenames to factories (dedup), collect their referenced
+    // bindings from the resolved AST.  Emission is deferred to Phase 6 so that
+    // scope-hoisted extraction can inform import/export synthesis.
     let mut modules: Vec<UnpackedModule> = Vec::new();
     let mut global_seen: HashSet<String> = HashSet::new();
     global_seen.insert("entry.js".to_string());
 
+    // Build top_level_bindings from the FULL analysis module so we can track
+    // which identifiers referenced by factory bodies are top-level declarations
+    // (potentially belonging to scope-hoisted modules).
+    let all_top_level_bindings: HashSet<BindingId> = analysis_module
+        .body
+        .iter()
+        .flat_map(module_item_declared_binding_ids)
+        .collect();
+
+    struct PendingFactory {
+        var_name: Atom,
+        filename: String,
+        body_stmts: Vec<Stmt>,
+        referenced_bindings: HashSet<BindingId>,
+    }
+
+    let mut pending_factories: Vec<PendingFactory> = Vec::new();
     for factory in factories {
         let filename = dedup_filename(&factory.filename, &mut global_seen);
-        let code = emit_stmts(factory.body_stmts, filename.clone(), cm.clone());
-        modules.push(UnpackedModule {
-            id: factory.var_name.to_string(),
-            is_entry: false,
-            code,
+
+        // Collect which top-level bindings this factory's body references
+        // by visiting the resolved (analysis) body stmts.
+        let mut referenced_bindings = HashSet::new();
+        for stmt in &factory.analysis_body_stmts {
+            let mut collector = TopLevelRefCollector {
+                top_level_bindings: &all_top_level_bindings,
+                references: HashSet::new(),
+            };
+            stmt.visit_with(&mut collector);
+            referenced_bindings.extend(collector.references);
+        }
+
+        pending_factories.push(PendingFactory {
+            var_name: factory.var_name,
             filename,
+            body_stmts: factory.body_stmts,
+            referenced_bindings,
         });
     }
+
+    // Aggregate all factory-referenced bindings for scope-hoisted export expansion.
+    let all_factory_referenced: HashSet<BindingId> = pending_factories
+        .iter()
+        .flat_map(|f| f.referenced_bindings.iter().cloned())
+        .collect();
 
     // Phase 4: everything that is not a helper decl or factory decl becomes the entry.
     let entry_items: Vec<ModuleItem> = module
@@ -100,13 +134,57 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         .collect();
 
     // Phase 5: split scope-hoisted modules out of the entry items.
-    let (scope_hoisted_modules, remaining_entry) = extract_scope_hoisted_modules(
-        &analysis_entry_items,
-        &entry_items,
-        &mut global_seen,
-        cm.clone(),
-    );
+    // Pass factory-referenced bindings so the extraction can expand exports
+    // and return binding→module mapping for factory import synthesis.
+    let (scope_hoisted_modules, remaining_entry, binding_to_filename) =
+        extract_scope_hoisted_modules(
+            &analysis_entry_items,
+            &entry_items,
+            &mut global_seen,
+            cm.clone(),
+            &all_factory_referenced,
+        );
     modules.extend(scope_hoisted_modules);
+
+    // Phase 6: emit each factory module, now with synthesized imports for any
+    // references to scope-hoisted module bindings.
+    for factory in pending_factories {
+        let mut import_items: Vec<ModuleItem> = Vec::new();
+
+        if !binding_to_filename.is_empty() {
+            // Group factory's referenced bindings by source module filename.
+            let mut imports_by_source: HashMap<String, Vec<Atom>> = HashMap::new();
+            for ref_binding in &factory.referenced_bindings {
+                if let Some(source_filename) = binding_to_filename.get(ref_binding) {
+                    imports_by_source
+                        .entry(source_filename.clone())
+                        .or_default()
+                        .push(ref_binding.0.clone());
+                }
+            }
+            let mut source_filenames: Vec<String> = imports_by_source.keys().cloned().collect();
+            source_filenames.sort();
+            for source_filename in source_filenames {
+                let names = imports_by_source.get_mut(&source_filename).unwrap();
+                names.sort();
+                names.dedup();
+                let rel_path = relative_import_path(&factory.filename, &source_filename);
+                import_items.push(make_scope_import_stmt(names, &rel_path));
+            }
+        }
+
+        let body_items: Vec<ModuleItem> = import_items
+            .into_iter()
+            .chain(factory.body_stmts.into_iter().map(ModuleItem::Stmt))
+            .collect();
+        let code = emit_items(body_items, factory.filename.clone(), cm.clone());
+        modules.push(UnpackedModule {
+            id: factory.var_name.to_string(),
+            is_entry: false,
+            code,
+            filename: factory.filename,
+        });
+    }
 
     if !remaining_entry.is_empty() {
         let entry_module = Module {
@@ -135,8 +213,10 @@ struct Factory {
     var_name: Atom,
     /// Derived filename: filepath string key when available, else `<var_name>.js`.
     filename: String,
-    /// The statements inside the factory function body.
+    /// The statements inside the factory function body (unresolved — for emission).
     body_stmts: Vec<Stmt>,
+    /// The statements inside the factory function body (resolved — for reference collection).
+    analysis_body_stmts: Vec<Stmt>,
 }
 
 // ---------------------------------------------------------------------------
@@ -198,14 +278,21 @@ fn is_lazy_helper(expr: &Expr) -> bool {
 //   var BO7 = y(() => { … })
 // ---------------------------------------------------------------------------
 
-fn collect_factories(module: &Module, helper_syms: &HashSet<Atom>) -> Vec<Factory> {
+fn collect_factories(
+    module: &Module,
+    analysis_module: &Module,
+    helper_syms: &HashSet<Atom>,
+) -> Vec<Factory> {
     let mut factories = Vec::new();
-    for item in &module.body {
+    for (item, analysis_item) in module.body.iter().zip(analysis_module.body.iter()) {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
             continue;
         };
-        for decl in &var.decls {
-            if let Some(factory) = try_extract_factory(decl, helper_syms) {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(analysis_var))) = analysis_item else {
+            continue;
+        };
+        for (decl, analysis_decl) in var.decls.iter().zip(analysis_var.decls.iter()) {
+            if let Some(factory) = try_extract_factory(decl, analysis_decl, helper_syms) {
                 factories.push(factory);
             }
         }
@@ -213,7 +300,11 @@ fn collect_factories(module: &Module, helper_syms: &HashSet<Atom>) -> Vec<Factor
     factories
 }
 
-fn try_extract_factory(decl: &VarDeclarator, helper_syms: &HashSet<Atom>) -> Option<Factory> {
+fn try_extract_factory(
+    decl: &VarDeclarator,
+    analysis_decl: &VarDeclarator,
+    helper_syms: &HashSet<Atom>,
+) -> Option<Factory> {
     let Pat::Ident(var_ident) = &decl.name else {
         return None;
     };
@@ -234,6 +325,12 @@ fn try_extract_factory(decl: &VarDeclarator, helper_syms: &HashSet<Atom>) -> Opt
     let arg = &*call.args[0].expr;
     let var_name = var_ident.id.sym.clone();
 
+    // Extract analysis (resolved) body stmts in parallel.
+    let analysis_arg = analysis_decl.init.as_ref().and_then(|init| match &**init {
+        Expr::Call(c) if c.args.len() == 1 => Some(&*c.args[0].expr),
+        _ => None,
+    });
+
     match arg {
         // Non-minified: __commonJS({ "src/foo.js"(exports, module) { … } })
         Expr::Object(obj) if obj.props.len() == 1 => {
@@ -244,10 +341,13 @@ fn try_extract_factory(decl: &VarDeclarator, helper_syms: &HashSet<Atom>) -> Opt
                         .map(sanitize_path)
                         .unwrap_or_else(|| format!("{var_name}.js"));
                     let body_stmts = method.function.body.as_ref()?.stmts.clone();
+                    let analysis_body_stmts = extract_analysis_body_stmts_obj(analysis_arg)
+                        .unwrap_or_else(|| body_stmts.clone());
                     return Some(Factory {
                         var_name,
                         filename,
                         body_stmts,
+                        analysis_body_stmts,
                     });
                 }
             }
@@ -257,27 +357,58 @@ fn try_extract_factory(decl: &VarDeclarator, helper_syms: &HashSet<Atom>) -> Opt
         // Minified arrow: y(() => { … }) or y(() => expr)
         Expr::Arrow(arrow) => {
             let body_stmts = arrow_body_stmts(arrow);
+            let analysis_body_stmts = analysis_arg
+                .and_then(|a| match a {
+                    Expr::Arrow(aa) => Some(arrow_body_stmts(aa)),
+                    _ => None,
+                })
+                .unwrap_or_else(|| body_stmts.clone());
             let filename = format!("{var_name}.js");
             Some(Factory {
                 var_name,
                 filename,
                 body_stmts,
+                analysis_body_stmts,
             })
         }
 
         // Minified function: m(function() { … })
         Expr::Fn(fn_expr) => {
             let body_stmts = fn_expr.function.body.as_ref()?.stmts.clone();
+            let analysis_body_stmts = analysis_arg
+                .and_then(|a| match a {
+                    Expr::Fn(af) => af.function.body.as_ref().map(|b| b.stmts.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| body_stmts.clone());
             let filename = format!("{var_name}.js");
             Some(Factory {
                 var_name,
                 filename,
                 body_stmts,
+                analysis_body_stmts,
             })
         }
 
         _ => None,
     }
+}
+
+/// Extract resolved body stmts from an analysis object-form factory argument.
+fn extract_analysis_body_stmts_obj(analysis_arg: Option<&Expr>) -> Option<Vec<Stmt>> {
+    let Expr::Object(obj) = analysis_arg? else {
+        return None;
+    };
+    if obj.props.len() != 1 {
+        return None;
+    }
+    let swc_core::ecma::ast::PropOrSpread::Prop(prop) = &obj.props[0] else {
+        return None;
+    };
+    let swc_core::ecma::ast::Prop::Method(method) = &**prop else {
+        return None;
+    };
+    method.function.body.as_ref().map(|b| b.stmts.clone())
 }
 
 fn call_targets_helper(call: &CallExpr, helper_syms: &HashSet<Atom>) -> bool {
@@ -394,7 +525,7 @@ struct ScopeModuleMeta {
 }
 
 /// Extract scope-hoisted modules from entry items.
-/// Returns (extracted_modules, remaining_entry_items).
+/// Returns (extracted_modules, remaining_entry_items, binding_to_filename).
 ///
 /// After partitioning items into per-module groups, this function
 /// synthesizes ES import/export statements so that cross-module
@@ -404,24 +535,34 @@ struct ScopeModuleMeta {
 /// `seen_lower` is the shared case-insensitive filename set, already
 /// populated by factory modules.  Scope-hoisted filenames are probed
 /// against it so they never collide with factories or each other.
+///
+/// `factory_referenced` contains all bindings referenced by factory modules.
+/// These are included in export expansion so scope-hoisted modules export
+/// bindings that factories need.  The returned `binding_to_filename` map
+/// lets callers synthesize imports in factory modules.
 fn extract_scope_hoisted_modules(
     analysis_items: &[ModuleItem],
     source_items: &[ModuleItem],
     seen_lower: &mut HashSet<String>,
     cm: Lrc<SourceMap>,
-) -> (Vec<UnpackedModule>, Vec<ModuleItem>) {
+    factory_referenced: &HashSet<BindingId>,
+) -> (
+    Vec<UnpackedModule>,
+    Vec<ModuleItem>,
+    HashMap<BindingId, String>,
+) {
     debug_assert_eq!(analysis_items.len(), source_items.len());
 
     // Step 1: find the __export helper binding.
     let Some((export_helper_index, export_helper)) = detect_export_helper(analysis_items) else {
-        return (vec![], source_items.to_vec());
+        return (vec![], source_items.to_vec(), HashMap::new());
     };
     let item_infos = build_item_binding_infos(analysis_items);
 
     // Step 2: find all (namespace_decl_index, export_call_index, ns_atom) triples.
     let boundaries = collect_scope_hoisted_boundaries(analysis_items, &export_helper);
     if boundaries.is_empty() {
-        return (vec![], source_items.to_vec());
+        return (vec![], source_items.to_vec(), HashMap::new());
     }
 
     // Step 3 (pass 1): partition items and collect per-module metadata.
@@ -433,6 +574,15 @@ fn extract_scope_hoisted_modules(
     // Track consumed namespace bindings so we can restore them for the entry.
     let mut consumed_ns: Vec<(usize, usize, &ScopeHoistedBoundary)> = Vec::new();
 
+    // Collect all factory-referenced atoms (not BindingIds) so we can use
+    // them when finding the last module's end boundary.  This ensures private
+    // helpers only referenced by factories are absorbed into the scope-hoisted
+    // module rather than leaking into entry.js.
+    let factory_referenced_atoms: HashSet<Atom> = factory_referenced
+        .iter()
+        .map(|(atom, _)| atom.clone())
+        .collect();
+
     for (bi, boundary) in boundaries.iter().enumerate() {
         let start = boundary.ns_decl_index;
         let end = if bi + 1 < boundaries.len() {
@@ -443,6 +593,7 @@ fn extract_scope_hoisted_modules(
                 &item_infos,
                 boundary.export_call_index + 1,
                 &boundary.exported_bindings,
+                &factory_referenced_atoms,
             )
         };
 
@@ -459,6 +610,7 @@ fn extract_scope_hoisted_modules(
             declared_bindings.extend(info.declared.iter().cloned());
             referenced_bindings.extend(info.references.iter().cloned());
         }
+
 
         consumed_ns.push((boundary.ns_decl_index, boundary.export_call_index, boundary));
 
@@ -535,6 +687,30 @@ fn extract_scope_hoisted_modules(
             effective_exports[source_mi].insert(ref_binding.0.clone());
         }
     }
+    // Also expand for references from factory modules.
+    for ref_binding in factory_referenced {
+        if let Some(&source_mi) = binding_to_module.get(ref_binding) {
+            effective_exports[source_mi].insert(ref_binding.0.clone());
+        }
+    }
+
+    // Build binding→filename map so callers can synthesize imports in factory modules.
+    let mut binding_to_filename: HashMap<BindingId, String> = binding_to_module
+        .iter()
+        .map(|(binding, &mi)| (binding.clone(), metas[mi].filename.clone()))
+        .collect();
+
+    // Map namespace bindings to "entry.js".  The namespace object
+    // (`var ns_a = {}; __export(ns_a, {...})`) is restored into the entry
+    // when the entry's own export declaration references it.  Factories
+    // that use `ns_a.greet()` need to import the namespace from there.
+    for boundary in &boundaries {
+        if factory_referenced.contains(&boundary.ns_binding) {
+            binding_to_filename
+                .entry(boundary.ns_binding.clone())
+                .or_insert_with(|| "entry.js".to_string());
+        }
+    }
 
     // Step 4 (pass 2): emit each module with synthesized imports/exports.
     let mut modules = Vec::new();
@@ -602,24 +778,68 @@ fn extract_scope_hoisted_modules(
         });
     }
 
+    // Collect atoms that the remaining entry items already export via ESM
+    // `export { ... }` declarations.  Used below to avoid synthesizing
+    // duplicate exports for namespace bindings.
+    // Only count unaliased exports: `export { ns_a }` makes `ns_a`
+    // importable by name, but `export { ns_a as math }` does not —
+    // consumers would need `import { math }`, not `import { ns_a }`.
+    let entry_already_exports: HashSet<Atom> = remaining_indices
+        .iter()
+        .flat_map(|&i| match &source_items[i] {
+            ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(named)) => named
+                .specifiers
+                .iter()
+                .filter_map(|s| match s {
+                    ExportSpecifier::Named(n) => {
+                        let orig_atom = match &n.orig {
+                            ModuleExportName::Ident(id) => &id.sym,
+                            ModuleExportName::Str(_) => return None,
+                        };
+                        let is_direct = match &n.exported {
+                            None => true,
+                            Some(ModuleExportName::Ident(id)) => id.sym == *orig_atom,
+                            Some(ModuleExportName::Str(_)) => false,
+                        };
+                        if is_direct { Some(orig_atom.clone()) } else { None }
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            _ => vec![],
+        })
+        .collect();
+
     // Restore consumed namespace decls + __export calls whose namespace
-    // binding is still referenced by the remaining entry (e.g. the entry
-    // has `export { math_exports as math }` but `var math_exports = {}`
-    // was consumed).  Re-inserting them keeps the namespace object alive;
+    // binding is still referenced by the remaining entry or by factory
+    // modules.  Re-inserting them keeps the namespace object alive;
     // importing the individual bindings ensures the __export getters
     // resolve correctly.
     let mut restored_items: Vec<ModuleItem> = Vec::new();
     let mut need_export_helper = false;
+    let mut factory_ns_exports: Vec<Atom> = Vec::new();
     for &(ns_idx, call_idx, boundary) in &consumed_ns {
-        if !entry_referenced.contains(&boundary.ns_binding) {
+        let entry_needs = entry_referenced.contains(&boundary.ns_binding);
+        let factory_needs = factory_referenced.contains(&boundary.ns_binding);
+        if !entry_needs && !factory_needs {
             continue;
         }
         need_export_helper = true;
         restored_items.push(source_items[ns_idx].clone());
         restored_items.push(source_items[call_idx].clone());
+        // If a factory references this namespace but the entry doesn't
+        // already export it via an ESM export declaration, synthesize one
+        // so the factory's `import { ns_a } from "./entry.js"` resolves.
+        if factory_needs && !entry_already_exports.contains(&boundary.ns_binding.0) {
+            factory_ns_exports.push(boundary.ns_binding.0.clone());
+        }
     }
     if need_export_helper {
         restored_items.insert(0, source_items[export_helper_index].clone());
+    }
+    if !factory_ns_exports.is_empty() {
+        factory_ns_exports.sort();
+        restored_items.push(make_scope_export_stmt(&factory_ns_exports));
     }
 
     let mut entry_imports: HashMap<usize, Vec<Atom>> = HashMap::new();
@@ -646,7 +866,7 @@ fn extract_scope_hoisted_modules(
     remaining.extend(restored_items);
     remaining.extend(remaining_indices.iter().map(|&i| source_items[i].clone()));
 
-    (modules, remaining)
+    (modules, remaining, binding_to_filename)
 }
 
 struct ScopeHoistedBoundary {
@@ -850,6 +1070,7 @@ fn find_last_module_end(
     item_infos: &[ItemBindingInfo],
     from: usize,
     exported_bindings: &HashSet<BindingId>,
+    factory_referenced_atoms: &HashSet<Atom>,
 ) -> usize {
     // Phase 1: find the last item that declares an exported binding.
     let mut last_export_idx = None;
@@ -871,8 +1092,10 @@ fn find_last_module_end(
     };
 
     // Phase 2: reference closure — include declarations whose names are
-    // referenced by the module code collected so far. This captures private
-    // helpers that esbuild emits after the exported functions that call them.
+    // referenced by the module code collected so far OR by factory modules.
+    // This captures private helpers that esbuild emits after the exported
+    // functions, whether they are called by other scope-hoisted code or by
+    // factory modules.
     let mut end = last + 1;
     let mut module_bindings: HashSet<BindingId> = exported_bindings.clone();
     while end < items.len() {
@@ -884,10 +1107,14 @@ fn find_last_module_end(
         if declared.is_empty() {
             break;
         };
-        if !declared
+        let referenced_by_module =
+            declared
+                .iter()
+                .any(|binding| items_reference_binding(&item_infos[from..end], binding));
+        let referenced_by_factory = declared
             .iter()
-            .any(|binding| items_reference_binding(&item_infos[from..end], binding))
-        {
+            .any(|(atom, _)| factory_referenced_atoms.contains(atom));
+        if !referenced_by_module && !referenced_by_factory {
             break;
         }
 
@@ -1062,6 +1289,48 @@ impl Visit for TopLevelRefCollector<'_> {
 // Import / export synthesis for scope-hoisted modules
 // ---------------------------------------------------------------------------
 
+/// Compute a relative import specifier from `importer` to `target`.
+/// Both are flat output filenames (e.g. `src/consumer.js`, `ns_a.js`).
+/// Returns a string suitable for an ES import source (e.g. `./ns_a.js`,
+/// `../ns_a.js`).
+fn relative_import_path(importer: &str, target: &str) -> String {
+    use std::path::Path;
+    let importer_dir = Path::new(importer)
+        .parent()
+        .unwrap_or(Path::new(""));
+    let rel = pathdiff_relative(importer_dir, Path::new(target));
+    // Ensure the path starts with ./ or ../
+    let s = rel.to_string_lossy().replace('\\', "/");
+    if s.starts_with("./") || s.starts_with("../") {
+        s
+    } else {
+        format!("./{s}")
+    }
+}
+
+/// Minimal relative path computation: `target` relative to `base` directory.
+fn pathdiff_relative(base: &std::path::Path, target: &std::path::Path) -> std::path::PathBuf {
+    use std::path::{Component, PathBuf};
+
+    let base_components: Vec<Component> = base.components().collect();
+    let target_components: Vec<Component> = target.components().collect();
+
+    let common = base_components
+        .iter()
+        .zip(target_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let mut result = PathBuf::new();
+    for _ in common..base_components.len() {
+        result.push("..");
+    }
+    for component in &target_components[common..] {
+        result.push(component);
+    }
+    result
+}
+
 fn make_scope_import_stmt(names: &[Atom], from: &str) -> ModuleItem {
     let specifiers = names
         .iter()
@@ -1079,7 +1348,11 @@ fn make_scope_import_stmt(names: &[Atom], from: &str) -> ModuleItem {
         specifiers,
         src: Box::new(Str {
             span: Default::default(),
-            value: format!("./{from}").into(),
+            value: if from.starts_with('.') || from.starts_with('/') {
+                from.into()
+            } else {
+                format!("./{from}").into()
+            },
             raw: None,
         }),
         type_only: false,
@@ -1205,17 +1478,6 @@ fn emit_items(items: Vec<ModuleItem>, filename: String, cm: Lrc<SourceMap>) -> S
 // ---------------------------------------------------------------------------
 // Code generation
 // ---------------------------------------------------------------------------
-
-/// Emit factory body statements as raw JavaScript — no rules, no resolver.
-/// The driver's `decompile()` will run the full pipeline on the emitted text.
-fn emit_stmts(stmts: Vec<Stmt>, filename: String, cm: Lrc<SourceMap>) -> String {
-    let module = Module {
-        span: Default::default(),
-        body: stmts.into_iter().map(ModuleItem::Stmt).collect(),
-        shebang: None,
-    };
-    emit_module(module, filename, cm)
-}
 
 fn emit_module(module: Module, filename: String, cm: Lrc<SourceMap>) -> String {
     let _fm = cm.new_source_file(FileName::Custom(filename).into(), String::new());

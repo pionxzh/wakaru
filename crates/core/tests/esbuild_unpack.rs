@@ -520,3 +520,428 @@ console.log(api.greet());
         pairs.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
     );
 }
+
+/// Factory modules that reference bindings from scope-hoisted modules should
+/// get synthesized imports, and the scope-hoisted modules should export those
+/// bindings.  Without this, Dead Code Elimination incorrectly removes code
+/// that appears unreferenced within its own module but is used by factories.
+#[test]
+fn factory_referencing_scope_hoisted_binding_gets_import() {
+    // Synthetic bundle: 5 factory modules (f1..f4 are trivial, f5 references
+    // `helperFn` which is declared in scope-hoisted module ns_a).
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { var result = helperFn(42); });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { greet: () => greet });
+function greet() { return "hello"; }
+function helperFn(x) { return x + 1; }
+var ns_b = {};
+__export(ns_b, { value: () => value });
+var value = 99;
+export { ns_a, ns_b };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+    let raw_names: Vec<&str> = raw_pairs.iter().map(|(n, _)| n.as_str()).collect();
+
+    // Verify we got the expected modules.
+    assert!(
+        raw_pairs.len() >= 7,
+        "expected factories + scope modules + entry, got {}: {raw_names:?}",
+        raw_pairs.len()
+    );
+
+    // f5 references helperFn from ns_a — it should have an import statement.
+    let f5_code = &raw_pairs.iter().find(|(n, _)| n == "f5.js").unwrap().1;
+    assert!(
+        f5_code.contains("import") && f5_code.contains("helperFn"),
+        "f5.js should import helperFn from the scope-hoisted module:\n{f5_code}"
+    );
+
+    // ns_a should export helperFn (it's referenced by f5, a factory module).
+    let ns_a_code = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function greet"))
+        .unwrap()
+        .1;
+    assert!(
+        ns_a_code.contains("export") && ns_a_code.contains("helperFn"),
+        "ns_a should export helperFn (referenced by factory f5):\n{ns_a_code}"
+    );
+}
+
+/// When multiple factory modules reference different bindings from the same
+/// scope-hoisted module, all referenced bindings should be exported.
+#[test]
+fn multiple_factories_referencing_scope_hoisted_bindings() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { var x = add(1, 2); });
+var f5 = y(() => { var p = PI; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var math_exports = {};
+__export(math_exports, { add: () => add, PI: () => PI });
+var PI = 3.14;
+function add(a, b) { return a + b; }
+export { math_exports as math };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    // f4 should import add.
+    let f4_code = &raw_pairs.iter().find(|(n, _)| n == "f4.js").unwrap().1;
+    assert!(
+        f4_code.contains("import") && f4_code.contains("add"),
+        "f4.js should import add:\n{f4_code}"
+    );
+
+    // f5 should import PI.
+    let f5_code = &raw_pairs.iter().find(|(n, _)| n == "f5.js").unwrap().1;
+    assert!(
+        f5_code.contains("import") && f5_code.contains("PI"),
+        "f5.js should import PI:\n{f5_code}"
+    );
+
+    // The math module should export both add and PI (they were in the original
+    // __export map, plus referenced by factories).
+    let math_code = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("3.14"))
+        .unwrap()
+        .1;
+    assert!(
+        math_code.contains("export"),
+        "math module should have exports:\n{math_code}"
+    );
+}
+
+/// Factory modules that don't reference any scope-hoisted bindings should not
+/// get any spurious import statements.
+#[test]
+fn factory_without_scope_hoisted_refs_gets_no_imports() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { greet: () => greet });
+function greet() { return "hello"; }
+export { ns_a };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    // All factory modules should have no import statements.
+    for (name, code) in &raw_pairs {
+        if name.starts_with("f") && name.ends_with(".js") {
+            assert!(
+                !code.contains("import"),
+                "{name} should not have import statements (no scope-hoisted refs):\n{code}"
+            );
+        }
+    }
+}
+
+/// Factory modules that reference a scope-hoisted namespace object (e.g.
+/// `ns_a.greet()`) should import it from entry.js, where the namespace
+/// declaration and __export call are restored.  The scope-hoisted module
+/// itself should NOT export the undeclared namespace binding.
+#[test]
+fn factory_referencing_namespace_imports_from_entry() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { var result = ns_a.greet(); });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { greet: () => greet });
+function greet() { return "hello"; }
+export { ns_a };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    // f5 should import ns_a from entry.js.
+    let f5_code = &raw_pairs.iter().find(|(n, _)| n == "f5.js").unwrap().1;
+    assert!(
+        f5_code.contains("import") && f5_code.contains("ns_a"),
+        "f5.js should import ns_a:\n{f5_code}"
+    );
+    assert!(
+        f5_code.contains("entry.js"),
+        "f5.js should import ns_a from entry.js:\n{f5_code}"
+    );
+
+    // The scope-hoisted module should NOT export `ns_a` (it doesn't declare it).
+    let ns_a_module = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function greet"))
+        .unwrap()
+        .1;
+    assert!(
+        !ns_a_module.contains("export { ns_a")
+            && !ns_a_module.contains("export { ns_a,"),
+        "scope module should NOT export undeclared ns_a:\n{ns_a_module}"
+    );
+}
+
+/// When the bundle has no ESM `export { ns_a }` but a factory references the
+/// namespace, entry.js must still export it so the factory import resolves.
+#[test]
+fn factory_namespace_ref_without_entry_export_adds_export() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { var result = ns_a.greet(); });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { greet: () => greet });
+function greet() { return "hello"; }
+var ns_b = {};
+__export(ns_b, { value: () => value });
+var value = 99;
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    // f5 should import ns_a from entry.js.
+    let f5_code = &raw_pairs.iter().find(|(n, _)| n == "f5.js").unwrap().1;
+    assert!(
+        f5_code.contains("import") && f5_code.contains("ns_a") && f5_code.contains("entry.js"),
+        "f5.js should import ns_a from entry.js:\n{f5_code}"
+    );
+
+    // entry.js must have an ESM `export { ns_a }` even though the bundle
+    // had no such declaration.  Check for the actual export statement, not
+    // the `__export` helper function name.
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "entry.js")
+        .unwrap()
+        .1;
+    assert!(
+        entry_code.contains("export { ns_a"),
+        "entry.js should have `export {{ ns_a }}` for the factory import:\n{entry_code}"
+    );
+}
+
+/// When the entry has an aliased export like `export { math_exports as math }`,
+/// `math_exports` is NOT directly importable by that name.  A factory that
+/// references `math_exports` still needs a synthesized `export { math_exports }`.
+#[test]
+fn factory_namespace_ref_with_aliased_entry_export_adds_export() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { var result = math_exports.add(1, 2); });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var math_exports = {};
+__export(math_exports, { add: () => add });
+function add(a, b) { return a + b; }
+export { math_exports as math };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    // f5 should import math_exports from entry.js.
+    let f5_code = &raw_pairs.iter().find(|(n, _)| n == "f5.js").unwrap().1;
+    assert!(
+        f5_code.contains("import") && f5_code.contains("math_exports"),
+        "f5.js should import math_exports:\n{f5_code}"
+    );
+
+    // entry.js must have an unaliased `export { math_exports }` in addition to
+    // the existing `export { math_exports as math }`.
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "entry.js")
+        .unwrap()
+        .1;
+    // Check there's an `export { math_exports }` (unaliased) — not just
+    // `export { math_exports as math }`.
+    let has_unaliased = entry_code.lines().any(|line| {
+        line.contains("export {") && line.contains("math_exports") && !line.contains(" as ")
+    });
+    assert!(
+        has_unaliased,
+        "entry.js needs unaliased `export {{ math_exports }}`:\n{entry_code}"
+    );
+}
+
+/// `export { ns_a as ns_a }` is semantically identical to `export { ns_a }` —
+/// both make the binding importable as `ns_a`. No duplicate export should be
+/// synthesized.
+#[test]
+fn same_name_alias_export_does_not_duplicate() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { var result = ns_a.greet(); });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { greet: () => greet });
+function greet() { return "hello"; }
+export { ns_a as ns_a };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "entry.js")
+        .unwrap()
+        .1;
+    // Count how many `export {` lines mention ns_a — should be exactly one.
+    let export_ns_a_count = entry_code
+        .lines()
+        .filter(|line| line.contains("export {") && line.contains("ns_a"))
+        .count();
+    assert_eq!(
+        export_ns_a_count, 1,
+        "entry.js should have exactly one export of ns_a (no duplicate):\n{entry_code}"
+    );
+}
+
+/// Private helpers only referenced by factory modules (not by other scope-
+/// hoisted code) should still be absorbed into the last scope-hoisted module,
+/// not left in entry.js.
+#[test]
+fn factory_only_ref_extends_last_scope_module() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { var x = privateHelper(1); });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { greet: () => greet });
+function greet() { return "hello"; }
+function privateHelper(x) { return x + 1; }
+export { ns_a };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    // privateHelper should be in the scope-hoisted module (ns_a), not entry.
+    let ns_a_code = &raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("function greet"))
+        .unwrap()
+        .1;
+    assert!(
+        ns_a_code.contains("privateHelper"),
+        "privateHelper should be in the scope-hoisted module, not entry:\n{ns_a_code}"
+    );
+
+    // f5 should import privateHelper.
+    let f5_code = &raw_pairs.iter().find(|(n, _)| n == "f5.js").unwrap().1;
+    assert!(
+        f5_code.contains("import") && f5_code.contains("privateHelper"),
+        "f5.js should import privateHelper:\n{f5_code}"
+    );
+
+    // entry should NOT contain privateHelper.
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "entry.js")
+        .unwrap()
+        .1;
+    assert!(
+        !entry_code.contains("privateHelper"),
+        "entry.js should NOT contain privateHelper:\n{entry_code}"
+    );
+}
+
+/// Factory files in subdirectories should get correct relative import paths.
+#[test]
+fn factory_in_subdirectory_gets_correct_import_path() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y({"src/consumer.js"(exports, module) { var x = helperFn(1); }});
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { greet: () => greet });
+function greet() { return "hello"; }
+function helperFn(x) { return x + 1; }
+export { ns_a };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    // The factory at src/consumer.js should import with ../ns_a.js, not ./ns_a.js.
+    let consumer_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n.contains("consumer"))
+        .unwrap()
+        .1;
+    assert!(
+        consumer_code.contains("../"),
+        "src/consumer.js should use ../ to reach the root-level scope module:\n{consumer_code}"
+    );
+    assert!(
+        !consumer_code.contains("./../"),
+        "should not have double-prefixed ./../ path:\n{consumer_code}"
+    );
+    assert!(
+        consumer_code.contains("helperFn"),
+        "src/consumer.js should import helperFn:\n{consumer_code}"
+    );
+}
