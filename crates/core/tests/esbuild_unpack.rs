@@ -707,8 +707,7 @@ export { ns_a };
         .unwrap()
         .1;
     assert!(
-        !ns_a_module.contains("export { ns_a")
-            && !ns_a_module.contains("export { ns_a,"),
+        !ns_a_module.contains("export { ns_a") && !ns_a_module.contains("export { ns_a,"),
         "scope module should NOT export undeclared ns_a:\n{ns_a_module}"
     );
 }
@@ -748,11 +747,7 @@ var value = 99;
     // entry.js must have an ESM `export { ns_a }` even though the bundle
     // had no such declaration.  Check for the actual export statement, not
     // the `__export` helper function name.
-    let entry_code = &raw_pairs
-        .iter()
-        .find(|(n, _)| n == "entry.js")
-        .unwrap()
-        .1;
+    let entry_code = &raw_pairs.iter().find(|(n, _)| n == "entry.js").unwrap().1;
     assert!(
         entry_code.contains("export { ns_a"),
         "entry.js should have `export {{ ns_a }}` for the factory import:\n{entry_code}"
@@ -792,11 +787,7 @@ export { math_exports as math };
 
     // entry.js must have an unaliased `export { math_exports }` in addition to
     // the existing `export { math_exports as math }`.
-    let entry_code = &raw_pairs
-        .iter()
-        .find(|(n, _)| n == "entry.js")
-        .unwrap()
-        .1;
+    let entry_code = &raw_pairs.iter().find(|(n, _)| n == "entry.js").unwrap().1;
     // Check there's an `export { math_exports }` (unaliased) — not just
     // `export { math_exports as math }`.
     let has_unaliased = entry_code.lines().any(|line| {
@@ -832,11 +823,7 @@ export { ns_a as ns_a };
 "#;
     let raw_pairs = expect_unpack_raw(bundle);
 
-    let entry_code = &raw_pairs
-        .iter()
-        .find(|(n, _)| n == "entry.js")
-        .unwrap()
-        .1;
+    let entry_code = &raw_pairs.iter().find(|(n, _)| n == "entry.js").unwrap().1;
     // Count how many `export {` lines mention ns_a — should be exactly one.
     let export_ns_a_count = entry_code
         .lines()
@@ -892,14 +879,94 @@ export { ns_a };
     );
 
     // entry should NOT contain privateHelper.
-    let entry_code = &raw_pairs
-        .iter()
-        .find(|(n, _)| n == "entry.js")
-        .unwrap()
-        .1;
+    let entry_code = &raw_pairs.iter().find(|(n, _)| n == "entry.js").unwrap().1;
     assert!(
         !entry_code.contains("privateHelper"),
         "entry.js should NOT contain privateHelper:\n{entry_code}"
+    );
+}
+
+/// Init factory that reads a binding from another scope module must synthesize
+/// an import in the target module after merging.
+#[test]
+fn merged_init_factory_imports_cross_module_reads() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var init_a = y(() => { target = source + 1; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var a_exports = {};
+__export(a_exports, { target: () => target });
+var target;
+var b_exports = {};
+__export(b_exports, { source: () => source });
+var source = 42;
+export { a_exports, b_exports };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let a_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n.starts_with("a_exports"))
+        .expect("a_exports module should exist")
+        .1;
+    // The merged init body uses `source` from b_exports — must have an import.
+    assert!(
+        a_code.contains("import") && a_code.contains("source"),
+        "a_exports should import `source` from b_exports:\n{a_code}"
+    );
+    assert!(
+        a_code.contains("target = source + 1"),
+        "a_exports should contain the merged assignment:\n{a_code}"
+    );
+}
+
+/// Update expressions (count++) that write to a scope-hoisted binding should
+/// be merged into the target module, not emitted standalone with an import.
+#[test]
+fn update_expr_write_merges_into_target_module() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var init_counter = y(() => { count++; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var counter_exports = {};
+__export(counter_exports, { count: () => count });
+var count = 0;
+export { counter_exports };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    // init_counter should NOT exist as a separate module.
+    assert!(
+        !raw_pairs.iter().any(|(n, _)| n.contains("init_counter")),
+        "init_counter should be merged, not standalone"
+    );
+
+    let counter_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n.starts_with("counter_exports"))
+        .expect("counter_exports module should exist")
+        .1;
+    assert!(
+        counter_code.contains("count++"),
+        "counter_exports should contain the merged count++:\n{counter_code}"
     );
 }
 

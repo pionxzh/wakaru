@@ -87,6 +87,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         filename: String,
         body_stmts: Vec<Stmt>,
         referenced_bindings: HashSet<BindingId>,
+        write_bindings: HashSet<BindingId>,
     }
 
     let mut pending_factories: Vec<PendingFactory> = Vec::new();
@@ -96,13 +97,15 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         // Collect which top-level bindings this factory's body references
         // by visiting the resolved (analysis) body stmts.
         let mut referenced_bindings = HashSet::new();
+        let mut write_bindings = HashSet::new();
         for stmt in &factory.analysis_body_stmts {
             let mut collector = TopLevelRefCollector {
                 top_level_bindings: &all_top_level_bindings,
                 references: HashSet::new(),
             };
             stmt.visit_with(&mut collector);
-            referenced_bindings.extend(collector.references);
+            referenced_bindings.extend(collector.references.clone());
+            collect_write_bindings(stmt, &all_top_level_bindings, &mut write_bindings);
         }
 
         pending_factories.push(PendingFactory {
@@ -110,6 +113,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
             filename,
             body_stmts: factory.body_stmts,
             referenced_bindings,
+            write_bindings,
         });
     }
 
@@ -136,7 +140,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     // Phase 5: split scope-hoisted modules out of the entry items.
     // Pass factory-referenced bindings so the extraction can expand exports
     // and return binding→module mapping for factory import synthesis.
-    let (scope_hoisted_modules, remaining_entry, binding_to_filename) =
+    let (scope_hoisted_modules, remaining_entry, binding_to_filename, module_already_imports) =
         extract_scope_hoisted_modules(
             &analysis_entry_items,
             &entry_items,
@@ -148,13 +152,127 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
 
     // Phase 6: emit each factory module, now with synthesized imports for any
     // references to scope-hoisted module bindings.
+    //
+    // Init-factory merging: if a factory writes to bindings that ALL belong to
+    // a single scope-hoisted module, it's an init function for that module.
+    // Merge its body into the target module rather than emitting a separate file
+    // with invalid ESM (imports are read-only, so `import {x} ...; x = ...`
+    // would be a runtime error).
+    struct MergedFactory {
+        stmts: Vec<Stmt>,
+        referenced_bindings: HashSet<BindingId>,
+        write_bindings: HashSet<BindingId>,
+    }
+
+    let mut merged_factories: HashMap<String, Vec<MergedFactory>> = HashMap::new();
+    let mut standalone_factories: Vec<PendingFactory> = Vec::new();
+
     for factory in pending_factories {
+        if factory.write_bindings.is_empty() {
+            standalone_factories.push(factory);
+            continue;
+        }
+
+        // Check if all write targets belong to the same scope-hoisted module.
+        let mut target_filename: Option<String> = None;
+        let mut is_single_target = true;
+        for wb in &factory.write_bindings {
+            if let Some(fname) = binding_to_filename.get(wb) {
+                match &target_filename {
+                    None => target_filename = Some(fname.clone()),
+                    Some(existing) if existing == fname => {}
+                    Some(_) => {
+                        is_single_target = false;
+                        break;
+                    }
+                }
+            } else {
+                is_single_target = false;
+                break;
+            }
+        }
+
+        if let (true, Some(fname)) = (is_single_target, target_filename) {
+            merged_factories
+                .entry(fname)
+                .or_default()
+                .push(MergedFactory {
+                    stmts: factory.body_stmts,
+                    referenced_bindings: factory.referenced_bindings,
+                    write_bindings: factory.write_bindings,
+                });
+        } else {
+            standalone_factories.push(factory);
+        }
+    }
+
+    // Append merged factory bodies to their target modules, synthesizing
+    // imports for any cross-module reads the factory body needs.
+    if !merged_factories.is_empty() {
+        for module in &mut modules {
+            let Some(factories) = merged_factories.remove(&module.filename) else {
+                continue;
+            };
+            let mut extra_imports: HashMap<String, Vec<Atom>> = HashMap::new();
+            let mut all_stmts: Vec<Stmt> = Vec::new();
+
+            let already_imported = module_already_imports
+                .get(&module.filename)
+                .cloned()
+                .unwrap_or_default();
+
+            for mf in factories {
+                for ref_binding in &mf.referenced_bindings {
+                    if mf.write_bindings.contains(ref_binding) {
+                        continue;
+                    }
+                    if already_imported.contains(ref_binding) {
+                        continue;
+                    }
+                    if let Some(source_filename) = binding_to_filename.get(ref_binding) {
+                        if *source_filename != module.filename {
+                            extra_imports
+                                .entry(source_filename.clone())
+                                .or_default()
+                                .push(ref_binding.0.clone());
+                        }
+                    }
+                }
+                all_stmts.extend(mf.stmts);
+            }
+
+            let mut import_items: Vec<ModuleItem> = Vec::new();
+            let mut source_filenames: Vec<String> = extra_imports.keys().cloned().collect();
+            source_filenames.sort();
+            for source_filename in source_filenames {
+                let names = extra_imports.get_mut(&source_filename).unwrap();
+                names.sort();
+                names.dedup();
+                let rel_path = relative_import_path(&module.filename, &source_filename);
+                import_items.push(make_scope_import_stmt(names, &rel_path));
+            }
+
+            let body_items: Vec<ModuleItem> = import_items
+                .into_iter()
+                .chain(all_stmts.into_iter().map(ModuleItem::Stmt))
+                .collect();
+            let extra_code = emit_items(body_items, module.filename.clone(), cm.clone());
+            module.code.push('\n');
+            module.code.push_str(&extra_code);
+        }
+    }
+
+    for factory in standalone_factories {
         let mut import_items: Vec<ModuleItem> = Vec::new();
 
         if !binding_to_filename.is_empty() {
             // Group factory's referenced bindings by source module filename.
             let mut imports_by_source: HashMap<String, Vec<Atom>> = HashMap::new();
             for ref_binding in &factory.referenced_bindings {
+                // Don't import bindings that this factory writes to.
+                if factory.write_bindings.contains(ref_binding) {
+                    continue;
+                }
                 if let Some(source_filename) = binding_to_filename.get(ref_binding) {
                     imports_by_source
                         .entry(source_filename.clone())
@@ -550,19 +668,30 @@ fn extract_scope_hoisted_modules(
     Vec<UnpackedModule>,
     Vec<ModuleItem>,
     HashMap<BindingId, String>,
+    HashMap<String, HashSet<BindingId>>,
 ) {
     debug_assert_eq!(analysis_items.len(), source_items.len());
 
     // Step 1: find the __export helper binding.
     let Some((export_helper_index, export_helper)) = detect_export_helper(analysis_items) else {
-        return (vec![], source_items.to_vec(), HashMap::new());
+        return (
+            vec![],
+            source_items.to_vec(),
+            HashMap::new(),
+            HashMap::new(),
+        );
     };
     let item_infos = build_item_binding_infos(analysis_items);
 
     // Step 2: find all (namespace_decl_index, export_call_index, ns_atom) triples.
     let boundaries = collect_scope_hoisted_boundaries(analysis_items, &export_helper);
     if boundaries.is_empty() {
-        return (vec![], source_items.to_vec(), HashMap::new());
+        return (
+            vec![],
+            source_items.to_vec(),
+            HashMap::new(),
+            HashMap::new(),
+        );
     }
 
     // Step 3 (pass 1): partition items and collect per-module metadata.
@@ -610,7 +739,6 @@ fn extract_scope_hoisted_modules(
             declared_bindings.extend(info.declared.iter().cloned());
             referenced_bindings.extend(info.references.iter().cloned());
         }
-
 
         consumed_ns.push((boundary.ns_decl_index, boundary.export_call_index, boundary));
 
@@ -778,6 +906,20 @@ fn extract_scope_hoisted_modules(
         });
     }
 
+    // Track which external bindings each scope-hoisted module already imports
+    // (used later to avoid duplicate imports when merging init factories).
+    let mut module_already_imports: HashMap<String, HashSet<BindingId>> = HashMap::new();
+    for meta in &metas {
+        let imported: HashSet<BindingId> = meta
+            .referenced_bindings
+            .iter()
+            .filter(|b| !meta.declared_bindings.contains(b))
+            .filter(|b| binding_to_module.contains_key(b))
+            .cloned()
+            .collect();
+        module_already_imports.insert(meta.filename.clone(), imported);
+    }
+
     // Collect atoms that the remaining entry items already export via ESM
     // `export { ... }` declarations.  Used below to avoid synthesizing
     // duplicate exports for namespace bindings.
@@ -801,7 +943,11 @@ fn extract_scope_hoisted_modules(
                             Some(ModuleExportName::Ident(id)) => id.sym == *orig_atom,
                             Some(ModuleExportName::Str(_)) => false,
                         };
-                        if is_direct { Some(orig_atom.clone()) } else { None }
+                        if is_direct {
+                            Some(orig_atom.clone())
+                        } else {
+                            None
+                        }
                     }
                     _ => None,
                 })
@@ -866,7 +1012,12 @@ fn extract_scope_hoisted_modules(
     remaining.extend(restored_items);
     remaining.extend(remaining_indices.iter().map(|&i| source_items[i].clone()));
 
-    (modules, remaining, binding_to_filename)
+    (
+        modules,
+        remaining,
+        binding_to_filename,
+        module_already_imports,
+    )
 }
 
 struct ScopeHoistedBoundary {
@@ -1107,10 +1258,9 @@ fn find_last_module_end(
         if declared.is_empty() {
             break;
         };
-        let referenced_by_module =
-            declared
-                .iter()
-                .any(|binding| items_reference_binding(&item_infos[from..end], binding));
+        let referenced_by_module = declared
+            .iter()
+            .any(|binding| items_reference_binding(&item_infos[from..end], binding));
         let referenced_by_factory = declared
             .iter()
             .any(|(atom, _)| factory_referenced_atoms.contains(atom));
@@ -1285,6 +1435,47 @@ impl Visit for TopLevelRefCollector<'_> {
     }
 }
 
+/// Collect top-level bindings that appear as assignment targets in a statement.
+/// This detects `X = expr` and `X = expr, Y = expr` patterns where X/Y are
+/// top-level bindings (not local declarations).
+fn collect_write_bindings(
+    stmt: &Stmt,
+    top_level_bindings: &HashSet<BindingId>,
+    out: &mut HashSet<BindingId>,
+) {
+    struct WriteCollector<'a> {
+        top_level_bindings: &'a HashSet<BindingId>,
+        writes: &'a mut HashSet<BindingId>,
+    }
+
+    impl Visit for WriteCollector<'_> {
+        fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
+            if let Some(ident) = assign.left.as_ident() {
+                let binding = (ident.sym.clone(), ident.ctxt);
+                if self.top_level_bindings.contains(&binding) {
+                    self.writes.insert(binding);
+                }
+            }
+            assign.right.visit_with(self);
+        }
+
+        fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
+            if let Expr::Ident(ident) = &*update.arg {
+                let binding = (ident.sym.clone(), ident.ctxt);
+                if self.top_level_bindings.contains(&binding) {
+                    self.writes.insert(binding);
+                }
+            }
+        }
+    }
+
+    let mut collector = WriteCollector {
+        top_level_bindings,
+        writes: out,
+    };
+    stmt.visit_with(&mut collector);
+}
+
 // ---------------------------------------------------------------------------
 // Import / export synthesis for scope-hoisted modules
 // ---------------------------------------------------------------------------
@@ -1295,9 +1486,7 @@ impl Visit for TopLevelRefCollector<'_> {
 /// `../ns_a.js`).
 fn relative_import_path(importer: &str, target: &str) -> String {
     use std::path::Path;
-    let importer_dir = Path::new(importer)
-        .parent()
-        .unwrap_or(Path::new(""));
+    let importer_dir = Path::new(importer).parent().unwrap_or(Path::new(""));
     let rel = pathdiff_relative(importer_dir, Path::new(target));
     // Ensure the path starts with ./ or ../
     let s = rel.to_string_lossy().replace('\\', "/");
