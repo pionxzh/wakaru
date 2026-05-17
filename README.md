@@ -12,26 +12,6 @@ Fast JavaScript decompiler and bundle splitter for modern frontend.
 
 </div>
 
-## Before / After
-
-Minified code goes in:
-
-```js
-var a = void 0;
-var b = !1;
-var c = x === null || x === void 0 ? void 0 : x.bar;
-exports.greet = function(e) { return "Hello, ".concat(e, "!"); };
-```
-
-Clean code comes out:
-
-```js
-let a;
-const b = false;
-const c = x?.bar;
-export const greet = (e) => `Hello, ${e}!`;
-```
-
 ## Quick Start
 
 ```bash
