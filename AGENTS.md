@@ -31,6 +31,8 @@ cargo run -p wakaru-cli -- --trace-rules path/to/module.js  # debug: per-rule di
 cargo test                                     # all tests
 cargo test -p wakaru-core --test my_rule_rule  # one test file
 cargo test -p wakaru-core --test smart_inline_rule -- inline_single_use  # one test
+cargo fmt --check                              # verify Rust formatting
+cargo clippy -p wakaru-core --all-targets -- -D warnings  # lint core changes
 INSTA_UPDATE=always cargo test                 # update snapshots
 cargo insta review                             # review snapshot diffs
 ```
@@ -92,15 +94,19 @@ Always use `rename_utils::BindingRenamer` (via `rename_bindings_in_module` or `r
    - `cargo test -p wakaru-core --test webpack4_unpack_raw`
    - `cargo test -p wakaru-core --test bundle_unpack` (webpack5 + browserify)
    - `cargo test -p wakaru-core --test esbuild_unpack`
-3. If snapshots change, inspect the diff — confirm the output is semantically better, not just different
-4. `git status --short` — no stale `.snap.new` files or unrelated changes
+3. Run formatting and lint checks:
+   - `cargo fmt --check`
+   - `cargo clippy -p wakaru-core --all-targets -- -D warnings` for core/rule changes
+   - Use the relevant package or `cargo clippy --workspace --all-targets -- -D warnings` when touching other crates or shared workspace code
+4. If snapshots change, inspect the diff — confirm the output is semantically better, not just different
+5. `git status --short` — no stale `.snap.new` files or unrelated changes
 
 ## Important Rules
 
 1. **All changes must be tested** — no exceptions.
 2. **Always check `SyntaxContext`** — rules matching identifiers by name must guard on `unresolved_mark`.
 3. **Use `BindingRenamer` for renames** — never rename by `sym` alone.
-4. **Don't format opportunistically** — `cargo fmt` on existing files creates unreviewable diffs. Only format in dedicated commits.
+4. **Formatting must pass, but don't format opportunistically** — run `cargo fmt --check`; if formatting is needed, keep it limited to files you intentionally changed and avoid unrelated rustfmt churn.
 5. **Inspect snapshot diffs** — "different" without "better" is a regression.
 6. **Be honest about what works** — never overstate what was accomplished.
 
