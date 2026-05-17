@@ -1,44 +1,99 @@
-use swc_core::common::{Mark, SyntaxContext};
+use std::collections::{HashMap, HashSet};
+
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BinExpr, BinaryOp, CondExpr, Expr, Lit, SimpleAssignTarget,
+    AssignOp, AssignTarget, BinExpr, BinaryOp, Bool, CondExpr, Expr, Ident, Lit, Module, Pat,
+    SimpleAssignTarget, VarDeclarator,
 };
 use swc_core::ecma::utils::ExprFactory;
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 pub(crate) use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
+use super::RewriteLevel;
+
+type BindingId = (swc_core::atoms::Atom, SyntaxContext);
 
 pub struct UnNullishCoalescing {
     unresolved_mark: Mark,
+    level: RewriteLevel,
+    uninitialized_bindings: HashSet<BindingId>,
+    binding_references: HashMap<BindingId, usize>,
 }
 
 impl UnNullishCoalescing {
-    pub fn new(unresolved_mark: Mark) -> Self {
-        Self { unresolved_mark }
+    pub fn new(unresolved_mark: Mark, level: RewriteLevel) -> Self {
+        Self {
+            unresolved_mark,
+            level,
+            uninitialized_bindings: HashSet::new(),
+            binding_references: HashMap::new(),
+        }
     }
 }
 
 impl VisitMut for UnNullishCoalescing {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        let facts = collect_binding_facts(module);
+        self.uninitialized_bindings = facts.uninitialized;
+        self.binding_references = facts.references;
+        module.visit_mut_children_with(self);
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
-        if let Some(result) = try_nullish_coalescing(expr, self.unresolved_mark) {
+        if let Some(result) = try_nullish_coalescing(
+            expr,
+            self.unresolved_mark,
+            self.level,
+            &self.uninitialized_bindings,
+            &self.binding_references,
+        ) {
             *expr = result;
         }
     }
 }
 
-fn try_nullish_coalescing(expr: &Expr, unresolved_mark: Mark) -> Option<Expr> {
+fn try_nullish_coalescing(
+    expr: &Expr,
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> Option<Expr> {
+    // Pattern C: `(tmp = X) === null || tmp === undefined || tmp` → `X ?? true`
+    // (||‐chain encoding of nullish coalescing with boolean `true` default)
+    if let Some(result) = try_pattern_c_coalescing(
+        expr,
+        unresolved_mark,
+        level,
+        uninitialized_bindings,
+        binding_references,
+    ) {
+        return Some(result);
+    }
+
     let Expr::Cond(cond_expr) = expr else {
         return None;
     };
 
     // Pattern B: `x === null || x === void 0 ? fallback : x`
-    if let Some(result) = try_pattern_b_coalescing(cond_expr, unresolved_mark) {
+    if let Some(result) = try_pattern_b_coalescing(
+        cond_expr,
+        unresolved_mark,
+        uninitialized_bindings,
+        binding_references,
+    ) {
         return Some(result);
     }
 
     // Pattern A: `x !== null && x !== void 0 ? x : fallback`
-    if let Some(result) = try_pattern_a_coalescing(cond_expr, unresolved_mark) {
+    if let Some(result) = try_pattern_a_coalescing(
+        cond_expr,
+        unresolved_mark,
+        uninitialized_bindings,
+        binding_references,
+    ) {
         return Some(result);
     }
 
@@ -47,13 +102,28 @@ fn try_nullish_coalescing(expr: &Expr, unresolved_mark: Mark) -> Option<Expr> {
 
 /// Pattern A: `x !== null && x !== void 0 ? x : fallback`  →  `x ?? fallback`
 /// Temp-var form: `(tmp = expr) !== null && tmp !== void 0 ? tmp : fallback`  →  `expr ?? fallback`
-fn try_pattern_a_coalescing(cond: &CondExpr, unresolved_mark: Mark) -> Option<Expr> {
+fn try_pattern_a_coalescing(
+    cond: &CondExpr,
+    unresolved_mark: Mark,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> Option<Expr> {
     let NullCheckResult { value, real_value } =
         extract_not_null_check(&cond.test, unresolved_mark)?;
 
     // Temp-var form: consequent must equal `tmp` (the variable on the LHS of the assignment)
     if let Some(real) = real_value {
         if exprs_structurally_equal(&cond.cons, &value) {
+            if let Expr::Ident(ref tmp_ident) = *value {
+                if !is_safe_temp(
+                    &tmp_ident.sym,
+                    tmp_ident.ctxt,
+                    uninitialized_bindings,
+                    binding_references,
+                ) {
+                    return None;
+                }
+            }
             return Some(make_nullish_coalescing(real, cond.alt.clone()));
         }
         return None;
@@ -69,12 +139,27 @@ fn try_pattern_a_coalescing(cond: &CondExpr, unresolved_mark: Mark) -> Option<Ex
 
 /// Pattern B: `x === null || x === void 0 ? fallback : x`  →  `x ?? fallback`
 /// Temp-var form: `(tmp = expr) === null || tmp === void 0 ? fallback : tmp`  →  `expr ?? fallback`
-fn try_pattern_b_coalescing(cond: &CondExpr, unresolved_mark: Mark) -> Option<Expr> {
+fn try_pattern_b_coalescing(
+    cond: &CondExpr,
+    unresolved_mark: Mark,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> Option<Expr> {
     let NullCheckResult { value, real_value } = extract_null_check(&cond.test, unresolved_mark)?;
 
     // Temp-var form: alternate must equal `tmp`
     if let Some(real) = real_value {
         if exprs_structurally_equal(&cond.alt, &value) {
+            if let Expr::Ident(ref tmp_ident) = *value {
+                if !is_safe_temp(
+                    &tmp_ident.sym,
+                    tmp_ident.ctxt,
+                    uninitialized_bindings,
+                    binding_references,
+                ) {
+                    return None;
+                }
+            }
             return Some(make_nullish_coalescing(real, cond.cons.clone()));
         }
         return None;
@@ -86,6 +171,108 @@ fn try_pattern_b_coalescing(cond: &CondExpr, unresolved_mark: Mark) -> Option<Ex
     }
 
     None
+}
+
+/// Pattern C: `(tmp = X) === null || tmp === undefined || tmp`  →  `X ?? true`
+/// Also handles the plain identifier form: `x === null || x === undefined || x`  →  `x ?? true`
+///
+/// This is an ||‐chain encoding of nullish coalescing where the default is `true`.
+/// When X is null/undefined the `=== null` or `=== undefined` comparison yields `true`
+/// (short-circuiting the chain), otherwise the chain falls through to `|| X` itself.
+///
+/// The plain form with member expressions (`B.broadcast === null || ...`) reads
+/// the property up to 3 times, so collapsing to `B.broadcast ?? true` changes
+/// semantics for getters, proxies, or values that change between reads. This
+/// form requires `Aggressive` level. Plain identifiers may also differ under
+/// `with` or global accessor bindings (3 reads → 1), but this is acceptable
+/// under Wakaru's heuristic policy for Standard level.
+/// The real machine-generated pattern always uses a temp variable.
+fn try_pattern_c_coalescing(
+    expr: &Expr,
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> Option<Expr> {
+    // Shape: `(A || B) || C` where A = null-check, B = undefined-check, C = value
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalOr,
+        left: outer_left,
+        right: tail,
+        ..
+    }) = expr
+    else {
+        return None;
+    };
+
+    // outer_left must be another `||`
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalOr,
+        left: null_check_expr,
+        right: undef_check_expr,
+        ..
+    }) = outer_left.as_ref()
+    else {
+        return None;
+    };
+
+    // Extract the null-check value (possibly with assignment)
+    let null_val = extract_null_single(null_check_expr)?;
+    // Extract the undefined-check value
+    let undef_val = extract_undefined_single(undef_check_expr, unresolved_mark)?;
+
+    // Check for assignment pattern: null_val may be `(tmp = real_expr)`
+    if let Some((tmp_sym, tmp_ctxt, real_rhs)) = extract_assign_parts(&null_val) {
+        // undef_check must reference `tmp`
+        if let Expr::Ident(ri) = &*undef_val {
+            if ri.sym == tmp_sym && ri.ctxt == tmp_ctxt {
+                // tail must also be `tmp`
+                if let Expr::Ident(ti) = tail.as_ref() {
+                    if ti.sym == tmp_sym && ti.ctxt == tmp_ctxt {
+                        if !is_safe_temp(
+                            &tmp_sym,
+                            tmp_ctxt,
+                            uninitialized_bindings,
+                            binding_references,
+                        ) {
+                            return None;
+                        }
+                        return Some(make_nullish_coalescing(
+                            real_rhs.clone(),
+                            Box::new(Expr::Lit(Lit::Bool(Bool {
+                                span: DUMMY_SP,
+                                value: true,
+                            }))),
+                        ));
+                    }
+                }
+            }
+        }
+        return None;
+    }
+
+    // Plain identifier form: identifiers may technically differ under `with` or
+    // global accessor bindings (3 reads → 1), but this is acceptable heuristically.
+    // Member expressions and other complex forms require Aggressive level
+    // because collapsing 3 reads into 1 changes semantics for getters/proxies.
+    if !matches!(&*null_val, Expr::Ident(_)) && level < RewriteLevel::Aggressive {
+        return None;
+    }
+
+    if !exprs_structurally_equal(&null_val, &undef_val) {
+        return None;
+    }
+    if !exprs_structurally_equal(&null_val, tail) {
+        return None;
+    }
+
+    Some(make_nullish_coalescing(
+        null_val,
+        Box::new(Expr::Lit(Lit::Bool(Bool {
+            span: DUMMY_SP,
+            value: true,
+        }))),
+    ))
 }
 
 /// Result of a null-check extraction.
@@ -282,6 +469,66 @@ fn extract_assign_parts(expr: &Expr) -> Option<(swc_core::atoms::Atom, SyntaxCon
 
 fn make_nullish_coalescing(value: Box<Expr>, fallback: Box<Expr>) -> Expr {
     (*value).make_bin(BinaryOp::NullishCoalescing, *fallback)
+}
+
+/// Check that a temp variable has a known uninitialized declaration (`var tmp;`
+/// or `let tmp;`) and is only referenced within the pattern itself plus that
+/// declaration. The temp appears 3 times in the pattern (assignment target +
+/// 2 uses) and 1 time in the declaration, for a total of 4.
+///
+/// Without a known declaration the temp is either an undeclared global (sloppy
+/// mode: erasing the assignment drops a global side effect) or an unresolved
+/// binding (strict/module mode: the original throws `ReferenceError` but the
+/// rewrite would not). Both cases are unsafe to erase.
+fn is_safe_temp(
+    sym: &swc_core::atoms::Atom,
+    ctxt: SyntaxContext,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> bool {
+    let binding_id = (sym.clone(), ctxt);
+    if !uninitialized_bindings.contains(&binding_id) {
+        return false;
+    }
+    let total_refs = binding_references.get(&binding_id).copied().unwrap_or(0);
+    total_refs == 4
+}
+
+#[derive(Default)]
+struct BindingFactsCollector {
+    uninitialized: HashSet<BindingId>,
+    references: HashMap<BindingId, usize>,
+}
+
+impl Visit for BindingFactsCollector {
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if declarator.init.is_none() {
+            if let Pat::Ident(binding) = &declarator.name {
+                self.uninitialized
+                    .insert((binding.id.sym.clone(), binding.id.ctxt));
+            }
+        }
+        declarator.visit_children_with(self);
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        let binding_id = (ident.sym.clone(), ident.ctxt);
+        *self.references.entry(binding_id).or_insert(0) += 1;
+    }
+}
+
+struct BindingFacts {
+    uninitialized: HashSet<BindingId>,
+    references: HashMap<BindingId, usize>,
+}
+
+fn collect_binding_facts(module: &Module) -> BindingFacts {
+    let mut collector = BindingFactsCollector::default();
+    module.visit_with(&mut collector);
+    BindingFacts {
+        uninitialized: collector.uninitialized,
+        references: collector.references,
+    }
 }
 
 #[cfg(test)]

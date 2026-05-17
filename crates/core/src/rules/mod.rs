@@ -516,7 +516,7 @@ fn apply_rules_range_impl(
     );
     run!(UnVariableMerging, "UnVariableMerging");
     run!(
-        UnNullishCoalescing::new(unresolved_mark),
+        UnNullishCoalescing::new(unresolved_mark, rewrite_level),
         "UnNullishCoalescing"
     );
     run!(
