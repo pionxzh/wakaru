@@ -69,6 +69,11 @@ fn is_pure_no_op_stmt(stmt: &Stmt, unresolved_mark: Mark) -> bool {
     if matches!(expr.as_ref(), Expr::Lit(Lit::Str(_))) {
         return false;
     }
+    // Never drop function/arrow expressions — they represent intentional wrapper
+    // patterns (e.g. webcrack output wrapped in `(function anonymous(...) { ... })`)
+    if is_fn_or_arrow(expr) {
+        return false;
+    }
     let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
     let ctx = ExprCtx {
         unresolved_ctxt,
@@ -77,6 +82,14 @@ fn is_pure_no_op_stmt(stmt: &Stmt, unresolved_mark: Mark) -> bool {
         remaining_depth: 4,
     };
     !expr.may_have_side_effects(ctx)
+}
+
+fn is_fn_or_arrow(expr: &Expr) -> bool {
+    match expr {
+        Expr::Fn(_) | Expr::Arrow(_) => true,
+        Expr::Paren(paren) => is_fn_or_arrow(&paren.expr),
+        _ => false,
+    }
 }
 
 fn split_stmt(stmt: Stmt) -> Vec<Stmt> {

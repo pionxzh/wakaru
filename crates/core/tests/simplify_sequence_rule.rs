@@ -217,6 +217,44 @@ b();
 }
 
 #[test]
+fn preserves_function_expression_statement() {
+    // A function expression as a statement should not be removed even though
+    // it's technically side-effect-free (issue #150: webcrack output wrapper)
+    let input = r#"
+(function anonymous(arg) {
+  (function () {
+    var foo = 1;
+    console.log(foo);
+  })();
+})
+"#;
+    let expected = r#"
+(function anonymous(arg) {
+  (function () {
+    var foo = 1;
+    console.log(foo);
+  })();
+})
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_arrow_function_expression_statement() {
+    let input = r#"
+() => { console.log(1); };
+doSomething();
+"#;
+    let expected = r#"
+() => { console.log(1); };
+doSomething();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn splits_assignment_member_pattern() {
     let input = r#"
 (a = b())['c'] = d;
