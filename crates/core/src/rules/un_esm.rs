@@ -536,14 +536,25 @@ fn get_or_insert<'a>(
 fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
     let mut converted_getter_map = false;
     let mut new_body = Vec::with_capacity(module.body.len());
+    // Webpack5 getter maps appear at the top of the module, before the
+    // declarations they reference.  Named exports use `export { x }` which
+    // is a live binding and tolerates forward references.  But `default`
+    // exports become `export default expr` which evaluates eagerly — placing
+    // them at the getter position causes TDZ violations.  Collect them here
+    // and append at the end of the module body.
+    let mut deferred_default: Vec<ModuleItem> = Vec::new();
 
     for item in std::mem::take(&mut module.body) {
         if let Some(exports) = extract_direct_webpack_export_getters(&item, unresolved_mark) {
-            new_body.extend(
-                exports
-                    .into_iter()
-                    .map(|export| make_exports_assign_item(export, unresolved_mark)),
-            );
+            for export in exports {
+                let is_default = export.0.as_ref() == "default";
+                let item = make_exports_assign_item(export, unresolved_mark);
+                if is_default {
+                    deferred_default.push(item);
+                } else {
+                    new_body.push(item);
+                }
+            }
             continue;
         }
 
@@ -564,6 +575,7 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
         new_body.push(item);
     }
 
+    new_body.extend(deferred_default);
     module.body = new_body;
 }
 

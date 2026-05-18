@@ -133,6 +133,22 @@ fn module_exports_default() {
 }
 
 #[test]
+fn module_exports_default_ident_not_affected() {
+    // CJS module.exports = ident still produces export default (the declaration
+    // is before the export, so no TDZ issue).
+    let input = r#"
+const o = { foo: 1 };
+module.exports = o;
+"#;
+    let expected = r#"
+const o = { foo: 1 };
+export default o;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn exports_named_const() {
     let input = "exports.foo = 1;";
     let expected = "export const foo = 1;";
@@ -277,6 +293,25 @@ if ((typeof exports.default === "function" || typeof exports.default === "object
   Object.assign(exports.default, exports);
   module.exports = exports.default;
 }
+"#;
+    let output = apply(input);
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn webpack_getter_default_deferred_to_end() {
+    // Webpack5 export getters place the getter map at the top of the module,
+    // before declarations.  Named exports are fine (live bindings), but
+    // `default` exports evaluate eagerly.  The default entry must be deferred
+    // to the end of the module body to avoid TDZ violations.
+    let input = r#"
+require.d(exports, {
+  default() { return o; },
+  VERSION() { return VERSION; }
+});
+const r = { apiBase: "https://example.com" };
+const o = r;
+const VERSION = "2.1.0";
 "#;
     let output = apply(input);
     insta::assert_snapshot!(output);

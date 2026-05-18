@@ -1,0 +1,11 @@
+---
+source: crates/core/tests/un_esm_rule.rs
+expression: output
+---
+export { VERSION };
+const r = {
+    apiBase: "https://example.com"
+};
+const o = r;
+const VERSION = "2.1.0";
+export default o;
