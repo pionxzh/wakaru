@@ -1,9 +1,8 @@
 ---
-source: tests/webpack4_unpack.rs
+source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import { a as a_2 } from "./module-31.js";
 let o;
 o = globalThis;
-const a = a_2(o);
-export { a };
+export const a = a_2(o);

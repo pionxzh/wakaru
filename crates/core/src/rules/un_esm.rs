@@ -452,7 +452,70 @@ impl VisitMut for UnEsm {
             }
         }
 
+        merge_decl_and_named_export(&mut new_body);
         module.body = new_body;
+    }
+}
+
+/// Merge adjacent `var/let/const X = expr;` + `export { X };` into `export var/let/const X = expr;`.
+/// Preserves the original declaration kind.
+/// This pattern arises when `split_compound_exports` splits `var X = exports.X = expr`.
+fn merge_decl_and_named_export(body: &mut Vec<ModuleItem>) {
+    let mut i = 0;
+    while i + 1 < body.len() {
+        // Check if body[i] is a single-binding var decl and body[i+1] is `export { name }`
+        let merged = 'merge: {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = &body[i] else {
+                break 'merge false;
+            };
+            if var_decl.decls.len() != 1 {
+                break 'merge false;
+            }
+            let Pat::Ident(binding) = &var_decl.decls[0].name else {
+                break 'merge false;
+            };
+            if var_decl.decls[0].init.is_none() {
+                break 'merge false;
+            }
+            let ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(named)) = &body[i + 1] else {
+                break 'merge false;
+            };
+            if named.src.is_some() || named.specifiers.len() != 1 {
+                break 'merge false;
+            }
+            let ExportSpecifier::Named(spec) = &named.specifiers[0] else {
+                break 'merge false;
+            };
+            if spec.exported.is_some() {
+                break 'merge false;
+            }
+            let ModuleExportName::Ident(export_id) = &spec.orig else {
+                break 'merge false;
+            };
+            if export_id.sym != binding.id.sym || export_id.ctxt != binding.id.ctxt {
+                break 'merge false;
+            }
+            true
+        };
+
+        if merged {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = body.remove(i) else {
+                unreachable!();
+            };
+            let kind = var_decl.kind;
+            let decl = var_decl.decls.into_iter().next().unwrap();
+            body[i] = ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                span: DUMMY_SP,
+                decl: Decl::Var(Box::new(VarDecl {
+                    span: DUMMY_SP,
+                    ctxt: Default::default(),
+                    kind,
+                    declare: false,
+                    decls: vec![decl],
+                })),
+            }));
+        }
+        i += 1;
     }
 }
 

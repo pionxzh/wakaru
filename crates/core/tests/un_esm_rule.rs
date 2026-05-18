@@ -441,6 +441,21 @@ use(s);
     insta::assert_snapshot!(output);
 }
 
+#[test]
+fn compound_exports_same_name_merges_to_export_decl() {
+    // var SessionContext = exports.SessionContext = expr
+    // → export var SessionContext = expr (merge preserves original decl kind)
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SessionContext = void 0;
+var SessionContext = exports.SessionContext = React.createContext(undefined);
+use(SessionContext);
+"#;
+    let output = apply(input);
+    insta::assert_snapshot!(output);
+}
+
 // ============================================================
 // Require hoisting from complex expressions
 // ============================================================
