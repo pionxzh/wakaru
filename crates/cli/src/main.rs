@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rayon::prelude::*;
+use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::prelude::*;
 use wakaru_core::{
     decompile, extract_source_entries, format_trace_events, parse_sourcemap, trace_rules, unpack,
     unpack_raw, DecompileOptions, RewriteLevel, RuleTraceOptions,
@@ -87,6 +89,14 @@ struct Cli {
     #[arg(long)]
     diagnostics: bool,
 
+    /// Write a Chrome trace profile to the given file (open with chrome://tracing).
+    #[arg(long, value_name = "FILE")]
+    profile: Option<PathBuf>,
+
+    /// Include per-rule spans in --profile output.
+    #[arg(long, requires = "profile")]
+    profile_rules: bool,
+
     /// Overwrite existing output files or non-empty output directories.
     #[arg(long, global = true)]
     force: bool,
@@ -161,6 +171,7 @@ struct TraceArgs {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let _profile_guard = init_profile(cli.profile.as_deref(), cli.profile_rules)?;
 
     match cli.command.clone() {
         Some(Command::Extract(args)) => run_extract(args, cli.force),
@@ -443,6 +454,33 @@ fn deduplicate_path(path: &Path, seen: &mut std::collections::HashSet<String>) -
     }
 }
 
+fn init_profile(
+    path: Option<&Path>,
+    include_rule_spans: bool,
+) -> Result<Option<tracing_chrome::FlushGuard>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let file = fs::File::create(path)
+        .with_context(|| format!("failed to create profile file {}", path.display()))?;
+
+    let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+        .writer(file)
+        .include_args(true)
+        .build();
+    let level = if include_rule_spans {
+        LevelFilter::DEBUG
+    } else {
+        LevelFilter::INFO
+    };
+    tracing_subscriber::registry()
+        .with(chrome_layer.with_filter(level))
+        .try_init()
+        .context("failed to initialize profiling subscriber")?;
+
+    Ok(Some(guard))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,6 +540,32 @@ mod tests {
             }
             other => panic!("expected debug trace command, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_profile_flag() {
+        let cli = Cli::try_parse_from(["wakaru", "input.js", "--profile", "profile.json"])
+            .expect("--profile should parse");
+        assert_eq!(cli.profile, Some(PathBuf::from("profile.json")));
+        assert!(!cli.profile_rules);
+    }
+
+    #[test]
+    fn parses_profile_rules_flag() {
+        let cli = Cli::try_parse_from([
+            "wakaru",
+            "input.js",
+            "--profile",
+            "profile.json",
+            "--profile-rules",
+        ])
+        .expect("--profile-rules should parse with --profile");
+        assert!(cli.profile_rules);
+    }
+
+    #[test]
+    fn rejects_profile_rules_without_profile() {
+        assert!(Cli::try_parse_from(["wakaru", "input.js", "--profile-rules"]).is_err());
     }
 
     #[test]

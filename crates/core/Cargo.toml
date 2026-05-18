@@ -17,6 +17,7 @@ rayon = "1.11"
 similar = "2"
 sourcemap.workspace = true
 swc_core.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 insta = "1"

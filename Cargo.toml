@@ -21,6 +21,7 @@ swc_core = { version = "65", features = [
   "ecma_utils",
   "ecma_visit",
 ] }
+tracing = "0.1"
 
 [profile.release]
 lto = "fat"

@@ -29,13 +29,54 @@ pub fn unpack_bundle(source: &str) -> Option<UnpackResult> {
 pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let module = parse_es_module(source, "bundle.js", cm.clone())?;
+        let module = {
+            let span = tracing::info_span!("parse_bundle");
+            let _enter = span.enter();
+            parse_es_module(source, "bundle.js", cm.clone())?
+        };
 
-        Ok(webpack5::detect_from_module(&module, cm.clone())
-            .or_else(|| webpack4::detect_from_module(&module, cm.clone()))
-            .or_else(|| webpack5::detect_chunk_from_module(&module, cm.clone()))
-            .or_else(|| browserify::detect_from_module(&module, cm.clone()))
-            .or_else(|| esbuild::detect_from_module(&module, cm)))
+        let result = {
+            let span = tracing::info_span!("detect_webpack5");
+            let _enter = span.enter();
+            webpack5::detect_from_module(&module, cm.clone())
+        };
+        if result.is_some() {
+            return Ok(result);
+        }
+
+        let result = {
+            let span = tracing::info_span!("detect_webpack4");
+            let _enter = span.enter();
+            webpack4::detect_from_module(&module, cm.clone())
+        };
+        if result.is_some() {
+            return Ok(result);
+        }
+
+        let result = {
+            let span = tracing::info_span!("detect_webpack5_chunk");
+            let _enter = span.enter();
+            webpack5::detect_chunk_from_module(&module, cm.clone())
+        };
+        if result.is_some() {
+            return Ok(result);
+        }
+
+        let result = {
+            let span = tracing::info_span!("detect_browserify");
+            let _enter = span.enter();
+            browserify::detect_from_module(&module, cm.clone())
+        };
+        if result.is_some() {
+            return Ok(result);
+        }
+
+        let result = {
+            let span = tracing::info_span!("detect_esbuild");
+            let _enter = span.enter();
+            esbuild::detect_from_module(&module, cm)
+        };
+        Ok(result)
     })
 }
 

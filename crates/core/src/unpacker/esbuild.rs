@@ -23,16 +23,27 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
 }
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
-    let mut analysis_module = module.clone();
-    analysis_module.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
+    let analysis_module = {
+        let span = tracing::info_span!("esbuild: clone and resolve for analysis");
+        let _enter = span.enter();
+        let mut am = module.clone();
+        am.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
+        am
+    };
 
     // Phase 1: find the lazy-helper variables (esbuild's __commonJS / __esm equivalents).
-    let helper_syms = collect_helper_syms(module);
+    let helper_syms = {
+        let span = tracing::info_span!("esbuild: collect helper syms");
+        let _enter = span.enter();
+        collect_helper_syms(module)
+    };
 
     // Phase 2: collect factory declarations — `var X = helper(factory_fn)`.
     let factories = if helper_syms.is_empty() {
         vec![]
     } else {
+        let span = tracing::info_span!("esbuild: collect factories");
+        let _enter = span.enter();
         collect_factories(module, &analysis_module, &helper_syms)
     };
 
@@ -40,25 +51,27 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
 
     // Try scope-hoisted detection on the full module body (needed for
     // scope-only bundles that have no factories at all).
-    // Two+ boundaries is strong evidence on its own. A single boundary
-    // needs corroboration: the namespace must appear in an ESM export
-    // declaration (e.g. `export { math_exports as math }`), which is
-    // always true for esbuild but not for coincidental helper code.
-    let has_scope_hoisted = detect_export_helper(&analysis_module.body)
-        .map(|(_, helper)| {
-            let refs = build_item_binding_infos(&analysis_module.body);
-            let boundaries = collect_scope_hoisted_boundaries(&analysis_module.body, &helper);
-            match boundaries.len() {
-                0 => false,
-                1 => namespace_is_module_exported(
-                    &analysis_module.body,
-                    &refs,
-                    &boundaries[0].ns_binding,
-                ),
-                _ => true,
-            }
-        })
-        .unwrap_or(false);
+    let has_scope_hoisted = {
+        let span = tracing::info_span!("esbuild: detect scope-hoisted");
+        let _enter = span.enter();
+        detect_export_helper(&analysis_module.body)
+            .map(|(_, helper)| {
+                let boundaries = collect_scope_hoisted_boundaries(&analysis_module.body, &helper);
+                match boundaries.len() {
+                    0 => false,
+                    1 => {
+                        let refs = build_item_binding_infos(&analysis_module.body);
+                        namespace_is_module_exported(
+                            &analysis_module.body,
+                            &refs,
+                            &boundaries[0].ns_binding,
+                        )
+                    }
+                    _ => true,
+                }
+            })
+            .unwrap_or(false)
+    };
 
     if !has_factories && !has_scope_hoisted {
         return None;
@@ -140,14 +153,17 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     // Phase 5: split scope-hoisted modules out of the entry items.
     // Pass factory-referenced bindings so the extraction can expand exports
     // and return binding→module mapping for factory import synthesis.
-    let (scope_hoisted_modules, remaining_entry, binding_to_filename, module_already_imports) =
+    let (scope_hoisted_modules, remaining_entry, binding_to_filename, module_already_imports) = {
+        let span = tracing::info_span!("esbuild: extract scope-hoisted modules");
+        let _enter = span.enter();
         extract_scope_hoisted_modules(
             &analysis_entry_items,
             &entry_items,
             &mut global_seen,
             cm.clone(),
             &all_factory_referenced,
-        );
+        )
+    };
     modules.extend(scope_hoisted_modules);
 
     // Phase 6: emit each factory module, now with synthesized imports for any

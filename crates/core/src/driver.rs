@@ -185,35 +185,44 @@ pub struct RuleTraceEvent {
 }
 
 pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOutput> {
+    let span = tracing::info_span!("decompile", filename = %options.filename);
+    let _enter = span.enter();
+
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
-        let parsed = parse_js_with_recovery(source, &options.filename, cm.clone())?;
+        let parsed = {
+            let span = tracing::info_span!("parse");
+            let _enter = span.enter();
+            parse_js_with_recovery(source, &options.filename, cm.clone())?
+        };
         let mut module = parsed.module;
 
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
-        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+        {
+            let span = tracing::info_span!("resolver");
+            let _enter = span.enter();
+            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+        }
 
-        apply_default_rules_with_level(
-            &mut module,
-            unresolved_mark,
-            options.dead_code_elimination,
-            options.level,
-        );
+        {
+            let span = tracing::info_span!("rules");
+            let _enter = span.enter();
+            apply_default_rules_with_level(
+                &mut module,
+                unresolved_mark,
+                options.dead_code_elimination,
+                options.level,
+            );
+        }
 
         // Source-map-enhanced passes (only when sourcemap bytes are supplied).
         if let Some(bytes) = &options.sourcemap {
+            let span = tracing::info_span!("sourcemap_renames");
+            let _enter = span.enter();
             let sm = parse_sourcemap(bytes)?;
-
-            // 1. Merge duplicate imports before renaming so that only the canonical
-            //    local binding remains when the rename pass runs.
             module.visit_mut_with(&mut ImportDedup);
-
-            // 2. Use source map positions to recover original identifier names.
             apply_sourcemap_renames(&mut module, &sm, &cm, unresolved_mark);
-
-            // 3. Clean up `import { foo as foo }` → `import { foo }` and rename
-            //    any remaining aliased imports to their imported name.
             module.visit_mut_with(&mut UnImportRename);
         }
 
@@ -229,9 +238,17 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOut
             Vec::new()
         };
 
-        module.visit_mut_with(&mut fixer(None));
+        {
+            let span = tracing::info_span!("fixer");
+            let _enter = span.enter();
+            module.visit_mut_with(&mut fixer(None));
+        }
 
-        let code = print_js(&module, cm)?;
+        let code = {
+            let span = tracing::info_span!("emit");
+            let _enter = span.enter();
+            print_js(&module, cm)?
+        };
 
         if options.diagnostics {
             warnings.extend(verify_output_parses(&code, &options.filename));
@@ -370,6 +387,9 @@ pub fn format_trace_events(events: &[RuleTraceEvent]) -> String {
 }
 
 pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
+    let span = tracing::info_span!("unpack");
+    let _enter = span.enter();
+
     match detect_bundle(source, &options.filename)? {
         Some(result) => unpack_multi_module(result.modules, options),
         None if options.heuristic_split => match scope_hoist::split_scope_hoisted(source) {
@@ -449,6 +469,9 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
 }
 
 fn detect_bundle(source: &str, filename: &str) -> Result<Option<UnpackResult>> {
+    let span = tracing::info_span!("detect_bundle");
+    let _enter = span.enter();
+
     match try_unpack_bundle(source) {
         Ok(result) => Ok(result),
         Err(bundle_parse_error) => {
@@ -510,6 +533,9 @@ fn unpack_multi_module(
     modules: Vec<crate::unpacker::UnpackedModule>,
     options: DecompileOptions,
 ) -> Result<UnpackOutput> {
+    let span = tracing::info_span!("unpack_multi_module", count = modules.len());
+    let _enter = span.enter();
+
     // Parse the sourcemap once before the loop.
     let parsed_sourcemap = options
         .sourcemap
@@ -549,7 +575,11 @@ fn unpack_multi_module(
             (unpacked.filename.clone(), facts, warning)
         };
 
-    let phase1: Vec<_> = modules.par_iter().map(collect_facts).collect();
+    let phase1: Vec<_> = {
+        let span = tracing::info_span!("phase1_collect_facts");
+        let _enter = span.enter();
+        modules.par_iter().map(collect_facts).collect()
+    };
 
     let mut module_facts = ModuleFactsMap::new();
     let mut warnings = Vec::new();
@@ -635,7 +665,11 @@ fn unpack_multi_module(
             }
         };
 
-    let triples: Vec<_> = modules.into_par_iter().map(decompile_module).collect();
+    let triples: Vec<_> = {
+        let span = tracing::info_span!("phase2_decompile_modules");
+        let _enter = span.enter();
+        modules.into_par_iter().map(decompile_module).collect()
+    };
 
     let mut modules = Vec::with_capacity(triples.len());
     for (filename, code, module_warnings) in triples {
