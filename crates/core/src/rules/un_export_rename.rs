@@ -65,7 +65,7 @@ impl VisitMut for UnExportRename {
 
 fn collect_export_rename_plans(
     module: &Module,
-    _module_names: &std::collections::HashSet<Atom>,
+    module_names: &std::collections::HashSet<Atom>,
     binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
 ) -> Vec<ExportRenamePlan> {
     // Compute which names will be freed by export renames.  Given
@@ -98,6 +98,7 @@ fn collect_export_rename_plans(
                             }
                             let new_name = id.id.sym.clone();
                             if new_name != info.id.0
+                                && !name_is_import_binding(&new_name, module_names, binding_infos)
                                 && !plans
                                     .iter()
                                     .any(|plan: &ExportRenamePlan| plan.old == info.id)
@@ -152,6 +153,7 @@ fn collect_export_rename_plans(
                     };
                     if old_name == new_name
                         || new_name.len() < old_name.len()
+                        || name_is_import_binding(&new_name, module_names, binding_infos)
                         || name_conflicts_with_unmoved_binding(
                             binding_infos,
                             &plans,
@@ -272,6 +274,14 @@ fn compute_freed_names(
     }
 
     freed
+}
+
+fn name_is_import_binding(
+    new_name: &Atom,
+    module_names: &HashSet<Atom>,
+    binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
+) -> bool {
+    module_names.contains(new_name) && !binding_infos.contains_key(new_name)
 }
 
 fn name_conflicts_with_unmoved_binding(

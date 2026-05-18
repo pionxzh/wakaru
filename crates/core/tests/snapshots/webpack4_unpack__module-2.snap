@@ -10,6 +10,7 @@ export { C as o };
 export { j as c };
 export { R as h };
 export { N as k };
+export { M as r };
 export { A as m };
 export { L as f };
 export { I as p };
@@ -128,7 +129,7 @@ function R(e, ...n) {
 function N(e, ...n) {
     return E(f, P("fork", e, n));
 }
-export function r(e, ...n) {
+function M(e, ...n) {
     return x(N(e, ...n));
 }
 function A(...t) {

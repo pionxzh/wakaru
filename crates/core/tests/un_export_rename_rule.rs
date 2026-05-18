@@ -396,3 +396,23 @@ export const routerActions = {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn skips_rename_when_target_conflicts_with_import() {
+    // `export { eX as ee }` wants to rename `eX` → `ee`, but `ee` is already
+    // imported.  The rename must be blocked to avoid a duplicate declaration.
+    let input = r#"
+import ee from "./module.js";
+const eX = 42;
+console.log(ee);
+export { eX as ee };
+"#;
+    let expected = r#"
+import ee from "./module.js";
+const eX = 42;
+console.log(ee);
+export { eX as ee };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

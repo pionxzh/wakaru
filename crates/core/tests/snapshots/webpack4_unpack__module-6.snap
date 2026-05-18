@@ -5,10 +5,12 @@ expression: code
 import { b, c as c_2, h as h_2, p as p_2, q, w } from "./module-0.js";
 import { a } from "./module-9.js";
 import { a as a_3 } from "./module-12.js";
+export { u as a };
 export { l as e };
 export { c };
+export { d as b };
 export { h as f };
-export const a = {
+const u = {
     type: "@@redux-saga/CHANNEL_END"
 };
 const l = (e)=>e && e.type === "@@redux-saga/CHANNEL_END";
@@ -29,7 +31,7 @@ function c() {
 }
 const s = "invalid buffer passed to channel factory function";
 const f = "Saga was provided with an undefined action";
-export function b(e = a.fixed()) {
+function d(e = a.fixed()) {
     let t = false;
     let n = [];
     function i() {
@@ -46,7 +48,7 @@ export function b(e = a.fixed()) {
             i();
             h_2(o, q.func, "channel.take's callback must be a function");
             if (t && e.isEmpty()) {
-                o(a);
+                o(u);
             } else if (e.isEmpty()) {
                 n.push(o);
                 o.cancel = ()=>w(n, o);
@@ -74,7 +76,7 @@ export function b(e = a.fixed()) {
             i();
             h_2(n, q.func, "channel.flush' callback must be a function");
             if (t && e.isEmpty()) {
-                n(a);
+                n(u);
             } else {
                 n(e.flush());
             }
@@ -85,7 +87,7 @@ export function b(e = a.fixed()) {
                 const e = n;
                 n = [];
                 for(let r = 0, o = e.length; r < o; r++){
-                    e[r](a);
+                    e[r](u);
                 }
             }
         },
@@ -101,7 +103,7 @@ export function d(e, t = a.none(), n) {
     if (arguments.length > 2) {
         h_2(n, q.func, "Invalid match function passed to eventChannel");
     }
-    const i = b(t);
+    const i = d(t);
     const a = ()=>{
         if (!i.__closed__) {
             if (u) {
