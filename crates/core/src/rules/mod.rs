@@ -441,7 +441,11 @@ fn apply_rules_range_impl(
                 }
             }
             if started {
-                module.visit_mut_with(&mut $rule);
+                let span = tracing::debug_span!("rule", name = $name);
+                {
+                    let _enter = span.enter();
+                    module.visit_mut_with(&mut $rule);
+                }
                 if let Some(observer) = observer.as_deref_mut() {
                     observer($name, module);
                 }
@@ -461,7 +465,11 @@ fn apply_rules_range_impl(
     }
     if started {
         if RemoveVoid::should_run(module) {
-            module.visit_mut_with(&mut RemoveVoid::new(unresolved_mark));
+            let span = tracing::debug_span!("rule", name = "RemoveVoid");
+            {
+                let _enter = span.enter();
+                module.visit_mut_with(&mut RemoveVoid::new(unresolved_mark));
+            }
         }
         if let Some(observer) = observer.as_deref_mut() {
             observer("RemoveVoid", module);
