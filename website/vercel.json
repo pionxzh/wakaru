@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/playground/:path*", "destination": "https://wakaru-playground.vercel.app/playground/:path*" }
+  ]
+}

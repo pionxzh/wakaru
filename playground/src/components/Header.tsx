@@ -7,7 +7,7 @@ export function Header() {
       </div>
       <div className="header-right">
         <a
-          href="https://github.com/nicolo-ribaudo/wakaru"
+          href="https://github.com/pionxzh/wakaru"
           target="_blank"
           rel="noopener noreferrer"
           className="header-link"
