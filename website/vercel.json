@@ -2,7 +2,7 @@
   "buildCommand": "",
   "outputDirectory": ".",
   "rewrites": [
-    { "source": "/playground", "destination": "https://wakaru-playground.vercel.app/" },
-    { "source": "/playground/:path*", "destination": "https://wakaru-playground.vercel.app/:path*" }
+    { "source": "/playground", "destination": "https://wakaru-playground.vercel.app/playground" },
+    { "source": "/playground/:path*", "destination": "https://wakaru-playground.vercel.app/playground/:path*" }
   ]
 }
