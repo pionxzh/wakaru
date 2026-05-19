@@ -2,11 +2,9 @@
   "buildCommand": "npx vite build",
   "outputDirectory": "dist",
   "framework": "vite",
-  "rewrites": [
-    { "source": "/playground/:path*", "destination": "/:path*" },
-    { "source": "/playground", "destination": "/" }
-  ],
   "routes": [
+    { "src": "/playground$", "dest": "/" },
+    { "src": "/playground/(.*)", "dest": "/$1" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
