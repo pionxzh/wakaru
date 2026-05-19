@@ -293,8 +293,13 @@ fn destructuring_rename_function(func: &mut Function) {
         collect_names_in_pat(&p.pat, &mut all_names);
     }
 
-    // Collect renames from both params and body VarDecls
+    // Collect renames from both params and body VarDecls.
+    // Feed param-rename targets into all_names so body renames don't
+    // pick names that would shadow a just-renamed parameter.
     let mut renames = collect_obj_pat_renames_from_params(&func.params, &all_names);
+    for r in &renames {
+        all_names.insert(r.new.to_string());
+    }
     let body_renames = collect_obj_pat_renames_from_stmts(&body.stmts, &all_names);
     renames.extend(body_renames);
 
@@ -328,6 +333,9 @@ fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
         collect_names_in_pat(p, &mut all_names);
     }
     let mut renames = collect_obj_pat_renames_from_pats(&arrow.params, &all_names);
+    for r in &renames {
+        all_names.insert(r.new.to_string());
+    }
     if let BlockStmtOrExpr::BlockStmt(b) = arrow.body.as_ref() {
         renames.extend(collect_obj_pat_renames_from_stmts(&b.stmts, &all_names));
     }

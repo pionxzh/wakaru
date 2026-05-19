@@ -912,3 +912,23 @@ function a() {
 "#;
     assert_eq_normalized(&apply(input), input);
 }
+
+#[test]
+fn body_destructuring_does_not_shadow_renamed_param() {
+    // Param rename: A → signal.  Body rename for `w` must not also pick
+    // `signal` — that would create `let { signal } = Ty(signal, ...)` which
+    // is a TDZ violation (the new `signal` shadows the parameter).
+    let input = r#"
+async function rhY({ signal: A }) {
+    let O = 1;
+    let { signal: w, cleanup: j } = Ty(A, { timeoutMs: O });
+    console.log(w, j);
+}
+"#;
+    let output = apply(input);
+    // `w` should NOT become `signal` — must get a suffixed name or stay aliased
+    assert!(
+        !output.contains("let { signal, cleanup }"),
+        "body destructuring should not shadow renamed param: {output}"
+    );
+}
