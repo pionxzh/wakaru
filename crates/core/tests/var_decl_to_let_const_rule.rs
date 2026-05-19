@@ -446,3 +446,55 @@ function foo(x, y) {
     let output = apply_rule(input);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn var_used_in_for_body_before_declaration_stays_var() {
+    // nv8 is used in the loop body but declared after the loop.
+    // Converting to let would cause a TDZ violation.
+    let input = r#"
+for(var vC = 0; vC < items.length; ++vC){
+    nv8 = items[vC];
+    use(nv8);
+}
+var nv8;
+"#;
+    let expected = r#"
+for(let vC = 0; vC < items.length; ++vC){
+    nv8 = items[vC];
+    use(nv8);
+}
+var nv8;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn var_used_in_for_in_body_before_declaration_stays_var() {
+    let input = r#"
+for(var key in obj){
+    tmp = { value: obj[key] };
+    use(tmp);
+}
+var tmp;
+"#;
+    let expected = r#"
+for(const key in obj){
+    tmp = { value: obj[key] };
+    use(tmp);
+}
+var tmp;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn cross_declarator_for_head_reference_stays_var() {
+    // `var i = j, j = 1` — i's init references j which is declared later
+    // in the same for-head.  With var, j is hoisted (reads undefined).
+    // With let, j is in TDZ → ReferenceError.
+    let input = "for (var i = j, j = 1; i < 1; i++) {}";
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}

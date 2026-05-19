@@ -1885,7 +1885,7 @@ function An(e, t, n) {
 function Ln(e) {
     if (e && e.dispatchConfig.phasedRegistrationNames) {
         const n = [];
-        for(var t = e._targetInst; t;){
+        for(let t = e._targetInst; t;){
             n.push(t);
             t = Nn(t);
         }
