@@ -3,8 +3,8 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "routes": [
-    { "src": "/playground$", "dest": "/" },
-    { "src": "/playground/(.*)", "dest": "/$1" },
+    { "src": "/playground$", "dest": "/", "check": true },
+    { "src": "/playground/(.*)", "dest": "/$1", "check": true },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
