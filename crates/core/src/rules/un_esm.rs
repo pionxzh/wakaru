@@ -537,22 +537,40 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
     let mut converted_getter_map = false;
     let mut new_body = Vec::with_capacity(module.body.len());
     // Webpack5 getter maps appear at the top of the module, before the
-    // declarations they reference.  Named exports use `export { x }` which
-    // is a live binding and tolerates forward references.  But `default`
-    // exports become `export default expr` which evaluates eagerly — placing
-    // them at the getter position causes TDZ violations.  Collect them here
-    // and append at the end of the module body.
+    // declarations they reference.  Deferring all converted exports to the
+    // end of the body (a) avoids TDZ violations for `export default ident`
+    // and (b) places `exports.X = X` adjacent to its `const X = ...`
+    // declaration so merge_decl_and_named_export can fold them into
+    // `export const X = ...`.
+    let mut deferred_named: Vec<ModuleItem> = Vec::new();
     let mut deferred_default: Vec<ModuleItem> = Vec::new();
 
     for item in std::mem::take(&mut module.body) {
         if let Some(exports) = extract_direct_webpack_export_getters(&item, unresolved_mark) {
-            for export in exports {
-                let is_default = export.0.as_ref() == "default";
-                let item = make_exports_assign_item(export, unresolved_mark);
-                if is_default {
-                    deferred_default.push(item);
+            for (name, ident) in exports {
+                if name.as_ref() == "default" {
+                    // Webpack5 getter `() => ident` is a live accessor.
+                    // Emit `export { ident as default }` directly — this
+                    // preserves live-binding semantics and avoids TDZ,
+                    // bypassing CJS classification (which would snapshot).
+                    deferred_default.push(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
+                        NamedExport {
+                            span: DUMMY_SP,
+                            specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+                                span: DUMMY_SP,
+                                orig: ModuleExportName::Ident(ident),
+                                exported: Some(ModuleExportName::Ident(
+                                    IdentName::new("default".into(), DUMMY_SP).into(),
+                                )),
+                                is_type_only: false,
+                            })],
+                            src: None,
+                            type_only: false,
+                            with: None,
+                        },
+                    )));
                 } else {
-                    new_body.push(item);
+                    deferred_named.push(make_exports_assign_item((name, ident), unresolved_mark));
                 }
             }
             continue;
@@ -560,6 +578,9 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
 
         if let Some(exports) = extract_webpack_export_getter_iife(&item, unresolved_mark) {
             converted_getter_map = true;
+            // IIFE getters already reject `default` entries, so no TDZ risk.
+            // Keep them in-place to preserve adjacency with their declarations
+            // for merge_decl_and_named_export.
             new_body.extend(
                 exports
                     .into_iter()
@@ -575,6 +596,9 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
         new_body.push(item);
     }
 
+    // Named exports first (adjacent to their declarations for merging),
+    // then default exports last (after all declarations to avoid TDZ).
+    new_body.extend(deferred_named);
     new_body.extend(deferred_default);
     module.body = new_body;
 }

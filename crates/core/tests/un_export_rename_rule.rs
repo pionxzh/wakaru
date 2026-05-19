@@ -416,3 +416,48 @@ export { eX as ee };
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn import_blocked_edge_does_not_falsely_free_name() {
+    // `x → ee` is blocked because `ee` is imported, so `x` is NOT freed.
+    // `i → x` must not proceed — `x` is still occupied.
+    let input = r#"
+import ee from "./module.js";
+export { i as x };
+export { x as ee };
+const i = 1;
+const x = 2;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn skips_rename_to_await() {
+    let input = r#"
+const x = 1;
+export { x as await };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn skips_rename_to_eval() {
+    let input = r#"
+const x = 1;
+export { x as eval };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn skips_rename_to_arguments() {
+    let input = r#"
+const x = 1;
+export { x as arguments };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}

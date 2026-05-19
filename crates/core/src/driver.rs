@@ -6,8 +6,8 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Spanned, GLOBALS};
 use swc_core::ecma::ast::{
-    BindingIdent, ClassDecl, ImportDecl, ImportSpecifier, Module, ObjectPatProp, Pat, VarDecl,
-    VarDeclKind,
+    BindingIdent, ClassDecl, ForInStmt, ForOfStmt, ForStmt, ImportDecl, ImportSpecifier, Module,
+    ObjectPatProp, Pat, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax, TsSyntax};
@@ -916,6 +916,24 @@ impl Visit for DuplicateDeclarationCollector {
         class.visit_children_with(&mut child);
         self.duplicates.extend(child.duplicates);
     }
+
+    fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
+        let mut child = DuplicateDeclarationCollector::default();
+        stmt.visit_children_with(&mut child);
+        self.duplicates.extend(child.duplicates);
+    }
+
+    fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        let mut child = DuplicateDeclarationCollector::default();
+        stmt.visit_children_with(&mut child);
+        self.duplicates.extend(child.duplicates);
+    }
+
+    fn visit_for_stmt(&mut self, stmt: &ForStmt) {
+        let mut child = DuplicateDeclarationCollector::default();
+        stmt.visit_children_with(&mut child);
+        self.duplicates.extend(child.duplicates);
+    }
 }
 
 fn verify_output_parses(code: &str, filename: &str) -> Vec<UnpackWarning> {
@@ -1178,6 +1196,27 @@ mod tests {
                 .iter()
                 .any(|w| w.kind == UnpackWarningKind::DuplicateDeclaration),
             "separate block scopes should not report duplicate: {:?}",
+            output.warnings
+        );
+    }
+
+    #[test]
+    fn diagnostics_no_false_positive_across_for_of_loops() {
+        let output = decompile(
+            "function f(items) { for (const x of items) { } for (const x of items) { } }",
+            DecompileOptions {
+                diagnostics: true,
+                filename: "for-of-scopes.js".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("decompile should succeed");
+        assert!(
+            !output
+                .warnings
+                .iter()
+                .any(|w| w.kind == UnpackWarningKind::DuplicateDeclaration),
+            "separate for-of loop scopes should not report duplicate: {:?}",
             output.warnings
         );
     }

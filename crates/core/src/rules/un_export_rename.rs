@@ -73,7 +73,7 @@ fn collect_export_rename_plans(
     // the name `x` is occupied but will be freed because `x` is itself renamed
     // to `f`.  We pre-compute the full set of freed names so all renames can be
     // planned in a single pass without iterative chain-following.
-    let freed_names = compute_freed_names(module, binding_infos);
+    let freed_names = compute_freed_names(module, binding_infos, module_names);
 
     let mut plans = Vec::new();
 
@@ -98,6 +98,7 @@ fn collect_export_rename_plans(
                             }
                             let new_name = id.id.sym.clone();
                             if new_name != info.id.0
+                                && !is_invalid_binding_name(&new_name)
                                 && !name_is_import_binding(&new_name, module_names, binding_infos)
                                 && !plans
                                     .iter()
@@ -153,6 +154,7 @@ fn collect_export_rename_plans(
                     };
                     if old_name == new_name
                         || new_name.len() < old_name.len()
+                        || is_invalid_binding_name(&new_name)
                         || name_is_import_binding(&new_name, module_names, binding_infos)
                         || name_conflicts_with_unmoved_binding(
                             binding_infos,
@@ -195,6 +197,7 @@ fn collect_export_rename_plans(
 fn compute_freed_names(
     module: &Module,
     binding_infos: &HashMap<Atom, TopLevelBindingInfo>,
+    module_names: &HashSet<Atom>,
 ) -> HashSet<Atom> {
     // Step 1: collect eligible rename edges (orig → exported).
     // Only include edges that the planner would actually accept: the exported
@@ -222,6 +225,12 @@ fn compute_freed_names(
                         continue;
                     };
                     if info.exported {
+                        continue;
+                    }
+                    if is_invalid_binding_name(&exported.sym) {
+                        continue;
+                    }
+                    if name_is_import_binding(&exported.sym, module_names, binding_infos) {
                         continue;
                     }
                     if rename_causes_shadowing(module, &info.id, &exported.sym) {
@@ -274,6 +283,63 @@ fn compute_freed_names(
     }
 
     freed
+}
+
+fn is_invalid_binding_name(name: &str) -> bool {
+    matches!(
+        name,
+        // Reserved words
+        "break"
+            | "case"
+            | "catch"
+            | "class"
+            | "const"
+            | "continue"
+            | "debugger"
+            | "default"
+            | "delete"
+            | "do"
+            | "else"
+            | "enum"
+            | "export"
+            | "extends"
+            | "false"
+            | "finally"
+            | "for"
+            | "function"
+            | "if"
+            | "import"
+            | "in"
+            | "instanceof"
+            | "new"
+            | "null"
+            | "return"
+            | "super"
+            | "switch"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typeof"
+            | "var"
+            | "void"
+            | "while"
+            | "with"
+            // Strict-mode / module-level reserved
+            | "yield"
+            | "let"
+            | "static"
+            | "implements"
+            | "interface"
+            | "package"
+            | "private"
+            | "protected"
+            | "public"
+            // Not keywords but invalid as module binding identifiers
+            | "await"
+            | "eval"
+            | "arguments"
+    )
 }
 
 fn name_is_import_binding(
