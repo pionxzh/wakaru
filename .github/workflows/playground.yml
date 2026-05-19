@@ -1,0 +1,59 @@
+name: Playground Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/core/**"
+      - "crates/wasm/**"
+      - "playground/**"
+      - ".github/workflows/playground.yml"
+  workflow_dispatch:
+
+env:
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PLAYGROUND_PROJECT_ID }}
+
+concurrency:
+  group: playground-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM
+        run: wasm-pack build crates/wasm --target web --out-dir pkg --release
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel
+
+      - name: Install playground dependencies
+        working-directory: playground
+        run: npm install
+
+      - name: Pull Vercel environment
+        working-directory: playground
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build with Vercel
+        working-directory: playground
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy to Vercel
+        working-directory: playground
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}

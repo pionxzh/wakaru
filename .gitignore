@@ -13,6 +13,8 @@ libs/**/dist
 coverage
 dist
 target
+crates/wasm/pkg
+.vercel
 
 # Editor directories and files
 !.vscode/extensions.json
