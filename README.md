@@ -10,6 +10,8 @@ Fast JavaScript decompiler and bundle splitter for modern frontend.
 [![npm](https://img.shields.io/npm/v/@wakaru/cli?label=npm)](https://www.npmjs.com/package/@wakaru/cli)
 [![Telegram](https://img.shields.io/badge/Telegram-group-blue)](https://t.me/wakarujs)
 
+[Try the online playground](https://wakaru.vercel.app/playground)
+
 </div>
 
 ## Quick Start
