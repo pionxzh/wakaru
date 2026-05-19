@@ -4,8 +4,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{BytePos, SyntaxContext};
 use swc_core::ecma::ast::{
     ArrowExpr, BlockStmt, BlockStmtOrExpr, Class, ClassDecl, ClassMember, Decl, FnDecl, Function,
-    Ident, ImportDecl, ImportSpecifier, Key, MemberProp, Module, ModuleDecl, ModuleItem,
-    NamedExport, ObjectPatProp, Pat, PropName, Stmt, VarDecl, VarDeclKind,
+    GetterProp, Ident, ImportDecl, ImportSpecifier, Key, MemberProp, Module, ModuleDecl,
+    ModuleItem, NamedExport, ObjectPatProp, Pat, PropName, SetterProp, Stmt, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -86,6 +86,20 @@ impl Visit for TdzChecker {
             self.check_scope(block);
         }
         arrow.visit_children_with(self);
+    }
+
+    fn visit_getter_prop(&mut self, prop: &GetterProp) {
+        if let Some(body) = &prop.body {
+            self.check_scope(body);
+        }
+        prop.visit_children_with(self);
+    }
+
+    fn visit_setter_prop(&mut self, prop: &SetterProp) {
+        if let Some(body) = &prop.body {
+            self.check_scope(body);
+        }
+        prop.visit_children_with(self);
     }
 }
 
@@ -199,6 +213,18 @@ impl Visit for OrderedScopeChecker<'_> {
 
     fn visit_function(&mut self, _: &Function) {}
     fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+    fn visit_getter_prop(&mut self, prop: &GetterProp) {
+        if let PropName::Computed(c) = &prop.key {
+            c.visit_with(self);
+        }
+    }
+
+    fn visit_setter_prop(&mut self, prop: &SetterProp) {
+        if let PropName::Computed(c) = &prop.key {
+            c.visit_with(self);
+        }
+    }
 
     fn visit_class(&mut self, class: &Class) {
         if let Some(super_class) = &class.super_class {
@@ -610,5 +636,42 @@ function outer() {
     #[test]
     fn destructuring_assign_default_references_earlier() {
         assert!(violation_names("let { a = 1, b = a } = {};").is_empty());
+    }
+
+    #[test]
+    fn getter_body_self_reference_no_false_positive() {
+        assert!(
+            violation_names("let A = { get isRefreshing() { return A.isRefreshing; } };")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn setter_body_self_reference_no_false_positive() {
+        assert!(violation_names("let A = { set value(v) { A._value = v; } };").is_empty());
+    }
+
+    #[test]
+    fn getter_computed_key_tdz() {
+        assert_eq!(
+            violation_names("let A = { get [B]() { return 1; } };\nlet B = 'key';"),
+            vec!["B"]
+        );
+    }
+
+    #[test]
+    fn tdz_inside_getter_body() {
+        assert_eq!(
+            violation_names("let A = { get x() { console.log(y); let y = 1; } };"),
+            vec!["y"]
+        );
+    }
+
+    #[test]
+    fn tdz_inside_setter_body() {
+        assert_eq!(
+            violation_names("let A = { set x(v) { console.log(y); let y = v; } };"),
+            vec!["y"]
+        );
     }
 }
