@@ -4,7 +4,6 @@ import wasm from "vite-plugin-wasm";
 import path from "node:path";
 
 export default defineConfig({
-  base: "/playground/",
   plugins: [react(), wasm()],
   resolve: {
     alias: {
