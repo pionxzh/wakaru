@@ -2,7 +2,7 @@
 source: crates/core/tests/smart_rename_rule.rs
 expression: output
 ---
-export const LContext = o.createContext(null);
+export const l = o.createContext(null);
 function createElement() {
     let l = arguments.length - 2;
     if (e && e.defaultProps) {
@@ -10,4 +10,4 @@ function createElement() {
     }
     return l;
 }
-use(LContext);
+use(l);

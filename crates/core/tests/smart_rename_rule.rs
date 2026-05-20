@@ -195,6 +195,26 @@ const buttonRef = o.useRef(null);
 }
 
 #[test]
+fn react_rename_skips_exported_createcontext_binding() {
+    let input = r#"
+export const l = o.createContext(null);
+use(l);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn react_rename_skips_exported_useref_binding() {
+    let input = r#"
+export const r = useRef(null);
+use(r);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn object_destructuring_in_function_body() {
     let input = r#"
 function f() {

@@ -94,16 +94,8 @@ fn collect_react_renames_from_module_items(
     let mut used_names = all_names.clone();
 
     for item in body {
-        match item {
-            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
-                collect_react_var_decl_renames(var_decl, &mut renames, &mut used_names);
-            }
-            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export_decl)) => {
-                if let Decl::Var(var_decl) = &export_decl.decl {
-                    collect_react_var_decl_renames(var_decl, &mut renames, &mut used_names);
-                }
-            }
-            _ => {}
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item {
+            collect_react_var_decl_renames(var_decl, &mut renames, &mut used_names);
         }
     }
 
