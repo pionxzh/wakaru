@@ -1,7 +1,7 @@
 mod common;
 
 use common::normalize;
-use wakaru_core::{unpack_raw, unpack_webpack4, unpack_webpack4_raw, DecompileOptions};
+use wakaru_core::{unpack_webpack4, unpack_webpack4_raw};
 
 fn raw_modules(source: &str) -> Vec<(String, String)> {
     unpack_webpack4_raw(source).expect("raw webpack4 unpack should succeed")
@@ -15,24 +15,8 @@ fn raw_module(source: &str, filename: &str) -> String {
         .unwrap_or_else(|| panic!("expected module {filename} to exist"))
 }
 
-fn cli_raw_module(source: &str, filename: &str) -> String {
-    let output =
-        unpack_raw(source, &DecompileOptions::default()).expect("raw unpack should succeed");
-    assert!(
-        !output.has_errors(),
-        "unexpected warnings: {:?}",
-        output.warnings
-    );
-    output
-        .modules
-        .into_iter()
-        .find(|(name, _)| name == filename)
-        .map(|(_, code)| normalize(&code))
-        .unwrap_or_else(|| panic!("expected module {filename} to exist"))
-}
-
 #[test]
-fn runtime_getter_exports_become_esm_in_unpack_output() {
+fn runtime_getter_exports_stay_as_getters_in_raw_output() {
     let source = r#"
 !function(modules) {
   function __webpack_require__(id) {}
@@ -49,14 +33,45 @@ fn runtime_getter_exports_become_esm_in_unpack_output() {
 ]);
 "#;
 
-    let code = cli_raw_module(source, "entry.js");
+    let code = raw_module(source, "entry.js");
     assert!(
-        code.contains("export { V as $G }"),
-        "runtime getter export should become ESM:\n{code}"
+        code.contains(r#"require.d(exports, "$G", function() {"#),
+        "raw output should preserve runtime export getter:\n{code}"
     );
     assert!(
         !code.contains("exports.$G"),
-        "synthetic exports assignment should not survive:\n{code}"
+        "raw output should not lower runtime getter to eager assignment:\n{code}"
+    );
+}
+
+#[test]
+fn runtime_getter_exports_become_esm_after_rules() {
+    let source = r#"
+!function(modules) {
+  function __webpack_require__(id) {}
+  __webpack_require__.s = 0;
+  __webpack_require__(0);
+}([
+  function(module, exports, require) {
+    require.r(exports);
+    require.d(exports, "$G", function() { return V; });
+    function V(value) {
+      return value;
+    }
+  }
+]);
+"#;
+
+    let result = unpack_webpack4(source).expect("webpack4 unpack should succeed");
+    let code = result
+        .modules
+        .into_iter()
+        .find(|module| module.filename == "entry.js")
+        .map(|module| normalize(&module.code))
+        .expect("expected entry.js module");
+    assert!(
+        code.contains("export function $G"),
+        "runtime getter export should become ESM after rules:\n{code}"
     );
 }
 

@@ -494,10 +494,10 @@ fn apply_rules_range_impl(
     // flag, strip "use strict", split chained assignments, resolve webpack interop
     // getters — confirmed experimentally (see rule-dependency-inventory.md).
     run!(UnCurlyBraces, "UnCurlyBraces");
-    run!(UnEsmoduleFlag, "UnEsmoduleFlag");
+    run!(UnEsmoduleFlag::new(unresolved_mark), "UnEsmoduleFlag");
     run!(UnUseStrict, "UnUseStrict");
     run!(UnAssignmentMerging, "UnAssignmentMerging");
-    run!(UnWebpackInterop, "UnWebpackInterop");
+    run!(UnWebpackInterop::new(unresolved_mark), "UnWebpackInterop");
     run!(UnEsm::new(unresolved_mark, rewrite_level), "UnEsm");
 
     // Stage 3: Structural restoration
@@ -543,7 +543,7 @@ fn apply_rules_range_impl(
     run!(UnRegenerator::new(unresolved_mark), "UnRegenerator");
     run!(UnAsyncAwait, "UnAsyncAwait");
     // Second pass: catches interop getters exposed by UnAsyncAwait.
-    run!(UnWebpackInterop, "UnWebpackInterop2");
+    run!(UnWebpackInterop::new(unresolved_mark), "UnWebpackInterop2");
 
     // Stage 5: Modernization
     run!(UnThenCatch::new(unresolved_mark), "UnThenCatch");

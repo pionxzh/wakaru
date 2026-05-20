@@ -1,5 +1,5 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
@@ -355,7 +355,15 @@ var B = function(e) {
         }, x));
     };
 }();
-exports.Provider = d;
-exports.createProvider = f;
-exports.connectAdvanced = P;
-exports.connect = B;
+require.d(exports, "Provider", function() {
+    return d;
+});
+require.d(exports, "createProvider", function() {
+    return f;
+});
+require.d(exports, "connectAdvanced", function() {
+    return P;
+});
+require.d(exports, "connect", function() {
+    return B;
+});

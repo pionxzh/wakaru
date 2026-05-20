@@ -2,20 +2,6 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-export { i as x };
-export { a as e };
-export { l as b };
-export { c as a };
-export { s as c };
-export { f as d };
-export { h as u };
-export { y as h };
-export { x as f };
-export { k as l };
-export { C as y };
-export { R as s };
-export { L as k };
-export { D as i };
 const i = (e)=>`@@redux-saga/${e}`;
 const a = i("TASK");
 const u = i("HELPER");
@@ -222,3 +208,17 @@ const D = function e(t) {
         };
     };
 };
+export { i as x };
+export { a as e };
+export { l as b };
+export { c as a };
+export { s as c };
+export { f as d };
+export { h as u };
+export { y as h };
+export { x as f };
+export { k as l };
+export { C as y };
+export { R as s };
+export { L as k };
+export { D as i };

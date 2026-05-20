@@ -2,16 +2,10 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-import { b, c as c_2, h as h_2, p as p_2, q, w } from "./module-0.js";
-import { a } from "./module-9.js";
-import { a as a_3 } from "./module-12.js";
-export { u as a };
-export { l as e };
-export { c };
-export { d as b };
-export { p as d };
-export { h as f };
-const u = {
+import { b as b_2, c as c_2, h as h_2, p, q, w } from "./module-0.js";
+import { a as a_3 } from "./module-9.js";
+import { a as a_4 } from "./module-12.js";
+export const a = {
     type: "@@redux-saga/CHANNEL_END"
 };
 const l = (e)=>e && e.type === "@@redux-saga/CHANNEL_END";
@@ -32,15 +26,15 @@ function c() {
 }
 const s = "invalid buffer passed to channel factory function";
 const f = "Saga was provided with an undefined action";
-function d(e = a.fixed()) {
+export function b(e = a_3.fixed()) {
     let t = false;
     let n = [];
     function i() {
         if (t && n.length) {
-            throw p_2("Cannot have a closed channel with pending takers");
+            throw p("Cannot have a closed channel with pending takers");
         }
         if (n.length && !e.isEmpty()) {
-            throw p_2("Cannot have pending takers with non empty buffer");
+            throw p("Cannot have pending takers with non empty buffer");
         }
     }
     h_2(e, q.buffer, s);
@@ -49,7 +43,7 @@ function d(e = a.fixed()) {
             i();
             h_2(o, q.func, "channel.take's callback must be a function");
             if (t && e.isEmpty()) {
-                o(u);
+                o(a);
             } else if (e.isEmpty()) {
                 n.push(o);
                 o.cancel = ()=>w(n, o);
@@ -66,7 +60,7 @@ function d(e = a.fixed()) {
                 }
                 for(let a = 0; a < n.length; a++){
                     const u = n[a];
-                    if (!u[b] || u[b](o)) {
+                    if (!u[b_2] || u[b_2](o)) {
                         n.splice(a, 1);
                         return u(o);
                     }
@@ -77,7 +71,7 @@ function d(e = a.fixed()) {
             i();
             h_2(n, q.func, "channel.flush' callback must be a function");
             if (t && e.isEmpty()) {
-                n(u);
+                n(a);
             } else {
                 n(e.flush());
             }
@@ -88,7 +82,7 @@ function d(e = a.fixed()) {
                 const e = n;
                 n = [];
                 for(let r = 0, o = e.length; r < o; r++){
-                    e[r](u);
+                    e[r](a);
                 }
             }
         },
@@ -100,11 +94,11 @@ function d(e = a.fixed()) {
         }
     };
 }
-function p(e, t = a.none(), n) {
+export function d(e, t = a_3.none(), n) {
     if (arguments.length > 2) {
         h_2(n, q.func, "Invalid match function passed to eventChannel");
     }
-    const i = d(t);
+    const i = b(t);
     const a = ()=>{
         if (!i.__closed__) {
             if (u) {
@@ -133,11 +127,11 @@ function p(e, t = a.none(), n) {
     };
 }
 function h(e) {
-    const t = p((t)=>e((e)=>{
+    const t = d((t)=>e((e)=>{
             if (e[c_2]) {
                 t(e);
             } else {
-                a_3(()=>t(e));
+                a_4(()=>t(e));
             }
         }));
     return {
@@ -145,9 +139,12 @@ function h(e) {
         take (e, n) {
             if (arguments.length > 1) {
                 h_2(n, q.func, "channel.take's matcher argument must be a function");
-                e[b] = n;
+                e[b_2] = n;
             }
             t.take(e);
         }
     };
 }
+export { l as e };
+export { c };
+export { h as f };

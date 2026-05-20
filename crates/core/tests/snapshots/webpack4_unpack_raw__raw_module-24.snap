@@ -1,5 +1,5 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
@@ -726,17 +726,45 @@ var fe = function(e) {
         wrappedComponentRef: l().func
     }, ce()(t, e);
 };
-exports.BrowserRouter = h;
-exports.HashRouter = v;
-exports.Link = T;
-exports.MemoryRouter = C;
-exports.NavLink = F;
-exports.Prompt = q;
-exports.Redirect = K;
-exports.Route = A;
-exports.Router = f;
-exports.StaticRouter = re;
-exports.Switch = ie;
-exports.generatePath = ae;
-exports.matchPath = ue;
-exports.withRouter = fe;
+require.d(exports, "BrowserRouter", function() {
+    return h;
+});
+require.d(exports, "HashRouter", function() {
+    return v;
+});
+require.d(exports, "Link", function() {
+    return T;
+});
+require.d(exports, "MemoryRouter", function() {
+    return C;
+});
+require.d(exports, "NavLink", function() {
+    return F;
+});
+require.d(exports, "Prompt", function() {
+    return q;
+});
+require.d(exports, "Redirect", function() {
+    return K;
+});
+require.d(exports, "Route", function() {
+    return A;
+});
+require.d(exports, "Router", function() {
+    return f;
+});
+require.d(exports, "StaticRouter", function() {
+    return re;
+});
+require.d(exports, "Switch", function() {
+    return ie;
+});
+require.d(exports, "generatePath", function() {
+    return ae;
+});
+require.d(exports, "matchPath", function() {
+    return ue;
+});
+require.d(exports, "withRouter", function() {
+    return fe;
+});

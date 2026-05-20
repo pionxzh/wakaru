@@ -1,5 +1,5 @@
 ---
-source: tests/webpack4_unpack.rs
+source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import o, { q } from "./module-0.js";
@@ -655,17 +655,6 @@ export function runSaga(e, t, ...r) {
     }
     return y;
 }
-export const END = i.a;
-export const eventChannel = i.d;
-export const channel = i.b;
-export const buffers = a_2;
-export const takeEvery = w.a;
-export const takeLatest = w.c;
-export const throttle = w.e;
-export const delay = o.m;
-export const CANCEL = o.a;
-export const detach = u.i;
-export { E as effects };
 export default ((e = {})=>{
     const { context = {}, ...rest } = e;
     const { sagaMonitor, logger, onError } = rest;
@@ -712,3 +701,14 @@ export default ((e = {})=>{
     };
     return c;
 });
+export const END = i.a;
+export const eventChannel = i.d;
+export const channel = i.b;
+export const buffers = a_2;
+export const takeEvery = w.a;
+export const takeLatest = w.c;
+export const throttle = w.e;
+export const delay = o.m;
+export const CANCEL = o.a;
+export const detach = u.i;
+export { E as effects };

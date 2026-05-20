@@ -1,5 +1,5 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
@@ -171,12 +171,24 @@ function p(e, t, n) {
         }
     }, "q1", "throttle(" + a(t) + ", " + n.name + ")");
 }
-exports.a = m;
-exports.c = y;
-exports.e = v;
-exports.b = s;
-exports.d = f;
-exports.f = p;
+require.d(exports, "a", function() {
+    return m;
+});
+require.d(exports, "c", function() {
+    return y;
+});
+require.d(exports, "e", function() {
+    return v;
+});
+require.d(exports, "b", function() {
+    return s;
+});
+require.d(exports, "d", function() {
+    return f;
+});
+require.d(exports, "f", function() {
+    return p;
+});
 var h = function(e) {
     return "import { " + e + " } from 'redux-saga' has been deprecated in favor of import { " + e + " } from 'redux-saga/effects'.\nThe latter will not work with yield*, as helper effects are wrapped automatically for you in fork effect.\nTherefore yield " + e + " will return task descriptor to your saga and execute next lines of code.";
 }, m = Object(r.n)(s, h("takeEvery")), y = Object(r.n)(f, h("takeLatest")), v = Object(r.n)(p, h("throttle"));

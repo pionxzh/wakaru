@@ -1,5 +1,5 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
@@ -433,19 +433,45 @@ function g(e, t) {
     return d && d.effectResolved(m, y), y;
 }
 var w = require("./module-10.js"), E = require("./module-17.js");
-exports.runSaga = g;
-exports.END = i.a;
-exports.eventChannel = i.d;
-exports.channel = i.b;
-exports.buffers = l.a;
-exports.takeEvery = w.a;
-exports.takeLatest = w.c;
-exports.throttle = w.e;
-exports.delay = o.m;
-exports.CANCEL = o.a;
-exports.detach = u.i;
-exports.effects = E;
-exports.utils = r;
+require.d(exports, "runSaga", function() {
+    return g;
+});
+require.d(exports, "END", function() {
+    return i.a;
+});
+require.d(exports, "eventChannel", function() {
+    return i.d;
+});
+require.d(exports, "channel", function() {
+    return i.b;
+});
+require.d(exports, "buffers", function() {
+    return l.a;
+});
+require.d(exports, "takeEvery", function() {
+    return w.a;
+});
+require.d(exports, "takeLatest", function() {
+    return w.c;
+});
+require.d(exports, "throttle", function() {
+    return w.e;
+});
+require.d(exports, "delay", function() {
+    return o.m;
+});
+require.d(exports, "CANCEL", function() {
+    return o.a;
+});
+require.d(exports, "detach", function() {
+    return u.i;
+});
+require.d(exports, "effects", function() {
+    return E;
+});
+require.d(exports, "utils", function() {
+    return r;
+});
 exports.default = function() {
     var e = arguments.length > 0 && void 0 !== arguments[0] ? arguments[0] : {}, t = e.context, n = void 0 === t ? {} : t, r = function(e, t) {
         var n = {};

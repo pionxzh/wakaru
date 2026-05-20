@@ -1,28 +1,68 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
-exports.i = x;
-exports.s = k;
-exports.t = T;
-exports.n = S;
-exports.b = O;
-exports.o = C;
-exports.e = _;
-exports.c = j;
-exports.h = R;
-exports.k = N;
-exports.r = M;
-exports.m = A;
-exports.f = L;
-exports.p = I;
-exports.a = D;
-exports.g = F;
-exports.j = z;
-exports.l = q;
-exports.q = U;
-exports.d = W;
+require.d(exports, "i", function() {
+    return x;
+});
+require.d(exports, "s", function() {
+    return k;
+});
+require.d(exports, "t", function() {
+    return T;
+});
+require.d(exports, "n", function() {
+    return S;
+});
+require.d(exports, "b", function() {
+    return O;
+});
+require.d(exports, "o", function() {
+    return C;
+});
+require.d(exports, "e", function() {
+    return _;
+});
+require.d(exports, "c", function() {
+    return j;
+});
+require.d(exports, "h", function() {
+    return R;
+});
+require.d(exports, "k", function() {
+    return N;
+});
+require.d(exports, "r", function() {
+    return M;
+});
+require.d(exports, "m", function() {
+    return A;
+});
+require.d(exports, "f", function() {
+    return L;
+});
+require.d(exports, "p", function() {
+    return I;
+});
+require.d(exports, "a", function() {
+    return D;
+});
+require.d(exports, "g", function() {
+    return F;
+});
+require.d(exports, "j", function() {
+    return z;
+});
+require.d(exports, "l", function() {
+    return q;
+});
+require.d(exports, "q", function() {
+    return U;
+});
+require.d(exports, "d", function() {
+    return W;
+});
 var r = require("./module-0.js"), o = Object(r.x)("IO"), i = "TAKE", a = "PUT", u = "ALL", l = "RACE", c = "CALL", s = "CPS", f = "FORK", d = "JOIN", p = "CANCEL", h = "SELECT", m = "ACTION_CHANNEL", y = "CANCELLED", v = "FLUSH", b = "GET_CONTEXT", g = "SET_CONTEXT", w = "\n(HINT: if you are getting this errors in tests, consider using createMockTask from redux-saga/utils)", E = function(e, t) {
     var n;
     return (n = {})[o] = !0, n[e] = t, n;

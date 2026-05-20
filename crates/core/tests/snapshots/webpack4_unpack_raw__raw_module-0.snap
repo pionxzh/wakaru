@@ -1,35 +1,89 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
-exports.x = i;
-exports.e = a;
-exports.b = l;
-exports.a = c;
-exports.c = s;
-exports.d = f;
-exports.r = p;
-exports.u = h;
-exports.o = m;
-exports.h = y;
-exports.q = g;
-exports.v = w;
-exports.w = E;
-exports.f = x;
-exports.l = k;
-exports.g = T;
-exports.m = S;
-exports.j = O;
-exports.y = C;
-exports.t = j;
-exports.s = R;
-exports.n = N;
-exports.z = M;
-exports.p = A;
-exports.k = L;
-exports.A = I;
-exports.i = D;
+require.d(exports, "x", function() {
+    return i;
+});
+require.d(exports, "e", function() {
+    return a;
+});
+require.d(exports, "b", function() {
+    return l;
+});
+require.d(exports, "a", function() {
+    return c;
+});
+require.d(exports, "c", function() {
+    return s;
+});
+require.d(exports, "d", function() {
+    return f;
+});
+require.d(exports, "r", function() {
+    return p;
+});
+require.d(exports, "u", function() {
+    return h;
+});
+require.d(exports, "o", function() {
+    return m;
+});
+require.d(exports, "h", function() {
+    return y;
+});
+require.d(exports, "q", function() {
+    return g;
+});
+require.d(exports, "v", function() {
+    return w;
+});
+require.d(exports, "w", function() {
+    return E;
+});
+require.d(exports, "f", function() {
+    return x;
+});
+require.d(exports, "l", function() {
+    return k;
+});
+require.d(exports, "g", function() {
+    return T;
+});
+require.d(exports, "m", function() {
+    return S;
+});
+require.d(exports, "j", function() {
+    return O;
+});
+require.d(exports, "y", function() {
+    return C;
+});
+require.d(exports, "t", function() {
+    return j;
+});
+require.d(exports, "s", function() {
+    return R;
+});
+require.d(exports, "n", function() {
+    return N;
+});
+require.d(exports, "z", function() {
+    return M;
+});
+require.d(exports, "p", function() {
+    return A;
+});
+require.d(exports, "k", function() {
+    return L;
+});
+require.d(exports, "A", function() {
+    return I;
+});
+require.d(exports, "i", function() {
+    return D;
+});
 var r = Object.assign || function(e) {
     for(var t = 1; t < arguments.length; t++){
         var n = arguments[t];

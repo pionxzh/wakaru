@@ -1,5 +1,5 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
@@ -12,4 +12,6 @@ function r() {
         return e;
     }).apply(this, arguments);
 }
-exports.a = r;
+require.d(exports, "a", function() {
+    return r;
+});

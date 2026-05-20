@@ -1,9 +1,11 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
-exports.a = s;
+require.d(exports, "a", function() {
+    return s;
+});
 var r = require("./module-0.js"), o = "Channel's Buffer overflow!", i = 1, a = 3, u = 4, l = {
     isEmpty: r.r,
     put: r.u,

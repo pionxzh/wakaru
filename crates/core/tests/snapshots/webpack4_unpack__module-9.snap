@@ -3,7 +3,6 @@ source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import { r as isEmpty, u as u_2 } from "./module-0.js";
-export { s as a };
 const o = "Channel's Buffer overflow!";
 const i = 1;
 const a = 3;
@@ -88,3 +87,4 @@ const s = {
         return c(e, u);
     }
 };
+export { s as a };

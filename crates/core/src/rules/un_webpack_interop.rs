@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::SyntaxContext;
+use swc_core::common::{Mark, SyntaxContext};
 use swc_core::ecma::ast::{
     BlockStmtOrExpr, Callee, Expr, Ident, IfStmt, Lit, MemberExpr, MemberProp, Module, ModuleItem,
     Pat, ReturnStmt, Stmt, VarDecl, VarDeclarator,
@@ -40,7 +40,15 @@ use super::rename_utils::{
 ///
 /// Runs twice in the pipeline (as `UnWebpackInterop` and `UnWebpackInterop2`)
 /// to catch getters that only become visible after other rules simplify the AST.
-pub struct UnWebpackInterop;
+pub struct UnWebpackInterop {
+    unresolved_mark: Mark,
+}
+
+impl UnWebpackInterop {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
 
 type BindingKey = (Atom, SyntaxContext);
 
@@ -52,7 +60,7 @@ struct UsageStats {
 
 impl VisitMut for UnWebpackInterop {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let require_bindings = collect_require_bindings(module);
+        let require_bindings = collect_require_bindings(module, self.unresolved_mark);
         if require_bindings.is_empty() {
             return;
         }
@@ -131,7 +139,7 @@ impl VisitMut for UnWebpackInterop {
     }
 }
 
-fn collect_require_bindings(module: &Module) -> HashSet<BindingKey> {
+fn collect_require_bindings(module: &Module, unresolved_mark: Mark) -> HashSet<BindingKey> {
     let mut bindings = HashSet::new();
     for item in &module.body {
         if let ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(var))) = item {
@@ -142,7 +150,7 @@ fn collect_require_bindings(module: &Module) -> HashSet<BindingKey> {
                 let Some(init) = &decl.init else {
                     continue;
                 };
-                if is_require_call(init.as_ref()) {
+                if is_require_call(init.as_ref(), unresolved_mark) {
                     bindings.insert((binding.id.sym.clone(), binding.id.ctxt));
                 }
             }
@@ -151,12 +159,16 @@ fn collect_require_bindings(module: &Module) -> HashSet<BindingKey> {
     bindings
 }
 
-fn is_require_call(expr: &Expr) -> bool {
+fn is_require_call(expr: &Expr, unresolved_mark: Mark) -> bool {
     let Expr::Call(call) = expr else { return false };
     let Callee::Expr(callee) = &call.callee else {
         return false;
     };
-    matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require")
+    matches!(
+        callee.as_ref(),
+        Expr::Ident(id)
+            if id.sym.as_ref() == "require" && id.ctxt.outer() == unresolved_mark
+    )
 }
 
 fn match_interop_getter(expr: &Expr, require_bindings: &HashSet<BindingKey>) -> Option<Ident> {

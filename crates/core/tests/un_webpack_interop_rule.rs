@@ -5,7 +5,7 @@ use wakaru_core::rules::UnWebpackInterop;
 
 /// Render applying only UnWebpackInterop in isolation.
 fn render(input: &str) -> String {
-    render_rule(input, |_| UnWebpackInterop)
+    render_rule(input, UnWebpackInterop::new)
 }
 
 // ── Ternary (expression) form ──────────────────────────────────────
@@ -190,6 +190,18 @@ console.log(_lib2());
 "#;
     let output = render(input);
     insta::assert_snapshot!(output);
+}
+
+#[test]
+fn shadowed_require_binding_not_matched() {
+    let input = r#"
+function outer(require) {
+  var _lib = require("./lib");
+  var _lib2 = () => _lib && _lib.__esModule ? _lib.default : _lib;
+  console.log(_lib2());
+}
+"#;
+    assert_eq_normalized(&render(input), input);
 }
 
 #[test]

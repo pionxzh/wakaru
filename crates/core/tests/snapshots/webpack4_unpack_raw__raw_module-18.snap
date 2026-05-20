@@ -1,5 +1,5 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
@@ -111,16 +111,42 @@ function O(e) {
         };
     };
 }
-exports.ConnectedRouter = h;
-exports.getLocation = y;
-exports.createMatchSelector = v;
-exports.LOCATION_CHANGE = c;
-exports.routerReducer = f;
-exports.CALL_HISTORY_METHOD = b;
-exports.push = w;
-exports.replace = E;
-exports.go = x;
-exports.goBack = k;
-exports.goForward = T;
-exports.routerActions = S;
-exports.routerMiddleware = O;
+require.d(exports, "ConnectedRouter", function() {
+    return h;
+});
+require.d(exports, "getLocation", function() {
+    return y;
+});
+require.d(exports, "createMatchSelector", function() {
+    return v;
+});
+require.d(exports, "LOCATION_CHANGE", function() {
+    return c;
+});
+require.d(exports, "routerReducer", function() {
+    return f;
+});
+require.d(exports, "CALL_HISTORY_METHOD", function() {
+    return b;
+});
+require.d(exports, "push", function() {
+    return w;
+});
+require.d(exports, "replace", function() {
+    return E;
+});
+require.d(exports, "go", function() {
+    return x;
+});
+require.d(exports, "goBack", function() {
+    return k;
+});
+require.d(exports, "goForward", function() {
+    return T;
+});
+require.d(exports, "routerActions", function() {
+    return S;
+});
+require.d(exports, "routerMiddleware", function() {
+    return O;
+});

@@ -1,8 +1,7 @@
 ---
-source: tests/webpack4_unpack.rs
+source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-export { a };
 const r = [];
 let o = 0;
 function i(e) {
@@ -33,3 +32,4 @@ export function b() {
         i(e);
     }
 }
+export { a };

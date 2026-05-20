@@ -3,23 +3,6 @@ source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import r from "./module-0.js";
-export { x as i };
-export { k as s };
-export { O as b };
-export { C as o };
-export { j as c };
-export { R as h };
-export { N as k };
-export { M as r };
-export { A as m };
-export { L as f };
-export { I as p };
-export { D as a };
-export { F as g };
-export { z as j };
-export { q as l };
-export { U as q };
-export { W as d };
 const o = r.x("IO");
 const i = "TAKE";
 const a = "PUT";
@@ -217,3 +200,20 @@ const W = {
     getContext: H(b),
     setContext: H(g)
 };
+export { x as i };
+export { k as s };
+export { O as b };
+export { C as o };
+export { j as c };
+export { R as h };
+export { N as k };
+export { M as r };
+export { A as m };
+export { L as f };
+export { I as p };
+export { D as a };
+export { F as g };
+export { z as j };
+export { q as l };
+export { U as q };
+export { W as d };

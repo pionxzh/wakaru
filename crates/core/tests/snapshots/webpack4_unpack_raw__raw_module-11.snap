@@ -1,14 +1,26 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
-exports.createStore = l;
-exports.combineReducers = s;
-exports.bindActionCreators = d;
-exports.applyMiddleware = h;
-exports.compose = p;
-exports.__DO_NOT_USE__ActionTypes = o;
+require.d(exports, "createStore", function() {
+    return l;
+});
+require.d(exports, "combineReducers", function() {
+    return s;
+});
+require.d(exports, "bindActionCreators", function() {
+    return d;
+});
+require.d(exports, "applyMiddleware", function() {
+    return h;
+});
+require.d(exports, "compose", function() {
+    return p;
+});
+require.d(exports, "__DO_NOT_USE__ActionTypes", function() {
+    return o;
+});
 var r = require("./module-21.js"), o = {
     INIT: "@@redux/INIT" + Math.random().toString(36).substring(7).split("").join("."),
     REPLACE: "@@redux/REPLACE" + Math.random().toString(36).substring(7).split("").join(".")

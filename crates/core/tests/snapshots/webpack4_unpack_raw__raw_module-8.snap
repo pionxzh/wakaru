@@ -1,5 +1,5 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
@@ -128,13 +128,27 @@ function w() {
         }
     };
 }
-exports.createBrowserHistory = O;
-exports.createHashHistory = N;
-exports.createMemoryHistory = A;
-exports.createLocation = b;
-exports.locationsAreEqual = g;
-exports.parsePath = y;
-exports.createPath = v;
+require.d(exports, "createBrowserHistory", function() {
+    return O;
+});
+require.d(exports, "createHashHistory", function() {
+    return N;
+});
+require.d(exports, "createMemoryHistory", function() {
+    return A;
+});
+require.d(exports, "createLocation", function() {
+    return b;
+});
+require.d(exports, "locationsAreEqual", function() {
+    return g;
+});
+require.d(exports, "parsePath", function() {
+    return y;
+});
+require.d(exports, "createPath", function() {
+    return v;
+});
 var E = !("undefined" == typeof window || !window.document || !window.document.createElement);
 function x(e, t) {
     t(window.confirm(e));

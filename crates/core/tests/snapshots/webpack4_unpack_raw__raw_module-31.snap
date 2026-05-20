@@ -1,5 +1,5 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
@@ -7,4 +7,6 @@ function r(e) {
     var t, n = e.Symbol;
     return "function" == typeof n ? n.observable ? t = n.observable : (t = n("observable"), n.observable = t) : t = "@@observable", t;
 }
-exports.a = r;
+require.d(exports, "a", function() {
+    return r;
+});

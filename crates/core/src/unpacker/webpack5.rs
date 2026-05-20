@@ -2,12 +2,12 @@ use std::collections::HashMap;
 
 use anyhow::anyhow;
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, SyntaxContext, GLOBALS};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
     ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmtOrExpr, CallExpr,
-    Callee, Expr, ExprStmt, FnExpr, Function, Ident, IdentName, Lit, MemberExpr, MemberProp,
-    Module, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt,
-    VarDecl, VarDeclarator,
+    Callee, Expr, ExprStmt, FnExpr, Function, Ident, Lit, MemberExpr, MemberProp, Module,
+    ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, VarDecl,
+    VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 
@@ -16,7 +16,7 @@ use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use crate::rules::apply_default_rules;
-use crate::unpacker::webpack4::RequireIdRewriter;
+use crate::unpacker::webpack4::{rewrite_require_n_accesses, RequireIdRewriter};
 use crate::unpacker::{UnpackResult, UnpackedModule};
 
 struct Webpack5RuntimeNormalizer {
@@ -84,67 +84,23 @@ impl Webpack5RuntimeNormalizer {
         };
 
         match prop_name.sym.as_ref() {
-            "r" => Some(vec![]),
-            "d" => self.convert_require_d(stmt, call),
+            "r" => {
+                if call.args.len() != 1 {
+                    return None;
+                }
+                let Expr::Ident(exports_arg) = &*call.args[0].expr else {
+                    return None;
+                };
+                if exports_arg.sym != self.exports_sym
+                    || exports_arg.ctxt.outer() != self.unresolved_mark
+                {
+                    return None;
+                }
+                Some(vec![])
+            }
+            "d" => None,
             _ => None,
         }
-    }
-
-    fn convert_require_d(&self, stmt: &Stmt, call: &CallExpr) -> Option<Vec<Stmt>> {
-        let span = stmt.span();
-        let exports_ident = Ident::new(self.exports_sym.clone(), span, Default::default());
-
-        // Webpack5 form: require.d(exports, { key: getter, ... })
-        if call.args.len() == 2 {
-            let Expr::Object(defs) = &*call.args[1].expr else {
-                return None;
-            };
-            let mut assignments = Vec::new();
-
-            for prop in &defs.props {
-                let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
-                    return None;
-                };
-                let swc_core::ecma::ast::Prop::KeyValue(key_value) = &**prop else {
-                    return None;
-                };
-                let export_name = match &key_value.key {
-                    swc_core::ecma::ast::PropName::Ident(name) => name.sym.clone(),
-                    swc_core::ecma::ast::PropName::Str(name) => {
-                        Atom::from(name.value.as_str().unwrap_or(""))
-                    }
-                    _ => return None,
-                };
-                let value = extract_getter_value(&key_value.value)?;
-                assignments.push(build_member_assign(
-                    exports_ident.clone(),
-                    export_name,
-                    value,
-                    span,
-                ));
-            }
-
-            return Some(assignments);
-        }
-
-        // Webpack4 form: require.d(exports, "name", getter)
-        if call.args.len() == 3 {
-            let Expr::Lit(Lit::Str(name_str)) = &*call.args[1].expr else {
-                return None;
-            };
-            let export_name: Atom = name_str.value.as_str().map(Atom::from).unwrap_or_else(|| {
-                Atom::from(name_str.value.to_string_lossy().into_owned().as_str())
-            });
-            let value = extract_getter_value(&call.args[2].expr)?;
-            return Some(vec![build_member_assign(
-                exports_ident,
-                export_name,
-                value,
-                span,
-            )]);
-        }
-
-        None
     }
 }
 
@@ -575,6 +531,8 @@ fn emit_webpack5_module(
     };
     synthetic_module.visit_mut_with(&mut id_rewriter);
 
+    rewrite_require_n_accesses(&mut synthetic_module, require_sym.clone(), unresolved_mark);
+
     let mut normalizer = Webpack5RuntimeNormalizer {
         require_sym,
         exports_sym,
@@ -818,52 +776,6 @@ fn extract_require_call_id(expr: &Expr, require_sym: &Atom) -> Option<String> {
     }
 }
 
-fn extract_getter_value(expr: &Expr) -> Option<Box<Expr>> {
-    match expr {
-        Expr::Fn(fn_expr) => {
-            let body = fn_expr.function.body.as_ref()?;
-            if body.stmts.len() == 1 {
-                if let Stmt::Return(ret) = &body.stmts[0] {
-                    return ret.arg.clone();
-                }
-            }
-            None
-        }
-        Expr::Arrow(arrow_expr) => match &*arrow_expr.body {
-            swc_core::ecma::ast::BlockStmtOrExpr::Expr(expr) => Some(expr.clone()),
-            swc_core::ecma::ast::BlockStmtOrExpr::BlockStmt(block) => {
-                if block.stmts.len() == 1 {
-                    if let Stmt::Return(ret) = &block.stmts[0] {
-                        return ret.arg.clone();
-                    }
-                }
-                None
-            }
-        },
-        _ => None,
-    }
-}
-
-fn build_member_assign(obj_ident: Ident, prop_name: Atom, val: Box<Expr>, span: Span) -> Stmt {
-    let member = MemberExpr {
-        span,
-        obj: Box::new(Expr::Ident(obj_ident)),
-        prop: MemberProp::Ident(IdentName::new(prop_name, span)),
-    };
-
-    let assign = AssignExpr {
-        span,
-        op: AssignOp::Assign,
-        left: AssignTarget::Simple(SimpleAssignTarget::Member(member)),
-        right: val,
-    };
-
-    Stmt::Expr(ExprStmt {
-        span,
-        expr: Box::new(Expr::Assign(assign)),
-    })
-}
-
 fn build_module_from_stmts(stmts: Vec<Stmt>) -> Module {
     Module {
         span: Default::default(),
@@ -886,29 +798,6 @@ fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
             .map_err(|e| anyhow!("emit error: {e:?}"))?;
     }
     String::from_utf8(output).map_err(|e| anyhow!("utf8 error: {e}"))
-}
-
-trait StmtSpan {
-    fn span(&self) -> Span;
-}
-
-impl StmtSpan for Stmt {
-    fn span(&self) -> Span {
-        match self {
-            Stmt::Expr(expr) => expr.span,
-            Stmt::Block(block) => block.span,
-            Stmt::Return(ret) => ret.span,
-            Stmt::If(if_stmt) => if_stmt.span,
-            Stmt::Throw(throw_stmt) => throw_stmt.span,
-            Stmt::Decl(decl) => match decl {
-                swc_core::ecma::ast::Decl::Var(var) => var.span,
-                swc_core::ecma::ast::Decl::Fn(func) => func.function.span,
-                swc_core::ecma::ast::Decl::Class(class) => class.class.span,
-                _ => Default::default(),
-            },
-            _ => Default::default(),
-        }
-    }
 }
 
 #[cfg(test)]

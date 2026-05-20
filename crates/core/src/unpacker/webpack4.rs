@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
-use swc_core::common::{sync::Lrc, Mark, SourceMap, Span, GLOBALS};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr,
     CallExpr, Callee, CondExpr, Expr, ExprOrSpread, ExprStmt, FnExpr, Id, Ident, IdentName, Lit,
@@ -26,8 +26,11 @@ enum ModuleId {
     Named(String),
 }
 
-/// Removes `require.r(exports)` calls and converts `require.d(exports, "name", getter)` to
-/// `exports.name = val`. This normalizes webpack runtime helpers before applying rules.
+/// Removes webpack's pure ESM marker from extracted module code.
+///
+/// Export getter helpers stay in the module for the rule pipeline. Lowering
+/// `require.d(exports, ...)` here would turn live getters into eager
+/// assignments before `UnEsm` can recover ESM export bindings.
 struct WebpackRuntimeNormalizer {
     /// The symbol name used for the require-like parameter
     require_sym: Atom,
@@ -144,41 +147,7 @@ impl WebpackRuntimeNormalizer {
                 // Remove `require.r(exports)` entirely
                 Some(vec![])
             }
-            "d" => {
-                // Convert `require.d(exports, "name", function() { return val; })` to `exports.name = val;`
-                if call.args.len() != 3 {
-                    return None;
-                }
-                let Expr::Ident(exports_arg) = &*call.args[0].expr else {
-                    return None;
-                };
-                if exports_arg.sym != self.exports_sym
-                    || exports_arg.ctxt.outer() != self.unresolved_mark
-                {
-                    return None;
-                }
-                let name_arg = &call.args[1];
-                let getter_arg = &call.args[2];
-
-                // Second arg must be a string literal (the export name)
-                let Expr::Lit(Lit::Str(name_str)) = &*name_arg.expr else {
-                    return None;
-                };
-                // name_str.value is Wtf8Atom; convert to Atom via &str
-                let export_name: Atom =
-                    name_str.value.as_str().map(Atom::from).unwrap_or_else(|| {
-                        Atom::from(name_str.value.to_string_lossy().into_owned().as_str())
-                    });
-
-                // Third arg must be a getter function: function() { return val; } or () => val
-                let val_expr = extract_getter_value(&getter_arg.expr)?;
-
-                // Build: exports.name = val;
-                let span = stmt.span();
-                let exports_ident = Ident::new(self.exports_sym.clone(), span, Default::default());
-                let assign_stmt = build_member_assign(exports_ident, export_name, val_expr, span);
-                Some(vec![assign_stmt])
-            }
+            "d" => None,
             _ => None,
         }
     }
@@ -422,58 +391,23 @@ impl VisitMut for RequireNAccessRewriter {
     }
 }
 
-/// Extracts the return value from a getter function `function() { return val; }` or `() => val`.
-fn extract_getter_value(expr: &Expr) -> Option<Box<Expr>> {
-    match expr {
-        Expr::Fn(fn_expr) => {
-            let body = fn_expr.function.body.as_ref()?;
-            // Must have exactly one statement: return <val>
-            if body.stmts.len() == 1 {
-                if let Stmt::Return(ret) = &body.stmts[0] {
-                    return ret.arg.clone();
-                }
-            }
-            None
-        }
-        Expr::Arrow(arrow_expr) => {
-            use swc_core::ecma::ast::BlockStmtOrExpr;
-            match &*arrow_expr.body {
-                BlockStmtOrExpr::Expr(e) => Some(e.clone()),
-                BlockStmtOrExpr::BlockStmt(block) => {
-                    if block.stmts.len() == 1 {
-                        if let Stmt::Return(ret) = &block.stmts[0] {
-                            return ret.arg.clone();
-                        }
-                    }
-                    None
-                }
-            }
-        }
-        _ => None,
+pub(crate) fn rewrite_require_n_accesses(
+    module: &mut Module,
+    require_sym: Atom,
+    unresolved_mark: Mark,
+) {
+    let mut n_rewriter = RequireNRewriter {
+        require_sym,
+        unresolved_mark,
+        getter_ids: HashSet::new(),
+    };
+    module.visit_mut_with(&mut n_rewriter);
+    if !n_rewriter.getter_ids.is_empty() {
+        let mut access_rewriter = RequireNAccessRewriter {
+            getter_ids: n_rewriter.getter_ids,
+        };
+        module.visit_mut_with(&mut access_rewriter);
     }
-}
-
-/// Builds `obj.name = val` as a Stmt.
-fn build_member_assign(obj_ident: Ident, prop_name: Atom, val: Box<Expr>, span: Span) -> Stmt {
-    use swc_core::ecma::ast::{AssignExpr, AssignOp, AssignTarget, MemberExpr, SimpleAssignTarget};
-
-    let member = MemberExpr {
-        span,
-        obj: Box::new(Expr::Ident(obj_ident)),
-        prop: MemberProp::Ident(IdentName::new(prop_name, span)),
-    };
-
-    let assign = AssignExpr {
-        span,
-        op: AssignOp::Assign,
-        left: AssignTarget::Simple(SimpleAssignTarget::Member(member)),
-        right: val,
-    };
-
-    Stmt::Expr(ExprStmt {
-        span,
-        expr: Box::new(Expr::Assign(assign)),
-    })
 }
 
 /// Detects whether the parsed module is a webpack4 bundle and extracts modules,
@@ -964,20 +898,11 @@ fn build_factory_module(
     );
 
     // Step 1c: rewrite require.n(expr) to an explicit getter and normalize `.a` accesses.
-    {
-        let mut n_rewriter = RequireNRewriter {
-            require_sym: post_rename_require_sym.clone(),
-            unresolved_mark,
-            getter_ids: HashSet::new(),
-        };
-        synthetic_module.visit_mut_with(&mut n_rewriter);
-        if !n_rewriter.getter_ids.is_empty() {
-            let mut access_rewriter = RequireNAccessRewriter {
-                getter_ids: n_rewriter.getter_ids,
-            };
-            synthetic_module.visit_mut_with(&mut access_rewriter);
-        }
-    }
+    rewrite_require_n_accesses(
+        &mut synthetic_module,
+        post_rename_require_sym.clone(),
+        unresolved_mark,
+    );
 
     // Step 2: normalize webpack runtime helpers (require.r / require.d)
     let final_require_sym = if param_syms.get(2).map(|s| s.as_ref()) == Some("require") {
@@ -1572,31 +1497,6 @@ fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
             .map_err(|e| anyhow!("emit error: {e:?}"))?;
     }
     String::from_utf8(output).map_err(|e| anyhow!("utf8 error: {e}"))
-}
-
-// Need Stmt::span() helper — import it
-trait StmtSpan {
-    fn span(&self) -> Span;
-}
-
-impl StmtSpan for Stmt {
-    fn span(&self) -> Span {
-        use swc_core::ecma::ast::*;
-        match self {
-            Stmt::Expr(e) => e.span,
-            Stmt::Block(b) => b.span,
-            Stmt::Return(r) => r.span,
-            Stmt::If(i) => i.span,
-            Stmt::Throw(t) => t.span,
-            Stmt::Decl(d) => match d {
-                Decl::Var(v) => v.span,
-                Decl::Fn(f) => f.function.span,
-                Decl::Class(c) => c.class.span,
-                _ => Default::default(),
-            },
-            _ => Default::default(),
-        }
-    }
 }
 
 #[cfg(test)]

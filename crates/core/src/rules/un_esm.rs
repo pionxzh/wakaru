@@ -547,30 +547,36 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
 
     for item in std::mem::take(&mut module.body) {
         if let Some(exports) = extract_direct_webpack_export_getters(&item, unresolved_mark) {
-            for (name, ident) in exports {
+            for (name, expr) in exports {
                 if name.as_ref() == "default" {
-                    // Webpack5 getter `() => ident` is a live accessor.
-                    // Emit `export { ident as default }` directly — this
-                    // preserves live-binding semantics and avoids TDZ,
-                    // bypassing CJS classification (which would snapshot).
-                    deferred_default.push(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
-                        NamedExport {
-                            span: DUMMY_SP,
-                            specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+                    if let Expr::Ident(ident) = *expr {
+                        // Webpack5 getter `() => ident` is a live accessor.
+                        // Emit `export { ident as default }` directly — this
+                        // preserves live-binding semantics and avoids TDZ,
+                        // bypassing CJS classification (which would snapshot).
+                        deferred_default.push(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
+                            NamedExport {
                                 span: DUMMY_SP,
-                                orig: ModuleExportName::Ident(ident),
-                                exported: Some(ModuleExportName::Ident(
-                                    IdentName::new("default".into(), DUMMY_SP).into(),
-                                )),
-                                is_type_only: false,
-                            })],
-                            src: None,
-                            type_only: false,
-                            with: None,
-                        },
-                    )));
+                                specifiers: vec![ExportSpecifier::Named(ExportNamedSpecifier {
+                                    span: DUMMY_SP,
+                                    orig: ModuleExportName::Ident(ident),
+                                    exported: Some(ModuleExportName::Ident(
+                                        IdentName::new("default".into(), DUMMY_SP).into(),
+                                    )),
+                                    is_type_only: false,
+                                })],
+                                src: None,
+                                type_only: false,
+                                with: None,
+                            },
+                        )));
+                    } else {
+                        deferred_default
+                            .push(make_exports_assign_expr_item((name, expr), unresolved_mark));
+                    }
                 } else {
-                    deferred_named.push(make_exports_assign_item((name, ident), unresolved_mark));
+                    deferred_named
+                        .push(make_exports_assign_expr_item((name, expr), unresolved_mark));
                 }
             }
             continue;
@@ -584,7 +590,7 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
             new_body.extend(
                 exports
                     .into_iter()
-                    .map(|export| make_exports_assign_item(export, unresolved_mark)),
+                    .map(|export| make_exports_assign_expr_item(export, unresolved_mark)),
             );
             continue;
         }
@@ -606,7 +612,7 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
 fn extract_direct_webpack_export_getters(
     item: &ModuleItem,
     unresolved_mark: Mark,
-) -> Option<Vec<(Atom, Ident)>> {
+) -> Option<Vec<(Atom, Box<Expr>)>> {
     let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
         return None;
     };
@@ -646,8 +652,8 @@ fn extract_direct_webpack_export_getters(
         if !is_valid_js_ident(export_name) {
             return None;
         }
-        let ident = extract_getter_expr_return_ident(call.args[2].expr.as_ref())?;
-        return Some(vec![(export_name.into(), ident)]);
+        let expr = extract_getter_expr_return_expr(call.args[2].expr.as_ref())?;
+        return Some(vec![(export_name.into(), expr)]);
     }
 
     None
@@ -656,7 +662,7 @@ fn extract_direct_webpack_export_getters(
 fn extract_webpack_export_getter_iife(
     item: &ModuleItem,
     unresolved_mark: Mark,
-) -> Option<Vec<(Atom, Ident)>> {
+) -> Option<Vec<(Atom, Box<Expr>)>> {
     let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
         return None;
     };
@@ -822,13 +828,13 @@ fn is_export_getter_descriptor(expr: &Expr, map_param: &Ident, loop_ident: &Iden
 
 fn extract_export_getter_map(
     object: &swc_core::ecma::ast::ObjectLit,
-) -> Option<Vec<(Atom, Ident)>> {
+) -> Option<Vec<(Atom, Box<Expr>)>> {
     let mut exports = Vec::with_capacity(object.props.len());
     for prop in &object.props {
         let PropOrSpread::Prop(prop) = prop else {
             return None;
         };
-        let (name, ident) = match prop.as_ref() {
+        let (name, expr) = match prop.as_ref() {
             Prop::Method(method) => {
                 let name = prop_name_as_atom(&method.key)?;
                 if !method.function.params.is_empty()
@@ -837,22 +843,22 @@ fn extract_export_getter_map(
                 {
                     return None;
                 }
-                let ident = extract_single_return_ident(method.function.body.as_ref()?)?;
-                (name, ident)
+                let expr = extract_single_return_expr(method.function.body.as_ref()?)?;
+                (name, expr)
             }
             Prop::KeyValue(entry) => {
                 let name = prop_name_as_atom(&entry.key)?;
-                let ident = extract_getter_expr_return_ident(entry.value.as_ref())?;
-                (name, ident)
+                let expr = extract_getter_expr_return_expr(entry.value.as_ref())?;
+                (name, expr)
             }
             _ => return None,
         };
-        exports.push((name, ident));
+        exports.push((name, expr));
     }
     Some(exports)
 }
 
-fn extract_getter_expr_return_ident(expr: &Expr) -> Option<Ident> {
+fn extract_getter_expr_return_expr(expr: &Expr) -> Option<Box<Expr>> {
     match expr {
         Expr::Fn(fn_expr) => {
             if fn_expr.ident.is_some()
@@ -862,41 +868,35 @@ fn extract_getter_expr_return_ident(expr: &Expr) -> Option<Ident> {
             {
                 return None;
             }
-            extract_single_return_ident(fn_expr.function.body.as_ref()?)
+            extract_single_return_expr(fn_expr.function.body.as_ref()?)
         }
         Expr::Arrow(arrow) => {
             if !arrow.params.is_empty() || arrow.is_async || arrow.is_generator {
                 return None;
             }
             match arrow.body.as_ref() {
-                BlockStmtOrExpr::BlockStmt(block) => extract_single_return_ident(block),
-                BlockStmtOrExpr::Expr(expr) => {
-                    if let Expr::Ident(id) = expr.as_ref() {
-                        Some(id.clone())
-                    } else {
-                        None
-                    }
-                }
+                BlockStmtOrExpr::BlockStmt(block) => extract_single_return_expr(block),
+                BlockStmtOrExpr::Expr(expr) => Some(expr.clone()),
             }
         }
         _ => None,
     }
 }
 
-fn extract_single_return_ident(block: &BlockStmt) -> Option<Ident> {
+fn extract_single_return_expr(block: &BlockStmt) -> Option<Box<Expr>> {
     if block.stmts.len() != 1 {
         return None;
     }
     let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = &block.stmts[0] else {
         return None;
     };
-    let Expr::Ident(id) = arg.as_ref() else {
-        return None;
-    };
-    Some(id.clone())
+    Some(arg.clone())
 }
 
-fn make_exports_assign_item((name, ident): (Atom, Ident), unresolved_mark: Mark) -> ModuleItem {
+fn make_exports_assign_expr_item(
+    (name, expr): (Atom, Box<Expr>),
+    unresolved_mark: Mark,
+) -> ModuleItem {
     ModuleItem::Stmt(Stmt::Expr(ExprStmt {
         span: DUMMY_SP,
         expr: Box::new(Expr::Assign(AssignExpr {
@@ -910,7 +910,7 @@ fn make_exports_assign_item((name, ident): (Atom, Ident), unresolved_mark: Mark)
                 ))),
                 prop: MemberProp::Ident(IdentName::new(name, DUMMY_SP)),
             })),
-            right: Box::new(Expr::Ident(ident)),
+            right: expr,
         })),
     }))
 }

@@ -1,5 +1,5 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
@@ -29,24 +29,66 @@ function u(e, t, n) {
         n
     ].concat(a));
 }
-exports.take = r.s;
-exports.takem = r.t;
-exports.put = r.n;
-exports.all = r.b;
-exports.race = r.o;
-exports.call = r.e;
-exports.apply = r.c;
-exports.cps = r.h;
-exports.fork = r.k;
-exports.spawn = r.r;
-exports.join = r.m;
-exports.cancel = r.f;
-exports.select = r.p;
-exports.actionChannel = r.a;
-exports.cancelled = r.g;
-exports.flush = r.j;
-exports.getContext = r.l;
-exports.setContext = r.q;
-exports.takeEvery = i;
-exports.takeLatest = a;
-exports.throttle = u;
+require.d(exports, "take", function() {
+    return r.s;
+});
+require.d(exports, "takem", function() {
+    return r.t;
+});
+require.d(exports, "put", function() {
+    return r.n;
+});
+require.d(exports, "all", function() {
+    return r.b;
+});
+require.d(exports, "race", function() {
+    return r.o;
+});
+require.d(exports, "call", function() {
+    return r.e;
+});
+require.d(exports, "apply", function() {
+    return r.c;
+});
+require.d(exports, "cps", function() {
+    return r.h;
+});
+require.d(exports, "fork", function() {
+    return r.k;
+});
+require.d(exports, "spawn", function() {
+    return r.r;
+});
+require.d(exports, "join", function() {
+    return r.m;
+});
+require.d(exports, "cancel", function() {
+    return r.f;
+});
+require.d(exports, "select", function() {
+    return r.p;
+});
+require.d(exports, "actionChannel", function() {
+    return r.a;
+});
+require.d(exports, "cancelled", function() {
+    return r.g;
+});
+require.d(exports, "flush", function() {
+    return r.j;
+});
+require.d(exports, "getContext", function() {
+    return r.l;
+});
+require.d(exports, "setContext", function() {
+    return r.q;
+});
+require.d(exports, "takeEvery", function() {
+    return i;
+});
+require.d(exports, "takeLatest", function() {
+    return a;
+});
+require.d(exports, "throttle", function() {
+    return u;
+});

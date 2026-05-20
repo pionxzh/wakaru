@@ -1,11 +1,17 @@
 ---
-source: tests/webpack4_unpack_raw.rs
+source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
-exports.a = a;
-exports.c = u;
-exports.b = c;
+require.d(exports, "a", function() {
+    return a;
+});
+require.d(exports, "c", function() {
+    return u;
+});
+require.d(exports, "b", function() {
+    return c;
+});
 var r = [], o = 0;
 function i(e) {
     try {

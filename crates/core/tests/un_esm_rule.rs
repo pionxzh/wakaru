@@ -332,6 +332,20 @@ function i(t, e = null) {
 }
 
 #[test]
+fn direct_webpack_export_getter_member_return_does_not_leak_helper() {
+    let input = r#"
+const effects = require("./effects.js");
+require.d(exports, "take", ()=>effects.take);
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("require.d"),
+        "webpack export getter helper should not survive:\n{output}"
+    );
+    insta::assert_snapshot!(output);
+}
+
+#[test]
 fn direct_webpack_export_getter_map_becomes_named_exports() {
     let input = r#"
 require.d(exports, {

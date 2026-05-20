@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::UnEsmoduleFlag;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnEsmoduleFlag)
+    render_rule(input, UnEsmoduleFlag::new)
 }
 
 #[test]
@@ -87,4 +87,17 @@ exports.__esModule = false;
 
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_remove_shadowed_exports_or_require() {
+    let input = r#"
+function outer(exports, require) {
+  require.r(exports);
+  exports.__esModule = true;
+}
+"#;
+
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
 }
