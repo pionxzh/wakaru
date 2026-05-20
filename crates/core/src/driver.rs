@@ -3,6 +3,7 @@ use std::fmt;
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
+use rayon::prelude::*;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, Spanned, GLOBALS};
 use swc_core::ecma::ast::{
@@ -13,9 +14,6 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax, TsSyntax};
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
-
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
@@ -506,7 +504,8 @@ fn normalize_raw_unpacked_module(source: &str, filename: &str) -> Result<String>
 /// `UnpackOutput::warnings` so callers can surface them without silent
 /// swallowing.
 ///
-/// When the `parallel` feature is enabled, both phases run via rayon `par_iter`.
+/// Both phases run via rayon. On targets without threading support, Rayon falls
+/// back to sequential execution.
 fn unpack_multi_module(
     modules: Vec<crate::unpacker::UnpackedModule>,
     options: DecompileOptions,
@@ -550,10 +549,7 @@ fn unpack_multi_module(
             (unpacked.filename.clone(), facts, warning)
         };
 
-    #[cfg(feature = "parallel")]
     let phase1: Vec<_> = modules.par_iter().map(collect_facts).collect();
-    #[cfg(not(feature = "parallel"))]
-    let phase1: Vec<_> = modules.iter().map(collect_facts).collect();
 
     let mut module_facts = ModuleFactsMap::new();
     let mut warnings = Vec::new();
@@ -639,10 +635,7 @@ fn unpack_multi_module(
             }
         };
 
-    #[cfg(feature = "parallel")]
     let triples: Vec<_> = modules.into_par_iter().map(decompile_module).collect();
-    #[cfg(not(feature = "parallel"))]
-    let triples: Vec<_> = modules.into_iter().map(decompile_module).collect();
 
     let mut modules = Vec::with_capacity(triples.len());
     for (filename, code, module_warnings) in triples {

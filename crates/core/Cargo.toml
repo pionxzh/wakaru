@@ -10,11 +10,10 @@ name = "wakaru_core"
 
 [features]
 default = []
-parallel = ["dep:rayon"]
 
 [dependencies]
 anyhow.workspace = true
-rayon = { version = "1.11", optional = true }
+rayon = "1.11"
 similar = "2"
 sourcemap.workspace = true
 swc_core.workspace = true
