@@ -256,19 +256,24 @@ fn extract_inline_interop_arg_with_kind(expr: &Expr) -> Option<(Box<Expr>, Inter
     // Unwrap parens around the callee
     let callee = strip_parens_expr(callee);
 
-    let body_stmts = match callee {
+    match callee {
         Expr::Arrow(ArrowExpr { body, params, .. }) if params.len() == 1 => match &**body {
-            BlockStmtOrExpr::BlockStmt(block) => &block.stmts,
-            _ => return None,
+            BlockStmtOrExpr::BlockStmt(block) => {
+                let kind = classify_interop_body(&block.stmts)?;
+                Some((args[0].expr.clone(), kind))
+            }
+            BlockStmtOrExpr::Expr(expr) => {
+                let kind = classify_interop_expr(expr)?;
+                Some((args[0].expr.clone(), kind))
+            }
         },
         Expr::Fn(FnExpr { function, .. }) if function.params.len() == 1 => {
-            function.body.as_ref()?.stmts.as_slice()
+            let stmts = function.body.as_ref()?.stmts.as_slice();
+            let kind = classify_interop_body(stmts)?;
+            Some((args[0].expr.clone(), kind))
         }
-        _ => return None,
-    };
-
-    let kind = classify_interop_body(body_stmts)?;
-    Some((args[0].expr.clone(), kind))
+        _ => None,
+    }
 }
 
 #[derive(PartialEq)]
@@ -279,9 +284,38 @@ enum InteropKind {
     Wildcard,
 }
 
+/// Check if an expression matches the ternary interop pattern:
+/// `e && e.__esModule ? e : { default: e }`
+fn classify_interop_expr(expr: &Expr) -> Option<InteropKind> {
+    let Expr::Cond(cond) = expr else {
+        return None;
+    };
+    if is_esmodule_check(&cond.test) && is_default_object_expr(&cond.alt) {
+        return Some(InteropKind::Default);
+    }
+    None
+}
+
 /// Check if the function body matches an __esModule interop pattern.
 fn classify_interop_body(stmts: &[Stmt]) -> Option<InteropKind> {
     if stmts.is_empty() {
+        return None;
+    }
+
+    // Ternary form (1 stmt): return e && e.__esModule ? e : { default: e }
+    if stmts.len() == 1 {
+        let Stmt::Return(ret) = &stmts[0] else {
+            return None;
+        };
+        let Some(arg) = &ret.arg else {
+            return None;
+        };
+        let Expr::Cond(cond) = &**arg else {
+            return None;
+        };
+        if is_esmodule_check(&cond.test) && is_default_object_expr(&cond.alt) {
+            return Some(InteropKind::Default);
+        }
         return None;
     }
 
@@ -378,6 +412,26 @@ fn is_default_assignment(stmt: &Stmt) -> bool {
         return false;
     };
     is_default_prop(&member.prop)
+}
+
+/// Check if expression matches `{ default: <anything> }`
+fn is_default_object_expr(expr: &Expr) -> bool {
+    let Expr::Object(obj) = expr else {
+        return false;
+    };
+    if obj.props.len() != 1 {
+        return false;
+    }
+    let swc_core::ecma::ast::PropOrSpread::Prop(prop) = &obj.props[0] else {
+        return false;
+    };
+    let swc_core::ecma::ast::Prop::KeyValue(kv) = &**prop else {
+        return false;
+    };
+    matches!(
+        &kv.key,
+        swc_core::ecma::ast::PropName::Ident(id) if id.sym.as_ref() == "default"
+    )
 }
 
 fn is_default_prop(prop: &MemberProp) -> bool {

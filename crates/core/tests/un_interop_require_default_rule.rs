@@ -182,6 +182,38 @@ console.log(x);
 }
 
 #[test]
+fn unwraps_inline_ternary_iife() {
+    // Inline IIFE using ternary form (not if/return) — the pattern from webpack4 module-27.
+    // Previously required a double-pass: UnConditionals expanded the ternary first,
+    // then UnInteropRequireDefault matched the if/return form on re-parse.
+    let input = r#"
+var i = function(e) {
+    return e && e.__esModule ? e : { default: e };
+}(require("./module-36.js"));
+console.log(i.default);
+"#;
+    let expected = r#"
+import i from "./module-36.js";
+console.log(i);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_inline_ternary_arrow_iife() {
+    // Same pattern but with arrow function syntax
+    let input = r#"
+var i = ((e) => e && e.__esModule ? e : { default: e })(require("./mod.js"));
+console.log(i.default);
+"#;
+    let expected = r#"
+import i from "./mod.js";
+console.log(i);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn unwraps_inline_wildcard_interop_iife() {
     // interopRequireWildcard: copies all properties + sets .default
     let input = r#"
