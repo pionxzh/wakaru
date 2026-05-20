@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render_rule};
+use common::{assert_eq_normalized, render_pipeline, render_rule};
 use wakaru_core::rules::UnWebpackInterop;
 
 /// Render applying only UnWebpackInterop in isolation.
@@ -232,6 +232,20 @@ const ref = _lib2;
 "#;
     let output = render(input);
     insta::assert_snapshot!(output);
+}
+
+#[test]
+fn pipeline_inlines_direct_require_n_after_esm_imports_exist() {
+    let input = r#"
+import _lib from "./lib";
+const _lib2 = require.n(_lib);
+console.log(_lib2()().astSync(source));
+"#;
+    let expected = r#"
+import _lib from "./lib";
+console.log(_lib().astSync(source));
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected.trim());
 }
 
 // ── No require bindings → rule is a no-op ──────────────────────────

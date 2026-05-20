@@ -131,6 +131,10 @@ fn rule_names_contains_key_rules() {
         "missing UnWebpackInterop2 (second pass)"
     );
     assert!(
+        names.contains(&"UnWebpackInterop3"),
+        "missing UnWebpackInterop3 (third pass)"
+    );
+    assert!(
         names.contains(&"UnParameters2"),
         "missing UnParameters2 (second pass)"
     );

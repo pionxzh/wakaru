@@ -211,7 +211,7 @@ pub fn apply_default_rules_with_level(
 
 /// Run the decompile pipeline, stopping immediately after `stop_after` completes.
 /// Rule names match their struct names (e.g. "SmartInline", "UnEsm").
-/// Second passes are suffixed: "UnWebpackInterop2", "UnIife2".
+/// Repeated passes are suffixed: "UnWebpackInterop2", "UnWebpackInterop3", "UnIife2".
 pub fn apply_rules_until(module: &mut Module, unresolved_mark: Mark, stop_after: &str) {
     apply_rules_until_with_level(
         module,
@@ -324,6 +324,7 @@ pub fn rule_names() -> &'static [&'static str] {
         "ImportDedup",
         "UnImportRename",
         "UnExportRename",
+        "UnWebpackInterop3",
         "UnDestructuring",
         "UnParameters2",
         "SmartInline",
@@ -571,6 +572,9 @@ fn apply_rules_range_impl(
     run!(ImportDedup, "ImportDedup");
     run!(UnImportRename, "UnImportRename");
     run!(UnExportRename, "UnExportRename");
+    // Third pass: catches direct `require.n(importBinding)` helpers that only
+    // become visible after UnEsm converts `require()` bindings to imports.
+    run!(UnWebpackInterop::new(unresolved_mark), "UnWebpackInterop3");
     run!(UnDestructuring::new(unresolved_mark), "UnDestructuring");
     // UnDestructuring can expose `param === undefined ? {} : param` initializers.
     run!(
