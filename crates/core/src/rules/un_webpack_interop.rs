@@ -3,8 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext};
 use swc_core::ecma::ast::{
-    BlockStmtOrExpr, Callee, Expr, Ident, IfStmt, ImportSpecifier, Lit, MemberExpr, MemberProp,
-    Module, ModuleDecl, ModuleItem, Pat, ReturnStmt, Stmt, VarDecl, VarDeclarator,
+    AssignOp, AssignTarget, BindingIdent, BlockStmtOrExpr, Callee, Expr, Ident, IfStmt,
+    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Pat, ReturnStmt,
+    SimpleAssignTarget, Stmt, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -64,6 +65,16 @@ impl VisitMut for UnWebpackInterop {
         if module_bindings.is_empty() {
             return;
         }
+
+        let initial_ref_counts = collect_binding_ref_counts(module);
+        let mut namespace_replacer = WebpackNamespaceReplacer {
+            initial_ref_counts: &initial_ref_counts,
+            module_bindings: &module_bindings,
+            removed_caches: HashSet::new(),
+            unresolved_mark: self.unresolved_mark,
+        };
+        module.visit_mut_with(&mut namespace_replacer);
+        remove_unused_namespace_cache_decls(module, &namespace_replacer.removed_caches);
 
         let mut candidates: HashMap<BindingKey, Ident> = HashMap::new();
         for item in &module.body {
@@ -239,6 +250,235 @@ fn match_require_n_getter(
         return None;
     }
     Some(base.clone())
+}
+
+struct NamespaceMatch {
+    base: Ident,
+    cache: Option<BindingKey>,
+}
+
+fn match_require_t_namespace(
+    expr: &Expr,
+    module_bindings: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> Option<NamespaceMatch> {
+    let expr = strip_parens(expr);
+    match expr {
+        Expr::Call(call) => match_require_t_call(call, module_bindings, unresolved_mark)
+            .map(|base| NamespaceMatch { base, cache: None }),
+        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+            let AssignTarget::Simple(SimpleAssignTarget::Ident(cache)) = &assign.left else {
+                return None;
+            };
+            match_require_t_namespace(assign.right.as_ref(), module_bindings, unresolved_mark).map(
+                |mut namespace| {
+                    namespace.cache = Some((cache.id.sym.clone(), cache.id.ctxt));
+                    namespace
+                },
+            )
+        }
+        Expr::Bin(bin) if bin.op == swc_core::ecma::ast::BinaryOp::LogicalOr => {
+            let namespace =
+                match_require_t_namespace(bin.right.as_ref(), module_bindings, unresolved_mark)?;
+            let Some(cache) = &namespace.cache else {
+                return None;
+            };
+            let Expr::Ident(left) = strip_parens(bin.left.as_ref()) else {
+                return None;
+            };
+            if &(left.sym.clone(), left.ctxt) != cache {
+                return None;
+            }
+            Some(namespace)
+        }
+        _ => None,
+    }
+}
+
+fn strip_parens(mut expr: &Expr) -> &Expr {
+    while let Expr::Paren(paren) = expr {
+        expr = paren.expr.as_ref();
+    }
+    expr
+}
+
+fn match_require_t_call(
+    call: &swc_core::ecma::ast::CallExpr,
+    module_bindings: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> Option<Ident> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(require_ident) = member.obj.as_ref() else {
+        return None;
+    };
+    if require_ident.sym.as_ref() != "require" || require_ident.ctxt.outer() != unresolved_mark {
+        return None;
+    }
+    if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "t") {
+        return None;
+    }
+    if call.args.len() != 2 || call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+    let Expr::Ident(base) = call.args[0].expr.as_ref() else {
+        return None;
+    };
+    if !module_bindings.contains(&(base.sym.clone(), base.ctxt)) {
+        return None;
+    }
+    if !matches!(call.args[1].expr.as_ref(), Expr::Lit(Lit::Num(mode)) if mode.value == 2.0) {
+        return None;
+    }
+    Some(base.clone())
+}
+
+fn static_member_prop_name(prop: &MemberProp) -> Option<&str> {
+    match prop {
+        MemberProp::Ident(prop) => Some(prop.sym.as_ref()),
+        MemberProp::Computed(computed) => static_string_expr(computed.expr.as_ref()),
+        _ => None,
+    }
+}
+
+fn static_string_expr(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Lit(Lit::Str(value)) => value.value.as_str(),
+        Expr::Call(call) if call.args.is_empty() => {
+            let Callee::Expr(callee) = &call.callee else {
+                return None;
+            };
+            let Expr::Member(member) = callee.as_ref() else {
+                return None;
+            };
+            if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "toString") {
+                return None;
+            }
+            let Expr::Lit(Lit::Str(value)) = member.obj.as_ref() else {
+                return None;
+            };
+            value.value.as_str()
+        }
+        _ => None,
+    }
+}
+
+fn remove_unused_namespace_cache_decls(module: &mut Module, caches: &HashSet<BindingKey>) {
+    if caches.is_empty() {
+        return;
+    }
+
+    let refs = collect_binding_refs(module, caches);
+    let removable: HashSet<_> = caches.difference(&refs).cloned().collect();
+    if removable.is_empty() {
+        return;
+    }
+
+    let mut new_body = Vec::with_capacity(module.body.len());
+    for item in module.body.drain(..) {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(mut var))) => {
+                var.decls
+                    .retain(|decl| !is_empty_decl_for_binding(decl, &removable));
+                if !var.decls.is_empty() {
+                    new_body.push(ModuleItem::Stmt(Stmt::Decl(
+                        swc_core::ecma::ast::Decl::Var(var),
+                    )));
+                }
+            }
+            other => new_body.push(other),
+        }
+    }
+    module.body = new_body;
+}
+
+fn collect_binding_refs(module: &Module, targets: &HashSet<BindingKey>) -> HashSet<BindingKey> {
+    struct RefCollector<'a> {
+        targets: &'a HashSet<BindingKey>,
+        refs: HashSet<BindingKey>,
+    }
+
+    impl Visit for RefCollector<'_> {
+        fn visit_ident(&mut self, ident: &Ident) {
+            let key = (ident.sym.clone(), ident.ctxt);
+            if self.targets.contains(&key) {
+                self.refs.insert(key);
+            }
+        }
+
+        fn visit_binding_ident(&mut self, _: &BindingIdent) {}
+
+        fn visit_prop_name(&mut self, _: &swc_core::ecma::ast::PropName) {}
+    }
+
+    let mut collector = RefCollector {
+        targets,
+        refs: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.refs
+}
+
+fn is_empty_decl_for_binding(decl: &VarDeclarator, bindings: &HashSet<BindingKey>) -> bool {
+    if decl.init.is_some() {
+        return false;
+    }
+    let Pat::Ident(binding) = &decl.name else {
+        return false;
+    };
+    bindings.contains(&(binding.id.sym.clone(), binding.id.ctxt))
+}
+
+fn collect_binding_ref_counts(module: &Module) -> HashMap<BindingKey, usize> {
+    struct RefCounter {
+        refs: HashMap<BindingKey, usize>,
+    }
+
+    impl Visit for RefCounter {
+        fn visit_ident(&mut self, ident: &Ident) {
+            *self
+                .refs
+                .entry((ident.sym.clone(), ident.ctxt))
+                .or_insert(0) += 1;
+        }
+
+        fn visit_binding_ident(&mut self, _: &BindingIdent) {}
+
+        fn visit_prop_name(&mut self, _: &swc_core::ecma::ast::PropName) {}
+    }
+
+    let mut counter = RefCounter {
+        refs: HashMap::new(),
+    };
+    module.visit_with(&mut counter);
+    counter.refs
+}
+
+fn count_binding_refs_in_expr(expr: &Expr, target: &BindingKey) -> usize {
+    struct RefCounter<'a> {
+        target: &'a BindingKey,
+        refs: usize,
+    }
+
+    impl Visit for RefCounter<'_> {
+        fn visit_ident(&mut self, ident: &Ident) {
+            if &(ident.sym.clone(), ident.ctxt) == self.target {
+                self.refs += 1;
+            }
+        }
+
+        fn visit_binding_ident(&mut self, _: &BindingIdent) {}
+
+        fn visit_prop_name(&mut self, _: &swc_core::ecma::ast::PropName) {}
+    }
+
+    let mut counter = RefCounter { target, refs: 0 };
+    expr.visit_with(&mut counter);
+    counter.refs
 }
 
 fn match_interop_cond(expr: &Expr, require_bindings: &HashSet<BindingKey>) -> Option<Ident> {
@@ -589,4 +829,47 @@ impl VisitMut for GetterReplacer<'_> {
             prop.visit_mut_with(self);
         }
     }
+}
+
+struct WebpackNamespaceReplacer<'a> {
+    initial_ref_counts: &'a HashMap<BindingKey, usize>,
+    module_bindings: &'a HashSet<BindingKey>,
+    removed_caches: HashSet<BindingKey>,
+    unresolved_mark: Mark,
+}
+
+impl VisitMut for WebpackNamespaceReplacer<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        let Expr::Member(member) = expr else {
+            return;
+        };
+        let Some(prop_name) = static_member_prop_name(&member.prop) else {
+            return;
+        };
+        let Some(namespace) = match_require_t_namespace(
+            member.obj.as_ref(),
+            self.module_bindings,
+            self.unresolved_mark,
+        ) else {
+            return;
+        };
+        if let Some(cache) = namespace.cache {
+            let total_refs = self.initial_ref_counts.get(&cache).copied().unwrap_or(0);
+            let local_refs = count_binding_refs_in_expr(member.obj.as_ref(), &cache);
+            if total_refs != local_refs {
+                return;
+            }
+            self.removed_caches.insert(cache);
+        }
+
+        if prop_name == "default" {
+            *expr = Expr::Ident(namespace.base);
+        } else {
+            *member.obj = Expr::Ident(namespace.base);
+        }
+    }
+
+    fn visit_mut_prop_name(&mut self, _: &mut swc_core::ecma::ast::PropName) {}
 }

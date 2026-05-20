@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/un_webpack_interop_rule.rs
+expression: output
+---
+let ns;
+const react = require("./react");
+let useId = (ns || (ns = require.t(react, 2))).useId;
+console.log(ns);

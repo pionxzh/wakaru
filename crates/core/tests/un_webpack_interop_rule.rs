@@ -248,6 +248,80 @@ console.log(_lib().astSync(source));
     assert_eq_normalized(&render_pipeline(input), expected.trim());
 }
 
+// ── Webpack require.t namespace helper form ────────────────────────
+
+#[test]
+fn require_t_mode_2_named_property_read_uses_module_binding() {
+    let input = r#"
+const react = require("./react");
+let useId = require.t(react, 2).useId || (() => undefined);
+"#;
+    let expected = r#"
+const react = require("./react");
+let useId = react.useId || (() => undefined);
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn require_t_mode_2_cached_namespace_property_read_uses_module_binding() {
+    let input = r#"
+let ns;
+const react = require("./react");
+let useId = (ns || (ns = require.t(react, 2)))["useId".toString()] || (() => undefined);
+"#;
+    let expected = r#"
+const react = require("./react");
+let useId = react["useId".toString()] || (() => undefined);
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn require_t_cached_namespace_with_later_cache_use_not_inlined() {
+    let input = r#"
+let ns;
+const react = require("./react");
+let useId = (ns || (ns = require.t(react, 2))).useId;
+console.log(ns);
+"#;
+    let output = render(input);
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn require_t_mode_2_default_property_read_returns_module_binding() {
+    let input = r#"
+const lib = require("./lib");
+let value = require.t(lib, 2).default;
+"#;
+    let expected = r#"
+const lib = require("./lib");
+let value = lib;
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn require_t_dynamic_property_read_not_inlined() {
+    let input = r#"
+const react = require("./react");
+let useId = require.t(react, 2)[name];
+"#;
+    let output = render(input);
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn require_t_non_mode_2_not_inlined() {
+    let input = r#"
+const lib = require("./lib");
+let value = require.t(lib, 19).default;
+"#;
+    let output = render(input);
+    insta::assert_snapshot!(output);
+}
+
 // ── No require bindings → rule is a no-op ──────────────────────────
 
 #[test]
