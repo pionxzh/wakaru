@@ -1,0 +1,20 @@
+---
+source: crates/core/tests/un_esm_rule.rs
+expression: output
+---
+import "./module-11.js";
+const r = {
+    apiBase: "https://example.com",
+    timeout: 5000
+};
+export default r;
+export const VERSION = "2.1.0";
+export function getConfig(t) {
+    return r[t];
+}
+export function mergeConfig(t) {
+    return {
+        ...r,
+        ...t
+    };
+}

@@ -534,6 +534,8 @@ fn get_or_insert<'a>(
 }
 
 fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
+    expose_unused_iife_webpack_export_getters(module, unresolved_mark);
+
     let mut converted_getter_map = false;
     let mut new_body = Vec::with_capacity(module.body.len());
     // Webpack5 getter maps appear at the top of the module, before the
@@ -607,6 +609,131 @@ fn rewrite_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
     new_body.extend(deferred_named);
     new_body.extend(deferred_default);
     module.body = new_body;
+}
+
+fn expose_unused_iife_webpack_export_getters(module: &mut Module, unresolved_mark: Mark) {
+    if module.body.len() != 1 {
+        return;
+    }
+    let Some(expanded) =
+        extract_unused_iife_webpack_export_getter_body(&module.body[0], unresolved_mark)
+    else {
+        return;
+    };
+    module.body = expanded;
+}
+
+fn extract_unused_iife_webpack_export_getter_body(
+    item: &ModuleItem,
+    unresolved_mark: Mark,
+) -> Option<Vec<ModuleItem>> {
+    let ModuleItem::Stmt(Stmt::Expr(expr_stmt)) = item else {
+        return None;
+    };
+    let Expr::Call(call) = expr_stmt.expr.as_ref() else {
+        return None;
+    };
+    if call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+
+    let Callee::Expr(callee_expr) = &call.callee else {
+        return None;
+    };
+    let Expr::Arrow(arrow) = strip_expr_parens(callee_expr.as_ref()) else {
+        return None;
+    };
+    let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
+        return None;
+    };
+    if block_has_top_level_return(block) || block_contains_arguments_ident(block) {
+        return None;
+    }
+    if !block_contains_direct_webpack_export_getter(block, unresolved_mark) {
+        return None;
+    }
+    if arrow_params_used_in_block(arrow, block) {
+        return None;
+    }
+
+    let mut items = Vec::with_capacity(call.args.len() + block.stmts.len());
+    items.extend(call.args.iter().map(|arg| {
+        ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: arg.expr.clone(),
+        }))
+    }));
+    items.extend(block.stmts.iter().cloned().map(ModuleItem::Stmt));
+    Some(items)
+}
+
+fn block_contains_direct_webpack_export_getter(block: &BlockStmt, unresolved_mark: Mark) -> bool {
+    block.stmts.iter().any(|stmt| {
+        extract_direct_webpack_export_getters(&ModuleItem::Stmt(stmt.clone()), unresolved_mark)
+            .is_some()
+    })
+}
+
+fn block_has_top_level_return(block: &BlockStmt) -> bool {
+    block
+        .stmts
+        .iter()
+        .any(|stmt| matches!(stmt, Stmt::Return(_)))
+}
+
+fn arrow_params_used_in_block(arrow: &ArrowExpr, block: &BlockStmt) -> bool {
+    let params: Vec<Ident> = arrow
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            Pat::Ident(binding) => Some(binding.id.clone()),
+            _ => None,
+        })
+        .collect();
+    if params.len() != arrow.params.len() {
+        return true;
+    }
+    if params.is_empty() {
+        return false;
+    }
+
+    let mut finder = IdentUseFinder {
+        targets: &params,
+        found: false,
+    };
+    block.visit_with(&mut finder);
+    finder.found
+}
+
+struct IdentUseFinder<'a> {
+    targets: &'a [Ident],
+    found: bool,
+}
+
+impl Visit for IdentUseFinder<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if self.targets.iter().any(|target| same_ident(ident, target)) {
+            self.found = true;
+        }
+    }
+}
+
+fn block_contains_arguments_ident(block: &BlockStmt) -> bool {
+    let mut finder = ArgumentsIdentFinder { found: false };
+    block.visit_with(&mut finder);
+    finder.found
+}
+
+struct ArgumentsIdentFinder {
+    found: bool,
+}
+
+impl Visit for ArgumentsIdentFinder {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym == "arguments" {
+            self.found = true;
+        }
+    }
 }
 
 fn extract_direct_webpack_export_getters(

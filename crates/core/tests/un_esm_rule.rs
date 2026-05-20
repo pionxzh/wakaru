@@ -362,6 +362,50 @@ function i(t, e = null) {
 }
 
 #[test]
+fn unused_iife_with_webpack_export_getters_becomes_module_exports() {
+    let input = r#"
+((t)=>{
+  require.d(exports, "VERSION", ()=>o);
+  require.d(exports, "getConfig", ()=>i);
+  require.d(exports, "mergeConfig", ()=>u);
+  const r = {
+    apiBase: "https://example.com",
+    timeout: 5000
+  };
+  exports.default = r;
+  const o = "2.1.0";
+  function i(t) {
+    return r[t];
+  }
+  function u(t) {
+    return { ...r, ...t };
+  }
+})(require("./module-11.js"));
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("require.d"),
+        "webpack export getter helper should not survive:\n{output}"
+    );
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn iife_with_used_param_keeps_webpack_export_getter_wrapped() {
+    let input = r#"
+((t)=>{
+  require.d(exports, "value", ()=>t.value);
+})(require("./dep.js"));
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("require.d"),
+        "webpack export getter should stay wrapped when the IIFE param is used:\n{output}"
+    );
+    insta::assert_snapshot!(output);
+}
+
+#[test]
 fn webpack_export_getter_iife_keeps_non_compat_if_block() {
     let input = r#"
 ((exports_1, B)=>{
