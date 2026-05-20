@@ -179,6 +179,61 @@ console.log(_lib);
     assert_eq_normalized(&render(input), expected.trim());
 }
 
+// ── Direct webpack require.n helper form ───────────────────────────
+
+#[test]
+fn direct_require_n_getter_call_inlined_for_require_binding() {
+    let input = r#"
+var _lib = require("./lib");
+var _lib2 = require.n(_lib);
+console.log(_lib2().method());
+"#;
+    let expected = r#"
+var _lib = require("./lib");
+console.log(_lib.method());
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn direct_require_n_getter_call_inlined_for_import_binding() {
+    let input = r#"
+import _lib from "./lib";
+const _lib2 = require.n(_lib);
+console.log(_lib2()().astSync(source));
+"#;
+    let expected = r#"
+import _lib from "./lib";
+console.log(_lib().astSync(source));
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn direct_require_n_getter_dot_a_inlined() {
+    let input = r#"
+import _lib from "./lib";
+const _lib2 = require.n(_lib);
+console.log(_lib2.a);
+"#;
+    let expected = r#"
+import _lib from "./lib";
+console.log(_lib);
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn direct_require_n_getter_used_as_value_not_inlined() {
+    let input = r#"
+import _lib from "./lib";
+const _lib2 = require.n(_lib);
+const ref = _lib2;
+"#;
+    let output = render(input);
+    insta::assert_snapshot!(output);
+}
+
 // ── No require bindings → rule is a no-op ──────────────────────────
 
 #[test]

@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext};
 use swc_core::ecma::ast::{
-    BlockStmtOrExpr, Callee, Expr, Ident, IfStmt, Lit, MemberExpr, MemberProp, Module, ModuleItem,
-    Pat, ReturnStmt, Stmt, VarDecl, VarDeclarator,
+    BlockStmtOrExpr, Callee, Expr, Ident, IfStmt, ImportSpecifier, Lit, MemberExpr, MemberProp,
+    Module, ModuleDecl, ModuleItem, Pat, ReturnStmt, Stmt, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -60,8 +60,8 @@ struct UsageStats {
 
 impl VisitMut for UnWebpackInterop {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let require_bindings = collect_require_bindings(module, self.unresolved_mark);
-        if require_bindings.is_empty() {
+        let module_bindings = collect_module_bindings(module, self.unresolved_mark);
+        if module_bindings.is_empty() {
             return;
         }
 
@@ -77,7 +77,15 @@ impl VisitMut for UnWebpackInterop {
                 let Some(init) = &decl.init else {
                     continue;
                 };
-                if let Some(base) = match_interop_getter(init.as_ref(), &require_bindings) {
+                if let Some(base) =
+                    match_interop_getter(init.as_ref(), &module_bindings).or_else(|| {
+                        match_require_n_getter(
+                            init.as_ref(),
+                            &module_bindings,
+                            self.unresolved_mark,
+                        )
+                    })
+                {
                     candidates.insert((binding.id.sym.clone(), binding.id.ctxt), base);
                 }
             }
@@ -139,21 +147,34 @@ impl VisitMut for UnWebpackInterop {
     }
 }
 
-fn collect_require_bindings(module: &Module, unresolved_mark: Mark) -> HashSet<BindingKey> {
+fn collect_module_bindings(module: &Module, unresolved_mark: Mark) -> HashSet<BindingKey> {
     let mut bindings = HashSet::new();
     for item in &module.body {
-        if let ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(var))) = item {
-            for decl in &var.decls {
-                let Pat::Ident(binding) = &decl.name else {
-                    continue;
-                };
-                let Some(init) = &decl.init else {
-                    continue;
-                };
-                if is_require_call(init.as_ref(), unresolved_mark) {
-                    bindings.insert((binding.id.sym.clone(), binding.id.ctxt));
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+                for specifier in &import.specifiers {
+                    let local = match specifier {
+                        ImportSpecifier::Named(named) => &named.local,
+                        ImportSpecifier::Default(default) => &default.local,
+                        ImportSpecifier::Namespace(namespace) => &namespace.local,
+                    };
+                    bindings.insert((local.sym.clone(), local.ctxt));
                 }
             }
+            ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(var))) => {
+                for decl in &var.decls {
+                    let Pat::Ident(binding) = &decl.name else {
+                        continue;
+                    };
+                    let Some(init) = &decl.init else {
+                        continue;
+                    };
+                    if is_require_call(init.as_ref(), unresolved_mark) {
+                        bindings.insert((binding.id.sym.clone(), binding.id.ctxt));
+                    }
+                }
+            }
+            _ => {}
         }
     }
     bindings
@@ -183,6 +204,41 @@ fn match_interop_getter(expr: &Expr, require_bindings: &HashSet<BindingKey>) -> 
         BlockStmtOrExpr::BlockStmt(block) => match_interop_block(block, require_bindings),
     }?;
     Some(base)
+}
+
+fn match_require_n_getter(
+    expr: &Expr,
+    module_bindings: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> Option<Ident> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(require_ident) = member.obj.as_ref() else {
+        return None;
+    };
+    if require_ident.sym.as_ref() != "require" || require_ident.ctxt.outer() != unresolved_mark {
+        return None;
+    }
+    if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "n") {
+        return None;
+    }
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return None;
+    }
+    let Expr::Ident(base) = call.args[0].expr.as_ref() else {
+        return None;
+    };
+    if !module_bindings.contains(&(base.sym.clone(), base.ctxt)) {
+        return None;
+    }
+    Some(base.clone())
 }
 
 fn match_interop_cond(expr: &Expr, require_bindings: &HashSet<BindingKey>) -> Option<Ident> {
