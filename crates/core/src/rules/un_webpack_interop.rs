@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, SyntaxContext};
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BindingIdent, BlockStmtOrExpr, Callee, Expr, Ident, IfStmt,
-    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Pat, ReturnStmt,
-    SimpleAssignTarget, Stmt, VarDecl, VarDeclarator,
+    AssignOp, AssignTarget, BindingIdent, BlockStmtOrExpr, CallExpr, Callee, Expr, Ident,
+    IdentName, IfStmt, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleItem, Pat, ReturnStmt, SimpleAssignTarget, Stmt, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -61,6 +61,11 @@ struct UsageStats {
 
 impl VisitMut for UnWebpackInterop {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        let mut has_own_replacer = WebpackHasOwnReplacer {
+            unresolved_mark: self.unresolved_mark,
+        };
+        module.visit_mut_with(&mut has_own_replacer);
+
         let module_bindings = collect_module_bindings(module, self.unresolved_mark);
         if module_bindings.is_empty() {
             return;
@@ -872,4 +877,79 @@ impl VisitMut for WebpackNamespaceReplacer<'_> {
     }
 
     fn visit_mut_prop_name(&mut self, _: &mut swc_core::ecma::ast::PropName) {}
+}
+
+struct WebpackHasOwnReplacer {
+    unresolved_mark: Mark,
+}
+
+impl VisitMut for WebpackHasOwnReplacer {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        let Expr::Call(call) = expr else {
+            return;
+        };
+        if !is_require_o_call(call, self.unresolved_mark) {
+            return;
+        }
+
+        let mut args = std::mem::take(&mut call.args);
+        let property = args.pop().expect("length checked").expr;
+        let object = args.pop().expect("length checked").expr;
+        *expr = Expr::Call(CallExpr {
+            span: call.span,
+            ctxt: call.ctxt,
+            callee: object_prototype_has_own_property_call_callee(),
+            args: vec![
+                swc_core::ecma::ast::ExprOrSpread {
+                    spread: None,
+                    expr: object,
+                },
+                swc_core::ecma::ast::ExprOrSpread {
+                    spread: None,
+                    expr: property,
+                },
+            ],
+            type_args: None,
+        });
+    }
+}
+
+fn is_require_o_call(call: &CallExpr, unresolved_mark: Mark) -> bool {
+    if call.args.len() != 2 || call.args.iter().any(|arg| arg.spread.is_some()) {
+        return false;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return false;
+    };
+    let Expr::Ident(require_ident) = member.obj.as_ref() else {
+        return false;
+    };
+    require_ident.sym.as_ref() == "require"
+        && require_ident.ctxt.outer() == unresolved_mark
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "o")
+}
+
+fn object_prototype_has_own_property_call_callee() -> Callee {
+    let object = Expr::Ident(Ident::new_no_ctxt("Object".into(), DUMMY_SP));
+    let prototype = Expr::Member(MemberExpr {
+        span: DUMMY_SP,
+        obj: Box::new(object),
+        prop: MemberProp::Ident(IdentName::new("prototype".into(), DUMMY_SP)),
+    });
+    let has_own_property = Expr::Member(MemberExpr {
+        span: DUMMY_SP,
+        obj: Box::new(prototype),
+        prop: MemberProp::Ident(IdentName::new("hasOwnProperty".into(), DUMMY_SP)),
+    });
+    let call = Expr::Member(MemberExpr {
+        span: DUMMY_SP,
+        obj: Box::new(has_own_property),
+        prop: MemberProp::Ident(IdentName::new("call".into(), DUMMY_SP)),
+    });
+    Callee::Expr(Box::new(call))
 }

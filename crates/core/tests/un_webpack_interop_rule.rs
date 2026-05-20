@@ -322,6 +322,42 @@ let value = require.t(lib, 19).default;
     insta::assert_snapshot!(output);
 }
 
+// ── Webpack require.o hasOwnProperty helper form ───────────────────
+
+#[test]
+fn require_o_rewrites_to_has_own_property_call() {
+    let input = r#"
+if (!require.o(map, request)) {
+  throw new Error("missing");
+}
+"#;
+    let expected = r#"
+if (!Object.prototype.hasOwnProperty.call(map, request)) {
+  throw new Error("missing");
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn require_o_with_spread_arg_not_rewritten() {
+    let input = r#"
+const ok = require.o(map, ...keys);
+"#;
+    let output = render(input);
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn shadowed_require_o_not_rewritten() {
+    let input = r#"
+function outer(require) {
+  return require.o(map, request);
+}
+"#;
+    assert_eq_normalized(&render(input), input);
+}
+
 // ── No require bindings → rule is a no-op ──────────────────────────
 
 #[test]
