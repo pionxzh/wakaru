@@ -103,6 +103,21 @@ var msg = `redux-saga ${level}: ${text}\n${extra}`;
 }
 
 #[test]
+fn nested_plus_chain_inside_template_expression() {
+    // Inner concatenation inside a logical expression should also be converted.
+    // Previously required a double-pass because converting the outer chain
+    // returned early without visiting children of the new template literal.
+    let input = r#"
+var msg = "Given " + (n && 'action "' + String(n) + '"' || "an action") + ', reducer "' + e + '" returned undefined.';
+"#;
+    let expected = r#"
+var msg = `Given ${n && `action "${String(n)}"` || "an action"}, reducer "${e}" returned undefined.`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn pure_number_addition_not_transformed() {
     // No string literals → must not be turned into a template.
     let input = r#"

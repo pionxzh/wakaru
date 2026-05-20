@@ -16,10 +16,12 @@ impl VisitMut for UnTemplateLiteral {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         if let Some(next) = rewrite_concat_chain(expr) {
             *expr = next;
+            expr.visit_mut_children_with(self);
             return;
         }
         if let Some(next) = rewrite_plus_chain(expr) {
             *expr = next;
+            expr.visit_mut_children_with(self);
             return;
         }
 
