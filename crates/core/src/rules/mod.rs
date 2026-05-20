@@ -564,7 +564,10 @@ fn apply_rules_range_impl(
         UnWebpackDefineGetters::new(unresolved_mark),
         "UnWebpackDefineGetters"
     );
-    run!(UnWebpackObjectGetters, "UnWebpackObjectGetters");
+    run!(
+        UnWebpackObjectGetters::new(unresolved_mark),
+        "UnWebpackObjectGetters"
+    );
     run!(ImportDedup, "ImportDedup");
     run!(UnImportRename, "UnImportRename");
     run!(UnExportRename, "UnExportRename");

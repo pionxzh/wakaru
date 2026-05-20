@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::UnWebpackObjectGetters;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnWebpackObjectGetters)
+    render_rule(input, UnWebpackObjectGetters::new)
 }
 
 #[test]
@@ -105,6 +105,108 @@ Object.defineProperties(utils, {
   noop: {
     enumerable: true,
     get: ()=>o.u
+  }
+});
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn folds_webpack_require_d_map_into_object_literal_getters() {
+    let input = r#"
+const integrations = {};
+require.r(integrations);
+require.d(integrations, {
+  FunctionToString() {
+    return FunctionToString;
+  },
+  InboundFilters() {
+    return InboundFilters;
+  }
+});
+class FunctionToString {}
+class InboundFilters {}
+"#;
+    let expected = r#"
+const integrations = {
+  get FunctionToString() {
+    return FunctionToString;
+  },
+  get InboundFilters() {
+    return InboundFilters;
+  }
+};
+class FunctionToString {}
+class InboundFilters {}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn folds_webpack_require_d_map_after_unrelated_declaration() {
+    let input = r#"
+const integrations = {};
+function helper(value) {
+  return value;
+}
+require.r(integrations);
+require.d(integrations, {
+  Breadcrumbs() {
+    return Breadcrumbs;
+  },
+  Dedupe() {
+    return Dedupe;
+  }
+});
+class Breadcrumbs {}
+class Dedupe {}
+"#;
+    let expected = r#"
+const integrations = {
+  get Breadcrumbs() {
+    return Breadcrumbs;
+  },
+  get Dedupe() {
+    return Dedupe;
+  }
+};
+function helper(value) {
+  return value;
+}
+class Breadcrumbs {}
+class Dedupe {}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn preserves_webpack_require_d_map_when_target_is_used_before_definition() {
+    let input = r#"
+const integrations = {};
+use(integrations);
+require.r(integrations);
+require.d(integrations, {
+  Breadcrumbs() {
+    return Breadcrumbs;
+  },
+  Dedupe() {
+    return Dedupe;
+  }
+});
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_webpack_require_d_map_without_require_r_marker() {
+    let input = r#"
+const integrations = {};
+require.d(integrations, {
+  Breadcrumbs() {
+    return Breadcrumbs;
+  },
+  Dedupe() {
+    return Dedupe;
   }
 });
 "#;

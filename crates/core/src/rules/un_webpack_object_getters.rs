@@ -1,20 +1,30 @@
+use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BlockStmt, BlockStmtOrExpr, Bool, Callee, Decl, Expr, ExprStmt, FnExpr, GetterProp, Lit,
+    BlockStmt, BlockStmtOrExpr, Bool, Callee, Decl, Expr, ExprStmt, FnExpr, GetterProp, Ident, Lit,
     MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread,
     ReturnStmt, Stmt, VarDeclarator,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 type BindingId = (Atom, SyntaxContext);
 
-pub struct UnWebpackObjectGetters;
+pub struct UnWebpackObjectGetters {
+    unresolved_mark: Mark,
+}
+
+impl UnWebpackObjectGetters {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
 
 impl VisitMut for UnWebpackObjectGetters {
     fn visit_mut_module(&mut self, module: &mut Module) {
         module.visit_mut_children_with(self);
-        rewrite_module_items(&mut module.body);
+        rewrite_module_items(&mut module.body, self.unresolved_mark);
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
@@ -23,12 +33,23 @@ impl VisitMut for UnWebpackObjectGetters {
     }
 }
 
-fn rewrite_module_items(items: &mut Vec<ModuleItem>) {
+fn rewrite_module_items(items: &mut Vec<ModuleItem>, unresolved_mark: Mark) {
     let original = std::mem::take(items);
+    let (replacements, removed) = plan_webpack_namespace_rewrites(&original, unresolved_mark);
     let mut rewritten = Vec::with_capacity(original.len());
     let mut i = 0;
 
     while i < original.len() {
+        if removed.contains(&i) {
+            i += 1;
+            continue;
+        }
+        if let Some(item) = replacements.get(&i) {
+            rewritten.push(item.clone());
+            i += 1;
+            continue;
+        }
+
         if i + 1 < original.len() {
             if let Some(item) = maybe_rewrite_module_item_pair(&original[i], &original[i + 1]) {
                 rewritten.push(item);
@@ -42,6 +63,70 @@ fn rewrite_module_items(items: &mut Vec<ModuleItem>) {
     }
 
     *items = rewritten;
+}
+
+fn plan_webpack_namespace_rewrites(
+    items: &[ModuleItem],
+    unresolved_mark: Mark,
+) -> (HashMap<usize, ModuleItem>, HashSet<usize>) {
+    let mut replacements = HashMap::new();
+    let mut removed = HashSet::new();
+
+    for index in 0..items.len() {
+        if removed.contains(&index) {
+            continue;
+        }
+        let Some(binding) = extract_empty_object_binding_from_module_item(&items[index]) else {
+            continue;
+        };
+        let Some((replacement, remove_indices)) =
+            maybe_rewrite_webpack_namespace(items, index, &binding, unresolved_mark)
+        else {
+            continue;
+        };
+
+        replacements.insert(index, replacement);
+        removed.extend(remove_indices);
+    }
+
+    (replacements, removed)
+}
+
+fn maybe_rewrite_webpack_namespace(
+    items: &[ModuleItem],
+    decl_index: usize,
+    target: &BindingId,
+    unresolved_mark: Mark,
+) -> Option<(ModuleItem, Vec<usize>)> {
+    let mut require_r_indices = Vec::new();
+    let mut index = decl_index + 1;
+
+    while index < items.len() {
+        if is_require_r_module_item(&items[index], target, unresolved_mark) {
+            require_r_indices.push(index);
+            index += 1;
+            continue;
+        }
+
+        if let Some(getters) =
+            extract_require_d_map_getters_module_item(&items[index], target, unresolved_mark)
+        {
+            if require_r_indices.is_empty() || getters.len() < 2 {
+                return None;
+            }
+            let mut replacement = items[decl_index].clone();
+            replace_module_item_init_with_getters(&mut replacement, getters)?;
+            require_r_indices.push(index);
+            return Some((replacement, require_r_indices));
+        }
+
+        if module_item_references_binding(&items[index], target) {
+            return None;
+        }
+        index += 1;
+    }
+
+    None
 }
 
 fn rewrite_stmts(stmts: &mut Vec<Stmt>) {
@@ -87,6 +172,24 @@ fn maybe_rewrite_module_item_pair(current: &ModuleItem, next: &ModuleItem) -> Op
             };
             replace_var_decl_init_with_getters(&mut var_decl.decls, getters)?;
             Some(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export_decl)))
+        }
+        _ => None,
+    }
+}
+
+fn replace_module_item_init_with_getters(
+    item: &mut ModuleItem,
+    getters: Vec<GetterProp>,
+) -> Option<()> {
+    match item {
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
+            replace_var_decl_init_with_getters(&mut var_decl.decls, getters)
+        }
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export_decl)) => {
+            let Decl::Var(var_decl) = &mut export_decl.decl else {
+                return None;
+            };
+            replace_var_decl_init_with_getters(&mut var_decl.decls, getters)
         }
         _ => None,
     }
@@ -219,6 +322,135 @@ fn extract_define_properties_getters(stmt: &Stmt, target: &BindingId) -> Option<
     }
 
     Some(getters)
+}
+
+fn is_require_r_module_item(item: &ModuleItem, target: &BindingId, unresolved_mark: Mark) -> bool {
+    let ModuleItem::Stmt(stmt) = item else {
+        return false;
+    };
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return false;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return false;
+    };
+    if !is_require_member_call(call, "r", unresolved_mark) || call.args.len() != 1 {
+        return false;
+    }
+    matches!(call.args[0].expr.as_ref(), Expr::Ident(id) if id.sym == target.0 && id.ctxt == target.1)
+}
+
+fn extract_require_d_map_getters_module_item(
+    item: &ModuleItem,
+    target: &BindingId,
+    unresolved_mark: Mark,
+) -> Option<Vec<GetterProp>> {
+    let ModuleItem::Stmt(stmt) = item else {
+        return None;
+    };
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return None;
+    };
+    if !is_require_member_call(call, "d", unresolved_mark) || call.args.len() != 2 {
+        return None;
+    }
+    let Expr::Ident(target_ident) = call.args[0].expr.as_ref() else {
+        return None;
+    };
+    if target_ident.sym != target.0 || target_ident.ctxt != target.1 {
+        return None;
+    }
+    let Expr::Object(getter_map) = call.args[1].expr.as_ref() else {
+        return None;
+    };
+
+    let mut getters = Vec::with_capacity(getter_map.props.len());
+    let mut seen = HashSet::new();
+    for prop in &getter_map.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let getter = match prop.as_ref() {
+            Prop::Method(method) => {
+                let name = prop_name_as_str(&method.key)?;
+                if !seen.insert(name.to_string())
+                    || !method.function.params.is_empty()
+                    || method.function.is_async
+                    || method.function.is_generator
+                {
+                    return None;
+                }
+                let body = method.function.body.clone()?;
+                GetterProp {
+                    span: DUMMY_SP,
+                    key: method.key.clone(),
+                    type_ann: None,
+                    body: Some(body),
+                }
+            }
+            Prop::KeyValue(entry) => {
+                let name = prop_name_as_str(&entry.key)?;
+                if !seen.insert(name.to_string()) {
+                    return None;
+                }
+                GetterProp {
+                    span: DUMMY_SP,
+                    key: entry.key.clone(),
+                    type_ann: None,
+                    body: Some(extract_getter_body(entry.value.as_ref())?),
+                }
+            }
+            _ => return None,
+        };
+        getters.push(getter);
+    }
+
+    Some(getters)
+}
+
+fn is_require_member_call(
+    call: &swc_core::ecma::ast::CallExpr,
+    prop_name: &str,
+    unresolved_mark: Mark,
+) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return false;
+    };
+    let Expr::Ident(require_ident) = member.obj.as_ref() else {
+        return false;
+    };
+    if require_ident.sym.as_ref() != "require" || require_ident.ctxt.outer() != unresolved_mark {
+        return false;
+    }
+    matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == prop_name)
+}
+
+fn module_item_references_binding(item: &ModuleItem, target: &BindingId) -> bool {
+    let mut finder = BindingRefFinder {
+        target,
+        found: false,
+    };
+    item.visit_with(&mut finder);
+    finder.found
+}
+
+struct BindingRefFinder<'a> {
+    target: &'a BindingId,
+    found: bool,
+}
+
+impl Visit for BindingRefFinder<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym == self.target.0 && ident.ctxt == self.target.1 {
+            self.found = true;
+        }
+    }
 }
 
 fn extract_getter_descriptor(key: &PropName, descriptor: &Expr) -> Option<GetterProp> {
