@@ -329,6 +329,7 @@ pub fn rule_names() -> &'static [&'static str] {
         "SmartInline",
         "UnIife2",
         "SmartRename",
+        "UnJsx2",
         "DeadDecls",
         "DeadImports",
         "UnReturn",
@@ -577,6 +578,12 @@ fn apply_rules_range_impl(
     // Second UnIife pass: simplify any (() => expr)() patterns created by SmartInline inlining
     run!(UnIife::new(rewrite_level), "UnIife2");
     run!(SmartRename::new(unresolved_mark), "SmartRename");
+    // Second UnJsx pass: SmartRename may capitalize component names (e.g. component → Component)
+    // that UnJsx couldn't convert in Stage 4 because lowercase tags mean HTML elements.
+    run!(
+        UnJsx::new_with_level(unresolved_mark, rewrite_level),
+        "UnJsx2"
+    );
     // Optional final DCE pass. Tests that focus on structural restoration can
     // disable this to avoid coupling fixture baselines to late cleanup.
     if dead_code_elimination {
