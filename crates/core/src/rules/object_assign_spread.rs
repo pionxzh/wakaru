@@ -6,9 +6,9 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 /// Converts `Object.assign({}, source1, source2, ...)` into object spread syntax.
 ///
-/// Only fires when the **first** argument is an empty object literal `{}`.
+/// Only fires when the **first** argument is a safe object literal target.
 /// In that case the semantics are identical: a fresh object is created with the
-/// sources merged in order.
+/// target's own data properties and the sources merged in order.
 ///
 /// ```js
 /// // input
@@ -17,9 +17,9 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 /// { ...defaults, extra: 1 }
 /// ```
 ///
-/// When the first argument is NOT `{}` (e.g. `Object.assign(target, src)`) the
-/// call is left unchanged because it mutates `target` in place, which is
-/// semantically different from spread.
+/// When the first argument is not a safe object literal target (e.g.
+/// `Object.assign(target, src)`) the call is left unchanged because it mutates
+/// `target` in place, which is semantically different from spread.
 pub struct ObjectAssignSpread {
     unresolved_mark: Mark,
 }
@@ -69,7 +69,7 @@ fn transform_object_assign(expr: &Expr, unresolved_mark: Mark) -> Option<Expr> {
         return None;
     }
 
-    // First argument must be an empty object literal `{}`
+    // First argument must be a safe fresh object literal target.
     let first_arg = &call.args[0];
     if first_arg.spread.is_some() {
         return None;
@@ -77,7 +77,7 @@ fn transform_object_assign(expr: &Expr, unresolved_mark: Mark) -> Option<Expr> {
     let Expr::Object(first_obj) = first_arg.expr.as_ref() else {
         return None;
     };
-    if !first_obj.props.is_empty() {
+    if !is_safe_to_inline_props(&first_obj.props) {
         return None;
     }
 
@@ -86,7 +86,7 @@ fn transform_object_assign(expr: &Expr, unresolved_mark: Mark) -> Option<Expr> {
     // Inline only plain data properties. Accessors, methods, and bare
     // `__proto__` entries are kept behind a spread because directly placing them
     // in the output object literal would change semantics.
-    let mut props: Vec<PropOrSpread> = Vec::new();
+    let mut props: Vec<PropOrSpread> = first_obj.props.clone();
     for arg in &call.args[1..] {
         if arg.spread.is_some() {
             // Can't handle a spread argument in call position — bail out.

@@ -526,6 +526,106 @@ const rest = m(obj, ["a"]);
 }
 
 #[test]
+fn named_owp_helper_babel_loose_continue_form() {
+    let input = r#"
+function _objectWithoutPropertiesLoose(r, e) {
+    if (null == r) return {};
+    var t = {};
+    for (var n in r) if ({}.hasOwnProperty.call(r, n)) {
+        if (-1 !== e.indexOf(n)) continue;
+        t[n] = r[n];
+    }
+    return t;
+}
+const { name } = app_info, rest_info = _objectWithoutPropertiesLoose(app_info, ["name"]);
+use(name, rest_info);
+"#;
+    let expected = r#"
+const { name, ...rest_info } = app_info;
+use(name, rest_info);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn named_owp_helper_babel_spec_wrapper_form() {
+    let input = r#"
+function _objectWithoutProperties(e, t) {
+    if (null == e) return {};
+    var o, r, i = _objectWithoutPropertiesLoose(e, t);
+    if (Object.getOwnPropertySymbols) {
+        var n = Object.getOwnPropertySymbols(e);
+        for (r = 0; r < n.length; r++) o = n[r], -1 === t.indexOf(o) && {}.propertyIsEnumerable.call(e, o) && (i[o] = e[o]);
+    }
+    return i;
+}
+function _objectWithoutPropertiesLoose(r, e) {
+    if (null == r) return {};
+    var t = {};
+    for (var n in r) if ({}.hasOwnProperty.call(r, n)) {
+        if (-1 !== e.indexOf(n)) continue;
+        t[n] = r[n];
+    }
+    return t;
+}
+const { name } = app_info, rest_info = _objectWithoutProperties(app_info, ["name"]);
+use(name, rest_info);
+"#;
+    let expected = r#"
+const { name, ...rest_info } = app_info;
+use(name, rest_info);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn named_owp_helper_preserves_destructuring_defaults() {
+    let input = r#"
+function _objectWithoutPropertiesLoose(r, e) {
+    if (null == r) return {};
+    var t = {};
+    for (var n in r) if ({}.hasOwnProperty.call(r, n)) {
+        if (-1 !== e.indexOf(n)) continue;
+        t[n] = r[n];
+    }
+    return t;
+}
+const { name: app_name, version = fallback_version } = app_info,
+  rest_info = _objectWithoutPropertiesLoose(app_info, ["name", "version"]);
+use(app_name, version, rest_info);
+"#;
+    let expected = r#"
+const { name: app_name, version = fallback_version, ...rest_info } = app_info;
+use(app_name, version, rest_info);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn named_owp_helper_ts_rest_helper() {
+    let input = r#"
+var __rest = (this && this.__rest) || function (s, e) {
+    var t = {};
+    for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+        t[p] = s[p];
+    if (s != null && typeof Object.getOwnPropertySymbols === "function")
+        for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
+            if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
+                t[p[i]] = s[p[i]];
+        }
+    return t;
+};
+var name = app_info.name, rest_info = __rest(app_info, ["name"]);
+use(name, rest_info);
+"#;
+    let expected = r#"
+const { name, ...rest_info } = app_info;
+use(name, rest_info);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn named_owp_helper_for_in_requires_guarded_copy() {
     let input = r#"
 function m(e, t) {

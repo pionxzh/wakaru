@@ -173,7 +173,7 @@ use swc_core::ecma::ast::ModuleItem;
 /// Extracted info from a preceding statement that accesses the same source object.
 enum PrecedingAccess {
     /// `const { a, b: c } = source` — destructuring with key→binding pairs
-    Destructuring(Vec<(Atom, Atom, SyntaxContext)>), // (prop_key, local_binding, binding_ctxt)
+    Destructuring(Vec<(Atom, Atom, SyntaxContext, Option<Box<Expr>>)>), // (prop_key, local_binding, binding_ctxt, default)
     /// `const x = source.prop` — single property access
     PropAccess {
         prop: Atom,
@@ -518,14 +518,33 @@ fn try_match_preceding(
                                     ObjectPatProp::Assign(a) => {
                                         let key = a.key.id.sym.clone();
                                         if excluded_keys.contains(&key) {
-                                            pairs.push((key.clone(), key, a.key.id.ctxt));
+                                            pairs.push((
+                                                key.clone(),
+                                                key,
+                                                a.key.id.ctxt,
+                                                a.value.clone(),
+                                            ));
                                         }
                                     }
                                     ObjectPatProp::KeyValue(kv) => {
                                         let key = prop_name_atom(&kv.key)?;
                                         if excluded_keys.contains(&key) {
                                             if let Pat::Ident(bi) = kv.value.as_ref() {
-                                                pairs.push((key, bi.id.sym.clone(), bi.id.ctxt));
+                                                pairs.push((
+                                                    key,
+                                                    bi.id.sym.clone(),
+                                                    bi.id.ctxt,
+                                                    None,
+                                                ));
+                                            } else if let Pat::Assign(assign) = kv.value.as_ref() {
+                                                if let Pat::Ident(bi) = assign.left.as_ref() {
+                                                    pairs.push((
+                                                        key,
+                                                        bi.id.sym.clone(),
+                                                        bi.id.ctxt,
+                                                        Some(assign.right.clone()),
+                                                    ));
+                                                }
                                             }
                                         }
                                     }
@@ -766,8 +785,11 @@ fn build_rest_destructuring(
     for access in merged {
         match access {
             PrecedingAccess::Destructuring(pairs) => {
-                for (key, binding, ctxt) in pairs {
+                for (key, binding, ctxt, default_value) in pairs {
                     key_to_binding.insert(key.clone(), (binding.clone(), *ctxt));
+                    if let Some(default_value) = default_value {
+                        key_to_default.insert(key.clone(), default_value.clone());
+                    }
                 }
             }
             PrecedingAccess::PropAccess {

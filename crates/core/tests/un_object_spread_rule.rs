@@ -137,6 +137,90 @@ const x = { ...obj1, ...obj2 };
 }
 
 #[test]
+fn detects_babel_extends_bind_apply_null() {
+    let input = r#"
+function _extends() {
+    return _extends = Object.assign ? Object.assign.bind() : function(n) {
+        for (var e = 1; e < arguments.length; e++) {
+            var t = arguments[e];
+            for (var r in t) {
+                ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);
+            }
+        }
+        return n;
+    }, _extends.apply(null, arguments);
+}
+const out = _extends({}, app_info, { name: value }, base_info);
+use(out);
+"#;
+    let expected = r#"
+const out = { ...app_info, name: value, ...base_info };
+use(out);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn handles_fresh_non_empty_helper_target() {
+    let input = r#"
+var _extends = require("@babel/runtime/helpers/extends");
+var x = _extends({ id: app_id }, app_info);
+"#;
+    let expected = r#"
+const x = { id: app_id, ...app_info };
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn handles_nested_babel_object_spread_with_fresh_target() {
+    let input = r#"
+function _objectSpread(e) {
+    for (var r = 1; r < arguments.length; r++) {
+        var t = null != arguments[r] ? arguments[r] : {};
+        r % 2 ? ownKeys(Object(t), !0).forEach(function(r) {
+            _defineProperty(e, r, t[r]);
+        }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function(r) {
+            Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r));
+        });
+    }
+    return e;
+}
+const out = _objectSpread(_objectSpread({}, app_info), {}, { name: value }, base_info);
+use(out);
+"#;
+    let expected = r#"
+const out = { ...app_info, name: value, ...base_info };
+use(out);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn detects_ts_assign_helper() {
+    let input = r#"
+var __assign = (this && this.__assign) || function () {
+    __assign = Object.assign || function(t) {
+        for (var s, i = 1, n = arguments.length; i < n; i++) {
+            s = arguments[i];
+            for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p))
+                t[p] = s[p];
+        }
+        return t;
+    };
+    return __assign.apply(this, arguments);
+};
+var out = __assign(__assign({ id: app_id }, app_info), { name: value });
+use(out);
+"#;
+    let expected = r#"
+const out = { id: app_id, ...app_info, name: value };
+use(out);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn detects_minified_extends() {
     let input = r#"
 function n() {

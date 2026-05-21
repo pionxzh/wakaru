@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use swc_core::common::DUMMY_SP;
-use swc_core::ecma::ast::{Callee, Expr, Module, ObjectLit, PropOrSpread, SpreadElement};
+use swc_core::ecma::ast::{
+    Callee, Expr, Module, ObjectLit, Prop, PropName, PropOrSpread, SpreadElement,
+};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
@@ -13,9 +15,10 @@ use super::babel_helper_utils::{
 /// object spread syntax.
 ///
 /// Both `_extends` and `_objectSpread2` mutate and return their first argument
-/// (like Object.assign). Only transform when the first arg is an empty object
-/// literal `{}`, which guarantees no mutation/identity side effects:
+/// (like Object.assign). Only transform when the first arg is a safe fresh object
+/// literal target, which guarantees no mutation/identity side effects:
 ///   `_extends({}, obj1, obj2)` → `{ ...obj1, ...obj2 }`
+///   `_extends({ a: 1 }, obj1)` → `{ a: 1, ...obj1 }`
 ///   `_objectSpread2({}, y)` → `{ ...y }`
 ///   `_extends(target, source)` → left as-is (mutation semantics)
 ///   `_objectSpread2(existing, {a: 1})` → left as-is (mutation semantics)
@@ -75,22 +78,21 @@ impl VisitMut for SpreadReplacer<'_> {
         }
 
         // Both _extends and _objectSpread2 mutate their first argument.
-        // Only transform when the first arg is an empty object literal `{}`,
-        // otherwise mutation/identity semantics are lost.
-        let first_is_empty_obj = matches!(
-            call.args[0].expr.as_ref(),
-            Expr::Object(obj) if obj.props.is_empty()
-        );
-        if !first_is_empty_obj {
+        // Only transform when the first arg is a safe fresh object literal
+        // target, otherwise mutation/identity semantics are lost.
+        let Expr::Object(first_obj) = call.args[0].expr.as_ref() else {
+            return;
+        };
+        if call.args[0].spread.is_some() || !is_safe_to_inline_props(&first_obj.props) {
             return;
         }
 
         // Merge all arguments into a single object expression.
         // - Object literal args: flatten their properties
         // - Everything else: wrap as spread element
-        let mut properties: Vec<PropOrSpread> = Vec::new();
+        let mut properties: Vec<PropOrSpread> = first_obj.props.clone();
 
-        for arg in &call.args {
+        for arg in &call.args[1..] {
             if arg.spread.is_some() {
                 properties.push(PropOrSpread::Spread(SpreadElement {
                     dot3_token: DUMMY_SP,
@@ -100,7 +102,7 @@ impl VisitMut for SpreadReplacer<'_> {
             }
 
             match arg.expr.as_ref() {
-                Expr::Object(obj) => {
+                Expr::Object(obj) if is_safe_to_inline_props(&obj.props) => {
                     properties.extend(obj.props.iter().cloned());
                 }
                 _ => {
@@ -116,5 +118,29 @@ impl VisitMut for SpreadReplacer<'_> {
             span: DUMMY_SP,
             props: properties,
         });
+    }
+}
+
+fn is_safe_to_inline_props(props: &[PropOrSpread]) -> bool {
+    props.iter().all(is_safe_to_inline_prop)
+}
+
+fn is_safe_to_inline_prop(prop: &PropOrSpread) -> bool {
+    match prop {
+        PropOrSpread::Spread(_) => true,
+        PropOrSpread::Prop(prop) => match prop.as_ref() {
+            Prop::Shorthand(ident) => ident.sym != "__proto__",
+            Prop::KeyValue(kv) => !is_bare_proto_name(&kv.key),
+            Prop::Assign(assign) => assign.key.sym != "__proto__",
+            Prop::Getter(_) | Prop::Setter(_) | Prop::Method(_) => false,
+        },
+    }
+}
+
+fn is_bare_proto_name(name: &PropName) -> bool {
+    match name {
+        PropName::Ident(ident) => ident.sym == "__proto__",
+        PropName::Str(value) => value.value == "__proto__",
+        PropName::Num(_) | PropName::BigInt(_) | PropName::Computed(_) => false,
     }
 }

@@ -320,15 +320,26 @@ fn detect_helper_from_var_decl(
     // var _extends = Object.assign || function(target) { ... }
     // This is the Babel 6 or pre-evaluated form of the _extends polyfill.
     if let Expr::Bin(bin) = init.as_ref() {
-        if bin.op == BinaryOp::LogicalOr
-            && is_object_assign_ref(&bin.left)
-            && is_extends_polyfill_fn(&bin.right)
-        {
-            return Some((key, BabelHelperKind::Extends));
+        if bin.op == BinaryOp::LogicalOr {
+            if is_object_assign_ref(&bin.left) && is_extends_polyfill_fn(&bin.right) {
+                return Some((key, BabelHelperKind::Extends));
+            }
+            if let Some(kind) = detect_helper_from_expr(&bin.right, has_sub_helpers) {
+                return Some((key, kind));
+            }
         }
     }
 
     None
+}
+
+fn detect_helper_from_expr(expr: &Expr, has_sub_helpers: bool) -> Option<BabelHelperKind> {
+    match expr {
+        Expr::Fn(fn_expr) => detect_helper_from_fn(&fn_expr.function, has_sub_helpers),
+        Expr::Arrow(arrow) => detect_helper_from_arrow(arrow, has_sub_helpers),
+        Expr::Paren(paren) => detect_helper_from_expr(&paren.expr, has_sub_helpers),
+        _ => None,
+    }
 }
 
 fn detect_helper_from_require(expr: &Expr) -> Option<BabelHelperKind> {
@@ -1035,13 +1046,27 @@ fn is_object_without_properties_fn(func: &Function) -> bool {
         return false;
     }
 
-    // Find the accumulator: the variable initialized with `{}`.
-    let Some((accum_sym, accum_ctxt)) = find_empty_object_accumulator(&body.stmts)
-        .or_else(|| find_accumulator_in_for_init(&body.stmts))
-    else {
+    // Find the accumulator: the variable initialized with `{}` in loose helpers,
+    // or the variable initialized by the loose helper call in spec wrappers.
+    let direct_accum = find_empty_object_accumulator(&body.stmts)
+        .or_else(|| find_accumulator_in_for_init(&body.stmts));
+    let is_wrapper_accum = direct_accum.is_none();
+    let wrapper_accum = direct_accum
+        .is_none()
+        .then(|| find_call_accumulator_from_source_excluded(&body.stmts, &ctx))
+        .flatten();
+    let Some((accum_sym, accum_ctxt)) = direct_accum.or(wrapper_accum) else {
         return false;
     };
     ctx.declare("accum", accum_sym, accum_ctxt);
+
+    if is_wrapper_accum {
+        let mut markers = BodyMarkerState::default();
+        scan_stmts_for_markers(&body.stmts, &mut markers);
+        if !markers.has_object_get_own_property_symbols || !markers.has_property_is_enumerable {
+            return false;
+        }
+    }
 
     // Last statement must return the accumulator
     let Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. })) = body.stmts.last() else {
@@ -1068,8 +1093,22 @@ fn is_object_without_properties_fn(func: &Function) -> bool {
                 if for_body_has_or_guarded_copy(&f.body, &ctx) {
                     return true;
                 }
+                if for_body_has_and_guarded_copy(&f.body, &ctx) {
+                    return true;
+                }
             }
             _ => {}
+        }
+    }
+
+    let mut nested_checker = OwpLoopChecker {
+        ctx: &ctx,
+        found: false,
+    };
+    for stmt in &body.stmts {
+        stmt.visit_with(&mut nested_checker);
+        if nested_checker.found {
+            return true;
         }
     }
 
@@ -1219,6 +1258,39 @@ fn find_accumulator_in_for_init(stmts: &[Stmt]) -> Option<(Atom, SyntaxContext)>
         }
     }
     None
+}
+
+fn find_call_accumulator_from_source_excluded(
+    stmts: &[Stmt],
+    ctx: &MatchContext,
+) -> Option<(Atom, SyntaxContext)> {
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Pat::Ident(bi) = &decl.name else {
+                continue;
+            };
+            let Some(init) = &decl.init else {
+                continue;
+            };
+            if is_call_with_source_excluded(init, ctx) {
+                return Some((bi.id.sym.clone(), bi.id.ctxt));
+            }
+        }
+    }
+    None
+}
+
+fn is_call_with_source_excluded(expr: &Expr, ctx: &MatchContext) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    if call.args.len() != 2 || call.args.iter().any(|arg| arg.spread.is_some()) {
+        return false;
+    }
+    ctx.is_binding(&call.args[0].expr, "source") && ctx.is_binding(&call.args[1].expr, "excluded")
 }
 
 fn for_in_loop_has_owp_shape(for_in: &swc_core::ecma::ast::ForInStmt, ctx: &MatchContext) -> bool {
@@ -1375,6 +1447,16 @@ fn for_in_body_has_canonical_expr(body: &Stmt, ctx: &MatchContext, loop_key: Com
     if if_checker.found {
         return stmt_has_has_own_property_call(body, ctx, &Some(loop_key));
     }
+
+    let mut continue_checker = ContinueGuardedCopyChecker {
+        ctx,
+        required_key: Some(loop_key),
+        found: false,
+    };
+    body.visit_with(&mut continue_checker);
+    if continue_checker.found {
+        return stmt_has_has_own_property_call(body, ctx, &continue_checker.required_key);
+    }
     false
 }
 
@@ -1387,6 +1469,50 @@ fn for_body_has_or_guarded_copy(body: &Stmt, ctx: &MatchContext) -> bool {
     };
     body.visit_with(&mut checker);
     checker.found
+}
+
+fn for_body_has_and_guarded_copy(body: &Stmt, ctx: &MatchContext) -> bool {
+    let mut checker = AndGuardChecker {
+        ctx,
+        required_key: None,
+        found: false,
+    };
+    body.visit_with(&mut checker);
+    checker.found
+}
+
+struct OwpLoopChecker<'a> {
+    ctx: &'a MatchContext,
+    found: bool,
+}
+
+impl Visit for OwpLoopChecker<'_> {
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_for_in_stmt(&mut self, for_in: &swc_core::ecma::ast::ForInStmt) {
+        if for_in_loop_has_owp_shape(for_in, self.ctx) {
+            self.found = true;
+            return;
+        }
+        for_in.visit_children_with(self);
+    }
+
+    fn visit_for_stmt(&mut self, for_stmt: &swc_core::ecma::ast::ForStmt) {
+        let mut if_checker = GuardedCopyInIfChecker {
+            ctx: self.ctx,
+            found: false,
+        };
+        for_stmt.body.visit_with(&mut if_checker);
+        if if_checker.found
+            || for_body_has_or_guarded_copy(&for_stmt.body, self.ctx)
+            || for_body_has_and_guarded_copy(&for_stmt.body, self.ctx)
+        {
+            self.found = true;
+            return;
+        }
+        for_stmt.visit_children_with(self);
+    }
 }
 
 struct OrGuardChecker<'a> {
@@ -1421,6 +1547,86 @@ impl Visit for OrGuardChecker<'_> {
             }
         }
         bin.visit_children_with(self);
+    }
+}
+
+struct AndGuardChecker<'a> {
+    ctx: &'a MatchContext,
+    required_key: Option<ComputedKey>,
+    found: bool,
+}
+
+impl Visit for AndGuardChecker<'_> {
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_bin_expr(&mut self, bin: &swc_core::ecma::ast::BinExpr) {
+        if bin.op == BinaryOp::LogicalAnd {
+            let index_keys =
+                index_guard_keys_for_polarity(&bin.left, self.ctx, GuardPolarity::Included);
+            let index_keys = filter_required_key(index_keys, &self.required_key);
+            if !index_keys.is_empty() {
+                let mut copy_collector = CopyKeyCollector {
+                    ctx: self.ctx,
+                    keys: Vec::new(),
+                };
+                bin.right.visit_with(&mut copy_collector);
+                if keys_have_match(&copy_collector.keys, &index_keys) {
+                    self.found = true;
+                    return;
+                }
+            }
+        }
+        bin.visit_children_with(self);
+    }
+}
+
+struct ContinueGuardedCopyChecker<'a> {
+    ctx: &'a MatchContext,
+    required_key: Option<ComputedKey>,
+    found: bool,
+}
+
+impl Visit for ContinueGuardedCopyChecker<'_> {
+    fn visit_function(&mut self, _: &Function) {}
+    fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+    fn visit_block_stmt(&mut self, block: &swc_core::ecma::ast::BlockStmt) {
+        let mut excluded_keys = Vec::new();
+        for stmt in &block.stmts {
+            let keys = excluded_continue_keys(stmt, self.ctx, &self.required_key);
+            excluded_keys.extend(keys);
+            if !excluded_keys.is_empty()
+                && stmt_contains_matching_copy(stmt, self.ctx, &excluded_keys)
+            {
+                self.found = true;
+                return;
+            }
+        }
+        block.visit_children_with(self);
+    }
+}
+
+fn excluded_continue_keys(
+    stmt: &Stmt,
+    ctx: &MatchContext,
+    required_key: &Option<ComputedKey>,
+) -> Vec<ComputedKey> {
+    let Stmt::If(if_stmt) = stmt else {
+        return Vec::new();
+    };
+    if !stmt_is_continue(&if_stmt.cons) {
+        return Vec::new();
+    }
+    let keys = index_guard_keys_for_polarity(&if_stmt.test, ctx, GuardPolarity::Excluded);
+    filter_required_key(keys, required_key)
+}
+
+fn stmt_is_continue(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Continue(_) => true,
+        Stmt::Block(block) if block.stmts.len() == 1 => matches!(block.stmts[0], Stmt::Continue(_)),
+        _ => false,
     }
 }
 
@@ -1678,7 +1884,7 @@ fn is_extends_fn(func: &Function) -> bool {
     let mut markers = BodyMarkerState::default();
     scan_stmts_for_markers(&body.stmts, &mut markers);
 
-    markers.has_object_assign && markers.has_apply_this_arguments
+    markers.has_object_assign && markers.has_apply_arguments
 }
 
 // ---------------------------------------------------------------------------
@@ -1830,10 +2036,12 @@ struct BodyMarkerState {
     has_array_from: bool,
     has_array_constructor: bool,
     has_object_assign: bool,
-    has_apply_this_arguments: bool,
+    has_apply_arguments: bool,
     has_arguments_ref: bool,
     has_object_define_property: bool,
     has_object_get_own_property_descriptor: bool,
+    has_object_get_own_property_symbols: bool,
+    has_property_is_enumerable: bool,
     has_symbol_iterator: bool,
 }
 
@@ -1872,15 +2080,21 @@ fn scan_stmts_for_markers(stmts: &[Stmt], state: &mut BodyMarkerState) {
                             {
                                 self.state.has_object_get_own_property_descriptor = true;
                             }
+                            if is_member_prop_name(&member.prop, "getOwnPropertySymbols") {
+                                self.state.has_object_get_own_property_symbols = true;
+                            }
                         }
                     }
-                    // *.apply(this, arguments)
+                    // *.apply(this|null, arguments)
                     if is_member_prop_name(&member.prop, "apply")
                         && call.args.len() == 2
-                        && matches!(call.args[0].expr.as_ref(), Expr::This(..))
+                        && matches!(
+                            call.args[0].expr.as_ref(),
+                            Expr::This(..) | Expr::Lit(Lit::Null(..))
+                        )
                         && matches!(call.args[1].expr.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "arguments")
                     {
-                        self.state.has_apply_this_arguments = true;
+                        self.state.has_apply_arguments = true;
                     }
                 }
                 // new Array(len) constructor
@@ -1919,6 +2133,9 @@ fn scan_stmts_for_markers(stmts: &[Stmt], state: &mut BodyMarkerState) {
                 if obj.sym.as_ref() == "Symbol" && is_member_prop_name(&member.prop, "iterator") {
                     self.state.has_symbol_iterator = true;
                 }
+            }
+            if is_member_prop_name(&member.prop, "propertyIsEnumerable") {
+                self.state.has_property_is_enumerable = true;
             }
             member.visit_children_with(self);
         }
@@ -2272,6 +2489,25 @@ mod tests {
                 }"#,
             );
             assert!(!is_class_call_check_fn(&f));
+        });
+    }
+
+    #[test]
+    fn object_without_properties_spec_wrapper() {
+        GLOBALS.set(&Globals::new(), || {
+            let f = parse_first_function(
+                r#"function _objectWithoutProperties(e, t) {
+                    if (null == e) return {};
+                    var o, r, i = _objectWithoutPropertiesLoose(e, t);
+                    if (Object.getOwnPropertySymbols) {
+                        var n = Object.getOwnPropertySymbols(e);
+                        for (r = 0; r < n.length; r++)
+                            o = n[r], -1 === t.indexOf(o) && {}.propertyIsEnumerable.call(e, o) && (i[o] = e[o]);
+                    }
+                    return i;
+                }"#,
+            );
+            assert!(is_object_without_properties_fn(&f));
         });
     }
 }

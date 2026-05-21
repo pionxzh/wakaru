@@ -57,14 +57,38 @@ const x = { ...base, extra: 1, ...more };
 
 #[test]
 fn non_empty_first_arg_is_left_unchanged() {
-    // First arg is not `{}` — mutates target, can't be spread.
+    // First arg is not a fresh object literal — mutates target, can't be spread.
     let input = r#"
 Object.assign(target, source);
-Object.assign({ a: 1 }, source);
 "#;
     let expected = r#"
 Object.assign(target, source);
-Object.assign({ a: 1 }, source);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn safe_non_empty_literal_target() {
+    let input = r#"
+const x = Object.assign({ id: app_id }, app_info);
+"#;
+    let expected = r#"
+const x = { id: app_id, ...app_info };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn unsafe_non_empty_literal_target_is_left_unchanged() {
+    let input = r#"
+const x = Object.assign({ set name(value) { record(value); } }, app_info);
+const y = Object.assign({ __proto__: null, ready: true }, app_info);
+"#;
+    let expected = r#"
+const x = Object.assign({ set name(value) { record(value); } }, app_info);
+const y = Object.assign({ __proto__: null, ready: true }, app_info);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
