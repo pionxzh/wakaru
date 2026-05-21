@@ -742,6 +742,28 @@ fn flattened_chain_temps_are_safe(
     })
 }
 
+fn temp_expr_is_safe_for_pattern(
+    temp: &Expr,
+    exprs: &[&Expr],
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> bool {
+    let Expr::Ident(Ident { sym, ctxt, .. }) = strip_parens(temp) else {
+        return false;
+    };
+    let binding_id = (sym.clone(), *ctxt);
+    let pattern_references = count_binding_references_in_exprs(exprs)
+        .get(&binding_id)
+        .copied()
+        .unwrap_or(0);
+    let total_references = binding_references.get(&binding_id).copied().unwrap_or(0);
+
+    if uninitialized_bindings.contains(&binding_id) && total_references == pattern_references + 1 {
+        return true;
+    }
+    looks_generated_temp_sym(sym) && total_references == pattern_references
+}
+
 fn count_binding_references_in_exprs(exprs: &[&Expr]) -> HashMap<BindingId, usize> {
     let mut counter = BindingReferenceCounter::default();
     for expr in exprs {
@@ -1132,6 +1154,12 @@ fn try_loose_chain_with_assign(
         ) || is_generated_temp_expr(&tmp_ident_expr, binding_references, 2)
             || is_generated_member_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
             || is_nested_optional_chain_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
+            || temp_expr_is_safe_for_pattern(
+                &tmp_ident_expr,
+                &[&checked, access],
+                uninitialized_bindings,
+                binding_references,
+            )
         {
             if let Some(chain) = make_optional_chain_replacing_preferred(
                 &tmp_ident_expr,
@@ -1141,6 +1169,20 @@ fn try_loose_chain_with_assign(
                 unresolved_mark,
             ) {
                 return Some(chain);
+            }
+        }
+        if policy.assumptions.pure_getters {
+            if let Some(recovered_access) =
+                recover_loose_repeated_optional_call_chain(access, unresolved_mark)
+            {
+                if let Some(chain) = make_optional_chain_replacing(
+                    &tmp_ident_expr,
+                    real_rhs,
+                    &recovered_access,
+                    unresolved_mark,
+                ) {
+                    return Some(chain);
+                }
             }
         }
         if policy.level < RewriteLevel::Aggressive {
@@ -1158,6 +1200,65 @@ fn try_loose_chain_with_assign(
     }
 }
 
+fn recover_loose_repeated_optional_call_chain(expr: &Expr, unresolved_mark: Mark) -> Option<Expr> {
+    let Expr::Cond(CondExpr {
+        test, cons, alt, ..
+    }) = strip_parens(expr)
+    else {
+        return None;
+    };
+    if !is_void_or_undefined(cons, unresolved_mark) {
+        return None;
+    }
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::EqEq,
+        left,
+        right,
+        ..
+    }) = test.as_ref()
+    else {
+        return None;
+    };
+    let checked = extract_loose_null_operand(left, right, unresolved_mark)?;
+
+    if let Some((tmp_sym, real_rhs)) = extract_assign_parts(&checked) {
+        let tmp_ident_expr = find_ident_by_sym(alt, &tmp_sym)?;
+        let recovered_alt = recover_loose_repeated_optional_call_chain(alt, unresolved_mark)?;
+        return make_optional_chain_replacing(
+            &tmp_ident_expr,
+            real_rhs,
+            &recovered_alt,
+            unresolved_mark,
+        );
+    }
+
+    let Expr::Call(CallExpr {
+        callee: Callee::Expr(callee_expr),
+        args,
+        type_args,
+        span,
+        ctxt,
+    }) = strip_parens(alt)
+    else {
+        return None;
+    };
+    if !exprs_structurally_equal(callee_expr.as_ref(), &checked) {
+        return None;
+    }
+
+    Some(Expr::OptChain(OptChainExpr {
+        span: DUMMY_SP,
+        optional: true,
+        base: Box::new(OptChainBase::Call(OptCall {
+            span: *span,
+            ctxt: *ctxt,
+            callee: Box::new(checked),
+            args: args.clone(),
+            type_args: type_args.clone(),
+        })),
+    }))
+}
+
 fn make_optional_chain_replacing_preferred(
     tmp: &Expr,
     original_rhs: &Expr,
@@ -1171,6 +1272,21 @@ fn make_optional_chain_replacing_preferred(
         );
     }
 
+    if let Some(recovered_access) = recover_lowered_optional_chain_expr(access, unresolved_mark)
+        .map(|recovered| recovered.chain)
+    {
+        if let Some(chain) = recovered_rhs
+            .and_then(|real_rhs| {
+                make_optional_chain_replacing(tmp, real_rhs, &recovered_access, unresolved_mark)
+            })
+            .or_else(|| {
+                make_optional_chain_replacing(tmp, original_rhs, &recovered_access, unresolved_mark)
+            })
+        {
+            return Some(chain);
+        }
+    }
+
     recovered_rhs
         .and_then(|real_rhs| make_optional_chain_replacing(tmp, real_rhs, access, unresolved_mark))
         .or_else(|| make_optional_chain_replacing(tmp, original_rhs, access, unresolved_mark))
@@ -1182,6 +1298,17 @@ fn is_call_expr(expr: &Expr) -> bool {
 
 fn find_ident_by_sym(access: &Expr, sym: &swc_core::atoms::Atom) -> Option<Expr> {
     match access {
+        Expr::Paren(paren) => find_ident_by_sym(&paren.expr, sym),
+        Expr::Ident(id) if id.sym == *sym => Some(Expr::Ident(id.clone())),
+        Expr::Cond(CondExpr {
+            test, cons, alt, ..
+        }) => find_ident_by_sym(test, sym)
+            .or_else(|| find_ident_by_sym(cons, sym))
+            .or_else(|| find_ident_by_sym(alt, sym)),
+        Expr::Bin(BinExpr { left, right, .. }) => {
+            find_ident_by_sym(left, sym).or_else(|| find_ident_by_sym(right, sym))
+        }
+        Expr::Assign(assign) => find_ident_by_sym(&assign.right, sym),
         Expr::Member(MemberExpr { obj, .. }) => {
             if let Expr::Ident(id) = &**obj {
                 if id.sym == *sym {

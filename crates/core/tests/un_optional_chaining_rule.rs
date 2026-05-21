@@ -310,6 +310,20 @@ const out = obj?.method?.(arg);
 }
 
 #[test]
+fn aggressive_transforms_babel_old_loose_optional_call_with_repeated_property() {
+    let input = r#"
+var _obj;
+const out = (_obj = obj) == null ? void 0 : _obj.method == null ? void 0 : _obj.method(arg);
+"#;
+    let expected = r#"
+var _obj;
+const out = obj?.method?.(arg);
+"#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn aggressive_transforms_babel_loose_nested_optional_call_with_repeated_property() {
     let input = r#"
 var _obj;
@@ -317,6 +331,20 @@ const out = (_obj = obj) == null || (_obj = _obj.foo) == null || _obj.method == 
 "#;
     let expected = r#"
 var _obj;
+const out = obj?.foo?.method?.(arg);
+"#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn aggressive_transforms_babel_old_loose_nested_optional_call_with_repeated_property() {
+    let input = r#"
+var _obj, _obj_foo;
+const out = (_obj = obj) == null ? void 0 : (_obj_foo = _obj.foo) == null ? void 0 : _obj_foo.method == null ? void 0 : _obj_foo.method(arg);
+"#;
+    let expected = r#"
+var _obj, _obj_foo;
 const out = obj?.foo?.method?.(arg);
 "#;
     let output = apply_with_level(input, RewriteLevel::Aggressive);
@@ -401,6 +429,20 @@ const out = obj.foo?.bar.baz?.qux;
 }
 
 #[test]
+fn standard_transforms_babel_old_loose_nested_mixed_required_member_chain() {
+    let input = r#"
+var _obj_foo, _obj_foo_bar_baz;
+const out = (_obj_foo = obj.foo) == null ? void 0 : (_obj_foo_bar_baz = _obj_foo.bar.baz) == null ? void 0 : _obj_foo_bar_baz.qux;
+"#;
+    let expected = r#"
+var _obj_foo, _obj_foo_bar_baz;
+const out = obj.foo?.bar.baz?.qux;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn standard_transforms_mixed_leading_optional_member_chain() {
     let input = r#"
 var _a;
@@ -408,6 +450,20 @@ const out = (_a = obj === null || obj === void 0 ? void 0 : obj.foo.bar) === nul
 "#;
     let expected = r#"
 var _a;
+const out = obj?.foo.bar?.baz.qux;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_babel_old_loose_nested_mixed_leading_optional_member_chain() {
+    let input = r#"
+var _obj, _obj_foo_bar;
+const out = (_obj = obj) == null ? void 0 : (_obj_foo_bar = _obj.foo.bar) == null ? void 0 : _obj_foo_bar.baz.qux;
+"#;
+    let expected = r#"
+var _obj, _obj_foo_bar;
 const out = obj?.foo.bar?.baz.qux;
 "#;
     let output = apply(input);
@@ -425,6 +481,22 @@ var _a;
 const out = obj?.foo.bar?.baz.qux;
 "#;
     let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_babel_old_loose_computed_member_chain_with_nullish() {
+    let input = r#"
+var _obj_key_value, _obj, _obj_key;
+const out = (_obj_key_value = (_obj = obj) == null ? void 0 : (_obj_key = _obj[key]) == null ? void 0 : _obj_key.value) != null ? _obj_key_value : fallback;
+"#;
+    let expected = r#"
+let _obj_key_value;
+let _obj;
+let _obj_key;
+const out = obj?.[key]?.value ?? fallback;
+"#;
+    let output = render(input);
     assert_eq_normalized(&output, expected);
 }
 
