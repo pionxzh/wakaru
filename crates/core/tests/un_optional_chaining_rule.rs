@@ -214,6 +214,22 @@ const a = r?.foo?.bar?.baz ?? "fallback";
 }
 
 #[test]
+fn pipeline_transforms_esbuild_nested_optional_chain_with_nullish() {
+    let input = r#"
+var _a, _b, _c;
+var x = (_c = (_b = (_a = value == null ? void 0 : value.foo) == null ? void 0 : _a.bar) == null ? void 0 : _b.baz) != null ? _c : "fallback";
+"#;
+    let expected = r#"
+let _a;
+let _b;
+let _c;
+const x = value?.foo?.bar?.baz ?? "fallback";
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn standard_transforms_babel_flattened_loose_optional_member_chain() {
     let input = r#"
 var _r$foo$bar, _r;

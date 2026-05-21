@@ -48,6 +48,32 @@ fn transforms_undefined_identifier_instead_of_void_0() {
 }
 
 #[test]
+fn transforms_loose_not_null_ternary() {
+    let input = r#"foo != null ? foo : "bar""#;
+    let expected = r#"foo ?? "bar""#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_loose_null_ternary_flipped() {
+    let input = r#"foo == null ? "bar" : foo"#;
+    let expected = r#"foo ?? "bar""#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn transforms_loose_temp_variable_assignment_in_condition() {
+    let input = r#"var _ref;
+(_ref = foo) != null ? _ref : "bar""#;
+    let expected = r#"var _ref;
+foo ?? "bar""#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn does_not_transform_non_null_check_ternary() {
     let input = r#"foo ? bar : baz"#;
     let output = apply(input);
@@ -190,6 +216,18 @@ use(G);"#;
 fn does_not_transform_ternary_temp_when_used_elsewhere() {
     let input = r#"var _ref;
 var v = (_ref = foo) !== null && _ref !== void 0 ? _ref : "bar";
+use(_ref);"#;
+    let output = apply(input);
+    assert!(
+        output.contains("_ref ="),
+        "should preserve assignment when temp is used elsewhere: {output}"
+    );
+}
+
+#[test]
+fn does_not_transform_loose_ternary_temp_when_used_elsewhere() {
+    let input = r#"var _ref;
+var v = (_ref = foo) != null ? _ref : "bar";
 use(_ref);"#;
     let output = apply(input);
     assert!(

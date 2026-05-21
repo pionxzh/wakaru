@@ -557,13 +557,13 @@ function Ee(e, t) {
         defaultChecked: undefined,
         defaultValue: undefined,
         value: undefined,
-        checked: t_checked != null ? t_checked : e._wrapperState.initialChecked
+        checked: t_checked ?? e._wrapperState.initialChecked
     });
 }
 function xe(e, t) {
-    let n = t.defaultValue == null ? "" : t.defaultValue;
-    const initialChecked = t.checked != null ? t.checked : t.defaultChecked;
-    n = ve(t.value != null ? t.value : n);
+    let n = t.defaultValue ?? "";
+    const initialChecked = t.checked ?? t.defaultChecked;
+    n = ve(t.value ?? n);
     e._wrapperState = {
         initialChecked,
         initialValue: n,
@@ -1942,7 +1942,7 @@ function Bn(e, t, n, r) {
     for(const o in e = this.constructor.Interface){
         e.hasOwnProperty(o) && ((t = e[o]) ? this[o] = t(n) : o === "target" ? this.target = r : this[o] = n[o]);
     }
-    this.isDefaultPrevented = (n.defaultPrevented != null ? n.defaultPrevented : n.returnValue === false) ? Wn : $n;
+    this.isDefaultPrevented = n.defaultPrevented ?? n.returnValue === false ? Wn : $n;
     this.isPropagationStopped = $n;
     return this;
 }

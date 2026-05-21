@@ -77,6 +77,17 @@ fn try_nullish_coalescing(
         return None;
     };
 
+    // Pattern D: `x != null ? x : fallback` / `x == null ? fallback : x`
+    // Temp-var form: `(tmp = expr) != null ? tmp : fallback` -> `expr ?? fallback`
+    if let Some(result) = try_loose_pattern_coalescing(
+        cond_expr,
+        unresolved_mark,
+        uninitialized_bindings,
+        binding_references,
+    ) {
+        return Some(result);
+    }
+
     // Pattern B: `x === null || x === void 0 ? fallback : x`
     if let Some(result) = try_pattern_b_coalescing(
         cond_expr,
@@ -95,6 +106,75 @@ fn try_nullish_coalescing(
         binding_references,
     ) {
         return Some(result);
+    }
+
+    None
+}
+
+fn try_loose_pattern_coalescing(
+    cond: &CondExpr,
+    unresolved_mark: Mark,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> Option<Expr> {
+    let Expr::Bin(BinExpr {
+        op, left, right, ..
+    }) = cond.test.as_ref()
+    else {
+        return None;
+    };
+
+    match op {
+        BinaryOp::NotEq => {
+            let checked = extract_loose_null_operand(left, right, unresolved_mark)?;
+            try_loose_pattern_parts(
+                checked,
+                &cond.cons,
+                cond.alt.clone(),
+                uninitialized_bindings,
+                binding_references,
+            )
+        }
+        BinaryOp::EqEq => {
+            let checked = extract_loose_null_operand(left, right, unresolved_mark)?;
+            try_loose_pattern_parts(
+                checked,
+                &cond.alt,
+                cond.cons.clone(),
+                uninitialized_bindings,
+                binding_references,
+            )
+        }
+        _ => None,
+    }
+}
+
+fn try_loose_pattern_parts(
+    checked: Box<Expr>,
+    value_branch: &Expr,
+    fallback: Box<Expr>,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> Option<Expr> {
+    if let Some((tmp_sym, tmp_ctxt, real_rhs)) = extract_assign_parts(&checked) {
+        let tmp = Box::new(Expr::Ident(Ident::new(tmp_sym.clone(), DUMMY_SP, tmp_ctxt)));
+        if !exprs_structurally_equal(value_branch, &tmp) {
+            return None;
+        }
+        if !is_safe_temp_with_total_refs(
+            &tmp_sym,
+            tmp_ctxt,
+            uninitialized_bindings,
+            binding_references,
+            3,
+        ) {
+            return None;
+        }
+        return Some(make_nullish_coalescing(real_rhs.clone(), fallback));
+    }
+
+    if exprs_structurally_equal(value_branch, &checked) {
+        return Some(make_nullish_coalescing(checked, fallback));
     }
 
     None
@@ -385,6 +465,20 @@ fn extract_not_null_single(expr: &Expr) -> Option<Box<Expr>> {
     None
 }
 
+fn extract_loose_null_operand(
+    left: &Expr,
+    right: &Expr,
+    unresolved_mark: Mark,
+) -> Option<Box<Expr>> {
+    if matches!(right, Expr::Lit(Lit::Null(_))) || is_unresolved_undefined(right, unresolved_mark) {
+        return Some(Box::new(left.clone()));
+    }
+    if matches!(left, Expr::Lit(Lit::Null(_))) || is_unresolved_undefined(left, unresolved_mark) {
+        return Some(Box::new(right.clone()));
+    }
+    None
+}
+
 /// Match `x !== void 0` or `x !== undefined` or flipped — return x.
 fn extract_not_undefined_single(expr: &Expr, unresolved_mark: Mark) -> Option<Box<Expr>> {
     let Expr::Bin(BinExpr {
@@ -486,12 +580,22 @@ fn is_safe_temp(
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
 ) -> bool {
+    is_safe_temp_with_total_refs(sym, ctxt, uninitialized_bindings, binding_references, 4)
+}
+
+fn is_safe_temp_with_total_refs(
+    sym: &swc_core::atoms::Atom,
+    ctxt: SyntaxContext,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+    expected_total_refs: usize,
+) -> bool {
     let binding_id = (sym.clone(), ctxt);
     if !uninitialized_bindings.contains(&binding_id) {
         return false;
     }
     let total_refs = binding_references.get(&binding_id).copied().unwrap_or(0);
-    total_refs == 4
+    total_refs == expected_total_refs
 }
 
 #[derive(Default)]
