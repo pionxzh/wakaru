@@ -111,17 +111,20 @@ try {
   console.log(`# wakaru: ${wakaruDescription()}`);
   console.log(`# level: ${rewriteLevel}`);
   console.log("");
-  console.log("| snippet | tool | recovered | notes |");
-  console.log("|---|---|---:|---|");
+  console.log("| snippet | shape | tools | recovered | notes |");
+  console.log("|---|---:|---|---:|---|");
 
   for (const snippet of snippets) {
-    for (const transformer of transformers) {
-      const result = runCase(snippet, transformer);
+    const shapes = collectShapes(snippet);
+    for (const shape of shapes) {
+      const result = runShape(snippet, shape);
       if (!result.recovered && result.failure) {
         failures.push(result.failure);
       }
       console.log(
-        `| ${snippet.name} | ${transformer.name} | ${result.recovered ? "yes" : "no"} | ${escapeCell(
+        `| ${snippet.name} | ${shape.label} | ${escapeCell(shape.tools.join(", "))} | ${
+          result.recovered ? "yes" : "no"
+        } | ${escapeCell(
           result.notes,
         )} |`,
       );
@@ -133,7 +136,9 @@ try {
     console.log("## Failure Details");
     for (const failure of failures) {
       console.log("");
-      console.log(`### ${failure.snippet} / ${failure.tool}`);
+      console.log(`### ${failure.snippet} / ${failure.shape}`);
+      console.log("");
+      console.log(`Tools: ${failure.tools.join(", ")}`);
       console.log("");
       console.log("Lowered:");
       console.log("```js");
@@ -150,17 +155,50 @@ try {
   rmSync(tmpRoot, { recursive: true, force: true });
 }
 
-function runCase(snippet, transformer) {
-  let lowered;
-  try {
-    lowered = transformer.run(snippet.source);
-  } catch (error) {
-    return { recovered: false, notes: `transform failed: ${error.message}` };
+function collectShapes(snippet) {
+  const groups = new Map();
+  const shapes = [];
+
+  for (const transformer of transformers) {
+    let lowered;
+    try {
+      lowered = transformer.run(snippet.source);
+    } catch (error) {
+      shapes.push({
+        label: "transform-failed",
+        tools: [transformer.name],
+        transformError: error,
+      });
+      continue;
+    }
+
+    const key = shapeKey(lowered);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.tools.push(transformer.name);
+      continue;
+    }
+
+    const shape = {
+      label: `shape ${groups.size + 1}`,
+      tools: [transformer.name],
+      lowered,
+    };
+    groups.set(key, shape);
+    shapes.push(shape);
+  }
+
+  return shapes;
+}
+
+function runShape(snippet, shape) {
+  if (shape.transformError) {
+    return { recovered: false, notes: `transform failed: ${shape.transformError.message}` };
   }
 
   let recovered;
   try {
-    recovered = runWakaru(lowered, `${snippet.name}-${transformer.name}.js`);
+    recovered = runWakaru(shape.lowered, `${snippet.name}-${shape.label.replaceAll(" ", "-")}.js`);
   } catch (error) {
     return { recovered: false, notes: `wakaru failed: ${error.message}` };
   }
@@ -170,15 +208,16 @@ function runCase(snippet, transformer) {
     return { recovered: true, notes: "expected syntax present" };
   }
 
-  const loweredShape = summarize(lowered);
+  const loweredShape = summarize(shape.lowered);
   const recoveredShape = summarize(recovered);
   return {
     recovered: false,
     notes: `missing ${missing.join(", ")}; lowered: ${loweredShape}; wakaru: ${recoveredShape}`,
     failure: {
       snippet: snippet.name,
-      tool: transformer.name,
-      lowered,
+      shape: shape.label,
+      tools: shape.tools,
+      lowered: shape.lowered,
       recovered,
     },
   };
@@ -370,6 +409,10 @@ function summarize(code) {
 
 function escapeCell(value) {
   return value.replaceAll("|", "\\|").replaceAll("\n", " ");
+}
+
+function shapeKey(code) {
+  return code.replaceAll("\r\n", "\n").trim();
 }
 
 function readOption(name, fallback) {

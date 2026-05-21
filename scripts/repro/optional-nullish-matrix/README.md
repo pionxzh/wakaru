@@ -16,6 +16,10 @@ Add `--details` to print full lowered and recovered code for missed cases.
 Add `--level minimal`, `--level standard`, or `--level aggressive` to run
 wakaru with a specific rewrite level.
 
+Rows are grouped by distinct lowered output per snippet. The grouping key only
+normalizes CRLF to LF and trims leading/trailing whitespace, so exact helper
+shape is still preserved while duplicate tool outputs are collapsed.
+
 By default the script uses `target/debug/wakaru(.exe)` when present, otherwise
 it falls back to `cargo run -q -p wakaru-cli --`. Set `WAKARU` to test a
 specific binary.
