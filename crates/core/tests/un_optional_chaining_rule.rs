@@ -359,6 +359,76 @@ const a = r?.foo?.bar?.baz;
 }
 
 #[test]
+fn standard_transforms_babel_mixed_required_member_chain() {
+    let input = r#"
+var _obj_foo;
+const out = (_obj_foo = obj.foo) === null || _obj_foo === void 0 || (_obj_foo = _obj_foo.bar.baz) === null || _obj_foo === void 0 ? void 0 : _obj_foo.qux;
+"#;
+    let expected = r#"
+var _obj_foo;
+const out = obj.foo?.bar.baz?.qux;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_tsc_mixed_required_member_chain() {
+    let input = r#"
+var _a, _b;
+const out = (_b = (_a = obj.foo) === null || _a === void 0 ? void 0 : _a.bar.baz) === null || _b === void 0 ? void 0 : _b.qux;
+"#;
+    let expected = r#"
+var _a, _b;
+const out = obj.foo?.bar.baz?.qux;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_esbuild_mixed_required_member_chain() {
+    let input = r#"
+var _a, _b;
+const out = (_b = (_a = obj.foo) == null ? void 0 : _a.bar.baz) == null ? void 0 : _b.qux;
+"#;
+    let expected = r#"
+var _a, _b;
+const out = obj.foo?.bar.baz?.qux;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_mixed_leading_optional_member_chain() {
+    let input = r#"
+var _a;
+const out = (_a = obj === null || obj === void 0 ? void 0 : obj.foo.bar) === null || _a === void 0 ? void 0 : _a.baz.qux;
+"#;
+    let expected = r#"
+var _a;
+const out = obj?.foo.bar?.baz.qux;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_esbuild_mixed_leading_optional_member_chain() {
+    let input = r#"
+var _a;
+const out = (_a = obj == null ? void 0 : obj.foo.bar) == null ? void 0 : _a.baz.qux;
+"#;
+    let expected = r#"
+var _a;
+const out = obj?.foo.bar?.baz.qux;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn standard_transforms_swc_nested_optional_call_chain() {
     let input = r#"
 var _obj_foo_method, _obj_foo, _obj;

@@ -827,6 +827,11 @@ fn make_optional_chain(base: Expr, access: &Expr) -> Option<Expr> {
                 })),
             }))
         }
+        // x.prop.deep → x?.prop.deep
+        Expr::Member(MemberExpr { obj, prop, .. }) => {
+            let replaced_obj = make_optional_chain(base, obj)?;
+            Some(make_required_member_tail(replaced_obj, prop.clone()))
+        }
 
         // x.method(...) → x?.method(...)
         Expr::Call(CallExpr {
@@ -899,6 +904,25 @@ fn is_optional_call_on_checked(access: &Expr, checked: &Expr) -> bool {
     }
 }
 
+fn make_required_member_tail(obj: Expr, prop: MemberProp) -> Expr {
+    if matches!(strip_parens(&obj), Expr::OptChain(_)) {
+        return Expr::OptChain(OptChainExpr {
+            span: DUMMY_SP,
+            optional: false,
+            base: Box::new(OptChainBase::Member(MemberExpr {
+                span: DUMMY_SP,
+                obj: Box::new(obj),
+                prop,
+            })),
+        });
+    }
+    Expr::Member(MemberExpr {
+        span: DUMMY_SP,
+        obj: Box::new(obj),
+        prop,
+    })
+}
+
 /// Build an optional chain for the assignment temp-var case.
 /// `tmp` is the temp variable expr, `real_rhs` is what it was assigned from.
 /// `access` should use `tmp` as its object; we replace `tmp` with `real_rhs` in the output.
@@ -919,6 +943,10 @@ fn make_optional_chain_replacing(
                     prop: prop.clone(),
                 })),
             }))
+        }
+        Expr::Member(MemberExpr { obj, prop, .. }) => {
+            let replaced_obj = make_optional_chain_replacing(tmp, real_rhs, obj, unresolved_mark)?;
+            Some(make_required_member_tail(replaced_obj, prop.clone()))
         }
 
         Expr::OptChain(OptChainExpr {
@@ -1092,6 +1120,8 @@ fn try_loose_chain_with_assign(
 ) -> Option<Expr> {
     if let Some((tmp_sym, real_rhs)) = extract_assign_parts(&checked) {
         let tmp_ident_expr = find_ident_by_sym(access, &tmp_sym)?;
+        let recovered_real_rhs = recover_lowered_optional_chain_expr(real_rhs, unresolved_mark)
+            .map(|recovered| recovered.chain);
         // Loose Babel lowering references the temp twice inside the chain:
         // once in the null check and once in the final access/call.
         if is_standard_temp_expr(
@@ -1103,19 +1133,51 @@ fn try_loose_chain_with_assign(
             || is_generated_member_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
             || is_nested_optional_chain_temp_expr(&tmp_ident_expr, real_rhs, binding_references, 2)
         {
-            if let Some(chain) =
-                make_optional_chain_replacing(&tmp_ident_expr, real_rhs, access, unresolved_mark)
-            {
+            if let Some(chain) = make_optional_chain_replacing_preferred(
+                &tmp_ident_expr,
+                real_rhs,
+                recovered_real_rhs.as_ref(),
+                access,
+                unresolved_mark,
+            ) {
                 return Some(chain);
             }
         }
         if policy.level < RewriteLevel::Aggressive {
             return None;
         }
-        make_optional_chain_replacing(&tmp_ident_expr, real_rhs, access, unresolved_mark)
+        make_optional_chain_replacing_preferred(
+            &tmp_ident_expr,
+            real_rhs,
+            recovered_real_rhs.as_ref(),
+            access,
+            unresolved_mark,
+        )
     } else {
         make_optional_chain(checked, access)
     }
+}
+
+fn make_optional_chain_replacing_preferred(
+    tmp: &Expr,
+    original_rhs: &Expr,
+    recovered_rhs: Option<&Expr>,
+    access: &Expr,
+    unresolved_mark: Mark,
+) -> Option<Expr> {
+    if is_call_expr(access) {
+        return make_optional_chain_replacing(tmp, original_rhs, access, unresolved_mark).or_else(
+            || make_optional_chain_replacing(tmp, recovered_rhs?, access, unresolved_mark),
+        );
+    }
+
+    recovered_rhs
+        .and_then(|real_rhs| make_optional_chain_replacing(tmp, real_rhs, access, unresolved_mark))
+        .or_else(|| make_optional_chain_replacing(tmp, original_rhs, access, unresolved_mark))
+}
+
+fn is_call_expr(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::Call(_))
 }
 
 fn find_ident_by_sym(access: &Expr, sym: &swc_core::atoms::Atom) -> Option<Expr> {
@@ -1126,7 +1188,7 @@ fn find_ident_by_sym(access: &Expr, sym: &swc_core::atoms::Atom) -> Option<Expr>
                     return Some(Expr::Ident(id.clone()));
                 }
             }
-            None
+            find_ident_by_sym(obj, sym)
         }
         Expr::Call(CallExpr {
             callee: Callee::Expr(callee_expr),
