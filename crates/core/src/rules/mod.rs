@@ -88,6 +88,46 @@ pub enum RewriteLevel {
     Aggressive,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RewriteAssumptions {
+    pub no_document_all: bool,
+    pub pure_getters: bool,
+}
+
+impl RewriteAssumptions {
+    pub fn from_level(level: RewriteLevel) -> Self {
+        match level {
+            RewriteLevel::Minimal => Self {
+                no_document_all: false,
+                pure_getters: false,
+            },
+            RewriteLevel::Standard => Self {
+                no_document_all: true,
+                pure_getters: false,
+            },
+            RewriteLevel::Aggressive => Self {
+                no_document_all: true,
+                pure_getters: true,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RewritePolicy {
+    pub level: RewriteLevel,
+    pub assumptions: RewriteAssumptions,
+}
+
+impl RewritePolicy {
+    pub fn from_level(level: RewriteLevel) -> Self {
+        Self {
+            level,
+            assumptions: RewriteAssumptions::from_level(level),
+        }
+    }
+}
+
 pub use arg_rest::ArgRest;
 pub use arrow_function::ArrowFunction;
 pub use arrow_return::ArrowReturn;

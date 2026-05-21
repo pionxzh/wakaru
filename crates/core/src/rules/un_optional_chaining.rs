@@ -9,11 +9,11 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
-use super::RewriteLevel;
+use super::{RewriteLevel, RewritePolicy};
 
 pub struct UnOptionalChaining {
     unresolved_mark: Mark,
-    level: RewriteLevel,
+    policy: RewritePolicy,
     uninitialized_bindings: HashSet<BindingId>,
     binding_references: HashMap<BindingId, usize>,
 }
@@ -22,7 +22,7 @@ impl UnOptionalChaining {
     pub fn new(unresolved_mark: Mark, level: RewriteLevel) -> Self {
         Self {
             unresolved_mark,
-            level,
+            policy: RewritePolicy::from_level(level),
             uninitialized_bindings: HashSet::new(),
             binding_references: HashMap::new(),
         }
@@ -48,7 +48,7 @@ impl VisitMut for UnOptionalChaining {
         if let Some(result) = try_optional_chaining(
             expr,
             self.unresolved_mark,
-            self.level,
+            self.policy,
             &self.uninitialized_bindings,
             &self.binding_references,
         ) {
@@ -212,7 +212,7 @@ fn build_optional_call_stmt(
 fn try_optional_chaining(
     expr: &Expr,
     unresolved_mark: Mark,
-    level: RewriteLevel,
+    policy: RewritePolicy,
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
 ) -> Option<Expr> {
@@ -220,7 +220,7 @@ fn try_optional_chaining(
     if let Some(result) = try_ternary_optional_chain(
         expr,
         unresolved_mark,
-        level,
+        policy,
         uninitialized_bindings,
         binding_references,
     ) {
@@ -232,7 +232,7 @@ fn try_optional_chaining(
     if let Some(result) = try_flattened_optional_chain(
         expr,
         unresolved_mark,
-        level,
+        policy,
         uninitialized_bindings,
         binding_references,
     ) {
@@ -243,7 +243,7 @@ fn try_optional_chaining(
     if let Some(result) = try_loose_eq_optional_chain(
         expr,
         unresolved_mark,
-        level,
+        policy,
         uninitialized_bindings,
         binding_references,
     ) {
@@ -256,11 +256,11 @@ fn try_optional_chaining(
 fn try_flattened_optional_chain(
     expr: &Expr,
     unresolved_mark: Mark,
-    level: RewriteLevel,
+    policy: RewritePolicy,
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
 ) -> Option<Expr> {
-    if level < RewriteLevel::Standard {
+    if policy.level < RewriteLevel::Standard {
         return None;
     }
 
@@ -277,7 +277,7 @@ fn try_flattened_optional_chain(
     try_flattened_strict_optional_chain(
         test,
         alt,
-        level,
+        policy,
         uninitialized_bindings,
         binding_references,
         unresolved_mark,
@@ -286,7 +286,7 @@ fn try_flattened_optional_chain(
         try_flattened_loose_optional_chain(
             test,
             alt,
-            level,
+            policy,
             uninitialized_bindings,
             binding_references,
             unresolved_mark,
@@ -297,7 +297,7 @@ fn try_flattened_optional_chain(
 fn try_flattened_strict_optional_chain(
     test: &Expr,
     alt: &Expr,
-    level: RewriteLevel,
+    policy: RewritePolicy,
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
     unresolved_mark: Mark,
@@ -346,7 +346,7 @@ fn try_flattened_strict_optional_chain(
         &temps,
         test,
         alt,
-        level,
+        policy.level,
         uninitialized_bindings,
         binding_references,
     ) {
@@ -366,12 +366,12 @@ fn try_flattened_strict_optional_chain(
 fn try_flattened_loose_optional_chain(
     test: &Expr,
     alt: &Expr,
-    level: RewriteLevel,
+    policy: RewritePolicy,
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
     unresolved_mark: Mark,
 ) -> Option<Expr> {
-    if level < RewriteLevel::Standard {
+    if !policy.assumptions.no_document_all {
         return None;
     }
 
@@ -415,7 +415,7 @@ fn try_flattened_loose_optional_chain(
         &temps,
         test,
         alt,
-        level,
+        policy.level,
         uninitialized_bindings,
         binding_references,
     ) {
@@ -667,7 +667,7 @@ fn count_binding_references_in_exprs(exprs: &[&Expr]) -> HashMap<BindingId, usiz
 fn try_ternary_optional_chain(
     expr: &Expr,
     unresolved_mark: Mark,
-    level: RewriteLevel,
+    policy: RewritePolicy,
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
 ) -> Option<Expr> {
@@ -702,10 +702,10 @@ fn try_ternary_optional_chain(
             if let Some(chain) =
                 make_optional_chain_replacing(&checked, &real_rhs, alt, unresolved_mark)
             {
-                return (level >= RewriteLevel::Standard).then_some(chain);
+                return (policy.level >= RewriteLevel::Standard).then_some(chain);
             }
         }
-        if level < RewriteLevel::Aggressive {
+        if policy.level < RewriteLevel::Aggressive {
             return None;
         }
         // Assignment form: `checked` is `tmp`, `real_rhs` is the original expr
@@ -891,11 +891,11 @@ fn make_optional_chain_replacing(
 fn try_loose_eq_optional_chain(
     expr: &Expr,
     unresolved_mark: Mark,
-    level: RewriteLevel,
+    policy: RewritePolicy,
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
 ) -> Option<Expr> {
-    if level < RewriteLevel::Standard {
+    if !policy.assumptions.no_document_all {
         return None;
     }
 
@@ -924,7 +924,7 @@ fn try_loose_eq_optional_chain(
             try_loose_chain_with_assign(
                 checked,
                 alt,
-                level,
+                policy,
                 uninitialized_bindings,
                 binding_references,
                 unresolved_mark,
@@ -940,7 +940,7 @@ fn try_loose_eq_optional_chain(
             try_loose_chain_with_assign(
                 checked,
                 cons,
-                level,
+                policy,
                 uninitialized_bindings,
                 binding_references,
                 unresolved_mark,
@@ -953,7 +953,7 @@ fn try_loose_eq_optional_chain(
 fn try_loose_chain_with_assign(
     checked: Expr,
     access: &Expr,
-    level: RewriteLevel,
+    policy: RewritePolicy,
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
     unresolved_mark: Mark,
@@ -977,7 +977,7 @@ fn try_loose_chain_with_assign(
                 return Some(chain);
             }
         }
-        if level < RewriteLevel::Aggressive {
+        if policy.level < RewriteLevel::Aggressive {
             return None;
         }
         make_optional_chain_replacing(&tmp_ident_expr, real_rhs, access, unresolved_mark)

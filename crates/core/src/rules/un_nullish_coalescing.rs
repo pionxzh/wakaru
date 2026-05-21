@@ -9,13 +9,13 @@ use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 pub(crate) use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
-use super::RewriteLevel;
+use super::{RewriteLevel, RewritePolicy};
 
 type BindingId = (swc_core::atoms::Atom, SyntaxContext);
 
 pub struct UnNullishCoalescing {
     unresolved_mark: Mark,
-    level: RewriteLevel,
+    policy: RewritePolicy,
     uninitialized_bindings: HashSet<BindingId>,
     binding_references: HashMap<BindingId, usize>,
 }
@@ -24,7 +24,7 @@ impl UnNullishCoalescing {
     pub fn new(unresolved_mark: Mark, level: RewriteLevel) -> Self {
         Self {
             unresolved_mark,
-            level,
+            policy: RewritePolicy::from_level(level),
             uninitialized_bindings: HashSet::new(),
             binding_references: HashMap::new(),
         }
@@ -45,7 +45,7 @@ impl VisitMut for UnNullishCoalescing {
         if let Some(result) = try_nullish_coalescing(
             expr,
             self.unresolved_mark,
-            self.level,
+            self.policy,
             &self.uninitialized_bindings,
             &self.binding_references,
         ) {
@@ -57,7 +57,7 @@ impl VisitMut for UnNullishCoalescing {
 fn try_nullish_coalescing(
     expr: &Expr,
     unresolved_mark: Mark,
-    level: RewriteLevel,
+    policy: RewritePolicy,
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
 ) -> Option<Expr> {
@@ -66,7 +66,7 @@ fn try_nullish_coalescing(
     if let Some(result) = try_pattern_c_coalescing(
         expr,
         unresolved_mark,
-        level,
+        policy,
         uninitialized_bindings,
         binding_references,
     ) {
@@ -79,7 +79,7 @@ fn try_nullish_coalescing(
 
     // Pattern D: `x != null ? x : fallback` / `x == null ? fallback : x`
     // Temp-var form: `(tmp = expr) != null ? tmp : fallback` -> `expr ?? fallback`
-    if level >= RewriteLevel::Standard {
+    if policy.assumptions.no_document_all {
         if let Some(result) = try_loose_pattern_coalescing(
             cond_expr,
             unresolved_mark,
@@ -272,7 +272,7 @@ fn try_pattern_b_coalescing(
 fn try_pattern_c_coalescing(
     expr: &Expr,
     unresolved_mark: Mark,
-    level: RewriteLevel,
+    policy: RewritePolicy,
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
 ) -> Option<Expr> {
@@ -335,13 +335,13 @@ fn try_pattern_c_coalescing(
 
     // Plain identifier form: identifiers may technically differ under `with` or
     // global accessor bindings (3 reads → 1), but this is acceptable heuristically.
-    if matches!(&*null_val, Expr::Ident(_)) && level < RewriteLevel::Standard {
+    if matches!(&*null_val, Expr::Ident(_)) && policy.level < RewriteLevel::Standard {
         return None;
     }
 
     // Member expressions and other complex forms require Aggressive level
     // because collapsing 3 reads into 1 changes semantics for getters/proxies.
-    if !matches!(&*null_val, Expr::Ident(_)) && level < RewriteLevel::Aggressive {
+    if !matches!(&*null_val, Expr::Ident(_)) && !policy.assumptions.pure_getters {
         return None;
     }
 
