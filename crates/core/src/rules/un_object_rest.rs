@@ -42,8 +42,10 @@ impl UnObjectRest {
 impl VisitMut for UnObjectRest {
     fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
         // Collect named OWP helpers (function declarations detected by babel_helper_utils)
-        let named_helpers =
-            collect_helpers_of_kind(module, BabelHelperKind::ObjectWithoutProperties);
+        let all_helpers = collect_helpers_of_kind(module, BabelHelperKind::ObjectWithoutProperties);
+        let helper_dependencies =
+            collect_helpers_of_kind(module, BabelHelperKind::HelperDependency);
+        let named_helpers = all_helpers;
 
         // Process inner scopes first (function bodies, etc.) with helpers available
         let mut processor = ObjectRestProcessor {
@@ -106,8 +108,13 @@ impl VisitMut for UnObjectRest {
 
         // Remove named helper declarations if all call sites were replaced
         if !named_helpers.is_empty() {
-            let remaining = helpers_with_remaining_refs(module, &named_helpers);
-            let safe: HashMap<BindingKey, BabelHelperKind> = named_helpers
+            let removable_helpers = named_helpers
+                .iter()
+                .chain(helper_dependencies.iter())
+                .map(|(key, kind)| (key.clone(), *kind))
+                .collect::<HashMap<_, _>>();
+            let remaining = helpers_with_remaining_refs(module, &removable_helpers);
+            let safe: HashMap<BindingKey, BabelHelperKind> = removable_helpers
                 .into_iter()
                 .filter(|(key, _)| !remaining.contains(key))
                 .collect();

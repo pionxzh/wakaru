@@ -27,6 +27,7 @@ pub(crate) enum BabelHelperKind {
     Inherits,
     CallSuper,
     AsyncToGenerator,
+    HelperDependency,
 }
 
 /// Known import paths for Babel runtime helpers.
@@ -94,7 +95,9 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
         match item {
             // function _interopRequireDefault(obj) { ... }
             ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
-                if let Some(kind) = detect_helper_from_fn(&fn_decl.function, has_sub_helpers) {
+                if let Some(kind) = detect_helper_from_fn(&fn_decl.function, has_sub_helpers)
+                    .or_else(|| generated_fn_helper_name_kind(fn_decl.ident.sym.as_ref()))
+                {
                     helpers.insert((fn_decl.ident.sym.clone(), fn_decl.ident.ctxt), kind);
                 }
             }
@@ -330,7 +333,47 @@ fn detect_helper_from_var_decl(
         }
     }
 
+    if let Some(kind) = generated_helper_name_kind(key.0.as_ref(), init) {
+        return Some((key, kind));
+    }
+
     None
+}
+
+fn generated_helper_name_kind(name: &str, init: &Expr) -> Option<BabelHelperKind> {
+    match name {
+        // SWC object spread helpers and esbuild object spread helpers.
+        "_object_spread" | "_object_spread_props" | "__spreadValues" | "__spreadProps" => {
+            matches!(init, Expr::Fn(_) | Expr::Arrow(_)).then_some(BabelHelperKind::ObjectSpread)
+        }
+        // SWC object rest helpers and esbuild object rest helper.
+        "_object_without_properties" | "_object_without_properties_loose" | "__objRest" => {
+            matches!(init, Expr::Fn(_) | Expr::Arrow(_))
+                .then_some(BabelHelperKind::ObjectWithoutProperties)
+        }
+        // Generated subhelpers used only by the spread/rest helpers above.
+        "_define_property"
+        | "ownKeys"
+        | "__defNormalProp"
+        | "__defProp"
+        | "__defProps"
+        | "__getOwnPropDescs"
+        | "__getOwnPropSymbols"
+        | "__hasOwnProp"
+        | "__propIsEnum" => Some(BabelHelperKind::HelperDependency),
+        _ => None,
+    }
+}
+
+fn generated_fn_helper_name_kind(name: &str) -> Option<BabelHelperKind> {
+    match name {
+        "_object_spread" | "_object_spread_props" => Some(BabelHelperKind::ObjectSpread),
+        "_object_without_properties" | "_object_without_properties_loose" => {
+            Some(BabelHelperKind::ObjectWithoutProperties)
+        }
+        "_define_property" | "ownKeys" => Some(BabelHelperKind::HelperDependency),
+        _ => None,
+    }
 }
 
 fn detect_helper_from_expr(expr: &Expr, has_sub_helpers: bool) -> Option<BabelHelperKind> {
@@ -1096,6 +1139,9 @@ fn is_object_without_properties_fn(func: &Function) -> bool {
                 if for_body_has_and_guarded_copy(&f.body, &ctx) {
                     return true;
                 }
+                if for_body_has_continue_guarded_copy(&f.body, &ctx) {
+                    return true;
+                }
             }
             _ => {}
         }
@@ -1481,6 +1527,16 @@ fn for_body_has_and_guarded_copy(body: &Stmt, ctx: &MatchContext) -> bool {
     checker.found
 }
 
+fn for_body_has_continue_guarded_copy(body: &Stmt, ctx: &MatchContext) -> bool {
+    let mut checker = ContinueGuardedCopyChecker {
+        ctx,
+        required_key: None,
+        found: false,
+    };
+    body.visit_with(&mut checker);
+    checker.found
+}
+
 struct OwpLoopChecker<'a> {
     ctx: &'a MatchContext,
     found: bool,
@@ -1507,6 +1563,7 @@ impl Visit for OwpLoopChecker<'_> {
         if if_checker.found
             || for_body_has_or_guarded_copy(&for_stmt.body, self.ctx)
             || for_body_has_and_guarded_copy(&for_stmt.body, self.ctx)
+            || for_body_has_continue_guarded_copy(&for_stmt.body, self.ctx)
         {
             self.found = true;
             return;
@@ -1958,10 +2015,6 @@ fn is_extends_polyfill_fn(expr: &Expr) -> bool {
 // ---------------------------------------------------------------------------
 
 fn is_object_spread_fn(func: &Function) -> bool {
-    let Some(ctx) = MatchContext::from_params(func, &["target"]) else {
-        return false;
-    };
-
     let body = match func.body.as_ref() {
         Some(b) => b,
         None => return false,
@@ -1970,18 +2023,36 @@ fn is_object_spread_fn(func: &Function) -> bool {
     let mut markers = BodyMarkerState::default();
     scan_stmts_for_markers(&body.stmts, &mut markers);
 
-    if !markers.has_arguments_ref {
-        return false;
-    }
-    if !markers.has_object_define_property || !markers.has_object_get_own_property_descriptor {
-        return false;
+    if let Some(ctx) = MatchContext::from_params(func, &["target"]) {
+        if !markers.has_arguments_ref {
+            return false;
+        }
+        if (!markers.has_object_define_property || !markers.has_object_get_own_property_descriptor)
+            && (!markers.has_object_keys || !markers.has_object_get_own_property_symbols)
+        {
+            return false;
+        }
+
+        return matches!(
+            body.stmts.last(),
+            Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. }))
+                if ctx.is_binding(arg, "target")
+        );
     }
 
-    matches!(
-        body.stmts.last(),
-        Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. }))
-            if ctx.is_binding(arg, "target")
-    )
+    if let Some(ctx) = MatchContext::from_params(func, &["target", "source"]) {
+        if !markers.has_object_define_property || !markers.has_object_get_own_property_descriptor {
+            return false;
+        }
+
+        return matches!(
+            body.stmts.last(),
+            Some(Stmt::Return(ReturnStmt { arg: Some(arg), .. }))
+                if ctx.is_binding(arg, "target")
+        );
+    }
+
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -2038,6 +2109,7 @@ struct BodyMarkerState {
     has_object_assign: bool,
     has_apply_arguments: bool,
     has_arguments_ref: bool,
+    has_object_keys: bool,
     has_object_define_property: bool,
     has_object_get_own_property_descriptor: bool,
     has_object_get_own_property_symbols: bool,
@@ -2067,6 +2139,9 @@ fn scan_stmts_for_markers(stmts: &[Stmt], state: &mut BodyMarkerState) {
                             }
                         }
                         if obj.sym.as_ref() == "Object" {
+                            if is_member_prop_name(&member.prop, "keys") {
+                                self.state.has_object_keys = true;
+                            }
                             if is_member_prop_name(&member.prop, "assign") {
                                 self.state.has_object_assign = true;
                             }

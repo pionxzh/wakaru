@@ -30,7 +30,9 @@ impl VisitMut for UnObjectSpread {
         let helpers: HashMap<BindingKey, BabelHelperKind> = all_helpers
             .into_iter()
             .filter(|(_, kind)| {
-                *kind == BabelHelperKind::Extends || *kind == BabelHelperKind::ObjectSpread
+                *kind == BabelHelperKind::Extends
+                    || *kind == BabelHelperKind::ObjectSpread
+                    || *kind == BabelHelperKind::HelperDependency
             })
             .collect();
         if helpers.is_empty() {
@@ -69,7 +71,13 @@ impl VisitMut for SpreadReplacer<'_> {
         };
 
         let key = (id.sym.clone(), id.ctxt);
-        let Some(_kind) = self.helpers.get(&key) else {
+        let Some(kind) = self.helpers.get(&key) else {
+            return;
+        };
+        if !matches!(
+            kind,
+            BabelHelperKind::Extends | BabelHelperKind::ObjectSpread
+        ) {
             return;
         };
 
