@@ -1,0 +1,163 @@
+# Rewrite Assumptions
+
+See also: [Architecture](architecture.md) for pipeline stages and rewrite
+levels, [Rule dependency inventory](rule-dependency-inventory.md) for per-rule
+safety classifications.
+
+## Purpose
+
+`RewriteLevel` controls how aggressively wakaru recovers original source, but
+it does not explain *why* a particular rewrite is safe or unsafe. Two rules at
+the same level may depend on completely different properties of the input.
+
+This document names those properties. When a rule relies on something that is
+not provable from the AST alone, it should say which assumption it depends on.
+The goal is a shared vocabulary so rule authors make the same tradeoff the same
+way, and so users can eventually understand what "standard" is actually
+promising.
+
+## Reproduce First
+
+A new generated-code recovery should start from a reproduced compiler, bundler,
+or minifier shape. Prefer a small input snippet plus the tool and version that
+produced the lowered code.
+
+Good sources: Babel, TypeScript, SWC, esbuild, terser, webpack, Rollup, and
+emitted helper/runtime code from real packages.
+
+A bug report is useful evidence, but it should not by itself justify a new
+heuristic if the producing tool and shape cannot be reproduced. Patterns that
+look generated but cannot be traced to a known toolchain belong in `aggressive`
+at most, with a test comment noting the shape is speculative and why
+reproduction was unavailable.
+
+## Assumptions
+
+These are named properties of the input that rules may depend on when a
+transform is not provable from the AST alone.
+
+Rules should reference these names in code comments or test names when
+applicable, so the dependency is grep-able.
+
+### `no_document_all`
+
+The input does not depend on the legacy `document.all` falsy-object behavior.
+
+Loose nullish checks:
+
+```js
+x == null    // true for null, undefined, AND document.all
+x != null
+```
+
+are not strictly equivalent to `x === null || x === undefined`. Optional
+chaining and nullish coalescing recovery from loose checks depends on this
+assumption.
+
+Affects: `UnOptionalChaining` (loose null-check forms), `UnNullishCoalescing`
+(loose null-check forms).
+
+Level: `standard` and above. `minimal` should only recover optional chaining
+and nullish coalescing from strict checks or temp-based patterns where the
+assumption is not needed.
+
+### `pure_getters`
+
+Property reads on the rewritten base are stable and side-effect-free.
+
+This matters whenever a rewrite changes how many times a property is read:
+
+```js
+// input: two reads of obj.value
+obj.value != null ? obj.value : fallback
+
+// output: one read of obj.value
+obj.value ?? fallback
+```
+
+If `obj.value` is a getter with side effects, the rewrite changes observable
+behavior.
+
+The same applies to optional chaining recovery:
+
+```js
+// input: two reads of obj.a
+obj.a != null ? obj.a.b : undefined
+
+// output: one read of obj.a
+obj.a?.b
+```
+
+Temp-based patterns avoid this entirely - the original code already evaluates
+the property once:
+
+```js
+var _a;
+(_a = obj.value) != null ? _a : fallback
+// -> obj.value ?? fallback (safe: _a proves single evaluation)
+```
+
+Rules should prefer temp-based recovery when available. Repeated-access recovery
+requires this assumption.
+
+Affects: `UnOptionalChaining` (repeated-base forms), `UnNullishCoalescing`
+(repeated-base forms).
+
+Level: `standard` and above for identifier bases (e.g. `x.prop`). Member
+expression bases (e.g. `a.b.prop`) should require `aggressive` unless a temp
+proves single evaluation.
+
+Other assumptions (e.g. `stable_builtins` for monkey-patched globals/prototypes)
+are intentionally deferred until a concrete rule needs one and the boundary is
+well-defined.
+
+## Generated Temporaries
+
+Temporaries introduced by compilers are handled by binding analysis, not by
+assumption. A temporary may be removed only when reference analysis proves it
+is isolated to the matched pattern:
+
+```js
+var _tmp;
+const out = (_tmp = obj.value) == null ? fallback : _tmp;
+// -> const out = obj.value ?? fallback
+// safe: _tmp has no reads or writes outside the pattern
+```
+
+If the temp is observed elsewhere, no level or assumption overrides that:
+
+```js
+var _tmp;
+const out = (_tmp = obj.value) == null ? fallback : _tmp;
+console.log(_tmp);
+// _tmp escapes the pattern - do not remove
+```
+
+This is a hard rule, not a level-gated policy. It prevents the assumption
+system from becoming a mechanism to skip safety checks.
+
+## Dynamic Scope Limits
+
+wakaru does not model `eval`, `with`, or host-level observation of generated
+temporaries (e.g. top-level script `var` bindings leaking to `globalThis`).
+
+Rules should still perform binding/reference analysis within the containing
+function or module scope. They do not need to bail out of otherwise valid
+recovery because dynamic code could theoretically observe an isolated compiler
+temp.
+
+This limitation should be documented for users, especially for `minimal`.
+
+## Rule Author Checklist
+
+Before adding or widening a rewrite:
+
+1. Reproduce the lowered shape from a known toolchain, or place the rewrite in
+   `aggressive` and note the shape is speculative.
+2. Decide the lowest level where the rewrite belongs.
+3. If the transform is not provable from the AST alone, name the assumption it
+   depends on (`no_document_all`, `pure_getters`) in the test or a code comment.
+4. Prefer binding/reference proof over assumptions. A temp that proves single
+   evaluation is better than relying on `pure_getters`.
+5. Never let an assumption override a concrete observed use - a temp read
+   outside the matched pattern means the temp stays.

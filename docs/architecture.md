@@ -130,54 +130,14 @@ Stage 6: Cleanup and renaming
 decompilation output, but tests can disable them to snapshot structural
 restoration separately from dead-code cleanup.
 
-`DecompileOptions.level` is a separate user-facing control over rewrite
-aggressiveness:
+`DecompileOptions.level` controls rewrite aggressiveness — `minimal` (high
+confidence, semantics-preserving), `standard` (default, readability-oriented),
+or `aggressive` (speculative recovery). Rules gate risky subpatterns inside the
+rule rather than moving entire rules in or out of the pipeline.
 
-- `minimal` — prefer direct, local, high-confidence rewrites. Avoid recovery that
-  depends on assuming compiler/transpiler output, synthesizing new bindings for
-  readability, or reconstructing params from `arguments`.
-- `standard` — the default decompiler mode. Recover common generated-source
-  patterns when the evidence is strong and local, even if the rewrite is not a
-  perfect edge-case semantics match. This is the readability-oriented mode wakaru
-  is primarily tuned for.
-- `aggressive` — enable speculative or compiler-intent-heavy recovery. This is
-  where temp-erasing, alias-synthesizing, or fact-backed heuristics belong when
-  they produce better recovered source but the proof is weaker.
-
-These levels are a rewrite policy, not a formal semantics guarantee. In
-particular, `standard` intentionally includes established decompiler heuristics
-that favor likely original source over strict preservation of every JavaScript
-edge case.
-
-Rules are expected to gate risky subpatterns inside the rule, not by moving entire
-rules in or out of the pipeline. This keeps pipeline ordering stable while allowing
-specific rewrites to opt into `standard` or `aggressive` behavior.
-
-Useful mental model:
-
-| Level | Provenance assumption | Semantic risk | Structural synthesis |
-|-------|-----------------------|---------------|----------------------|
-| `minimal` | Low | Low | Low |
-| `standard` | Medium | Moderate | Moderate |
-| `aggressive` | High | Higher | High |
-
-Examples from the current rollout:
-
-- `minimal`
-  - keeps plain strict optional-chaining recovery
-  - skips `.apply(...)` → spread recovery
-  - skips `arguments[...]`-based parameter reconstruction
-  - skips object-alias default-param recovery
-  - skips IIFE param renames / literal hoists
-- `standard`
-  - enables loose optional chaining on plain bases
-  - enables `.apply(undefined, args)` / `obj.fn.apply(obj, args)` spread recovery
-  - enables IIFE param cleanup and literal hoisting
-  - enables object-alias and `arguments[...]`-based parameter recovery
-- `aggressive`
-  - enables optional-chaining assignment-temp recovery
-  - enables JSX dynamic-tag alias synthesis
-  - is reserved for future fact-backed cross-module heuristics
+See [Rewrite assumptions](rewrite-assumptions.md) for the semantic contract:
+which named assumptions each level may rely on, and the reproduce-first policy
+for new heuristics.
 
 #### Key design pattern: `unresolved_mark`
 
@@ -287,6 +247,7 @@ docs/
   helper-detection.md               — transpiler helper detection design
   fact-system.md                    — cross-module fact system
   rule-dependency-inventory.md      — rule dependency relationships
+  rewrite-assumptions.md            — semantic assumptions and rewrite policy
   proposals/
     skip-unless.md                  — deferred performance proposal
 ```
@@ -298,6 +259,7 @@ docs/
 - [Helper detection](helper-detection.md) -- transpiler helper detection design
 - [Fact system](fact-system.md) -- cross-module fact system
 - [Rule dependency inventory](rule-dependency-inventory.md) -- rule dependency relationships and experimental validation
+- [Rewrite assumptions](rewrite-assumptions.md) -- semantic assumptions and rewrite policy
 
 ## References
 

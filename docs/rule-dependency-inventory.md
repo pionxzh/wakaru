@@ -26,7 +26,10 @@ User-facing configuration is controlled separately by `RewriteLevel` /
 - `aggressive` — enable speculative or compiler-intent-heavy recovery when the
   pattern is promising but the proof is weaker
 
-These levels are a rewrite policy, not a formal semantics guarantee.
+`minimal` aims for runtime-equivalent output within documented dynamic-scope
+limits. `standard` and `aggressive` are readability policies that may rely on
+named assumptions. See [Rewrite assumptions](rewrite-assumptions.md) for the
+semantic contract and which assumptions each level may depend on.
 
 Mixed rules may contain subpatterns that belong to different user-facing levels. For
 those rules, level gating happens inside the rule rather than by enabling/disabling
@@ -49,7 +52,6 @@ These rules normalize minified syntax into canonical forms. Most are independent
 
 | Field | Value |
 |-------|-------|
-| Current position | 1 (first rule) |
 | Family | Generic |
 | Role | Syntax normalization |
 | Uses `unresolved_mark` | Yes — guards against removing non-pure calls |
@@ -65,7 +67,6 @@ These rules normalize minified syntax into canonical forms. Most are independent
 
 | Field | Value |
 |-------|-------|
-| Current position | 2 |
 | Family | Generic |
 | Role | Syntax normalization |
 | Uses `unresolved_mark` | No |
@@ -80,7 +81,6 @@ These rules normalize minified syntax into canonical forms. Most are independent
 
 | Field | Value |
 |-------|-------|
-| Current position | 3 |
 | Family | Generic |
 | Role | Syntax normalization |
 | Uses `unresolved_mark` | No |
@@ -95,7 +95,6 @@ These rules normalize minified syntax into canonical forms. Most are independent
 
 | Field | Value |
 |-------|-------|
-| Current position | 4 |
 | Family | Generic |
 | Role | Syntax normalization |
 | Uses `unresolved_mark` | No |
@@ -111,7 +110,6 @@ These rules normalize minified syntax into canonical forms. Most are independent
 
 | Field | Value |
 |-------|-------|
-| Current position | 5 |
 | Family | Generic |
 | Role | Syntax normalization |
 | Uses `unresolved_mark` | No |
@@ -126,7 +124,6 @@ These rules normalize minified syntax into canonical forms. Most are independent
 
 | Field | Value |
 |-------|-------|
-| Current position | 6 |
 | Family | Generic |
 | Role | Syntax normalization |
 | Uses `unresolved_mark` | No |
@@ -141,7 +138,6 @@ These rules normalize minified syntax into canonical forms. Most are independent
 
 | Field | Value |
 |-------|-------|
-| Current position | 7 |
 | Family | Generic |
 | Role | Syntax normalization |
 | Uses `unresolved_mark` | No |
@@ -156,7 +152,6 @@ These rules normalize minified syntax into canonical forms. Most are independent
 
 | Field | Value |
 |-------|-------|
-| Current position | 8 |
 | Family | Generic |
 | Role | Syntax normalization |
 | Uses `unresolved_mark` | No |
@@ -171,7 +166,6 @@ These rules normalize minified syntax into canonical forms. Most are independent
 
 | Field | Value |
 |-------|-------|
-| Current position | 9 |
 | Family | Generic |
 | Role | Syntax normalization |
 | Uses `unresolved_mark` | No |
@@ -186,7 +180,6 @@ These rules normalize minified syntax into canonical forms. Most are independent
 
 | Field | Value |
 |-------|-------|
-| Current position | 10 |
 | Family | Generic |
 | Role | Syntax normalization |
 | Uses `unresolved_mark` | No |
@@ -208,7 +201,6 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Current position | 11 |
 | Family | Babel |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
@@ -223,7 +215,6 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Current position | 12 |
 | Family | Babel |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
@@ -238,7 +229,6 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Current position | 13 |
 | Family | Babel |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
@@ -253,7 +243,6 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Current position | 14 |
 | Family | Babel |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
@@ -268,7 +257,6 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Current position | 15 |
 | Family | Babel |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
@@ -283,7 +271,6 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Current position | 16 |
 | Family | Babel |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
@@ -298,7 +285,6 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Current position | 17 |
 | Family | Babel |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
@@ -313,7 +299,6 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Current position | 18 |
 | Family | Babel |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
@@ -328,7 +313,6 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Current position | 19 |
 | Family | Babel |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
@@ -349,7 +333,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 20 |
 | Family | Generic |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -364,7 +347,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 21 |
 | Family | Generic |
 | Role | Cleanup |
 | Uses `unresolved_mark` | No |
@@ -379,7 +361,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 22 |
 | Family | Generic |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -394,7 +375,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 23 |
 | Family | Generic |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -410,7 +390,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 24 |
 | Family | Generic |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -420,12 +399,12 @@ These rules restore structural patterns and clean up minification artifacts.
 | Downstream dependents | None known |
 | Fact behavior | Neither |
 | Safety | Heuristic (`+x` → `Number(x)` is semantically equivalent but changes readability intent) |
+| Notes | Level-gated: entire rule disabled below `standard`. |
 
 ### 25. UnEsmoduleFlag
 
 | Field | Value |
 |-------|-------|
-| Current position | 25 |
 | Family | Module-system |
 | Role | Module-system reconstruction |
 | Uses `unresolved_mark` | No |
@@ -440,7 +419,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 26 |
 | Family | Generic |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -456,7 +434,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 27 |
 | Family | Generic |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -471,7 +448,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 28 |
 | Family | Generic |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -481,13 +457,12 @@ These rules restore structural patterns and clean up minification artifacts.
 | Downstream dependents | UnSpreadArrayLiteral (consumes spread syntax) |
 | Fact behavior | **Reader** — could benefit from knowing whether a binding is a direct import vs namespace access (the `obj.fn.apply(null, args)` case documented in late-program-pass.md) |
 | Safety | Heuristic (Pattern 1 `fn.apply(null, args)` is safe; Pattern 2 `obj.fn.apply(obj, args)` is safe; `obj.fn.apply(null, args)` is intentionally skipped — not semantics-preserving without namespace decomposition) |
-| Notes | **Key rule for late-program-pass** — the `obj.fn.apply(undefined, args)` case requires cross-module context |
+| Notes | **Key rule for late-program-pass** — the `obj.fn.apply(undefined, args)` case requires cross-module context. Level-gated: entire rule disabled below `standard`. |
 
 ### 29. UnArrayConcatSpread
 
 | Field | Value |
 |-------|-------|
-| Current position | 29 |
 | Family | Generic |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -502,7 +477,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 30 |
 | Family | Generic |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -517,7 +491,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 31 |
 | Family | Generic |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | Yes — to match `Object.assign` on unresolved `Object` |
@@ -532,7 +505,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 32 |
 | Family | Generic |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -547,7 +519,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 33 |
 | Family | Generic |
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
@@ -557,12 +528,12 @@ These rules restore structural patterns and clean up minification artifacts.
 | Downstream dependents | UnConditionals (should run after nullish coalescing to avoid converting `??`-eligible ternaries to if/else) |
 | Fact behavior | Neither |
 | Safety | Safe |
+| Notes | Level-gated: strict-check patterns (Patterns A/B: `x === null \|\| x === undefined`) run at all levels. Loose-check patterns (Pattern D: `x != null ? x : fallback`) should require `standard+` (assumes `no_document_all`). Non-identifier bases (member expressions, computed access) require `aggressive` because collapsing three reads to one changes getter/proxy semantics (assumes `pure_getters`). **Code gap:** Pattern D and the plain-ident branch of Pattern C currently lack a `standard` level gate — they fire at `minimal`. |
 
 ### 34. UnOptionalChaining
 
 | Field | Value |
 |-------|-------|
-| Current position | 34 |
 | Family | Generic |
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
@@ -582,7 +553,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 35 (first pass), 45 (second pass as UnWebpackInterop2) |
 | Family | Webpack |
 | Role | Helper unwrapping / Bundler artifact |
 | Uses `unresolved_mark` | No |
@@ -598,7 +568,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 36 (first pass), 64 (second pass as UnIife2) |
 | Family | Generic |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -608,13 +577,12 @@ These rules restore structural patterns and clean up minification artifacts.
 | Downstream dependents | UnEs6Class (class IIFEs become visible), UnEnum (enum IIFEs), SmartInline (second pass catches IIFEs it creates) |
 | Fact behavior | Neither |
 | Safety | Heuristic (parameter inlining uses usage counting) |
-| Notes | Second pass after SmartInline catches IIFEs created by inlining |
+| Notes | Second pass after SmartInline catches IIFEs created by inlining. Level-gated: param cleanup and literal hoisting disabled below `standard`; `.call()` unwrapping on arrows runs at all levels. |
 
 ### 37. UnConditionals
 
 | Field | Value |
 |-------|-------|
-| Current position | 37 |
 | Family | Generic |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -629,7 +597,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 38 |
 | Family | Generic |
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
@@ -639,12 +606,12 @@ These rules restore structural patterns and clean up minification artifacts.
 | Downstream dependents | None known |
 | Fact behavior | Neither |
 | Safety | Heuristic (pattern match on guard shape) |
+| Notes | Level-gated: Pattern A (`if (arg === undefined) arg = val`) runs at all levels. Pattern B (`arguments[i]`-based reconstruction) and Pattern C (object-alias default params) require `standard`. |
 
 ### 39. UnEnum
 
 | Field | Value |
 |-------|-------|
-| Current position | 39 |
 | Family | TypeScript |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -663,7 +630,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 40 |
 | Family | Babel / React |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | Yes — to detect JSX pragma imports |
@@ -673,12 +639,12 @@ These rules restore structural patterns and clean up minification artifacts.
 | Downstream dependents | None known |
 | Fact behavior | Neither |
 | Safety | Heuristic |
+| Notes | Level-gated: dynamic-tag alias synthesis (creating a local `const Component = expr` for non-identifier JSX tags) requires `aggressive`, or `standard` when strong JSX shape evidence is present. |
 
 ### 41. UnEs6Class
 
 | Field | Value |
 |-------|-------|
-| Current position | 41 |
 | Family | Babel |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -693,7 +659,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 42 |
 | Family | Babel |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -708,7 +673,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 43 |
 | Family | TypeScript |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
@@ -724,7 +688,6 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Current position | 44 |
 | Family | TypeScript |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
@@ -743,7 +706,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 46 |
 | Family | Module-system |
 | Role | Module-system reconstruction |
 | Uses `unresolved_mark` | No |
@@ -753,7 +715,7 @@ See #35 (second pass of UnWebpackInterop).
 | Downstream dependents | UnTsHelpers (must run after — `confirmed`), UnImportRename, UnExportRename, SmartInline |
 | Fact behavior | **Writer** — could emit import/export summary, module classification (CJS/ESM) |
 | Safety | Heuristic (classification logic for default vs named imports/exports) |
-| Notes | **Experimentally validated.** Current position (end of Stage 5, after UnWebpackInterop2) is the earliest safe position. Core require→import conversion works as early as Stage 2, but webpack interop getter patterns require the full UnTsHelpers → UnAsyncAwait → UnWebpackInterop2 chain to complete first. See Step 3 experiments for details. |
+| Notes | **Experimentally validated.** Current position (end of Stage 5, after UnWebpackInterop2) is the earliest safe position. Core require→import conversion works as early as Stage 2, but webpack interop getter patterns require the full UnTsHelpers → UnAsyncAwait → UnWebpackInterop2 chain to complete first. See Step 3 experiments for details. Level-gated: entire rule disabled below `standard`. |
 
 ---
 
@@ -763,7 +725,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 47 |
 | Family | Generic |
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
@@ -778,7 +739,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 48 |
 | Family | Generic |
 | Role | Cleanup |
 | Uses `unresolved_mark` | No |
@@ -793,7 +753,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 49 |
 | Family | Generic |
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
@@ -808,7 +767,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 50 |
 | Family | Generic |
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
@@ -823,7 +781,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 51 |
 | Family | Generic |
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
@@ -838,7 +795,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 52 |
 | Family | Generic |
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
@@ -853,7 +809,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 53 |
 | Family | Generic |
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
@@ -868,7 +823,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 54 |
 | Family | Generic |
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
@@ -878,12 +832,12 @@ See #35 (second pass of UnWebpackInterop).
 | Downstream dependents | **UnRestArrayCopy** (hard — detects Babel copy loop for rest params created by ArgRest) |
 | Fact behavior | Neither |
 | Safety | Heuristic |
+| Notes | Level-gated: entire rule disabled below `standard`. |
 
 ### 55. UnRestArrayCopy
 
 | Field | Value |
 |-------|-------|
-| Current position | 55 |
 | Family | Babel |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
@@ -898,7 +852,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 56 |
 | Family | Generic |
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
@@ -913,7 +866,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 57 |
 | Family | Generic |
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
@@ -928,7 +880,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 58 |
 | Family | TypeScript |
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
@@ -938,6 +889,7 @@ See #35 (second pass of UnWebpackInterop).
 | Downstream dependents | None known |
 | Fact behavior | Neither |
 | Safety | Heuristic |
+| Notes | Level-gated: entire rule disabled below `standard`. |
 
 ---
 
@@ -947,7 +899,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 59 |
 | Family | Webpack |
 | Role | Bundler artifact |
 | Uses `unresolved_mark` | Yes — to match webpack runtime `require("d")` calls |
@@ -962,7 +913,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 60 |
 | Family | Webpack |
 | Role | Bundler artifact |
 | Uses `unresolved_mark` | No |
@@ -977,7 +927,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 61 |
 | Family | Module-system |
 | Role | Naming / presentation |
 | Uses `unresolved_mark` | No |
@@ -992,7 +941,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 62 |
 | Family | Module-system |
 | Role | Naming / presentation |
 | Uses `unresolved_mark` | No |
@@ -1007,7 +955,6 @@ See #35 (second pass of UnWebpackInterop).
 
 | Field | Value |
 |-------|-------|
-| Current position | 63 |
 | Family | Generic |
 | Role | Cleanup |
 | Uses `unresolved_mark` | No |
@@ -1017,6 +964,7 @@ See #35 (second pass of UnWebpackInterop).
 | Downstream dependents | **UnIife2** (hard — catches IIFEs created by SmartInline), SmartRename (aliases removed) |
 | Fact behavior | Neither |
 | Safety | Heuristic (usage counting for inline decisions) |
+| Notes | Level-gated: builtin alias inlining (`const floor = Math.floor` → inline) runs at all levels. Temp-var inlining, useState tuple folding, and property destructuring grouping require `standard`. Index-based destructuring grouping (`obj[0]`, `obj[1]` → array destructuring) requires `aggressive`. |
 
 ### 64. UnIife2
 
@@ -1026,7 +974,6 @@ See #36 (second pass of UnIife, after SmartInline).
 
 | Field | Value |
 |-------|-------|
-| Current position | 65 |
 | Family | Generic |
 | Role | Naming / presentation |
 | Uses `unresolved_mark` | No |
@@ -1041,7 +988,6 @@ See #36 (second pass of UnIife, after SmartInline).
 
 | Field | Value |
 |-------|-------|
-| Current position | 66 (last rule) |
 | Family | Generic |
 | Role | Cleanup |
 | Uses `unresolved_mark` | No |
