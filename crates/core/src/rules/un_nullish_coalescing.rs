@@ -79,13 +79,15 @@ fn try_nullish_coalescing(
 
     // Pattern D: `x != null ? x : fallback` / `x == null ? fallback : x`
     // Temp-var form: `(tmp = expr) != null ? tmp : fallback` -> `expr ?? fallback`
-    if let Some(result) = try_loose_pattern_coalescing(
-        cond_expr,
-        unresolved_mark,
-        uninitialized_bindings,
-        binding_references,
-    ) {
-        return Some(result);
+    if level >= RewriteLevel::Standard {
+        if let Some(result) = try_loose_pattern_coalescing(
+            cond_expr,
+            unresolved_mark,
+            uninitialized_bindings,
+            binding_references,
+        ) {
+            return Some(result);
+        }
     }
 
     // Pattern B: `x === null || x === void 0 ? fallback : x`
@@ -333,6 +335,10 @@ fn try_pattern_c_coalescing(
 
     // Plain identifier form: identifiers may technically differ under `with` or
     // global accessor bindings (3 reads → 1), but this is acceptable heuristically.
+    if matches!(&*null_val, Expr::Ident(_)) && level < RewriteLevel::Standard {
+        return None;
+    }
+
     // Member expressions and other complex forms require Aggressive level
     // because collapsing 3 reads into 1 changes semantics for getters/proxies.
     if !matches!(&*null_val, Expr::Ident(_)) && level < RewriteLevel::Aggressive {

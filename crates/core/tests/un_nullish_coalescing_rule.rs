@@ -22,6 +22,14 @@ fn transforms_not_null_and_not_undefined_ternary() {
 }
 
 #[test]
+fn transforms_strict_not_null_ternary_at_minimal() {
+    let input = r#"foo !== null && foo !== void 0 ? foo : "bar""#;
+    let expected = r#"foo ?? "bar""#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn transforms_null_or_undefined_ternary_flipped() {
     let input = r#"foo === null || foo === void 0 ? "bar" : foo"#;
     let expected = r#"foo ?? "bar""#;
@@ -56,11 +64,25 @@ fn transforms_loose_not_null_ternary() {
 }
 
 #[test]
+fn does_not_transform_loose_not_null_ternary_at_minimal() {
+    let input = r#"foo != null ? foo : "bar""#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn transforms_loose_null_ternary_flipped() {
     let input = r#"foo == null ? "bar" : foo"#;
     let expected = r#"foo ?? "bar""#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_transform_loose_null_ternary_flipped_at_minimal() {
+    let input = r#"foo == null ? "bar" : foo"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -71,6 +93,14 @@ fn transforms_loose_temp_variable_assignment_in_condition() {
 foo ?? "bar""#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_transform_loose_temp_variable_assignment_at_minimal() {
+    let input = r#"var _ref;
+(_ref = foo) != null ? _ref : "bar""#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -99,12 +129,33 @@ B.broadcast ?? true"#;
 }
 
 #[test]
+fn transforms_or_chain_with_temp_var_at_minimal() {
+    // Temp usage proves single evaluation, so this does not need the Standard
+    // repeated-read heuristic.
+    let input = r#"var G;
+(G = B.broadcast) === null || G === undefined || G"#;
+    let expected = r#"var G;
+B.broadcast ?? true"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn transforms_or_chain_plain_form_to_nullish_true() {
     // x === null || x === undefined || x  →  x ?? true
     let input = r#"foo === null || foo === undefined || foo"#;
     let expected = r#"foo ?? true"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_transform_or_chain_plain_form_at_minimal() {
+    // The plain form collapses repeated identifier reads and is a Standard-level
+    // heuristic. The temp form remains allowed at Minimal.
+    let input = r#"foo === null || foo === undefined || foo"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
