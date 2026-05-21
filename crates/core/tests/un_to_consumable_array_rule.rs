@@ -163,3 +163,44 @@ var x = choose(items);
     let output = render(input);
     insta::assert_snapshot!(output);
 }
+
+#[test]
+fn unwraps_typescript_spread_array_helper() {
+    let input = r#"
+var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
+    return to.concat(from);
+};
+var out = __spreadArray(__spreadArray([head], items, true), [tail], false);
+"#;
+    let expected = r#"
+const out = [head, ...items, tail];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_nested_typescript_spread_array_helper() {
+    let input = r#"
+var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
+    return to.concat(from);
+};
+var out = __spreadArray(__spreadArray(__spreadArray([], left_items, true), [middle], false), right_items, true);
+"#;
+    let expected = r#"
+const out = [...left_items, middle, ...right_items];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn preserves_non_helper_named_spread_array() {
+    let input = r#"
+var __spreadArray = customSpreadArray;
+var out = __spreadArray([head], items, true);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("customSpreadArray([") && !output.contains("...items"),
+        "non-helper __spreadArray call should be preserved as a call: {output}"
+    );
+}

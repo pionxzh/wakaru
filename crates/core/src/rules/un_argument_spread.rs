@@ -1,5 +1,8 @@
 use swc_core::common::{Mark, DUMMY_SP};
-use swc_core::ecma::ast::{CallExpr, Callee, Expr, ExprOrSpread, Lit, MemberProp};
+use swc_core::ecma::ast::{
+    AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprOrSpread, Lit, MemberProp,
+    SimpleAssignTarget,
+};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
@@ -100,6 +103,9 @@ fn try_convert_apply(call: CallExpr, unresolved_mark: Mark) -> Result<Expr, Call
         if exprs_structurally_equal(first_arg, &callee_member_obj.obj) {
             return Ok(make_spread_call(call));
         }
+        if let Some(receiver) = memoized_receiver_source(&callee_member_obj.obj, first_arg) {
+            return Ok(make_spread_call_with_member_receiver(call, receiver));
+        }
         // obj.fn.apply(null/undefined, ...) — Babel spread artifact for standalone
         // function calls on module namespaces (e.g. `r.applyMiddleware.apply(void 0, d)`).
         // Not converted here because it changes `this` from undefined to obj.
@@ -151,4 +157,40 @@ fn make_spread_call(call: CallExpr) -> Expr {
         }],
         type_args,
     })
+}
+
+fn memoized_receiver_source(receiver_expr: &Expr, first_arg: &Expr) -> Option<Box<Expr>> {
+    let receiver_expr = strip_paren(receiver_expr);
+    let Expr::Assign(assign) = receiver_expr else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assign.left else {
+        return None;
+    };
+    if !matches!(first_arg, Expr::Ident(id) if id.sym == target.id.sym && id.ctxt == target.id.ctxt)
+    {
+        return None;
+    }
+    Some(assign.right.clone())
+}
+
+fn strip_paren(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_paren(&paren.expr),
+        _ => expr,
+    }
+}
+
+fn make_spread_call_with_member_receiver(mut call: CallExpr, receiver: Box<Expr>) -> Expr {
+    if let Callee::Expr(callee) = &mut call.callee {
+        if let Expr::Member(apply_member) = callee.as_mut() {
+            if let Expr::Member(fn_member) = apply_member.obj.as_mut() {
+                fn_member.obj = receiver;
+            }
+        }
+    }
+    make_spread_call(call)
 }

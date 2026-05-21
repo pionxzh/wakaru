@@ -196,6 +196,34 @@ var [head, ...tail] = arr;
 }
 
 #[test]
+fn reconstructs_array_rest_from_array_like_to_array_slice() {
+    let input = r#"
+var _ref = arr;
+var head = _ref[0];
+var tail = _arrayLikeToArray(_ref).slice(1);
+"#;
+    let expected = r#"
+var [head, ...tail] = arr;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn reconstructs_array_default_rest_from_array_like_to_array_slice() {
+    let input = r#"
+var _ref = arr;
+var head = _ref[0];
+var _tmp = _ref[2];
+var third = _tmp === void 0 ? fallback : _tmp;
+var tail = _arrayLikeToArray(_ref).slice(3);
+"#;
+    let expected = r#"
+var [head, , third = fallback, ...tail] = arr;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn leaves_direct_loose_array_rest() {
     let input = r#"
 const head = values[0];

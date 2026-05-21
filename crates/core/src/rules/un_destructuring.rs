@@ -362,10 +362,7 @@ fn extract_slice_rest(
     let Expr::Member(MemberExpr { obj, prop, .. }) = callee.as_ref() else {
         return None;
     };
-    let Expr::Ident(obj) = obj.as_ref() else {
-        return None;
-    };
-    if obj.sym != ref_ident.sym || obj.ctxt != ref_ident.ctxt {
+    if !is_ref_or_array_like_to_array_ref(obj, ref_ident) {
         return None;
     }
     if !matches!(prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "slice") {
@@ -375,6 +372,28 @@ fn extract_slice_rest(
         return None;
     };
     Some((numeric_index(num)?, binding))
+}
+
+fn is_ref_or_array_like_to_array_ref(expr: &Expr, ref_ident: &Ident) -> bool {
+    match expr {
+        Expr::Ident(obj) => obj.sym == ref_ident.sym && obj.ctxt == ref_ident.ctxt,
+        Expr::Call(call) => {
+            if call.args.is_empty() || call.args[0].spread.is_some() {
+                return false;
+            }
+            let swc_core::ecma::ast::Callee::Expr(callee) = &call.callee else {
+                return false;
+            };
+            let Expr::Ident(helper) = callee.as_ref() else {
+                return false;
+            };
+            matches!(
+                helper.sym.as_ref(),
+                "_arrayLikeToArray" | "_array_like_to_array"
+            ) && is_ref_or_array_like_to_array_ref(call.args[0].expr.as_ref(), ref_ident)
+        }
+        _ => false,
+    }
 }
 
 fn numeric_index(num: &Number) -> Option<usize> {

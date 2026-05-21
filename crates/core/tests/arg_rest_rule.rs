@@ -393,6 +393,44 @@ function foo(a, b, ...rest) {
 }
 
 #[test]
+fn function_typescript_tail_copy_loop_removed() {
+    let input = r#"
+function collect(first) {
+    var rest_items = [];
+    for (var _i = 1; _i < arguments.length; _i++) {
+        rest_items[_i - 1] = arguments[_i];
+    }
+    return use(first, rest_items);
+}
+"#;
+    let expected = r#"
+function collect(first, ...rest_items) {
+    return use(first, rest_items);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn function_typescript_tail_copy_loop_with_offset_removed() {
+    let input = r#"
+function collect(app_id, version) {
+    var rest_items = [];
+    for (var _i = 2; _i < arguments.length; _i++) {
+        rest_items[_i - 2] = arguments[_i];
+    }
+    return use(app_id, version, rest_items);
+}
+"#;
+    let expected = r#"
+function collect(app_id, version, ...rest_items) {
+    return use(app_id, version, rest_items);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn tail_copy_loop_with_wrong_test_is_preserved() {
     let input = r#"
 function foo(a, b) {

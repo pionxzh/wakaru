@@ -185,3 +185,27 @@ obj.fn(...[1, 2, 3]);
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn converts_memoized_method_apply_with_same_receiver_temp() {
+    let input = r#"
+var _app_info;
+const out = (_app_info = app_info).build.apply(_app_info, [prefix, ...items, tail]);
+"#;
+    let expected = r#"
+var _app_info;
+const out = app_info.build(...[prefix, ...items, tail]);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_memoized_method_apply_with_different_receiver_temp() {
+    let input = r#"
+var _app_info;
+const out = (_app_info = app_info).build.apply(other_info, [prefix, ...items, tail]);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}

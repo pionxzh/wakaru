@@ -132,6 +132,15 @@ fn detect_copy_var_name(body: &BlockStmt, fixed_param_count: usize) -> Option<At
     body.stmts
         .iter()
         .find_map(|stmt| detect_copy_var_name_from_stmt(stmt, fixed_param_count))
+        .or_else(|| detect_ts_copy_var_name(body, fixed_param_count))
+}
+
+fn detect_ts_copy_var_name(body: &BlockStmt, fixed_param_count: usize) -> Option<Atom> {
+    body.stmts.windows(2).find_map(|pair| {
+        let copy_sym = ts_empty_array_binding_from_stmt(&pair[0])?;
+        let loop_copy_sym = detect_ts_copy_loop_from_stmt(&pair[1], fixed_param_count)?;
+        (copy_sym == loop_copy_sym).then_some(copy_sym)
+    })
 }
 
 fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Option<Atom> {
@@ -225,6 +234,117 @@ fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Opti
     }
 
     Some(copy_sym)
+}
+
+fn ts_empty_array_binding_from_stmt(stmt: &Stmt) -> Option<Atom> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+
+    let decl = &var.decls[0];
+    let Pat::Ident(BindingIdent { id, .. }) = &decl.name else {
+        return None;
+    };
+    let Expr::Array(array) = decl.init.as_deref()? else {
+        return None;
+    };
+    array.elems.is_empty().then_some(id.sym.clone())
+}
+
+fn detect_ts_copy_loop_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Option<Atom> {
+    let Stmt::For(for_stmt) = stmt else {
+        return None;
+    };
+    let Some(VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else {
+        return None;
+    };
+    if init.decls.len() != 1 {
+        return None;
+    }
+
+    let decl = &init.decls[0];
+    let Pat::Ident(BindingIdent { id: idx_id, .. }) = &decl.name else {
+        return None;
+    };
+    if !matches!(decl.init.as_deref(), Some(expr) if is_number(expr, fixed_param_count)) {
+        return None;
+    }
+
+    let idx_sym = idx_id.sym.clone();
+    if !matches_ts_copy_loop_test(for_stmt.test.as_deref(), &idx_sym)
+        || !matches_copy_loop_update(for_stmt.update.as_deref(), &idx_sym)
+    {
+        return None;
+    }
+
+    copy_var_from_ts_copy_loop_body(&for_stmt.body, &idx_sym, fixed_param_count)
+}
+
+fn matches_ts_copy_loop_test(test: Option<&Expr>, idx_sym: &Atom) -> bool {
+    let Some(Expr::Bin(bin)) = test else {
+        return false;
+    };
+    bin.op == BinaryOp::Lt
+        && matches!(bin.left.as_ref(), Expr::Ident(id) if id.sym == *idx_sym)
+        && is_arguments_length_expr(bin.right.as_ref())
+}
+
+fn copy_var_from_ts_copy_loop_body(
+    body: &Stmt,
+    idx_sym: &Atom,
+    fixed_param_count: usize,
+) -> Option<Atom> {
+    let expr = match body {
+        Stmt::Expr(expr) => expr.expr.as_ref(),
+        Stmt::Block(block) => {
+            if block.stmts.len() != 1 {
+                return None;
+            }
+            let Stmt::Expr(expr) = &block.stmts[0] else {
+                return None;
+            };
+            expr.expr.as_ref()
+        }
+        _ => return None,
+    };
+
+    let Expr::Assign(assign) = expr else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+
+    let AssignTarget::Simple(SimpleAssignTarget::Member(left)) = &assign.left else {
+        return None;
+    };
+    let Expr::Ident(copy_id) = left.obj.as_ref() else {
+        return None;
+    };
+    let MemberProp::Computed(left_prop) = &left.prop else {
+        return None;
+    };
+    if !is_copy_write_index(left_prop.expr.as_ref(), idx_sym, fixed_param_count) {
+        return None;
+    }
+
+    let Expr::Member(right) = assign.right.as_ref() else {
+        return None;
+    };
+    if !is_arguments_ident(&right.obj) {
+        return None;
+    }
+    let MemberProp::Computed(right_prop) = &right.prop else {
+        return None;
+    };
+    if !matches!(right_prop.expr.as_ref(), Expr::Ident(id) if id.sym == *idx_sym) {
+        return None;
+    }
+
+    Some(copy_id.sym.clone())
 }
 
 fn is_copy_array_len_expr(expr: &Expr, len_sym: &Atom, fixed_param_count: usize) -> bool {
@@ -417,6 +537,10 @@ impl Visit for ArgumentsChecker {
             .extend(zero_initialized_bindings_from_stmt(stmt));
 
         if detect_copy_var_name_from_stmt(stmt, self.fixed_param_count).is_some() {
+            self.has_any = true;
+            return;
+        }
+        if detect_ts_copy_loop_from_stmt(stmt, self.fixed_param_count).is_some() {
             self.has_any = true;
             return;
         }
@@ -618,8 +742,37 @@ fn is_binding_ident(expr: &Expr, bindings: &[BindingId]) -> bool {
 /// `for (var len = arguments.length, arr = Array(len), i = 0; i < len; i++) arr[i] = arguments[i];`
 /// This loop is dead code once the rest param is added.
 fn remove_arguments_copy_loop(body: &mut BlockStmt, fixed_param_count: usize) {
-    body.stmts
-        .retain(|stmt| detect_copy_var_name_from_stmt(stmt, fixed_param_count).is_none());
+    let old = std::mem::take(&mut body.stmts);
+    let mut result = Vec::with_capacity(old.len());
+    let mut i = 0;
+
+    while i < old.len() {
+        if detect_copy_var_name_from_stmt(&old[i], fixed_param_count).is_some() {
+            i += 1;
+            continue;
+        }
+
+        if i + 1 < old.len() {
+            if let Some(copy_sym) = ts_empty_array_binding_from_stmt(&old[i]) {
+                if detect_ts_copy_loop_from_stmt(&old[i + 1], fixed_param_count)
+                    .is_some_and(|loop_copy_sym| loop_copy_sym == copy_sym)
+                {
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+
+        if detect_ts_copy_loop_from_stmt(&old[i], fixed_param_count).is_some() {
+            i += 1;
+            continue;
+        }
+
+        result.push(old[i].clone());
+        i += 1;
+    }
+
+    body.stmts = result;
 }
 
 struct ArgumentsRewriter {
