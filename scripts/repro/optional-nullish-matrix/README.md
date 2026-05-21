@@ -1,7 +1,9 @@
 # Optional/Nullish Reproduction Matrix
 
 This harness checks how common tools lower optional chaining and nullish
-coalescing snippets, then runs wakaru on the lowered output.
+coalescing snippets, then runs wakaru on the lowered output. Babel is tested
+across a few meaningful lines: early proposal plugins, assumptions-era Babel 7,
+current transform plugins, and the Babel 8 RC line.
 
 It is for investigation, not as a committed snapshot source. Use it to find
 reproduced tool shapes worth minimizing into focused Rust unit tests.

@@ -54,37 +54,55 @@ const snippets = [
     expected: ["??"],
   },
   {
+    name: "nullish-with-optional-middle",
+    source: "const out = foo ?? bar?.prop ?? baz;\n",
+    expected: ["foo ??", "bar?.prop ?? baz"],
+  },
+  {
     name: "optional-after-nullish",
     source: "const out = (obj?.foo ?? fallback)?.bar;\n",
     expected: ["??", "?.bar"],
   },
 ];
 
+const babelProfiles = [
+  {
+    name: "babel-7.8",
+    core: "7.8.7",
+    optionalPlugin: ["@babel/plugin-proposal-optional-chaining", "7.8.3"],
+    nullishPlugin: ["@babel/plugin-proposal-nullish-coalescing-operator", "7.8.3"],
+    modes: ["spec", "loose"],
+  },
+  {
+    name: "babel-7.13",
+    core: "7.13.16",
+    optionalPlugin: ["@babel/plugin-proposal-optional-chaining", "7.13.12"],
+    nullishPlugin: ["@babel/plugin-proposal-nullish-coalescing-operator", "7.13.8"],
+    modes: ["spec", "noDocumentAll", "loose"],
+  },
+  {
+    name: "babel-7.28",
+    core: "7.28.5",
+    optionalPlugin: ["@babel/plugin-transform-optional-chaining", "7.28.5"],
+    nullishPlugin: ["@babel/plugin-transform-nullish-coalescing-operator", "7.28.6"],
+    modes: ["spec", "noDocumentAll", "loose"],
+  },
+  {
+    name: "babel-8-rc",
+    core: "8.0.0-rc.5",
+    optionalPlugin: ["@babel/plugin-transform-optional-chaining", "8.0.0-rc.5"],
+    nullishPlugin: ["@babel/plugin-transform-nullish-coalescing-operator", "8.0.0-rc.5"],
+    modes: ["spec", "noDocumentAll", "loose"],
+  },
+];
+
 const transformers = [
-  {
-    name: "babel-spec",
-    run: (source) =>
-      runBabel(source, {
-        assumptions: {},
-        pluginOptions: {},
-      }),
-  },
-  {
-    name: "babel-noDocumentAll",
-    run: (source) =>
-      runBabel(source, {
-        assumptions: { noDocumentAll: true },
-        pluginOptions: {},
-      }),
-  },
-  {
-    name: "babel-loose",
-    run: (source) =>
-      runBabel(source, {
-        assumptions: {},
-        pluginOptions: { loose: true },
-      }),
-  },
+  ...babelProfiles.flatMap((profile) =>
+    profile.modes.map((mode) => ({
+      name: `${profile.name}-${mode}`,
+      run: (source) => runBabel(source, profile, babelModeOptions(mode)),
+    })),
+  ),
   {
     name: "tsc-es5",
     run: runTsc,
@@ -177,34 +195,56 @@ function runCase(snippet, transformer) {
   };
 }
 
-function runBabel(source, options) {
-  const toolDir = ensureNodeTool("babel", [
-    "@babel/core@7",
-    "@babel/plugin-transform-optional-chaining@7",
-    "@babel/plugin-transform-nullish-coalescing-operator@7",
+function babelModeOptions(mode) {
+  switch (mode) {
+    case "spec":
+      return { assumptions: {}, pluginOptions: {} };
+    case "noDocumentAll":
+      return { assumptions: { noDocumentAll: true }, pluginOptions: {} };
+    case "loose":
+      return { assumptions: {}, pluginOptions: { loose: true } };
+    default:
+      throw new Error(`unsupported Babel mode ${mode}`);
+  }
+}
+
+function runBabel(source, profile, options) {
+  const [optionalName, optionalVersion] = profile.optionalPlugin;
+  const [nullishName, nullishVersion] = profile.nullishPlugin;
+  const toolDir = ensureNodeTool(`babel-${profile.core}`, [
+    `@babel/core@${profile.core}`,
+    `${optionalName}@${optionalVersion}`,
+    `${nullishName}@${nullishVersion}`,
   ]);
-  const helper = join(toolDir, "babel-transform.cjs");
+  const helper = join(toolDir, "babel-transform.mjs");
   writeFileSync(
     helper,
     `
-const fs = require("node:fs");
-const babel = require("@babel/core");
-const optional = require("@babel/plugin-transform-optional-chaining");
-const nullish = require("@babel/plugin-transform-nullish-coalescing-operator");
+import fs from "node:fs";
+
+const babelModule = await import("@babel/core");
+const optionalModule = await import(${JSON.stringify(optionalName)});
+const nullishModule = await import(${JSON.stringify(nullishName)});
+const babel = babelModule.default ?? babelModule;
+const optional = optionalModule.default ?? optionalModule;
+const nullish = nullishModule.default ?? nullishModule;
 const source = fs.readFileSync(0, "utf8");
 const options = JSON.parse(process.env.MATRIX_BABEL_OPTIONS || "{}");
-const result = babel.transformSync(source, {
+const transformOptions = {
   filename: "input.js",
   babelrc: false,
   configFile: false,
   comments: false,
   compact: false,
-  assumptions: options.assumptions || {},
   plugins: [
     [optional, options.pluginOptions || {}],
     [nullish, options.pluginOptions || {}],
   ],
-});
+};
+if (options.assumptions && Object.keys(options.assumptions).length > 0) {
+  transformOptions.assumptions = options.assumptions;
+}
+const result = babel.transformSync(source, transformOptions);
 process.stdout.write(result.code + "\\n");
 `,
   );
