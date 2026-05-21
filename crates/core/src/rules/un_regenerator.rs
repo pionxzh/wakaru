@@ -1,11 +1,11 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignOp, AwaitExpr, BlockStmt, CatchClause, Decl, Expr, ExprStmt, Function, Ident, Lit,
-    MemberExpr, MemberProp, Module, ModuleItem, Pat, ReturnStmt, Stmt, SwitchCase, WhileStmt,
-    YieldExpr,
+    AssignOp, AssignTarget, AwaitExpr, BlockStmt, CatchClause, Decl, Expr, ExprStmt, FnDecl,
+    Function, Ident, Lit, MemberExpr, MemberProp, Module, ModuleItem, Param, Pat, ReturnStmt,
+    SimpleAssignTarget, Stmt, SwitchCase, WhileStmt, YieldExpr,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith, VisitWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
     collect_helpers, helpers_with_remaining_refs, BabelHelperKind, BindingKey,
@@ -34,6 +34,9 @@ impl VisitMut for UnRegenerator {
         // Phase 2: Transform functions containing regeneratorRuntime.wrap()
         // and _asyncToGenerator() calls. Track consumed mark bindings.
         let mut consumed_marks: Vec<BindingKey> = Vec::new();
+
+        transform_babel_async_trampolines(module, &async_to_gen_bindings, &mut consumed_marks);
+
         let mut transformer = FunctionTransformer {
             unresolved_mark: self.unresolved_mark,
             async_to_gen_bindings: &async_to_gen_bindings,
@@ -55,6 +58,250 @@ impl VisitMut for UnRegenerator {
                 .map(|((sym, ctxt), _)| (sym.clone(), *ctxt))
                 .collect();
             remove_helper_decls(module, &to_remove);
+        }
+    }
+}
+
+fn transform_babel_async_trampolines(
+    module: &mut Module,
+    async_to_gen_bindings: &[BindingKey],
+    consumed_marks: &mut Vec<BindingKey>,
+) {
+    let mut index = 0;
+    while index + 1 < module.body.len() {
+        let Some((public_name, private_key)) = extract_public_trampoline_fn(&module.body[index])
+        else {
+            index += 1;
+            continue;
+        };
+
+        if binding_used_outside_pair(&module.body, index, index + 1, &private_key) {
+            index += 1;
+            continue;
+        }
+
+        let Some((params, mut stmts, mark_key)) = extract_private_trampoline_body(
+            &module.body[index + 1],
+            &private_key,
+            async_to_gen_bindings,
+        ) else {
+            index += 1;
+            continue;
+        };
+
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(public_decl))) = &mut module.body[index] else {
+            index += 1;
+            continue;
+        };
+        if public_decl.ident.sym != public_name.0 || public_decl.ident.ctxt != public_name.1 {
+            index += 1;
+            continue;
+        }
+
+        replace_yield_with_await(&mut stmts);
+        public_decl.function.params = params;
+        public_decl.function.body = Some(BlockStmt {
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            stmts,
+        });
+        public_decl.function.is_async = true;
+        public_decl.function.is_generator = false;
+
+        if let Some(mark_key) = mark_key {
+            consumed_marks.push(mark_key);
+        }
+
+        module.body.remove(index + 1);
+        index += 1;
+    }
+}
+
+fn extract_public_trampoline_fn(item: &ModuleItem) -> Option<(BindingKey, BindingKey)> {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item else {
+        return None;
+    };
+    let private_ident = private_apply_return_ident(fn_decl)?;
+    Some((
+        (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt),
+        (private_ident.sym.clone(), private_ident.ctxt),
+    ))
+}
+
+fn private_apply_return_ident(fn_decl: &FnDecl) -> Option<Ident> {
+    let body = fn_decl.function.body.as_ref()?;
+    if body.stmts.len() != 1 {
+        return None;
+    }
+    let Stmt::Return(ret) = &body.stmts[0] else {
+        return None;
+    };
+    let arg = ret.arg.as_deref()?;
+    extract_apply_this_arguments_callee(arg)
+}
+
+fn extract_apply_this_arguments_callee(expr: &Expr) -> Option<Ident> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if call.args.len() != 2 {
+        return None;
+    }
+    if !matches!(call.args[0].expr.as_ref(), Expr::This(_)) {
+        return None;
+    }
+    if !matches!(call.args[1].expr.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "arguments") {
+        return None;
+    }
+
+    let callee = call.callee.as_expr()?;
+    let Expr::Member(apply_member) = callee.as_ref() else {
+        return None;
+    };
+    if !is_member_prop(&apply_member.prop, "apply") {
+        return None;
+    }
+    let Expr::Ident(id) = apply_member.obj.as_ref() else {
+        return None;
+    };
+    Some(id.clone())
+}
+
+fn extract_private_trampoline_body(
+    item: &ModuleItem,
+    private_key: &BindingKey,
+    async_to_gen_bindings: &[BindingKey],
+) -> Option<(Vec<Param>, Vec<Stmt>, Option<BindingKey>)> {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item else {
+        return None;
+    };
+    if fn_decl.ident.sym != private_key.0 || fn_decl.ident.ctxt != private_key.1 {
+        return None;
+    }
+    let body = fn_decl.function.body.as_ref()?;
+    if body.stmts.len() != 2 {
+        return None;
+    }
+    if !apply_return_ident_from_stmt(&body.stmts[1])
+        .is_some_and(|id| id.sym == private_key.0 && id.ctxt == private_key.1)
+    {
+        return None;
+    }
+
+    let gen_arg = extract_async_assignment_arg(&body.stmts[0], private_key, async_to_gen_bindings)?;
+    extract_async_to_gen_body_with_params(gen_arg)
+}
+
+fn apply_return_ident_from_stmt(stmt: &Stmt) -> Option<Ident> {
+    let Stmt::Return(ret) = stmt else {
+        return None;
+    };
+    let arg = ret.arg.as_deref()?;
+    extract_apply_this_arguments_callee(arg)
+}
+
+fn extract_async_assignment_arg(
+    stmt: &Stmt,
+    private_key: &BindingKey,
+    async_to_gen_bindings: &[BindingKey],
+) -> Option<Expr> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(left)) = &assign.left else {
+        return None;
+    };
+    if left.id.sym != private_key.0 || left.id.ctxt != private_key.1 {
+        return None;
+    }
+
+    let Expr::Call(call) = assign.right.as_ref() else {
+        return None;
+    };
+    if call.args.len() != 1 {
+        return None;
+    }
+    let callee = call.callee.as_expr()?;
+    let Expr::Ident(helper) = callee.as_ref() else {
+        return None;
+    };
+    if !async_to_gen_bindings
+        .iter()
+        .any(|(sym, ctxt)| helper.sym == *sym && helper.ctxt == *ctxt)
+    {
+        return None;
+    }
+
+    Some(*call.args[0].expr.clone())
+}
+
+fn extract_async_to_gen_body_with_params(
+    gen_fn_arg: Expr,
+) -> Option<(Vec<Param>, Vec<Stmt>, Option<BindingKey>)> {
+    match gen_fn_arg {
+        Expr::Fn(fn_expr) => {
+            let params = fn_expr.function.params.clone();
+            if fn_expr.function.is_generator {
+                return Some((params, fn_expr.function.body?.stmts, None));
+            }
+            let mut body = fn_expr.function.body?;
+            let mark_key = try_transform_regenerator_wrap(&mut body)?;
+            Some((params, body.stmts, mark_key))
+        }
+        Expr::Call(mark_call) => {
+            let callee_expr = mark_call.callee.as_expr()?;
+            let Expr::Member(member) = callee_expr.as_ref() else {
+                return None;
+            };
+            if !is_member_prop(&member.prop, "mark") || mark_call.args.len() != 1 {
+                return None;
+            }
+            let Expr::Fn(fn_expr) = *mark_call.args.into_iter().next()?.expr else {
+                return None;
+            };
+            let params = fn_expr.function.params.clone();
+            let mut body = fn_expr.function.body?;
+            let mark_key = try_transform_regenerator_wrap(&mut body)?;
+            Some((params, body.stmts, mark_key))
+        }
+        _ => None,
+    }
+}
+
+fn binding_used_outside_pair(
+    items: &[ModuleItem],
+    first: usize,
+    second: usize,
+    key: &BindingKey,
+) -> bool {
+    items.iter().enumerate().any(|(index, item)| {
+        if index == first || index == second {
+            return false;
+        }
+        let mut finder = BindingUseFinder {
+            key: key.clone(),
+            found: false,
+        };
+        item.visit_with(&mut finder);
+        finder.found
+    })
+}
+
+struct BindingUseFinder {
+    key: BindingKey,
+    found: bool,
+}
+
+impl Visit for BindingUseFinder {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym == self.key.0 && ident.ctxt == self.key.1 {
+            self.found = true;
         }
     }
 }
@@ -293,21 +540,13 @@ fn extract_switch_cases_ref(body: &BlockStmt) -> Option<&[SwitchCase]> {
     for stmt in &body.stmts {
         match stmt {
             Stmt::While(while_stmt) => {
-                if let Stmt::Block(block) = while_stmt.body.as_ref() {
-                    for inner in &block.stmts {
-                        if let Stmt::Switch(sw) = inner {
-                            return Some(&sw.cases);
-                        }
-                    }
+                if let Some(cases) = switch_cases_from_loop_body_ref(while_stmt.body.as_ref()) {
+                    return Some(cases);
                 }
             }
             Stmt::For(for_stmt) => {
-                if let Stmt::Block(block) = for_stmt.body.as_ref() {
-                    for inner in &block.stmts {
-                        if let Stmt::Switch(sw) = inner {
-                            return Some(&sw.cases);
-                        }
-                    }
+                if let Some(cases) = switch_cases_from_loop_body_ref(for_stmt.body.as_ref()) {
+                    return Some(cases);
                 }
             }
             _ => {}
@@ -393,10 +632,8 @@ fn has_state_machine_structure(body: &BlockStmt, param_name: &Atom) -> bool {
                 if !is_true_expr(&while_stmt.test) {
                     continue;
                 }
-                if let Stmt::Block(block) = while_stmt.body.as_ref() {
-                    if has_state_switch(block, param_name) {
-                        return true;
-                    }
+                if loop_body_has_state_switch(while_stmt.body.as_ref(), param_name) {
+                    return true;
                 }
             }
             Stmt::For(for_stmt) => {
@@ -404,10 +641,8 @@ fn has_state_machine_structure(body: &BlockStmt, param_name: &Atom) -> bool {
                 if for_stmt.init.is_some() || for_stmt.test.is_some() || for_stmt.update.is_some() {
                     continue;
                 }
-                if let Stmt::Block(block) = for_stmt.body.as_ref() {
-                    if has_state_switch(block, param_name) {
-                        return true;
-                    }
+                if loop_body_has_state_switch(for_stmt.body.as_ref(), param_name) {
+                    return true;
                 }
             }
             _ => {}
@@ -435,6 +670,29 @@ fn has_state_switch(block: &BlockStmt, param_name: &Atom) -> bool {
         }
     }
     false
+}
+
+fn loop_body_has_state_switch(stmt: &Stmt, param_name: &Atom) -> bool {
+    match stmt {
+        Stmt::Switch(sw) => is_prev_assign_next(&sw.discriminant, param_name),
+        Stmt::Block(block) => has_state_switch(block, param_name),
+        _ => false,
+    }
+}
+
+fn switch_cases_from_loop_body_ref(stmt: &Stmt) -> Option<&[SwitchCase]> {
+    match stmt {
+        Stmt::Switch(sw) => Some(&sw.cases),
+        Stmt::Block(block) => {
+            for inner in &block.stmts {
+                if let Stmt::Switch(sw) = inner {
+                    return Some(&sw.cases);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 /// Check for `param.prev = param.next`
@@ -512,27 +770,34 @@ fn extract_switch_cases_from_body(body: BlockStmt) -> Option<Vec<SwitchCase>> {
     for stmt in body.stmts {
         match stmt {
             Stmt::While(while_stmt) => {
-                if let Stmt::Block(block) = *while_stmt.body {
-                    for inner in block.stmts {
-                        if let Stmt::Switch(sw) = inner {
-                            return Some(sw.cases);
-                        }
-                    }
+                if let Some(cases) = switch_cases_from_loop_body(*while_stmt.body) {
+                    return Some(cases);
                 }
             }
             Stmt::For(for_stmt) => {
-                if let Stmt::Block(block) = *for_stmt.body {
-                    for inner in block.stmts {
-                        if let Stmt::Switch(sw) = inner {
-                            return Some(sw.cases);
-                        }
-                    }
+                if let Some(cases) = switch_cases_from_loop_body(*for_stmt.body) {
+                    return Some(cases);
                 }
             }
             _ => {}
         }
     }
     None
+}
+
+fn switch_cases_from_loop_body(stmt: Stmt) -> Option<Vec<SwitchCase>> {
+    match stmt {
+        Stmt::Switch(sw) => Some(sw.cases),
+        Stmt::Block(block) => {
+            for inner in block.stmts {
+                if let Stmt::Switch(sw) = inner {
+                    return Some(sw.cases);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 // ============================================================

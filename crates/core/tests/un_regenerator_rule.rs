@@ -437,6 +437,89 @@ async function fetchUser(id) {
 }
 
 #[test]
+fn async_to_generator_babel_trampoline_with_params() {
+    let input = r#"
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+function load_user(_x) {
+  return _load_user.apply(this, arguments);
+}
+function _load_user() {
+  _load_user = _asyncToGenerator(function* (app_id) {
+    var response = yield fetch_user(app_id);
+    return response;
+  });
+  return _load_user.apply(this, arguments);
+}
+"#;
+    let expected = r#"
+async function load_user(app_id) {
+  var response = await fetch_user(app_id);
+  return response;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn async_to_generator_babel_trampoline_with_regenerator() {
+    let input = r#"
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+function load_user(_x) {
+  return _load_user.apply(this, arguments);
+}
+function _load_user() {
+  _load_user = _asyncToGenerator(regeneratorRuntime.mark(function _callee(app_id) {
+    return regeneratorRuntime.wrap(function _callee$(_context) {
+      while (1) switch (_context.prev = _context.next) {
+        case 0:
+          _context.next = 2;
+          return fetch_user(app_id);
+        case 2:
+        case "end":
+          return _context.stop();
+      }
+    }, _callee);
+  }));
+  return _load_user.apply(this, arguments);
+}
+"#;
+    let expected = r#"
+async function load_user(app_id) {
+  await fetch_user(app_id);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn no_transform_non_regenerator() {
     // Should not transform regular functions
     let input = r#"
