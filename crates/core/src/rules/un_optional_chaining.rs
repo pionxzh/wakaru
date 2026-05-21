@@ -38,6 +38,21 @@ impl VisitMut for UnOptionalChaining {
     }
 
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if let Some(result) = try_optional_chaining(
+            expr,
+            self.unresolved_mark,
+            self.policy,
+            &self.uninitialized_bindings,
+            &self.binding_references,
+        ) {
+            *expr = result;
+            expr.visit_mut_children_with(self);
+            if let Some(result) = try_optional_call_cleanup(expr) {
+                *expr = result;
+            }
+            return;
+        }
+
         expr.visit_mut_children_with(self);
 
         if let Some(result) = try_optional_call_cleanup(expr) {
@@ -395,9 +410,31 @@ fn try_flattened_loose_optional_chain(
     );
     let mut current_tmp = Expr::Ident(first_tmp);
 
-    for term in terms.iter().skip(1) {
-        let (next_tmp, real_rhs) =
-            extract_flattened_loose_assignment_segment(term, unresolved_mark)?;
+    for (index, term) in terms.iter().enumerate().skip(1) {
+        let Some((next_tmp, real_rhs)) =
+            extract_flattened_loose_assignment_segment(term, unresolved_mark)
+        else {
+            if index == terms.len() - 1 && policy.assumptions.pure_getters {
+                if !flattened_chain_temps_are_safe(
+                    &temps,
+                    test,
+                    alt,
+                    policy.level,
+                    uninitialized_bindings,
+                    binding_references,
+                ) {
+                    return None;
+                }
+                return make_flattened_loose_repeated_access(
+                    &current_tmp,
+                    &chain,
+                    term,
+                    alt,
+                    unresolved_mark,
+                );
+            }
+            return None;
+        };
         chain = make_optional_chain_replacing(&current_tmp, &chain, &real_rhs, unresolved_mark)?;
         let call_context = flattened_member_call_context(&real_rhs, &temp_values);
         record_flattened_temp_value(
@@ -430,6 +467,57 @@ fn try_flattened_loose_optional_chain(
         &temp_call_contexts,
         unresolved_mark,
     )
+}
+
+fn make_flattened_loose_repeated_access(
+    current_tmp: &Expr,
+    chain: &Expr,
+    term: &Expr,
+    alt: &Expr,
+    unresolved_mark: Mark,
+) -> Option<Expr> {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::EqEq,
+        left,
+        right,
+        ..
+    }) = strip_parens(term)
+    else {
+        return None;
+    };
+    let checked_access = extract_loose_null_operand(left, right, unresolved_mark)?;
+    let optional_access =
+        make_optional_chain_replacing(current_tmp, chain, &checked_access, unresolved_mark)?;
+
+    if exprs_structurally_equal(alt, &checked_access) {
+        return Some(optional_access);
+    }
+
+    let Expr::Call(CallExpr {
+        callee: Callee::Expr(callee_expr),
+        args,
+        type_args,
+        span,
+        ctxt,
+    }) = strip_parens(alt)
+    else {
+        return None;
+    };
+    if !exprs_structurally_equal(callee_expr.as_ref(), &checked_access) {
+        return None;
+    }
+
+    Some(Expr::OptChain(OptChainExpr {
+        span: DUMMY_SP,
+        optional: true,
+        base: Box::new(OptChainBase::Call(OptCall {
+            span: *span,
+            ctxt: *ctxt,
+            callee: Box::new(optional_access),
+            args: args.clone(),
+            type_args: type_args.clone(),
+        })),
+    }))
 }
 
 fn collect_logical_or_terms<'a>(expr: &'a Expr, terms: &mut Vec<&'a Expr>) {
@@ -698,6 +786,13 @@ fn try_ternary_optional_chain(
             // require the three references inside the lowered chain itself.
             || is_generated_member_temp_expr(&checked, &real_rhs, binding_references, 3)
             || is_nested_optional_chain_temp_expr(&checked, &real_rhs, binding_references, 3)
+            || (is_optional_call_on_checked(alt, &checked)
+                && (is_standard_temp_expr(
+                    &checked,
+                    uninitialized_bindings,
+                    binding_references,
+                    5,
+                ) || is_generated_member_temp_expr(&checked, &real_rhs, binding_references, 5)))
         {
             if let Some(chain) =
                 make_optional_chain_replacing(&checked, &real_rhs, alt, unresolved_mark)
@@ -787,6 +882,23 @@ fn make_optional_chain(base: Expr, access: &Expr) -> Option<Expr> {
     }
 }
 
+fn is_optional_call_on_checked(access: &Expr, checked: &Expr) -> bool {
+    let Expr::OptChain(OptChainExpr { base, .. }) = strip_parens(access) else {
+        return false;
+    };
+    let OptChainBase::Call(OptCall { callee, .. }) = base.as_ref() else {
+        return false;
+    };
+    match strip_parens(callee.as_ref()) {
+        Expr::Member(MemberExpr { obj, .. }) => exprs_structurally_equal(obj, checked),
+        Expr::OptChain(OptChainExpr { base, .. }) => match base.as_ref() {
+            OptChainBase::Member(MemberExpr { obj, .. }) => exprs_structurally_equal(obj, checked),
+            OptChainBase::Call(_) => false,
+        },
+        _ => false,
+    }
+}
+
 /// Build an optional chain for the assignment temp-var case.
 /// `tmp` is the temp variable expr, `real_rhs` is what it was assigned from.
 /// `access` should use `tmp` as its object; we replace `tmp` with `real_rhs` in the output.
@@ -830,7 +942,27 @@ fn make_optional_chain_replacing(
                     })),
                 }))
             }
-            _ => None,
+            OptChainBase::Call(OptCall {
+                callee,
+                args,
+                type_args,
+                span,
+                ctxt,
+            }) => {
+                let replaced_callee =
+                    make_optional_chain_replacing(tmp, real_rhs, callee, unresolved_mark)?;
+                Some(Expr::OptChain(OptChainExpr {
+                    span: DUMMY_SP,
+                    optional: *optional,
+                    base: Box::new(OptChainBase::Call(OptCall {
+                        span: *span,
+                        ctxt: *ctxt,
+                        callee: Box::new(replaced_callee),
+                        args: args.clone(),
+                        type_args: type_args.clone(),
+                    })),
+                }))
+            }
         },
 
         Expr::Call(CallExpr {

@@ -286,6 +286,44 @@ const x = obj?.foo?.method?.(arg);
 }
 
 #[test]
+fn standard_does_not_transform_babel_loose_optional_call_with_repeated_property() {
+    let input = r#"
+var _obj;
+const out = (_obj = obj) == null || _obj.method == null ? void 0 : _obj.method(arg);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn aggressive_transforms_babel_loose_optional_call_with_repeated_property() {
+    let input = r#"
+var _obj;
+const out = (_obj = obj) == null || _obj.method == null ? void 0 : _obj.method(arg);
+"#;
+    let expected = r#"
+var _obj;
+const out = obj?.method?.(arg);
+"#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn aggressive_transforms_babel_loose_nested_optional_call_with_repeated_property() {
+    let input = r#"
+var _obj;
+const out = (_obj = obj) == null || (_obj = _obj.foo) == null || _obj.method == null ? void 0 : _obj.method(arg);
+"#;
+    let expected = r#"
+var _obj;
+const out = obj?.foo?.method?.(arg);
+"#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn does_not_transform_babel_flattened_optional_call_with_wrong_nested_context() {
     let input = r#"
 var _m, _p, _o;
@@ -315,6 +353,20 @@ const a = (_r = r) === null || _r === void 0 ? void 0 : (_r_foo = _r.foo) === nu
     let expected = r#"
 var _r_foo_bar, _r_foo, _r;
 const a = r?.foo?.bar?.baz;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_swc_nested_optional_call_chain() {
+    let input = r#"
+var _obj_foo_method, _obj_foo, _obj;
+const out = (_obj = obj) === null || _obj === void 0 ? void 0 : (_obj_foo = _obj.foo) === null || _obj_foo === void 0 ? void 0 : (_obj_foo_method = _obj_foo.method) === null || _obj_foo_method === void 0 ? void 0 : _obj_foo_method.call(_obj_foo, arg);
+"#;
+    let expected = r#"
+var _obj_foo_method, _obj_foo, _obj;
+const out = obj?.foo?.method?.(arg);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
