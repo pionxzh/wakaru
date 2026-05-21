@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render_rule};
+use common::{assert_eq_normalized, render, render_rule};
 use wakaru_core::{rules::UnOptionalChaining, RewriteLevel};
 
 fn apply(input: &str) -> String {
@@ -170,6 +170,136 @@ fn standard_transforms_nested_babel_optional_member_from_recovered_optional_chai
 fn standard_transforms_generated_named_temp_member_access() {
     let input = r#"(T1 = source.adapter) === null || T1 === void 0 ? void 0 : T1.name"#;
     let expected = r#"source.adapter?.name"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_babel_flattened_strict_optional_member_chain() {
+    let input = r#"
+var _r$foo$bar, _r;
+const a = (_r = r) === null || _r === void 0 || (_r = _r.foo) === null || _r === void 0 || (_r = _r.bar) === null || _r === void 0 ? void 0 : _r.baz;
+"#;
+    let expected = r#"
+var _r$foo$bar, _r;
+const a = r?.foo?.bar?.baz;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_does_not_transform_babel_flattened_strict_optional_member_chain() {
+    let input = r#"
+var _r$foo$bar, _r;
+const a = (_r = r) === null || _r === void 0 || (_r = _r.foo) === null || _r === void 0 || (_r = _r.bar) === null || _r === void 0 ? void 0 : _r.baz;
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn pipeline_transforms_babel_flattened_strict_optional_member_chain_with_nullish() {
+    let input = r#"
+var _r$foo$bar, _r;
+const a = (_r$foo$bar = (_r = r) === null || _r === void 0 || (_r = _r.foo) === null || _r === void 0 || (_r = _r.bar) === null || _r === void 0 ? void 0 : _r.baz) !== null && _r$foo$bar !== void 0 ? _r$foo$bar : "fallback";
+"#;
+    let expected = r#"
+let _r$foo$bar;
+let _r;
+const a = r?.foo?.bar?.baz ?? "fallback";
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_babel_flattened_loose_optional_member_chain() {
+    let input = r#"
+var _r$foo$bar, _r;
+const a = (_r = r) == null || (_r = _r.foo) == null || (_r = _r.bar) == null ? void 0 : _r.baz;
+"#;
+    let expected = r#"
+var _r$foo$bar, _r;
+const a = r?.foo?.bar?.baz;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_babel_flattened_optional_call_with_memoized_context() {
+    let input = r#"
+var _m, _o;
+const x = (_o = obj) === null || _o === void 0 || (_m = _o.method) === null || _m === void 0 ? void 0 : _m.call(_o, arg);
+"#;
+    let expected = r#"
+var _m, _o;
+const x = obj?.method?.(arg);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_babel_flattened_optional_call_with_nested_memoized_context() {
+    let input = r#"
+var _m, _p, _o;
+const x = (_o = obj) === null || _o === void 0 || (_p = _o.foo) === null || _p === void 0 || (_m = _p.method) === null || _m === void 0 ? void 0 : _m.call(_p, arg);
+"#;
+    let expected = r#"
+var _m, _p, _o;
+const x = obj?.foo?.method?.(arg);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_babel_flattened_loose_optional_call_with_nested_memoized_context() {
+    let input = r#"
+var _m, _p, _o;
+const x = (_o = obj) == null || (_p = _o.foo) == null || (_m = _p.method) == null ? void 0 : _m.call(_p, arg);
+"#;
+    let expected = r#"
+var _m, _p, _o;
+const x = obj?.foo?.method?.(arg);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_transform_babel_flattened_optional_call_with_wrong_nested_context() {
+    let input = r#"
+var _m, _p, _o;
+const x = (_o = obj) === null || _o === void 0 || (_p = _o.foo) === null || _p === void 0 || (_m = _p.method) === null || _m === void 0 ? void 0 : _m.call(_o, arg);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_preserves_babel_flattened_temp_when_observed_later() {
+    let input = r#"
+var _r;
+const a = (_r = r) === null || _r === void 0 || (_r = _r.foo) === null || _r === void 0 ? void 0 : _r.bar;
+use(_r);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_transforms_swc_nested_optional_member_chain() {
+    let input = r#"
+var _r_foo_bar, _r_foo, _r;
+const a = (_r = r) === null || _r === void 0 ? void 0 : (_r_foo = _r.foo) === null || _r_foo === void 0 ? void 0 : (_r_foo_bar = _r_foo.bar) === null || _r_foo_bar === void 0 ? void 0 : _r_foo_bar.baz;
+"#;
+    let expected = r#"
+var _r_foo_bar, _r_foo, _r;
+const a = r?.foo?.bar?.baz;
+"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
