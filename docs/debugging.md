@@ -110,14 +110,18 @@ Example workflow for a regression:
 
 A private fixture repo at `../wakaru-fixtures/` contains bundled demo apps and
 real-world bundles for cross-bundler regression testing. After significant rule
-changes, run `./run.sh` there and check `git diff` for regressions.
+changes, run the fixture script there and check `git diff` for regressions.
 
-Always rebuild the release binary before running fixtures. `run.sh` invokes
-`target/release/wakaru` by default; it does not rebuild it for you.
+On Windows, use the PowerShell runner. It builds `wakaru-cli` with the
+`dev-release` profile, which uses lighter optimization settings than full
+`release` and is the intended profile for routine fixture/debugging runs.
 
-```bash
-cargo build --release && (cd ../../wakaru-fixtures && ./run.sh)
+```powershell
+cd ..\wakaru-fixtures
+.\run.ps1
 ```
 
-Before trusting a fixture diff, sanity-check the binary timestamp against your
-most recent code change.
+On Unix-like shells, use `run.sh` from the fixture repo and make sure it points
+at a fresh binary. Do not use a full `cargo build --release` fixture run unless
+you specifically need release-LTO performance numbers; it is slower and not
+needed for normal regression checks.
