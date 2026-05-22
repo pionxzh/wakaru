@@ -1,8 +1,9 @@
 ---
 source: crates/core/tests/bun_unpack.rs
+assertion_line: 110
 expression: combined
 ---
-// === require_math.js ===
+// === src-cjs/math.js ===
 let __wakaru_require_math_cache;
 export function require_math() {
     if (__wakaru_require_math_cache) {
@@ -26,7 +27,7 @@ export function require_math() {
     return module.exports;
 }
 
-// === require_logger.js ===
+// === src-cjs/logger.js ===
 let __wakaru_require_logger_cache;
 export function require_logger() {
     if (__wakaru_require_logger_cache) {
@@ -54,8 +55,8 @@ export function require_logger() {
 }
 
 // === entry.js ===
-import { require_logger } from "./require_logger.js";
-import { require_math } from "./require_math.js";
+import { require_logger } from "./src-cjs/logger.js";
+import { require_math } from "./src-cjs/math.js";
 const __hasOwnProp = Object.prototype.hasOwnProperty;
 function __accessProp(key) {
     return this[key];

@@ -190,7 +190,7 @@ fn detect_bundle_candidate(
 
     let span = tracing::info_span!("detect_esbuild");
     let _enter = span.enter();
-    esbuild::detect_from_module(module, cm)
+    esbuild::detect_from_module_with_source(module, Some(source), cm)
 }
 
 pub fn try_unpack_bundle_raw(source: &str) -> anyhow::Result<Option<UnpackResult>> {

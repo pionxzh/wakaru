@@ -15,6 +15,7 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::find_pat_ids;
 use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 
+use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::{rename_bindings, BindingRename};
 use crate::unpacker::{
     module_item_declared_binding_ids, BindingId, BundleFormat, UnpackResult, UnpackedModule,
@@ -24,11 +25,15 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let module = super::parse_es_module(source, "esbuild.js", cm.clone()).ok()?;
-        detect_from_module(&module, cm)
+        detect_from_module_with_source(&module, Some(source), cm)
     })
 }
 
-pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+pub(super) fn detect_from_module_with_source(
+    module: &Module,
+    source: Option<&str>,
+    cm: Lrc<SourceMap>,
+) -> Option<UnpackResult> {
     // Phase 1: cheap structural pre-checks on the unresolved module.
     // Both scans are O(top-level items) with no cloning or resolution.
     let helper_syms = {
@@ -53,6 +58,10 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     };
 
     let commonjs_helper_syms = collect_commonjs_helper_syms(module);
+    let filename_hints = source.map(|source| {
+        let source_file = cm.lookup_source_file(module.span.lo);
+        PathCommentHints::new(source, source_file.start_pos.0)
+    });
 
     // Phase 2: collect factory declarations — `var X = helper(factory_fn)`.
     let factories = if helper_syms.is_empty() {
@@ -65,6 +74,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
             &analysis_module,
             &helper_syms,
             &commonjs_helper_syms,
+            filename_hints.as_ref(),
         )
     };
     let helper_syms: HashSet<Atom> = factories
@@ -1163,11 +1173,77 @@ fn expr_mentions_exports_member(expr: &Expr) -> bool {
 //   var BO7 = y(() => { … })
 // ---------------------------------------------------------------------------
 
+struct PathCommentHints<'a> {
+    source: &'a str,
+    source_start_pos: u32,
+    hints: Vec<(usize, String)>,
+}
+
+impl<'a> PathCommentHints<'a> {
+    fn new(source: &'a str, source_start_pos: u32) -> Self {
+        let mut hints = Vec::new();
+        let mut offset = 0usize;
+        for line in source.split_inclusive('\n') {
+            let text = line.trim_end_matches(['\r', '\n']);
+            if let Some(path) = parse_path_comment(text) {
+                hints.push((offset + line.len(), sanitize_path_comment_hint(path)));
+            }
+            offset += line.len();
+        }
+        Self {
+            source,
+            source_start_pos,
+            hints,
+        }
+    }
+
+    fn hint_before(&self, abs_byte_pos: u32) -> Option<String> {
+        let rel = abs_byte_pos.checked_sub(self.source_start_pos)? as usize;
+        if rel > self.source.len() {
+            return None;
+        }
+        let (code_start, filename) = self
+            .hints
+            .iter()
+            .rev()
+            .find(|(code_start, _)| *code_start <= rel)?;
+        if self.source[*code_start..rel].trim().is_empty() {
+            Some(filename.clone())
+        } else {
+            None
+        }
+    }
+}
+
+fn parse_path_comment(line: &str) -> Option<String> {
+    let path = line.trim_start().strip_prefix("// ")?;
+    if path.starts_with('#') || path.starts_with("===") {
+        return None;
+    }
+    let normalized = path.replace('\\', "/");
+    let lower = normalized.to_ascii_lowercase();
+    let valid_ext = [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]
+        .iter()
+        .any(|ext| lower.ends_with(ext));
+    valid_ext.then_some(normalized)
+}
+
+fn sanitize_path_comment_hint(path: String) -> String {
+    let mut path = sanitize_path(path);
+    if let Some(dot) = path.rfind('.') {
+        path.replace_range(dot.., ".js");
+    } else {
+        path.push_str(".js");
+    }
+    path
+}
+
 fn collect_factories(
     module: &Module,
     analysis_module: &Module,
     helper_syms: &HashSet<Atom>,
     commonjs_helper_syms: &HashSet<Atom>,
+    filename_hints: Option<&PathCommentHints<'_>>,
 ) -> Vec<Factory> {
     let mut factories = Vec::new();
     for (item, analysis_item) in module.body.iter().zip(analysis_module.body.iter()) {
@@ -1178,9 +1254,14 @@ fn collect_factories(
             continue;
         };
         for (decl, analysis_decl) in var.decls.iter().zip(analysis_var.decls.iter()) {
-            if let Some(factory) =
-                try_extract_factory(decl, analysis_decl, helper_syms, commonjs_helper_syms)
-            {
+            if let Some(factory) = try_extract_factory(
+                decl,
+                analysis_decl,
+                var.span.lo.0,
+                helper_syms,
+                commonjs_helper_syms,
+                filename_hints,
+            ) {
                 factories.push(factory);
             }
         }
@@ -1191,8 +1272,10 @@ fn collect_factories(
 fn try_extract_factory(
     decl: &VarDeclarator,
     analysis_decl: &VarDeclarator,
+    decl_start_abs: u32,
     helper_syms: &HashSet<Atom>,
     commonjs_helper_syms: &HashSet<Atom>,
+    filename_hints: Option<&PathCommentHints<'_>>,
 ) -> Option<Factory> {
     let Pat::Ident(var_ident) = &decl.name else {
         return None;
@@ -1212,6 +1295,7 @@ fn try_extract_factory(
 
     let arg = &*call.args[0].expr;
     let var_name = var_ident.id.sym.clone();
+    let hinted_filename = filename_hints.and_then(|hints| hints.hint_before(decl_start_abs));
     let binding = match &analysis_decl.name {
         Pat::Ident(bi) => (bi.id.sym.clone(), bi.id.ctxt),
         _ => return None,
@@ -1231,6 +1315,7 @@ fn try_extract_factory(
                 if let Prop::Method(method) = &**prop {
                     let filename = prop_key_str(&method.key)
                         .map(sanitize_path)
+                        .or_else(|| hinted_filename.clone())
                         .unwrap_or_else(|| format!("{var_name}.js"));
                     let body_stmts = method.function.body.as_ref()?.stmts.clone();
                     let analysis_body_stmts = extract_analysis_body_stmts_obj(analysis_arg)
@@ -1260,7 +1345,7 @@ fn try_extract_factory(
                     _ => None,
                 })
                 .unwrap_or_else(|| body_stmts.clone());
-            let filename = format!("{var_name}.js");
+            let filename = hinted_filename.unwrap_or_else(|| format!("{var_name}.js"));
             Some(Factory {
                 helper_sym,
                 binding,
@@ -1283,7 +1368,7 @@ fn try_extract_factory(
                     _ => None,
                 })
                 .unwrap_or_else(|| body_stmts.clone());
-            let filename = format!("{var_name}.js");
+            let filename = hinted_filename.unwrap_or_else(|| format!("{var_name}.js"));
             Some(Factory {
                 helper_sym,
                 binding,
@@ -3551,39 +3636,7 @@ fn collect_scope_write_pat(pat: &Pat, collector: &mut ScopeWriteAtomCollector<'_
 /// Returns a string suitable for an ES import source (e.g. `./ns_a.js`,
 /// `../ns_a.js`).
 fn relative_import_path(importer: &str, target: &str) -> String {
-    use std::path::Path;
-    let importer_dir = Path::new(importer).parent().unwrap_or(Path::new(""));
-    let rel = pathdiff_relative(importer_dir, Path::new(target));
-    // Ensure the path starts with ./ or ../
-    let s = rel.to_string_lossy().replace('\\', "/");
-    if s.starts_with("./") || s.starts_with("../") {
-        s
-    } else {
-        format!("./{s}")
-    }
-}
-
-/// Minimal relative path computation: `target` relative to `base` directory.
-fn pathdiff_relative(base: &std::path::Path, target: &std::path::Path) -> std::path::PathBuf {
-    use std::path::{Component, PathBuf};
-
-    let base_components: Vec<Component> = base.components().collect();
-    let target_components: Vec<Component> = target.components().collect();
-
-    let common = base_components
-        .iter()
-        .zip(target_components.iter())
-        .take_while(|(a, b)| a == b)
-        .count();
-
-    let mut result = PathBuf::new();
-    for _ in common..base_components.len() {
-        result.push("..");
-    }
-    for component in &target_components[common..] {
-        result.push(component);
-    }
-    result
+    relative_import_specifier(importer, target)
 }
 
 fn reserve_import_atom(imported: &Atom, reserved: &mut HashSet<Atom>) -> Atom {

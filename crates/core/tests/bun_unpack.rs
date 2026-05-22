@@ -1,6 +1,34 @@
 mod common;
+
 use common::render;
-use wakaru_core::{unpack, DecompileOptions};
+use wakaru_core::{unpack, unpack_raw, DecompileOptions};
+
+fn expect_unpack_raw(source: &str) -> Vec<(String, String)> {
+    let output =
+        unpack_raw(source, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    output.modules
+}
+
+fn module<'a>(modules: &'a [(String, String)], name: &str) -> &'a str {
+    modules
+        .iter()
+        .find(|(filename, _)| filename == name)
+        .map(|(_, code)| code.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "missing {name}; modules: {:?}",
+                modules
+                    .iter()
+                    .map(|(filename, _)| filename)
+                    .collect::<Vec<_>>()
+            )
+        })
+}
 
 // --- Decompile (single-file) tests ---
 
@@ -53,7 +81,7 @@ fn bun_es_unpack_produces_single_module() {
     assert_eq!(
         result.modules.len(),
         1,
-        "pure ESM bundle should produce 1 module (no boundary markers)"
+        "pure ESM bundle should produce 1 module (no structural boundary markers)"
     );
 }
 
@@ -105,4 +133,40 @@ fn bun_cjs_interop_min_unpack_splits_modules() {
         .collect::<Vec<_>>()
         .join("\n");
     insta::assert_snapshot!("bun_cjs_interop_min_unpack", combined);
+}
+
+#[test]
+fn bun_path_comment_names_detected_commonjs_factory() {
+    let input = r#"
+var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+
+// src/cjs.js
+var require_cjs = __commonJS((exports, module) => {
+  module.exports = { cjsValue: 7, cjsFn(x) {
+    return x + 1;
+  } };
+});
+
+// src/entry.ts
+var cjs = require_cjs();
+console.log(cjs.cjsFn(cjs.cjsValue));
+"#;
+
+    let modules = expect_unpack_raw(input);
+    assert!(
+        modules.iter().any(|(name, _)| name == "src/cjs.js"),
+        "path comment should name the structurally detected factory module: {:?}",
+        modules.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    assert!(
+        modules.iter().all(|(name, _)| name != "require_cjs.js"),
+        "factory variable fallback should not be used when a direct path hint exists: {:?}",
+        modules.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+
+    let cjs = module(&modules, "src/cjs.js");
+    assert!(
+        cjs.contains("cjsValue") && cjs.contains("cjsFn"),
+        "factory body should stay with the structurally detected module:\n{cjs}"
+    );
 }

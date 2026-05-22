@@ -54,7 +54,10 @@ Each unpacker detects a specific bundle format and extracts individual modules a
    Bun's bundler emits the same helper shapes as esbuild, so CJS-interop
    bundles from Bun are detected and split by this unpacker. Pure ESM
    scope-hoisted output (from esbuild, Bun, Rollup, or Vite) without
-   `__export` or `__commonJS` markers falls through to single-file decompile
+   `__export` or `__commonJS` markers falls through to single-file decompile.
+   Preserved Bun path comments are used only as filename hints for modules
+   already found through structural helper patterns; they are not module
+   boundaries by themselves.
 
 Unpackers emit module code strings. They do not run the normal decompile rule
 pipeline — that's the driver's job. Webpack4 is the exception only for
