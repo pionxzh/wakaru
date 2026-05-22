@@ -466,6 +466,38 @@ async function fetchUser(id) {
 }
 
 #[test]
+fn async_to_generator_expression_var_init() {
+    let input = r#"
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+const load_user = _asyncToGenerator(function* (app_id) {
+  var response = yield fetch_user(app_id);
+  return response;
+});
+"#;
+    let expected = r#"
+const load_user = async function(app_id) {
+  var response = await fetch_user(app_id);
+  return response;
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn async_to_generator_babel_trampoline_with_params() {
     let input = r#"
 function _asyncToGenerator(fn) {
@@ -598,6 +630,233 @@ async function load_user(app_id) {
 }
 "#;
     let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn async_to_generator_babel_trampoline_with_regenerator_try_catch() {
+    let input = r#"
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+function load_user(_x) {
+  return _load_user.apply(this, arguments);
+}
+function _load_user() {
+  _load_user = _asyncToGenerator(regeneratorRuntime.mark(function _callee(app_id) {
+    return regeneratorRuntime.wrap(function _callee$(_context) {
+      while (1) switch (_context.prev = _context.next) {
+        case 0:
+          _context.prev = 0;
+          _context.next = 3;
+          return fetch_user(app_id);
+        case 3:
+          return _context.abrupt("return", _context.sent);
+        case 6:
+          _context.prev = 6;
+          _context.t0 = _context["catch"](0);
+          return _context.abrupt("return", fallback_user(_context.t0));
+        case 9:
+        case "end":
+          return _context.stop();
+      }
+    }, _callee, null, [[0, 6]]);
+  }));
+  return _load_user.apply(this, arguments);
+}
+"#;
+    let expected = r#"
+async function load_user(app_id) {
+  try {
+    return await fetch_user(app_id);
+  } catch (error) {
+    return fallback_user(error);
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn async_to_generator_babel_728_trampoline_with_regenerator_try_catch() {
+    let input = r#"
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+function load_user(_x) {
+  return _load_user.apply(this, arguments);
+}
+function _load_user() {
+  _load_user = _asyncToGenerator(_regenerator().m(function _callee(app_id) {
+    var _t;
+    return _regenerator().w(function (_context) {
+      while (1) switch (_context.p = _context.n) {
+        case 0:
+          _context.p = 0;
+          _context.n = 1;
+          return fetch_user(app_id);
+        case 1:
+          return _context.a(2, _context.v);
+        case 2:
+          _context.p = 2;
+          _t = _context.v;
+          return _context.a(2, fallback_user(_t));
+      }
+    }, _callee, null, [[0, 2]]);
+  }));
+  return _load_user.apply(this, arguments);
+}
+"#;
+    let expected = r#"
+async function load_user(app_id) {
+  var _t;
+  try {
+    return await fetch_user(app_id);
+  } catch (error) {
+    return fallback_user(error);
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn async_to_generator_babel_trampoline_with_regenerator_try_catch_then_return() {
+    let input = r#"
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+function load_user(_x) {
+  return _load_user.apply(this, arguments);
+}
+function _load_user() {
+  _load_user = _asyncToGenerator(regeneratorRuntime.mark(function _callee(app_id) {
+    return regeneratorRuntime.wrap(function _callee$(_context) {
+      while (1) switch (_context.prev = _context.next) {
+        case 0:
+          _context.prev = 0;
+          _context.next = 3;
+          return fetch_user(app_id);
+        case 3:
+          _context.next = 8;
+          break;
+        case 5:
+          _context.prev = 5;
+          _context.t0 = _context["catch"](0);
+          fallback_user(_context.t0);
+        case 8:
+          return _context.abrupt("return", done());
+        case 9:
+        case "end":
+          return _context.stop();
+      }
+    }, _callee, null, [[0, 5]]);
+  }));
+  return _load_user.apply(this, arguments);
+}
+"#;
+    let expected = r#"
+async function load_user(app_id) {
+  try {
+    await fetch_user(app_id);
+  } catch (error) {
+    fallback_user(error);
+  }
+  return done();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn async_to_generator_expression_assignment_with_regenerator_try_catch() {
+    let input = r#"
+const runtime = interop(require("./module-runtime.js"));
+const asyncHelper = interop(require("./module-async.js"));
+function wrap_handlers(app_info, logger) {
+  return Object.keys(app_info).reduce((handlers, key) => {
+    handlers[key] = asyncHelper.default(runtime.default.mark(function handler() {
+      let current;
+      const args = arguments;
+      return runtime.default.wrap(function(_context) {
+        while (1) switch (_context.prev = _context.next) {
+          case 0:
+            _context.prev = 0;
+            current = app_info[key];
+            _context.next = 4;
+            return current(...args);
+          case 4:
+            return _context.abrupt("return", _context.sent);
+          case 7:
+            _context.prev = 7;
+            _context.t0 = _context.catch(0);
+            logger.error(key, _context.t0);
+          case 10:
+          case "end":
+            return _context.stop();
+        }
+      }, handler, null, [[0, 7]]);
+    }));
+    return handlers;
+  }, {});
+}
+"#;
+    let expected = r#"
+const runtime = interop(require("./module-runtime.js"));
+const asyncHelper = interop(require("./module-async.js"));
+function wrap_handlers(app_info, logger) {
+  return Object.keys(app_info).reduce((handlers, key) => {
+    handlers[key] = async function handler() {
+      let current;
+      const args = arguments;
+      try {
+        current = app_info[key];
+        return await current(...args);
+      } catch (error) {
+        logger.error(key, error);
+      }
+    };
+    return handlers;
+  }, {});
+}
+"#;
+    let output = apply_with_helper_facts(input);
     assert_eq_normalized(&output, expected);
 }
 
