@@ -3,6 +3,12 @@
 This document maps the dependency relationships between all rules in the decompile pipeline.
 It serves as the foundation for Step 1 and Step 2 of the [fact-system proposal](proposal-of-fact-system.md).
 
+The executable subset of these relationships lives in
+`crates/core/src/rules/pipeline.rs` as `RuleDescriptor::requires`. That metadata
+records ordering constraints the pipeline should preserve; this document remains
+the broader prose inventory for safety notes, downstream effects, and open
+questions.
+
 **Legend**
 
 - **Prerequisite status**: `suspected` (inferred from code reading), `confirmed` (validated by test/experiment), `unknown` (needs investigation)

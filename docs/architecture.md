@@ -84,7 +84,7 @@ Runs the pipeline with an observer that captures per-rule before/after snapshots
 
 ### Rules pipeline (`crates/core/src/rules/`)
 
-~60 transformation rules, each implementing SWC's `VisitMut` trait. Applied in a fixed order by `apply_rules()`. Order matters — some rules depend on earlier ones having run. The ordered registry lives in `crates/core/src/rules/pipeline.rs` as `RuleDescriptor` entries with `RuleStage` metadata, while `RulePipelineOptions` controls ranges, rewrite level, dead-code cleanup, and optional module facts.
+~60 transformation rules, each implementing SWC's `VisitMut` trait. Applied in a fixed order by `apply_rules()`. Order matters — some rules depend on earlier ones having run. The ordered registry lives in `crates/core/src/rules/pipeline.rs` as `RuleDescriptor` entries with `RuleStage` metadata and explicit ordering dependencies, while `RulePipelineOptions` controls ranges, rewrite level, dead-code cleanup, and optional module facts.
 
 #### Pipeline stages
 

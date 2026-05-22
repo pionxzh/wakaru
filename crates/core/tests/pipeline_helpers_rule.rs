@@ -172,6 +172,56 @@ fn rule_descriptors_expose_stage_metadata() {
 }
 
 #[test]
+fn rule_descriptor_dependencies_point_to_earlier_rules() {
+    let descriptors = wakaru_core::rule_descriptors();
+
+    for (index, descriptor) in descriptors.iter().enumerate() {
+        for required in descriptor.requires {
+            let required_index = descriptors
+                .iter()
+                .position(|candidate| candidate.id == *required)
+                .unwrap_or_else(|| {
+                    panic!("{} declares unknown dependency {}", descriptor.id, required)
+                });
+            assert!(
+                required_index < index,
+                "{} depends on {}, but it does not run earlier",
+                descriptor.id,
+                required
+            );
+        }
+    }
+}
+
+#[test]
+fn rule_descriptors_expose_dependency_metadata() {
+    let descriptors = wakaru_core::rule_descriptors();
+    let requires = |id: &str| {
+        descriptors
+            .iter()
+            .find(|descriptor| descriptor.id == id)
+            .map(|descriptor| descriptor.requires)
+            .unwrap_or_else(|| panic!("missing descriptor {id}"))
+    };
+
+    assert_eq!(
+        requires("UnEsm"),
+        &[
+            "UnCurlyBraces",
+            "UnEsmoduleFlag",
+            "UnUseStrict",
+            "UnAssignmentMerging",
+            "UnWebpackInterop"
+        ]
+    );
+    assert_eq!(requires("UnWebpackInterop2"), &["UnAsyncAwait"]);
+    assert_eq!(requires("UnWebpackInterop3"), &["UnEsm"]);
+    assert_eq!(requires("UnParameters2"), &["UnDestructuring"]);
+    assert_eq!(requires("UnJsx2"), &["SmartRename"]);
+    assert_eq!(requires("DeadImports"), &["DeadDecls"]);
+}
+
+#[test]
 fn rule_names_matches_trace_execution_order() {
     let events = trace_pipeline(
         "const x = 1;",

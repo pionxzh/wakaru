@@ -23,6 +23,7 @@ type RuleEnabled = for<'a> fn(RuleRunContext<'a>) -> bool;
 pub struct RuleDescriptor {
     pub id: &'static str,
     pub stage: RuleStage,
+    pub requires: &'static [&'static str],
     run: RuleRunner,
     enabled: RuleEnabled,
 }
@@ -33,10 +34,12 @@ impl RuleDescriptor {
         stage: RuleStage,
         run: RuleRunner,
         enabled: RuleEnabled,
+        requires: &'static [&'static str],
     ) -> Self {
         Self {
             id,
             stage,
+            requires,
             run,
             enabled,
         }
@@ -81,12 +84,24 @@ macro_rules! runner {
 }
 
 macro_rules! define_rule_registry {
+    (@requires) => {
+        &[]
+    };
+    (@requires $($requires:literal),+ $(,)?) => {
+        &[$($requires),+]
+    };
     ($(
-        ($id:literal, $stage:ident, $runner:ident, $enabled:ident)
+        ($id:literal, $stage:ident, $runner:ident, $enabled:ident $(, requires: [$($requires:literal),* $(,)?])?)
     ),+ $(,)?) => {
         pub static RULE_DESCRIPTORS: &[RuleDescriptor] = &[
             $(
-                RuleDescriptor::gated($id, RuleStage::$stage, $runner, $enabled),
+                RuleDescriptor::gated(
+                    $id,
+                    RuleStage::$stage,
+                    $runner,
+                    $enabled,
+                    define_rule_registry!(@requires $($($requires),*)?),
+                ),
             )+
         ];
 
@@ -247,7 +262,9 @@ define_rule_registry! {
     ("SimplifySequence", Syntax, run_simplify_sequence, always_enabled),
     ("FlipComparisons", Syntax, run_flip_comparisons, always_enabled),
     ("UnTypeofStrict", Syntax, run_un_typeof_strict, always_enabled),
-    ("RemoveVoid", Syntax, run_remove_void, always_enabled),
+    ("RemoveVoid", Syntax, run_remove_void, always_enabled, requires: [
+        "SimplifySequence"
+    ]),
     ("UnminifyBooleans", Syntax, run_unminify_booleans, always_enabled),
     ("UnDoubleNegation", Syntax, run_un_double_negation, always_enabled),
     ("UnInfinity", Syntax, run_un_infinity, always_enabled),
@@ -255,11 +272,19 @@ define_rule_registry! {
     ("UnTypeof", Syntax, run_un_typeof, always_enabled),
     ("UnNumericLiteral", Syntax, run_un_numeric_literal, always_enabled),
     ("UnBracketNotation", Syntax, run_un_bracket_notation, always_enabled),
-    ("UnInteropRequireDefault", Helpers, run_un_interop_require_default, always_enabled),
-    ("UnInteropRequireWildcard", Helpers, run_un_interop_require_wildcard, always_enabled),
+    ("UnInteropRequireDefault", Helpers, run_un_interop_require_default, always_enabled, requires: [
+        "UnIndirectCall",
+        "UnBracketNotation"
+    ]),
+    ("UnInteropRequireWildcard", Helpers, run_un_interop_require_wildcard, always_enabled, requires: [
+        "UnIndirectCall",
+        "UnBracketNotation"
+    ]),
     ("UnToConsumableArray", Helpers, run_un_to_consumable_array, always_enabled),
     ("UnObjectSpread", Helpers, run_un_object_spread, always_enabled),
-    ("UnObjectRest", Helpers, run_un_object_rest, always_enabled),
+    ("UnObjectRest", Helpers, run_un_object_rest, always_enabled, requires: [
+        "UnBracketNotation"
+    ]),
     ("UnSlicedToArray", Helpers, run_un_sliced_to_array, always_enabled),
     ("UnDefineProperty", Helpers, run_un_define_property, always_enabled),
     ("UnClassCallCheck", Helpers, run_un_class_call_check, always_enabled),
@@ -273,9 +298,20 @@ define_rule_registry! {
     ("UnCurlyBraces", Helpers, run_un_curly_braces, always_enabled),
     ("UnEsmoduleFlag", Helpers, run_un_esmodule_flag, always_enabled),
     ("UnUseStrict", Helpers, run_un_use_strict, always_enabled),
-    ("UnAssignmentMerging", Helpers, run_un_assignment_merging, always_enabled),
-    ("UnWebpackInterop", Helpers, run_un_webpack_interop, always_enabled),
-    ("UnEsm", Helpers, run_un_esm, always_enabled),
+    ("UnAssignmentMerging", Helpers, run_un_assignment_merging, always_enabled, requires: [
+        "UnCurlyBraces"
+    ]),
+    ("UnWebpackInterop", Helpers, run_un_webpack_interop, always_enabled, requires: [
+        "UnBracketNotation",
+        "UnEsmoduleFlag"
+    ]),
+    ("UnEsm", Helpers, run_un_esm, always_enabled, requires: [
+        "UnCurlyBraces",
+        "UnEsmoduleFlag",
+        "UnUseStrict",
+        "UnAssignmentMerging",
+        "UnWebpackInterop"
+    ]),
     ("UnTemplateLiteral", Structural, run_un_template_literal, always_enabled),
     ("UnWhileLoop", Structural, run_un_while_loop, always_enabled),
     ("UnTypeConstructor", Structural, run_un_type_constructor, always_enabled),
@@ -289,7 +325,10 @@ define_rule_registry! {
     ("UnOptionalChaining", Structural, run_un_optional_chaining, always_enabled),
     ("UnIife", Complex, run_un_iife, always_enabled),
     ("UnConditionals", Complex, run_un_conditionals, always_enabled),
-    ("UnParameters", Complex, run_un_parameters, always_enabled),
+    ("UnParameters", Complex, run_un_parameters, always_enabled, requires: [
+        "FlipComparisons",
+        "RemoveVoid"
+    ]),
     ("UnEnum", Complex, run_un_enum, always_enabled),
     ("UnJsx", Complex, run_un_jsx, always_enabled),
     ("UnEs6Class", Complex, run_un_es6_class, always_enabled),
@@ -298,7 +337,9 @@ define_rule_registry! {
     ("UnRegenerator", Complex, run_un_regenerator, always_enabled),
     ("UnAsyncAwait", Complex, run_un_async_await, always_enabled),
     // Second pass: UnAsyncAwait can expose additional interop getter shapes.
-    ("UnWebpackInterop2", Complex, run_un_webpack_interop, always_enabled),
+    ("UnWebpackInterop2", Complex, run_un_webpack_interop, always_enabled, requires: [
+        "UnAsyncAwait"
+    ]),
     ("UnThenCatch", Modernization, run_un_then_catch, always_enabled),
     ("UnUndefinedInit", Modernization, run_un_undefined_init, always_enabled),
     ("VarDeclToLetConst", Modernization, run_var_decl_to_let_const, always_enabled),
@@ -318,21 +359,38 @@ define_rule_registry! {
     ("UnExportRename", Cleanup, run_un_export_rename, always_enabled),
     // Third pass: UnEsm can convert require() bindings to imports, exposing
     // direct require.n(importBinding) helpers.
-    ("UnWebpackInterop3", Cleanup, run_un_webpack_interop, always_enabled),
-    ("UnDestructuring", Cleanup, run_un_destructuring, always_enabled),
+    ("UnWebpackInterop3", Cleanup, run_un_webpack_interop, always_enabled, requires: [
+        "UnEsm"
+    ]),
+    ("UnDestructuring", Cleanup, run_un_destructuring, always_enabled, requires: [
+        "UnImportRename",
+        "UnExportRename"
+    ]),
     // UnDestructuring can expose param === undefined ? {} : param initializers.
-    ("UnParameters2", Cleanup, run_un_parameters, always_enabled),
-    ("SmartInline", Cleanup, run_smart_inline, always_enabled),
+    ("UnParameters2", Cleanup, run_un_parameters, always_enabled, requires: [
+        "UnDestructuring"
+    ]),
+    ("SmartInline", Cleanup, run_smart_inline, always_enabled, requires: [
+        "UnDestructuring"
+    ]),
     // SmartInline can create new (() => expr)() patterns.
-    ("UnIife2", Cleanup, run_un_iife, always_enabled),
-    ("SmartRename", Cleanup, run_smart_rename, always_enabled),
+    ("UnIife2", Cleanup, run_un_iife, always_enabled, requires: [
+        "SmartInline"
+    ]),
+    ("SmartRename", Cleanup, run_smart_rename, always_enabled, requires: [
+        "SmartInline"
+    ]),
     // SmartRename may capitalize component bindings that UnJsx intentionally
     // skipped earlier because lowercase JSX tags are HTML elements.
-    ("UnJsx2", Cleanup, run_un_jsx, always_enabled),
+    ("UnJsx2", Cleanup, run_un_jsx, always_enabled, requires: [
+        "SmartRename"
+    ]),
     // DeadDecls first: removing dead helpers can leave import specifiers
     // unreferenced, which DeadImports then cleans up.
     ("DeadDecls", Cleanup, run_dead_decls, dead_code_elimination_enabled),
-    ("DeadImports", Cleanup, run_dead_imports, dead_code_elimination_enabled),
+    ("DeadImports", Cleanup, run_dead_imports, dead_code_elimination_enabled, requires: [
+        "DeadDecls"
+    ]),
     // Last pass: no downstream rule needs tail return undefined, and earlier
     // restructuring rules can introduce new ones.
     ("UnReturn", Cleanup, run_un_return, always_enabled),
