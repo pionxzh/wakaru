@@ -66,6 +66,18 @@ pub struct ExportFact {
 /// Transpiler/runtime helper identity proven from a module's exported AST shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelperKind {
+    InteropRequireDefault,
+    InteropRequireWildcard,
+    ToConsumableArray,
+    Extends,
+    ObjectSpread,
+    SlicedToArray,
+    ClassCallCheck,
+    PossibleConstructorReturn,
+    AssertThisInitialized,
+    ObjectWithoutProperties,
+    Inherits,
+    CallSuper,
     AsyncToGenerator,
     RegeneratorRuntime,
 }
@@ -210,6 +222,18 @@ impl fmt::Display for ExportKind {
 impl fmt::Display for HelperKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            HelperKind::InteropRequireDefault => write!(f, "interopRequireDefault"),
+            HelperKind::InteropRequireWildcard => write!(f, "interopRequireWildcard"),
+            HelperKind::ToConsumableArray => write!(f, "toConsumableArray"),
+            HelperKind::Extends => write!(f, "extends"),
+            HelperKind::ObjectSpread => write!(f, "objectSpread"),
+            HelperKind::SlicedToArray => write!(f, "slicedToArray"),
+            HelperKind::ClassCallCheck => write!(f, "classCallCheck"),
+            HelperKind::PossibleConstructorReturn => write!(f, "possibleConstructorReturn"),
+            HelperKind::AssertThisInitialized => write!(f, "assertThisInitialized"),
+            HelperKind::ObjectWithoutProperties => write!(f, "objectWithoutProperties"),
+            HelperKind::Inherits => write!(f, "inherits"),
+            HelperKind::CallSuper => write!(f, "callSuper"),
             HelperKind::AsyncToGenerator => write!(f, "asyncToGenerator"),
             HelperKind::RegeneratorRuntime => write!(f, "regeneratorRuntime"),
         }
@@ -462,8 +486,20 @@ fn collect_helper_exports(module: &Module, exports: &[ExportFact]) -> Vec<Helper
 
 fn helper_kind_from_babel(kind: BabelHelperKind) -> Option<HelperKind> {
     match kind {
+        BabelHelperKind::InteropRequireDefault => Some(HelperKind::InteropRequireDefault),
+        BabelHelperKind::InteropRequireWildcard => Some(HelperKind::InteropRequireWildcard),
+        BabelHelperKind::ToConsumableArray => Some(HelperKind::ToConsumableArray),
+        BabelHelperKind::Extends => Some(HelperKind::Extends),
+        BabelHelperKind::ObjectSpread => Some(HelperKind::ObjectSpread),
+        BabelHelperKind::SlicedToArray => Some(HelperKind::SlicedToArray),
+        BabelHelperKind::ClassCallCheck => Some(HelperKind::ClassCallCheck),
+        BabelHelperKind::PossibleConstructorReturn => Some(HelperKind::PossibleConstructorReturn),
+        BabelHelperKind::AssertThisInitialized => Some(HelperKind::AssertThisInitialized),
+        BabelHelperKind::ObjectWithoutProperties => Some(HelperKind::ObjectWithoutProperties),
+        BabelHelperKind::Inherits => Some(HelperKind::Inherits),
+        BabelHelperKind::CallSuper => Some(HelperKind::CallSuper),
         BabelHelperKind::AsyncToGenerator => Some(HelperKind::AsyncToGenerator),
-        _ => None,
+        BabelHelperKind::HelperDependency => None,
     }
 }
 

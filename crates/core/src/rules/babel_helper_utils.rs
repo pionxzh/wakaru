@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BinaryOp, BlockStmtOrExpr, Callee, Decl, Expr, ForHead, Function, IfStmt, Lit, MemberProp,
-    Module, ModuleItem, Pat, ReturnStmt, Stmt, UnaryOp, VarDeclarator,
+    BinaryOp, BlockStmtOrExpr, Callee, Decl, Expr, ForHead, Function, IfStmt, ImportSpecifier, Lit,
+    MemberProp, Module, ModuleDecl, ModuleItem, Pat, ReturnStmt, Stmt, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -80,6 +80,11 @@ const ASYNC_TO_GENERATOR_PATHS: &[&str] = &[
     "@babel/runtime/helpers/esm/asyncToGenerator",
 ];
 
+const DEFINE_PROPERTY_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/defineProperty",
+    "@babel/runtime/helpers/esm/defineProperty",
+];
+
 /// Scan module-level declarations for helper functions.
 /// Detects by function body shape and by import path.
 pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelperKind> {
@@ -109,6 +114,52 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
                     }
                 }
             }
+            // import _extends from "@babel/runtime/helpers/extends"
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+                if import.type_only {
+                    continue;
+                }
+                let Some(kind) = detect_helper_from_path(import.src.value.as_str().unwrap_or(""))
+                else {
+                    continue;
+                };
+                for specifier in &import.specifiers {
+                    match specifier {
+                        ImportSpecifier::Default(default) => {
+                            helpers.insert((default.local.sym.clone(), default.local.ctxt), kind);
+                        }
+                        ImportSpecifier::Named(named)
+                            if named
+                                .imported
+                                .as_ref()
+                                .is_some_and(|imported| export_name_is(imported, "default")) =>
+                        {
+                            helpers.insert((named.local.sym.clone(), named.local.ctxt), kind);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // export function _extends() { ... }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => match &export.decl {
+                Decl::Fn(fn_decl) => {
+                    if let Some(kind) = detect_helper_from_fn(&fn_decl.function, has_sub_helpers)
+                        .or_else(|| generated_fn_helper_name_kind(fn_decl.ident.sym.as_ref()))
+                    {
+                        helpers.insert((fn_decl.ident.sym.clone(), fn_decl.ident.ctxt), kind);
+                    }
+                }
+                Decl::Var(var) => {
+                    for decl in &var.decls {
+                        if let Some((key, kind)) =
+                            detect_helper_from_var_decl(decl, has_sub_helpers)
+                        {
+                            helpers.insert(key, kind);
+                        }
+                    }
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -193,6 +244,15 @@ pub(crate) fn helpers_with_remaining_refs(
                     }
                 }
             }
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+                for specifier in &import.specifiers {
+                    if let Some(key) = import_specifier_binding_key(specifier) {
+                        if helpers.contains_key(&key) {
+                            decl_idents.insert(key);
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -230,6 +290,8 @@ pub(crate) fn helpers_with_remaining_refs(
             // Otherwise skip just the name, scan the body
             fn_decl.function.visit_with(self);
         }
+
+        fn visit_import_decl(&mut self, _: &swc_core::ecma::ast::ImportDecl) {}
 
         fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
             let key = (ident.sym.clone(), ident.ctxt);
@@ -274,6 +336,16 @@ pub(crate) fn remove_helper_declarations(
                 });
                 if !var.decls.is_empty() {
                     new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))));
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+                let mut import = import.clone();
+                import.specifiers.retain(|specifier| {
+                    import_specifier_binding_key(specifier)
+                        .is_none_or(|key| !helpers.contains_key(&key))
+                });
+                if !import.specifiers.is_empty() {
+                    new_body.push(ModuleItem::ModuleDecl(ModuleDecl::Import(import)));
                 }
             }
             _ => new_body.push(item),
@@ -399,7 +471,10 @@ fn detect_helper_from_require(expr: &Expr) -> Option<BabelHelperKind> {
     let Expr::Lit(Lit::Str(s)) = call.args[0].expr.as_ref() else {
         return None;
     };
-    let path = s.value.as_str().unwrap_or("");
+    detect_helper_from_path(s.value.as_str().unwrap_or(""))
+}
+
+pub(crate) fn detect_helper_from_path(path: &str) -> Option<BabelHelperKind> {
     if INTEROP_DEFAULT_PATHS.contains(&path) {
         return Some(BabelHelperKind::InteropRequireDefault);
     }
@@ -427,7 +502,27 @@ fn detect_helper_from_require(expr: &Expr) -> Option<BabelHelperKind> {
     if ASYNC_TO_GENERATOR_PATHS.contains(&path) {
         return Some(BabelHelperKind::AsyncToGenerator);
     }
+    if DEFINE_PROPERTY_PATHS.contains(&path) {
+        return Some(BabelHelperKind::HelperDependency);
+    }
     None
+}
+
+fn import_specifier_binding_key(specifier: &ImportSpecifier) -> Option<BindingKey> {
+    match specifier {
+        ImportSpecifier::Default(default) => Some((default.local.sym.clone(), default.local.ctxt)),
+        ImportSpecifier::Named(named) => Some((named.local.sym.clone(), named.local.ctxt)),
+        ImportSpecifier::Namespace(namespace) => {
+            Some((namespace.local.sym.clone(), namespace.local.ctxt))
+        }
+    }
+}
+
+fn export_name_is(name: &swc_core::ecma::ast::ModuleExportName, expected: &str) -> bool {
+    match name {
+        swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.as_ref() == expected,
+        swc_core::ecma::ast::ModuleExportName::Str(s) => s.value.as_str() == Some(expected),
+    }
 }
 
 fn detect_helper_from_fn(func: &Function, has_sub_helpers: bool) -> Option<BabelHelperKind> {

@@ -21,7 +21,7 @@ use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
     apply_default_rules_with_level, apply_rules_between_with_level_and_facts,
     apply_rules_range_with_observer_with_level, apply_rules_until, rule_names, ImportDedup,
-    RewriteLevel, UnEsm, UnImportRename,
+    RewriteLevel, UnEsm, UnImportRename, UnObjectSpread,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::{scope_hoist, try_unpack_bundle, UnpackResult};
@@ -613,6 +613,7 @@ fn unpack_multi_module(
                 // Late pass at the barrier
                 run_reexport_consolidation(&mut module, facts_ref);
                 run_namespace_decomposition(&mut module, facts_ref);
+                module.visit_mut_with(&mut UnObjectSpread::new_with_facts(facts_ref));
 
                 // Stage 3+
                 apply_rules_between_with_level_and_facts(

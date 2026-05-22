@@ -1,10 +1,14 @@
 use std::collections::HashMap;
 
+use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    Callee, Expr, Module, ObjectLit, Prop, PropName, PropOrSpread, SpreadElement,
+    Callee, Expr, ImportSpecifier, Module, ModuleDecl, ModuleItem, ObjectLit, Prop, PropName,
+    PropOrSpread, SpreadElement,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+
+use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::babel_helper_utils::{
     collect_helpers, helpers_with_remaining_refs, remove_helper_declarations, BabelHelperKind,
@@ -22,12 +26,28 @@ use super::babel_helper_utils::{
 ///   `_objectSpread2({}, y)` → `{ ...y }`
 ///   `_extends(target, source)` → left as-is (mutation semantics)
 ///   `_objectSpread2(existing, {a: 1})` → left as-is (mutation semantics)
-pub struct UnObjectSpread;
+pub struct UnObjectSpread<'a> {
+    module_facts: Option<&'a ModuleFactsMap>,
+}
 
-impl VisitMut for UnObjectSpread {
+impl UnObjectSpread<'_> {
+    pub fn new() -> Self {
+        Self { module_facts: None }
+    }
+}
+
+impl<'a> UnObjectSpread<'a> {
+    pub fn new_with_facts(module_facts: &'a ModuleFactsMap) -> Self {
+        Self {
+            module_facts: Some(module_facts),
+        }
+    }
+}
+
+impl VisitMut for UnObjectSpread<'_> {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let all_helpers = collect_helpers(module);
-        let helpers: HashMap<BindingKey, BabelHelperKind> = all_helpers
+        let local_helpers: HashMap<BindingKey, BabelHelperKind> = all_helpers
             .into_iter()
             .filter(|(_, kind)| {
                 *kind == BabelHelperKind::Extends
@@ -35,6 +55,13 @@ impl VisitMut for UnObjectSpread {
                     || *kind == BabelHelperKind::HelperDependency
             })
             .collect();
+        let mut helpers = local_helpers.clone();
+        if let Some(module_facts) = self.module_facts {
+            helpers.extend(collect_cross_module_object_spread_helpers(
+                module,
+                module_facts,
+            ));
+        }
         if helpers.is_empty() {
             return;
         }
@@ -43,14 +70,82 @@ impl VisitMut for UnObjectSpread {
         module.visit_mut_with(&mut replacer);
 
         // Only remove declaration if no untransformed calls remain
-        let remaining = helpers_with_remaining_refs(module, &helpers);
+        let remaining = helpers_with_remaining_refs(module, &local_helpers);
         let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = helpers
             .into_iter()
-            .filter(|(key, _)| !remaining.contains(key))
+            .filter(|(key, _)| local_helpers.contains_key(key) && !remaining.contains(key))
             .collect();
         if !safe_to_remove.is_empty() {
             remove_helper_declarations(&mut module.body, &safe_to_remove);
         }
+    }
+}
+
+impl Default for UnObjectSpread<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn collect_cross_module_object_spread_helpers(
+    module: &Module,
+    module_facts: &ModuleFactsMap,
+) -> HashMap<BindingKey, BabelHelperKind> {
+    let mut helpers = HashMap::new();
+
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        let source = str_to_atom(&import.src.value);
+
+        for specifier in &import.specifiers {
+            match specifier {
+                ImportSpecifier::Default(default) => {
+                    if let Some(kind) = module_helper_export_kind(module_facts, &source, "default")
+                    {
+                        helpers.insert((default.local.sym.clone(), default.local.ctxt), kind);
+                    }
+                }
+                ImportSpecifier::Named(named) => {
+                    let imported = named
+                        .imported
+                        .as_ref()
+                        .map(export_name_to_atom)
+                        .unwrap_or_else(|| named.local.sym.clone());
+                    if let Some(kind) =
+                        module_helper_export_kind(module_facts, &source, imported.as_ref())
+                    {
+                        helpers.insert((named.local.sym.clone(), named.local.ctxt), kind);
+                    }
+                }
+                ImportSpecifier::Namespace(_) => {}
+            }
+        }
+    }
+
+    helpers
+}
+
+fn module_helper_export_kind(
+    module_facts: &ModuleFactsMap,
+    source: &Atom,
+    exported: &str,
+) -> Option<BabelHelperKind> {
+    module_facts.get(source.as_ref()).and_then(|facts| {
+        facts
+            .helper_exports
+            .iter()
+            .find(|helper| helper.exported.as_ref() == exported)
+            .and_then(|helper| helper_kind_to_babel(helper.kind))
+    })
+}
+
+fn helper_kind_to_babel(kind: HelperKind) -> Option<BabelHelperKind> {
+    match kind {
+        HelperKind::Extends => Some(BabelHelperKind::Extends),
+        HelperKind::ObjectSpread => Some(BabelHelperKind::ObjectSpread),
+        _ => None,
     }
 }
 
@@ -151,4 +246,15 @@ fn is_bare_proto_name(name: &PropName) -> bool {
         PropName::Str(value) => value.value == "__proto__",
         PropName::Num(_) | PropName::BigInt(_) | PropName::Computed(_) => false,
     }
+}
+
+fn export_name_to_atom(name: &swc_core::ecma::ast::ModuleExportName) -> Atom {
+    match name {
+        swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.clone(),
+        swc_core::ecma::ast::ModuleExportName::Str(s) => str_to_atom(&s.value),
+    }
+}
+
+fn str_to_atom(value: &swc_core::atoms::Wtf8Atom) -> Atom {
+    Atom::from(value.as_str().unwrap_or(""))
 }

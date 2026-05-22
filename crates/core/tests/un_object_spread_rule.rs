@@ -1,5 +1,7 @@
 mod common;
-use common::{assert_eq_normalized, render};
+use common::{assert_eq_normalized, render, render_rule};
+use wakaru_core::facts::{HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap};
+use wakaru_core::rules::UnObjectSpread;
 
 #[test]
 fn replaces_object_spread2_with_spread_syntax() {
@@ -35,6 +37,88 @@ var x = _extends({}, obj1, obj2);
 const x = { ...obj1, ...obj2 };
 "#;
     assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn handles_babel_runtime_esm_import_extends() {
+    let input = r#"
+import _extends from "@babel/runtime/helpers/extends";
+var x = _extends({}, app_info, base_info);
+"#;
+    let expected = r#"
+const x = { ...app_info, ...base_info };
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn handles_babel_runtime_esm_import_object_spread() {
+    let input = r#"
+import _objectSpread2 from "@babel/runtime/helpers/objectSpread2";
+var x = _objectSpread2({}, app_info, { app_name: name });
+"#;
+    let expected = r#"
+const x = { ...app_info, app_name: name };
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn handles_cross_module_extends_helper_fact() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            helper_exports: vec![HelperExportFact {
+                exported: "default".into(),
+                local: Some("extends".into()),
+                kind: HelperKind::Extends,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import _extends from "./helpers.js";
+var x = _extends({}, app_info, base_info);
+"#;
+    let expected = r#"
+import _extends from "./helpers.js";
+var x = { ...app_info, ...base_info };
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |_| UnObjectSpread::new_with_facts(&facts)),
+        expected,
+    );
+}
+
+#[test]
+fn handles_cross_module_named_extends_helper_fact() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            helper_exports: vec![HelperExportFact {
+                exported: "Z".into(),
+                local: Some("Z".into()),
+                kind: HelperKind::Extends,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import { Z as _extends } from "./helpers.js";
+var x = _extends({}, app_info, base_info);
+"#;
+    let expected = r#"
+import { Z as _extends } from "./helpers.js";
+var x = { ...app_info, ...base_info };
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |_| UnObjectSpread::new_with_facts(&facts)),
+        expected,
+    );
 }
 
 #[test]

@@ -283,6 +283,67 @@ export default asyncToGenerator;
 }
 
 #[test]
+fn babel_runtime_default_helper_export() {
+    let facts = collect_facts(
+        r#"
+import _extends from "@babel/runtime/helpers/extends";
+export default _extends;
+"#,
+    );
+    assert_eq!(
+        facts.helper_exports,
+        vec![helper_export(
+            "default",
+            Some("_extends"),
+            HelperKind::Extends
+        )]
+    );
+}
+
+#[test]
+fn babel_runtime_named_default_helper_export() {
+    let facts = collect_facts(
+        r#"
+import { default as _objectSpread2 } from "@babel/runtime/helpers/objectSpread2";
+export { _objectSpread2 as objectSpread };
+"#,
+    );
+    assert_eq!(
+        facts.helper_exports,
+        vec![helper_export(
+            "objectSpread",
+            Some("_objectSpread2"),
+            HelperKind::ObjectSpread
+        )]
+    );
+}
+
+#[test]
+fn exported_function_helper_fact() {
+    let facts = collect_facts(
+        r#"
+export function Z() {
+    return (Z = Object.assign ? Object.assign.bind() : function(target) {
+        for (var i = 1; i < arguments.length; i++) {
+            var source = arguments[i];
+            for (var key in source) {
+                if (Object.prototype.hasOwnProperty.call(source, key)) {
+                    target[key] = source[key];
+                }
+            }
+        }
+        return target;
+    }).apply(this, arguments);
+}
+"#,
+    );
+    assert_eq!(
+        facts.helper_exports,
+        vec![helper_export("Z", Some("Z"), HelperKind::Extends)]
+    );
+}
+
+#[test]
 fn regenerator_runtime_default_helper_export() {
     let facts = collect_facts(
         r#"

@@ -568,7 +568,7 @@ fn apply_rules_range_impl(
     run!(UnInteropRequireDefault, "UnInteropRequireDefault");
     run!(UnInteropRequireWildcard, "UnInteropRequireWildcard");
     run!(UnToConsumableArray, "UnToConsumableArray");
-    run!(UnObjectSpread, "UnObjectSpread");
+    run!(UnObjectSpread::new(), "UnObjectSpread");
     run!(UnObjectRest::new(unresolved_mark), "UnObjectRest");
     run!(UnSlicedToArray, "UnSlicedToArray");
     run!(UnDefineProperty, "UnDefineProperty");

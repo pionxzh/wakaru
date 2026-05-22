@@ -1,10 +1,10 @@
 ---
-source: tests/webpack4_unpack.rs
+source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import { Children, Component, forwardRef } from "./module-50.js";
 import u from "./module-1.js";
-import { a as a_2 } from "./module-7.js";
+import { a } from "./module-7.js";
 import y from "./module-32.js";
 import _b from "./module-5.js";
 import { isValidElementType } from "./module-43.js";
@@ -139,7 +139,8 @@ export function connectAdvanced(e, t = {}) {
         _b(isValidElementType(T1), `You must pass a component to the function returned by ${methodName}. Instead received ${JSON.stringify(T1)}`);
         const n = T1.displayName || T1.name || "Component";
         const r = getDisplayName(n);
-        const a = a_2({}, rest, {
+        const a = {
+            ...rest,
             getDisplayName,
             methodName,
             renderCountProp,
@@ -149,7 +150,7 @@ export function connectAdvanced(e, t = {}) {
             displayName: r,
             wrappedComponentName: n,
             WrappedComponent: T1
-        });
+        };
         class u extends Component {
             constructor(e, t){
                 super(e, t);
@@ -251,7 +252,9 @@ export function connectAdvanced(e, t = {}) {
                 if (!(withRef || renderCountProp || this.propsMode && this.subscription)) {
                     return e;
                 }
-                const t = a_2({}, e);
+                const t = {
+                    ...e
+                };
                 if (withRef) {
                     t.ref = this.setWrappedInstance;
                 }
@@ -384,7 +387,11 @@ const D = [
     }
 ];
 function F(e, t, n) {
-    return a_2({}, n, e, t);
+    return {
+        ...n,
+        ...e,
+        ...t
+    };
 }
 const z = [
     (e)=>{
@@ -502,7 +509,7 @@ export const connect = ((e = {})=>{
         const initMapStateToProps = W(e, mapStateToPropsFactories, "mapStateToProps");
         const initMapDispatchToProps = W(t, mapDispatchToPropsFactories, "mapDispatchToProps");
         const initMergeProps = W(n, mergePropsFactories, "mergeProps");
-        return connectHOC(selectorFactory, a_2({
+        return connectHOC(selectorFactory, a({
             methodName: "connect",
             getDisplayName (e) {
                 return `Connect(${e})`;

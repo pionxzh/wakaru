@@ -8,8 +8,8 @@ rules fit in the pipeline.
 
 A barrier-and-read mechanism that lets Phase 2 rules read import/export shape
 from **other** modules in the same bundle. Used today by
-`namespace_decomposition`; designed to be extended by further cross-module
-rules.
+`namespace_decomposition` and helper recovery rules that need to prove a helper
+identity across module boundaries.
 
 ## Why it's simpler than the original proposal
 
@@ -69,6 +69,12 @@ export shape after Stage 2. They do not speculate from consumer-side usage.
   prevents the rewrite. Handles aliased pre-existing specifiers, inner-scope
   shadowing, mixed default+named imports, and readability backoff when too many
   collisions would force aliasing.
+- **`UnObjectSpread`** — in multi-module unpack, recognizes object spread
+  helpers imported from a helper module whose default/named export fact proves
+  it is Babel's `extends` or `objectSpread` helper. This covers helpers split
+  into their own module before consumer calls are rewritten to object spread
+  syntax. The consumer import is retained for now because helper identity does
+  not by itself prove that evaluating the helper module is side-effect-free.
 - **`UnRegenerator`** — in multi-module unpack, recognizes async-to-generator
   helpers that were hoisted into their own module and consumed through generated
   `require()`/interop aliases such as `h.default(...)`, but only when the target

@@ -9,7 +9,7 @@ rules sit in the pipeline ordering.
 
 Transpilers (Babel, TypeScript/tslib, SWC) inject runtime helper functions to polyfill modern syntax for older targets. In bundled output, these helpers appear in several forms:
 
-1. **Imported** from a runtime package — `require("@babel/runtime/helpers/interopRequireDefault")`
+1. **Imported** from a runtime package — `require("@babel/runtime/helpers/interopRequireDefault")` or `import _extends from "@babel/runtime/helpers/extends"`
 2. **Inlined** at the top of each module — the function body is copied directly, no import
 3. **Hoisted** into a shared webpack module — accessed via numeric `require(42)`, name lost entirely
 4. **Minified** — parameter and function names are mangled, but the body structure is preserved
@@ -49,11 +49,12 @@ These ideas were explored and rejected:
 
 ### Detection (`babel_helper_utils.rs`)
 
-The `collect_helpers()` function scans module-level declarations (function declarations and function-assigned variables) and returns a `HashMap<BindingKey, BabelHelperKind>` by running each candidate through a set of shape matchers.
+The `collect_helpers()` function scans module-level declarations (function declarations, function-assigned variables, and Babel runtime imports) and returns a `HashMap<BindingKey, BabelHelperKind>` by running each candidate through a set of shape matchers or matching known runtime package paths.
 
 ```
 scan module-level declarations
   → for each function body, run shape matchers
+  → for each Babel runtime import, map the import path to a helper kind
   → collect (binding_key, BabelHelperKind) pairs
 ```
 

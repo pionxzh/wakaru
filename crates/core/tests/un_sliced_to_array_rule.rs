@@ -38,6 +38,18 @@ var x = _ref[0];
 }
 
 #[test]
+fn handles_babel_runtime_esm_import() {
+    let input = r#"
+import _slicedToArray from "@babel/runtime/helpers/slicedToArray";
+var _ref = _slicedToArray(pair, 2);
+var key = _ref[0];
+var value = _ref[1];
+"#;
+    let output = render(input);
+    insta::assert_snapshot!(output);
+}
+
+#[test]
 fn skips_invalid_arg_counts() {
     let input = r#"
 var _slicedToArray = require("@babel/runtime/helpers/slicedToArray");

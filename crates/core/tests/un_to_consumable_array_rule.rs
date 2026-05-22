@@ -26,6 +26,18 @@ const x = [...arr];
 }
 
 #[test]
+fn handles_babel_runtime_esm_import() {
+    let input = r#"
+import _toConsumableArray from "@babel/runtime/helpers/toConsumableArray";
+var x = _toConsumableArray(items);
+"#;
+    let expected = r#"
+const x = [...items];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn preserves_helper_when_untransformed_calls_remain() {
     let input = r#"
 var _toConsumableArray = require("@babel/runtime/helpers/toConsumableArray");
