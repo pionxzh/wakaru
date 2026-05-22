@@ -50,12 +50,17 @@ Phase 1 AST would break downstream ctxt-sensitive rules.
 
 - `ImportFact { local, source, kind: Default | Namespace | Named(imported) }`
 - `ExportFact { exported, local, kind: Default | Named }`
-- `ModuleFacts { imports, exports }`
+- `HelperExportFact { exported, local, kind }`
+- `ModuleFacts { imports, exports, helper_exports, passthrough_target }`
 - `ModuleFactsMap` — keyed by normalized module specifier
   (handles `./foo`, `foo`, `foo.js` variants)
 
 Extraction (`collect_module_facts`) reads the post-Stage-2 AST and returns
 these structures. No mutation, no shared state.
+
+Helper export facts are still pure AST facts. They only record helper identity
+when the exported local binding matches a known helper body shape or runtime
+export shape after Stage 2. They do not speculate from consumer-side usage.
 
 ## Rules that read facts
 
@@ -64,17 +69,28 @@ these structures. No mutation, no shared state.
   prevents the rewrite. Handles aliased pre-existing specifiers, inner-scope
   shadowing, mixed default+named imports, and readability backoff when too many
   collisions would force aliasing.
+- **`UnRegenerator`** — in multi-module unpack, recognizes async-to-generator
+  helpers that were hoisted into their own module and consumed through generated
+  `require()`/interop aliases such as `h.default(...)`, but only when the target
+  module's helper export fact proves the default export is the async helper.
 
 ## Adding a new fact-reading rule
 
-1. Put the rule in `crates/core/src/` as a free function taking
+For a cross-module late pass that naturally runs at the Stage 2 barrier:
+
+1. Put the pass in `crates/core/src/` as a free function taking
    `(&mut Module, &ModuleFactsMap)`.
 2. Call it from `unpack_multi_module` between `apply_rules_until("UnEsm")` and
-   `apply_rules_between("UnTemplateLiteral", …)`.
+   the Stage 3+ rule range.
 3. Do all AST mutation locally to the module — never write back to
    `ModuleFactsMap`.
 4. Add unit tests following `crates/core/tests/namespace_decomposition_rule.rs` (use
    `facts_for(source)` to synthesize a target module's facts).
+
+For an existing rule that must stay at its current pipeline position, add an
+optional fact-aware constructor and thread `ModuleFactsMap` through the
+multi-module rule runner only. Single-file `decompile()` should keep using the
+normal constructor.
 
 ### Gotchas when synthesizing new idents
 

@@ -1,10 +1,39 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
+use wakaru_core::facts::{HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap};
 use wakaru_core::rules::UnRegenerator;
 
 fn apply(input: &str) -> String {
     render_rule(input, UnRegenerator::new)
+}
+
+fn apply_with_helper_facts(input: &str) -> String {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "./module-async.js",
+        ModuleFacts {
+            helper_exports: vec![HelperExportFact {
+                exported: "default".into(),
+                local: Some("asyncToGenerator".into()),
+                kind: HelperKind::AsyncToGenerator,
+            }],
+            ..Default::default()
+        },
+    );
+    facts.insert(
+        "./module-runtime.js",
+        ModuleFacts {
+            helper_exports: vec![HelperExportFact {
+                exported: "default".into(),
+                local: Some("runtime".into()),
+                kind: HelperKind::RegeneratorRuntime,
+            }],
+            ..Default::default()
+        },
+    );
+
+    render_rule(input, |mark| UnRegenerator::new_with_facts(mark, &facts))
 }
 
 // ── Pure generators (regeneratorRuntime.wrap → function*) ───────────────────
@@ -570,6 +599,116 @@ async function load_user(app_id) {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn cross_module_async_to_generator_with_exported_public_trampoline() {
+    let input = r#"
+const runtime = interop(require("./module-runtime.js"));
+const asyncHelper = interop(require("./module-async.js"));
+export function load_user(_x) {
+  return _load_user.apply(this, arguments);
+}
+function _load_user() {
+  _load_user = asyncHelper.default(runtime.default.mark(function _callee(app_id) {
+    return runtime.default.wrap(function(_context) {
+      while (true) {
+        switch (_context.prev = _context.next) {
+          case 0:
+            _context.next = 2;
+            return fetch_user(app_id);
+          case 2:
+            return _context.abrupt("return", _context.sent);
+          case 3:
+          case "end":
+            return _context.stop();
+        }
+      }
+    }, _callee);
+  }));
+  return _load_user.apply(this, arguments);
+}
+"#;
+    let expected = r#"
+const runtime = interop(require("./module-runtime.js"));
+const asyncHelper = interop(require("./module-async.js"));
+export async function load_user(app_id) {
+  return await fetch_user(app_id);
+}
+"#;
+    let output = apply_with_helper_facts(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn cross_module_async_to_generator_with_compact_private_trampoline() {
+    let input = r#"
+const runtime = interop(require("./module-runtime.js"));
+const asyncHelper = interop(require("./module-async.js"));
+export function load_user(_x) {
+  return _load_user.apply(this, arguments);
+}
+function _load_user() {
+  return (_load_user = asyncHelper.default(runtime.default.mark(function _callee(app_id) {
+    return runtime.default.wrap(function(_context) {
+      while (true) {
+        switch (_context.prev = _context.next) {
+          case 0:
+            _context.next = 2;
+            return fetch_user(app_id);
+          case 2:
+            return _context.abrupt("return", _context.sent);
+          case 3:
+          case "end":
+            return _context.stop();
+        }
+      }
+    }, _callee);
+  }))).apply(this, arguments);
+}
+"#;
+    let expected = r#"
+const runtime = interop(require("./module-runtime.js"));
+const asyncHelper = interop(require("./module-async.js"));
+export async function load_user(app_id) {
+  return await fetch_user(app_id);
+}
+"#;
+    let output = apply_with_helper_facts(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn missing_cross_module_helper_fact_keeps_async_wrapper() {
+    let input = r#"
+const runtime = interop(require("./module-runtime.js"));
+const asyncHelper = interop(require("./module-async.js"));
+export function load_user(_x) {
+  return _load_user.apply(this, arguments);
+}
+function _load_user() {
+  _load_user = asyncHelper.default(runtime.default.mark(function _callee(app_id) {
+    return runtime.default.wrap(function(_context) {
+      while (true) {
+        switch (_context.prev = _context.next) {
+          case 0:
+            _context.next = 2;
+            return fetch_user(app_id);
+          case 2:
+          case "end":
+            return _context.stop();
+        }
+      }
+    }, _callee);
+  }));
+  return _load_user.apply(this, arguments);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("asyncHelper.default"),
+        "should require helper facts before treating member callee as async helper, got:\n{output}"
+    );
 }
 
 #[test]

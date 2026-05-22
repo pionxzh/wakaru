@@ -6,7 +6,8 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::apply_rules_until;
 use wakaru_core::facts::{
-    collect_module_facts, ExportFact, ExportKind, ImportFact, ImportKind, ModuleFacts,
+    collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
+    ImportKind, ModuleFacts,
 };
 
 /// Parse source, run Stage 1+2 (up through UnEsm), then collect facts.
@@ -52,6 +53,14 @@ fn import(local: &str, source: &str, kind: ImportKind) -> ImportFact {
 /// Helper to build an ExportFact for assertions.
 fn export(exported: &str, local: Option<&str>, kind: ExportKind) -> ExportFact {
     ExportFact {
+        exported: exported.into(),
+        local: local.map(|s| s.into()),
+        kind,
+    }
+}
+
+fn helper_export(exported: &str, local: Option<&str>, kind: HelperKind) -> HelperExportFact {
+    HelperExportFact {
         exported: exported.into(),
         local: local.map(|s| s.into()),
         kind,
@@ -221,6 +230,78 @@ export { a as default };
     assert_eq!(
         facts.exports,
         vec![export("default", Some("a"), ExportKind::Default),]
+    );
+}
+
+// ── Helper export detection ───────────────────────────────────────
+
+#[test]
+fn async_to_generator_default_helper_export() {
+    let facts = collect_facts(
+        r#"
+function step(gen, resolve, reject, next, throwFn, key, arg) {
+    try {
+        var info = gen[key](arg);
+        var value = info.value;
+    } catch (err) {
+        reject(err);
+        return;
+    }
+    if (info.done) {
+        resolve(value);
+    } else {
+        Promise.resolve(value).then(next, throwFn);
+    }
+}
+function asyncToGenerator(fn) {
+    return function() {
+        const self = this;
+        const args = arguments;
+        return new Promise((resolve, reject)=>{
+            const gen = fn.apply(self, args);
+            function next(value) {
+                step(gen, resolve, reject, next, throwFn, "next", value);
+            }
+            function throwFn(value) {
+                step(gen, resolve, reject, next, throwFn, "throw", value);
+            }
+            next(undefined);
+        });
+    };
+}
+export default asyncToGenerator;
+"#,
+    );
+    assert_eq!(
+        facts.helper_exports,
+        vec![helper_export(
+            "default",
+            Some("asyncToGenerator"),
+            HelperKind::AsyncToGenerator
+        )]
+    );
+}
+
+#[test]
+fn regenerator_runtime_default_helper_export() {
+    let facts = collect_facts(
+        r#"
+const runtime = require("./runtime.js")();
+export default runtime;
+try {
+    regeneratorRuntime = runtime;
+} catch (err) {
+    globalThis.regeneratorRuntime = runtime;
+}
+"#,
+    );
+    assert_eq!(
+        facts.helper_exports,
+        vec![helper_export(
+            "default",
+            Some("runtime"),
+            HelperKind::RegeneratorRuntime
+        )]
     );
 }
 

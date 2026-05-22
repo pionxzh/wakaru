@@ -2,44 +2,69 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignOp, AssignTarget, AwaitExpr, BlockStmt, CatchClause, Decl, Expr, ExprStmt, FnDecl,
-    Function, Ident, Lit, MemberExpr, MemberProp, Module, ModuleItem, Param, Pat, ReturnStmt,
-    SimpleAssignTarget, Stmt, SwitchCase, WhileStmt, YieldExpr,
+    Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem,
+    Param, Pat, ReturnStmt, SimpleAssignTarget, Stmt, SwitchCase, WhileStmt, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+
+use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::babel_helper_utils::{
     collect_helpers, helpers_with_remaining_refs, BabelHelperKind, BindingKey,
 };
 
-pub struct UnRegenerator {
+pub struct UnRegenerator<'a> {
     unresolved_mark: Mark,
+    module_facts: Option<&'a ModuleFactsMap>,
 }
 
-impl UnRegenerator {
+impl UnRegenerator<'_> {
     pub fn new(unresolved_mark: Mark) -> Self {
-        Self { unresolved_mark }
+        Self {
+            unresolved_mark,
+            module_facts: None,
+        }
     }
 }
 
-impl VisitMut for UnRegenerator {
+impl<'a> UnRegenerator<'a> {
+    pub fn new_with_facts(unresolved_mark: Mark, module_facts: &'a ModuleFactsMap) -> Self {
+        Self {
+            unresolved_mark,
+            module_facts: Some(module_facts),
+        }
+    }
+}
+
+impl VisitMut for UnRegenerator<'_> {
     fn visit_mut_module(&mut self, module: &mut Module) {
         // Phase 1: Detect _asyncToGenerator helper bindings (scope-aware)
         let helpers = collect_helpers(module);
-        let async_to_gen_bindings: Vec<BindingKey> = helpers
+        let mut async_to_gen_bindings: Vec<BindingKey> = helpers
             .iter()
             .filter(|(_, kind)| **kind == BabelHelperKind::AsyncToGenerator)
             .map(|((sym, ctxt), _)| (sym.clone(), *ctxt))
             .collect();
+        let mut async_to_gen_default_members = Vec::new();
+        if let Some(module_facts) = self.module_facts {
+            let imported_helpers = collect_cross_module_async_helpers(module, module_facts);
+            async_to_gen_bindings.extend(imported_helpers.direct);
+            async_to_gen_default_members.extend(imported_helpers.default_members);
+        }
+        let async_to_gen_callees = AsyncToGenCallees {
+            direct: &async_to_gen_bindings,
+            default_members: &async_to_gen_default_members,
+        };
 
         // Phase 2: Transform functions containing regeneratorRuntime.wrap()
         // and _asyncToGenerator() calls. Track consumed mark bindings.
         let mut consumed_marks: Vec<BindingKey> = Vec::new();
 
-        transform_babel_async_trampolines(module, &async_to_gen_bindings, &mut consumed_marks);
+        transform_babel_async_trampolines(module, &async_to_gen_callees, &mut consumed_marks);
 
         let mut transformer = FunctionTransformer {
             unresolved_mark: self.unresolved_mark,
-            async_to_gen_bindings: &async_to_gen_bindings,
+            async_to_gen_callees: &async_to_gen_callees,
             consumed_marks: &mut consumed_marks,
         };
         module.visit_mut_with(&mut transformer);
@@ -62,9 +87,139 @@ impl VisitMut for UnRegenerator {
     }
 }
 
+struct AsyncToGenCallees<'a> {
+    direct: &'a [BindingKey],
+    default_members: &'a [BindingKey],
+}
+
+#[derive(Default)]
+struct CrossModuleAsyncHelpers {
+    direct: Vec<BindingKey>,
+    default_members: Vec<BindingKey>,
+}
+
+fn collect_cross_module_async_helpers(
+    module: &Module,
+    module_facts: &ModuleFactsMap,
+) -> CrossModuleAsyncHelpers {
+    let mut helpers = CrossModuleAsyncHelpers::default();
+
+    for item in &module.body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
+                if !module_exports_helper(
+                    module_facts,
+                    &str_to_atom(&import.src.value),
+                    "default",
+                    HelperKind::AsyncToGenerator,
+                ) {
+                    continue;
+                }
+
+                for specifier in &import.specifiers {
+                    match specifier {
+                        ImportSpecifier::Default(default) => {
+                            helpers
+                                .direct
+                                .push((default.local.sym.clone(), default.local.ctxt));
+                        }
+                        ImportSpecifier::Namespace(namespace) => {
+                            helpers
+                                .default_members
+                                .push((namespace.local.sym.clone(), namespace.local.ctxt));
+                        }
+                        ImportSpecifier::Named(named)
+                            if named
+                                .imported
+                                .as_ref()
+                                .is_some_and(|imported| export_name_is(imported, "default")) =>
+                        {
+                            helpers
+                                .direct
+                                .push((named.local.sym.clone(), named.local.ctxt));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    let Pat::Ident(binding) = &decl.name else {
+                        continue;
+                    };
+                    let Some(init) = &decl.init else {
+                        continue;
+                    };
+                    let Some(source) = require_source_from_interop_init(init) else {
+                        continue;
+                    };
+                    if module_exports_helper(
+                        module_facts,
+                        &source,
+                        "default",
+                        HelperKind::AsyncToGenerator,
+                    ) {
+                        helpers
+                            .default_members
+                            .push((binding.id.sym.clone(), binding.id.ctxt));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    helpers
+}
+
+fn module_exports_helper(
+    module_facts: &ModuleFactsMap,
+    source: &Atom,
+    exported: &str,
+    kind: HelperKind,
+) -> bool {
+    module_facts.get(source.as_ref()).is_some_and(|facts| {
+        facts
+            .helper_exports
+            .iter()
+            .any(|helper| helper.exported.as_ref() == exported && helper.kind == kind)
+    })
+}
+
+fn require_source_from_interop_init(expr: &Expr) -> Option<Atom> {
+    if let Some(source) = require_source(expr) {
+        return Some(source);
+    }
+
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return None;
+    }
+    require_source(&call.args[0].expr)
+}
+
+fn require_source(expr: &Expr) -> Option<Atom> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return None;
+    }
+    let callee = call.callee.as_expr()?;
+    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require") {
+        return None;
+    }
+    let Expr::Lit(Lit::Str(source)) = call.args[0].expr.as_ref() else {
+        return None;
+    };
+    Some(str_to_atom(&source.value))
+}
+
 fn transform_babel_async_trampolines(
     module: &mut Module,
-    async_to_gen_bindings: &[BindingKey],
+    async_to_gen_callees: &AsyncToGenCallees,
     consumed_marks: &mut Vec<BindingKey>,
 ) {
     let mut index = 0;
@@ -83,13 +238,13 @@ fn transform_babel_async_trampolines(
         let Some((params, mut stmts, mark_key)) = extract_private_trampoline_body(
             &module.body[index + 1],
             &private_key,
-            async_to_gen_bindings,
+            async_to_gen_callees,
         ) else {
             index += 1;
             continue;
         };
 
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(public_decl))) = &mut module.body[index] else {
+        let Some(public_decl) = public_fn_decl_from_module_item_mut(&mut module.body[index]) else {
             index += 1;
             continue;
         };
@@ -118,14 +273,34 @@ fn transform_babel_async_trampolines(
 }
 
 fn extract_public_trampoline_fn(item: &ModuleItem) -> Option<(BindingKey, BindingKey)> {
-    let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item else {
-        return None;
-    };
+    let fn_decl = public_fn_decl_from_module_item(item)?;
     let private_ident = private_apply_return_ident(fn_decl)?;
     Some((
         (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt),
         (private_ident.sym.clone(), private_ident.ctxt),
     ))
+}
+
+fn public_fn_decl_from_module_item(item: &ModuleItem) -> Option<&FnDecl> {
+    match item {
+        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => Some(fn_decl),
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => match &export.decl {
+            Decl::Fn(fn_decl) => Some(fn_decl),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn public_fn_decl_from_module_item_mut(item: &mut ModuleItem) -> Option<&mut FnDecl> {
+    match item {
+        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => Some(fn_decl),
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => match &mut export.decl {
+            Decl::Fn(fn_decl) => Some(fn_decl),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn private_apply_return_ident(fn_decl: &FnDecl) -> Option<Ident> {
@@ -170,7 +345,7 @@ fn extract_apply_this_arguments_callee(expr: &Expr) -> Option<Ident> {
 fn extract_private_trampoline_body(
     item: &ModuleItem,
     private_key: &BindingKey,
-    async_to_gen_bindings: &[BindingKey],
+    async_to_gen_callees: &AsyncToGenCallees,
 ) -> Option<(Vec<Param>, Vec<Stmt>, Option<BindingKey>)> {
     let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item else {
         return None;
@@ -179,16 +354,20 @@ fn extract_private_trampoline_body(
         return None;
     }
     let body = fn_decl.function.body.as_ref()?;
-    if body.stmts.len() != 2 {
-        return None;
-    }
-    if !apply_return_ident_from_stmt(&body.stmts[1])
-        .is_some_and(|id| id.sym == private_key.0 && id.ctxt == private_key.1)
-    {
-        return None;
-    }
-
-    let gen_arg = extract_async_assignment_arg(&body.stmts[0], private_key, async_to_gen_bindings)?;
+    let gen_arg = match body.stmts.as_slice() {
+        [assign_stmt, return_stmt]
+            if apply_return_ident_from_stmt(return_stmt)
+                .is_some_and(|id| id.sym == private_key.0 && id.ctxt == private_key.1) =>
+        {
+            extract_async_assignment_arg(assign_stmt, private_key, async_to_gen_callees)?
+        }
+        [return_stmt] => extract_async_assignment_arg_from_returned_apply(
+            return_stmt,
+            private_key,
+            async_to_gen_callees,
+        )?,
+        _ => return None,
+    };
     extract_async_to_gen_body_with_params(gen_arg)
 }
 
@@ -203,7 +382,7 @@ fn apply_return_ident_from_stmt(stmt: &Stmt) -> Option<Ident> {
 fn extract_async_assignment_arg(
     stmt: &Stmt,
     private_key: &BindingKey,
-    async_to_gen_bindings: &[BindingKey],
+    async_to_gen_callees: &AsyncToGenCallees,
 ) -> Option<Expr> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
@@ -228,17 +407,68 @@ fn extract_async_assignment_arg(
         return None;
     }
     let callee = call.callee.as_expr()?;
-    let Expr::Ident(helper) = callee.as_ref() else {
-        return None;
-    };
-    if !async_to_gen_bindings
-        .iter()
-        .any(|(sym, ctxt)| helper.sym == *sym && helper.ctxt == *ctxt)
-    {
+    if !is_async_to_gen_callee(callee, async_to_gen_callees) {
         return None;
     }
 
     Some(*call.args[0].expr.clone())
+}
+
+fn extract_async_assignment_arg_from_returned_apply(
+    stmt: &Stmt,
+    private_key: &BindingKey,
+    async_to_gen_callees: &AsyncToGenCallees,
+) -> Option<Expr> {
+    let Stmt::Return(ret) = stmt else {
+        return None;
+    };
+    let Expr::Call(apply_call) = ret.arg.as_deref()? else {
+        return None;
+    };
+    if apply_call.args.len() != 2 {
+        return None;
+    }
+    if !matches!(apply_call.args[0].expr.as_ref(), Expr::This(_)) {
+        return None;
+    }
+    if !matches!(apply_call.args[1].expr.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "arguments")
+    {
+        return None;
+    }
+
+    let apply_callee = apply_call.callee.as_expr()?;
+    let Expr::Member(apply_member) = apply_callee.as_ref() else {
+        return None;
+    };
+    if !is_member_prop(&apply_member.prop, "apply") {
+        return None;
+    }
+
+    let Expr::Assign(assign) = strip_parens(&apply_member.obj) else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(left)) = &assign.left else {
+        return None;
+    };
+    if left.id.sym != private_key.0 || left.id.ctxt != private_key.1 {
+        return None;
+    }
+
+    let Expr::Call(helper_call) = assign.right.as_ref() else {
+        return None;
+    };
+    if helper_call.args.len() != 1 {
+        return None;
+    }
+    let helper_callee = helper_call.callee.as_expr()?;
+    if !is_async_to_gen_callee(helper_callee, async_to_gen_callees) {
+        return None;
+    }
+
+    Some(*helper_call.args[0].expr.clone())
 }
 
 fn extract_async_to_gen_body_with_params(
@@ -308,7 +538,7 @@ impl Visit for BindingUseFinder {
 
 struct FunctionTransformer<'a> {
     unresolved_mark: Mark,
-    async_to_gen_bindings: &'a [BindingKey],
+    async_to_gen_callees: &'a AsyncToGenCallees<'a>,
     consumed_marks: &'a mut Vec<BindingKey>,
 }
 
@@ -319,7 +549,7 @@ impl VisitMut for FunctionTransformer<'_> {
         if let Some(body) = func.body.as_mut() {
             if try_transform_async_to_generator(
                 body,
-                self.async_to_gen_bindings,
+                self.async_to_gen_callees,
                 self.unresolved_mark,
             ) {
                 func.is_async = true;
@@ -1499,13 +1729,13 @@ fn reconstruct_with_regions(label_stmts: Vec<Vec<Stmt>>, trys: &[[Option<usize>;
 
 fn try_transform_async_to_generator(
     body: &mut BlockStmt,
-    async_to_gen_bindings: &[BindingKey],
+    async_to_gen_callees: &AsyncToGenCallees,
     _unresolved_mark: Mark,
 ) -> bool {
     let return_idx = body
         .stmts
         .iter()
-        .position(|s| is_async_to_gen_return(s, async_to_gen_bindings));
+        .position(|s| is_async_to_gen_return(s, async_to_gen_callees));
     let return_idx = match return_idx {
         Some(i) => i,
         None => return false,
@@ -1517,7 +1747,7 @@ fn try_transform_async_to_generator(
     }
 
     let ret_stmt = body.stmts.remove(return_idx);
-    let inner_stmts = match extract_async_to_gen_body(ret_stmt, async_to_gen_bindings) {
+    let inner_stmts = match extract_async_to_gen_body(ret_stmt, async_to_gen_callees) {
         Some(s) => s,
         None => unreachable!("can_extract_async_to_gen passed but extract failed"),
     };
@@ -1529,12 +1759,12 @@ fn try_transform_async_to_generator(
     true
 }
 
-fn is_async_to_gen_return(stmt: &Stmt, async_to_gen_bindings: &[BindingKey]) -> bool {
+fn is_async_to_gen_return(stmt: &Stmt, async_to_gen_callees: &AsyncToGenCallees) -> bool {
     let Stmt::Return(ret) = stmt else {
         return false;
     };
     let Some(arg) = &ret.arg else { return false };
-    is_async_to_gen_call(arg, async_to_gen_bindings)
+    is_async_to_gen_call(arg, async_to_gen_callees)
 }
 
 /// Non-destructive check: can we extract the async body from this statement?
@@ -1605,7 +1835,7 @@ fn can_extract_async_to_gen(stmt: &Stmt) -> bool {
 }
 
 /// Check for `_asyncToGenerator(fn)()` — IIFE pattern with scope-aware matching
-fn is_async_to_gen_call(expr: &Expr, async_to_gen_bindings: &[BindingKey]) -> bool {
+fn is_async_to_gen_call(expr: &Expr, async_to_gen_callees: &AsyncToGenCallees) -> bool {
     let Expr::Call(outer_call) = expr else {
         return false;
     };
@@ -1618,17 +1848,35 @@ fn is_async_to_gen_call(expr: &Expr, async_to_gen_bindings: &[BindingKey]) -> bo
     let Some(inner_callee) = inner_call.callee.as_expr() else {
         return false;
     };
-    let Expr::Ident(id) = inner_callee.as_ref() else {
+    is_async_to_gen_callee(inner_callee, async_to_gen_callees)
+}
+
+fn is_async_to_gen_callee(expr: &Expr, async_to_gen_callees: &AsyncToGenCallees) -> bool {
+    if let Expr::Ident(id) = expr {
+        return async_to_gen_callees
+            .direct
+            .iter()
+            .any(|(sym, ctxt)| id.sym == *sym && id.ctxt == *ctxt);
+    }
+
+    let Expr::Member(member) = expr else {
         return false;
     };
-    async_to_gen_bindings
+    if !is_member_prop(&member.prop, "default") {
+        return false;
+    }
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    async_to_gen_callees
+        .default_members
         .iter()
-        .any(|(sym, ctxt)| id.sym == *sym && id.ctxt == *ctxt)
+        .any(|(sym, ctxt)| obj.sym == *sym && obj.ctxt == *ctxt)
 }
 
 fn extract_async_to_gen_body(
     stmt: Stmt,
-    async_to_gen_bindings: &[BindingKey],
+    async_to_gen_callees: &AsyncToGenCallees,
 ) -> Option<Vec<Stmt>> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = *ret.arg?;
@@ -1644,14 +1892,7 @@ fn extract_async_to_gen_body(
         return None;
     };
     let inner_callee = inner_call.callee.as_expr()?;
-    let Expr::Ident(id) = inner_callee.as_ref() else {
-        return None;
-    };
-    // P1-3: Scope-aware matching — check both sym and SyntaxContext
-    if !async_to_gen_bindings
-        .iter()
-        .any(|(sym, ctxt)| id.sym == *sym && id.ctxt == *ctxt)
-    {
+    if !is_async_to_gen_callee(inner_callee, async_to_gen_callees) {
         return None;
     }
     if inner_call.args.len() != 1 {
@@ -1808,6 +2049,13 @@ fn is_ident_with_name(expr: &Expr, name: &Atom) -> bool {
     matches!(expr, Expr::Ident(id) if id.sym == *name)
 }
 
+fn strip_parens(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_parens(&paren.expr),
+        _ => expr,
+    }
+}
+
 fn is_member_prop(prop: &MemberProp, name: &str) -> bool {
     match prop {
         MemberProp::Ident(id) => id.sym.as_str() == name,
@@ -1820,4 +2068,15 @@ fn is_member_prop(prop: &MemberProp, name: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn export_name_is(name: &swc_core::ecma::ast::ModuleExportName, expected: &str) -> bool {
+    match name {
+        swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.as_ref() == expected,
+        swc_core::ecma::ast::ModuleExportName::Str(s) => s.value.as_str() == Some(expected),
+    }
+}
+
+fn str_to_atom(value: &swc_core::atoms::Wtf8Atom) -> Atom {
+    Atom::from(value.as_str().unwrap_or(""))
 }

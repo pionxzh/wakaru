@@ -11,9 +11,12 @@ use std::fmt;
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    Callee, Decl, DefaultDecl, ExportSpecifier, Expr, ImportSpecifier, Lit, Module, ModuleDecl,
-    ModuleItem,
+    AssignExpr, Callee, Decl, DefaultDecl, ExportSpecifier, Expr, ImportSpecifier, Lit, Module,
+    ModuleDecl, ModuleItem,
 };
+use swc_core::ecma::visit::{Visit, VisitWith};
+
+use crate::rules::babel_helper_utils::{collect_helpers, BabelHelperKind};
 
 /// How a binding was imported.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,11 +63,31 @@ pub struct ExportFact {
     pub kind: ExportKind,
 }
 
+/// Transpiler/runtime helper identity proven from a module's exported AST shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HelperKind {
+    AsyncToGenerator,
+    RegeneratorRuntime,
+}
+
+/// One helper export extracted from the post-Stage-2 AST.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HelperExportFact {
+    /// The exported name that consumers import/access.
+    /// `"default"` for default exports.
+    pub exported: Atom,
+    /// The local binding name, if any.
+    pub local: Option<Atom>,
+    /// The proven helper/runtime identity.
+    pub kind: HelperKind,
+}
+
 /// Facts extracted from one module after Stage 2.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModuleFacts {
     pub imports: Vec<ImportFact>,
     pub exports: Vec<ExportFact>,
+    pub helper_exports: Vec<HelperExportFact>,
     /// If this module is a passthrough re-export (`export default require("./X.js")`),
     /// this is the target module specifier. Importers can be redirected to the target.
     pub passthrough_target: Option<Atom>,
@@ -184,6 +207,15 @@ impl fmt::Display for ExportKind {
     }
 }
 
+impl fmt::Display for HelperKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HelperKind::AsyncToGenerator => write!(f, "asyncToGenerator"),
+            HelperKind::RegeneratorRuntime => write!(f, "regeneratorRuntime"),
+        }
+    }
+}
+
 impl fmt::Display for ImportFact {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -205,9 +237,24 @@ impl fmt::Display for ExportFact {
     }
 }
 
+impl fmt::Display for HelperExportFact {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.local {
+            Some(local) if local.as_ref() != self.exported.as_ref() => {
+                write!(
+                    f,
+                    "helper export {} as {} [{}]",
+                    local, self.exported, self.kind
+                )
+            }
+            _ => write!(f, "helper export {} [{}]", self.exported, self.kind),
+        }
+    }
+}
+
 impl fmt::Display for ModuleFacts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.imports.is_empty() && self.exports.is_empty() {
+        if self.imports.is_empty() && self.exports.is_empty() && self.helper_exports.is_empty() {
             return write!(f, "(no imports or exports)");
         }
         for (i, import) in self.imports.iter().enumerate() {
@@ -224,6 +271,16 @@ impl fmt::Display for ModuleFacts {
                 writeln!(f)?;
             }
             write!(f, "{export}")?;
+        }
+        if (!self.imports.is_empty() || !self.exports.is_empty()) && !self.helper_exports.is_empty()
+        {
+            writeln!(f)?;
+        }
+        for (i, helper) in self.helper_exports.iter().enumerate() {
+            if i > 0 {
+                writeln!(f)?;
+            }
+            write!(f, "{helper}")?;
         }
         Ok(())
     }
@@ -281,10 +338,14 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
                     kind: ExportKind::Default,
                 });
             }
-            ModuleDecl::ExportDefaultExpr(_) => {
+            ModuleDecl::ExportDefaultExpr(export) => {
+                let local = match export.expr.as_ref() {
+                    Expr::Ident(ident) => Some(ident.sym.clone()),
+                    _ => None,
+                };
                 facts.exports.push(ExportFact {
                     exported: "default".into(),
-                    local: None,
+                    local,
                     kind: ExportKind::Default,
                 });
             }
@@ -362,7 +423,101 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
     }
 
     facts.passthrough_target = detect_passthrough(module);
+    facts.helper_exports = collect_helper_exports(module, &facts.exports);
     facts
+}
+
+fn collect_helper_exports(module: &Module, exports: &[ExportFact]) -> Vec<HelperExportFact> {
+    let local_helpers = collect_helpers(module);
+    let mut helper_exports = Vec::new();
+
+    for export in exports {
+        let Some(local) = &export.local else {
+            continue;
+        };
+
+        let kind = local_helpers
+            .iter()
+            .find_map(|((sym, _), kind)| {
+                (sym == local)
+                    .then(|| helper_kind_from_babel(*kind))
+                    .flatten()
+            })
+            .or_else(|| {
+                is_regenerator_runtime_binding(module, local)
+                    .then_some(HelperKind::RegeneratorRuntime)
+            });
+
+        if let Some(kind) = kind {
+            helper_exports.push(HelperExportFact {
+                exported: export.exported.clone(),
+                local: Some(local.clone()),
+                kind,
+            });
+        }
+    }
+
+    helper_exports
+}
+
+fn helper_kind_from_babel(kind: BabelHelperKind) -> Option<HelperKind> {
+    match kind {
+        BabelHelperKind::AsyncToGenerator => Some(HelperKind::AsyncToGenerator),
+        _ => None,
+    }
+}
+
+fn is_regenerator_runtime_binding(module: &Module, local: &Atom) -> bool {
+    struct Finder<'a> {
+        local: &'a Atom,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            let Some(right) = assign.right.as_ident() else {
+                assign.visit_children_with(self);
+                return;
+            };
+            if right.sym != *self.local {
+                assign.visit_children_with(self);
+                return;
+            }
+
+            let Some(left) = assign.left.as_simple() else {
+                assign.visit_children_with(self);
+                return;
+            };
+
+            if matches!(
+                left.as_ident(),
+                Some(ident) if ident.sym.as_ref() == "regeneratorRuntime"
+            ) {
+                self.found = true;
+                return;
+            }
+
+            if let Some(member) = left.as_member() {
+                if is_member_prop_name(&member.prop, "regeneratorRuntime") {
+                    self.found = true;
+                    return;
+                }
+            }
+
+            assign.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder {
+        local,
+        found: false,
+    };
+    module.visit_with(&mut finder);
+    finder.found
 }
 
 /// Detect `export default require("./X.js")` — a pure passthrough module that
@@ -407,4 +562,17 @@ fn export_name_to_atom(name: &swc_core::ecma::ast::ModuleExportName) -> Atom {
 
 fn str_to_atom(value: &swc_core::atoms::Wtf8Atom) -> Atom {
     Atom::from(value.as_str().unwrap_or(""))
+}
+
+fn is_member_prop_name(prop: &swc_core::ecma::ast::MemberProp, name: &str) -> bool {
+    match prop {
+        swc_core::ecma::ast::MemberProp::Ident(id) => id.sym.as_ref() == name,
+        swc_core::ecma::ast::MemberProp::Computed(computed) => {
+            matches!(
+                computed.expr.as_ref(),
+                Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some(name)
+            )
+        }
+        swc_core::ecma::ast::MemberProp::PrivateName(_) => false,
+    }
 }

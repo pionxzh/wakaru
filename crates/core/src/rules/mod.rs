@@ -1,7 +1,7 @@
 mod arg_rest;
 mod arrow_function;
 mod arrow_return;
-mod babel_helper_utils;
+pub(crate) mod babel_helper_utils;
 mod dead_decls;
 mod dead_imports;
 pub(crate) mod decl_utils;
@@ -79,6 +79,8 @@ mod var_decl_to_let_const;
 use swc_core::common::Mark;
 use swc_core::ecma::ast::Module;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+
+use crate::facts::ModuleFactsMap;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RewriteLevel {
@@ -418,7 +420,30 @@ pub fn apply_rules_between_with_level(
         unresolved_mark,
         Some(start_from),
         Some(stop_after),
-        None,
+        RuleRunExtras::default(),
+        dead_code_elimination,
+        rewrite_level,
+    );
+}
+
+pub(crate) fn apply_rules_between_with_level_and_facts(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    start_from: &str,
+    stop_after: &str,
+    dead_code_elimination: bool,
+    rewrite_level: RewriteLevel,
+    module_facts: &ModuleFactsMap,
+) {
+    apply_rules_range_impl(
+        module,
+        unresolved_mark,
+        Some(start_from),
+        Some(stop_after),
+        RuleRunExtras {
+            observer: None,
+            module_facts: Some(module_facts),
+        },
         dead_code_elimination,
         rewrite_level,
     );
@@ -438,7 +463,10 @@ pub(crate) fn apply_rules_range_with_observer_with_level(
         unresolved_mark,
         start_from,
         stop_after,
-        Some(observer),
+        RuleRunExtras {
+            observer: Some(observer),
+            module_facts: None,
+        },
         dead_code_elimination,
         rewrite_level,
     );
@@ -457,10 +485,19 @@ fn apply_rules_impl(
         unresolved_mark,
         None,
         stop_after,
-        observer,
+        RuleRunExtras {
+            observer,
+            module_facts: None,
+        },
         dead_code_elimination,
         rewrite_level,
     );
+}
+
+#[derive(Default)]
+struct RuleRunExtras<'a> {
+    observer: Option<&'a mut dyn FnMut(&'static str, &Module)>,
+    module_facts: Option<&'a ModuleFactsMap>,
 }
 
 fn apply_rules_range_impl(
@@ -468,7 +505,7 @@ fn apply_rules_range_impl(
     unresolved_mark: Mark,
     start_from: Option<&str>,
     stop_after: Option<&str>,
-    mut observer: Option<&mut dyn FnMut(&'static str, &Module)>,
+    mut extras: RuleRunExtras,
     dead_code_elimination: bool,
     rewrite_level: RewriteLevel,
 ) {
@@ -486,7 +523,7 @@ fn apply_rules_range_impl(
                     let _enter = span.enter();
                     module.visit_mut_with(&mut $rule);
                 }
-                if let Some(observer) = observer.as_deref_mut() {
+                if let Some(observer) = extras.observer.as_deref_mut() {
                     observer($name, module);
                 }
                 if stop_after == Some($name) {
@@ -511,7 +548,7 @@ fn apply_rules_range_impl(
                 module.visit_mut_with(&mut RemoveVoid::new(unresolved_mark));
             }
         }
-        if let Some(observer) = observer.as_deref_mut() {
+        if let Some(observer) = extras.observer.as_deref_mut() {
             observer("RemoveVoid", module);
         }
     }
@@ -589,7 +626,14 @@ fn apply_rules_range_impl(
     run!(UnEs6Class::new(unresolved_mark), "UnEs6Class");
     run!(UnClassFields, "UnClassFields");
     run!(UnTsHelpers, "UnTsHelpers");
-    run!(UnRegenerator::new(unresolved_mark), "UnRegenerator");
+    if let Some(facts) = extras.module_facts {
+        run!(
+            UnRegenerator::new_with_facts(unresolved_mark, facts),
+            "UnRegenerator"
+        );
+    } else {
+        run!(UnRegenerator::new(unresolved_mark), "UnRegenerator");
+    }
     run!(UnAsyncAwait, "UnAsyncAwait");
     // Second pass: catches interop getters exposed by UnAsyncAwait.
     run!(UnWebpackInterop::new(unresolved_mark), "UnWebpackInterop2");

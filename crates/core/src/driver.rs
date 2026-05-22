@@ -19,7 +19,7 @@ use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
-    apply_default_rules_with_level, apply_rules_between_with_level,
+    apply_default_rules_with_level, apply_rules_between_with_level_and_facts,
     apply_rules_range_with_observer_with_level, apply_rules_until, rule_names, ImportDedup,
     RewriteLevel, UnEsm, UnImportRename,
 };
@@ -615,13 +615,14 @@ fn unpack_multi_module(
                 run_namespace_decomposition(&mut module, facts_ref);
 
                 // Stage 3+
-                apply_rules_between_with_level(
+                apply_rules_between_with_level_and_facts(
                     &mut module,
                     unresolved_mark,
                     "UnTemplateLiteral",
                     "UnReturn",
                     options.dead_code_elimination,
                     options.level,
+                    facts_ref,
                 );
 
                 // Source-map-enhanced passes

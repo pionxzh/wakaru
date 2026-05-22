@@ -22,8 +22,8 @@ pub use driver::{
     UnpackWarningKind,
 };
 pub use facts::{
-    collect_module_facts, ExportFact, ExportKind, ImportFact, ImportKind, ModuleFacts,
-    ModuleFactsMap,
+    collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
+    ImportKind, ModuleFacts, ModuleFactsMap,
 };
 pub use rules::{
     apply_default_rules_with_options, apply_rules_between, apply_rules_between_with_options,
