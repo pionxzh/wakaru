@@ -73,7 +73,7 @@ For example, `UnInteropRequireDefault`:
 
 ### Where it runs in the pipeline
 
-Helper detection and restoration runs within **Stage 2** of the pipeline in `apply_default_rules()`, after Stage 1 syntax normalization. Stage 1 rules like `UnIndirectCall` and `UnBracketNotation` must run first to normalize patterns like `(0, x.default)()` and `["default"]` before helper detection can match reliably.
+Helper detection and restoration runs within **Stage 2** of the `apply_rules()` pipeline, after Stage 1 syntax normalization. Stage 1 rules like `UnIndirectCall` and `UnBracketNotation` must run first to normalize patterns like `(0, x.default)()` and `["default"]` before helper detection can match reliably.
 
 ## Transpiler helper coverage
 

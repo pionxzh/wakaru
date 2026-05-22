@@ -26,10 +26,8 @@ pub use facts::{
     ImportKind, ModuleFacts, ModuleFactsMap,
 };
 pub use rules::{
-    apply_default_rules_with_options, apply_rules_between, apply_rules_between_with_options,
-    apply_rules_until, apply_rules_until_with_level, apply_rules_until_with_options,
-    rule_descriptors, rule_names, RewriteAssumptions, RewriteLevel, RewritePolicy, RuleDescriptor,
-    RuleStage,
+    apply_rules, rule_descriptors, rule_names, RewriteAssumptions, RewriteLevel, RewritePolicy,
+    RuleDescriptor, RulePipelineOptions, RuleStage,
 };
 pub use sourcemap_rename::{extract_source_entries, parse_sourcemap, resolve_source_path};
 pub use tdz_check::{check_tdz, TdzViolation};

@@ -27,7 +27,8 @@ RUST_BACKTRACE=1 cargo test -- --nocapture
 
 ## Rule Trace
 
-Use the rule trace CLI before manually bisecting with `apply_rules_between`.
+Use the rule trace CLI before manually bisecting with `apply_rules()` and
+`RulePipelineOptions::between(...)`.
 It runs the normal single-file rule pipeline and prints the initial source
 once, followed by a git-style unified diff for each rule that changes the
 rendered code. Rules that ran but left the output unchanged (with `--all`)

@@ -4,11 +4,11 @@ use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, GLOBALS};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
-use wakaru_core::apply_rules_until;
 use wakaru_core::facts::{
     collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
     ImportKind, ModuleFacts,
 };
+use wakaru_core::{apply_rules, RulePipelineOptions};
 
 /// Parse source, run Stage 1+2 (up through UnEsm), then collect facts.
 fn collect_facts(source: &str) -> ModuleFacts {
@@ -35,7 +35,11 @@ fn collect_facts(source: &str) -> ModuleFacts {
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
         // Run pipeline through end of Stage 2
-        apply_rules_until(&mut module, unresolved_mark, "UnEsm");
+        apply_rules(
+            &mut module,
+            unresolved_mark,
+            RulePipelineOptions::until("UnEsm"),
+        );
 
         collect_module_facts(&module)
     })

@@ -138,14 +138,9 @@ pub use import_dedup::ImportDedup;
 pub use obj_method_shorthand::ObjMethodShorthand;
 pub use obj_shorthand::ObjShorthand;
 pub use object_assign_spread::ObjectAssignSpread;
+pub(crate) use pipeline::{apply_default_rules, apply_rules_with_observer};
 pub use pipeline::{
-    apply_default_rules, apply_default_rules_with_level, apply_default_rules_with_options,
-    apply_rules_between, apply_rules_between_with_level, apply_rules_between_with_options,
-    apply_rules_until, apply_rules_until_with_level, apply_rules_until_with_options,
-    rule_descriptors, rule_names, RuleDescriptor, RuleStage,
-};
-pub(crate) use pipeline::{
-    apply_rules_between_with_level_and_facts, apply_rules_range_with_observer_with_level,
+    apply_rules, rule_descriptors, rule_names, RuleDescriptor, RulePipelineOptions, RuleStage,
 };
 pub use remove_void::RemoveVoid;
 pub use simplify_sequence::SimplifySequence;

@@ -6,9 +6,9 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
-use wakaru_core::apply_rules_between;
 use wakaru_core::facts::{collect_module_facts, ModuleFacts, ModuleFactsMap};
 use wakaru_core::namespace_decomposition::run_namespace_decomposition;
+use wakaru_core::{apply_rules, RulePipelineOptions};
 
 /// Parse ESM source, collect facts, run namespace decomposition with given
 /// cross-module facts, and return the emitted code.
@@ -78,11 +78,10 @@ fn run_decomp_then_rename(source: &str, facts: &ModuleFactsMap) -> String {
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
         run_namespace_decomposition(&mut module, facts);
-        apply_rules_between(
+        apply_rules(
             &mut module,
             unresolved_mark,
-            "UnImportRename",
-            "UnImportRename",
+            RulePipelineOptions::between("UnImportRename", "UnImportRename"),
         );
 
         let mut output = Vec::new();
@@ -123,11 +122,10 @@ fn run_decomp_then_late_pipeline(source: &str, facts: &ModuleFactsMap) -> String
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
         run_namespace_decomposition(&mut module, facts);
-        apply_rules_between(
+        apply_rules(
             &mut module,
             unresolved_mark,
-            "UnTemplateLiteral",
-            "DeadImports",
+            RulePipelineOptions::between("UnTemplateLiteral", "DeadImports"),
         );
 
         let mut output = Vec::new();

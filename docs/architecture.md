@@ -60,7 +60,7 @@ Orchestrates the full pipeline.
 ```
 parse_js(source)
   → resolver(unresolved_mark, top_level_mark)
-  → apply_default_rules(module, unresolved_mark)
+  → apply_rules(module, unresolved_mark, RulePipelineOptions)
   → [optional: source map rename pipeline]
   → fixer()
   → print_js(module)
@@ -84,7 +84,7 @@ Runs the pipeline with an observer that captures per-rule before/after snapshots
 
 ### Rules pipeline (`crates/core/src/rules/`)
 
-~60 transformation rules, each implementing SWC's `VisitMut` trait. Applied in a fixed order by `apply_default_rules()`. Order matters — some rules depend on earlier ones having run. The ordered registry lives in `crates/core/src/rules/pipeline.rs` as `RuleDescriptor` entries with `RuleStage` metadata.
+~60 transformation rules, each implementing SWC's `VisitMut` trait. Applied in a fixed order by `apply_rules()`. Order matters — some rules depend on earlier ones having run. The ordered registry lives in `crates/core/src/rules/pipeline.rs` as `RuleDescriptor` entries with `RuleStage` metadata, while `RulePipelineOptions` controls ranges, rewrite level, dead-code cleanup, and optional module facts.
 
 #### Pipeline stages
 

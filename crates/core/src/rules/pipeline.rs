@@ -338,82 +338,74 @@ define_rule_registry! {
     ("UnReturn", Cleanup, run_un_return, always_enabled),
 }
 
-pub fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
-    apply_default_rules_with_level(module, unresolved_mark, true, RewriteLevel::Standard);
+#[derive(Debug, Clone, Copy)]
+pub struct RulePipelineOptions<'a> {
+    pub start_from: Option<&'a str>,
+    pub stop_after: Option<&'a str>,
+    pub dead_code_elimination: bool,
+    pub rewrite_level: RewriteLevel,
+    pub module_facts: Option<&'a ModuleFactsMap>,
 }
 
-pub fn apply_default_rules_with_options(
+impl Default for RulePipelineOptions<'_> {
+    fn default() -> Self {
+        Self {
+            start_from: None,
+            stop_after: None,
+            dead_code_elimination: true,
+            rewrite_level: RewriteLevel::Standard,
+            module_facts: None,
+        }
+    }
+}
+
+impl<'a> RulePipelineOptions<'a> {
+    pub fn until(stop_after: &'a str) -> Self {
+        Self {
+            stop_after: Some(stop_after),
+            ..Default::default()
+        }
+    }
+
+    pub fn between(start_from: &'a str, stop_after: &'a str) -> Self {
+        Self {
+            start_from: Some(start_from),
+            stop_after: Some(stop_after),
+            ..Default::default()
+        }
+    }
+
+    pub fn with_dead_code_elimination(mut self, dead_code_elimination: bool) -> Self {
+        self.dead_code_elimination = dead_code_elimination;
+        self
+    }
+
+    pub fn with_rewrite_level(mut self, rewrite_level: RewriteLevel) -> Self {
+        self.rewrite_level = rewrite_level;
+        self
+    }
+
+    pub fn with_module_facts(mut self, module_facts: &'a ModuleFactsMap) -> Self {
+        self.module_facts = Some(module_facts);
+        self
+    }
+}
+
+pub(crate) fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
+    apply_rules(module, unresolved_mark, RulePipelineOptions::default());
+}
+
+pub fn apply_rules(module: &mut Module, unresolved_mark: Mark, options: RulePipelineOptions<'_>) {
+    apply_rules_impl(module, unresolved_mark, options, None);
+}
+
+pub(crate) fn apply_rules_with_observer(
     module: &mut Module,
     unresolved_mark: Mark,
-    dead_code_elimination: bool,
+    options: RulePipelineOptions<'_>,
+    observer: &mut dyn FnMut(&'static str, &Module),
 ) {
-    apply_default_rules_with_level(
-        module,
-        unresolved_mark,
-        dead_code_elimination,
-        RewriteLevel::Standard,
-    );
-}
-
-pub fn apply_default_rules_with_level(
-    module: &mut Module,
-    unresolved_mark: Mark,
-    dead_code_elimination: bool,
-    rewrite_level: RewriteLevel,
-) {
-    apply_rules_impl(
-        module,
-        unresolved_mark,
-        None,
-        None,
-        dead_code_elimination,
-        rewrite_level,
-    );
-}
-
-/// Run the decompile pipeline, stopping immediately after `stop_after` completes.
-/// Rule names match their struct names (e.g. "SmartInline", "UnEsm").
-/// Repeated passes are suffixed: "UnWebpackInterop2", "UnWebpackInterop3", "UnIife2".
-pub fn apply_rules_until(module: &mut Module, unresolved_mark: Mark, stop_after: &str) {
-    apply_rules_until_with_level(
-        module,
-        unresolved_mark,
-        stop_after,
-        true,
-        RewriteLevel::Standard,
-    );
-}
-
-pub fn apply_rules_until_with_options(
-    module: &mut Module,
-    unresolved_mark: Mark,
-    stop_after: &str,
-    dead_code_elimination: bool,
-) {
-    apply_rules_until_with_level(
-        module,
-        unresolved_mark,
-        stop_after,
-        dead_code_elimination,
-        RewriteLevel::Standard,
-    );
-}
-
-pub fn apply_rules_until_with_level(
-    module: &mut Module,
-    unresolved_mark: Mark,
-    stop_after: &str,
-    dead_code_elimination: bool,
-    rewrite_level: RewriteLevel,
-) {
-    apply_rules_impl(
-        module,
-        unresolved_mark,
-        Some(stop_after),
-        None,
-        dead_code_elimination,
-        rewrite_level,
-    );
+    apply_rules_impl(module, unresolved_mark, options, Some(observer));
 }
 
 /// Returns the ordered list of rule names in the pipeline.
@@ -426,149 +418,25 @@ pub fn rule_descriptors() -> &'static [RuleDescriptor] {
     RULE_DESCRIPTORS
 }
 
-/// Run only the rules from `start_from` through `stop_after` (inclusive on both ends).
-/// Useful for testing a rule's behavior given realistic intermediate pipeline state.
-pub fn apply_rules_between(
-    module: &mut Module,
-    unresolved_mark: Mark,
-    start_from: &str,
-    stop_after: &str,
-) {
-    apply_rules_between_with_options(module, unresolved_mark, start_from, stop_after, true);
-}
-
-pub fn apply_rules_between_with_options(
-    module: &mut Module,
-    unresolved_mark: Mark,
-    start_from: &str,
-    stop_after: &str,
-    dead_code_elimination: bool,
-) {
-    apply_rules_between_with_level(
-        module,
-        unresolved_mark,
-        start_from,
-        stop_after,
-        dead_code_elimination,
-        RewriteLevel::Standard,
-    );
-}
-
-pub fn apply_rules_between_with_level(
-    module: &mut Module,
-    unresolved_mark: Mark,
-    start_from: &str,
-    stop_after: &str,
-    dead_code_elimination: bool,
-    rewrite_level: RewriteLevel,
-) {
-    apply_rules_range_impl(
-        module,
-        unresolved_mark,
-        Some(start_from),
-        Some(stop_after),
-        RuleRunExtras::default(),
-        dead_code_elimination,
-        rewrite_level,
-    );
-}
-
-pub(crate) fn apply_rules_between_with_level_and_facts(
-    module: &mut Module,
-    unresolved_mark: Mark,
-    start_from: &str,
-    stop_after: &str,
-    dead_code_elimination: bool,
-    rewrite_level: RewriteLevel,
-    module_facts: &ModuleFactsMap,
-) {
-    apply_rules_range_impl(
-        module,
-        unresolved_mark,
-        Some(start_from),
-        Some(stop_after),
-        RuleRunExtras {
-            observer: None,
-            module_facts: Some(module_facts),
-        },
-        dead_code_elimination,
-        rewrite_level,
-    );
-}
-
-pub(crate) fn apply_rules_range_with_observer_with_level(
-    module: &mut Module,
-    unresolved_mark: Mark,
-    start_from: Option<&str>,
-    stop_after: Option<&str>,
-    observer: &mut dyn FnMut(&'static str, &Module),
-    dead_code_elimination: bool,
-    rewrite_level: RewriteLevel,
-) {
-    apply_rules_range_impl(
-        module,
-        unresolved_mark,
-        start_from,
-        stop_after,
-        RuleRunExtras {
-            observer: Some(observer),
-            module_facts: None,
-        },
-        dead_code_elimination,
-        rewrite_level,
-    );
-}
-
 fn apply_rules_impl(
     module: &mut Module,
     unresolved_mark: Mark,
-    stop_after: Option<&str>,
-    observer: Option<&mut dyn FnMut(&'static str, &Module)>,
-    dead_code_elimination: bool,
-    rewrite_level: RewriteLevel,
-) {
-    apply_rules_range_impl(
-        module,
-        unresolved_mark,
-        None,
-        stop_after,
-        RuleRunExtras {
-            observer,
-            module_facts: None,
-        },
-        dead_code_elimination,
-        rewrite_level,
-    );
-}
-
-#[derive(Default)]
-struct RuleRunExtras<'a> {
-    observer: Option<&'a mut dyn FnMut(&'static str, &Module)>,
-    module_facts: Option<&'a ModuleFactsMap>,
-}
-
-fn apply_rules_range_impl(
-    module: &mut Module,
-    unresolved_mark: Mark,
-    start_from: Option<&str>,
-    stop_after: Option<&str>,
-    mut extras: RuleRunExtras,
-    dead_code_elimination: bool,
-    rewrite_level: RewriteLevel,
+    options: RulePipelineOptions<'_>,
+    mut observer: Option<&mut dyn FnMut(&'static str, &Module)>,
 ) {
     let ctx = RuleRunContext {
         unresolved_mark,
-        rewrite_level,
-        dead_code_elimination,
-        module_facts: extras.module_facts,
+        rewrite_level: options.rewrite_level,
+        dead_code_elimination: options.dead_code_elimination,
+        module_facts: options.module_facts,
     };
-    let mut started = start_from.is_none();
+    let mut started = options.start_from.is_none();
 
     for descriptor in RULE_DESCRIPTORS {
         if !descriptor.is_enabled(ctx) {
             continue;
         }
-        if !started && start_from == Some(descriptor.id) {
+        if !started && options.start_from == Some(descriptor.id) {
             started = true;
         }
         if !started {
@@ -580,10 +448,10 @@ fn apply_rules_range_impl(
             let _enter = span.enter();
             descriptor.run(module, ctx);
         }
-        if let Some(observer) = extras.observer.as_deref_mut() {
+        if let Some(observer) = observer.as_deref_mut() {
             observer(descriptor.id, module);
         }
-        if stop_after == Some(descriptor.id) {
+        if options.stop_after == Some(descriptor.id) {
             return;
         }
     }

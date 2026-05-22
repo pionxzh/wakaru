@@ -5,8 +5,8 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 use wakaru_core::{
-    apply_rules_between, apply_rules_until_with_level, decompile, trace_rules, DecompileOptions,
-    RewriteLevel, RuleTraceEvent, RuleTraceOptions,
+    apply_rules, decompile, trace_rules, DecompileOptions, RewriteLevel, RulePipelineOptions,
+    RuleTraceEvent, RuleTraceOptions,
 };
 
 #[allow(dead_code)]
@@ -80,7 +80,11 @@ pub fn render_pipeline_until_with_level(
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-        apply_rules_until_with_level(&mut module, unresolved_mark, stop_after_rule, true, level);
+        apply_rules(
+            &mut module,
+            unresolved_mark,
+            RulePipelineOptions::until(stop_after_rule).with_rewrite_level(level),
+        );
         module.visit_mut_with(&mut fixer(None));
 
         emit_module(&module, cm)
@@ -100,7 +104,11 @@ pub fn render_pipeline_between(source: &str, start_from: &str, stop_after: &str)
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-        apply_rules_between(&mut module, unresolved_mark, start_from, stop_after);
+        apply_rules(
+            &mut module,
+            unresolved_mark,
+            RulePipelineOptions::between(start_from, stop_after),
+        );
         module.visit_mut_with(&mut fixer(None));
 
         emit_module(&module, cm)

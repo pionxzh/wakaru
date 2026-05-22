@@ -86,8 +86,9 @@ For a cross-module late pass that naturally runs at the Stage 2 barrier:
 
 1. Put the pass in `crates/core/src/` as a free function taking
    `(&mut Module, &ModuleFactsMap)`.
-2. Call it from `unpack_multi_module` between `apply_rules_until("UnEsm")` and
-   the Stage 3+ rule range.
+2. Call it from `unpack_multi_module` between
+   `apply_rules(..., RulePipelineOptions::until("UnEsm"))` and the Stage 3+
+   rule range.
 3. Do all AST mutation locally to the module — never write back to
    `ModuleFactsMap`.
 4. Add unit tests following `crates/core/tests/namespace_decomposition_rule.rs` (use

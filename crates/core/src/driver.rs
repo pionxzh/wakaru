@@ -19,9 +19,8 @@ use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
-    apply_default_rules_with_level, apply_rules_between_with_level_and_facts,
-    apply_rules_range_with_observer_with_level, apply_rules_until, rule_names, ImportDedup,
-    RewriteLevel, UnEsm, UnImportRename, UnObjectSpread,
+    apply_rules, apply_rules_with_observer, rule_names, ImportDedup, RewriteLevel,
+    RulePipelineOptions, UnEsm, UnImportRename, UnObjectSpread,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::{scope_hoist, try_unpack_bundle, UnpackResult};
@@ -208,11 +207,12 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOut
         {
             let span = tracing::info_span!("rules");
             let _enter = span.enter();
-            apply_default_rules_with_level(
+            apply_rules(
                 &mut module,
                 unresolved_mark,
-                options.dead_code_elimination,
-                options.level,
+                RulePipelineOptions::default()
+                    .with_dead_code_elimination(options.dead_code_elimination)
+                    .with_rewrite_level(options.level),
             );
         }
 
@@ -308,14 +308,17 @@ pub fn trace_rules(
                 }
             };
 
-            apply_rules_range_with_observer_with_level(
+            apply_rules_with_observer(
                 &mut module,
                 unresolved_mark,
-                trace_options.start_from.as_deref(),
-                trace_options.stop_after.as_deref(),
+                RulePipelineOptions {
+                    start_from: trace_options.start_from.as_deref(),
+                    stop_after: trace_options.stop_after.as_deref(),
+                    dead_code_elimination: options.dead_code_elimination,
+                    rewrite_level: options.level,
+                    module_facts: None,
+                },
                 &mut observer,
-                options.dead_code_elimination,
-                options.level,
             );
         }
 
@@ -569,7 +572,11 @@ fn unpack_multi_module(
                 let unresolved_mark = Mark::new();
                 let top_level_mark = Mark::new();
                 module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-                apply_rules_until(&mut module, unresolved_mark, "UnEsm");
+                apply_rules(
+                    &mut module,
+                    unresolved_mark,
+                    RulePipelineOptions::until("UnEsm"),
+                );
                 (collect_module_facts(&module), None)
             });
             (unpacked.filename.clone(), facts, warning)
@@ -608,7 +615,11 @@ fn unpack_multi_module(
                 module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
                 // Stage 1+2
-                apply_rules_until(&mut module, unresolved_mark, "UnEsm");
+                apply_rules(
+                    &mut module,
+                    unresolved_mark,
+                    RulePipelineOptions::until("UnEsm"),
+                );
 
                 // Late pass at the barrier
                 run_reexport_consolidation(&mut module, facts_ref);
@@ -616,14 +627,13 @@ fn unpack_multi_module(
                 module.visit_mut_with(&mut UnObjectSpread::new_with_facts(facts_ref));
 
                 // Stage 3+
-                apply_rules_between_with_level_and_facts(
+                apply_rules(
                     &mut module,
                     unresolved_mark,
-                    "UnTemplateLiteral",
-                    "UnReturn",
-                    options.dead_code_elimination,
-                    options.level,
-                    facts_ref,
+                    RulePipelineOptions::between("UnTemplateLiteral", "UnReturn")
+                        .with_dead_code_elimination(options.dead_code_elimination)
+                        .with_rewrite_level(options.level)
+                        .with_module_facts(facts_ref),
                 );
 
                 // Source-map-enhanced passes
