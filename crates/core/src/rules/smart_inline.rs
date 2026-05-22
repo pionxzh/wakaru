@@ -433,16 +433,18 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
     // Collect candidates: `const t = e` where e is a simple expr (Ident or Lit)
     // Only inline if t is used exactly once in the rest of the block (not in nested functions)
     let mut candidates: HashMap<BindingKey, Box<Expr>> = HashMap::new();
+    let mut def_indices: HashMap<BindingKey, usize> = HashMap::new();
 
-    // First pass: find all `const t = e` with simple inits and count usages
-    for stmt in &stmts {
+    for (idx, stmt) in stmts.iter().enumerate() {
         if let Stmt::Decl(Decl::Var(var)) = stmt {
             if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
                 let decl = &var.decls[0];
                 if let Pat::Ident(bi) = &decl.name {
                     if let Some(init) = &decl.init {
                         if is_simple_expr(init) {
-                            candidates.insert((bi.id.sym.clone(), bi.id.ctxt), init.clone());
+                            let key = (bi.id.sym.clone(), bi.id.ctxt);
+                            candidates.insert(key.clone(), init.clone());
+                            def_indices.insert(key, idx);
                         }
                     }
                 }
@@ -454,44 +456,35 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
         return stmts;
     }
 
-    // Count top-level usages for each candidate
-    let mut usage_count: HashMap<BindingKey, usize> = HashMap::new();
-    for key in candidates.keys() {
-        usage_count.insert(key.clone(), 0);
-    }
+    // Single pass: count usages excluding definition stmts, and record use positions.
+    // Track the last stmt index where each candidate was referenced — for
+    // single-use candidates this is the unique use site.
+    let mut usage_counts: HashMap<BindingKey, usize> =
+        candidates.keys().map(|k| (k.clone(), 0)).collect();
+    let mut use_indices: HashMap<BindingKey, usize> = HashMap::new();
 
-    for stmt in &stmts {
-        count_top_level_ident_uses_in_stmt(stmt, &mut usage_count);
-    }
-
-    // Candidates with exactly 1 usage (including their own declaration) →
-    // the declaration counts as 1 "definition" not a "use", so we count uses in
-    // non-declaration stmts only. Actually let's recount: only count uses NOT in the def stmt.
-
-    // Re-count: skip the definition statement itself
-    let mut usage_count2: HashMap<BindingKey, usize> = HashMap::new();
-    for key in candidates.keys() {
-        usage_count2.insert(key.clone(), 0);
-    }
-
-    for stmt in &stmts {
-        // Skip definition stmts
+    for (idx, stmt) in stmts.iter().enumerate() {
         if let Stmt::Decl(Decl::Var(var)) = stmt {
             if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
                 if let Pat::Ident(bi) = &var.decls[0].name {
                     if candidates.contains_key(&(bi.id.sym.clone(), bi.id.ctxt)) {
-                        continue; // skip this stmt
+                        continue;
                     }
                 }
             }
         }
-        count_top_level_ident_uses_in_stmt(stmt, &mut usage_count2);
+        let mut counter = StmtIdentCounter {
+            counts: &mut usage_counts,
+            use_indices: &mut use_indices,
+            stmt_idx: idx,
+        };
+        stmt.visit_with(&mut counter);
     }
 
     // Build set of names to inline (exactly 1 top-level use)
     let to_inline: HashMap<BindingKey, Box<Expr>> = candidates
         .into_iter()
-        .filter(|(key, _)| usage_count2.get(key).copied().unwrap_or(0) == 1)
+        .filter(|(key, _)| usage_counts.get(key).copied().unwrap_or(0) == 1)
         .collect();
 
     if to_inline.is_empty() {
@@ -509,7 +502,9 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
         .into_iter()
         .filter(|(key, init)| {
             if let Expr::Ident(src_id) = init.as_ref() {
-                is_ident_alias_safe_to_inline(src_id, key, &stmts)
+                let def_idx = def_indices[key];
+                let use_idx = use_indices[key];
+                is_ident_alias_safe_to_inline_with_positions(src_id, key, &stmts, def_idx, use_idx)
             } else {
                 true
             }
@@ -543,15 +538,17 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
     result
 }
 
-fn is_ident_alias_safe_to_inline(src_id: &Ident, temp_key: &BindingKey, stmts: &[Stmt]) -> bool {
+fn is_ident_alias_safe_to_inline_with_positions(
+    src_id: &Ident,
+    _temp_key: &BindingKey,
+    stmts: &[Stmt],
+    def_idx: usize,
+    use_idx: usize,
+) -> bool {
     let src_key = (src_id.sym.clone(), src_id.ctxt);
-    if is_ident_mutated_after_def(&src_key, temp_key, stmts) {
+    if is_ident_mutated_in_stmts(&src_key, &stmts[def_idx + 1..]) {
         return false;
     }
-
-    let Some((def_idx, use_idx)) = find_def_and_single_use_stmt(temp_key, stmts) else {
-        return false;
-    };
     if use_idx <= def_idx + 1 {
         return true;
     }
@@ -559,38 +556,6 @@ fn is_ident_alias_safe_to_inline(src_id: &Ident, temp_key: &BindingKey, stmts: &
     !stmts[def_idx + 1..use_idx]
         .iter()
         .any(stmt_has_top_level_side_effect)
-}
-
-fn find_def_and_single_use_stmt(temp_key: &BindingKey, stmts: &[Stmt]) -> Option<(usize, usize)> {
-    let def_idx = stmts.iter().position(|s| {
-        if let Stmt::Decl(Decl::Var(var)) = s {
-            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
-                if let Pat::Ident(bi) = &var.decls[0].name {
-                    return &(bi.id.sym.clone(), bi.id.ctxt) == temp_key;
-                }
-            }
-        }
-        false
-    })?;
-
-    let mut use_idx = None;
-    for (idx, stmt) in stmts.iter().enumerate() {
-        if idx == def_idx {
-            continue;
-        }
-        let mut counts = HashMap::new();
-        counts.insert(temp_key.clone(), 0);
-        count_top_level_ident_uses_in_stmt(stmt, &mut counts);
-        let count = counts.get(temp_key).copied().unwrap_or(0);
-        if count > 0 {
-            if use_idx.is_some() || count > 1 {
-                return None;
-            }
-            use_idx = Some(idx);
-        }
-    }
-
-    Some((def_idx, use_idx?))
 }
 
 fn stmt_has_top_level_side_effect(stmt: &Stmt) -> bool {
@@ -657,32 +622,6 @@ fn stmt_has_top_level_side_effect(stmt: &Stmt) -> bool {
 /// Check if `src_key` is mutated after the definition of `temp_key`.
 /// `temp_key` is the inline candidate (e.g. `u`), `src_key` is its init value (e.g. `e`).
 ///
-/// Only checks stmts AFTER the def — mutations before the def are irrelevant
-/// because the temp var captures the value at its definition point.
-/// Checks all stmts after def (not just up to the use), because the mutation
-/// and use can be inside the same compound statement (try/finally, loops, etc.).
-fn is_ident_mutated_after_def(src_key: &BindingKey, temp_key: &BindingKey, stmts: &[Stmt]) -> bool {
-    // Find the index of the definition stmt: `const temp_key = src_key`
-    let def_idx = stmts.iter().position(|s| {
-        if let Stmt::Decl(Decl::Var(var)) = s {
-            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
-                if let Pat::Ident(bi) = &var.decls[0].name {
-                    return &(bi.id.sym.clone(), bi.id.ctxt) == temp_key;
-                }
-            }
-        }
-        false
-    });
-
-    match def_idx {
-        Some(di) => is_ident_mutated_in_stmts(src_key, &stmts[di + 1..]),
-        None => {
-            // Couldn't find def — fall back to conservative whole-block check
-            is_ident_mutated_in_stmts(src_key, stmts)
-        }
-    }
-}
-
 /// Check if an identifier is assigned (mutated) anywhere in a list of statements.
 fn is_ident_mutated_in_stmts(key: &BindingKey, stmts: &[Stmt]) -> bool {
     use swc_core::ecma::ast::{AssignTarget, SimpleAssignTarget, UpdateExpr};
@@ -750,26 +689,22 @@ fn is_simple_expr(expr: &Expr) -> bool {
     }
 }
 
-/// Count top-level ident usages (not inside nested function bodies).
-fn count_top_level_ident_uses_in_stmt(stmt: &Stmt, counts: &mut HashMap<BindingKey, usize>) {
-    let mut counter = TopLevelIdentCounter { counts };
-    stmt.visit_with(&mut counter);
-}
-
-struct TopLevelIdentCounter<'a> {
+struct StmtIdentCounter<'a> {
     counts: &'a mut HashMap<BindingKey, usize>,
+    use_indices: &'a mut HashMap<BindingKey, usize>,
+    stmt_idx: usize,
 }
 
-impl Visit for TopLevelIdentCounter<'_> {
+impl Visit for StmtIdentCounter<'_> {
     fn visit_ident(&mut self, id: &Ident) {
-        if let Some(c) = self.counts.get_mut(&(id.sym.clone(), id.ctxt)) {
+        let key = (id.sym.clone(), id.ctxt);
+        if let Some(c) = self.counts.get_mut(&key) {
             *c += 1;
+            self.use_indices.insert(key, self.stmt_idx);
         }
     }
-    // Don't descend into nested function bodies (closures capture by reference)
     fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
     fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
-    // Don't rename property keys
     fn visit_member_prop(&mut self, prop: &MemberProp) {
         if let MemberProp::Computed(c) = prop {
             c.visit_with(self);

@@ -285,6 +285,39 @@ while (q_length > 0) {}
 }
 
 #[test]
+fn member_init_var_redeclaration_uses_first_name() {
+    // Function-scoped `var` redeclarations share the same BindingId. If the
+    // collector proposes multiple names for that binding, BindingRenamer must
+    // preserve the historical first-match behavior.
+    let input = r#"
+function visit(q) {
+    var z = q.length;
+    while (z--) {
+        use(q[z]);
+    }
+    var z = q.length;
+    while (z--) {
+        use(q[z]);
+    }
+}
+"#;
+    let expected = r#"
+function visit(q) {
+    var q_length = q.length;
+    while (q_length--) {
+        use(q[q_length]);
+    }
+    var q_length = q.length;
+    while (q_length--) {
+        use(q[q_length]);
+    }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn member_init_rename_skips_long_names() {
     // Long variable names aren't minified, don't rename
     let input = r#"

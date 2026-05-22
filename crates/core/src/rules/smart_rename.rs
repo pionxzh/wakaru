@@ -15,8 +15,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use super::decl_utils::collect_decl_binding_ids;
 use super::expr_utils::is_unresolved_ident;
 use super::rename_utils::{
-    collect_module_names, rename_bindings, rename_bindings_in_module, rename_causes_shadowing,
-    BindingId, BindingRename,
+    collect_module_names, rename_bindings, rename_bindings_in_module, BindingId, BindingRename,
+    RenameShadowIndex,
 };
 use super::ObjShorthand;
 
@@ -1099,6 +1099,11 @@ fn value_position_rename_module(module: &mut Module) {
         .collect();
     candidates.sort_by(|(a, _), (b, _)| a.cmp(b));
 
+    // Build the shadow index once for all candidates instead of per-candidate.
+    let all_candidate_bids: HashSet<BindingId> =
+        candidates.iter().map(|(_, bid)| bid.clone()).collect();
+    let shadow_index = RenameShadowIndex::for_bindings(module, &all_candidate_bids);
+
     // Two-pass assignment: first reserve direct (unsuffixed) target names so
     // a later suffix fallback never steals another binding's natural target.
     let mut renames: Vec<BindingRename> = Vec::new();
@@ -1110,7 +1115,7 @@ fn value_position_rename_module(module: &mut Module) {
             continue;
         }
         let atom: Atom = target.as_str().into();
-        if !top_level_names.contains(&atom) && !rename_causes_shadowing(module, &bid, &atom) {
+        if !top_level_names.contains(&atom) && !shadow_index.rename_causes_shadowing(&bid, &atom) {
             committed_names.insert(target.clone());
             renames.push(BindingRename {
                 old: bid,
@@ -1126,7 +1131,7 @@ fn value_position_rename_module(module: &mut Module) {
             let atom: Atom = candidate.as_str().into();
             !committed_names.contains(candidate.as_str())
                 && !top_level_names.contains(&atom)
-                && !rename_causes_shadowing(module, &bid, &atom)
+                && !shadow_index.rename_causes_shadowing(&bid, &atom)
         });
 
         if let Some(name) = final_name {
@@ -1454,6 +1459,13 @@ fn sentry_component_rename_module(module: &mut Module) {
 
     let mut used_names = collect_module_names(module);
 
+    let all_candidate_bids: HashSet<BindingId> = collector
+        .candidates
+        .iter()
+        .map(|(bid, _)| bid.clone())
+        .collect();
+    let shadow_index = RenameShadowIndex::for_bindings(module, &all_candidate_bids);
+
     let mut renames = Vec::new();
     for (bid, target) in collector.candidates {
         if bid.0.as_ref() == target.as_str() {
@@ -1472,7 +1484,7 @@ fn sentry_component_rename_module(module: &mut Module) {
         if used_names.contains(&atom) {
             continue;
         }
-        if rename_causes_shadowing(module, &bid, &atom) {
+        if shadow_index.rename_causes_shadowing(&bid, &atom) {
             continue;
         }
         used_names.insert(atom.clone());

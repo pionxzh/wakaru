@@ -448,18 +448,18 @@ pub fn rename_bindings_in_module(module: &mut Module, renames: &[BindingRename])
     if renames.is_empty() {
         return;
     }
-    let mut renamer = BindingRenamer { renames };
+    let mut renamer = BindingRenamer::new(renames);
     module.visit_mut_with(&mut renamer);
 }
 
 pub fn rename_bindings<T>(node: &mut T, renames: &[BindingRename])
 where
-    for<'a> T: VisitMutWith<BindingRenamer<'a>>,
+    T: VisitMutWith<BindingRenamer>,
 {
     if renames.is_empty() {
         return;
     }
-    let mut renamer = BindingRenamer { renames };
+    let mut renamer = BindingRenamer::new(renames);
     node.visit_mut_with(&mut renamer);
 }
 
@@ -585,78 +585,73 @@ fn collect_decl_binding_infos(
     }
 }
 
-pub(crate) struct BindingRenamer<'a> {
-    renames: &'a [BindingRename],
+pub(crate) struct BindingRenamer {
+    rename_map: HashMap<BindingId, Atom>,
 }
 
-impl VisitMut for BindingRenamer<'_> {
+impl BindingRenamer {
+    pub fn new(renames: &[BindingRename]) -> Self {
+        let mut rename_map = HashMap::new();
+        for rename in renames {
+            rename_map
+                .entry(rename.old.clone())
+                .or_insert_with(|| rename.new.clone());
+        }
+        Self { rename_map }
+    }
+
+    fn lookup(&self, sym: &Atom, ctxt: SyntaxContext) -> Option<&Atom> {
+        self.rename_map.get(&(sym.clone(), ctxt))
+    }
+}
+
+impl VisitMut for BindingRenamer {
     fn visit_mut_ident(&mut self, ident: &mut Ident) {
-        for rename in self.renames {
-            if ident.sym == rename.old.0 && ident.ctxt == rename.old.1 {
-                ident.sym = rename.new.clone();
-                return;
-            }
+        if let Some(new_name) = self.lookup(&ident.sym, ident.ctxt) {
+            ident.sym = new_name.clone();
         }
     }
 
-    /// Rename the local binding of a named import specifier while preserving the
-    /// external (imported) name.  Without this override, renaming a shorthand
-    /// specifier `import { createHash }` would produce `import { newName }` which
-    /// tries to import `newName` from the module — wrong.  We instead emit
-    /// `import { createHash as newName }`.
     fn visit_mut_import_named_specifier(&mut self, spec: &mut ImportNamedSpecifier) {
-        for rename in self.renames {
-            if spec.local.sym == rename.old.0 && spec.local.ctxt == rename.old.1 {
-                // Lock in the external name before changing local.
-                if spec.imported.is_none() {
-                    spec.imported = Some(ModuleExportName::Ident(swc_core::ecma::ast::Ident::new(
-                        spec.local.sym.clone(),
-                        spec.local.span,
-                        spec.local.ctxt,
-                    )));
-                }
-                spec.local.sym = rename.new.clone();
-                return;
+        if let Some(new_name) = self.lookup(&spec.local.sym, spec.local.ctxt) {
+            if spec.imported.is_none() {
+                spec.imported = Some(ModuleExportName::Ident(swc_core::ecma::ast::Ident::new(
+                    spec.local.sym.clone(),
+                    spec.local.span,
+                    spec.local.ctxt,
+                )));
             }
+            spec.local.sym = new_name.clone();
         }
     }
 
-    /// Rename the local side of a named export specifier while preserving the
-    /// public exported name.  Without this override, renaming `A` in
-    /// `export { I as A }` can incorrectly change the export name to the new
-    /// local binding name.
     fn visit_mut_export_named_specifier(&mut self, spec: &mut ExportNamedSpecifier) {
         let ModuleExportName::Ident(orig) = &mut spec.orig else {
             return;
         };
 
-        for rename in self.renames {
-            if orig.sym == rename.old.0 && orig.ctxt == rename.old.1 {
-                if spec.exported.is_none() {
-                    spec.exported = Some(ModuleExportName::Ident(swc_core::ecma::ast::Ident::new(
-                        orig.sym.clone(),
-                        orig.span,
-                        orig.ctxt,
-                    )));
-                }
-                orig.sym = rename.new.clone();
-                return;
+        if let Some(new_name) = self.lookup(&orig.sym, orig.ctxt) {
+            if spec.exported.is_none() {
+                spec.exported = Some(ModuleExportName::Ident(swc_core::ecma::ast::Ident::new(
+                    orig.sym.clone(),
+                    orig.span,
+                    orig.ctxt,
+                )));
             }
+            orig.sym = new_name.clone();
         }
     }
 
     fn visit_mut_prop(&mut self, prop: &mut Prop) {
         if let Prop::Shorthand(ident) = prop {
-            for rename in self.renames {
-                if ident.sym == rename.old.0 && ident.ctxt == rename.old.1 {
-                    let key = PropName::Ident(ident.clone().into());
-                    ident.sym = rename.new.clone();
-                    *prop = Prop::KeyValue(KeyValueProp {
-                        key,
-                        value: Box::new(Expr::Ident(ident.clone())),
-                    });
-                    return;
-                }
+            if let Some(new_name) = self.lookup(&ident.sym, ident.ctxt) {
+                let key = PropName::Ident(ident.clone().into());
+                ident.sym = new_name.clone();
+                *prop = Prop::KeyValue(KeyValueProp {
+                    key,
+                    value: Box::new(Expr::Ident(ident.clone())),
+                });
+                return;
             }
         }
 
@@ -684,27 +679,25 @@ impl VisitMut for BindingRenamer<'_> {
 
     fn visit_mut_object_pat_prop(&mut self, prop: &mut ObjectPatProp) {
         if let ObjectPatProp::Assign(assign) = prop {
-            for rename in self.renames {
-                if assign.key.id.sym == rename.old.0 && assign.key.id.ctxt == rename.old.1 {
-                    let key = PropName::Ident(assign.key.id.clone().into());
-                    let mut binding = assign.key.clone();
-                    binding.id.sym = rename.new.clone();
-                    let value = if let Some(default) = assign.value.take() {
-                        Pat::Assign(AssignPat {
-                            span: binding.id.span,
-                            left: Box::new(Pat::Ident(binding)),
-                            right: default,
-                        })
-                    } else {
-                        Pat::Ident(binding)
-                    };
-                    *prop = ObjectPatProp::KeyValue(KeyValuePatProp {
-                        key,
-                        value: Box::new(value),
-                    });
-                    prop.visit_mut_children_with(self);
-                    return;
-                }
+            if let Some(new_name) = self.lookup(&assign.key.id.sym, assign.key.id.ctxt) {
+                let key = PropName::Ident(assign.key.id.clone().into());
+                let mut binding = assign.key.clone();
+                binding.id.sym = new_name.clone();
+                let value = if let Some(default) = assign.value.take() {
+                    Pat::Assign(AssignPat {
+                        span: binding.id.span,
+                        left: Box::new(Pat::Ident(binding)),
+                        right: default,
+                    })
+                } else {
+                    Pat::Ident(binding)
+                };
+                *prop = ObjectPatProp::KeyValue(KeyValuePatProp {
+                    key,
+                    value: Box::new(value),
+                });
+                prop.visit_mut_children_with(self);
+                return;
             }
         }
 
