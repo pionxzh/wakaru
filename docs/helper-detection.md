@@ -43,7 +43,7 @@ These ideas were explored and rejected:
 
 - **Version auto-detect via runtime strings** — Bundled code often strips version markers, and inlined helpers erase them entirely. Designing around version gating would fail on real-world bundles.
 
-- **Configurable pass graphs / incremental re-analysis** — Premature optimization. The current linear pipeline in `crates/core/src/rules/mod.rs` is simple and works.
+- **Configurable pass graphs / incremental re-analysis** — Premature optimization. The current linear pipeline in `crates/core/src/rules/pipeline.rs` is descriptor-based but still intentionally fixed-order.
 
 ## Architecture
 

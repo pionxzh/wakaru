@@ -232,17 +232,6 @@ Route.contextTypes = {
 Route.childContextTypes = {
     router: u.object.isRequired
 };
-const L = Object.assign || function(e) {
-    for(let t = 1; t < arguments.length; t++){
-        const n = arguments[t];
-        for(const r in n){
-            if (Object.prototype.hasOwnProperty.call(n, r)) {
-                e[r] = n[r];
-            }
-        }
-    }
-    return e;
-};
 export const NavLink = (e)=>{
     const { to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, "aria-current": aria_current, ...rest } = e;
     const p = (to === undefined ? "undefined" : typeof to) === "object" ? to.pathname : to;
@@ -250,18 +239,13 @@ export const NavLink = (e)=>{
     return <Route path={h} exact={exact} strict={strict} location={location} children={(e)=>{
         const { location, match } = e;
         const o = !!(isActive ? isActive(match, location) : match);
-        return <Link {...L({
-            to,
-            className: o ? [
-                className,
-                activeClassName
-            ].filter((e)=>e).join(" ") : className,
-            style: o ? {
-                ...style,
-                ...activeStyle
-            } : style,
-            "aria-current": o && aria_current || null
-        }, rest)}/>;
+        return <Link to={to} className={o ? [
+            className,
+            activeClassName
+        ].filter((e)=>e).join(" ") : className} style={o ? {
+            ...style,
+            ...activeStyle
+        } : style} aria-current={o && aria_current || null} {...rest}/>;
     }}/>;
 };
 NavLink.propTypes = {

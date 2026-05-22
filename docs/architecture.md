@@ -84,7 +84,7 @@ Runs the pipeline with an observer that captures per-rule before/after snapshots
 
 ### Rules pipeline (`crates/core/src/rules/`)
 
-~60 transformation rules, each implementing SWC's `VisitMut` trait. Applied in a fixed order by `apply_default_rules()`. Order matters — some rules depend on earlier ones having run.
+~60 transformation rules, each implementing SWC's `VisitMut` trait. Applied in a fixed order by `apply_default_rules()`. Order matters — some rules depend on earlier ones having run. The ordered registry lives in `crates/core/src/rules/pipeline.rs` as `RuleDescriptor` entries with `RuleStage` metadata.
 
 #### Pipeline stages
 
@@ -97,9 +97,9 @@ Stage 1: Syntax normalization
 Stage 2: Transpiler helper unwrapping + module-system reconstruction
   UnInteropRequireDefault, UnInteropRequireWildcard, UnToConsumableArray,
   UnObjectSpread, UnObjectRest, UnSlicedToArray, UnDefineProperty,
-  UnClassCallCheck, UnPossibleConstructorReturn, UnTypeofPolyfill,
-  UnCurlyBraces, UnEsmoduleFlag, UnUseStrict, UnAssignmentMerging,
-  UnWebpackInterop, UnEsm
+  UnClassCallCheck, UnPossibleConstructorReturn, UnAssertThisInitialized,
+  UnTypeofPolyfill, UnCurlyBraces, UnEsmoduleFlag, UnUseStrict,
+  UnAssignmentMerging, UnWebpackInterop, UnEsm
 
   ── cross-module barrier (unpack only: fact collection + late pass) ──
 
@@ -111,7 +111,8 @@ Stage 3: Structural restoration
 
 Stage 4: Complex pattern restoration
   UnIife, UnConditionals, UnParameters, UnEnum, UnJsx, UnEs6Class,
-  UnClassFields, UnTsHelpers, UnAsyncAwait, UnWebpackInterop (2nd pass)
+  UnClassFields, UnTsHelpers, UnRegenerator, UnAsyncAwait,
+  UnWebpackInterop (2nd pass)
 
 Stage 5: Modernization
   UnThenCatch, UnUndefinedInit, VarDeclToLetConst, ObjShorthand,
@@ -119,10 +120,11 @@ Stage 5: Modernization
   UnRestArrayCopy, ArrowFunction, ArrowReturn, UnForOf
 
 Stage 6: Cleanup and renaming
-  UnWebpackDefineGetters, UnWebpackObjectGetters, UnImportRename,
-  UnExportRename, UnDestructuring, UnParameters (2nd pass),
-  SmartInline, UnIife (2nd pass), SmartRename,
-  [optional] DeadImports, [optional] DeadDecls, UnReturn
+  UnWebpackDefineGetters, UnWebpackObjectGetters, ImportDedup,
+  UnImportRename, UnExportRename, UnWebpackInterop (3rd pass),
+  UnDestructuring, UnParameters (2nd pass), SmartInline,
+  UnIife (2nd pass), SmartRename, UnJsx (2nd pass),
+  [optional] DeadDecls, [optional] DeadImports, UnReturn
 ```
 
 `DeadImports` and `DeadDecls` are an optional late cleanup phase controlled by
@@ -190,9 +192,9 @@ This works even when the `names` array is empty (common in esbuild output).
 When unpacking bundles, the driver runs a two-phase pipeline:
 
 1. **Phase 1 (parallel):** Parse each module → run Stage 1+2 → extract import/export facts → discard AST
-2. **Phase 2 (parallel):** Parse each module again → run Stage 1+2 → cross-module late pass (re-export consolidation, namespace decomposition) → run Stage 3+ → emit
+2. **Phase 2 (parallel):** Parse each module again → run Stage 1+2 → cross-module late pass (re-export consolidation, namespace decomposition, fact-aware helper recovery) → run Stage 3+ → emit
 
-The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g., converting `ns.foo` to `import { foo }`). Facts are extracted in `crates/core/src/facts.rs` and consumed by `crates/core/src/namespace_decomposition.rs` and `crates/core/src/reexport_consolidation.rs`. See [fact-system.md](fact-system.md) for details.
+The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g., converting `ns.foo` to `import { foo }` or recognizing a split helper module). Facts are extracted in `crates/core/src/facts.rs` and consumed by `crates/core/src/namespace_decomposition.rs`, `crates/core/src/reexport_consolidation.rs`, and fact-aware rules. See [fact-system.md](fact-system.md) for details.
 
 Stage 1+2 runs twice per module — once for fact collection, once for the real pipeline. This is necessary because SWC's `SyntaxContext` must remain continuous across the entire pipeline (re-parsing creates fresh contexts that break rename rules).
 
@@ -213,7 +215,8 @@ crates/
       namespace_decomposition.rs    — cross-module namespace-to-named-import rewrite
       reexport_consolidation.rs     — cross-module re-export consolidation
       rules/
-        mod.rs                      — apply_default_rules() pipeline ordering
+        mod.rs                      — rule module declarations and public exports
+        pipeline.rs                 — rule descriptor registry and pipeline execution
         babel_helper_utils.rs       — shared helper detection (body shape + import path)
         rename_utils.rs             — shared binding rename utilities
         *.rs                        — one file per transformation rule

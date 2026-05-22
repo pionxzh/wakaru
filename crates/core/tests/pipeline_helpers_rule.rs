@@ -145,6 +145,33 @@ fn rule_names_contains_key_rules() {
 }
 
 #[test]
+fn rule_descriptors_match_rule_names() {
+    let descriptor_names: Vec<&str> = wakaru_core::rule_descriptors()
+        .iter()
+        .map(|descriptor| descriptor.id)
+        .collect();
+    assert_eq!(descriptor_names, wakaru_core::rule_names());
+}
+
+#[test]
+fn rule_descriptors_expose_stage_metadata() {
+    let descriptors = wakaru_core::rule_descriptors();
+
+    assert_eq!(descriptors[0].stage, wakaru_core::RuleStage::Syntax);
+    assert_eq!(
+        descriptors
+            .iter()
+            .find(|descriptor| descriptor.id == "UnObjectSpread")
+            .map(|descriptor| descriptor.stage),
+        Some(wakaru_core::RuleStage::Helpers)
+    );
+    assert_eq!(
+        descriptors.last().map(|descriptor| descriptor.stage),
+        Some(wakaru_core::RuleStage::Cleanup)
+    );
+}
+
+#[test]
 fn rule_names_matches_trace_execution_order() {
     let events = trace_pipeline(
         "const x = 1;",
