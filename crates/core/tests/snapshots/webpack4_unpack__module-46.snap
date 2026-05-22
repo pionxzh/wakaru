@@ -289,7 +289,7 @@ export const unstable_next = (e)=>{
         case 1:
         case 2:
         case 3:
-            let t = 3;
+            var t = 3;
             break;
         default:
             t = M;

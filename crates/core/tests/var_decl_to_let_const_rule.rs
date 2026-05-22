@@ -498,3 +498,250 @@ fn cross_declarator_for_head_reference_stays_var() {
     let output = apply_rule(input);
     assert_eq_normalized(&output, input);
 }
+
+#[test]
+fn var_used_before_decl_inside_same_block_stays_var() {
+    // Compound statements currently predeclare all inner vars before scanning
+    // the statement body. A same-block read before the declaration still relies
+    // on var hoisting and must not become `const`.
+    let input = r#"
+function f(cond) {
+    if (cond) {
+        use(x);
+        var x = 1;
+    }
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn var_used_before_decl_inside_plain_block_stays_var() {
+    let input = r#"
+function f() {
+    {
+        use(x);
+        var x = 1;
+    }
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn var_inside_switch_case_referenced_after_switch_stays_var() {
+    // `switch` case lists are not BlockStmt nodes, but a `var` declared in a
+    // case still hoists to the enclosing function/module scope.
+    let input = r#"
+function f(tag) {
+    switch (tag) {
+        case 1:
+            var value = compute();
+            break;
+    }
+    return value;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn var_for_counter_captured_by_closure_stays_var() {
+    // `var` loop counters are one shared function-scoped binding. Converting
+    // this to `let` creates a fresh binding per iteration and changes closures.
+    let input = r#"
+function f(xs) {
+    var fns = [];
+    for (var i = 0; i < xs.length; i++) {
+        fns.push(function() {
+            return i;
+        });
+    }
+    return fns[0]();
+}
+"#;
+    let expected = r#"
+function f(xs) {
+    const fns = [];
+    for (var i = 0; i < xs.length; i++) {
+        fns.push(function() {
+            return i;
+        });
+    }
+    return fns[0]();
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn var_inside_loop_body_captured_by_closure_stays_var() {
+    // Moving a loop-body `var` to block scope gives each iteration its own
+    // binding, while original `var` closures all observe the same binding.
+    let input = r#"
+function f(xs) {
+    var fns = [];
+    for (var i = 0; i < xs.length; i++) {
+        var value = xs[i];
+        fns.push(function() {
+            return value;
+        });
+    }
+    return fns[0]();
+}
+"#;
+    let expected = r#"
+function f(xs) {
+    const fns = [];
+    for (let i = 0; i < xs.length; i++) {
+        var value = xs[i];
+        fns.push(function() {
+            return value;
+        });
+    }
+    return fns[0]();
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn for_of_var_captured_by_closure_stays_var() {
+    let input = r#"
+function f(xs) {
+    var fns = [];
+    for (var value of xs) {
+        fns.push(function() {
+            return value;
+        });
+    }
+    return fns[0]();
+}
+"#;
+    let expected = r#"
+function f(xs) {
+    const fns = [];
+    for (var value of xs) {
+        fns.push(function() {
+            return value;
+        });
+    }
+    return fns[0]();
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn for_in_var_captured_by_closure_stays_var() {
+    let input = r#"
+function f(obj) {
+    var fns = [];
+    for (var key in obj) {
+        fns.push(function() {
+            return key;
+        });
+    }
+    return fns[0]();
+}
+"#;
+    let expected = r#"
+function f(obj) {
+    const fns = [];
+    for (var key in obj) {
+        fns.push(function() {
+            return key;
+        });
+    }
+    return fns[0]();
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn var_duplicate_with_function_param_stays_var() {
+    // `var x` and parameter `x` are the same function binding in sloppy-mode
+    // inputs. Converting the var to a lexical declaration creates a duplicate
+    // binding and changes parse/runtime semantics.
+    let input = r#"
+function f(x) {
+    var x = 1;
+    return x;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn var_duplicate_with_catch_param_stays_var() {
+    // Catch parameters are block-scoped bindings. A `var` with the same name in
+    // the catch body is still allowed in legacy inputs, but `let`/`const` would
+    // create a duplicate lexical binding.
+    let input = r#"
+function f() {
+    try {
+        throw 1;
+    } catch (error) {
+        var error = 2;
+        return error;
+    }
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn direct_eval_keeps_scope_vars_as_var() {
+    // A direct eval can read or write bindings that are invisible to static
+    // assignment collection, so upgrading to `const` is not conservative.
+    let input = r#"
+function f() {
+    var x = 1;
+    eval("x = 2");
+    return x;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn direct_eval_hidden_require_does_not_block_unrelated_var() {
+    let input = r#"
+function f(moduleName) {
+    var mod = moduleName === "fs" ? require("fs") : eval("quire".replace(/^/, "re"))(moduleName);
+    return mod;
+}
+"#;
+    let expected = r#"
+function f(moduleName) {
+    const mod = moduleName === "fs" ? require("fs") : eval("quire".replace(/^/, "re"))(moduleName);
+    return mod;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn direct_eval_hidden_require_keeps_referenced_var() {
+    let input = r#"
+function f() {
+    var require = getRequire();
+    eval("quire".replace(/^/, "re"));
+    return require;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}

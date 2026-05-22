@@ -66,6 +66,39 @@ impl TdzChecker {
         node.visit_with(&mut scope_checker);
         self.violations.extend(scope_checker.violations);
     }
+
+    fn check_param_scope<'a, I>(&mut self, params: I)
+    where
+        I: IntoIterator<Item = &'a Pat>,
+    {
+        let params: Vec<&Pat> = params.into_iter().collect();
+        let mut collector = LexicalBindingCollector {
+            bindings: HashSet::new(),
+            positions: HashMap::new(),
+        };
+        for param in &params {
+            collect_pat_ids_with_pos(
+                param,
+                BytePos(0),
+                &mut collector.bindings,
+                &mut collector.positions,
+            );
+        }
+        if collector.bindings.is_empty() {
+            return;
+        }
+
+        let mut scope_checker = OrderedScopeChecker {
+            lexical_bindings: &collector.bindings,
+            decl_positions: &collector.positions,
+            declared: HashSet::new(),
+            violations: Vec::new(),
+        };
+        for param in params {
+            visit_pat_expressions_and_declare(param, &mut scope_checker);
+        }
+        self.violations.extend(scope_checker.violations);
+    }
 }
 
 impl Visit for TdzChecker {
@@ -75,6 +108,7 @@ impl Visit for TdzChecker {
     }
 
     fn visit_function(&mut self, func: &Function) {
+        self.check_param_scope(func.params.iter().map(|param| &param.pat));
         if let Some(body) = &func.body {
             self.check_scope(body);
         }
@@ -82,6 +116,7 @@ impl Visit for TdzChecker {
     }
 
     fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.check_param_scope(arrow.params.iter());
         if let BlockStmtOrExpr::BlockStmt(block) = &*arrow.body {
             self.check_scope(block);
         }
@@ -179,9 +214,12 @@ impl Visit for OrderedScopeChecker<'_> {
     }
 
     fn visit_class_decl(&mut self, class_decl: &ClassDecl) {
-        class_decl.class.visit_with(self);
+        if let Some(super_class) = &class_decl.class.super_class {
+            super_class.visit_with(self);
+        }
         self.declared
             .insert((class_decl.ident.sym.clone(), class_decl.ident.ctxt));
+        visit_class_members(&class_decl.class, self);
     }
 
     fn visit_ident(&mut self, ident: &Ident) {
@@ -230,49 +268,7 @@ impl Visit for OrderedScopeChecker<'_> {
         if let Some(super_class) = &class.super_class {
             super_class.visit_with(self);
         }
-        for member in &class.body {
-            match member {
-                ClassMember::Constructor(ctor) => {
-                    if let PropName::Computed(c) = &ctor.key {
-                        c.visit_with(self);
-                    }
-                }
-                ClassMember::Method(method) => {
-                    if let PropName::Computed(c) = &method.key {
-                        c.visit_with(self);
-                    }
-                }
-                ClassMember::ClassProp(prop) => {
-                    if let PropName::Computed(c) = &prop.key {
-                        c.visit_with(self);
-                    }
-                    if prop.is_static {
-                        if let Some(value) = &prop.value {
-                            value.visit_with(self);
-                        }
-                    }
-                }
-                ClassMember::PrivateProp(prop) if prop.is_static => {
-                    if let Some(value) = &prop.value {
-                        value.visit_with(self);
-                    }
-                }
-                ClassMember::StaticBlock(block) => {
-                    block.body.visit_with(self);
-                }
-                ClassMember::AutoAccessor(accessor) => {
-                    if let Key::Public(PropName::Computed(c)) = &accessor.key {
-                        c.visit_with(self);
-                    }
-                    if accessor.is_static {
-                        if let Some(value) = &accessor.value {
-                            value.visit_with(self);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+        visit_class_members(class, self);
     }
 }
 
@@ -349,6 +345,52 @@ fn collect_pat_ids_with_pos(
         Pat::Rest(r) => collect_pat_ids_with_pos(&r.arg, pos, bindings, positions),
         Pat::Assign(a) => collect_pat_ids_with_pos(&a.left, pos, bindings, positions),
         _ => {}
+    }
+}
+
+fn visit_class_members(class: &Class, checker: &mut OrderedScopeChecker<'_>) {
+    for member in &class.body {
+        match member {
+            ClassMember::Constructor(ctor) => {
+                if let PropName::Computed(c) = &ctor.key {
+                    c.visit_with(checker);
+                }
+            }
+            ClassMember::Method(method) => {
+                if let PropName::Computed(c) = &method.key {
+                    c.visit_with(checker);
+                }
+            }
+            ClassMember::ClassProp(prop) => {
+                if let PropName::Computed(c) = &prop.key {
+                    c.visit_with(checker);
+                }
+                if prop.is_static {
+                    if let Some(value) = &prop.value {
+                        value.visit_with(checker);
+                    }
+                }
+            }
+            ClassMember::PrivateProp(prop) if prop.is_static => {
+                if let Some(value) = &prop.value {
+                    value.visit_with(checker);
+                }
+            }
+            ClassMember::StaticBlock(block) => {
+                block.body.visit_with(checker);
+            }
+            ClassMember::AutoAccessor(accessor) => {
+                if let Key::Public(PropName::Computed(c)) = &accessor.key {
+                    c.visit_with(checker);
+                }
+                if accessor.is_static {
+                    if let Some(value) = &accessor.value {
+                        value.visit_with(checker);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -672,6 +714,105 @@ function outer() {
         assert_eq!(
             violation_names("let A = { set x(v) { console.log(y); let y = v; } };"),
             vec!["y"]
+        );
+    }
+
+    #[test]
+    fn function_param_default_references_later_param() {
+        assert_eq!(violation_names("function f(a = b, b) {}"), vec!["b"]);
+    }
+
+    #[test]
+    fn function_param_default_references_self() {
+        assert_eq!(violation_names("function f(a = a) {}"), vec!["a"]);
+    }
+
+    #[test]
+    fn arrow_param_default_references_later_param() {
+        assert_eq!(violation_names("const f = (a = b, b) => a;"), vec!["b"]);
+    }
+
+    #[test]
+    fn function_param_default_references_earlier_param_is_fine() {
+        assert!(violation_names("function f(a, b = a) {}").is_empty());
+    }
+
+    #[test]
+    fn assignment_before_let_declaration_is_tdz() {
+        assert_eq!(violation_names("x = 2;\nlet x;"), vec!["x"]);
+    }
+
+    #[test]
+    fn assignment_after_let_declaration_is_fine() {
+        assert!(violation_names("let x;\nx = 2;").is_empty());
+    }
+
+    #[test]
+    fn update_before_let_declaration_is_tdz() {
+        assert_eq!(violation_names("x++;\nlet x;"), vec!["x"]);
+    }
+
+    #[test]
+    #[ignore = "requires switch-case control-flow analysis"]
+    fn switch_case_ref_to_uninitialized_case_binding_is_tdz() {
+        assert_eq!(
+            violation_names(
+                r#"
+switch (tag) {
+    case "read":
+        value;
+        break;
+    case "init":
+        let value = 1;
+        break;
+}
+"#
+            ),
+            vec!["value"]
+        );
+    }
+
+    #[test]
+    #[ignore = "requires call-order/control-flow analysis"]
+    fn function_called_before_lexical_declaration_is_tdz() {
+        assert_eq!(
+            violation_names(
+                r#"
+function read() {
+    value;
+}
+read();
+let value = 1;
+"#
+            ),
+            vec!["value"]
+        );
+    }
+
+    #[test]
+    fn function_called_after_lexical_declaration_is_fine() {
+        assert!(violation_names(
+            r#"
+function read() {
+    value;
+}
+let value = 1;
+read();
+"#
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn class_decl_static_block_can_reference_class_name() {
+        assert!(violation_names("class C { static { C; } }").is_empty());
+    }
+
+    #[test]
+    fn const_class_expr_static_block_self_reference_is_tdz() {
+        assert_eq!(
+            violation_names("const C = class { static { C; } };"),
+            vec!["C"]
         );
     }
 }

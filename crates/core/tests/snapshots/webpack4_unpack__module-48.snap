@@ -459,7 +459,7 @@ function ye(e) {
             case 7:
             case 10:
             case 9:
-                let n = "";
+                var n = "";
                 break e;
             default:
                 let r = e._debugOwner;
@@ -6188,7 +6188,7 @@ function fu(e) {
     t = n.stateNode;
     switch(n.tag){
         case 5:
-            let r = false;
+            var r = false;
             break;
         case 3:
         case 4:
