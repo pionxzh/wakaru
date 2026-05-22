@@ -52,7 +52,7 @@ Each unpacker detects a specific bundle format and extracts individual modules a
 
 Unpackers emit raw module code. They do NOT run transformation rules — that's the driver's job. Webpack4 is the exception: it applies webpack-specific normalization (param rename, `require()` rewriting, runtime helper removal) before emitting, because those transforms are tightly coupled to the webpack format.
 
-### Driver (`crates/core/src/driver.rs`)
+### Driver (`crates/core/src/driver.rs`, `crates/core/src/driver/`)
 
 Orchestrates the full pipeline.
 
@@ -187,7 +187,7 @@ Name recovery works by:
 
 This works even when the `names` array is empty (common in esbuild output).
 
-## Multi-module pipeline (`crates/core/src/driver.rs`)
+## Multi-module pipeline (`crates/core/src/driver/unpack.rs`)
 
 When unpacking bundles, the driver runs a two-phase pipeline:
 
@@ -209,7 +209,14 @@ crates/
   core/
     src/
       lib.rs                        — public API exports
-      driver.rs                     — decompile() and unpack() orchestration
+      driver.rs                     — public driver facade
+      driver/
+        single_file.rs              — decompile() orchestration
+        unpack.rs                   — unpack(), unpack_raw(), and multi-module pipeline
+        trace.rs                    — rule trace orchestration and formatting
+        diagnostics.rs              — post-transform diagnostic warning collection
+        io.rs                       — parse/print helpers
+        types.rs                    — driver options, outputs, and warning types
       facts.rs                      — post-Stage-2 cross-module fact extraction
       sourcemap_rename.rs           — source-map-driven name recovery
       namespace_decomposition.rs    — cross-module namespace-to-named-import rewrite

@@ -23,7 +23,7 @@ written observations, no merge step.
 ## Shape
 
 Multi-module unpack runs in two parallel phases with a single barrier between
-them (`crates/core/src/driver.rs::unpack_multi_module`):
+them (`crates/core/src/driver/unpack.rs::unpack_multi_module`):
 
 ```
 Phase 1 (per module, parallel):
