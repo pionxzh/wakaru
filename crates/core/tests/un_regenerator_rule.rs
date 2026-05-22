@@ -520,6 +520,87 @@ async function load_user(app_id) {
 }
 
 #[test]
+fn async_to_generator_babel_728_trampoline_with_regenerator() {
+    let input = r#"
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+function load_user(_x) {
+  return _load_user.apply(this, arguments);
+}
+function _load_user() {
+  _load_user = _asyncToGenerator(_regenerator().m(function _callee(app_id) {
+    var response, data;
+    return _regenerator().w(function (_context) {
+      while (1) switch (_context.n) {
+        case 0:
+          _context.n = 1;
+          return fetch_user(app_id);
+        case 1:
+          response = _context.v;
+          _context.n = 2;
+          return response.json();
+        case 2:
+          data = _context.v;
+          return _context.a(2, data);
+      }
+    }, _callee);
+  }));
+  return _load_user.apply(this, arguments);
+}
+"#;
+    let expected = r#"
+async function load_user(app_id) {
+  var response, data;
+  response = await fetch_user(app_id);
+  data = await response.json();
+  return data;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn babel_728_regenerator_function() {
+    let input = r#"
+function read_items(items) {
+  return _regenerator().w(function (_context) {
+    while (1) switch (_context.n) {
+      case 0:
+        _context.n = 1;
+        return first_item(items);
+      case 1:
+        _context.n = 2;
+        return second_item(items);
+      case 2:
+        return _context.a(2);
+    }
+  }, read_items);
+}
+"#;
+    let expected = r#"
+function* read_items(items) {
+  yield first_item(items);
+  yield second_item(items);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn no_transform_non_regenerator() {
     // Should not transform regular functions
     let input = r#"

@@ -259,7 +259,7 @@ fn extract_async_to_gen_body_with_params(
             let Expr::Member(member) = callee_expr.as_ref() else {
                 return None;
             };
-            if !is_member_prop(&member.prop, "mark") || mark_call.args.len() != 1 {
+            if !is_mark_prop(&member.prop) || mark_call.args.len() != 1 {
                 return None;
             }
             let Expr::Fn(fn_expr) = *mark_call.args.into_iter().next()?.expr else {
@@ -482,7 +482,7 @@ fn has_state_ops_deep(state_name: &Atom, stmt: &Stmt) -> bool {
         fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
             if let Some(left_member) = assign.left.as_simple().and_then(|s| s.as_member()) {
                 if is_ident_with_name(&left_member.obj, &self.state_name)
-                    && is_member_prop(&left_member.prop, "next")
+                    && is_next_prop(&left_member.prop)
                 {
                     self.found = true;
                     return;
@@ -563,7 +563,8 @@ fn is_regenerator_wrap_return(stmt: &Stmt) -> bool {
     is_wrap_call(arg)
 }
 
-/// Check if expr is `<something>.wrap(stateMachineFn, ...)`
+/// Check if expr is `<something>.wrap(stateMachineFn, ...)` or Babel 7.27+
+/// `<something>.w(stateMachineFn, ...)`.
 /// where stateMachineFn contains the distinctive `while(true) { switch(param.prev = param.next) }` pattern.
 fn is_wrap_call(expr: &Expr) -> bool {
     let Expr::Call(call) = expr else {
@@ -575,7 +576,7 @@ fn is_wrap_call(expr: &Expr) -> bool {
     let Expr::Member(member) = callee_expr.as_ref() else {
         return false;
     };
-    if !is_member_prop(&member.prop, "wrap") {
+    if !is_wrap_prop(&member.prop) {
         return false;
     }
     if call.args.is_empty() {
@@ -659,12 +660,12 @@ fn is_true_expr(expr: &Expr) -> bool {
     }
 }
 
-/// Check if a block contains `switch(param.prev = param.next) { ... }`
+/// Check if a block contains `switch(param.prev = param.next) { ... }` or
+/// Babel 7.27+ `switch(param.n) { ... }`.
 fn has_state_switch(block: &BlockStmt, param_name: &Atom) -> bool {
     for stmt in &block.stmts {
         if let Stmt::Switch(sw) = stmt {
-            // Discriminant should be: param.prev = param.next
-            if is_prev_assign_next(&sw.discriminant, param_name) {
+            if is_state_switch_discriminant(&sw.discriminant, param_name) {
                 return true;
             }
         }
@@ -674,7 +675,7 @@ fn has_state_switch(block: &BlockStmt, param_name: &Atom) -> bool {
 
 fn loop_body_has_state_switch(stmt: &Stmt, param_name: &Atom) -> bool {
     match stmt {
-        Stmt::Switch(sw) => is_prev_assign_next(&sw.discriminant, param_name),
+        Stmt::Switch(sw) => is_state_switch_discriminant(&sw.discriminant, param_name),
         Stmt::Block(block) => has_state_switch(block, param_name),
         _ => false,
     }
@@ -695,8 +696,11 @@ fn switch_cases_from_loop_body_ref(stmt: &Stmt) -> Option<&[SwitchCase]> {
     }
 }
 
-/// Check for `param.prev = param.next`
-fn is_prev_assign_next(expr: &Expr, param_name: &Atom) -> bool {
+fn is_state_switch_discriminant(expr: &Expr, param_name: &Atom) -> bool {
+    if let Expr::Member(member) = expr {
+        return is_ident_with_name(&member.obj, param_name) && is_next_prop(&member.prop);
+    }
+
     let Expr::Assign(assign) = expr else {
         return false;
     };
@@ -712,11 +716,10 @@ fn is_prev_assign_next(expr: &Expr, param_name: &Atom) -> bool {
     {
         return false;
     }
-    // Right: param.next
     let Expr::Member(right_member) = assign.right.as_ref() else {
         return false;
     };
-    is_ident_with_name(&right_member.obj, param_name) && is_member_prop(&right_member.prop, "next")
+    is_ident_with_name(&right_member.obj, param_name) && is_next_prop(&right_member.prop)
 }
 
 fn extract_wrap_args(stmt: Stmt) -> Option<(Atom, Vec<SwitchCase>)> {
@@ -727,7 +730,7 @@ fn extract_wrap_args(stmt: Stmt) -> Option<(Atom, Vec<SwitchCase>)> {
     let Expr::Member(member) = callee_expr.as_ref() else {
         return None;
     };
-    if !is_member_prop(&member.prop, "wrap") {
+    if !is_wrap_prop(&member.prop) {
         return None;
     }
     if call.args.is_empty() {
@@ -1054,9 +1057,7 @@ fn is_next_assign_to(state_name: &Atom, stmt: &Stmt, target: usize) -> bool {
     let Some(left_member) = assign.left.as_simple().and_then(|s| s.as_member()) else {
         return false;
     };
-    if !is_ident_with_name(&left_member.obj, state_name)
-        || !is_member_prop(&left_member.prop, "next")
-    {
+    if !is_ident_with_name(&left_member.obj, state_name) || !is_next_prop(&left_member.prop) {
         return false;
     }
     if let Expr::Lit(Lit::Num(n)) = assign.right.as_ref() {
@@ -1077,9 +1078,7 @@ fn is_comma_next_assign_to(state_name: &Atom, expr: &Expr, target: usize) -> boo
             let Some(left_member) = assign.left.as_simple().and_then(|s| s.as_member()) else {
                 continue;
             };
-            if is_ident_with_name(&left_member.obj, state_name)
-                && is_member_prop(&left_member.prop, "next")
-            {
+            if is_ident_with_name(&left_member.obj, state_name) && is_next_prop(&left_member.prop) {
                 if let Expr::Lit(Lit::Num(n)) = assign.right.as_ref() {
                     if n.value as usize == target {
                         return true;
@@ -1109,6 +1108,11 @@ fn decode_return(state_name: &Atom, ret: &ReturnStmt) -> Option<DecodedReturn> {
 
     // return _ctx.abrupt("return", value)
     if let Some(decoded) = decode_abrupt(state_name, arg) {
+        return Some(decoded);
+    }
+
+    // Babel 7.27+: return _ctx.a(2, value)
+    if let Some(decoded) = decode_short_abrupt(state_name, arg) {
         return Some(decoded);
     }
 
@@ -1176,6 +1180,34 @@ fn decode_abrupt(state_name: &Atom, expr: &Expr) -> Option<DecodedReturn> {
     }
 }
 
+fn decode_short_abrupt(state_name: &Atom, expr: &Expr) -> Option<DecodedReturn> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    let callee = call.callee.as_expr()?;
+    let Expr::Member(member) = callee.as_ref() else {
+        return None;
+    };
+    if !is_ident_with_name(&member.obj, state_name) || !is_member_prop(&member.prop, "a") {
+        return None;
+    }
+    let Expr::Lit(Lit::Num(kind)) = call.args.first()?.expr.as_ref() else {
+        return None;
+    };
+    match kind.value as u8 {
+        1 => call
+            .args
+            .get(1)
+            .map(|arg| DecodedReturn::Throw(arg.expr.clone())),
+        2 => call
+            .args
+            .get(1)
+            .map(|arg| DecodedReturn::Return(arg.expr.clone()))
+            .or(Some(DecodedReturn::Stop)),
+        _ => None,
+    }
+}
+
 fn is_next_assign(state_name: &Atom, stmt: &Stmt) -> bool {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return false;
@@ -1193,7 +1225,19 @@ fn is_next_assign_expr(state_name: &Atom, expr: &Expr) -> bool {
     let Some(left_member) = assign.left.as_simple().and_then(|s| s.as_member()) else {
         return false;
     };
-    is_ident_with_name(&left_member.obj, state_name) && is_member_prop(&left_member.prop, "next")
+    is_ident_with_name(&left_member.obj, state_name) && is_next_prop(&left_member.prop)
+}
+
+fn is_next_prop(prop: &MemberProp) -> bool {
+    is_member_prop(prop, "next") || is_member_prop(prop, "n")
+}
+
+fn is_wrap_prop(prop: &MemberProp) -> bool {
+    is_member_prop(prop, "wrap") || is_member_prop(prop, "w")
+}
+
+fn is_mark_prop(prop: &MemberProp) -> bool {
+    is_member_prop(prop, "mark") || is_member_prop(prop, "m")
 }
 
 fn is_label_assign(state_name: &Atom, stmt: &Stmt) -> bool {
@@ -1276,14 +1320,13 @@ fn is_standalone_sent(state_name: &Atom, stmt: &Stmt) -> bool {
 fn is_sent_access(state_name: &Atom, expr: &Expr) -> bool {
     // _ctx.sent (property access, not method call like tslib)
     if let Expr::Member(member) = expr {
-        return is_ident_with_name(&member.obj, state_name) && is_member_prop(&member.prop, "sent");
+        return is_ident_with_name(&member.obj, state_name) && is_sent_prop(&member.prop);
     }
     // Also handle _ctx.sent() (some versions use method call)
     if let Expr::Call(call) = expr {
         if let Some(callee) = call.callee.as_expr() {
             if let Expr::Member(member) = callee.as_ref() {
-                return is_ident_with_name(&member.obj, state_name)
-                    && is_member_prop(&member.prop, "sent");
+                return is_ident_with_name(&member.obj, state_name) && is_sent_prop(&member.prop);
             }
         }
     }
@@ -1297,9 +1340,7 @@ fn stmt_uses_sent(state_name: &Atom, stmt: &Stmt) -> bool {
     }
     impl swc_core::ecma::visit::Visit for Finder {
         fn visit_member_expr(&mut self, member: &MemberExpr) {
-            if is_ident_with_name(&member.obj, &self.state_name)
-                && is_member_prop(&member.prop, "sent")
-            {
+            if is_ident_with_name(&member.obj, &self.state_name) && is_sent_prop(&member.prop) {
                 self.found = true;
                 return;
             }
@@ -1336,9 +1377,7 @@ impl VisitMut for SentReplacer {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         // Replace _ctx.sent property access
         if let Expr::Member(member) = expr {
-            if is_ident_with_name(&member.obj, &self.state_name)
-                && is_member_prop(&member.prop, "sent")
-            {
+            if is_ident_with_name(&member.obj, &self.state_name) && is_sent_prop(&member.prop) {
                 *expr = *self.replacement.clone();
                 return;
             }
@@ -1348,7 +1387,7 @@ impl VisitMut for SentReplacer {
             if let Some(callee) = call.callee.as_expr() {
                 if let Expr::Member(member) = callee.as_ref() {
                     if is_ident_with_name(&member.obj, &self.state_name)
-                        && is_member_prop(&member.prop, "sent")
+                        && is_sent_prop(&member.prop)
                     {
                         *expr = *self.replacement.clone();
                         return;
@@ -1358,6 +1397,10 @@ impl VisitMut for SentReplacer {
         }
         expr.visit_mut_children_with(self);
     }
+}
+
+fn is_sent_prop(prop: &MemberProp) -> bool {
+    is_member_prop(prop, "sent") || is_member_prop(prop, "v")
 }
 
 fn reconstruct_with_regions(label_stmts: Vec<Vec<Stmt>>, trys: &[[Option<usize>; 4]]) -> Vec<Stmt> {
@@ -1542,7 +1585,7 @@ fn can_extract_async_to_gen(stmt: &Stmt) -> bool {
             let Expr::Member(member) = callee.as_ref() else {
                 return false;
             };
-            if !is_member_prop(&member.prop, "mark") || mark_call.args.len() != 1 {
+            if !is_mark_prop(&member.prop) || mark_call.args.len() != 1 {
                 return false;
             }
             let Expr::Fn(fn_expr) = mark_call.args[0].expr.as_ref() else {
@@ -1644,7 +1687,7 @@ fn extract_async_to_gen_body(
             let Expr::Member(member) = callee_expr.as_ref() else {
                 return None;
             };
-            if !is_member_prop(&member.prop, "mark") {
+            if !is_mark_prop(&member.prop) {
                 return None;
             }
             if mark_call.args.len() != 1 {
@@ -1728,7 +1771,7 @@ fn remove_consumed_mark_declarations(module: &mut Module, consumed_marks: &[Bind
             let Expr::Member(member) = callee.as_ref() else {
                 return true;
             };
-            !is_member_prop(&member.prop, "mark")
+            !is_mark_prop(&member.prop)
         });
         !var.decls.is_empty()
     });
