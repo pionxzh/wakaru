@@ -145,3 +145,214 @@ fn no_transform_destructuring_when_temp_used_later() {
     let expected = r#"for (let i = 0; i < entries.length; i++) { const _entry = entries[i]; const key = _entry[0]; const value = _entry[1]; use(_entry, key, value); }"#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn for_of_from_babel_iterator_helper() {
+    let input = r#"
+let step;
+const iterator = _createForOfIteratorHelper(items);
+try {
+  for (iterator.s(); !(step = iterator.n()).done;) {
+    const item = step.value;
+    use(item);
+  }
+} catch (err) {
+  iterator.e(err);
+} finally {
+  iterator.f();
+}
+"#;
+    let expected = r#"
+for (const item of items) {
+  use(item);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_from_babel_iterator_helper_rewrites_value_refs() {
+    let input = r#"
+let step;
+let last;
+const iterator = _createForOfIteratorHelper(items);
+try {
+  for (iterator.s(); !(step = iterator.n()).done;) {
+    last = step.value;
+  }
+} catch (err) {
+  iterator.e(err);
+} finally {
+  iterator.f();
+}
+return last;
+"#;
+    let expected = r#"
+let last;
+for (const step of items) {
+  last = step;
+}
+return last;
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_from_babel_iterator_helper_decl_first() {
+    let input = r#"
+const iterator = _createForOfIteratorHelper(items);
+let step;
+try {
+  for (iterator.s(); !(step = iterator.n()).done;) {
+    const item = step.value;
+    use(item);
+  }
+} catch (err) {
+  iterator.e(err);
+} finally {
+  iterator.f();
+}
+"#;
+    let expected = r#"
+for (const item of items) {
+  use(item);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_from_babel_loose_iterator_helper() {
+    let input = r#"
+let step;
+for (const iterator = _createForOfIteratorHelperLoose(items); !(step = iterator()).done;) {
+  const item = step.value;
+  use(item);
+}
+"#;
+    let expected = r#"
+for (const item of items) {
+  use(item);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_destructuring_from_iterator_helper() {
+    let input = r#"
+const iterator = _createForOfIteratorHelper(entries);
+let step;
+try {
+  for (iterator.s(); !(step = iterator.n()).done;) {
+    const pair = step.value;
+    const key = pair[0];
+    const value = pair[1];
+    use(key, value);
+  }
+} catch (err) {
+  iterator.e(err);
+} finally {
+  iterator.f();
+}
+"#;
+    let expected = r#"
+for (const [key, value] of entries) {
+  use(key, value);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_destructuring_from_iterator_helper_read_call() {
+    let input = r#"
+const iterator = _createForOfIteratorHelper(entries);
+let step;
+try {
+  for (iterator.s(); !(step = iterator.n()).done;) {
+    const pair = _slicedToArray(step.value, 2);
+    const key = pair[0];
+    const value = pair[1];
+    use(key, value);
+  }
+} catch (err) {
+  iterator.e(err);
+} finally {
+  iterator.f();
+}
+"#;
+    let expected = r#"
+for (const [key, value] of entries) {
+  use(key, value);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_from_ts_values_helper() {
+    let input = r#"
+let errorState;
+let iteratorReturn;
+try {
+  for (var iterator = tslib.__values(items), step = iterator.next(); !step.done; step = iterator.next()) {
+    const item = step.value;
+    use(item);
+  }
+} catch (error) {
+  errorState = { error };
+} finally {
+  try {
+    if (step && !step.done && (iteratorReturn = iterator.return)) {
+      iteratorReturn.call(iterator);
+    }
+  } finally {
+    if (errorState) {
+      throw errorState.error;
+    }
+  }
+}
+"#;
+    let expected = r#"
+for (const item of items) {
+  use(item);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_from_swc_symbol_iterator_helper() {
+    let input = r#"
+let normal = true;
+let didError = false;
+let iteratorError;
+try {
+  let step;
+  for (var iterator = items[Symbol.iterator](); !(normal = (step = iterator.next()).done); normal = true) {
+    const item = step.value;
+    use(item);
+  }
+} catch (err) {
+  didError = true;
+  iteratorError = err;
+} finally {
+  try {
+    if (!normal && iterator.return != null) {
+      iterator.return();
+    }
+  } finally {
+    if (didError) {
+      throw iteratorError;
+    }
+  }
+}
+"#;
+    let expected = r#"
+for (const item of items) {
+  use(item);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}

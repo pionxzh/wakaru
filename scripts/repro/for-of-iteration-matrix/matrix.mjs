@@ -47,20 +47,17 @@ const transformers = [
   {
     name: "tsc-es5-downlevel-true",
     run: (source) => runTsc(source, true),
-    shouldRecover: false,
-    note: "TS downlevelIteration emits __values/try-finally iterator protocol code.",
+    shouldRecover: true,
   },
   {
     name: "babel-7.28-spec",
     run: (source) => runBabel(source, "spec"),
-    shouldRecover: false,
-    note: "Babel spec emits _createForOfIteratorHelper plus try/catch/finally.",
+    shouldRecover: true,
   },
   {
     name: "babel-7.28-loose",
     run: (source) => runBabel(source, "loose"),
-    shouldRecover: false,
-    note: "Babel loose emits _createForOfIteratorHelperLoose.",
+    shouldRecover: true,
   },
   {
     name: "babel-7.28-iterableIsArray",
@@ -70,8 +67,7 @@ const transformers = [
   {
     name: "swc-es5",
     run: runSwc,
-    shouldRecover: false,
-    note: "SWC emits explicit Symbol.iterator try/catch/finally loops.",
+    shouldRecover: true,
   },
 ];
 
@@ -384,4 +380,3 @@ function readOption(name, fallback) {
   }
   return fallback;
 }
-

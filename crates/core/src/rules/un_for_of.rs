@@ -1,8 +1,10 @@
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, BinExpr, BinaryOp, BindingIdent, Decl, Expr, ForHead, ForOfStmt, Ident, Lit,
-    MemberExpr, MemberProp, Pat, Stmt, UpdateExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclarator,
+    ArrayPat, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, BlockStmt,
+    CallExpr, Callee, Decl, Expr, ExprOrSpread, ForHead, ForOfStmt, Ident, Lit, MemberExpr,
+    MemberProp, ModuleItem, Pat, SimpleAssignTarget, Stmt, TryStmt, UnaryExpr, UnaryOp, UpdateExpr,
+    UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -37,6 +39,38 @@ impl Default for UnForOf {
 }
 
 impl VisitMut for UnForOf {
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        items.visit_mut_children_with(self);
+
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
+
+        let old = std::mem::take(items);
+        let mut stmt_run = Vec::new();
+
+        for item in old {
+            match item {
+                ModuleItem::Stmt(stmt) => stmt_run.push(stmt),
+                item => {
+                    flush_stmt_run(items, &mut stmt_run);
+                    items.push(item);
+                }
+            }
+        }
+        flush_stmt_run(items, &mut stmt_run);
+    }
+
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        stmts.visit_mut_children_with(self);
+
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
+
+        process_stmt_vec(stmts);
+    }
+
     fn visit_mut_stmt(&mut self, stmt: &mut Stmt) {
         if self.level < RewriteLevel::Standard {
             return;
@@ -47,6 +81,935 @@ impl VisitMut for UnForOf {
             *stmt = Stmt::ForOf(for_of);
         }
     }
+}
+
+fn flush_stmt_run(items: &mut Vec<ModuleItem>, stmts: &mut Vec<Stmt>) {
+    if stmts.is_empty() {
+        return;
+    }
+    process_stmt_vec(stmts);
+    items.extend(std::mem::take(stmts).into_iter().map(ModuleItem::Stmt));
+}
+
+fn process_stmt_vec(stmts: &mut Vec<Stmt>) {
+    let old = std::mem::take(stmts);
+    let mut i = 0;
+    while i < old.len() {
+        if let Some(rewrite) = try_convert_ts_values_sequence(&old[i..]) {
+            stmts.push(Stmt::ForOf(rewrite.for_of));
+            i += rewrite.consumed_stmts;
+            continue;
+        }
+
+        if let Some(rewrite) = try_convert_swc_iterator_sequence(&old[i..]) {
+            stmts.push(Stmt::ForOf(rewrite.for_of));
+            i += rewrite.consumed_stmts;
+            continue;
+        }
+
+        if let Some(rewrite) = try_convert_iterator_helper_sequence(&old[i..]) {
+            stmts.extend(rewrite.preserved_stmts);
+            stmts.push(Stmt::ForOf(rewrite.for_of));
+            i += rewrite.consumed_stmts;
+            continue;
+        }
+
+        if let Some(rewrite) = try_convert_loose_iterator_sequence(&old[i..]) {
+            stmts.push(Stmt::ForOf(rewrite.for_of));
+            i += rewrite.consumed_stmts;
+            continue;
+        }
+
+        let stmt = old[i].clone();
+        if let Some(for_of) = try_convert_for_of(&stmt) {
+            stmts.push(Stmt::ForOf(for_of));
+        } else {
+            stmts.push(stmt);
+        }
+        i += 1;
+    }
+}
+
+struct SequenceRewrite {
+    consumed_stmts: usize,
+    preserved_stmts: Vec<Stmt>,
+    for_of: ForOfStmt,
+}
+
+fn try_convert_iterator_helper_sequence(stmts: &[Stmt]) -> Option<SequenceRewrite> {
+    if let Some(rewrite) = try_convert_iterator_helper_decl_first_sequence(stmts) {
+        return Some(rewrite);
+    }
+
+    let item_ident = empty_single_var_ident(stmts.first()?)?;
+
+    let mut helper_index = None;
+    let mut preserved_stmts = Vec::new();
+    for (idx, stmt) in stmts.iter().enumerate().skip(1) {
+        if let Some(decl) = stmt_as_single_var_decl(stmt) {
+            if decl.decls[0].init.is_some() && pat_as_ident(&decl.decls[0].name).is_some() {
+                helper_index = Some(idx);
+                break;
+            }
+        }
+
+        if empty_single_var_ident(stmt).is_some() {
+            preserved_stmts.push(stmt.clone());
+            continue;
+        }
+
+        return None;
+    }
+
+    let helper_index = helper_index?;
+    let helper_decl = stmt_as_single_var_decl(&stmts[helper_index])?;
+    let helper_ident = pat_as_ident(&helper_decl.decls[0].name)?.id.clone();
+    let iterable = extract_single_call_arg(helper_decl.decls[0].init.as_ref()?)?;
+    let try_stmt = stmt_as_try(stmts.get(helper_index + 1)?)?;
+    let helper_loop = extract_iterator_helper_loop(try_stmt, &helper_ident, &item_ident)?;
+
+    let consumed_stmts = helper_index + 2;
+    if stmts[consumed_stmts..].iter().any(|stmt| {
+        stmt_uses_ident_key(stmt, &item_ident) || stmt_uses_ident_key(stmt, &helper_ident)
+    }) {
+        return None;
+    }
+
+    let for_of = build_helper_for_of(helper_loop, iterable, item_ident)?;
+    Some(SequenceRewrite {
+        consumed_stmts,
+        preserved_stmts,
+        for_of,
+    })
+}
+
+fn try_convert_iterator_helper_decl_first_sequence(stmts: &[Stmt]) -> Option<SequenceRewrite> {
+    let helper_decl = stmt_as_single_var_decl(stmts.first()?)?;
+    let helper_ident = pat_as_ident(&helper_decl.decls[0].name)?.id.clone();
+    let iterable = extract_single_call_arg(helper_decl.decls[0].init.as_ref()?)?;
+    let item_ident = empty_single_var_ident(stmts.get(1)?)?;
+    let try_stmt = stmt_as_try(stmts.get(2)?)?;
+    let helper_loop = extract_iterator_helper_loop(try_stmt, &helper_ident, &item_ident)?;
+
+    if stmts[3..].iter().any(|stmt| {
+        stmt_uses_ident_key(stmt, &item_ident) || stmt_uses_ident_key(stmt, &helper_ident)
+    }) {
+        return None;
+    }
+
+    let for_of = build_helper_for_of(helper_loop, iterable, item_ident)?;
+    Some(SequenceRewrite {
+        consumed_stmts: 3,
+        preserved_stmts: Vec::new(),
+        for_of,
+    })
+}
+
+fn try_convert_loose_iterator_sequence(stmts: &[Stmt]) -> Option<SequenceRewrite> {
+    let item_ident = empty_single_var_ident(stmts.first()?)?;
+    let Stmt::For(for_stmt) = stmts.get(1)? else {
+        return None;
+    };
+    let Some(VarDeclOrExpr::VarDecl(init_decl)) = &for_stmt.init else {
+        return None;
+    };
+    let [helper_decl] = init_decl.decls.as_slice() else {
+        return None;
+    };
+    let helper_ident = pat_as_ident(&helper_decl.name)?.id.clone();
+    let iterable = extract_single_call_arg(helper_decl.init.as_ref()?)?;
+    if for_stmt.update.is_some() {
+        return None;
+    }
+    if !is_loose_iterator_test(for_stmt.test.as_deref()?, &helper_ident, &item_ident) {
+        return None;
+    }
+    if stmts[2..].iter().any(|stmt| {
+        stmt_uses_ident_key(stmt, &item_ident) || stmt_uses_ident_key(stmt, &helper_ident)
+    }) {
+        return None;
+    }
+
+    let Stmt::Block(body) = &*for_stmt.body else {
+        return None;
+    };
+    let for_of = build_helper_for_of(body.clone(), iterable, item_ident)?;
+    Some(SequenceRewrite {
+        consumed_stmts: 2,
+        preserved_stmts: Vec::new(),
+        for_of,
+    })
+}
+
+fn try_convert_ts_values_sequence(stmts: &[Stmt]) -> Option<SequenceRewrite> {
+    let error_ident = empty_single_var_ident(stmts.first()?)?;
+    let return_ident = empty_single_var_ident(stmts.get(1)?)?;
+    let try_stmt = stmt_as_try(stmts.get(2)?)?;
+    let helper_loop = extract_ts_values_loop(try_stmt, &error_ident, &return_ident)?;
+    if stmts[3..].iter().any(|stmt| {
+        stmt_uses_ident_key(stmt, &error_ident) || stmt_uses_ident_key(stmt, &return_ident)
+    }) {
+        return None;
+    }
+
+    let for_of = build_helper_for_of(
+        helper_loop.loop_body,
+        helper_loop.iterable,
+        helper_loop.result_ident,
+    )?;
+    Some(SequenceRewrite {
+        consumed_stmts: 3,
+        preserved_stmts: Vec::new(),
+        for_of,
+    })
+}
+
+fn try_convert_swc_iterator_sequence(stmts: &[Stmt]) -> Option<SequenceRewrite> {
+    let normal_ident = single_var_ident_with_bool(stmts.first()?, true)?;
+    let did_error_ident = single_var_ident_with_bool(stmts.get(1)?, false)?;
+    let error_ident = empty_single_var_ident(stmts.get(2)?)?;
+    let try_stmt = stmt_as_try(stmts.get(3)?)?;
+    let helper_loop = extract_swc_iterator_loop(try_stmt, &normal_ident)?;
+
+    if !swc_catch_matches(try_stmt, &did_error_ident, &error_ident) {
+        return None;
+    }
+    if !try_stmt.finalizer.as_ref().is_some_and(|finalizer| {
+        let stmt = Stmt::Block(finalizer.clone());
+        stmt_uses_ident_key(&stmt, &normal_ident)
+            && stmt_uses_ident_key(&stmt, &did_error_ident)
+            && stmt_uses_ident_key(&stmt, &error_ident)
+            && stmt_uses_ident_key(&stmt, &helper_loop.iterator_ident)
+    }) {
+        return None;
+    }
+    if stmts[4..].iter().any(|stmt| {
+        stmt_uses_ident_key(stmt, &normal_ident)
+            || stmt_uses_ident_key(stmt, &did_error_ident)
+            || stmt_uses_ident_key(stmt, &error_ident)
+    }) {
+        return None;
+    }
+
+    let for_of = build_helper_for_of(
+        helper_loop.loop_body,
+        helper_loop.iterable,
+        helper_loop.result_ident,
+    )?;
+    Some(SequenceRewrite {
+        consumed_stmts: 4,
+        preserved_stmts: Vec::new(),
+        for_of,
+    })
+}
+
+struct TsValuesLoop {
+    iterable: Box<Expr>,
+    result_ident: Ident,
+    loop_body: BlockStmt,
+}
+
+struct SwcIteratorLoop {
+    iterable: Box<Expr>,
+    iterator_ident: Ident,
+    result_ident: Ident,
+    loop_body: BlockStmt,
+}
+
+fn extract_iterator_helper_loop(
+    try_stmt: &TryStmt,
+    helper_ident: &Ident,
+    item_ident: &Ident,
+) -> Option<BlockStmt> {
+    let for_stmt = single_for_stmt(&try_stmt.block)?;
+
+    let Some(VarDeclOrExpr::Expr(init)) = &for_stmt.init else {
+        return None;
+    };
+    if !is_helper_method_call(init, helper_ident, "s") {
+        return None;
+    }
+    if for_stmt.update.is_some() {
+        return None;
+    }
+    let test = for_stmt.test.as_deref()?;
+    if !is_iterator_helper_test(test, helper_ident, item_ident) {
+        return None;
+    }
+    if !catch_calls_helper_error(try_stmt, helper_ident) {
+        return None;
+    }
+    if !finally_calls_helper_method(try_stmt.finalizer.as_ref()?, helper_ident, "f") {
+        return None;
+    }
+
+    let Stmt::Block(body) = &*for_stmt.body else {
+        return None;
+    };
+    Some(body.clone())
+}
+
+fn extract_ts_values_loop(
+    try_stmt: &TryStmt,
+    error_ident: &Ident,
+    return_ident: &Ident,
+) -> Option<TsValuesLoop> {
+    let for_stmt = single_for_stmt(&try_stmt.block)?;
+    let Some(VarDeclOrExpr::VarDecl(init_decl)) = &for_stmt.init else {
+        return None;
+    };
+    let [iterator_decl, result_decl] = init_decl.decls.as_slice() else {
+        return None;
+    };
+    let iterator_ident = pat_as_ident(&iterator_decl.name)?.id.clone();
+    let result_ident = pat_as_ident(&result_decl.name)?.id.clone();
+    let iterable = extract_ts_values_arg(iterator_decl.init.as_ref()?)?;
+    if !is_iterator_next_call(result_decl.init.as_ref()?, &iterator_ident) {
+        return None;
+    }
+    if !is_not_done_test(for_stmt.test.as_deref()?, &result_ident) {
+        return None;
+    }
+    if !for_stmt
+        .update
+        .as_deref()
+        .is_some_and(|update| is_iterator_next_update(update, &result_ident, &iterator_ident))
+    {
+        return None;
+    }
+    if !ts_values_catch_matches(try_stmt, error_ident) {
+        return None;
+    }
+    if !try_stmt.finalizer.as_ref().is_some_and(|finalizer| {
+        stmt_uses_ident_key(&Stmt::Block(finalizer.clone()), return_ident)
+            && stmt_uses_ident_key(&Stmt::Block(finalizer.clone()), &iterator_ident)
+    }) {
+        return None;
+    }
+
+    let Stmt::Block(body) = &*for_stmt.body else {
+        return None;
+    };
+    Some(TsValuesLoop {
+        iterable,
+        result_ident,
+        loop_body: body.clone(),
+    })
+}
+
+fn extract_swc_iterator_loop(try_stmt: &TryStmt, normal_ident: &Ident) -> Option<SwcIteratorLoop> {
+    let [step_decl_stmt, Stmt::For(for_stmt)] = try_stmt.block.stmts.as_slice() else {
+        return None;
+    };
+    let result_ident = empty_single_var_ident(step_decl_stmt)?;
+    let Some(VarDeclOrExpr::VarDecl(init_decl)) = &for_stmt.init else {
+        return None;
+    };
+    let [iterator_decl] = init_decl.decls.as_slice() else {
+        return None;
+    };
+    let iterator_ident = pat_as_ident(&iterator_decl.name)?.id.clone();
+    let iterable = extract_symbol_iterator_call_obj(iterator_decl.init.as_ref()?)?;
+    if !is_swc_iterator_test(
+        for_stmt.test.as_deref()?,
+        normal_ident,
+        &result_ident,
+        &iterator_ident,
+    ) {
+        return None;
+    }
+    if !for_stmt
+        .update
+        .as_deref()
+        .is_some_and(|update| is_assign_bool(update, normal_ident, true))
+    {
+        return None;
+    }
+    let Stmt::Block(body) = &*for_stmt.body else {
+        return None;
+    };
+    Some(SwcIteratorLoop {
+        iterable,
+        iterator_ident,
+        result_ident,
+        loop_body: body.clone(),
+    })
+}
+
+fn build_helper_for_of(
+    mut body: BlockStmt,
+    iterable: Box<Expr>,
+    item_ident: Ident,
+) -> Option<ForOfStmt> {
+    let mut element = extract_iterator_value_element(&body.stmts, &item_ident);
+    if element.is_none() {
+        replace_iterator_value_refs(&mut body, &item_ident);
+        element = extract_iterator_call_destructuring_element(&body.stmts, &item_ident);
+    }
+    let (pat, bindings, kind, consumed_stmts, temp_sym) = if let Some(element) = element {
+        (
+            element.pat,
+            element.bindings,
+            element.kind,
+            element.consumed_stmts,
+            element.temp_sym,
+        )
+    } else {
+        (
+            Pat::Ident(BindingIdent {
+                id: item_ident.clone(),
+                type_ann: None,
+            }),
+            vec![item_ident.sym.clone()],
+            VarDeclKind::Const,
+            0,
+            None,
+        )
+    };
+
+    let mut remaining_body = body.stmts[consumed_stmts..].to_vec();
+    if consumed_stmts > 0
+        && remaining_body
+            .iter()
+            .any(|stmt| stmt_uses_ident_key(stmt, &item_ident))
+    {
+        return None;
+    }
+    if temp_sym
+        .as_ref()
+        .is_some_and(|sym| remaining_body.iter().any(|stmt| stmt_uses_ident(stmt, sym)))
+    {
+        return None;
+    }
+
+    let is_reassigned = remaining_body
+        .iter()
+        .any(|stmt| bindings.iter().any(|sym| stmt_assigns_ident(stmt, sym)));
+    let kind = if kind == VarDeclKind::Var {
+        VarDeclKind::Var
+    } else if is_reassigned {
+        VarDeclKind::Let
+    } else {
+        VarDeclKind::Const
+    };
+
+    Some(ForOfStmt {
+        span: DUMMY_SP,
+        is_await: false,
+        left: ForHead::VarDecl(Box::new(VarDecl {
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            kind,
+            declare: false,
+            decls: vec![VarDeclarator {
+                span: DUMMY_SP,
+                name: pat,
+                init: None,
+                definite: false,
+            }],
+        })),
+        right: iterable,
+        body: Box::new(Stmt::Block(BlockStmt {
+            span: body.span,
+            ctxt: body.ctxt,
+            stmts: std::mem::take(&mut remaining_body),
+        })),
+    })
+}
+
+fn extract_iterator_call_destructuring_element(
+    stmts: &[Stmt],
+    item_ident: &Ident,
+) -> Option<LoopElement> {
+    let first_decl = stmt_as_single_var_decl(stmts.first()?)?;
+    let first = &first_decl.decls[0];
+    let Pat::Ident(temp_binding) = &first.name else {
+        return None;
+    };
+    if !is_destructuring_helper_call(first.init.as_ref()?, item_ident) {
+        return None;
+    }
+
+    let temp_sym = &temp_binding.id.sym;
+    let mut elems = Vec::new();
+    let mut bindings = Vec::new();
+    let mut consumed_stmts = 1;
+
+    for stmt in &stmts[1..] {
+        let Some(decl) = stmt_as_single_var_decl(stmt) else {
+            break;
+        };
+        let declarator = &decl.decls[0];
+        let expected_index = elems.len() as f64;
+        let Pat::Ident(binding) = &declarator.name else {
+            break;
+        };
+        let Some(init) = declarator.init.as_ref() else {
+            break;
+        };
+        if !is_numeric_index_access(init, temp_sym, expected_index) {
+            break;
+        }
+
+        elems.push(Some(Pat::Ident(BindingIdent {
+            id: binding.id.clone(),
+            type_ann: binding.type_ann.clone(),
+        })));
+        bindings.push(binding.id.sym.clone());
+        consumed_stmts += 1;
+    }
+
+    if elems.is_empty() {
+        return None;
+    }
+
+    Some(LoopElement {
+        pat: Pat::Array(ArrayPat {
+            span: DUMMY_SP,
+            elems,
+            optional: false,
+            type_ann: None,
+        }),
+        bindings,
+        kind: first_decl.kind,
+        temp_sym: Some(temp_sym.clone()),
+        consumed_stmts,
+    })
+}
+
+fn extract_iterator_value_element(stmts: &[Stmt], item_ident: &Ident) -> Option<LoopElement> {
+    let first_decl = stmt_as_single_var_decl(stmts.first()?)?;
+    let first = &first_decl.decls[0];
+    let Pat::Ident(binding) = &first.name else {
+        return None;
+    };
+    if !is_value_member(first.init.as_ref()?, item_ident) {
+        return None;
+    }
+
+    let temp_sym = &binding.id.sym;
+    let mut elems = Vec::new();
+    let mut bindings = Vec::new();
+    let mut consumed_stmts = 1;
+
+    for stmt in &stmts[1..] {
+        let Some(decl) = stmt_as_single_var_decl(stmt) else {
+            break;
+        };
+        let declarator = &decl.decls[0];
+        let expected_index = elems.len() as f64;
+        let Pat::Ident(binding) = &declarator.name else {
+            break;
+        };
+        let Some(init) = declarator.init.as_ref() else {
+            break;
+        };
+        if !is_numeric_index_access(init, temp_sym, expected_index) {
+            break;
+        }
+
+        elems.push(Some(Pat::Ident(BindingIdent {
+            id: binding.id.clone(),
+            type_ann: binding.type_ann.clone(),
+        })));
+        bindings.push(binding.id.sym.clone());
+        consumed_stmts += 1;
+    }
+
+    if !elems.is_empty() {
+        return Some(LoopElement {
+            pat: Pat::Array(ArrayPat {
+                span: DUMMY_SP,
+                elems,
+                optional: false,
+                type_ann: None,
+            }),
+            bindings,
+            kind: first_decl.kind,
+            temp_sym: Some(temp_sym.clone()),
+            consumed_stmts,
+        });
+    }
+
+    Some(LoopElement {
+        pat: Pat::Ident(binding.clone()),
+        bindings: vec![binding.id.sym.clone()],
+        kind: first_decl.kind,
+        temp_sym: None,
+        consumed_stmts: 1,
+    })
+}
+
+fn single_for_stmt(block: &BlockStmt) -> Option<&swc_core::ecma::ast::ForStmt> {
+    let [Stmt::For(for_stmt)] = block.stmts.as_slice() else {
+        return None;
+    };
+    Some(for_stmt)
+}
+
+fn empty_single_var_ident(stmt: &Stmt) -> Option<Ident> {
+    let decl = stmt_as_single_var_decl(stmt)?;
+    let declarator = &decl.decls[0];
+    if declarator.init.is_some() {
+        return None;
+    }
+    Some(pat_as_ident(&declarator.name)?.id.clone())
+}
+
+fn single_var_ident_with_bool(stmt: &Stmt, value: bool) -> Option<Ident> {
+    let decl = stmt_as_single_var_decl(stmt)?;
+    let declarator = &decl.decls[0];
+    if !declarator.init.as_deref().is_some_and(
+        |init| matches!(init, Expr::Lit(Lit::Bool(bool_lit)) if bool_lit.value == value),
+    ) {
+        return None;
+    }
+    Some(pat_as_ident(&declarator.name)?.id.clone())
+}
+
+fn pat_as_ident(pat: &Pat) -> Option<&BindingIdent> {
+    let Pat::Ident(ident) = pat else {
+        return None;
+    };
+    Some(ident)
+}
+
+fn stmt_as_try(stmt: &Stmt) -> Option<&TryStmt> {
+    let Stmt::Try(try_stmt) = stmt else {
+        return None;
+    };
+    Some(try_stmt)
+}
+
+fn extract_single_call_arg(expr: &Expr) -> Option<Box<Expr>> {
+    let Expr::Call(CallExpr { args, .. }) = expr else {
+        return None;
+    };
+    let [ExprOrSpread { spread: None, expr }] = args.as_slice() else {
+        return None;
+    };
+    Some(expr.clone())
+}
+
+fn extract_ts_values_arg(expr: &Expr) -> Option<Box<Expr>> {
+    let Expr::Call(CallExpr { callee, args, .. }) = expr else {
+        return None;
+    };
+    if !callee_is_prop(callee, "__values") && !callee_is_ident(callee, "__values") {
+        return None;
+    }
+    let [ExprOrSpread { spread: None, expr }] = args.as_slice() else {
+        return None;
+    };
+    Some(expr.clone())
+}
+
+fn is_loose_iterator_test(expr: &Expr, helper_ident: &Ident, item_ident: &Ident) -> bool {
+    let Expr::Unary(UnaryExpr {
+        op: UnaryOp::Bang,
+        arg,
+        ..
+    }) = expr
+    else {
+        return false;
+    };
+    let Some(done_obj) = extract_done_obj(arg) else {
+        return false;
+    };
+    let Expr::Assign(assign) = done_obj else {
+        return false;
+    };
+    is_assign_ident(assign, item_ident) && is_helper_call(&assign.right, helper_ident)
+}
+
+fn is_swc_iterator_test(
+    expr: &Expr,
+    normal_ident: &Ident,
+    result_ident: &Ident,
+    iterator_ident: &Ident,
+) -> bool {
+    let Expr::Unary(UnaryExpr {
+        op: UnaryOp::Bang,
+        arg,
+        ..
+    }) = expr
+    else {
+        return false;
+    };
+    let Expr::Assign(normal_assign) = strip_paren(arg) else {
+        return false;
+    };
+    if !is_assign_ident(normal_assign, normal_ident) {
+        return false;
+    }
+    let Some(done_obj) = extract_done_obj(&normal_assign.right) else {
+        return false;
+    };
+    let Expr::Assign(next_assign) = done_obj else {
+        return false;
+    };
+    is_assign_ident(next_assign, result_ident)
+        && is_iterator_next_call(&next_assign.right, iterator_ident)
+}
+
+fn is_iterator_helper_test(expr: &Expr, helper_ident: &Ident, item_ident: &Ident) -> bool {
+    let Expr::Unary(UnaryExpr {
+        op: UnaryOp::Bang,
+        arg,
+        ..
+    }) = expr
+    else {
+        return false;
+    };
+    let Some(done_obj) = extract_done_obj(arg) else {
+        return false;
+    };
+    let Expr::Assign(assign) = done_obj else {
+        return false;
+    };
+    is_assign_ident(assign, item_ident) && is_helper_method_call(&assign.right, helper_ident, "n")
+}
+
+fn is_not_done_test(expr: &Expr, result_ident: &Ident) -> bool {
+    let Expr::Unary(UnaryExpr {
+        op: UnaryOp::Bang,
+        arg,
+        ..
+    }) = expr
+    else {
+        return false;
+    };
+    let Some(done_obj) = extract_done_obj(arg) else {
+        return false;
+    };
+    is_ident_key(done_obj, result_ident)
+}
+
+fn extract_done_obj(expr: &Expr) -> Option<&Expr> {
+    let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
+        return None;
+    };
+    let MemberProp::Ident(prop) = prop else {
+        return None;
+    };
+    if prop.sym.as_ref() != "done" {
+        return None;
+    }
+    Some(strip_paren(obj))
+}
+
+fn is_assign_ident(assign: &AssignExpr, ident: &Ident) -> bool {
+    if assign.op != AssignOp::Assign {
+        return false;
+    }
+    matches!(
+        &assign.left,
+        AssignTarget::Simple(SimpleAssignTarget::Ident(left)) if left.id.sym == ident.sym && left.id.ctxt == ident.ctxt
+    )
+}
+
+fn is_iterator_next_call(expr: &Expr, iterator_ident: &Ident) -> bool {
+    is_helper_method_call(expr, iterator_ident, "next")
+}
+
+fn is_iterator_next_update(expr: &Expr, result_ident: &Ident, iterator_ident: &Ident) -> bool {
+    let Expr::Assign(assign) = expr else {
+        return false;
+    };
+    is_assign_ident(assign, result_ident) && is_iterator_next_call(&assign.right, iterator_ident)
+}
+
+fn is_assign_bool(expr: &Expr, ident: &Ident, value: bool) -> bool {
+    let Expr::Assign(assign) = expr else {
+        return false;
+    };
+    is_assign_ident(assign, ident)
+        && matches!(&*assign.right, Expr::Lit(Lit::Bool(bool_lit)) if bool_lit.value == value)
+}
+
+fn is_helper_method_call(expr: &Expr, helper_ident: &Ident, method: &str) -> bool {
+    let Expr::Call(CallExpr { callee, args, .. }) = expr else {
+        return false;
+    };
+    if !args.is_empty() {
+        return false;
+    }
+    let Callee::Expr(callee_expr) = callee else {
+        return false;
+    };
+    let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else {
+        return false;
+    };
+    if !is_ident_key(obj, helper_ident) {
+        return false;
+    }
+    matches!(prop, MemberProp::Ident(prop) if prop.sym.as_ref() == method)
+}
+
+fn is_helper_call(expr: &Expr, helper_ident: &Ident) -> bool {
+    let Expr::Call(CallExpr { callee, args, .. }) = expr else {
+        return false;
+    };
+    if !args.is_empty() {
+        return false;
+    }
+    let Callee::Expr(callee_expr) = callee else {
+        return false;
+    };
+    is_ident_key(callee_expr, helper_ident)
+}
+
+fn catch_calls_helper_error(try_stmt: &TryStmt, helper_ident: &Ident) -> bool {
+    let Some(catch) = &try_stmt.handler else {
+        return false;
+    };
+    let [Stmt::Expr(expr_stmt)] = catch.body.stmts.as_slice() else {
+        return false;
+    };
+    let Expr::Call(CallExpr { callee, args, .. }) = &*expr_stmt.expr else {
+        return false;
+    };
+    if args.len() != 1 {
+        return false;
+    }
+    let Callee::Expr(callee_expr) = callee else {
+        return false;
+    };
+    let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else {
+        return false;
+    };
+    is_ident_key(obj, helper_ident)
+        && matches!(prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "e")
+}
+
+fn finally_calls_helper_method(block: &BlockStmt, helper_ident: &Ident, method: &str) -> bool {
+    let [Stmt::Expr(expr_stmt)] = block.stmts.as_slice() else {
+        return false;
+    };
+    is_helper_method_call(&expr_stmt.expr, helper_ident, method)
+}
+
+fn ts_values_catch_matches(try_stmt: &TryStmt, error_ident: &Ident) -> bool {
+    let Some(catch) = &try_stmt.handler else {
+        return false;
+    };
+    let [Stmt::Expr(expr_stmt)] = catch.body.stmts.as_slice() else {
+        return false;
+    };
+    let Expr::Assign(assign) = &*expr_stmt.expr else {
+        return false;
+    };
+    is_assign_ident(assign, error_ident)
+}
+
+fn swc_catch_matches(try_stmt: &TryStmt, did_error_ident: &Ident, error_ident: &Ident) -> bool {
+    let Some(catch) = &try_stmt.handler else {
+        return false;
+    };
+    let [Stmt::Expr(first), Stmt::Expr(second)] = catch.body.stmts.as_slice() else {
+        return false;
+    };
+    if !is_assign_bool(&first.expr, did_error_ident, true) {
+        return false;
+    }
+    let Some(param) = catch.param.as_ref().and_then(pat_as_ident) else {
+        return false;
+    };
+    let Expr::Assign(assign) = &*second.expr else {
+        return false;
+    };
+    is_assign_ident(assign, error_ident) && is_ident_key(&assign.right, &param.id)
+}
+
+fn is_value_member(expr: &Expr, item_ident: &Ident) -> bool {
+    let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
+        return false;
+    };
+    is_ident_key(obj, item_ident)
+        && matches!(prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value")
+}
+
+fn is_destructuring_helper_call(expr: &Expr, item_ident: &Ident) -> bool {
+    let Expr::Call(CallExpr { args, .. }) = expr else {
+        return false;
+    };
+    let Some(ExprOrSpread { spread: None, expr }) = args.first() else {
+        return false;
+    };
+    is_ident_key(expr, item_ident)
+}
+
+fn extract_symbol_iterator_call_obj(expr: &Expr) -> Option<Box<Expr>> {
+    let Expr::Call(CallExpr { callee, args, .. }) = expr else {
+        return None;
+    };
+    if !args.is_empty() {
+        return None;
+    }
+    let Callee::Expr(callee_expr) = callee else {
+        return None;
+    };
+    let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else {
+        return None;
+    };
+    let MemberProp::Computed(computed) = prop else {
+        return None;
+    };
+    if !is_symbol_iterator_expr(&computed.expr) {
+        return None;
+    }
+    Some(obj.clone())
+}
+
+fn is_symbol_iterator_expr(expr: &Expr) -> bool {
+    let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
+        return false;
+    };
+    is_ident(obj, &Atom::from("Symbol"))
+        && matches!(prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "iterator")
+}
+
+fn replace_iterator_value_refs(block: &mut BlockStmt, item_ident: &Ident) {
+    struct Replacer {
+        ident: Ident,
+    }
+
+    impl VisitMut for Replacer {
+        fn visit_mut_expr(&mut self, expr: &mut Expr) {
+            expr.visit_mut_children_with(self);
+            if is_value_member(expr, &self.ident) {
+                *expr = Expr::Ident(self.ident.clone());
+            }
+        }
+    }
+
+    block.visit_mut_with(&mut Replacer {
+        ident: item_ident.clone(),
+    });
+}
+
+fn strip_paren(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_paren(&paren.expr),
+        _ => expr,
+    }
+}
+
+fn callee_is_prop(callee: &Callee, prop_name: &str) -> bool {
+    let Callee::Expr(callee_expr) = callee else {
+        return false;
+    };
+    let Expr::Member(MemberExpr { prop, .. }) = &**callee_expr else {
+        return false;
+    };
+    matches!(prop, MemberProp::Ident(prop) if prop.sym.as_ref() == prop_name)
+}
+
+fn callee_is_ident(callee: &Callee, sym: &str) -> bool {
+    let Callee::Expr(callee_expr) = callee else {
+        return false;
+    };
+    matches!(&**callee_expr, Expr::Ident(ident) if ident.sym.as_ref() == sym)
 }
 
 fn try_convert_for_of(stmt: &Stmt) -> Option<ForOfStmt> {
@@ -354,6 +1317,10 @@ fn is_ident(expr: &Expr, sym: &Atom) -> bool {
     matches!(expr, Expr::Ident(id) if &id.sym == sym)
 }
 
+fn is_ident_key(expr: &Expr, ident: &Ident) -> bool {
+    matches!(expr, Expr::Ident(id) if id.sym == ident.sym && id.ctxt == ident.ctxt)
+}
+
 fn same_ident_expr(left: &Expr, right: &Expr) -> bool {
     match (left, right) {
         (Expr::Ident(left), Expr::Ident(right)) => left.sym == right.sym && left.ctxt == right.ctxt,
@@ -416,6 +1383,33 @@ fn stmt_uses_ident(stmt: &Stmt, sym: &Atom) -> bool {
 
     let mut finder = IdentFinder {
         sym: sym.clone(),
+        found: false,
+    };
+    finder.visit_stmt(stmt);
+    finder.found
+}
+
+/// Check if a statement references the exact identifier binding.
+fn stmt_uses_ident_key(stmt: &Stmt, ident: &Ident) -> bool {
+    use swc_core::ecma::visit::Visit;
+
+    struct IdentFinder {
+        sym: Atom,
+        ctxt: SyntaxContext,
+        found: bool,
+    }
+
+    impl Visit for IdentFinder {
+        fn visit_ident(&mut self, ident: &Ident) {
+            if ident.sym == self.sym && ident.ctxt == self.ctxt {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = IdentFinder {
+        sym: ident.sym.clone(),
+        ctxt: ident.ctxt,
         found: false,
     };
     finder.visit_stmt(stmt);
