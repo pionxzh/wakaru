@@ -38,14 +38,19 @@ const a = (e, t = "")=>{
     let f = 0;
     for(let d = a.length; d >= 0; d--){
         const p = a[d];
-        if (p === ".") {
-            i(a, d);
-        } else if (p === "..") {
-            i(a, d);
-            f++;
-        } else if (f) {
-            i(a, d);
-            f--;
+        switch(p){
+            case ".":
+                i(a, d);
+                break;
+            case "..":
+                i(a, d);
+                f++;
+                break;
+            default:
+                if (f) {
+                    i(a, d);
+                    f--;
+                }
         }
     }
     if (!c) {

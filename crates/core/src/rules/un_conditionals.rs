@@ -1,7 +1,9 @@
+use std::collections::HashSet;
+
 use swc_core::common::{Span, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BinExpr, BinaryOp, BlockStmt, Expr, ExprStmt, IfStmt, ModuleItem, ReturnStmt, Stmt, UnaryExpr,
-    UnaryOp,
+    BinExpr, BinaryOp, BlockStmt, BreakStmt, CondExpr, Expr, ExprStmt, Ident, IfStmt, Lit,
+    ModuleItem, ReturnStmt, Stmt, SwitchCase, SwitchStmt, UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -62,6 +64,10 @@ fn convert_stmt(stmt: Stmt) -> Vec<Stmt> {
 fn try_convert_expr_stmt_to_if(span: Span, expr: Expr) -> Vec<Stmt> {
     match expr {
         Expr::Cond(cond_expr) => {
+            if let Some(switch_stmt) = try_cond_to_switch_expr_stmt(&cond_expr) {
+                return vec![switch_stmt];
+            }
+
             // Only convert if at least one branch is action-like (has side effects)
             if !is_action_expr(&cond_expr.cons) && !is_action_expr(&cond_expr.alt) {
                 return vec![Stmt::Expr(ExprStmt {
@@ -133,6 +139,198 @@ fn is_action_expr(expr: &Box<Expr>) -> bool {
         Expr::Seq(seq) => seq.exprs.iter().any(is_action_expr),
         Expr::Paren(paren) => is_action_expr(&paren.expr),
         _ => false,
+    }
+}
+
+#[derive(Clone)]
+struct SwitchChain {
+    discriminant: Ident,
+    cases: Vec<(Box<Expr>, Box<Expr>)>,
+    default: Box<Expr>,
+}
+
+fn try_cond_to_switch_expr_stmt(cond: &CondExpr) -> Option<Stmt> {
+    let chain = collect_switch_chain(cond)?;
+    if !chain_has_action(&chain) {
+        return None;
+    }
+
+    Some(Stmt::Switch(SwitchStmt {
+        span: DUMMY_SP,
+        discriminant: Box::new(Expr::Ident(chain.discriminant.clone())),
+        cases: switch_cases_from_expr_chain(chain),
+    }))
+}
+
+fn try_cond_to_switch_return(cond: &CondExpr, return_span: Span) -> Option<Stmt> {
+    let chain = collect_switch_chain(cond)?;
+    let mut cases = Vec::with_capacity(chain.cases.len() + 1);
+
+    for (test, body) in chain.cases {
+        cases.push(SwitchCase {
+            span: DUMMY_SP,
+            test: Some(test),
+            cons: vec![Stmt::Return(ReturnStmt {
+                span: return_span,
+                arg: Some(body),
+            })],
+        });
+    }
+
+    cases.push(SwitchCase {
+        span: DUMMY_SP,
+        test: None,
+        cons: vec![Stmt::Return(ReturnStmt {
+            span: return_span,
+            arg: Some(chain.default),
+        })],
+    });
+
+    Some(Stmt::Switch(SwitchStmt {
+        span: DUMMY_SP,
+        discriminant: Box::new(Expr::Ident(chain.discriminant)),
+        cases,
+    }))
+}
+
+fn collect_switch_chain(cond: &CondExpr) -> Option<SwitchChain> {
+    let mut discriminant = None;
+    let mut cases = Vec::new();
+    let mut seen_cases = HashSet::new();
+    let mut current = cond;
+
+    loop {
+        let (case_discriminant, case_test) = extract_strict_case_test(&current.test)?;
+        if let Some(existing) = &discriminant {
+            if !same_ident(existing, &case_discriminant) {
+                return None;
+            }
+        } else {
+            discriminant = Some(case_discriminant);
+        }
+
+        let key = literal_case_key(&case_test)?;
+        if !seen_cases.insert(key) {
+            return None;
+        }
+        cases.push((case_test, current.cons.clone()));
+
+        match current.alt.as_ref() {
+            Expr::Cond(next) => current = next,
+            _ => {
+                if cases.len() < 2 {
+                    return None;
+                }
+                return Some(SwitchChain {
+                    discriminant: discriminant.expect("set by first case"),
+                    cases,
+                    default: current.alt.clone(),
+                });
+            }
+        }
+    }
+}
+
+fn extract_strict_case_test(test: &Expr) -> Option<(Ident, Box<Expr>)> {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::EqEqEq,
+        left,
+        right,
+        ..
+    }) = unparen_expr(test)
+    else {
+        return None;
+    };
+
+    match (unparen_expr(left), unparen_expr(right)) {
+        (Expr::Ident(discriminant), case) if literal_case_key(case).is_some() => {
+            Some((discriminant.clone(), Box::new(case.clone())))
+        }
+        (case, Expr::Ident(discriminant)) if literal_case_key(case).is_some() => {
+            Some((discriminant.clone(), Box::new(case.clone())))
+        }
+        _ => None,
+    }
+}
+
+fn switch_cases_from_expr_chain(chain: SwitchChain) -> Vec<SwitchCase> {
+    let mut cases = Vec::with_capacity(chain.cases.len() + 1);
+    for (test, body) in chain.cases {
+        cases.push(SwitchCase {
+            span: DUMMY_SP,
+            test: Some(test),
+            cons: expr_to_case_stmts(*body, true),
+        });
+    }
+
+    cases.push(SwitchCase {
+        span: DUMMY_SP,
+        test: None,
+        cons: expr_to_case_stmts(*chain.default, false),
+    });
+
+    cases
+}
+
+fn expr_to_case_stmts(expr: Expr, append_break: bool) -> Vec<Stmt> {
+    let inner = strip_paren_expr(expr);
+    let mut stmts = match inner {
+        Expr::Seq(seq) => seq
+            .exprs
+            .into_iter()
+            .flat_map(|expr| expr_to_case_stmts(*expr, false))
+            .collect(),
+        Expr::Cond(cond) => vec![convert_cond_to_if(*cond.test, cond.cons, cond.alt)],
+        other => convert_stmt(Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(other),
+        })),
+    };
+
+    if append_break {
+        stmts.push(Stmt::Break(BreakStmt {
+            span: DUMMY_SP,
+            label: None,
+        }));
+    }
+
+    stmts
+}
+
+fn chain_has_action(chain: &SwitchChain) -> bool {
+    chain.cases.iter().any(|(_, body)| is_action_expr(body)) || is_action_expr(&chain.default)
+}
+
+fn same_ident(left: &Ident, right: &Ident) -> bool {
+    left.sym == right.sym && left.ctxt == right.ctxt
+}
+
+fn literal_case_key(expr: &Expr) -> Option<String> {
+    match unparen_expr(expr) {
+        Expr::Lit(Lit::Str(value)) => Some(format!("str:{}", value.value.to_string_lossy())),
+        Expr::Lit(Lit::Bool(value)) => Some(format!("bool:{}", value.value)),
+        Expr::Lit(Lit::Null(_)) => Some("null".to_string()),
+        Expr::Lit(Lit::Num(value)) => Some(format!(
+            "num:{}:{}",
+            value.value,
+            value.value.is_sign_positive()
+        )),
+        Expr::Lit(Lit::BigInt(value)) => Some(format!("bigint:{}", value.value)),
+        _ => None,
+    }
+}
+
+fn unparen_expr(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => unparen_expr(&paren.expr),
+        other => other,
+    }
+}
+
+fn strip_paren_expr(expr: Expr) -> Expr {
+    match expr {
+        Expr::Paren(paren) => strip_paren_expr(*paren.expr),
+        other => other,
     }
 }
 
@@ -255,6 +453,10 @@ fn try_split_return_ternary(expr: Expr, return_span: Span) -> Option<Vec<Stmt>> 
     let Expr::Cond(cond) = expr else {
         return None;
     };
+
+    if let Some(switch_stmt) = try_cond_to_switch_return(&cond, return_span) {
+        return Some(vec![switch_stmt]);
+    }
 
     let mut stmts = Vec::new();
     build_return_chain(*cond.test, cond.cons, cond.alt, &mut stmts, return_span);

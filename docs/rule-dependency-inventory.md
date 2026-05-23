@@ -594,10 +594,10 @@ These rules restore structural patterns and clean up minification artifacts.
 | Uses `unresolved_mark` | No |
 | Suspected prerequisites | UnOptionalChaining (`suspected`), UnNullishCoalescing (`suspected`) — must run after these to avoid converting `?.`/`??`-eligible patterns |
 | Shape prerequisites | Ternary/logical expressions not eligible for `?.` or `??` |
-| Produces | `if/else` statements from ternaries and logical expressions |
+| Produces | `if/else` statements from ternaries/logical expressions; `switch` statements from strict same-discriminant ternary chains |
 | Downstream dependents | UnParameters (needs if-statement form for default param detection) |
 | Fact behavior | Neither |
-| Safety | Heuristic (only converts "action-like" branches: calls, assignments, awaits) |
+| Safety | Heuristic (only converts "action-like" branches for statement conditionals; switch recovery is limited to strict equality over one identifier and literal cases) |
 
 ### 38. UnParameters
 

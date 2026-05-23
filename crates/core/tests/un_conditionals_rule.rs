@@ -131,6 +131,197 @@ function fn() {
 }
 
 #[test]
+fn strict_return_ternary_chain_to_switch() {
+    let input = r#"
+function fn(kind) {
+  return kind === "bar" ? bar() : kind === "baz" ? baz() : kind === "qux" ? qux() : quux();
+}
+"#;
+    let expected = r#"
+function fn(kind) {
+  switch (kind) {
+    case "bar":
+      return bar();
+    case "baz":
+      return baz();
+    case "qux":
+      return qux();
+    default:
+      return quux();
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn strict_statement_ternary_chain_to_switch() {
+    let input = r#"
+kind === "bar" ? bar() : kind === "baz" ? baz() : kind === "qux" ? qux() : quux();
+"#;
+    let expected = r#"
+switch (kind) {
+  case "bar":
+    bar();
+    break;
+  case "baz":
+    baz();
+    break;
+  case "qux":
+    qux();
+    break;
+  default:
+    quux();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn switch_case_sequence_body_expands_without_block_wrapper() {
+    let input = r#"
+kind === "bar" ? (console.log(1), alert(2)) : kind === "baz" ? baz() : quux();
+"#;
+    let expected = r#"
+switch (kind) {
+  case "bar":
+    console.log(1);
+    alert(2);
+    break;
+  case "baz":
+    baz();
+    break;
+  default:
+    quux();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn switch_case_body_expands_nested_ternary() {
+    let input = r#"
+kind === "bar" ? (flag ? bar() : baz()) : kind === "qux" ? qux() : quux();
+"#;
+    let expected = r#"
+switch (kind) {
+  case "bar":
+    if (flag) {
+      bar();
+    } else {
+      baz();
+    }
+    break;
+  case "qux":
+    qux();
+    break;
+  default:
+    quux();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn strict_literal_left_ternary_chain_to_switch() {
+    let input = r#"
+function fn(kind) {
+  return "bar" === kind ? bar() : "baz" === kind ? baz() : quux();
+}
+"#;
+    let expected = r#"
+function fn(kind) {
+  switch (kind) {
+    case "bar":
+      return bar();
+    case "baz":
+      return baz();
+    default:
+      return quux();
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn loose_equality_ternary_chain_stays_if_return_chain() {
+    let input = r#"
+function fn(kind) {
+  return kind == "bar" ? bar() : kind == "baz" ? baz() : quux();
+}
+"#;
+    let expected = r#"
+function fn(kind) {
+  if (kind == "bar") {
+    return bar();
+  }
+
+  if (kind == "baz") {
+    return baz();
+  }
+
+  return quux();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn member_discriminant_ternary_chain_stays_if_return_chain() {
+    let input = r#"
+function fn(obj) {
+  return obj.kind === "bar" ? bar() : obj.kind === "baz" ? baz() : quux();
+}
+"#;
+    let expected = r#"
+function fn(obj) {
+  if (obj.kind === "bar") {
+    return bar();
+  }
+
+  if (obj.kind === "baz") {
+    return baz();
+  }
+
+  return quux();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn mixed_discriminant_ternary_chain_stays_if_return_chain() {
+    let input = r#"
+function fn(kind, other) {
+  return kind === "bar" ? bar() : other === "baz" ? baz() : quux();
+}
+"#;
+    let expected = r#"
+function fn(kind, other) {
+  if (kind === "bar") {
+    return bar();
+  }
+
+  if (other === "baz") {
+    return baz();
+  }
+
+  return quux();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn return_simple_ternary_split() {
     let input = r#"
 function fn() {

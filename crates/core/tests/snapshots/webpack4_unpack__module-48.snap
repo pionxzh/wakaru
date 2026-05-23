@@ -5570,22 +5570,26 @@ function Ja(e, t, n) {
                     for(u in s){
                         if (s.hasOwnProperty(u)) {
                             let f = s[u];
-                            if (u === "style") {
-                                Zt(e, f);
-                            } else if (u === "dangerouslySetInnerHTML") {
-                                if ((f = f ? f.__html : undefined) != null) {
-                                    Fe(e, f);
-                                }
-                            } else if (u === "children") {
-                                if (typeof f === "string") {
-                                    if (i !== "textarea" || f !== "") {
-                                        ze(e, f);
+                            switch(u){
+                                case "style":
+                                    Zt(e, f);
+                                    break;
+                                case "dangerouslySetInnerHTML":
+                                    if ((f = f ? f.__html : undefined) != null) {
+                                        Fe(e, f);
                                     }
-                                } else if (typeof f === "number") {
-                                    ze(e, `${f}`);
-                                }
-                            } else {
-                                u !== "suppressContentEditableWarning" && u !== "suppressHydrationWarning" && u !== "autoFocus" && (k.hasOwnProperty(u) ? f != null && on(n, u) : f != null && G(e, u, f, l));
+                                    break;
+                                case "children":
+                                    if (typeof f === "string") {
+                                        if (i !== "textarea" || f !== "") {
+                                            ze(e, f);
+                                        }
+                                    } else if (typeof f === "number") {
+                                        ze(e, `${f}`);
+                                    }
+                                    break;
+                                default:
+                                    u !== "suppressContentEditableWarning" && u !== "suppressHydrationWarning" && u !== "autoFocus" && (k.hasOwnProperty(u) ? f != null && on(n, u) : f != null && G(e, u, f, l));
                             }
                         }
                     }
@@ -5957,18 +5961,21 @@ Wa = (e, t, n, r, i)=>{
                         n = s;
                     }
                 } else {
-                    if (u === "dangerouslySetInnerHTML") {
-                        s = s ? s.__html : undefined;
-                        c = c ? c.__html : undefined;
-                        if (s != null && c !== s) {
-                            (e = e || []).push(u, s);
-                        }
-                    } else if (u === "children") {
-                        if (!(c === s || typeof s !== "string" && typeof s !== "number")) {
-                            (e = e || []).push(u, `${s}`);
-                        }
-                    } else {
-                        u !== "suppressContentEditableWarning" && u !== "suppressHydrationWarning" && (k.hasOwnProperty(u) ? (s != null && on(i, u), e || c === s || (e = [])) : (e = e || []).push(u, s));
+                    switch(u){
+                        case "dangerouslySetInnerHTML":
+                            s = s ? s.__html : undefined;
+                            c = c ? c.__html : undefined;
+                            if (s != null && c !== s) {
+                                (e = e || []).push(u, s);
+                            }
+                            break;
+                        case "children":
+                            if (!(c === s || typeof s !== "string" && typeof s !== "number")) {
+                                (e = e || []).push(u, `${s}`);
+                            }
+                            break;
+                        default:
+                            u !== "suppressContentEditableWarning" && u !== "suppressHydrationWarning" && (k.hasOwnProperty(u) ? (s != null && on(i, u), e || c === s || (e = [])) : (e = e || []).push(u, s));
                     }
                 }
             }
@@ -6415,14 +6422,18 @@ function pu(e, t) {
                     for(o = 0; o < i.length; o += 2){
                         const u = i[o];
                         const l = i[o + 1];
-                        if (u === "style") {
-                            Zt(n, l);
-                        } else if (u === "dangerouslySetInnerHTML") {
-                            Fe(n, l);
-                        } else if (u === "children") {
-                            ze(n, l);
-                        } else {
-                            G(n, u, l, t);
+                        switch(u){
+                            case "style":
+                                Zt(n, l);
+                                break;
+                            case "dangerouslySetInnerHTML":
+                                Fe(n, l);
+                                break;
+                            case "children":
+                                ze(n, l);
+                                break;
+                            default:
+                                G(n, u, l, t);
                         }
                     }
                     switch(e){
