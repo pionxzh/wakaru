@@ -358,15 +358,29 @@ function runWakaru(source, name) {
 function ensureNodeTool(name, packages) {
   const dir = join(toolRoot, name);
   const marker = join(dir, ".installed");
-  if (existsSync(marker)) {
+  const installed = existsSync(marker)
+    && packages.every((pkg) =>
+      existsSync(join(dir, "node_modules", packageName(pkg), "package.json")),
+    );
+  if (installed) {
     return dir;
   }
 
+  rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "package.json"), JSON.stringify({ private: true, type: "commonjs" }, null, 2));
   runCommandScript("npm", ["install", "--silent", "--no-audit", "--no-fund", ...packages], { cwd: dir });
   writeFileSync(marker, packages.join("\n"));
   return dir;
+}
+
+function packageName(spec) {
+  if (spec.startsWith("@")) {
+    const versionIndex = spec.indexOf("@", 1);
+    return versionIndex === -1 ? spec : spec.slice(0, versionIndex);
+  }
+  const versionIndex = spec.indexOf("@");
+  return versionIndex === -1 ? spec : spec.slice(0, versionIndex);
 }
 
 function runCommandScript(command, args, options = {}) {
