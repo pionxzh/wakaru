@@ -359,10 +359,10 @@ function f() {
     assert_eq_normalized(&output, expected);
 }
 
-// --- known-broken semantic regressions ---
+// --- semantic regressions ---
 
 #[test]
-fn known_bug_react_rename_should_not_leave_stale_use_site() {
+fn react_rename_should_not_leave_stale_use_site() {
     let input = r#"
 const d = useRef();
 use(d);
@@ -372,7 +372,7 @@ use(d);
 }
 
 #[test]
-fn known_bug_destructuring_rename_should_not_touch_shadowed_param() {
+fn destructuring_rename_should_not_touch_shadowed_param() {
     let input = r#"
 const { gql: t } = n;
 function inner(t) {

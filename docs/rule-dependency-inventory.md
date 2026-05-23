@@ -982,7 +982,7 @@ See #36 (second pass of UnIife, after SmartInline).
 |-------|-------|
 | Family | Generic |
 | Role | Naming / presentation |
-| Uses `unresolved_mark` | No |
+| Uses `unresolved_mark` | Yes — to match unresolved `Symbol.for` calls |
 | Suspected prerequisites | SmartInline (`suspected` — aliases removed, names stabilized), UnIndirectCall (`suspected` — partially, for cleaner patterns) |
 | Shape prerequisites | Final binding state |
 | Produces | Readable names from destructuring patterns, React hooks, member init, Symbol.for |
