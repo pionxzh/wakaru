@@ -11,6 +11,7 @@ import {
   parseArgs,
   parseTestMetadata,
   runnableVariants,
+  runRoundTrip,
   transformSource,
 } from "./test262-roundtrip.mjs";
 
@@ -138,6 +139,34 @@ test("parseArgs accepts repeatable paths and defaults to minimal terser", () => 
   assert.equal(options.level, "minimal");
   assert.equal(options.transform, "terser");
   assert.equal(options.terserProfile, "light");
+});
+
+test("runRoundTrip reports baseline failures as unsupported inputs", async () => {
+  const root = makeTempTest262();
+  try {
+    const testDir = join(root, "test", "language", "sample");
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(join(testDir, "baseline-fails.js"), "throw new Error('host gap');\n");
+
+    const report = await runRoundTrip({
+      test262Root: root,
+      paths: ["test/language/sample"],
+      limit: 1,
+      transform: "none",
+      terserProfile: "light",
+      level: "minimal",
+      toolRoot: join(root, "tools"),
+      keepTemp: false,
+    });
+
+    assert.equal(report.totals.runnable, 1);
+    assert.equal(report.totals.unsupported, 1);
+    assert.equal(report.totals.failed, 0);
+    assert.equal(report.results[0].status, "unsupported");
+    assert.equal(report.results[0].phase, "baseline");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 function makeTempTest262() {

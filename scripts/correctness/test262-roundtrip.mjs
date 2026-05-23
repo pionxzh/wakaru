@@ -297,6 +297,8 @@ export async function runRoundTrip(options) {
     totals: {
       discovered: tests.length,
       skipped: 0,
+      unsupported: 0,
+      rejected: 0,
       runnable: 0,
       passed: 0,
       failed: 0,
@@ -350,6 +352,10 @@ export async function runRoundTrip(options) {
       report.results.push(result);
       if (result.status === "passed") {
         report.totals.passed += 1;
+      } else if (result.status === "unsupported") {
+        report.totals.unsupported += 1;
+      } else if (result.status === "rejected") {
+        report.totals.rejected += 1;
       } else {
         report.totals.failed += 1;
       }
@@ -374,14 +380,14 @@ async function runOneTest({ filePath, relativePath, source, harnessSource, varia
       });
     }
   } catch (error) {
-    return failure(relativePath, "baseline", error);
+    return unsupported(relativePath, "baseline", error);
   }
 
   let transformed;
   try {
     transformed = await transformSource(source, options);
   } catch (error) {
-    return failure(relativePath, "transform", error);
+    return rejected(relativePath, "transform", error);
   }
 
   try {
@@ -394,7 +400,7 @@ async function runOneTest({ filePath, relativePath, source, harnessSource, varia
       });
     }
   } catch (error) {
-    return failure(relativePath, "transformed-runtime", error);
+    return rejected(relativePath, "transformed-runtime", error);
   }
 
   let decompiled;
@@ -438,6 +444,24 @@ function failure(path, phase, error, extra = {}) {
     phase,
     error: formatError(error),
     ...extra,
+  };
+}
+
+function unsupported(path, phase, error) {
+  return {
+    path,
+    status: "unsupported",
+    phase,
+    error: formatError(error),
+  };
+}
+
+function rejected(path, phase, error) {
+  return {
+    path,
+    status: "rejected",
+    phase,
+    error: formatError(error),
   };
 }
 
@@ -589,6 +613,8 @@ function printReport(report, details) {
   console.log(`discovered: ${report.totals.discovered}`);
   console.log(`runnable: ${report.totals.runnable}`);
   console.log(`skipped: ${report.totals.skipped}`);
+  console.log(`unsupported: ${report.totals.unsupported}`);
+  console.log(`rejected: ${report.totals.rejected}`);
   console.log(`passed: ${report.totals.passed}`);
   console.log(`failed: ${report.totals.failed}`);
   console.log("");
@@ -601,6 +627,16 @@ function printReport(report, details) {
       console.log(`PASS ${result.path} [${result.variants.join(", ")}]`);
     } else if (result.status === "skipped") {
       console.log(`SKIP ${result.path} (${result.reason})`);
+    } else if (result.status === "unsupported") {
+      console.log(`UNSUPPORTED ${result.path} (${result.phase})`);
+      if (details) {
+        console.log(indent(result.error));
+      }
+    } else if (result.status === "rejected") {
+      console.log(`REJECT ${result.path} (${result.phase})`);
+      if (details) {
+        console.log(indent(result.error));
+      }
     } else {
       console.log(`FAIL ${result.path} (${result.phase})`);
       if (details) {
