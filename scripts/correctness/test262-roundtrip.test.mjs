@@ -1,0 +1,151 @@
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import {
+  buildHarnessSource,
+  classifyTest,
+  executeTestSource,
+  parseArgs,
+  parseTestMetadata,
+  runnableVariants,
+  transformSource,
+} from "./test262-roundtrip.mjs";
+
+test("parseTestMetadata reads inline and block list metadata", () => {
+  const source = `/*---
+description: sample
+features: [optional-chaining, coalesce-expression]
+includes:
+  - propertyHelper.js
+  - compareArray.js
+flags: [noStrict]
+---*/
+assert.sameValue(1, 1);
+`;
+
+  const metadata = parseTestMetadata(source);
+
+  assert.deepEqual(metadata.features, ["optional-chaining", "coalesce-expression"]);
+  assert.deepEqual(metadata.includes, ["propertyHelper.js", "compareArray.js"]);
+  assert.deepEqual(metadata.flags, ["noStrict"]);
+  assert.equal(metadata.negative, null);
+});
+
+test("parseTestMetadata detects negative tests", () => {
+  const source = `/*---
+negative:
+  phase: parse
+  type: SyntaxError
+---*/
+`;
+
+  assert.equal(parseTestMetadata(source).negative, true);
+});
+
+test("runnableVariants follows Test262 strict mode flags", () => {
+  assert.deepEqual(
+    runnableVariants({ flags: [], negative: null }),
+    [
+      { name: "sloppy", strict: false },
+      { name: "strict", strict: true },
+    ],
+  );
+  assert.deepEqual(runnableVariants({ flags: ["noStrict"], negative: null }), [
+    { name: "sloppy", strict: false },
+  ]);
+  assert.deepEqual(runnableVariants({ flags: ["onlyStrict"], negative: null }), [
+    { name: "strict", strict: true },
+  ]);
+  assert.deepEqual(runnableVariants({ flags: ["module"], negative: null }), []);
+});
+
+test("classifyTest skips unsupported host-sensitive tests", () => {
+  assert.deepEqual(
+    classifyTest("test/language/example.js", "$262.gc();", {
+      flags: [],
+      negative: null,
+    }),
+    { runnable: false, reason: "host-api" },
+  );
+  assert.deepEqual(
+    classifyTest("test/language/example.js", "assert.sameValue(1, 1);", {
+      flags: ["async"],
+      negative: null,
+    }),
+    { runnable: false, reason: "flag:async" },
+  );
+  assert.deepEqual(
+    classifyTest("test/language/example.js", "assert.sameValue(1, 1);", {
+      flags: [],
+      negative: null,
+    }),
+    { runnable: true, reason: null },
+  );
+});
+
+test("buildHarnessSource loads required Test262 harness files", () => {
+  const root = makeTempTest262();
+  try {
+    const harness = buildHarnessSource(root, {
+      includes: ["extra.js"],
+    });
+
+    assert.match(harness, /harness\/assert\.js/);
+    assert.match(harness, /harness\/sta\.js/);
+    assert.match(harness, /harness\/extra\.js/);
+    assert.match(harness, /globalThis.extraLoaded = true/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("executeTestSource runs harness and strict test source in a script realm", () => {
+  const harnessSource = `
+globalThis.assert = {
+  sameValue(actual, expected) {
+    if (!Object.is(actual, expected)) {
+      throw new Error(\`expected \${expected}, got \${actual}\`);
+    }
+  }
+};
+`;
+
+  executeTestSource({
+    harnessSource,
+    testSource: "assert.sameValue(function f() { return this; }(), undefined);",
+    filename: "strict-fixture.js",
+    strict: true,
+  });
+});
+
+test("transformSource supports no-op mode without external tools", async () => {
+  const source = "const value = 1;\n";
+  const output = await transformSource(source, {
+    transform: "none",
+  });
+
+  assert.equal(output, source);
+});
+
+test("parseArgs accepts repeatable paths and defaults to minimal terser", () => {
+  const options = parseArgs(["--path", "test/language/a", "--path", "test/language/b", "--limit", "3"]);
+
+  assert.deepEqual(options.paths, ["test/language/a", "test/language/b"]);
+  assert.equal(options.limit, 3);
+  assert.equal(options.level, "minimal");
+  assert.equal(options.transform, "terser");
+  assert.equal(options.terserProfile, "light");
+});
+
+function makeTempTest262() {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-test262-unit-"));
+  const harness = join(root, "harness");
+  mkdirSync(harness, { recursive: true });
+  writeFileSync(join(harness, "assert.js"), "globalThis.assert = { sameValue() {} };\n");
+  writeFileSync(join(harness, "sta.js"), "globalThis.staLoaded = true;\n");
+  writeFileSync(join(harness, "extra.js"), "globalThis.extraLoaded = true;\n");
+  return root;
+}
