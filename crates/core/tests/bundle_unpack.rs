@@ -167,6 +167,92 @@ fn webpack5_require_g_is_recovered_as_global() {
 }
 
 #[test]
+fn webpack5_amd_and_module_decorators_are_recovered() {
+    let source = r#"
+(() => {
+    var __webpack_modules__ = ({
+    "./src/runtime-helpers.js": ((module, exports, __webpack_require__) => {
+      module = __webpack_require__.hmd(module);
+      __webpack_require__.d(exports, { named: function() { return named; } }), module = __webpack_require__.hmd(module);
+      const named = 1;
+      exports.amd = __webpack_require__.amdO;
+      exports.load = function(name) {
+        return module.require(name);
+      };
+      exports.localRequire = function(require) {
+        return require.amdO;
+      };
+    }),
+    "./src/node-module.js": ((module, exports, __webpack_require__) => {
+      module = __webpack_require__.nmd(module);
+      exports.children = module.children;
+      exports.localModule = function(module) {
+        module = __webpack_require__.nmd(module);
+        return module.children;
+      };
+    })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var cachedModule = __webpack_module_cache__[moduleId];
+    if (cachedModule !== undefined) return cachedModule.exports;
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__("./src/runtime-helpers.js");
+  __webpack_require__("./src/node-module.js");
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-runtime-helpers.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack5 unpack should succeed");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+
+    let runtime_helpers = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "src/runtime-helpers.js")
+        .map(|(_, code)| code)
+        .expect("expected runtime helpers module");
+    assert!(
+        runtime_helpers.contains(r#"typeof define === "function" && define.amd"#),
+        "expected require.amdO to recover as AMD detection:\n{runtime_helpers}"
+    );
+    assert!(
+        !runtime_helpers.contains("module = require.hmd(module)")
+            && !runtime_helpers.contains("amd = require.amdO"),
+        "webpack hmd/amdO helpers should not survive:\n{runtime_helpers}"
+    );
+    assert!(
+        runtime_helpers.contains("=>require.amdO"),
+        "inner parameter named require should not be rewritten:\n{runtime_helpers}"
+    );
+
+    let node_module = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "src/node-module.js")
+        .map(|(_, code)| code)
+        .expect("expected node module");
+    let nmd_decorator_count = node_module.matches("module = require.nmd(module);").count();
+    assert!(
+        nmd_decorator_count == 1,
+        "only shadowed local module decorator should remain:\n{node_module}"
+    );
+}
+
+#[test]
 fn browserify_unpack_extracts_multiple_modules() {
     let source_path = "../../testcases/browserify/dist/index.js";
     let source = fs::read_to_string(source_path).expect("failed to read browserify testcase");

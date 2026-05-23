@@ -2,12 +2,12 @@ use std::collections::HashMap;
 
 use anyhow::anyhow;
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, Mark, SourceMap, SyntaxContext, GLOBALS};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::{
     ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmtOrExpr, CallExpr,
-    Callee, Expr, ExprStmt, FnExpr, Function, Ident, Lit, MemberExpr, MemberProp, Module,
-    ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, VarDecl,
-    VarDeclarator,
+    Callee, Expr, ExprStmt, FnExpr, Function, Ident, IdentName, Lit, MemberExpr, MemberProp,
+    Module, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SeqExpr, SimpleAssignTarget,
+    Stmt, Str, UnaryExpr, UnaryOp, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 
@@ -29,8 +29,10 @@ impl VisitMut for Webpack5RuntimeNormalizer {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
-        if let Some(ctxt) = self.try_match_require_g(expr) {
-            *expr = Expr::Ident(Ident::new(Atom::from("global"), Default::default(), ctxt));
+        if let Some(ctxt) = self.try_match_require_member(expr, "g") {
+            *expr = Expr::Ident(Ident::new(Atom::from("global"), DUMMY_SP, ctxt));
+        } else if let Some(ctxt) = self.try_match_require_member(expr, "amdO") {
+            *expr = amd_define_detection_expr(ctxt);
         }
     }
 
@@ -40,7 +42,7 @@ impl VisitMut for Webpack5RuntimeNormalizer {
         let mut new_items = Vec::with_capacity(items.len());
         for item in items.drain(..) {
             if let ModuleItem::Stmt(stmt) = item {
-                if let Some(replacements) = self.try_convert_stmt(&stmt) {
+                if let Some(replacements) = self.try_convert_stmt(&stmt, true) {
                     new_items.extend(replacements.into_iter().map(ModuleItem::Stmt));
                 } else {
                     new_items.push(ModuleItem::Stmt(stmt));
@@ -57,7 +59,7 @@ impl VisitMut for Webpack5RuntimeNormalizer {
 
         let mut new_stmts = Vec::with_capacity(stmts.len());
         for stmt in stmts.drain(..) {
-            if let Some(replacements) = self.try_convert_stmt(&stmt) {
+            if let Some(replacements) = self.try_convert_stmt(&stmt, false) {
                 new_stmts.extend(replacements);
             } else {
                 new_stmts.push(stmt);
@@ -68,7 +70,7 @@ impl VisitMut for Webpack5RuntimeNormalizer {
 }
 
 impl Webpack5RuntimeNormalizer {
-    fn try_match_require_g(&self, expr: &Expr) -> Option<SyntaxContext> {
+    fn try_match_require_member(&self, expr: &Expr, expected_prop: &str) -> Option<SyntaxContext> {
         let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
             return None;
         };
@@ -81,17 +83,30 @@ impl Webpack5RuntimeNormalizer {
         let MemberProp::Ident(prop_name) = prop else {
             return None;
         };
-        if prop_name.sym.as_ref() != "g" {
+        if prop_name.sym.as_ref() != expected_prop {
             return None;
         }
         Some(obj_ident.ctxt)
     }
 
-    fn try_convert_stmt(&self, stmt: &Stmt) -> Option<Vec<Stmt>> {
+    fn try_convert_stmt(
+        &self,
+        stmt: &Stmt,
+        allow_module_decorator_removal: bool,
+    ) -> Option<Vec<Stmt>> {
         let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
             return None;
         };
-        let Expr::Call(call) = &**expr else {
+        let stripped_expr = strip_parens(expr);
+        if allow_module_decorator_removal {
+            if self.is_module_decorator_assignment(stripped_expr) {
+                return Some(vec![]);
+            }
+            if let Expr::Seq(seq) = stripped_expr {
+                return self.try_remove_module_decorator_from_seq(seq);
+            }
+        }
+        let Expr::Call(call) = stripped_expr else {
             return None;
         };
         let Callee::Expr(callee_expr) = &call.callee else {
@@ -129,6 +144,107 @@ impl Webpack5RuntimeNormalizer {
             _ => None,
         }
     }
+
+    fn try_remove_module_decorator_from_seq(&self, seq: &SeqExpr) -> Option<Vec<Stmt>> {
+        let mut changed = false;
+        let mut exprs = Vec::with_capacity(seq.exprs.len());
+        for expr in &seq.exprs {
+            if self.is_module_decorator_assignment(strip_parens(expr)) {
+                changed = true;
+            } else {
+                exprs.push(expr.clone());
+            }
+        }
+        if !changed {
+            return None;
+        }
+        match exprs.len() {
+            0 => Some(vec![]),
+            1 => Some(vec![Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: exprs.pop().expect("single seq expr"),
+            })]),
+            _ => Some(vec![Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Seq(SeqExpr {
+                    span: seq.span,
+                    exprs,
+                })),
+            })]),
+        }
+    }
+
+    fn is_module_decorator_assignment(&self, expr: &Expr) -> bool {
+        let Expr::Assign(AssignExpr {
+            op: AssignOp::Assign,
+            left,
+            right,
+            ..
+        }) = expr
+        else {
+            return false;
+        };
+        let AssignTarget::Simple(SimpleAssignTarget::Ident(left_ident)) = left else {
+            return false;
+        };
+        if left_ident.id.sym.as_ref() != "module" {
+            return false;
+        }
+        let Expr::Call(call) = &**right else {
+            return false;
+        };
+        if call.args.len() != 1 {
+            return false;
+        }
+        let Callee::Expr(callee_expr) = &call.callee else {
+            return false;
+        };
+        let Expr::Member(MemberExpr { obj, prop, .. }) = &**callee_expr else {
+            return false;
+        };
+        let Expr::Ident(callee_obj) = &**obj else {
+            return false;
+        };
+        if callee_obj.sym != self.require_sym || callee_obj.ctxt.outer() != self.unresolved_mark {
+            return false;
+        }
+        let MemberProp::Ident(prop_name) = prop else {
+            return false;
+        };
+        if !matches!(prop_name.sym.as_ref(), "hmd" | "nmd") {
+            return false;
+        }
+        let Expr::Ident(arg_ident) = &*call.args[0].expr else {
+            return false;
+        };
+        arg_ident.sym.as_ref() == "module" && arg_ident.ctxt == left_ident.id.ctxt
+    }
+}
+
+fn amd_define_detection_expr(ctxt: SyntaxContext) -> Expr {
+    Expr::Bin(BinExpr {
+        span: DUMMY_SP,
+        op: BinaryOp::LogicalAnd,
+        left: Box::new(Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::EqEqEq,
+            left: Box::new(Expr::Unary(UnaryExpr {
+                span: DUMMY_SP,
+                op: UnaryOp::TypeOf,
+                arg: Box::new(Expr::Ident(Ident::new("define".into(), DUMMY_SP, ctxt))),
+            })),
+            right: Box::new(Expr::Lit(Lit::Str(Str {
+                span: DUMMY_SP,
+                value: "function".into(),
+                raw: None,
+            }))),
+        })),
+        right: Box::new(Expr::Member(MemberExpr {
+            span: DUMMY_SP,
+            obj: Box::new(Expr::Ident(Ident::new("define".into(), DUMMY_SP, ctxt))),
+            prop: MemberProp::Ident(IdentName::new("amd".into(), DUMMY_SP)),
+        })),
+    })
 }
 
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
