@@ -344,8 +344,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             })(k, w);
         }
         if (k = u.d.put(e)) {
-            return ((e, t)=>{
-                const { channel, action, resolve } = e;
+            return (({ channel, action, resolve }, t)=>{
                 a.a(()=>{
                     let e;
                     try {
@@ -408,8 +407,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             })(k, v, w);
         }
         if (k = u.d.call(e)) {
-            return ((e, t, n)=>{
-                const { context, fn, args } = e;
+            return (({ context, fn, args }, t, n)=>{
                 let u;
                 try {
                     u = fn.apply(context, args);
@@ -426,8 +424,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             })(k, v, w);
         }
         if (k = u.d.cps(e)) {
-            return ((e, t)=>{
-                const { context, fn, args } = e;
+            return (({ context, fn, args }, t)=>{
                 try {
                     const a = (e, n)=>{
                         if (q.undef(e)) {
@@ -477,8 +474,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             })(k, w);
         }
         if (k = u.d.select(e)) {
-            return ((e, t)=>{
-                const { selector, args } = e;
+            return (({ selector, args }, t)=>{
                 try {
                     const i = selector(r(), ...args);
                     t(i);
@@ -488,8 +484,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             })(k, w);
         }
         if (k = u.d.actionChannel(e)) {
-            return ((e, n)=>{
-                const { pattern, buffer } = e;
+            return (({ pattern, buffer }, n)=>{
                 const a = m(pattern);
                 a.pattern = pattern;
                 n(i.d(t, buffer || a_2.fixed(), a));
@@ -531,10 +526,8 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
     function D(e, o, i, a) {
         v(e, t, n, r, P, h, o, i, a);
     }
-    function F(e, i, u) {
-        const { context, fn, args, detached } = e;
-        const d = ((e)=>{
-            const { context, fn, args } = e;
+    function F({ context, fn, args, detached }, i, u) {
+        const d = (({ context, fn, args })=>{
             if (q.iterator(fn)) {
                 return fn;
             }
@@ -660,8 +653,7 @@ export function runSaga(e, t, ...r) {
     }
     return y;
 }
-export default ((e = {})=>{
-    const { context = {}, ...rest } = e;
+export default (({ context = {}, ...rest } = {})=>{
     const { sagaMonitor, logger, onError } = rest;
     if (q.func(rest)) {
         throw new Error("Saga middleware no longer accept Generator functions. Use sagaMiddleware.run instead");
@@ -675,8 +667,7 @@ export default ((e = {})=>{
     if (rest.emitter && !q.func(rest.emitter)) {
         throw new Error("`options.emitter` passed to the Saga middleware is not a function!");
     }
-    function c(e) {
-        const { getState, dispatch } = e;
+    function c({ getState, dispatch }) {
         const f = i.c();
         f.emit = (rest.emitter || o.o)(f.emit);
         c.run = runSaga.bind(null, {

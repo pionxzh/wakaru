@@ -148,8 +148,7 @@ export class Route extends Component {
             }
         };
     }
-    computeMatch(e, t) {
-        const { computedMatch, location, path, strict, exact, sensitive } = e;
+    computeMatch({ computedMatch, location, path, strict, exact, sensitive }, t) {
         if (computedMatch) {
             return computedMatch;
         }
@@ -232,12 +231,10 @@ Route.contextTypes = {
 Route.childContextTypes = {
     router: u.object.isRequired
 };
-export const NavLink = (e)=>{
-    const { to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, "aria-current": aria_current, ...rest } = e;
+export const NavLink = ({ to, exact, strict, location, activeClassName, className, activeStyle, style, isActive, "aria-current": aria_current, ...rest })=>{
     const p = (to === undefined ? "undefined" : typeof to) === "object" ? to.pathname : to;
     const h = p && p.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
-    return <Route path={h} exact={exact} strict={strict} location={location} children={(e)=>{
-        const { location, match } = e;
+    return <Route path={h} exact={exact} strict={strict} location={location} children={({ location, match })=>{
         const o = !!(isActive ? isActive(match, location) : match);
         return <Link to={to} className={o ? [
             className,
@@ -369,8 +366,7 @@ export class Redirect extends Component {
             this.perform();
         }
     }
-    computeTo(e) {
-        const { computedMatch, to } = e;
+    computeTo({ computedMatch, to }) {
         if (computedMatch) {
             if (typeof to === "string") {
                 return generatePath(to, computedMatch.params);
@@ -566,14 +562,11 @@ Switch.propTypes = {
 };
 export const matchPath = a;
 export const withRouter = (e)=>{
-    const t = (t)=>{
-        const { wrappedComponentRef, ...rest } = t;
-        return <Route children={(t)=>createElement(e, {
+    const t = ({ wrappedComponentRef, ...rest })=><Route children={(t)=>createElement(e, {
                 ...rest,
                 ...t,
                 ref: wrappedComponentRef
             })}/>;
-    };
     t.displayName = `withRouter(${e.displayName || e.name})`;
     t.WrappedComponent = e;
     t.propTypes = {

@@ -481,8 +481,7 @@ function U(e, t, n, r, o) {
         })(o, s);
     };
 }
-function H(e, t) {
-    const { initMapStateToProps, initMapDispatchToProps, initMergeProps, ...rest } = t;
+function H(e, { initMapStateToProps, initMapDispatchToProps, initMergeProps, ...rest }) {
     const a = initMapStateToProps(e, rest);
     const u = initMapDispatchToProps(e, rest);
     const l = initMergeProps(e, rest);
@@ -502,10 +501,7 @@ function W(e, t, n) {
 function $(e, t) {
     return e === t;
 }
-export const connect = ((e = {})=>{
-    const { connectHOC = connectAdvanced, mapStateToPropsFactories = D, mapDispatchToPropsFactories = I, mergePropsFactories = z, selectorFactory = H } = e;
-    return (e, t, n, o = {})=>{
-        const { pure = true, areStatesEqual = $, areOwnPropsEqual = R, areStatePropsEqual = R, areMergedPropsEqual = R, ...rest } = o;
+export const connect = (({ connectHOC = connectAdvanced, mapStateToPropsFactories = D, mapDispatchToPropsFactories = I, mergePropsFactories = z, selectorFactory = H } = {})=>(e, t, n, { pure = true, areStatesEqual = $, areOwnPropsEqual = R, areStatePropsEqual = R, areMergedPropsEqual = R, ...rest } = {})=>{
         const initMapStateToProps = W(e, mapStateToPropsFactories, "mapStateToProps");
         const initMapDispatchToProps = W(t, mapDispatchToPropsFactories, "mapDispatchToProps");
         const initMergeProps = W(n, mergePropsFactories, "mergeProps");
@@ -524,5 +520,4 @@ export const connect = ((e = {})=>{
             areStatePropsEqual,
             areMergedPropsEqual
         }, rest));
-    };
-})();
+    })();

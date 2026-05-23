@@ -612,7 +612,7 @@ These rules restore structural patterns and clean up minification artifacts.
 | Downstream dependents | None known |
 | Fact behavior | Neither |
 | Safety | Heuristic (pattern match on guard shape) |
-| Notes | Level-gated: Pattern A (`if (arg === undefined) arg = val`) runs at all levels. Pattern B (`arguments[i]`-based reconstruction) and Pattern C (object-alias default params) require `standard`. |
+| Notes | Level-gated: Pattern A (`if (arg === undefined) arg = val`) runs at all levels. Pattern B (`arguments[i]`-based reconstruction), Pattern C (object-alias default params), and destructured parameter alias folding require `standard`. |
 
 ### 39. UnEnum
 

@@ -267,6 +267,33 @@ function foo(a, b) {
 }
 
 #[test]
+fn optional_arguments_alias_becomes_plain_param() {
+    let input = r#"
+function foo(a) {
+  let b = arguments.length > 1 ? arguments[1] : undefined;
+  return b;
+}
+"#;
+    let expected = r#"
+function foo(a, b) {
+  return b;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn minimal_does_not_recover_optional_arguments_alias() {
+    let input = r#"
+function foo(a) {
+  let b = arguments.length > 1 ? arguments[1] : undefined;
+  return b;
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Minimal), input);
+}
+
+#[test]
 fn arguments_alias_to_existing_param_name_stays_in_body() {
     let input = r#"
 function foo(a) {
@@ -350,6 +377,146 @@ const foo = (options = {}) => {
 };
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_destructuring_alias_becomes_param_pattern() {
+    let input = r#"
+function foo(_ref) {
+  const { name, age = fallback } = _ref;
+  return name + age;
+}
+"#;
+    let expected = r#"
+function foo({ name, age = fallback }) {
+  return name + age;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_destructuring_alias_default_becomes_param_pattern_default() {
+    let input = r#"
+function foo(_ref) {
+  const { name = fallback } = _ref === undefined ? {} : _ref;
+  return name;
+}
+"#;
+    let expected = r#"
+function foo({ name = fallback } = {}) {
+  return name;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn nested_object_destructuring_alias_becomes_param_pattern() {
+    let input = r#"
+function nested(_ref = {}) {
+  const { outer: { value = fallbackValue } = {} } = _ref;
+  return value;
+}
+"#;
+    let expected = r#"
+function nested({ outer: { value = fallbackValue } = {} } = {}) {
+  return value;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn array_destructuring_alias_becomes_param_pattern() {
+    let input = r#"
+function foo(_ref = []) {
+  const [first, second = fallback] = _ref;
+  return first + second;
+}
+"#;
+    let expected = r#"
+function foo([first, second = fallback] = []) {
+  return first + second;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn array_destructuring_conditional_alias_becomes_param_pattern_default() {
+    let input = r#"
+function foo(_ref) {
+  const [first, second = fallback] = _ref === undefined ? [] : _ref;
+  return first + second;
+}
+"#;
+    let expected = r#"
+function foo([first, second = fallback] = []) {
+  return first + second;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn arrow_object_destructuring_alias_becomes_param_pattern() {
+    let input = r#"
+const foo = (_ref) => {
+  const { name } = _ref;
+  return name;
+};
+"#;
+    let expected = r#"
+const foo = ({ name }) => {
+  return name;
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn minimal_does_not_fold_destructured_param_alias() {
+    let input = r#"
+function foo(_ref) {
+  const { name } = _ref;
+  return name;
+}
+"#;
+    assert_eq_normalized(&apply_with_level(input, RewriteLevel::Minimal), input);
+}
+
+#[test]
+fn destructured_param_alias_used_later_stays_in_body() {
+    let input = r#"
+function foo(_ref) {
+  const { name } = _ref;
+  return _ref.name || name;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn destructured_param_alias_used_in_default_stays_in_body() {
+    let input = r#"
+function foo(_ref) {
+  const { name = _ref.name } = _ref;
+  return name;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn destructured_param_collision_stays_in_body() {
+    let input = r#"
+function foo(name, _ref) {
+  const { name } = _ref;
+  return name;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]

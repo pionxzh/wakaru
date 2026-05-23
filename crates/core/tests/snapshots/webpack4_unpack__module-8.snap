@@ -152,8 +152,7 @@ export function parsePath(e) {
         hash: r === "#" ? "" : r
     };
 }
-export function createPath(e) {
-    const { pathname, search, hash } = e;
+export function createPath({ pathname, search, hash }) {
     let o = pathname || "/";
     if (search && search !== "?") {
         o += search.charAt(0) === "?" ? search : `?${search}`;
@@ -688,10 +687,9 @@ export function createHashHistory(e = {}) {
 function M(e, t, n) {
     return Math.min(Math.max(e, t), n);
 }
-export function createMemoryHistory(e = {}) {
-    const { getUserConfirmation, initialEntries = [
-        "/"
-    ], initialIndex = 0, keyLength = 6 } = e;
+export function createMemoryHistory({ getUserConfirmation, initialEntries = [
+    "/"
+], initialIndex = 0, keyLength = 6 } = {}) {
     const s = w();
     function f(e) {
         a_2(g, e);

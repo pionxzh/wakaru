@@ -3,9 +3,10 @@ use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignTarget, BinExpr, BinaryOp, BindingIdent,
     BlockStmt, BlockStmtOrExpr, Bool, Decl, Expr, Function, Ident, IfStmt, Lit, MemberExpr,
-    MemberProp, Number, Param, Pat, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, VarDeclKind,
+    MemberProp, Number, ObjectPatProp, Param, Pat, PropName, SimpleAssignTarget, Stmt, UnaryExpr,
+    UnaryOp, VarDeclKind,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::RewriteLevel;
 
@@ -52,6 +53,7 @@ fn process_function_params(
         process_pattern_c_params(params, body, unresolved_mark);
         process_pattern_b_params(params, body, unresolved_mark);
         rewrite_inline_arguments_defaults(params, body, unresolved_mark);
+        fold_destructured_param_aliases(params, body, unresolved_mark);
     }
 }
 
@@ -65,6 +67,7 @@ fn process_arrow_params(
     process_pattern_a_arrow_params(params, body, unresolved_mark);
     if level >= RewriteLevel::Standard {
         process_pattern_c_arrow_params(params, body, unresolved_mark);
+        fold_destructured_arrow_param_aliases(params, body, unresolved_mark);
     }
 }
 
@@ -393,8 +396,432 @@ fn is_empty_object_literal(expr: &Expr) -> bool {
     matches!(strip_parens(expr), Expr::Object(obj) if obj.props.is_empty())
 }
 
+fn is_empty_array_literal(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::Array(array) if array.elems.is_empty())
+}
+
 fn is_ident_named(expr: &Expr, name: &Atom) -> bool {
     matches!(strip_parens(expr), Expr::Ident(id) if &id.sym == name)
+}
+
+// ============================================================
+// Destructured parameter alias folding
+// ============================================================
+
+fn fold_destructured_param_aliases(
+    params: &mut [Param],
+    body: &mut BlockStmt,
+    unresolved_mark: Mark,
+) {
+    loop {
+        let Some((alias, destructured_pat, default_val)) =
+            extract_prefix_destructuring_alias(body, unresolved_mark)
+        else {
+            break;
+        };
+        let Some(param_idx) = find_param_alias_idx(params, &alias) else {
+            break;
+        };
+        if destructured_pat_references_alias(&destructured_pat, &alias)
+            || destructured_pat_has_minified_alias(&destructured_pat)
+            || destructured_pat_references_later_body_binding(&destructured_pat, &body.stmts[1..])
+            || stmts_reference_ident(&body.stmts[1..], &alias)
+            || destructured_pat_collides_with_other_params(&destructured_pat, params, param_idx)
+            || !replace_param_alias_pat(
+                &mut params[param_idx].pat,
+                &alias,
+                destructured_pat,
+                default_val,
+            )
+        {
+            break;
+        }
+        body.stmts.remove(0);
+    }
+}
+
+fn fold_destructured_arrow_param_aliases(
+    params: &mut [Pat],
+    body: &mut BlockStmt,
+    unresolved_mark: Mark,
+) {
+    loop {
+        let Some((alias, destructured_pat, default_val)) =
+            extract_prefix_destructuring_alias(body, unresolved_mark)
+        else {
+            break;
+        };
+        let Some(param_idx) = find_arrow_param_alias_idx(params, &alias) else {
+            break;
+        };
+        if destructured_pat_references_alias(&destructured_pat, &alias)
+            || destructured_pat_has_minified_alias(&destructured_pat)
+            || destructured_pat_references_later_body_binding(&destructured_pat, &body.stmts[1..])
+            || stmts_reference_ident(&body.stmts[1..], &alias)
+            || destructured_pat_collides_with_other_arrow_params(
+                &destructured_pat,
+                params,
+                param_idx,
+            )
+            || !replace_param_alias_pat(
+                &mut params[param_idx],
+                &alias,
+                destructured_pat,
+                default_val,
+            )
+        {
+            break;
+        }
+        body.stmts.remove(0);
+    }
+}
+
+fn extract_prefix_destructuring_alias(
+    body: &BlockStmt,
+    unresolved_mark: Mark,
+) -> Option<(Ident, Pat, Option<Box<Expr>>)> {
+    let Stmt::Decl(Decl::Var(var)) = body.stmts.first()? else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let decl = &var.decls[0];
+    let destructured_pat = match &decl.name {
+        Pat::Object(_) | Pat::Array(_) => decl.name.clone(),
+        _ => return None,
+    };
+    let init = strip_parens(decl.init.as_ref()?);
+    if let Expr::Ident(alias) = init {
+        return Some((alias.clone(), destructured_pat, None));
+    }
+
+    let (alias, default_val) = extract_destructuring_alias_default(init, unresolved_mark)?;
+    Some((alias, destructured_pat, Some(default_val)))
+}
+
+fn extract_destructuring_alias_default(
+    expr: &Expr,
+    unresolved_mark: Mark,
+) -> Option<(Ident, Box<Expr>)> {
+    let Expr::Cond(cond) = strip_parens(expr) else {
+        return None;
+    };
+    let param_name = extract_void0_check(cond.test.as_ref(), unresolved_mark)?;
+    let Expr::Ident(alias) = strip_parens(cond.alt.as_ref()) else {
+        return None;
+    };
+    if alias.sym != param_name {
+        return None;
+    }
+    let default_val = cond.cons.clone();
+    if !is_empty_object_literal(&default_val) && !is_empty_array_literal(&default_val) {
+        return None;
+    }
+    Some((alias.clone(), default_val))
+}
+
+fn find_param_alias_idx(params: &[Param], alias: &Ident) -> Option<usize> {
+    params
+        .iter()
+        .position(|param| param_pat_matches_alias(&param.pat, alias))
+}
+
+fn find_arrow_param_alias_idx(params: &[Pat], alias: &Ident) -> Option<usize> {
+    params
+        .iter()
+        .position(|param| param_pat_matches_alias(param, alias))
+}
+
+fn param_pat_matches_alias(param: &Pat, alias: &Ident) -> bool {
+    match param {
+        Pat::Ident(binding) => same_ident(&binding.id, alias),
+        Pat::Assign(assign) => {
+            matches!(assign.left.as_ref(), Pat::Ident(binding) if same_ident(&binding.id, alias))
+        }
+        _ => false,
+    }
+}
+
+fn replace_param_alias_pat(
+    param: &mut Pat,
+    alias: &Ident,
+    destructured_pat: Pat,
+    default_val: Option<Box<Expr>>,
+) -> bool {
+    match param {
+        Pat::Ident(binding) if same_ident(&binding.id, alias) => {
+            *param = if let Some(default_val) = default_val {
+                Pat::Assign(AssignPat {
+                    span: DUMMY_SP,
+                    left: Box::new(destructured_pat),
+                    right: default_val,
+                })
+            } else {
+                destructured_pat
+            };
+            true
+        }
+        Pat::Assign(assign)
+            if default_val.is_none()
+                && matches!(assign.left.as_ref(), Pat::Ident(binding) if same_ident(&binding.id, alias)) =>
+        {
+            *assign.left = destructured_pat;
+            true
+        }
+        _ => false,
+    }
+}
+
+fn destructured_pat_collides_with_other_params(
+    destructured_pat: &Pat,
+    params: &[Param],
+    param_idx: usize,
+) -> bool {
+    let mut destructured_bindings = Vec::new();
+    collect_pat_bound_names(destructured_pat, &mut destructured_bindings);
+    params.iter().enumerate().any(|(idx, param)| {
+        idx != param_idx && pat_binds_any_name(&param.pat, &destructured_bindings)
+    })
+}
+
+fn destructured_pat_collides_with_other_arrow_params(
+    destructured_pat: &Pat,
+    params: &[Pat],
+    param_idx: usize,
+) -> bool {
+    let mut destructured_bindings = Vec::new();
+    collect_pat_bound_names(destructured_pat, &mut destructured_bindings);
+    params
+        .iter()
+        .enumerate()
+        .any(|(idx, param)| idx != param_idx && pat_binds_any_name(param, &destructured_bindings))
+}
+
+fn pat_binds_any_name(pat: &Pat, names: &[Atom]) -> bool {
+    let mut existing = Vec::new();
+    collect_pat_bound_names(pat, &mut existing);
+    existing.iter().any(|name| names.iter().any(|n| n == name))
+}
+
+fn collect_pat_bound_names(pat: &Pat, out: &mut Vec<Atom>) {
+    match pat {
+        Pat::Ident(binding) => out.push(binding.id.sym.clone()),
+        Pat::Assign(assign) => collect_pat_bound_names(&assign.left, out),
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_bound_names(elem, out);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => collect_pat_bound_names(&kv.value, out),
+                    ObjectPatProp::Assign(assign) => out.push(assign.key.id.sym.clone()),
+                    ObjectPatProp::Rest(rest) => collect_pat_bound_names(&rest.arg, out),
+                }
+            }
+        }
+        Pat::Rest(rest) => collect_pat_bound_names(&rest.arg, out),
+        _ => {}
+    }
+}
+
+fn destructured_pat_references_alias(pat: &Pat, alias: &Ident) -> bool {
+    match pat {
+        Pat::Assign(assign) => {
+            expr_references_ident(&assign.right, alias)
+                || destructured_pat_references_alias(&assign.left, alias)
+        }
+        Pat::Array(array) => array
+            .elems
+            .iter()
+            .flatten()
+            .any(|elem| destructured_pat_references_alias(elem, alias)),
+        Pat::Object(object) => object.props.iter().any(|prop| match prop {
+            ObjectPatProp::KeyValue(kv) => {
+                prop_name_references_ident(&kv.key, alias)
+                    || destructured_pat_references_alias(&kv.value, alias)
+            }
+            ObjectPatProp::Assign(assign) => assign
+                .value
+                .as_ref()
+                .is_some_and(|value| expr_references_ident(value, alias)),
+            ObjectPatProp::Rest(rest) => destructured_pat_references_alias(&rest.arg, alias),
+        }),
+        Pat::Rest(rest) => destructured_pat_references_alias(&rest.arg, alias),
+        _ => false,
+    }
+}
+
+fn destructured_pat_has_minified_alias(pat: &Pat) -> bool {
+    match pat {
+        Pat::Assign(assign) => destructured_pat_has_minified_alias(&assign.left),
+        Pat::Array(array) => array
+            .elems
+            .iter()
+            .flatten()
+            .any(destructured_pat_has_minified_alias),
+        Pat::Object(object) => object.props.iter().any(|prop| match prop {
+            ObjectPatProp::KeyValue(kv) => {
+                key_value_pat_has_minified_alias(kv)
+                    || destructured_pat_has_minified_alias(&kv.value)
+            }
+            ObjectPatProp::Assign(_) => false,
+            ObjectPatProp::Rest(rest) => destructured_pat_has_minified_alias(&rest.arg),
+        }),
+        Pat::Rest(rest) => destructured_pat_has_minified_alias(&rest.arg),
+        _ => false,
+    }
+}
+
+fn key_value_pat_has_minified_alias(kv: &swc_core::ecma::ast::KeyValuePatProp) -> bool {
+    let PropName::Ident(key) = &kv.key else {
+        return false;
+    };
+    match kv.value.as_ref() {
+        Pat::Ident(binding) => is_short_alias_for_key(&key.sym, &binding.id.sym),
+        Pat::Assign(assign) => {
+            matches!(assign.left.as_ref(), Pat::Ident(binding) if is_short_alias_for_key(&key.sym, &binding.id.sym))
+        }
+        _ => false,
+    }
+}
+
+fn is_short_alias_for_key(key: &Atom, alias: &Atom) -> bool {
+    key != alias && alias.len() <= 2
+}
+
+fn destructured_pat_references_later_body_binding(pat: &Pat, later_stmts: &[Stmt]) -> bool {
+    let mut referenced = Vec::new();
+    collect_pat_expr_reference_names(pat, &mut referenced);
+    if referenced.is_empty() {
+        return false;
+    }
+
+    let mut later_bindings = Vec::new();
+    collect_direct_decl_names(later_stmts, &mut later_bindings);
+    referenced
+        .iter()
+        .any(|name| later_bindings.iter().any(|binding| binding == name))
+}
+
+fn collect_pat_expr_reference_names(pat: &Pat, out: &mut Vec<Atom>) {
+    match pat {
+        Pat::Assign(assign) => {
+            collect_expr_reference_names(&assign.right, out);
+            collect_pat_expr_reference_names(&assign.left, out);
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_expr_reference_names(elem, out);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => {
+                        collect_prop_name_reference_names(&kv.key, out);
+                        collect_pat_expr_reference_names(&kv.value, out);
+                    }
+                    ObjectPatProp::Assign(assign) => {
+                        if let Some(value) = &assign.value {
+                            collect_expr_reference_names(value, out);
+                        }
+                    }
+                    ObjectPatProp::Rest(rest) => collect_pat_expr_reference_names(&rest.arg, out),
+                }
+            }
+        }
+        Pat::Rest(rest) => collect_pat_expr_reference_names(&rest.arg, out),
+        _ => {}
+    }
+}
+
+fn collect_prop_name_reference_names(prop: &PropName, out: &mut Vec<Atom>) {
+    if let PropName::Computed(computed) = prop {
+        collect_expr_reference_names(&computed.expr, out);
+    }
+}
+
+fn collect_expr_reference_names(expr: &Expr, out: &mut Vec<Atom>) {
+    let mut visitor = IdentNameCollector { names: out };
+    expr.visit_with(&mut visitor);
+}
+
+fn collect_direct_decl_names(stmts: &[Stmt], out: &mut Vec<Atom>) {
+    for stmt in stmts {
+        let Stmt::Decl(decl) = stmt else {
+            continue;
+        };
+        match decl {
+            Decl::Var(var) => {
+                for declarator in &var.decls {
+                    collect_pat_bound_names(&declarator.name, out);
+                }
+            }
+            Decl::Fn(fn_decl) => out.push(fn_decl.ident.sym.clone()),
+            Decl::Class(class_decl) => out.push(class_decl.ident.sym.clone()),
+            _ => {}
+        }
+    }
+}
+
+struct IdentNameCollector<'a> {
+    names: &'a mut Vec<Atom>,
+}
+
+impl Visit for IdentNameCollector<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.names.push(ident.sym.clone());
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+}
+
+fn prop_name_references_ident(prop: &PropName, alias: &Ident) -> bool {
+    matches!(prop, PropName::Computed(computed) if expr_references_ident(&computed.expr, alias))
+}
+
+fn stmts_reference_ident(stmts: &[Stmt], alias: &Ident) -> bool {
+    let mut visitor = IdentReferenceFinder {
+        alias,
+        found: false,
+    };
+    stmts.visit_with(&mut visitor);
+    visitor.found
+}
+
+fn expr_references_ident(expr: &Expr, alias: &Ident) -> bool {
+    let mut visitor = IdentReferenceFinder {
+        alias,
+        found: false,
+    };
+    expr.visit_with(&mut visitor);
+    visitor.found
+}
+
+struct IdentReferenceFinder<'a> {
+    alias: &'a Ident,
+    found: bool,
+}
+
+impl Visit for IdentReferenceFinder<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if same_ident(ident, self.alias) {
+            self.found = true;
+        }
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+}
+
+fn same_ident(left: &Ident, right: &Ident) -> bool {
+    left.sym == right.sym && left.ctxt == right.ctxt
 }
 
 // ============================================================
@@ -599,7 +1026,8 @@ fn extract_arguments_alias(stmt: &Stmt, unresolved_mark: Mark) -> Option<(usize,
         return None;
     };
     let init = declarator.init.as_ref()?;
-    let param_idx = extract_arguments_index_expr(init.as_ref(), unresolved_mark)?;
+    let param_idx = extract_arguments_index_expr(init.as_ref(), unresolved_mark)
+        .or_else(|| extract_simple_arguments_optional(init.as_ref(), unresolved_mark))?;
     Some((param_idx, var_ident.sym.clone()))
 }
 
