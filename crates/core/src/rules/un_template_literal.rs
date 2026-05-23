@@ -1,18 +1,56 @@
-use swc_core::common::DUMMY_SP;
+use std::collections::{HashMap, HashSet};
+
+use swc_core::atoms::Atom;
+use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BinExpr, BinaryOp, CallExpr, Callee, Expr, Lit, MemberExpr, MemberProp, Tpl, TplElement,
+    AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, Decl, Expr, Lit, MemberExpr,
+    MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt, TaggedTpl, Tpl, TplElement,
 };
 use swc_core::ecma::utils::ExprFactory;
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 pub struct UnTemplateLiteral;
+
+type BindingKey = (Atom, SyntaxContext);
 
 enum Part {
     Text(String),
     Expr(Box<Expr>),
 }
 
+#[derive(Clone)]
+struct TemplateData {
+    cooked: Vec<Option<String>>,
+    raw: Vec<String>,
+    helper: Option<BindingKey>,
+}
+
+struct TemplateMatch {
+    data: TemplateData,
+    cache: Option<BindingKey>,
+    factory: Option<BindingKey>,
+}
+
 impl VisitMut for UnTemplateLiteral {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        let factories = collect_template_factories(module);
+        let mut replacer = TaggedTemplateReplacer {
+            factories: &factories,
+            consumed_helpers: HashSet::new(),
+            consumed_caches: HashSet::new(),
+            consumed_factories: HashSet::new(),
+        };
+        module.visit_mut_children_with(&mut replacer);
+        module.visit_mut_children_with(self);
+
+        let mut removable = replacer.consumed_helpers;
+        removable.extend(replacer.consumed_caches);
+        removable.extend(replacer.consumed_factories);
+        if !removable.is_empty() {
+            remove_unused_template_bindings(module, &removable);
+        }
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         if let Some(next) = rewrite_concat_chain(expr) {
             *expr = next;
@@ -26,6 +64,33 @@ impl VisitMut for UnTemplateLiteral {
         }
 
         expr.visit_mut_children_with(self);
+    }
+}
+
+struct TaggedTemplateReplacer<'a> {
+    factories: &'a HashMap<BindingKey, TemplateData>,
+    consumed_helpers: HashSet<BindingKey>,
+    consumed_caches: HashSet<BindingKey>,
+    consumed_factories: HashSet<BindingKey>,
+}
+
+impl VisitMut for TaggedTemplateReplacer<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        let Expr::Call(call) = expr else {
+            return;
+        };
+        let Some(next) = rewrite_tagged_template_call(
+            call,
+            self.factories,
+            &mut self.consumed_helpers,
+            &mut self.consumed_caches,
+            &mut self.consumed_factories,
+        ) else {
+            return;
+        };
+        *expr = next;
     }
 }
 
@@ -75,6 +140,169 @@ fn collect_concat_parts(call: &CallExpr, out: &mut Vec<Part>) -> bool {
     }
 
     true
+}
+
+fn rewrite_tagged_template_call(
+    call: &CallExpr,
+    factories: &HashMap<BindingKey, TemplateData>,
+    consumed_helpers: &mut HashSet<BindingKey>,
+    consumed_caches: &mut HashSet<BindingKey>,
+    consumed_factories: &mut HashSet<BindingKey>,
+) -> Option<Expr> {
+    if call.args.is_empty() || call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+
+    let template_match = extract_template_match(call.args[0].expr.as_ref(), factories)?;
+    if template_match.data.cooked.len() != call.args.len() {
+        return None;
+    }
+
+    if let Some(helper) = &template_match.data.helper {
+        consumed_helpers.insert(helper.clone());
+    }
+    if let Some(cache) = template_match.cache {
+        consumed_caches.insert(cache);
+    }
+    if let Some(factory) = template_match.factory {
+        consumed_factories.insert(factory);
+    }
+
+    let Callee::Expr(tag) = &call.callee else {
+        return None;
+    };
+    let exprs = call
+        .args
+        .iter()
+        .skip(1)
+        .map(|arg| arg.expr.clone())
+        .collect();
+
+    Some(Expr::TaggedTpl(TaggedTpl {
+        span: call.span,
+        ctxt: call.ctxt,
+        tag: tag.clone(),
+        type_params: call.type_args.clone(),
+        tpl: Box::new(template_match.data.into_tpl(exprs, call.span)),
+    }))
+}
+
+fn extract_template_match(
+    expr: &Expr,
+    factories: &HashMap<BindingKey, TemplateData>,
+) -> Option<TemplateMatch> {
+    let expr = strip_paren_expr(expr);
+
+    if let Some((data, helper)) = extract_direct_template_helper_call(expr) {
+        return Some(TemplateMatch {
+            data: TemplateData { helper, ..data },
+            cache: None,
+            factory: None,
+        });
+    }
+
+    if let Some((factory, data)) = extract_template_factory_call(expr, factories) {
+        return Some(TemplateMatch {
+            data: data.clone(),
+            cache: None,
+            factory: Some(factory),
+        });
+    }
+
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalOr,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
+        return None;
+    };
+    let cache = binding_key_from_ident_expr(strip_paren_expr(left))?;
+    let Expr::Assign(assign) = strip_paren_expr(right) else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(target)) = &assign.left else {
+        return None;
+    };
+    let target_key = (target.id.sym.clone(), target.id.ctxt);
+    if target_key != cache {
+        return None;
+    }
+    let (data, helper) = extract_direct_template_helper_call(strip_paren_expr(&assign.right))?;
+
+    Some(TemplateMatch {
+        data: TemplateData { helper, ..data },
+        cache: Some(cache),
+        factory: None,
+    })
+}
+
+fn extract_template_factory_call<'a>(
+    expr: &Expr,
+    factories: &'a HashMap<BindingKey, TemplateData>,
+) -> Option<(BindingKey, &'a TemplateData)> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if !call.args.is_empty() {
+        return None;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let key = binding_key_from_ident_expr(strip_paren_expr(callee))?;
+    factories
+        .get_key_value(&key)
+        .map(|(key, data)| (key.clone(), data))
+}
+
+fn extract_direct_template_helper_call(expr: &Expr) -> Option<(TemplateData, Option<BindingKey>)> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if call.args.is_empty()
+        || call.args.len() > 2
+        || call.args.iter().any(|arg| arg.spread.is_some())
+    {
+        return None;
+    }
+
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let helper = binding_key_from_ident_expr(strip_paren_expr(callee))?;
+    if !is_template_helper_name(helper.0.as_ref()) {
+        return None;
+    }
+
+    let cooked = collect_template_array(call.args[0].expr.as_ref())?;
+    let raw = if call.args.len() == 2 {
+        collect_template_array(call.args[1].expr.as_ref())?
+            .into_iter()
+            .collect::<Option<Vec<_>>>()?
+    } else {
+        cooked
+            .iter()
+            .map(|value| value.as_deref().map(escape_template_raw))
+            .collect::<Option<Vec<_>>>()?
+    };
+
+    if cooked.len() != raw.len() || cooked.is_empty() {
+        return None;
+    }
+
+    Some((
+        TemplateData {
+            cooked,
+            raw,
+            helper: None,
+        },
+        Some(helper),
+    ))
 }
 
 /// Convert `"str" + a + b` (binary `+` chains with at least one string literal)
@@ -149,6 +377,98 @@ fn is_str_lit(expr: &Expr) -> bool {
     matches!(expr, Expr::Lit(Lit::Str(_)))
 }
 
+fn collect_template_factories(module: &Module) -> HashMap<BindingKey, TemplateData> {
+    module
+        .body
+        .iter()
+        .filter_map(|item| {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(func))) = item else {
+                return None;
+            };
+            let body = func.function.body.as_ref()?;
+            let data = extract_template_from_factory_body(&body.stmts)?;
+            Some(((func.ident.sym.clone(), func.ident.ctxt), data))
+        })
+        .collect()
+}
+
+fn extract_template_from_factory_body(stmts: &[Stmt]) -> Option<TemplateData> {
+    let mut locals: HashMap<BindingKey, TemplateData> = HashMap::new();
+
+    for stmt in stmts {
+        match stmt {
+            Stmt::Decl(Decl::Var(var)) => {
+                for decl in &var.decls {
+                    let Pat::Ident(binding) = &decl.name else {
+                        continue;
+                    };
+                    let Some(init) = decl.init.as_deref() else {
+                        continue;
+                    };
+                    if let Some((data, helper)) = extract_direct_template_helper_call(init) {
+                        locals.insert(
+                            (binding.id.sym.clone(), binding.id.ctxt),
+                            TemplateData { helper, ..data },
+                        );
+                    }
+                }
+            }
+            Stmt::Return(ret) => {
+                let arg = ret.arg.as_deref()?;
+                if let Some(key) = binding_key_from_ident_expr(strip_paren_expr(arg)) {
+                    if let Some(data) = locals.get(&key) {
+                        return Some(data.clone());
+                    }
+                }
+                if let Some((data, helper)) = extract_direct_template_helper_call(arg) {
+                    return Some(TemplateData { helper, ..data });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn collect_template_array(expr: &Expr) -> Option<Vec<Option<String>>> {
+    let Expr::Array(array) = strip_paren_expr(expr) else {
+        return None;
+    };
+    array
+        .elems
+        .iter()
+        .map(|elem| {
+            let elem = elem.as_ref()?;
+            if elem.spread.is_some() {
+                return None;
+            }
+            match elem.expr.as_ref() {
+                Expr::Lit(Lit::Str(s)) => Some(Some(s.value.to_string_lossy().into_owned())),
+                Expr::Ident(id) if id.sym.as_ref() == "undefined" => Some(None),
+                Expr::Unary(unary)
+                    if unary.op == swc_core::ecma::ast::UnaryOp::Void
+                        && matches!(unary.arg.as_ref(), Expr::Lit(Lit::Num(_))) =>
+                {
+                    Some(None)
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn is_template_helper_name(name: &str) -> bool {
+    matches!(
+        name,
+        "_taggedTemplateLiteral"
+            | "_taggedTemplateLiteralLoose"
+            | "_tagged_template_literal"
+            | "__makeTemplateObject"
+            | "__template"
+    )
+}
+
 /// Re-assemble a slice of expressions into a left-associative `+` chain.
 fn rebuild_add_chain(exprs: &[&Expr]) -> Box<Expr> {
     debug_assert!(!exprs.is_empty());
@@ -157,6 +477,30 @@ fn rebuild_add_chain(exprs: &[&Expr]) -> Box<Expr> {
         acc = Box::new((*acc).make_bin(BinaryOp::Add, (*e).clone()));
     }
     acc
+}
+
+impl TemplateData {
+    fn into_tpl(self, exprs: Vec<Box<Expr>>, span: swc_core::common::Span) -> Tpl {
+        let last = self.cooked.len().saturating_sub(1);
+        let quasis = self
+            .cooked
+            .into_iter()
+            .zip(self.raw)
+            .enumerate()
+            .map(|(index, (cooked, raw))| TplElement {
+                span,
+                tail: index == last,
+                cooked: cooked.map(Into::into),
+                raw: raw.into(),
+            })
+            .collect();
+
+        Tpl {
+            span,
+            exprs,
+            quasis,
+        }
+    }
 }
 
 fn parts_to_template(parts: Vec<Part>, span: swc_core::common::Span) -> Tpl {
@@ -202,4 +546,103 @@ fn escape_template_raw(input: &str) -> String {
         .replace('\n', "\\n")
         .replace('\t', "\\t")
         .replace('\r', "\\r")
+}
+
+fn binding_key_from_ident_expr(expr: &Expr) -> Option<BindingKey> {
+    let Expr::Ident(id) = expr else {
+        return None;
+    };
+    Some((id.sym.clone(), id.ctxt))
+}
+
+fn strip_paren_expr(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_paren_expr(&paren.expr),
+        _ => expr,
+    }
+}
+
+fn remove_unused_template_bindings(module: &mut Module, candidates: &HashSet<BindingKey>) {
+    let unused: HashSet<_> = candidates
+        .iter()
+        .filter(|key| !has_remaining_ref(module, key, candidates))
+        .cloned()
+        .collect();
+    if unused.is_empty() {
+        return;
+    }
+
+    module.body.retain_mut(|item| match item {
+        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(func))) => {
+            !unused.contains(&(func.ident.sym.clone(), func.ident.ctxt))
+        }
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+            var.decls.retain(|decl| !declarator_matches(decl, &unused));
+            !var.decls.is_empty()
+        }
+        _ => true,
+    });
+}
+
+fn declarator_matches(
+    decl: &swc_core::ecma::ast::VarDeclarator,
+    keys: &HashSet<BindingKey>,
+) -> bool {
+    let Pat::Ident(binding) = &decl.name else {
+        return false;
+    };
+    keys.contains(&(binding.id.sym.clone(), binding.id.ctxt))
+}
+
+fn has_remaining_ref(
+    module: &Module,
+    target: &BindingKey,
+    removable: &HashSet<BindingKey>,
+) -> bool {
+    let mut finder = RemainingRefFinder {
+        target,
+        removable,
+        found: false,
+    };
+    for item in &module.body {
+        finder.visit_module_item_checked(item);
+        if finder.found {
+            return true;
+        }
+    }
+    false
+}
+
+struct RemainingRefFinder<'a> {
+    target: &'a BindingKey,
+    removable: &'a HashSet<BindingKey>,
+    found: bool,
+}
+
+impl RemainingRefFinder<'_> {
+    fn visit_module_item_checked(&mut self, item: &ModuleItem) {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(func)))
+                if self
+                    .removable
+                    .contains(&(func.ident.sym.clone(), func.ident.ctxt)) => {}
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    if declarator_matches(decl, self.removable) {
+                        continue;
+                    }
+                    decl.visit_with(self);
+                }
+            }
+            _ => item.visit_with(self),
+        }
+    }
+}
+
+impl Visit for RemainingRefFinder<'_> {
+    fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+        if ident.sym == self.target.0 && ident.ctxt == self.target.1 {
+            self.found = true;
+        }
+    }
 }

@@ -131,3 +131,89 @@ var y = 1 + 2;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn restores_babel_modern_tagged_template() {
+    let input = r#"
+var _templateObject;
+function _taggedTemplateLiteral(e, t) { return e; }
+var out = tag(_templateObject || (_templateObject = _taggedTemplateLiteral(["hello ", ""], ["hello ", ""])), name);
+"#;
+    let expected = r#"
+var out = tag`hello ${name}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn restores_typescript_tagged_template() {
+    let input = r#"
+var __makeTemplateObject = (this && this.__makeTemplateObject) || function (cooked, raw) { return cooked; };
+var out = tag(__makeTemplateObject(["hello ", ""], ["hello ", ""]), name);
+"#;
+    let expected = r#"
+var out = tag`hello ${name}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn restores_swc_tagged_template() {
+    let input = r#"
+function _tagged_template_literal(strings, raw) { return strings; }
+var out = tag(_tagged_template_literal(["hello ", ""], ["hello ", ""]), name);
+"#;
+    let expected = r#"
+var out = tag`hello ${name}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn restores_esbuild_cached_tagged_template() {
+    let input = r#"
+var __template = function(cooked, raw) { return cooked; };
+var _a;
+var out = tag(_a || (_a = __template(["hello ", ""], ["hello ", ""])), name);
+"#;
+    let expected = r#"
+var out = tag`hello ${name}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn restores_babel_cache_function_tagged_template() {
+    let input = r#"
+function _templateObject() {
+    const data = _taggedTemplateLiteral(["hello ", ""]);
+    _templateObject = function () { return data; };
+    return data;
+}
+function _taggedTemplateLiteral(e, t) { return e; }
+var out = tag(_templateObject(), name);
+"#;
+    let expected = r#"
+var out = tag`hello ${name}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn restores_member_tagged_template_with_raw_segments() {
+    let input = r#"
+var _templateObject;
+function _taggedTemplateLiteral(e, t) { return e; }
+var out = css.div(_templateObject || (_templateObject = _taggedTemplateLiteral(["line\n", ""], ["line\\n", ""])), value);
+"#;
+    let expected = r#"
+var out = css.div`line\n${value}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
