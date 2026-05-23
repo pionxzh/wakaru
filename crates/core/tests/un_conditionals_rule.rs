@@ -173,3 +173,25 @@ if (arguments.length > 1) {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn sequence_branch_conditionals_are_converted_recursively() {
+    let input = r#"
+a ? (b ? c() : d || (e(), f = 5), g()) : h();
+"#;
+    let expected = r#"
+if (a) {
+  if (b) {
+    c();
+  } else if (!d) {
+    e();
+    f = 5;
+  }
+  g();
+} else {
+  h();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

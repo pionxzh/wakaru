@@ -202,7 +202,7 @@ fn convert_alt_branch_to_stmt(expr: Expr) -> Stmt {
 }
 
 /// Wrap an expression in a block statement.
-/// Sequence expressions (including paren-wrapped) are expanded into multiple ExprStmts.
+/// Sequence expressions (including paren-wrapped) are expanded into converted statements.
 fn expr_to_block_stmt(expr: Expr) -> Stmt {
     let inner = match expr {
         Expr::Paren(paren) => *paren.expr,
@@ -212,17 +212,17 @@ fn expr_to_block_stmt(expr: Expr) -> Stmt {
         Expr::Seq(seq) => seq
             .exprs
             .into_iter()
-            .map(|e| {
-                Stmt::Expr(ExprStmt {
+            .flat_map(|expr| {
+                convert_stmt(Stmt::Expr(ExprStmt {
                     span: DUMMY_SP,
-                    expr: e,
-                })
+                    expr,
+                }))
             })
             .collect(),
-        other => vec![Stmt::Expr(ExprStmt {
+        other => convert_stmt(Stmt::Expr(ExprStmt {
             span: DUMMY_SP,
             expr: Box::new(other),
-        })],
+        })),
     };
     Stmt::Block(BlockStmt {
         span: DUMMY_SP,

@@ -4943,9 +4943,13 @@ function Fa(e, t, n, r, o) {
             }
             if (u = ai || bi(t, n, u, r, d, l, c)) {
                 f || typeof a.UNSAFE_componentWillMount !== "function" && typeof a.componentWillMount !== "function" || (typeof a.componentWillMount === "function" && a.componentWillMount(), typeof a.UNSAFE_componentWillMount === "function" && a.UNSAFE_componentWillMount());
-                typeof a.componentDidMount === "function" && (t.effectTag |= 4);
+                if (typeof a.componentDidMount === "function") {
+                    t.effectTag |= 4;
+                }
             } else {
-                typeof a.componentDidMount === "function" && (t.effectTag |= 4);
+                if (typeof a.componentDidMount === "function") {
+                    t.effectTag |= 4;
+                }
                 t.memoizedProps = r;
                 t.memoizedState = l;
             }
@@ -4983,11 +4987,19 @@ function Fa(e, t, n, r, o) {
             }
             if (s = ai || bi(t, n, u, r, l, d, c)) {
                 f || typeof a.UNSAFE_componentWillUpdate !== "function" && typeof a.componentWillUpdate !== "function" || (typeof a.componentWillUpdate === "function" && a.componentWillUpdate(r, d, c), typeof a.UNSAFE_componentWillUpdate === "function" && a.UNSAFE_componentWillUpdate(r, d, c));
-                typeof a.componentDidUpdate === "function" && (t.effectTag |= 4);
-                typeof a.getSnapshotBeforeUpdate === "function" && (t.effectTag |= 256);
+                if (typeof a.componentDidUpdate === "function") {
+                    t.effectTag |= 4;
+                }
+                if (typeof a.getSnapshotBeforeUpdate === "function") {
+                    t.effectTag |= 256;
+                }
             } else {
-                typeof a.componentDidUpdate !== "function" || u === e.memoizedProps && l === e.memoizedState || (t.effectTag |= 4);
-                typeof a.getSnapshotBeforeUpdate !== "function" || u === e.memoizedProps && l === e.memoizedState || (t.effectTag |= 256);
+                if (!(typeof a.componentDidUpdate !== "function" || u === e.memoizedProps && l === e.memoizedState)) {
+                    t.effectTag |= 4;
+                }
+                if (!(typeof a.getSnapshotBeforeUpdate !== "function" || u === e.memoizedProps && l === e.memoizedState)) {
+                    t.effectTag |= 256;
+                }
                 t.memoizedProps = r;
                 t.memoizedState = d;
             }
@@ -5476,7 +5488,11 @@ function Ja(e, t, n) {
                             e = l.createElement(i);
                             if (i === "select") {
                                 l = e;
-                                t_pendingProps.multiple ? l.multiple = true : t_pendingProps.size && (l.size = t_pendingProps.size);
+                                if (t_pendingProps.multiple) {
+                                    l.multiple = true;
+                                } else if (t_pendingProps.size) {
+                                    l.size = t_pendingProps.size;
+                                }
                             }
                         }
                     } else {
@@ -5642,7 +5658,9 @@ function Ja(e, t, n) {
             n = t_pendingProps !== null;
             t_pendingProps = false;
             if (e === null) {
-                t.memoizedProps.fallback !== undefined && Pa(t);
+                if (t.memoizedProps.fallback !== undefined) {
+                    Pa(t);
+                }
             } else {
                 t_pendingProps = (i = e.memoizedState) !== null;
                 n || i === null || (i = e.child.sibling) !== null && ((u = t.firstEffect) !== null ? (t.firstEffect = i, i.nextEffect = u) : (t.firstEffect = t.lastEffect = i, i.nextEffect = null), i.effectTag = 8);
@@ -6714,7 +6732,9 @@ function il(e, t) {
     if (o !== null) {
         if (Mu === o) {
             ml(t);
-            Iu === ju && Fl(o, Lu);
+            if (Iu === ju) {
+                Fl(o, Lu);
+            }
         }
         zl(o, t);
     }
@@ -7475,10 +7495,24 @@ function El(e) {
                         s = w.textContent.length;
                         u = Math.min(l.start, s);
                         l = l.end === undefined ? u : Math.min(l.end, s);
-                        !x.extend && u > l && (s = l, l = u, u = s);
+                        if (!x.extend && u > l) {
+                            s = l;
+                            l = u;
+                            u = s;
+                        }
                         s = cn(w, u);
                         f = cn(w, l);
-                        s && f && (x.rangeCount !== 1 || x.anchorNode !== s.node || x.anchorOffset !== s.offset || x.focusNode !== f.node || x.focusOffset !== f.offset) && ((E = E.createRange()).setStart(s.node, s.offset), x.removeAllRanges(), u > l ? (x.addRange(E), x.extend(f.node, f.offset)) : (E.setEnd(f.node, f.offset), x.addRange(E)));
+                        if (s && f && (x.rangeCount !== 1 || x.anchorNode !== s.node || x.anchorOffset !== s.offset || x.focusNode !== f.node || x.focusOffset !== f.offset)) {
+                            (E = E.createRange()).setStart(s.node, s.offset);
+                            x.removeAllRanges();
+                            if (u > l) {
+                                x.addRange(E);
+                                x.extend(f.node, f.offset);
+                            } else {
+                                E.setEnd(f.node, f.offset);
+                                x.addRange(E);
+                            }
+                        }
                     }
                 }
                 E = [];

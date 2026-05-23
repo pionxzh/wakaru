@@ -163,8 +163,13 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                     if (c) {
                         u(l);
                     } else {
-                        e === t && (i = l);
-                        r.length || (a = true, n(i));
+                        if (e === t) {
+                            i = l;
+                        }
+                        if (!r.length) {
+                            a = true;
+                            n(i);
+                        }
                     }
                 }
             };

@@ -22,6 +22,20 @@ c();
 }
 
 #[test]
+fn splits_parenthesized_top_level_sequence_expression_statement() {
+    let input = r#"
+(a(), b(), c())
+"#;
+    let expected = r#"
+a();
+b();
+c();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn does_not_split_while_condition_but_splits_body_sequence_statement() {
     let input = r#"
 while (a(), b(), c()) {

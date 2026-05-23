@@ -1,8 +1,8 @@
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BlockStmt, Decl, Expr, ExprStmt, ForInStmt, ForOfStmt, ForStmt,
-    IfStmt, Invalid, Lit, MemberExpr, ModuleItem, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt,
-    SwitchStmt, ThrowStmt, VarDecl, VarDeclOrExpr, VarDeclarator,
+    IfStmt, Invalid, Lit, MemberExpr, ModuleItem, ParenExpr, ReturnStmt, SeqExpr,
+    SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, VarDecl, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -104,6 +104,7 @@ fn split_stmt(stmt: Stmt) -> Vec<Stmt> {
                     .into_iter()
                     .map(|expr| Stmt::Expr(ExprStmt { span, expr }))
                     .collect(),
+                Expr::Paren(paren) => split_expr_stmt_paren(paren, span),
                 other => vec![Stmt::Expr(ExprStmt {
                     span,
                     expr: Box::new(other),
@@ -122,6 +123,22 @@ fn split_stmt(stmt: Stmt) -> Vec<Stmt> {
         Stmt::ForIn(for_in_stmt) => split_for_in_stmt(for_in_stmt),
         Stmt::ForOf(for_of_stmt) => split_for_of_stmt(for_of_stmt),
         _ => vec![stmt],
+    }
+}
+
+fn split_expr_stmt_paren(paren: ParenExpr, span: swc_core::common::Span) -> Vec<Stmt> {
+    match *paren.expr {
+        Expr::Seq(SeqExpr { exprs, .. }) => exprs
+            .into_iter()
+            .map(|expr| Stmt::Expr(ExprStmt { span, expr }))
+            .collect(),
+        inner => vec![Stmt::Expr(ExprStmt {
+            span,
+            expr: Box::new(Expr::Paren(ParenExpr {
+                expr: Box::new(inner),
+                ..paren
+            })),
+        })],
     }
 }
 

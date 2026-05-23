@@ -170,12 +170,16 @@ export function createLocation(e, t, n, o) {
             i.pathname = "";
         }
         if (i.search) {
-            i.search.charAt(0) !== "?" && (i.search = `?${i.search}`);
+            if (i.search.charAt(0) !== "?") {
+                i.search = `?${i.search}`;
+            }
         } else {
             i.search = "";
         }
         if (i.hash) {
-            i.hash.charAt(0) !== "#" && (i.hash = `#${i.hash}`);
+            if (i.hash.charAt(0) !== "#") {
+                i.hash = `#${i.hash}`;
+            }
         } else {
             i.hash = "";
         }
