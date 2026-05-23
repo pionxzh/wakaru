@@ -2,6 +2,7 @@ mod arg_rest;
 mod arrow_function;
 mod arrow_return;
 pub(crate) mod babel_helper_utils;
+pub(crate) mod binding_facts;
 mod dead_decls;
 mod dead_imports;
 pub(crate) mod decl_utils;

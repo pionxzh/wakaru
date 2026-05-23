@@ -2,16 +2,15 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BinExpr, BinaryOp, Bool, CondExpr, Expr, Ident, Lit, Module, Pat,
-    SimpleAssignTarget, VarDeclarator,
+    AssignOp, AssignTarget, BinExpr, BinaryOp, Bool, CondExpr, Expr, Ident, Lit, Module,
+    SimpleAssignTarget,
 };
 use swc_core::ecma::utils::ExprFactory;
-use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::binding_facts::{collect_binding_facts, BindingId};
 pub(crate) use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::{RewriteLevel, RewritePolicy};
-
-type BindingId = (swc_core::atoms::Atom, SyntaxContext);
 
 pub struct UnNullishCoalescing {
     unresolved_mark: Mark,
@@ -602,43 +601,6 @@ fn is_safe_temp_with_total_refs(
     }
     let total_refs = binding_references.get(&binding_id).copied().unwrap_or(0);
     total_refs == expected_total_refs
-}
-
-#[derive(Default)]
-struct BindingFactsCollector {
-    uninitialized: HashSet<BindingId>,
-    references: HashMap<BindingId, usize>,
-}
-
-impl Visit for BindingFactsCollector {
-    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        if declarator.init.is_none() {
-            if let Pat::Ident(binding) = &declarator.name {
-                self.uninitialized
-                    .insert((binding.id.sym.clone(), binding.id.ctxt));
-            }
-        }
-        declarator.visit_children_with(self);
-    }
-
-    fn visit_ident(&mut self, ident: &Ident) {
-        let binding_id = (ident.sym.clone(), ident.ctxt);
-        *self.references.entry(binding_id).or_insert(0) += 1;
-    }
-}
-
-struct BindingFacts {
-    uninitialized: HashSet<BindingId>,
-    references: HashMap<BindingId, usize>,
-}
-
-fn collect_binding_facts(module: &Module) -> BindingFacts {
-    let mut collector = BindingFactsCollector::default();
-    module.visit_with(&mut collector);
-    BindingFacts {
-        uninitialized: collector.uninitialized,
-        references: collector.references,
-    }
 }
 
 #[cfg(test)]

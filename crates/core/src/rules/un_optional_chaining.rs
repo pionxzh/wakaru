@@ -1,13 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
-use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, CondExpr, Expr, Ident, IfStmt,
-    Lit, MemberExpr, MemberProp, Module, OptCall, OptChainBase, OptChainExpr, Pat,
-    SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, VarDeclarator,
+    Lit, MemberExpr, MemberProp, Module, OptCall, OptChainBase, OptChainExpr, SimpleAssignTarget,
+    Stmt, UnaryExpr, UnaryOp,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::binding_facts::{binding_id, collect_binding_facts, BindingId};
 use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::{RewriteLevel, RewritePolicy};
 
@@ -31,7 +32,7 @@ impl UnOptionalChaining {
 
 impl VisitMut for UnOptionalChaining {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let facts = collect_temp_binding_facts(module);
+        let facts = collect_binding_facts(module);
         self.uninitialized_bindings = facts.uninitialized;
         self.binding_references = facts.references;
         module.visit_mut_children_with(self);
@@ -84,8 +85,6 @@ impl VisitMut for UnOptionalChaining {
         }
     }
 }
-
-type BindingId = (swc_core::atoms::Atom, SyntaxContext);
 
 fn try_optional_call_cleanup(expr: &Expr) -> Option<Expr> {
     let Expr::OptChain(OptChainExpr { base, .. }) = expr else {
@@ -573,7 +572,7 @@ fn record_flattened_temp_value(
     temp_values: &mut HashMap<BindingId, Expr>,
     temp_call_contexts: &mut HashMap<BindingId, Expr>,
 ) {
-    let binding_id = (tmp.sym.clone(), tmp.ctxt);
+    let binding_id = binding_id(tmp);
     temp_values.insert(binding_id.clone(), value.clone());
     if let Some(call_context) = call_context {
         temp_call_contexts.insert(binding_id, call_context);
@@ -633,7 +632,7 @@ fn make_flattened_optional_call(
     }
 
     let (context, call_args) = args.split_first()?;
-    let binding_id = (current_ident.sym.clone(), current_ident.ctxt);
+    let binding_id = binding_id(current_ident);
     let expected_context = temp_call_contexts.get(&binding_id)?;
     let actual_context = resolve_flattened_temp_expr(context.expr.as_ref(), temp_values);
     if !flattened_call_contexts_equal(expected_context, &actual_context) {
@@ -658,7 +657,7 @@ fn resolve_flattened_temp_expr(expr: &Expr, temp_values: &HashMap<BindingId, Exp
         return expr.clone();
     };
     temp_values
-        .get(&(ident.sym.clone(), ident.ctxt))
+        .get(&binding_id(ident))
         .cloned()
         .unwrap_or_else(|| expr.clone())
 }
@@ -721,10 +720,7 @@ fn flattened_chain_temps_are_safe(
     binding_references: &HashMap<BindingId, usize>,
 ) -> bool {
     let pattern_references = count_binding_references_in_exprs(&[test, alt]);
-    let unique_temps: HashSet<BindingId> = temps
-        .iter()
-        .map(|tmp| (tmp.sym.clone(), tmp.ctxt))
-        .collect();
+    let unique_temps: HashSet<BindingId> = temps.iter().map(binding_id).collect();
 
     unique_temps.iter().all(|binding_id| {
         let pattern_count = pattern_references.get(binding_id).copied().unwrap_or(0);
@@ -1140,8 +1136,8 @@ fn try_loose_chain_with_assign(
     binding_references: &HashMap<BindingId, usize>,
     unresolved_mark: Mark,
 ) -> Option<Expr> {
-    if let Some((tmp_sym, real_rhs)) = extract_assign_parts(&checked) {
-        let tmp_ident_expr = find_ident_by_sym(access, &tmp_sym)?;
+    if let Some((tmp, real_rhs)) = extract_assign_parts(&checked) {
+        let tmp_ident_expr = find_ident_by_binding(access, &tmp)?;
         let recovered_real_rhs = recover_lowered_optional_chain_expr(real_rhs, unresolved_mark)
             .map(|recovered| recovered.chain);
         // Loose Babel lowering references the temp twice inside the chain:
@@ -1221,8 +1217,8 @@ fn recover_loose_repeated_optional_call_chain(expr: &Expr, unresolved_mark: Mark
     };
     let checked = extract_loose_null_operand(left, right, unresolved_mark)?;
 
-    if let Some((tmp_sym, real_rhs)) = extract_assign_parts(&checked) {
-        let tmp_ident_expr = find_ident_by_sym(alt, &tmp_sym)?;
+    if let Some((tmp, real_rhs)) = extract_assign_parts(&checked) {
+        let tmp_ident_expr = find_ident_by_binding(alt, &tmp)?;
         let recovered_alt = recover_loose_repeated_optional_call_chain(alt, unresolved_mark)?;
         return make_optional_chain_replacing(
             &tmp_ident_expr,
@@ -1296,26 +1292,26 @@ fn is_call_expr(expr: &Expr) -> bool {
     matches!(strip_parens(expr), Expr::Call(_))
 }
 
-fn find_ident_by_sym(access: &Expr, sym: &swc_core::atoms::Atom) -> Option<Expr> {
+fn find_ident_by_binding(access: &Expr, binding: &Ident) -> Option<Expr> {
     match access {
-        Expr::Paren(paren) => find_ident_by_sym(&paren.expr, sym),
-        Expr::Ident(id) if id.sym == *sym => Some(Expr::Ident(id.clone())),
+        Expr::Paren(paren) => find_ident_by_binding(&paren.expr, binding),
+        Expr::Ident(id) if same_binding(id, binding) => Some(Expr::Ident(id.clone())),
         Expr::Cond(CondExpr {
             test, cons, alt, ..
-        }) => find_ident_by_sym(test, sym)
-            .or_else(|| find_ident_by_sym(cons, sym))
-            .or_else(|| find_ident_by_sym(alt, sym)),
+        }) => find_ident_by_binding(test, binding)
+            .or_else(|| find_ident_by_binding(cons, binding))
+            .or_else(|| find_ident_by_binding(alt, binding)),
         Expr::Bin(BinExpr { left, right, .. }) => {
-            find_ident_by_sym(left, sym).or_else(|| find_ident_by_sym(right, sym))
+            find_ident_by_binding(left, binding).or_else(|| find_ident_by_binding(right, binding))
         }
-        Expr::Assign(assign) => find_ident_by_sym(&assign.right, sym),
+        Expr::Assign(assign) => find_ident_by_binding(&assign.right, binding),
         Expr::Member(MemberExpr { obj, .. }) => {
             if let Expr::Ident(id) = &**obj {
-                if id.sym == *sym {
+                if same_binding(id, binding) {
                     return Some(Expr::Ident(id.clone()));
                 }
             }
-            find_ident_by_sym(obj, sym)
+            find_ident_by_binding(obj, binding)
         }
         Expr::Call(CallExpr {
             callee: Callee::Expr(callee_expr),
@@ -1323,7 +1319,7 @@ fn find_ident_by_sym(access: &Expr, sym: &swc_core::atoms::Atom) -> Option<Expr>
         }) => {
             if let Expr::Member(MemberExpr { obj, .. }) = &**callee_expr {
                 if let Expr::Ident(id) = &**obj {
-                    if id.sym == *sym {
+                    if same_binding(id, binding) {
                         return Some(Expr::Ident(id.clone()));
                     }
                 }
@@ -1332,6 +1328,10 @@ fn find_ident_by_sym(access: &Expr, sym: &swc_core::atoms::Atom) -> Option<Expr>
         }
         _ => None,
     }
+}
+
+fn same_binding(a: &Ident, b: &Ident) -> bool {
+    a.sym == b.sym && a.ctxt == b.ctxt
 }
 
 /// From a binary `x == null` or `null == x`, extract the non-null operand.
@@ -1377,9 +1377,9 @@ fn extract_null_check(expr: &Expr, unresolved_mark: Mark) -> Option<NullCheckRes
     let left_val = extract_null_single(left)?;
     let right_val = extract_undefined_single(right, unresolved_mark)?;
 
-    if let Some((tmp_sym, real_rhs)) = extract_assign_parts(&left_val) {
+    if let Some((tmp, real_rhs)) = extract_assign_parts(&left_val) {
         if let Expr::Ident(ri) = &*right_val {
-            if ri.sym == tmp_sym {
+            if same_binding(ri, &tmp) {
                 return Some(NullCheckResult {
                     value: Box::new(Expr::Ident(ri.clone())),
                     real_value: Some(real_rhs.clone()),
@@ -1617,8 +1617,8 @@ fn recover_loose_lowered_optional_chain_parts(
     access: &Expr,
     unresolved_mark: Mark,
 ) -> Option<RecoveredLoweredOptionalChain> {
-    if let Some((tmp_sym, real_rhs)) = extract_assign_parts(&checked) {
-        let tmp_ident_expr = find_ident_by_sym(access, &tmp_sym)?;
+    if let Some((tmp, real_rhs)) = extract_assign_parts(&checked) {
+        let tmp_ident_expr = find_ident_by_binding(access, &tmp)?;
         Some(RecoveredLoweredOptionalChain {
             chain: make_optional_chain_replacing(
                 &tmp_ident_expr,
@@ -1644,8 +1644,8 @@ fn recover_babel_call_context(member_obj: &Expr, context: &Expr) -> Option<Expr>
     let Expr::Ident(context_ident) = strip_parens(context) else {
         return None;
     };
-    let (assigned_sym, assigned_rhs) = extract_assign_parts(member_obj)?;
-    if assigned_sym == context_ident.sym {
+    let (assigned, assigned_rhs) = extract_assign_parts(member_obj)?;
+    if same_binding(&assigned, context_ident) {
         return Some((**assigned_rhs).clone());
     }
 
@@ -1659,7 +1659,7 @@ fn strip_parens(expr: &Expr) -> &Expr {
     }
 }
 
-fn extract_assign_parts(expr: &Expr) -> Option<(swc_core::atoms::Atom, &Box<Expr>)> {
+fn extract_assign_parts(expr: &Expr) -> Option<(Ident, &Box<Expr>)> {
     let Expr::Assign(assign) = strip_parens(expr) else {
         return None;
     };
@@ -1669,7 +1669,7 @@ fn extract_assign_parts(expr: &Expr) -> Option<(swc_core::atoms::Atom, &Box<Expr
     let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = &assign.left else {
         return None;
     };
-    Some((id.id.sym.clone(), &assign.right))
+    Some((id.id.clone(), &assign.right))
 }
 
 fn extract_assign_ident_parts(expr: &Expr) -> Option<(Ident, &Box<Expr>)> {
@@ -1766,41 +1766,113 @@ impl Visit for BindingReferenceCounter {
     }
 }
 
-#[derive(Default)]
-struct TempBindingFactsCollector {
-    uninitialized: HashSet<BindingId>,
-    references: HashMap<BindingId, usize>,
-}
+#[cfg(test)]
+mod tests {
+    use swc_core::common::{Globals, SyntaxContext, GLOBALS};
+    use swc_core::ecma::ast::{AssignExpr, BindingIdent, ExprOrSpread, Null};
 
-impl Visit for TempBindingFactsCollector {
-    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        if declarator.init.is_none() {
-            let Pat::Ident(binding) = &declarator.name else {
-                declarator.visit_children_with(self);
-                return;
-            };
-            self.uninitialized
-                .insert((binding.id.sym.clone(), binding.id.ctxt));
-        }
-        declarator.visit_children_with(self);
+    use super::*;
+
+    fn ident(sym: &str, ctxt: SyntaxContext) -> Ident {
+        Ident::new(sym.into(), DUMMY_SP, ctxt)
     }
 
-    fn visit_ident(&mut self, ident: &Ident) {
-        let binding_id = (ident.sym.clone(), ident.ctxt);
-        *self.references.entry(binding_id).or_insert(0) += 1;
+    fn ident_expr(sym: &str, ctxt: SyntaxContext) -> Expr {
+        Expr::Ident(ident(sym, ctxt))
     }
-}
 
-struct TempBindingFacts {
-    uninitialized: HashSet<BindingId>,
-    references: HashMap<BindingId, usize>,
-}
+    fn assign_ident_expr(sym: &str, ctxt: SyntaxContext, rhs: Expr) -> Expr {
+        Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left: AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent {
+                id: ident(sym, ctxt),
+                type_ann: None,
+            })),
+            right: Box::new(rhs),
+        })
+    }
 
-fn collect_temp_binding_facts(module: &Module) -> TempBindingFacts {
-    let mut collector = TempBindingFactsCollector::default();
-    module.visit_with(&mut collector);
-    TempBindingFacts {
-        uninitialized: collector.uninitialized,
-        references: collector.references,
+    fn eq_null(expr: Expr) -> Expr {
+        Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::EqEqEq,
+            left: Box::new(expr),
+            right: Box::new(Expr::Lit(Lit::Null(Null { span: DUMMY_SP }))),
+        })
+    }
+
+    fn eq_undefined(expr: Expr, unresolved_mark: Mark) -> Expr {
+        Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::EqEqEq,
+            left: Box::new(expr),
+            right: Box::new(ident_expr(
+                "undefined",
+                SyntaxContext::empty().apply_mark(unresolved_mark),
+            )),
+        })
+    }
+
+    #[test]
+    fn null_check_assignment_requires_matching_context() {
+        GLOBALS.set(&Globals::default(), || {
+            let unresolved_mark = Mark::new();
+            let first_ctxt = SyntaxContext::empty().apply_mark(Mark::new());
+            let second_ctxt = SyntaxContext::empty().apply_mark(Mark::new());
+            let test = Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::LogicalOr,
+                left: Box::new(eq_null(assign_ident_expr(
+                    "tmp",
+                    first_ctxt,
+                    ident_expr("obj", SyntaxContext::empty()),
+                ))),
+                right: Box::new(eq_undefined(
+                    ident_expr("tmp", second_ctxt),
+                    unresolved_mark,
+                )),
+            });
+
+            assert!(extract_null_check(&test, unresolved_mark).is_none());
+        });
+    }
+
+    #[test]
+    fn babel_call_context_assignment_requires_matching_context() {
+        GLOBALS.set(&Globals::default(), || {
+            let first_ctxt = SyntaxContext::empty().apply_mark(Mark::new());
+            let second_ctxt = SyntaxContext::empty().apply_mark(Mark::new());
+            let member_obj =
+                assign_ident_expr("tmp", first_ctxt, ident_expr("obj", SyntaxContext::empty()));
+            let context = ident_expr("tmp", second_ctxt);
+
+            assert!(recover_babel_call_context(&member_obj, &context).is_none());
+        });
+    }
+
+    #[test]
+    fn find_ident_by_binding_requires_matching_context() {
+        GLOBALS.set(&Globals::default(), || {
+            let first_ctxt = SyntaxContext::empty().apply_mark(Mark::new());
+            let second_ctxt = SyntaxContext::empty().apply_mark(Mark::new());
+            let target = ident("tmp", first_ctxt);
+            let access = Expr::Call(CallExpr {
+                span: DUMMY_SP,
+                ctxt: SyntaxContext::empty(),
+                callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                    span: DUMMY_SP,
+                    obj: Box::new(ident_expr("tmp", second_ctxt)),
+                    prop: MemberProp::Ident(ident("method", SyntaxContext::empty()).into()),
+                }))),
+                args: vec![ExprOrSpread {
+                    spread: None,
+                    expr: Box::new(ident_expr("arg", SyntaxContext::empty())),
+                }],
+                type_args: None,
+            });
+
+            assert!(find_ident_by_binding(&access, &target).is_none());
+        });
     }
 }
