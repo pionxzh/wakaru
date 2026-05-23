@@ -74,6 +74,11 @@ fn is_pure_no_op_stmt(stmt: &Stmt, unresolved_mark: Mark) -> bool {
     if is_fn_or_arrow(expr) {
         return false;
     }
+    // Identifier reads are observable: unresolved identifiers throw ReferenceError,
+    // and lexical bindings can throw before initialization (TDZ).
+    if is_ident_read(expr) {
+        return false;
+    }
     let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
     let ctx = ExprCtx {
         unresolved_ctxt,
@@ -88,6 +93,14 @@ fn is_fn_or_arrow(expr: &Expr) -> bool {
     match expr {
         Expr::Fn(_) | Expr::Arrow(_) => true,
         Expr::Paren(paren) => is_fn_or_arrow(&paren.expr),
+        _ => false,
+    }
+}
+
+fn is_ident_read(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ident(_) => true,
+        Expr::Paren(paren) => is_ident_read(&paren.expr),
         _ => false,
     }
 }
@@ -210,6 +223,21 @@ fn split_var_decl(var: Box<VarDecl>) -> Vec<Stmt> {
 
     for decl in var.decls {
         if let Some(init) = decl.init {
+            if sequence_blocks_decl_name_inference(&init) {
+                result.push(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+                    span,
+                    ctxt,
+                    kind,
+                    declare: false,
+                    decls: vec![VarDeclarator {
+                        span: decl.span,
+                        name: decl.name,
+                        init: Some(init),
+                        definite: decl.definite,
+                    }],
+                }))));
+                continue;
+            }
             let (prefix, last) = split_expr_seq(init);
             for expr in prefix {
                 result.push(Stmt::Expr(ExprStmt { span, expr }));
@@ -303,6 +331,15 @@ fn extract_var_decl_prefix(
 
     for decl in var.decls {
         if let Some(init) = decl.init {
+            if sequence_blocks_decl_name_inference(&init) {
+                new_decls.push(VarDeclarator {
+                    span: decl.span,
+                    name: decl.name,
+                    init: Some(init),
+                    definite: decl.definite,
+                });
+                continue;
+            }
             let (pre, last) = split_expr_seq(init);
             for p in pre {
                 prefix.push(Stmt::Expr(ExprStmt { span, expr: p }));
@@ -327,6 +364,29 @@ fn extract_var_decl_prefix(
     });
 
     (prefix, new_var)
+}
+
+fn sequence_blocks_decl_name_inference(expr: &Expr) -> bool {
+    let expr = match expr {
+        Expr::Paren(paren) => paren.expr.as_ref(),
+        other => other,
+    };
+    let Expr::Seq(seq) = expr else {
+        return false;
+    };
+    let Some(last) = seq.exprs.last() else {
+        return false;
+    };
+    is_anonymous_function_or_class(last)
+}
+
+fn is_anonymous_function_or_class(expr: &Expr) -> bool {
+    match expr {
+        Expr::Fn(fn_expr) => fn_expr.ident.is_none(),
+        Expr::Class(class_expr) => class_expr.ident.is_none(),
+        Expr::Paren(paren) => is_anonymous_function_or_class(&paren.expr),
+        _ => false,
+    }
 }
 
 fn is_assign_expr(expr: &Box<Expr>) -> bool {

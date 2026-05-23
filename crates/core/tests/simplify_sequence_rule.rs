@@ -125,6 +125,24 @@ const x = c();
 }
 
 #[test]
+fn preserves_sequence_around_anonymous_function_decl_init() {
+    let input = r#"
+let x = (0, function() {});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_sequence_around_anonymous_class_decl_init() {
+    let input = r#"
+let x = (0, class {});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn splits_variable_declaration_sequence_expression_advanced() {
     let input = r#"
 const x = (a(), b(), c()), y = 3, z = (d(), e())
@@ -228,6 +246,32 @@ b();
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_identifier_read_statements() {
+    let input = r#"
+missing;
+(value);
+"#;
+    let expected = r#"
+missing;
+value;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_tdz_identifier_read_before_lexical_declaration() {
+    let input = r#"
+{
+  x;
+  let x;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]

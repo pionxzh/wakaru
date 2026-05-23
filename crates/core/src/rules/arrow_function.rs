@@ -50,6 +50,12 @@ fn try_convert_to_arrow(fn_expr: &mut FnExpr) -> Option<ArrowExpr> {
         return None;
     }
 
+    // Named function expressions expose the name through `.name`. Converting
+    // them to arrows can erase or change that observable value.
+    if fn_expr.ident.is_some() {
+        return None;
+    }
+
     // Must have a body
     let body = func.body.as_ref()?;
 
@@ -58,19 +64,6 @@ fn try_convert_to_arrow(fn_expr: &mut FnExpr) -> Option<ArrowExpr> {
     body.visit_with(&mut checker);
     if checker.0 {
         return None;
-    }
-
-    // Check if the function name is used inside (self-referential)
-    if let Some(ident) = &fn_expr.ident {
-        let mut name_checker = HasIdentRef {
-            sym: ident.sym.clone(),
-            ctxt: ident.ctxt,
-            found: false,
-        };
-        body.visit_with(&mut name_checker);
-        if name_checker.found {
-            return None;
-        }
     }
 
     // Convert params: Vec<Param> -> Vec<Pat>
@@ -208,22 +201,4 @@ impl Visit for HasArguments {
     }
 
     fn visit_function(&mut self, _: &Function) {}
-}
-
-// ============================================================
-// Visitor: check if a given ident name is referenced in body
-// ============================================================
-
-struct HasIdentRef {
-    sym: swc_core::atoms::Atom,
-    ctxt: SyntaxContext,
-    found: bool,
-}
-
-impl Visit for HasIdentRef {
-    fn visit_ident(&mut self, id: &Ident) {
-        if id.sym == self.sym && id.ctxt == self.ctxt {
-            self.found = true;
-        }
-    }
 }

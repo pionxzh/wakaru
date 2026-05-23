@@ -127,17 +127,17 @@ const gen = function* () { yield 1; };
 
 #[test]
 fn named_function_expr_not_converted() {
-    // Named function expressions may reference themselves by name — converting
-    // to an arrow would break that self-reference
+    // Named function expressions expose their name via `.name`, even when they
+    // do not reference themselves.
     let input = r#"
-f = function fact(n) { return n * fact(n - 1); };
+f = function fact(n) { return n; };
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
 #[test]
-fn named_function_expr_with_shadowed_name_converted() {
+fn named_function_expr_with_shadowed_name_not_converted() {
     let input = r#"
 f = function fact() {
     function inner(fact) {
@@ -146,15 +146,19 @@ f = function fact() {
     return inner(1);
 };
 "#;
-    let expected = r#"
-f = () => {
-    function inner(fact) {
-        return fact;
-    }
-    return inner(1);
-};
-"#;
     let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn named_function_expr_name_observation_not_converted_in_pipeline() {
+    let input = r#"
+export const observed = function named() {}?.name;
+"#;
+    let expected = r#"
+export const observed = (function named() {})?.name;
+"#;
+    let output = apply_pipeline(input);
     assert_eq_normalized(&output, expected);
 }
 
@@ -199,4 +203,13 @@ f = async () => {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn async_named_function_not_converted() {
+    let input = r#"
+f = async function named() { return 1; };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
 }

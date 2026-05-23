@@ -44,3 +44,15 @@ fn let_multiple_decls_partial() {
     let expected = "let x;\nlet y = 42;";
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn object_destructuring_undefined_init_preserved() {
+    let input = r#"let {} = undefined"#;
+    assert_eq_normalized(&render(input), input);
+}
+
+#[test]
+fn array_destructuring_undefined_init_preserved() {
+    let input = r#"let [] = undefined"#;
+    assert_eq_normalized(&render(input), input);
+}
