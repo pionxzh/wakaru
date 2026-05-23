@@ -218,6 +218,12 @@ function runShape(snippet, shape) {
   if (missing.length === 0) {
     return { recovered: true, notes: "expected syntax present" };
   }
+  if (isExpectedLevelGate(snippet, shape)) {
+    return {
+      recovered: false,
+      notes: "direct index/slice array-rest recovery is aggressive-only",
+    };
+  }
 
   const loweredShape = summarize(shape.lowered);
   const recoveredShape = summarize(recovered);
@@ -232,6 +238,12 @@ function runShape(snippet, shape) {
       recovered,
     },
   };
+}
+
+function isExpectedLevelGate(snippet, shape) {
+  return rewriteLevel !== "aggressive"
+    && ["array-rest-basic", "array-rest-default-hole"].includes(snippet.name)
+    && shape.tools.includes("tsc-es5");
 }
 
 function babelModeOptions(mode) {
@@ -384,15 +396,29 @@ function runWakaru(source, name) {
 function ensureNodeTool(name, packages) {
   const dir = join(toolRoot, name);
   const marker = join(dir, ".installed");
-  if (existsSync(marker)) {
+  const installed = existsSync(marker)
+    && packages.every((pkg) =>
+      existsSync(join(dir, "node_modules", packageName(pkg), "package.json")),
+    );
+  if (installed) {
     return dir;
   }
 
+  rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "package.json"), JSON.stringify({ private: true, type: "commonjs" }, null, 2));
   runCommandScript("npm", ["install", "--silent", "--no-audit", "--no-fund", ...packages], { cwd: dir });
   writeFileSync(marker, packages.join("\n"));
   return dir;
+}
+
+function packageName(spec) {
+  if (spec.startsWith("@")) {
+    const versionIndex = spec.indexOf("@", 1);
+    return versionIndex === -1 ? spec : spec.slice(0, versionIndex);
+  }
+  const versionIndex = spec.indexOf("@");
+  return versionIndex === -1 ? spec : spec.slice(0, versionIndex);
 }
 
 function runCommandScript(command, args, options = {}) {

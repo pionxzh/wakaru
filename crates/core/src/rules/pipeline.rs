@@ -247,9 +247,9 @@ runner!(run_un_webpack_object_getters, |ctx| {
 runner!(run_import_dedup, ImportDedup);
 runner!(run_un_import_rename, UnImportRename);
 runner!(run_un_export_rename, UnExportRename);
-runner!(run_un_destructuring, |ctx| UnDestructuring::new(
-    ctx.unresolved_mark
-));
+runner!(run_un_destructuring, |ctx| {
+    UnDestructuring::new_with_level(ctx.unresolved_mark, ctx.rewrite_level)
+});
 runner!(run_smart_inline, |ctx| SmartInline::new(ctx.rewrite_level));
 runner!(run_smart_rename, |ctx| SmartRename::new(
     ctx.unresolved_mark

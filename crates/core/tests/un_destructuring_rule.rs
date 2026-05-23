@@ -1,7 +1,8 @@
 mod common;
 
-use common::{assert_eq_normalized, render_rule};
+use common::{assert_eq_normalized, render_pipeline_until_with_level, render_rule};
 use wakaru_core::rules::UnDestructuring;
+use wakaru_core::RewriteLevel;
 
 fn apply(input: &str) -> String {
     render_rule(input, UnDestructuring::new)
@@ -253,9 +254,105 @@ const tail = ref.slice(1);
 }
 
 #[test]
+fn leaves_direct_loose_array_rest_with_default_temp() {
+    let input = r#"
+const first = items[0];
+const _a = items[2];
+const second = _a === void 0 ? fallback : _a;
+const rest_items = items.slice(3);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn leaves_direct_slice_without_index_access() {
     let input = r#"
 const rest = values.slice(1);
 "#;
     assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn reconstructs_tsc_array_rest_from_split_var_decl() {
+    let input = r#"
+var first = items[0], rest_items = items.slice(1);
+use(first, rest_items);
+"#;
+    let expected = r#"
+const [first, ...rest_items] = items;
+use(first, rest_items);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until_with_level(input, "UnDestructuring", RewriteLevel::Aggressive),
+        expected,
+    );
+}
+
+#[test]
+fn standard_preserves_direct_array_rest_from_split_var_decl() {
+    let input = r#"
+var first = items[0], rest_items = items.slice(1);
+use(first, rest_items);
+"#;
+    let expected = r#"
+const first = items[0];
+const rest_items = items.slice(1);
+use(first, rest_items);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until_with_level(input, "UnDestructuring", RewriteLevel::Standard),
+        expected,
+    );
+}
+
+#[test]
+fn reconstructs_tsc_array_rest_with_default_and_hole() {
+    let input = r#"
+var first = items[0], _a = items[2], second = _a === void 0 ? fallback : _a, rest_items = items.slice(3);
+use(first, second, rest_items);
+"#;
+    let expected = r#"
+const [first, , second = fallback, ...rest_items] = items;
+use(first, second, rest_items);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until_with_level(input, "UnDestructuring", RewriteLevel::Aggressive),
+        expected,
+    );
+}
+
+#[test]
+fn standard_preserves_direct_array_rest_with_default_and_hole() {
+    let input = r#"
+var first = items[0], _a = items[2], second = _a === void 0 ? fallback : _a, rest_items = items.slice(3);
+use(first, second, rest_items);
+"#;
+    let expected = r#"
+const first = items[0];
+const _a = items[2];
+const second = _a === undefined ? fallback : _a;
+const rest_items = items.slice(3);
+use(first, second, rest_items);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until_with_level(input, "UnDestructuring", RewriteLevel::Standard),
+        expected,
+    );
+}
+
+#[test]
+fn standard_preserves_potential_object_slice_semantics() {
+    let input = r#"
+var first = source[0], rest = source.slice(1);
+use(first, rest);
+"#;
+    let expected = r#"
+const first = source[0];
+const rest = source.slice(1);
+use(first, rest);
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until_with_level(input, "UnDestructuring", RewriteLevel::Standard),
+        expected,
+    );
 }

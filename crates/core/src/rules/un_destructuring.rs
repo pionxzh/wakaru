@@ -1,5 +1,5 @@
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignPat, AssignPatProp, BinaryOp, BindingIdent, Bool, Decl, Expr, ExprOrSpread,
     Ident, IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number,
@@ -7,7 +7,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::expr_utils::is_unresolved_undefined;
+use super::{expr_utils::is_unresolved_undefined, RewriteLevel};
 
 /// Reconstructs destructuring from compiler-lowered ref/temp declarations.
 ///
@@ -17,11 +17,19 @@ use super::expr_utils::is_unresolved_undefined;
 /// adjacent accesses.
 pub struct UnDestructuring {
     unresolved_mark: Mark,
+    level: RewriteLevel,
 }
 
 impl UnDestructuring {
     pub fn new(unresolved_mark: Mark) -> Self {
-        Self { unresolved_mark }
+        Self::new_with_level(unresolved_mark, RewriteLevel::Standard)
+    }
+
+    pub fn new_with_level(unresolved_mark: Mark, level: RewriteLevel) -> Self {
+        Self {
+            unresolved_mark,
+            level,
+        }
     }
 }
 
@@ -59,16 +67,24 @@ enum PropKey {
 impl VisitMut for UnDestructuring {
     fn visit_mut_module(&mut self, module: &mut Module) {
         module.visit_mut_children_with(self);
-        module.body = process_module_items(std::mem::take(&mut module.body), self.unresolved_mark);
+        module.body = process_module_items(
+            std::mem::take(&mut module.body),
+            self.unresolved_mark,
+            self.level,
+        );
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-        *stmts = process_stmts(std::mem::take(stmts), self.unresolved_mark);
+        *stmts = process_stmts(std::mem::take(stmts), self.unresolved_mark, self.level);
     }
 }
 
-fn process_module_items(items: Vec<ModuleItem>, unresolved_mark: Mark) -> Vec<ModuleItem> {
+fn process_module_items(
+    items: Vec<ModuleItem>,
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+) -> Vec<ModuleItem> {
     let mut result = Vec::with_capacity(items.len());
     let mut stmt_buf = Vec::new();
 
@@ -78,7 +94,7 @@ fn process_module_items(items: Vec<ModuleItem>, unresolved_mark: Mark) -> Vec<Mo
             other => {
                 if !stmt_buf.is_empty() {
                     result.extend(
-                        process_stmts(std::mem::take(&mut stmt_buf), unresolved_mark)
+                        process_stmts(std::mem::take(&mut stmt_buf), unresolved_mark, level)
                             .into_iter()
                             .map(ModuleItem::Stmt),
                     );
@@ -90,7 +106,7 @@ fn process_module_items(items: Vec<ModuleItem>, unresolved_mark: Mark) -> Vec<Mo
 
     if !stmt_buf.is_empty() {
         result.extend(
-            process_stmts(stmt_buf, unresolved_mark)
+            process_stmts(stmt_buf, unresolved_mark, level)
                 .into_iter()
                 .map(ModuleItem::Stmt),
         );
@@ -99,12 +115,12 @@ fn process_module_items(items: Vec<ModuleItem>, unresolved_mark: Mark) -> Vec<Mo
     result
 }
 
-fn process_stmts(stmts: Vec<Stmt>, unresolved_mark: Mark) -> Vec<Stmt> {
+fn process_stmts(stmts: Vec<Stmt>, unresolved_mark: Mark, level: RewriteLevel) -> Vec<Stmt> {
     let mut result = Vec::with_capacity(stmts.len());
     let mut i = 0;
 
     while i < stmts.len() {
-        if let Some((stmt, consumed)) = try_reconstruct_group(&stmts, i, unresolved_mark) {
+        if let Some((stmt, consumed)) = try_reconstruct_group(&stmts, i, unresolved_mark, level) {
             result.push(stmt);
             i += consumed;
         } else {
@@ -120,8 +136,13 @@ fn try_reconstruct_group(
     stmts: &[Stmt],
     start: usize,
     unresolved_mark: Mark,
+    level: RewriteLevel,
 ) -> Option<(Stmt, usize)> {
-    try_reconstruct_ref_group(stmts, start, unresolved_mark)
+    try_reconstruct_ref_group(stmts, start, unresolved_mark).or_else(|| {
+        (level >= RewriteLevel::Aggressive)
+            .then(|| try_reconstruct_direct_array_group(stmts, start, unresolved_mark))
+            .flatten()
+    })
 }
 
 fn try_reconstruct_ref_group(
@@ -184,6 +205,228 @@ fn is_rest_or_default_access(access: &Access) -> bool {
         Access::ArrayRest { .. } => true,
         Access::Array { pat, .. } | Access::Object { pat, .. } => matches!(pat, Pat::Assign(_)),
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct DeclGroup {
+    span: Span,
+    ctxt: SyntaxContext,
+    kind: VarDeclKind,
+    declare: bool,
+}
+
+fn try_reconstruct_direct_array_group(
+    stmts: &[Stmt],
+    start: usize,
+    unresolved_mark: Mark,
+) -> Option<(Stmt, usize)> {
+    let (source, group, first_access, consumed, first_temp) =
+        try_extract_direct_array_access(stmts, start, None, None, unresolved_mark)?;
+
+    let mut accesses = vec![first_access];
+    let mut removed_temps = Vec::new();
+    if let Some(temp) = first_temp {
+        removed_temps.push(temp);
+    }
+
+    let mut i = start + consumed;
+    while i < stmts.len() {
+        let next_default = try_extract_direct_default_access(
+            stmts,
+            i,
+            Some(&source),
+            Some(group),
+            unresolved_mark,
+        )
+        .map(|(source, group, access, temp)| (source, group, access, 2, Some(temp)));
+
+        let next_access = next_default.or_else(|| {
+            try_extract_direct_array_access(stmts, i, Some(&source), Some(group), unresolved_mark)
+        });
+
+        if let Some((_, _, access, consumed, temp)) = next_access {
+            accesses.push(access);
+            if let Some(temp) = temp {
+                removed_temps.push(temp);
+            }
+            i += consumed;
+        } else {
+            break;
+        }
+    }
+
+    if !accesses
+        .iter()
+        .any(|access| matches!(access, Access::ArrayRest { .. }))
+        || !accesses
+            .iter()
+            .any(|access| matches!(access, Access::Array { .. }))
+    {
+        return None;
+    }
+
+    if accesses
+        .iter()
+        .any(|access| default_uses_any_removed_binding(access, &removed_temps))
+    {
+        return None;
+    }
+
+    for temp in &removed_temps {
+        if ident_used_in_stmts(&stmts[i..], temp) {
+            return None;
+        }
+    }
+
+    let stmt =
+        build_direct_array_destructuring_stmt(group, accesses, Box::new(Expr::Ident(source)))?;
+    Some((stmt, i - start))
+}
+
+fn try_extract_direct_array_access(
+    stmts: &[Stmt],
+    index: usize,
+    expected_source: Option<&Ident>,
+    expected_group: Option<DeclGroup>,
+    unresolved_mark: Mark,
+) -> Option<(Ident, DeclGroup, Access, usize, Option<BindingKey>)> {
+    if let Some((source, group, access, temp)) = try_extract_direct_default_access(
+        stmts,
+        index,
+        expected_source,
+        expected_group,
+        unresolved_mark,
+    ) {
+        return Some((source, group, access, 2, Some(temp)));
+    }
+
+    let (group, binding, init) = extract_grouped_binding_decl(stmts.get(index)?)?;
+    if let Some(expected_group) = expected_group {
+        if group != expected_group {
+            return None;
+        }
+    }
+
+    if let Some((source, index)) = extract_direct_array_index(init, expected_source) {
+        return Some((
+            source,
+            group,
+            Access::Array {
+                index,
+                pat: Pat::Ident(binding),
+            },
+            1,
+            None,
+        ));
+    }
+
+    if let Some((source, start, binding)) =
+        extract_direct_slice_rest(init, expected_source, binding)
+    {
+        return Some((source, group, Access::ArrayRest { start, binding }, 1, None));
+    }
+
+    None
+}
+
+fn try_extract_direct_default_access(
+    stmts: &[Stmt],
+    index: usize,
+    expected_source: Option<&Ident>,
+    expected_group: Option<DeclGroup>,
+    unresolved_mark: Mark,
+) -> Option<(Ident, DeclGroup, Access, BindingKey)> {
+    let (group, temp, temp_init) = extract_grouped_binding_decl(stmts.get(index)?)?;
+    if let Some(expected_group) = expected_group {
+        if group != expected_group {
+            return None;
+        }
+    }
+    let (source, array_index) = extract_direct_array_index(temp_init, expected_source)?;
+
+    let (next_group, binding, binding_init) = extract_grouped_binding_decl(stmts.get(index + 1)?)?;
+    if expected_group.is_some() && next_group != group {
+        return None;
+    }
+    let default = extract_default_value(binding_init, &temp.id, unresolved_mark)?;
+    let temp_key = binding_key(&temp);
+    if expr_uses_ident(&default, &temp_key) {
+        return None;
+    }
+
+    let pat = Pat::Assign(AssignPat {
+        span: DUMMY_SP,
+        left: Box::new(Pat::Ident(binding)),
+        right: default,
+    });
+
+    Some((
+        source,
+        group,
+        Access::Array {
+            index: array_index,
+            pat,
+        },
+        temp_key,
+    ))
+}
+
+fn extract_direct_array_index(
+    expr: &Expr,
+    expected_source: Option<&Ident>,
+) -> Option<(Ident, usize)> {
+    let Expr::Member(member) = expr else {
+        return None;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return None;
+    };
+    if let Some(expected) = expected_source {
+        if obj.sym != expected.sym || obj.ctxt != expected.ctxt {
+            return None;
+        }
+    }
+    let MemberProp::Computed(computed) = &member.prop else {
+        return None;
+    };
+    let Expr::Lit(Lit::Num(num)) = computed.expr.as_ref() else {
+        return None;
+    };
+    Some((obj.clone(), numeric_index(num)?))
+}
+
+fn extract_direct_slice_rest(
+    expr: &Expr,
+    expected_source: Option<&Ident>,
+    binding: BindingIdent,
+) -> Option<(Ident, usize, BindingIdent)> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if call.args.len() != 1 {
+        return None;
+    }
+    let swc_core::ecma::ast::Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(MemberExpr { obj, prop, .. }) = callee.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(source) = obj.as_ref() else {
+        return None;
+    };
+    if let Some(expected) = expected_source {
+        if source.sym != expected.sym || source.ctxt != expected.ctxt {
+            return None;
+        }
+    }
+    if !matches!(prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "slice") {
+        return None;
+    }
+    let Expr::Lit(Lit::Num(num)) = call.args[0].expr.as_ref() else {
+        return None;
+    };
+    Some((source.clone(), numeric_index(num)?, binding))
 }
 
 fn default_uses_any_removed_binding(access: &Access, removed_bindings: &[BindingKey]) -> bool {
@@ -318,6 +561,29 @@ fn extract_binding_decl(stmt: &Stmt) -> Option<(BindingIdent, &Expr)> {
         return None;
     };
     Some((binding.clone(), decl.init.as_deref()?))
+}
+
+fn extract_grouped_binding_decl(stmt: &Stmt) -> Option<(DeclGroup, BindingIdent, &Expr)> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let decl = &var.decls[0];
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    Some((
+        DeclGroup {
+            span: var.span,
+            ctxt: var.ctxt,
+            kind: var.kind,
+            declare: var.declare,
+        },
+        binding.clone(),
+        decl.init.as_deref()?,
+    ))
 }
 
 fn extract_source_access(expr: &Expr, ref_ident: &Ident) -> Option<SourceAccess> {
@@ -492,6 +758,22 @@ fn build_destructuring_stmt(ref_decl: &RefDecl, accesses: Vec<Access>) -> Option
 fn build_array_destructuring_stmt(ref_decl: &RefDecl, accesses: Vec<Access>) -> Option<Stmt> {
     let pat = build_array_pat(accesses)?;
     Some(build_var_stmt(ref_decl, pat))
+}
+
+fn build_direct_array_destructuring_stmt(
+    group: DeclGroup,
+    accesses: Vec<Access>,
+    init: Box<Expr>,
+) -> Option<Stmt> {
+    let pat = build_array_pat(accesses)?;
+    Some(build_var_stmt_from_parts(
+        group.span,
+        group.ctxt,
+        group.kind,
+        group.declare,
+        pat,
+        init,
+    ))
 }
 
 fn build_array_pat(accesses: Vec<Access>) -> Option<Pat> {
