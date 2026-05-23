@@ -120,6 +120,10 @@ const transformers = [
     name: "swc-es5",
     run: runSwc,
   },
+  {
+    name: "esbuild-es2015",
+    run: runEsbuild,
+  },
 ];
 
 try {
@@ -336,6 +340,26 @@ const result = swc.transformSync(source, {
     parser: { syntax: "ecmascript" },
   },
   module: { type: "es6" },
+});
+process.stdout.write(result.code);
+`,
+  );
+  return runChecked("node", [helper], { input: source, cwd: toolDir });
+}
+
+function runEsbuild(source) {
+  const toolDir = ensureNodeTool("esbuild", ["esbuild@0.25"]);
+  const helper = join(toolDir, "esbuild-transform.cjs");
+  writeFileSync(
+    helper,
+    `
+const fs = require("node:fs");
+const esbuild = require("esbuild");
+const source = fs.readFileSync(0, "utf8");
+const result = esbuild.transformSync(source, {
+  loader: "js",
+  target: "es2015",
+  format: "esm",
 });
 process.stdout.write(result.code);
 `,

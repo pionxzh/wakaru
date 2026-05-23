@@ -1,8 +1,9 @@
 # Parameters Reproduction Matrix
 
-This harness checks how Babel, TypeScript, and SWC lower default parameters and
-destructured parameters, then runs wakaru on the lowered JavaScript. Esbuild is
-not included because it does not lower default/destructured parameters to ES5.
+This harness checks how Babel, TypeScript, SWC, and esbuild handle default
+parameters and destructured parameters, then runs wakaru on the generated
+JavaScript. Esbuild is checked at ES2015 because it does not lower
+default/destructured parameters to ES5.
 
 It is for investigation, not as a committed snapshot source. Use it to find
 compiler shapes worth minimizing into focused Rust unit tests.
