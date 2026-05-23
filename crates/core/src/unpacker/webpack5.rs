@@ -26,6 +26,14 @@ struct Webpack5RuntimeNormalizer {
 }
 
 impl VisitMut for Webpack5RuntimeNormalizer {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        if let Some(ctxt) = self.try_match_require_g(expr) {
+            *expr = Expr::Ident(Ident::new(Atom::from("global"), Default::default(), ctxt));
+        }
+    }
+
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         items.visit_mut_children_with(self);
 
@@ -60,6 +68,25 @@ impl VisitMut for Webpack5RuntimeNormalizer {
 }
 
 impl Webpack5RuntimeNormalizer {
+    fn try_match_require_g(&self, expr: &Expr) -> Option<SyntaxContext> {
+        let Expr::Member(MemberExpr { obj, prop, .. }) = expr else {
+            return None;
+        };
+        let Expr::Ident(obj_ident) = &**obj else {
+            return None;
+        };
+        if obj_ident.sym != self.require_sym || obj_ident.ctxt.outer() != self.unresolved_mark {
+            return None;
+        }
+        let MemberProp::Ident(prop_name) = prop else {
+            return None;
+        };
+        if prop_name.sym.as_ref() != "g" {
+            return None;
+        }
+        Some(obj_ident.ctxt)
+    }
+
     fn try_convert_stmt(&self, stmt: &Stmt) -> Option<Vec<Stmt>> {
         let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
             return None;

@@ -93,6 +93,80 @@ fn webpack5_require_n_default_interop_is_recovered() {
 }
 
 #[test]
+fn webpack5_require_g_is_recovered_as_global() {
+    let source = r#"
+(() => {
+  var __webpack_modules__ = ({
+    "./src/browser-process.js": ((module) => {
+      module.exports = { env: {} };
+    }),
+    "./src/global.js": ((__unused_webpack_module, exports, __webpack_require__) => {
+      exports.envProcess = __webpack_require__.g.process?.env && typeof __webpack_require__.g.process?.env === "object"
+        ? __webpack_require__.g.process
+        : __webpack_require__("./src/browser-process.js");
+      exports.readLocal = function(require) {
+        return require.g;
+      };
+    })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var cachedModule = __webpack_module_cache__[moduleId];
+    if (cachedModule !== undefined) return cachedModule.exports;
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__.g = (function() {
+    if (typeof globalThis === "object") return globalThis;
+    try {
+      return this || new Function("return this")();
+    } catch (e) {
+      if (typeof window === "object") return window;
+    }
+  })();
+  __webpack_require__("./src/global.js");
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-require-g.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack5 unpack should succeed");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+
+    let global = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "src/global.js")
+        .map(|(_, code)| code)
+        .expect("expected global module");
+
+    assert!(
+        global.contains("global.process?.env")
+            && global.contains("typeof global.process?.env === \"object\"")
+            && global.contains("global.process"),
+        "expected webpack require.g to recover as global:\n{global}"
+    );
+    assert!(
+        !global.contains("require.g.process"),
+        "webpack require.g.process should not survive:\n{global}"
+    );
+    assert!(
+        global.contains("=>require.g"),
+        "inner parameter named require should not be rewritten:\n{global}"
+    );
+}
+
+#[test]
 fn browserify_unpack_extracts_multiple_modules() {
     let source_path = "../../testcases/browserify/dist/index.js";
     let source = fs::read_to_string(source_path).expect("failed to read browserify testcase");
