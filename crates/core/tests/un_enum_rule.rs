@@ -113,6 +113,64 @@ var Direction = {
 }
 
 #[test]
+fn test_function_initializer_enum() {
+    let input = r#"
+var Direction = function (Direction) {
+  Direction[Direction["Up"] = 1] = "Up";
+  Direction[Direction["Down"] = 2] = "Down";
+  return Direction;
+}(Direction || {});
+"#;
+    let expected = r#"
+var Direction = {
+  Up: 1,
+  Down: 2,
+  1: "Up",
+  2: "Down"
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_arrow_initializer_enum() {
+    let input = r#"
+var Direction = ((Direction2) => {
+  Direction2[Direction2["Up"] = 1] = "Up";
+  Direction2[Direction2["Down"] = 2] = "Down";
+  return Direction2;
+})(Direction || {});
+"#;
+    let expected = r#"
+var Direction = {
+  Up: 1,
+  Down: 2,
+  1: "Up",
+  2: "Down"
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_exported_function_initializer_enum() {
+    let input = r#"
+export let Mode = function (Mode) {
+  Mode["Dev"] = "dev";
+  Mode["Prod"] = "prod";
+  return Mode;
+}({});
+"#;
+    let expected = r#"
+export let Mode = {
+  Dev: "dev",
+  Prod: "prod"
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn test_enum_invalid_identifier_keys() {
     let input = r#"
 var RenderMode;

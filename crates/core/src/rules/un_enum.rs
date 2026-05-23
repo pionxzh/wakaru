@@ -1,9 +1,9 @@
 use swc_core::atoms::{Atom, Wtf8Atom};
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, CallExpr, Callee,
-    ComputedPropName, Decl, Expr, ExprStmt, FnExpr, Ident, IdentName, KeyValueProp, Lit,
-    MemberProp, ModuleItem, Number, ObjectLit, Pat, Prop, PropName, PropOrSpread,
+    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, BlockStmtOrExpr, CallExpr,
+    Callee, ComputedPropName, Decl, Expr, ExprStmt, FnExpr, Ident, IdentName, KeyValueProp, Lit,
+    MemberProp, ModuleDecl, ModuleItem, Number, ObjectLit, Pat, Prop, PropName, PropOrSpread,
     SimpleAssignTarget, Stmt, Str, UnaryExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -53,6 +53,12 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>) {
     while let Some(item) = iter.next() {
         match item {
             ModuleItem::Stmt(stmt) => {
+                let mut stmt = stmt;
+                if rewrite_enum_var_decl_stmt(&mut stmt) {
+                    items.push(ModuleItem::Stmt(stmt));
+                    continue;
+                }
+
                 // Check if this is a bare var decl like `var Direction;`
                 if let Some(bare_var_name) = get_bare_var_decl_name(&stmt) {
                     if let Some(ModuleItem::Stmt(next_stmt)) = iter.peek() {
@@ -75,7 +81,14 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>) {
 
                 items.push(ModuleItem::Stmt(stmt));
             }
-            other => items.push(other),
+            ModuleItem::ModuleDecl(mut module_decl) => {
+                if rewrite_enum_export_decl(&mut module_decl) {
+                    items.push(ModuleItem::ModuleDecl(module_decl));
+                    continue;
+                }
+
+                items.push(ModuleItem::ModuleDecl(module_decl));
+            }
         }
     }
 }
@@ -85,6 +98,12 @@ fn process_stmts_for_enum(stmts: &mut Vec<Stmt>) {
     let mut iter = old.into_iter().peekable();
 
     while let Some(stmt) = iter.next() {
+        let mut stmt = stmt;
+        if rewrite_enum_var_decl_stmt(&mut stmt) {
+            stmts.push(stmt);
+            continue;
+        }
+
         if let Some(bare_var_name) = get_bare_var_decl_name(&stmt) {
             if let Some(peeked) = iter.peek() {
                 if let Some(members) = parse_enum_iife(peeked, &bare_var_name) {
@@ -104,6 +123,43 @@ fn process_stmts_for_enum(stmts: &mut Vec<Stmt>) {
 
         stmts.push(stmt);
     }
+}
+
+fn rewrite_enum_var_decl_stmt(stmt: &mut Stmt) -> bool {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return false;
+    };
+    rewrite_enum_var_decl(var)
+}
+
+fn rewrite_enum_export_decl(module_decl: &mut ModuleDecl) -> bool {
+    let ModuleDecl::ExportDecl(export_decl) = module_decl else {
+        return false;
+    };
+    let Decl::Var(var) = &mut export_decl.decl else {
+        return false;
+    };
+    rewrite_enum_var_decl(var)
+}
+
+fn rewrite_enum_var_decl(var: &mut VarDecl) -> bool {
+    let mut changed = false;
+
+    for declarator in &mut var.decls {
+        let Pat::Ident(BindingIdent { id, .. }) = &declarator.name else {
+            continue;
+        };
+        let Some(init) = &mut declarator.init else {
+            continue;
+        };
+        let Some(members) = parse_enum_iife_expr(init, Some(&id.sym)) else {
+            continue;
+        };
+        **init = build_enum_object(members);
+        changed = true;
+    }
+
+    changed
 }
 
 // ============================================================
@@ -181,20 +237,11 @@ fn parse_enum_iife_expr_inner(
     enum_name: &Atom,
     _expected_name: Option<&Atom>,
 ) -> Option<Vec<EnumMember>> {
-    // Callee must be FnExpr (possibly paren-wrapped)
+    // Callee must be a function or block-bodied arrow expression (possibly paren-wrapped)
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
-    let fn_expr = extract_fn_expr(callee)?;
-
-    // Single param
-    if fn_expr.function.params.len() != 1 {
-        return None;
-    }
-    let Pat::Ident(param_ident) = &fn_expr.function.params[0].pat else {
-        return None;
-    };
-    let inner_param_name = &param_ident.id.sym;
+    let (inner_param_name, body_stmts) = extract_enum_iife_body(callee)?;
 
     // Single arg matching `Name || (Name = {})`
     if call.args.len() != 1 {
@@ -205,16 +252,38 @@ fn parse_enum_iife_expr_inner(
     }
 
     // Parse body
-    let body = fn_expr.function.body.as_ref()?;
-    parse_enum_body(&body.stmts, inner_param_name)
+    parse_enum_body(body_stmts, inner_param_name)
 }
 
-fn extract_fn_expr(expr: &Expr) -> Option<&FnExpr> {
+fn extract_enum_iife_body(expr: &Expr) -> Option<(&Atom, &[Stmt])> {
     match expr {
-        Expr::Fn(fn_expr) => Some(fn_expr),
-        Expr::Paren(paren) => extract_fn_expr(&paren.expr),
+        Expr::Fn(fn_expr) => extract_fn_expr_body(fn_expr),
+        Expr::Arrow(arrow) => {
+            if arrow.params.len() != 1 {
+                return None;
+            }
+            let Pat::Ident(param_ident) = &arrow.params[0] else {
+                return None;
+            };
+            let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
+                return None;
+            };
+            Some((&param_ident.id.sym, &body.stmts))
+        }
+        Expr::Paren(paren) => extract_enum_iife_body(&paren.expr),
         _ => None,
     }
+}
+
+fn extract_fn_expr_body(fn_expr: &FnExpr) -> Option<(&Atom, &[Stmt])> {
+    if fn_expr.function.params.len() != 1 {
+        return None;
+    }
+    let Pat::Ident(param_ident) = &fn_expr.function.params[0].pat else {
+        return None;
+    };
+    let body = fn_expr.function.body.as_ref()?;
+    Some((&param_ident.id.sym, &body.stmts))
 }
 
 fn strip_unary_bang(expr: &Expr) -> &Expr {
@@ -255,7 +324,7 @@ fn validate_enum_iife_arg(args: &[swc_core::ecma::ast::ExprOrSpread], name: &Ato
     is_enum_iife_arg(&args[0].expr, name)
 }
 
-/// Check that expr is `Name || (Name = {})` or `Name || {}`
+/// Check that expr is `Name || (Name = {})`, `Name || {}`, or an initialized `{}`.
 fn is_enum_iife_arg(expr: &Expr, name: &Atom) -> bool {
     let expr = strip_parens(expr);
     match expr {
@@ -273,6 +342,7 @@ fn is_enum_iife_arg(expr: &Expr, name: &Atom) -> bool {
             is_assign_empty_obj(right, name)
                 || matches!(right, Expr::Object(o) if o.props.is_empty())
         }
+        Expr::Object(o) => o.props.is_empty(),
         _ => false,
     }
 }
