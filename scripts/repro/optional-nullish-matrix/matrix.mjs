@@ -219,6 +219,13 @@ function runShape(snippet, shape) {
     return { recovered: true, notes: "expected syntax present" };
   }
 
+  if (isExpectedLevelGate(snippet, shape)) {
+    return {
+      recovered: false,
+      notes: `gated at ${rewriteLevel}; Babel loose repeated-property optional calls require aggressive`,
+    };
+  }
+
   const loweredShape = summarize(shape.lowered);
   const recoveredShape = summarize(recovered);
   return {
@@ -232,6 +239,16 @@ function runShape(snippet, shape) {
       recovered,
     },
   };
+}
+
+function isExpectedLevelGate(snippet, shape) {
+  if (rewriteLevel !== "standard") {
+    return false;
+  }
+  if (!["optional-call-nullish", "nested-receiver-call"].includes(snippet.name)) {
+    return false;
+  }
+  return shape.tools.some((tool) => tool.endsWith("-loose"));
 }
 
 function babelModeOptions(mode) {

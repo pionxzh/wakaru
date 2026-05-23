@@ -16,6 +16,11 @@ Add `--details` to print full lowered and recovered code for missed cases.
 Add `--level minimal`, `--level standard`, or `--level aggressive` to run
 wakaru with a specific rewrite level.
 
+Some Babel loose optional-call rows are expected to stay unrecovered at
+`standard`: those lowerings read the same property twice, while optional-call
+syntax reads it once. Wakaru only recovers those rows at `aggressive`, where
+stable getter reads are an accepted assumption.
+
 Rows are grouped by distinct lowered output per snippet. The grouping key only
 normalizes CRLF to LF and trims leading/trailing whitespace, so exact helper
 shape is still preserved while duplicate tool outputs are collapsed.

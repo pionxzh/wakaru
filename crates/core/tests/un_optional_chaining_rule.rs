@@ -1,7 +1,10 @@
 mod common;
 
 use common::{assert_eq_normalized, render, render_rule};
-use wakaru_core::{rules::UnOptionalChaining, RewriteLevel};
+use wakaru_core::{
+    rules::{UnNullishCoalescing, UnOptionalChaining},
+    RewriteLevel,
+};
 
 fn apply(input: &str) -> String {
     apply_with_level(input, RewriteLevel::Standard)
@@ -230,6 +233,38 @@ const x = value?.foo?.bar?.baz ?? "fallback";
 }
 
 #[test]
+fn pipeline_standard_preserves_babel_loose_optional_call_nullish_wrapper() {
+    let input = r#"
+var _obj$method, _obj;
+const out = (_obj$method = (_obj = obj) == null ? void 0 : _obj.method == null ? void 0 : _obj.method(arg)) != null ? _obj$method : fallback;
+"#;
+    let expected = r#"
+let _obj$method;
+let _obj;
+const out = ((_obj = obj) == null ? undefined : _obj.method == null ? undefined : _obj.method(arg)) ?? fallback;
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn aggressive_recovers_babel_loose_optional_call_inside_nullish_wrapper() {
+    let input = r#"
+var _obj$method, _obj;
+const out = (_obj$method = (_obj = obj) == null ? void 0 : _obj.method == null ? void 0 : _obj.method(arg)) != null ? _obj$method : fallback;
+"#;
+    let expected = r#"
+var _obj$method, _obj;
+const out = obj?.method?.(arg) ?? fallback;
+"#;
+    let optional = apply_with_level(input, RewriteLevel::Aggressive);
+    let output = render_rule(&optional, |unresolved_mark| {
+        UnNullishCoalescing::new(unresolved_mark, RewriteLevel::Aggressive)
+    });
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn standard_transforms_babel_flattened_loose_optional_member_chain() {
     let input = r#"
 var _r$foo$bar, _r;
@@ -310,6 +345,16 @@ const out = obj?.method?.(arg);
 }
 
 #[test]
+fn standard_preserves_babel_old_loose_optional_call_with_repeated_property() {
+    let input = r#"
+var _obj;
+const out = (_obj = obj) == null ? void 0 : _obj.method == null ? void 0 : _obj.method(arg);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn aggressive_transforms_babel_old_loose_optional_call_with_repeated_property() {
     let input = r#"
 var _obj;
@@ -324,6 +369,16 @@ const out = obj?.method?.(arg);
 }
 
 #[test]
+fn standard_preserves_babel_loose_nested_optional_call_with_repeated_property() {
+    let input = r#"
+var _obj;
+const out = (_obj = obj) == null || (_obj = _obj.foo) == null || _obj.method == null ? void 0 : _obj.method(arg);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn aggressive_transforms_babel_loose_nested_optional_call_with_repeated_property() {
     let input = r#"
 var _obj;
@@ -335,6 +390,16 @@ const out = obj?.foo?.method?.(arg);
 "#;
     let output = apply_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_preserves_babel_old_loose_nested_optional_call_with_repeated_property() {
+    let input = r#"
+var _obj, _obj_foo;
+const out = (_obj = obj) == null ? void 0 : (_obj_foo = _obj.foo) == null ? void 0 : _obj_foo.method == null ? void 0 : _obj_foo.method(arg);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]

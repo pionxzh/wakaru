@@ -534,7 +534,7 @@ These rules restore structural patterns and clean up minification artifacts.
 | Downstream dependents | UnConditionals (should run after nullish coalescing to avoid converting `??`-eligible ternaries to if/else) |
 | Fact behavior | Neither |
 | Safety | Safe |
-| Notes | Level-gated: strict-check patterns (Patterns A/B: `x === null \|\| x === undefined`) run at all levels. Loose-check patterns (Pattern D: `x != null ? x : fallback`) should require `standard+` (assumes `no_document_all`). Non-identifier bases (member expressions, computed access) require `aggressive` because collapsing three reads to one changes getter/proxy semantics (assumes `pure_getters`). **Code gap:** Pattern D and the plain-ident branch of Pattern C currently lack a `standard` level gate — they fire at `minimal`. |
+| Notes | Level-gated: strict-check patterns (Patterns A/B: `x === null \|\| x === undefined`) run at all levels. Loose-check patterns (Pattern D: `x != null ? x : fallback`) require `standard+` (assumes `no_document_all`). Pattern C temp forms run at `minimal` when binding facts prove the temp is isolated; plain identifier Pattern C requires `standard+`; non-identifier bases (member expressions, computed access) require `aggressive` because collapsing three reads to one changes getter/proxy semantics (assumes `pure_getters`). |
 
 ### 34. UnOptionalChaining
 
@@ -549,7 +549,7 @@ These rules restore structural patterns and clean up minification artifacts.
 | Downstream dependents | UnConditionals (should run after optional chaining) |
 | Fact behavior | Neither |
 | Safety | Mixed: standard heuristic + aggressive subpatterns |
-| Notes | Shares helper functions with UnNullishCoalescing (`exprs_structurally_equal`, `is_undefined`). Level-gated behavior: `minimal` disables loose `x == null ? undefined : x.prop` recovery; `standard` enables loose null-check recovery; `aggressive` additionally enables Babel-loose temp-binding forms like `(tmp = expr) == null ? undefined : tmp.prop` → `expr?.prop`. |
+| Notes | Shares helper functions with UnNullishCoalescing (`exprs_structurally_equal`, `is_undefined`). Level-gated behavior: `minimal` disables loose `x == null ? undefined : x.prop` recovery; `standard` enables loose null-check recovery when temp analysis or direct structural matching preserves evaluation count; `aggressive` additionally enables Babel loose repeated-property call forms such as `_obj.method == null ? undefined : _obj.method(arg)` → `obj?.method?.(arg)` because that recovery assumes stable property reads. |
 
 ---
 
