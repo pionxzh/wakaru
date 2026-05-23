@@ -51,7 +51,7 @@ const transformers = [
     run: runTerser,
   },
   {
-    name: "esbuild-0.25",
+    name: "esbuild-0.28",
     run: runEsbuild,
   },
   {
@@ -194,7 +194,7 @@ process.stdout.write(result.code + "\\n");
 }
 
 function runEsbuild(source) {
-  const toolDir = ensureNodeTool("esbuild", ["esbuild@0.25"]);
+  const toolDir = ensureNodeTool("esbuild-0.28", ["esbuild@0.28.0"]);
   const helper = join(toolDir, "esbuild-transform.cjs");
   writeFileSync(
     helper,
