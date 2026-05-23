@@ -1128,8 +1128,7 @@ function dt(e) {
             a |= 64;
         }
         let u = null;
-        for(let l = 0; l < E.length; l++){
-            let c = E[l];
+        for (let c of E){
             if (c && (c = c.extractEvents(r, e_targetInst, i, o, a))) {
                 u = nt(u, c);
             }

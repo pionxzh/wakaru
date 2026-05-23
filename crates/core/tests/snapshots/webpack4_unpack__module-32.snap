@@ -62,8 +62,7 @@ export default (function e(t, n, r) {
         }
         const u = l(t);
         const m = l(n);
-        for(let y = 0; y < a.length; ++y){
-            const v = a[y];
+        for (const v of a){
             if (!(i[v] || r && r[v] || m && m[v] || u && u[v])) {
                 const b = Object.getOwnPropertyDescriptor(n, v);
                 try {

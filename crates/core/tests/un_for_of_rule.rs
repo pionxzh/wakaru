@@ -72,10 +72,76 @@ fn for_of_uses_let_when_elem_reassigned() {
 
 #[test]
 fn for_of_single_decl_arr_form() {
-    // Variant: for(let i = 0; i < arr.length; i++) { const x = arr[i]; ... }
-    // Only one declarator, arr is external — still transformable if arr is not modified
     let input =
         r#"for (let Y = 0, V = B.split("."); Y < V.length; Y++) { const Z = V[Y]; process(Z); }"#;
     let expected = r#"for (const Z of B.split(".")) { process(Z); }"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_direct_array_index_form() {
+    // Babel with the `iterableIsArray` assumption emits direct indexed loops.
+    let input = r#"for (let i = 0; i < items.length; i++) { const item = items[i]; use(item); }"#;
+    let expected = r#"for (const item of items) { use(item); }"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_direct_array_index_uses_let_when_elem_reassigned() {
+    let input = r#"for (let i = 0; i < items.length; i++) { let item = items[i]; item = normalize(item); use(item); }"#;
+    let expected = r#"for (let item of items) { item = normalize(item); use(item); }"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_preserves_var_when_var_decl_survives() {
+    let input = r#"
+function f(items) {
+  var item = fallback;
+  for (let i = 0; i < items.length; i++) {
+    var item = items[i];
+    use(item);
+  }
+  return item;
+}
+"#;
+    let expected = r#"
+function f(items) {
+  var item = fallback;
+  for (var item of items) {
+    use(item);
+  }
+  return item;
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_destructuring_from_ts_index_form() {
+    let input = r#"for (let i = 0, entries_1 = entries; i < entries_1.length; i++) { const _a = entries_1[i], key = _a[0], value = _a[1]; use(key, value); }"#;
+    let expected = r#"for (const [key, value] of entries) { use(key, value); }"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_destructuring_from_direct_array_index_form() {
+    let input = r#"for (let i = 0; i < entries.length; i++) { const _entry = entries[i], key = _entry[0], value = _entry[1]; use(key, value); }"#;
+    let expected = r#"for (const [key, value] of entries) { use(key, value); }"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_destructuring_uses_let_when_binding_reassigned() {
+    let input = r#"for (let i = 0; i < entries.length; i++) { let _entry = entries[i], key = _entry[0], value = _entry[1]; key = normalize(key); use(key, value); }"#;
+    let expected =
+        r#"for (let [key, value] of entries) { key = normalize(key); use(key, value); }"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn no_transform_destructuring_when_temp_used_later() {
+    let input = r#"for (let i = 0; i < entries.length; i++) { const _entry = entries[i], key = _entry[0], value = _entry[1]; use(_entry, key, value); }"#;
+    let expected = r#"for (let i = 0; i < entries.length; i++) { const _entry = entries[i]; const key = _entry[0]; const value = _entry[1]; use(_entry, key, value); }"#;
     assert_eq_normalized(&render(input), expected);
 }

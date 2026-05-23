@@ -890,12 +890,12 @@ See #35 (second pass of UnWebpackInterop).
 | Role | Modernization |
 | Uses `unresolved_mark` | No |
 | Suspected prerequisites | None |
-| Shape prerequisites | None |
-| Produces | `for...of` loops from index-based iteration patterns |
+| Shape prerequisites | Index-based array/array-like loops, optionally with a temporary destructuring declaration |
+| Produces | `for...of` loops from TypeScript `downlevelIteration: false` and Babel `iterableIsArray` index-based iteration patterns |
 | Downstream dependents | None known |
 | Fact behavior | Neither |
 | Safety | Heuristic |
-| Notes | Level-gated: entire rule disabled below `standard`. |
+| Notes | Level-gated: entire rule disabled below `standard`. Does not currently recover iterator-helper/try-finally forms from TypeScript `downlevelIteration: true`, Babel spec/loose, or SWC. |
 
 ---
 

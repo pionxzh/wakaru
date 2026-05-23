@@ -35,8 +35,7 @@ export default (function e(t, n, f) {
         if (Object.getOwnPropertySymbols) {
             p = p.concat(Object.getOwnPropertySymbols(n));
         }
-        for(let h = 0; h < p.length; ++h){
-            const m = p[h];
+        for (const m of p){
             if (!(r[m] || o[m] || f && f[m])) {
                 const y = Object.getOwnPropertyDescriptor(n, m);
                 try {

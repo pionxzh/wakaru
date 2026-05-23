@@ -148,8 +148,7 @@ export function tokensToRegExp(e, t, n) {
     const strict = (n = n || {}).strict;
     const i = n.end !== false;
     let a = "";
-    for(let u = 0; u < e.length; u++){
-        const l = e[u];
+    for (const l of e){
         if (typeof l === "string") {
             a += c(l);
         } else {

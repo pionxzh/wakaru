@@ -172,8 +172,7 @@ export function combineReducers(e) {
         }
         let r = false;
         const o = {};
-        for(let i = 0; i < a.length; i++){
-            const l = a[i];
+        for (const l of a){
             const s = n[l];
             const f = e[l];
             const d = s(f, t);
