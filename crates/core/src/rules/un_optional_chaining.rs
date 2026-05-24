@@ -297,6 +297,16 @@ fn try_flattened_optional_chain(
         unresolved_mark,
     )
     .or_else(|| {
+        try_flattened_mixed_loose_root_optional_chain(
+            test,
+            alt,
+            policy,
+            uninitialized_bindings,
+            binding_references,
+            unresolved_mark,
+        )
+    })
+    .or_else(|| {
         try_flattened_loose_optional_chain(
             test,
             alt,
@@ -338,6 +348,75 @@ fn try_flattened_strict_optional_chain(
     let mut current_tmp = Expr::Ident(first_tmp);
 
     let mut index = 2;
+    while index < terms.len() {
+        let segment = extract_null_single(terms[index])?;
+        let (next_tmp, real_rhs) =
+            extract_flattened_assignment_segment(&segment, terms[index + 1], unresolved_mark)?;
+        chain = make_optional_chain_replacing(&current_tmp, &chain, &real_rhs, unresolved_mark)?;
+        let call_context = flattened_member_call_context(&real_rhs, &temp_values);
+        record_flattened_temp_value(
+            &next_tmp,
+            &chain,
+            call_context,
+            &mut temp_values,
+            &mut temp_call_contexts,
+        );
+        current_tmp = Expr::Ident(next_tmp.clone());
+        temps.push(next_tmp);
+        index += 2;
+    }
+
+    if !flattened_chain_temps_are_safe(
+        &temps,
+        test,
+        alt,
+        policy.level,
+        uninitialized_bindings,
+        binding_references,
+    ) {
+        return None;
+    }
+
+    make_flattened_final_access(
+        &current_tmp,
+        &chain,
+        alt,
+        &temp_values,
+        &temp_call_contexts,
+        unresolved_mark,
+    )
+}
+
+fn try_flattened_mixed_loose_root_optional_chain(
+    test: &Expr,
+    alt: &Expr,
+    policy: RewritePolicy,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+    unresolved_mark: Mark,
+) -> Option<Expr> {
+    if !policy.assumptions.no_document_all {
+        return None;
+    }
+
+    let mut terms = Vec::new();
+    collect_logical_or_terms(test, &mut terms);
+    if terms.len() < 3 || terms.len() % 2 == 0 {
+        return None;
+    }
+
+    let base = extract_loose_null_single(terms[0], unresolved_mark)?;
+    if !matches!(strip_parens(&base), Expr::Ident(_)) && !policy.assumptions.pure_getters {
+        return None;
+    }
+
+    let mut chain = base.clone();
+    let mut current_tmp = base;
+    let mut temps = Vec::new();
+    let mut temp_values = HashMap::new();
+    let mut temp_call_contexts = HashMap::new();
+
+    let mut index = 1;
     while index < terms.len() {
         let segment = extract_null_single(terms[index])?;
         let (next_tmp, real_rhs) =
@@ -563,6 +642,19 @@ fn extract_flattened_loose_assignment_segment(
     let checked = extract_loose_null_operand(left, right, unresolved_mark)?;
     let (tmp, real_rhs) = extract_assign_ident_parts(&checked)?;
     Some((tmp, *real_rhs.clone()))
+}
+
+fn extract_loose_null_single(expr: &Expr, unresolved_mark: Mark) -> Option<Expr> {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::EqEq,
+        left,
+        right,
+        ..
+    }) = strip_parens(expr)
+    else {
+        return None;
+    };
+    extract_loose_null_operand(left, right, unresolved_mark)
 }
 
 fn record_flattened_temp_value(

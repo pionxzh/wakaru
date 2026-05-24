@@ -279,6 +279,24 @@ const a = r?.foo?.bar?.baz;
 }
 
 #[test]
+fn pipeline_transforms_issue_142_swc_terser_mixed_loose_root_chain() {
+    // Reproduces issue #142 from:
+    //   var a = (null == r ? void 0 : r.app_info?.base_info?.app_name) ?? "game";
+    //   @swc/core 1.15.40 target es5, then terser 5.48.0 compress+mangle.
+    let input = r#"
+var _ref, _r_app_info_base_info, _r_app_info, a = null !== (_ref = null == r || null === (_r_app_info = r.app_info) || void 0 === _r_app_info || null === (_r_app_info_base_info = _r_app_info.base_info) || void 0 === _r_app_info_base_info ? void 0 : _r_app_info_base_info.app_name) && void 0 !== _ref ? _ref : "game";
+"#;
+    let expected = r#"
+let _ref;
+let _r_app_info_base_info;
+let _r_app_info;
+const a = r?.app_info?.base_info?.app_name ?? "game";
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn standard_transforms_babel_flattened_optional_call_with_memoized_context() {
     let input = r#"
 var _m, _o;
