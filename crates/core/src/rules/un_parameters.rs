@@ -428,9 +428,9 @@ fn fold_destructured_param_aliases(
         };
         if destructured_pat_references_alias(&destructured_pat, &alias)
             || destructured_pat_has_minified_alias(&destructured_pat)
-            || destructured_pat_references_later_body_binding(&destructured_pat, &body.stmts[1..])
+            || destructured_pat_references_later_decl_name(&destructured_pat, &body.stmts[1..])
             || stmts_reference_ident(&body.stmts[1..], &alias)
-            || destructured_pat_collides_with_other_params(&destructured_pat, params, param_idx)
+            || destructured_pat_reuses_other_param_name(&destructured_pat, params, param_idx)
             || !replace_param_alias_pat(
                 &mut params[param_idx].pat,
                 &alias,
@@ -460,13 +460,9 @@ fn fold_destructured_arrow_param_aliases(
         };
         if destructured_pat_references_alias(&destructured_pat, &alias)
             || destructured_pat_has_minified_alias(&destructured_pat)
-            || destructured_pat_references_later_body_binding(&destructured_pat, &body.stmts[1..])
+            || destructured_pat_references_later_decl_name(&destructured_pat, &body.stmts[1..])
             || stmts_reference_ident(&body.stmts[1..], &alias)
-            || destructured_pat_collides_with_other_arrow_params(
-                &destructured_pat,
-                params,
-                param_idx,
-            )
+            || destructured_pat_reuses_other_arrow_param_name(&destructured_pat, params, param_idx)
             || !replace_param_alias_pat(
                 &mut params[param_idx],
                 &alias,
@@ -577,56 +573,59 @@ fn replace_param_alias_pat(
     }
 }
 
-fn destructured_pat_collides_with_other_params(
+fn destructured_pat_reuses_other_param_name(
     destructured_pat: &Pat,
     params: &[Param],
     param_idx: usize,
 ) -> bool {
     let mut destructured_bindings = Vec::new();
-    collect_pat_bound_names(destructured_pat, &mut destructured_bindings);
+    collect_pat_bound_emitted_names(destructured_pat, &mut destructured_bindings);
     params.iter().enumerate().any(|(idx, param)| {
-        idx != param_idx && pat_binds_any_name(&param.pat, &destructured_bindings)
+        idx != param_idx && pat_binds_any_emitted_name(&param.pat, &destructured_bindings)
     })
 }
 
-fn destructured_pat_collides_with_other_arrow_params(
+fn destructured_pat_reuses_other_arrow_param_name(
     destructured_pat: &Pat,
     params: &[Pat],
     param_idx: usize,
 ) -> bool {
     let mut destructured_bindings = Vec::new();
-    collect_pat_bound_names(destructured_pat, &mut destructured_bindings);
-    params
-        .iter()
-        .enumerate()
-        .any(|(idx, param)| idx != param_idx && pat_binds_any_name(param, &destructured_bindings))
+    collect_pat_bound_emitted_names(destructured_pat, &mut destructured_bindings);
+    params.iter().enumerate().any(|(idx, param)| {
+        idx != param_idx && pat_binds_any_emitted_name(param, &destructured_bindings)
+    })
 }
 
-fn pat_binds_any_name(pat: &Pat, names: &[Atom]) -> bool {
+fn pat_binds_any_emitted_name(pat: &Pat, names: &[Atom]) -> bool {
     let mut existing = Vec::new();
-    collect_pat_bound_names(pat, &mut existing);
+    collect_pat_bound_emitted_names(pat, &mut existing);
     existing.iter().any(|name| names.iter().any(|n| n == name))
 }
 
-fn collect_pat_bound_names(pat: &Pat, out: &mut Vec<Atom>) {
+// These collision checks intentionally use emitted names, not SyntaxContext.
+// Moving a destructuring declaration into the parameter list changes where names
+// are declared, so two distinct bindings with the same printed name can become an
+// invalid or meaningfully different parameter list after the rewrite.
+fn collect_pat_bound_emitted_names(pat: &Pat, out: &mut Vec<Atom>) {
     match pat {
         Pat::Ident(binding) => out.push(binding.id.sym.clone()),
-        Pat::Assign(assign) => collect_pat_bound_names(&assign.left, out),
+        Pat::Assign(assign) => collect_pat_bound_emitted_names(&assign.left, out),
         Pat::Array(array) => {
             for elem in array.elems.iter().flatten() {
-                collect_pat_bound_names(elem, out);
+                collect_pat_bound_emitted_names(elem, out);
             }
         }
         Pat::Object(object) => {
             for prop in &object.props {
                 match prop {
-                    ObjectPatProp::KeyValue(kv) => collect_pat_bound_names(&kv.value, out),
+                    ObjectPatProp::KeyValue(kv) => collect_pat_bound_emitted_names(&kv.value, out),
                     ObjectPatProp::Assign(assign) => out.push(assign.key.id.sym.clone()),
-                    ObjectPatProp::Rest(rest) => collect_pat_bound_names(&rest.arg, out),
+                    ObjectPatProp::Rest(rest) => collect_pat_bound_emitted_names(&rest.arg, out),
                 }
             }
         }
-        Pat::Rest(rest) => collect_pat_bound_names(&rest.arg, out),
+        Pat::Rest(rest) => collect_pat_bound_emitted_names(&rest.arg, out),
         _ => {}
     }
 }
@@ -696,64 +695,68 @@ fn is_short_alias_for_key(key: &Atom, alias: &Atom) -> bool {
     key != alias && alias.len() <= 2
 }
 
-fn destructured_pat_references_later_body_binding(pat: &Pat, later_stmts: &[Stmt]) -> bool {
+fn destructured_pat_references_later_decl_name(pat: &Pat, later_stmts: &[Stmt]) -> bool {
     let mut referenced = Vec::new();
-    collect_pat_expr_reference_names(pat, &mut referenced);
+    collect_pat_expr_reference_emitted_names(pat, &mut referenced);
     if referenced.is_empty() {
         return false;
     }
 
     let mut later_bindings = Vec::new();
-    collect_direct_decl_names(later_stmts, &mut later_bindings);
+    collect_direct_decl_emitted_names(later_stmts, &mut later_bindings);
     referenced
         .iter()
         .any(|name| later_bindings.iter().any(|binding| binding == name))
 }
 
-fn collect_pat_expr_reference_names(pat: &Pat, out: &mut Vec<Atom>) {
+// This is also an emitted-name check: moving pattern defaults into parameter
+// scope can make a default expression resolve before a later body declaration.
+fn collect_pat_expr_reference_emitted_names(pat: &Pat, out: &mut Vec<Atom>) {
     match pat {
         Pat::Assign(assign) => {
-            collect_expr_reference_names(&assign.right, out);
-            collect_pat_expr_reference_names(&assign.left, out);
+            collect_expr_reference_emitted_names(&assign.right, out);
+            collect_pat_expr_reference_emitted_names(&assign.left, out);
         }
         Pat::Array(array) => {
             for elem in array.elems.iter().flatten() {
-                collect_pat_expr_reference_names(elem, out);
+                collect_pat_expr_reference_emitted_names(elem, out);
             }
         }
         Pat::Object(object) => {
             for prop in &object.props {
                 match prop {
                     ObjectPatProp::KeyValue(kv) => {
-                        collect_prop_name_reference_names(&kv.key, out);
-                        collect_pat_expr_reference_names(&kv.value, out);
+                        collect_prop_name_reference_emitted_names(&kv.key, out);
+                        collect_pat_expr_reference_emitted_names(&kv.value, out);
                     }
                     ObjectPatProp::Assign(assign) => {
                         if let Some(value) = &assign.value {
-                            collect_expr_reference_names(value, out);
+                            collect_expr_reference_emitted_names(value, out);
                         }
                     }
-                    ObjectPatProp::Rest(rest) => collect_pat_expr_reference_names(&rest.arg, out),
+                    ObjectPatProp::Rest(rest) => {
+                        collect_pat_expr_reference_emitted_names(&rest.arg, out)
+                    }
                 }
             }
         }
-        Pat::Rest(rest) => collect_pat_expr_reference_names(&rest.arg, out),
+        Pat::Rest(rest) => collect_pat_expr_reference_emitted_names(&rest.arg, out),
         _ => {}
     }
 }
 
-fn collect_prop_name_reference_names(prop: &PropName, out: &mut Vec<Atom>) {
+fn collect_prop_name_reference_emitted_names(prop: &PropName, out: &mut Vec<Atom>) {
     if let PropName::Computed(computed) = prop {
-        collect_expr_reference_names(&computed.expr, out);
+        collect_expr_reference_emitted_names(&computed.expr, out);
     }
 }
 
-fn collect_expr_reference_names(expr: &Expr, out: &mut Vec<Atom>) {
-    let mut visitor = IdentNameCollector { names: out };
+fn collect_expr_reference_emitted_names(expr: &Expr, out: &mut Vec<Atom>) {
+    let mut visitor = EmittedIdentNameCollector { names: out };
     expr.visit_with(&mut visitor);
 }
 
-fn collect_direct_decl_names(stmts: &[Stmt], out: &mut Vec<Atom>) {
+fn collect_direct_decl_emitted_names(stmts: &[Stmt], out: &mut Vec<Atom>) {
     for stmt in stmts {
         let Stmt::Decl(decl) = stmt else {
             continue;
@@ -761,7 +764,7 @@ fn collect_direct_decl_names(stmts: &[Stmt], out: &mut Vec<Atom>) {
         match decl {
             Decl::Var(var) => {
                 for declarator in &var.decls {
-                    collect_pat_bound_names(&declarator.name, out);
+                    collect_pat_bound_emitted_names(&declarator.name, out);
                 }
             }
             Decl::Fn(fn_decl) => out.push(fn_decl.ident.sym.clone()),
@@ -771,11 +774,11 @@ fn collect_direct_decl_names(stmts: &[Stmt], out: &mut Vec<Atom>) {
     }
 }
 
-struct IdentNameCollector<'a> {
+struct EmittedIdentNameCollector<'a> {
     names: &'a mut Vec<Atom>,
 }
 
-impl Visit for IdentNameCollector<'_> {
+impl Visit for EmittedIdentNameCollector<'_> {
     fn visit_ident(&mut self, ident: &Ident) {
         self.names.push(ident.sym.clone());
     }
