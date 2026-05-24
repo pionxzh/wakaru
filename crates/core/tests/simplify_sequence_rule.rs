@@ -233,19 +233,64 @@ for (let x = c(), y = 1; x < 10; x++) {
 #[test]
 fn splits_for_in_sequence_expression() {
     let input = r#"
-for (let x in (a(), b(), c())) {
+for (var x in (a(), b(), c())) {
   console.log(x);
 }
 "#;
     let expected = r#"
 a();
 b();
-for (let x in c()) {
+for (var x in c()) {
   console.log(x);
 }
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_lexical_for_in_sequence_expression() {
+    let input = r#"
+for (let x in (a(), b(), c())) {
+  console.log(x);
+}
+"#;
+    let expected = r#"
+for (let x in a(), b(), c()) {
+  console.log(x);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn splits_for_of_sequence_expression() {
+    let input = r#"
+for (var x of (a(), b(), c())) {
+  console.log(x);
+}
+"#;
+    let expected = r#"
+a();
+b();
+for (var x of c()) {
+  console.log(x);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_lexical_for_of_sequence_expression() {
+    let input = r#"
+for (let x of (a(), b(), c())) {
+  console.log(x);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -287,6 +332,21 @@ fn preserves_tdz_identifier_read_before_lexical_declaration() {
 {
   x;
   let x;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_typeof_resolved_binding_read() {
+    // `typeof` can throw for lexical bindings while they are in TDZ. Even when
+    // the expression looks like a no-op, dropping it can remove an observable
+    // ReferenceError from a closure created in a for-of TDZ environment.
+    let input = r#"
+let x;
+function probe() {
+  typeof x;
 }
 "#;
     let output = apply(input);

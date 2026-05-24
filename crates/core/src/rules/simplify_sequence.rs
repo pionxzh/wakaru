@@ -2,10 +2,10 @@ use std::collections::HashSet;
 
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, BlockStmt, Decl, Expr, ExprStmt, ForInStmt, ForOfStmt, ForStmt,
-    IfStmt, Invalid, Lit, MemberExpr, ModuleDecl, ModuleItem, ParenExpr, Pat, Prop, PropName,
-    PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, VarDecl,
-    VarDeclKind, VarDeclOrExpr, VarDeclarator,
+    AssignExpr, AssignTarget, BlockStmt, Decl, Expr, ExprStmt, ForHead, ForInStmt, ForOfStmt,
+    ForStmt, IfStmt, Invalid, Lit, MemberExpr, ModuleDecl, ModuleItem, ParenExpr, Pat, Prop,
+    PropName, PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt,
+    UnaryOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -109,6 +109,9 @@ fn is_pure_no_op_stmt(
     if is_observable_ident_read(expr, unresolved_mark, future_lexical) {
         return false;
     }
+    if is_observable_typeof(expr, unresolved_mark) {
+        return false;
+    }
     // Computed object literal keys perform ToPropertyKey even when the key
     // expression itself looks pure, and that coercion can throw.
     if has_computed_object_literal_key(expr) {
@@ -122,6 +125,20 @@ fn is_pure_no_op_stmt(
         remaining_depth: 4,
     };
     !expr.may_have_side_effects(ctx)
+}
+
+fn is_observable_typeof(expr: &Expr, unresolved_mark: Mark) -> bool {
+    match expr {
+        Expr::Unary(unary) if unary.op == UnaryOp::TypeOf => {
+            let Expr::Ident(ident) = unary.arg.as_ref() else {
+                return false;
+            };
+            let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
+            ident.ctxt != unresolved_ctxt
+        }
+        Expr::Paren(paren) => is_observable_typeof(&paren.expr, unresolved_mark),
+        _ => false,
+    }
 }
 
 fn is_fn_or_arrow(expr: &Expr) -> bool {
@@ -567,6 +584,9 @@ fn is_assign_expr(expr: &Box<Expr>) -> bool {
 // ---------------------------------------------------------------------------
 
 fn split_for_in_stmt(mut stmt: ForInStmt) -> Vec<Stmt> {
+    if for_head_has_lexical_decl(&stmt.left) {
+        return vec![Stmt::ForIn(stmt)];
+    }
     let dummy = Box::new(Expr::Invalid(Invalid { span: DUMMY_SP }));
     let right = std::mem::replace(&mut stmt.right, dummy);
     let (pre, last) = split_expr_seq(right);
@@ -588,6 +608,9 @@ fn split_for_in_stmt(mut stmt: ForInStmt) -> Vec<Stmt> {
 }
 
 fn split_for_of_stmt(mut stmt: ForOfStmt) -> Vec<Stmt> {
+    if for_head_has_lexical_decl(&stmt.left) {
+        return vec![Stmt::ForOf(stmt)];
+    }
     let dummy = Box::new(Expr::Invalid(Invalid { span: DUMMY_SP }));
     let right = std::mem::replace(&mut stmt.right, dummy);
     let (pre, last) = split_expr_seq(right);
@@ -606,6 +629,13 @@ fn split_for_of_stmt(mut stmt: ForOfStmt) -> Vec<Stmt> {
         .collect();
     result.push(Stmt::ForOf(stmt));
     result
+}
+
+fn for_head_has_lexical_decl(head: &ForHead) -> bool {
+    matches!(
+        head,
+        ForHead::VarDecl(var) if matches!(var.kind, VarDeclKind::Let | VarDeclKind::Const)
+    )
 }
 
 // ---------------------------------------------------------------------------

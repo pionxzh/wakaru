@@ -58,6 +58,48 @@ const fn = () => {
 }
 
 #[test]
+fn function_used_as_constructor_not_converted() {
+    let input = r#"
+const CustomError = function() {};
+const error = new CustomError();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn assigned_function_used_as_constructor_not_converted() {
+    let input = r#"
+CustomError = function() {};
+const error = new CustomError();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn constructor_function_body_still_processes_nested_functions() {
+    let input = r#"
+const C = function() {
+    return values.map(function(value) {
+        return value;
+    });
+};
+new C();
+"#;
+    let expected = r#"
+const C = function() {
+    return values.map(value => {
+        return value;
+    });
+};
+new C();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn multi_params_arrow() {
     let input = r#"
 const add = function(a, b) { return a + b; };

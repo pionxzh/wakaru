@@ -1,13 +1,31 @@
+use std::collections::HashSet;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
+
+use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmtOrExpr, CallExpr, Callee, Expr, FnExpr, Function, Ident, KeyValueProp,
-    MemberProp, Pat, ThisExpr,
+    ArrowExpr, AssignExpr, AssignTarget, BlockStmtOrExpr, CallExpr, Callee, Expr, FnExpr, Function,
+    Ident, KeyValueProp, MemberProp, Module, Pat, SimpleAssignTarget, ThisExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 pub struct ArrowFunction;
 
 impl VisitMut for ArrowFunction {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        let constructed_bindings = collect_constructed_bindings(module);
+        module.visit_mut_with(&mut ArrowFunctionConverter {
+            constructed_bindings: &constructed_bindings,
+        });
+    }
+}
+
+type BindingId = (Atom, SyntaxContext);
+
+struct ArrowFunctionConverter<'a> {
+    constructed_bindings: &'a HashSet<BindingId>,
+}
+
+impl VisitMut for ArrowFunctionConverter<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
@@ -26,6 +44,31 @@ impl VisitMut for ArrowFunction {
         }
     }
 
+    fn visit_mut_var_declarator(&mut self, decl: &mut VarDeclarator) {
+        decl.name.visit_mut_with(self);
+        let is_constructed_binding =
+            declarator_binds_constructed_name(decl, self.constructed_bindings);
+        let Some(init) = &mut decl.init else {
+            return;
+        };
+
+        if is_constructed_binding {
+            visit_fn_body_without_converting(init, self);
+            return;
+        }
+
+        init.visit_mut_with(self);
+    }
+
+    fn visit_mut_assign_expr(&mut self, expr: &mut AssignExpr) {
+        expr.left.visit_mut_with(self);
+        if assign_target_is_constructed_name(&expr.left, self.constructed_bindings) {
+            visit_fn_body_without_converting(&mut expr.right, self);
+            return;
+        }
+        expr.right.visit_mut_with(self);
+    }
+
     fn visit_mut_key_value_prop(&mut self, prop: &mut KeyValueProp) {
         // Object property function values are handled by ObjMethodShorthand.
         // ArrowFunction must not convert them to arrows — that would produce
@@ -39,6 +82,57 @@ impl VisitMut for ArrowFunction {
         } else {
             prop.value.visit_mut_with(self);
         }
+    }
+}
+
+fn collect_constructed_bindings(module: &Module) -> HashSet<BindingId> {
+    let mut collector = ConstructedBindingCollector::default();
+    module.visit_with(&mut collector);
+    collector.bindings
+}
+
+#[derive(Default)]
+struct ConstructedBindingCollector {
+    bindings: HashSet<BindingId>,
+}
+
+impl Visit for ConstructedBindingCollector {
+    fn visit_new_expr(&mut self, expr: &swc_core::ecma::ast::NewExpr) {
+        if let Expr::Ident(id) = expr.callee.as_ref() {
+            self.bindings.insert((id.sym.clone(), id.ctxt));
+        }
+        expr.args.visit_with(self);
+        expr.type_args.visit_with(self);
+    }
+}
+
+fn declarator_binds_constructed_name(
+    decl: &VarDeclarator,
+    constructed_bindings: &HashSet<BindingId>,
+) -> bool {
+    let Pat::Ident(binding) = &decl.name else {
+        return false;
+    };
+    constructed_bindings.contains(&(binding.id.sym.clone(), binding.id.ctxt))
+}
+
+fn assign_target_is_constructed_name(
+    target: &AssignTarget,
+    constructed_bindings: &HashSet<BindingId>,
+) -> bool {
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = target else {
+        return false;
+    };
+    constructed_bindings.contains(&(binding.id.sym.clone(), binding.id.ctxt))
+}
+
+fn visit_fn_body_without_converting(expr: &mut Expr, converter: &mut ArrowFunctionConverter<'_>) {
+    if let Expr::Fn(fn_expr) = expr {
+        if let Some(body) = &mut fn_expr.function.body {
+            body.visit_mut_with(converter);
+        }
+    } else {
+        expr.visit_mut_with(converter);
     }
 }
 
