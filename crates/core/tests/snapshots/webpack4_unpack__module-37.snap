@@ -1,6 +1,5 @@
 ---
-source: tests/webpack4_unpack.rs
-assertion_line: 108
+source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
 import FrontPage from "./module-28.js";
