@@ -2,6 +2,7 @@
 
 ## Options
 
+- complete: true
 - paths: test/language/expressions/async-arrow-function, test/language/expressions/async-function, test/language/expressions/async-generator, test/language/expressions/generators, test/language/statements/async-function, test/language/statements/async-generator, test/language/statements/generators
 - limit: all
 - pipeline: terser-light
@@ -9,6 +10,9 @@
 - terserProfile: light
 - level: minimal
 - knownBlockers: scripts/correctness/test262-known-blockers.json
+- caseTimeoutMs: 30000
+- rerunFrom: none
+- rerunStatuses: none
 
 ## Totals
 

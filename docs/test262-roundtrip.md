@@ -16,6 +16,7 @@ node scripts\correctness\test262-roundtrip.mjs --limit all --summary target\test
 node scripts\correctness\test262-roundtrip.mjs --preset classes --pipeline babel-env-terser --limit 100 --summary target\test262-classes-babel.md
 node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --json target\test262-classes.json
 node scripts\correctness\compare-test262-reports.mjs target\before.json target\after.json --details
+node scripts\correctness\test262-roundtrip.mjs --rerun-from target\test262-default.json --rerun-status failed --json target\test262-default-rerun.json
 ```
 
 Defaults:
@@ -32,6 +33,10 @@ Use `--summary <file>` when you want a stable Markdown report suitable for
 reviewing baseline movement in git diffs. It records options, totals,
 reason-count buckets, and current Wakaru failures without timestamps.
 
+When `--json` or `--summary` is provided, the runner updates that file after
+each processed test. Interrupted runs leave `complete: false` in the report, so
+the last saved result is still inspectable.
+
 ## Pipelines
 
 `--pipeline` selects the producer that creates the code Wakaru decompiles:
@@ -45,6 +50,20 @@ reason-count buckets, and current Wakaru failures without timestamps.
 Babel is an input producer, not the correctness oracle. The Test262 harness
 remains the oracle: the original source, produced source, and Wakaru output must
 all pass the same test.
+
+## Timeouts and Reruns
+
+`--case-timeout-ms <n>` bounds each runnable test case. The default is 30000 ms.
+Timeouts are recorded as `rejected` with reason `case-timeout`, so they are
+visible in JSON and Markdown reports without losing the whole run.
+
+Use `--rerun-from <json>` to rerun paths selected from a previous report. By
+default it reruns `failed` results. Add one or more `--rerun-status` values to
+include `rejected` or `unsupported` results too:
+
+```powershell
+node scripts\correctness\test262-roundtrip.mjs --rerun-from target\before.json --rerun-status failed --rerun-status rejected --json target\rerun.json
+```
 
 ## Status Buckets
 

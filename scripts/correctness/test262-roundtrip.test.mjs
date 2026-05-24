@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ import {
   classifyKnownBlocker,
   classifyTest,
   executeTestSource,
+  discoverTestsFromReport,
   formatMarkdownSummary,
   isSloppyOnlyWakaruParseUnsupported,
   knownSwcFidelityIssueReason,
@@ -206,6 +207,14 @@ test("parseArgs accepts repeatable paths, presets, and all limit", () => {
     "target/test262-summary.md",
     "--known-blockers",
     "scripts/correctness/test262-known-blockers.json",
+    "--case-timeout-ms",
+    "1234",
+    "--rerun-from",
+    "target/previous.json",
+    "--rerun-status",
+    "failed",
+    "--rerun-status",
+    "rejected",
   ]);
 
   assert.deepEqual(options.paths, [
@@ -217,10 +226,40 @@ test("parseArgs accepts repeatable paths, presets, and all limit", () => {
   assert.equal(options.limit, Number.POSITIVE_INFINITY);
   assert.equal(options.level, "minimal");
   assert.equal(options.pipeline, "babel-env-terser");
+  assert.equal(options.caseTimeoutMs, 1234);
+  assert.deepEqual(options.rerunStatuses, ["failed", "rejected"]);
+  assert.match(options.rerunFrom, /target[\\/]previous\.json$/);
   assert.equal(options.transform, "terser");
   assert.equal(options.terserProfile, "light");
   assert.match(options.summary, /target[\\/]test262-summary\.md$/);
   assert.match(options.knownBlockers, /scripts[\\/]correctness[\\/]test262-known-blockers\.json$/);
+});
+
+test("discoverTestsFromReport reruns selected result statuses", () => {
+  const root = makeTempTest262();
+  const reportPath = join(root, "report.json");
+  try {
+    const testDir = join(root, "test", "language", "sample");
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(join(testDir, "failed.js"), "assert.sameValue(1, 1);\n");
+    writeFileSync(join(testDir, "passed.js"), "assert.sameValue(1, 1);\n");
+    writeFileSync(
+      reportPath,
+      JSON.stringify({
+        results: [
+          { path: "test/language/sample/failed.js", status: "failed" },
+          { path: "test/language/sample/passed.js", status: "passed" },
+        ],
+      }),
+    );
+
+    const tests = discoverTestsFromReport(root, reportPath, ["failed"]);
+
+    assert.equal(tests.length, 1);
+    assert.match(tests[0], /failed\.js$/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("loadKnownBlockers and classifyKnownBlocker use manifest entries", () => {
@@ -358,7 +397,11 @@ test("formatMarkdownSummary emits stable totals, reasons, and failures", () => {
       terserProfile: "light",
       level: "minimal",
       knownBlockers: "scripts/correctness/test262-known-blockers.json",
+      caseTimeoutMs: 30000,
+      rerunFrom: null,
+      rerunStatuses: [],
     },
+    complete: false,
     totals: {
       discovered: 3,
       runnable: 2,
@@ -376,6 +419,8 @@ test("formatMarkdownSummary emits stable totals, reasons, and failures", () => {
   });
 
   assert.match(summary, /# Test262 Round-Trip Summary/);
+  assert.match(summary, /- complete: false/);
+  assert.match(summary, /- caseTimeoutMs: 30000/);
   assert.match(summary, /\| 3 \| 2 \| 1 \| 0 \| 1 \| 0 \| 1 \|/);
   assert.match(summary, /\| rejected \| swc-array-binding-elision \| 1 \|/);
   assert.match(summary, /- c\.js \(decompiled-runtime\)/);
@@ -405,6 +450,37 @@ test("runRoundTrip reports baseline failures as unsupported inputs", async () =>
     assert.equal(report.results[0].status, "unsupported");
     assert.equal(report.results[0].phase, "baseline");
     assert.equal(report.results[0].reason, "node-vm-baseline");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runRoundTrip writes incremental JSON and final completion state", async () => {
+  const root = makeTempTest262();
+  try {
+    const testDir = join(root, "test", "language", "sample");
+    const reportPath = join(root, "report.json");
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(join(testDir, "baseline-fails.js"), "throw new Error('host gap');\n");
+
+    await runRoundTrip({
+      test262Root: root,
+      paths: ["test/language/sample"],
+      limit: 1,
+      pipeline: "none",
+      transform: "terser",
+      terserProfile: "light",
+      level: "minimal",
+      toolRoot: join(root, "tools"),
+      keepTemp: false,
+      json: reportPath,
+      caseTimeoutMs: 1000,
+    });
+
+    const report = JSON.parse(readFileSync(reportPath, "utf8"));
+    assert.equal(report.complete, true);
+    assert.equal(report.totals.processed, 1);
+    assert.equal(report.results[0].status, "unsupported");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

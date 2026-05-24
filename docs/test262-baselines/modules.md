@@ -2,6 +2,7 @@
 
 ## Options
 
+- complete: true
 - paths: test/language/module-code
 - limit: all
 - pipeline: terser-light
@@ -9,6 +10,9 @@
 - terserProfile: light
 - level: minimal
 - knownBlockers: scripts/correctness/test262-known-blockers.json
+- caseTimeoutMs: 30000
+- rerunFrom: none
+- rerunStatuses: none
 
 ## Totals
 

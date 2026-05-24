@@ -82,6 +82,9 @@ export function parseArgs(argv) {
     json: null,
     summary: null,
     knownBlockers: defaultKnownBlockersPath,
+    caseTimeoutMs: 30_000,
+    rerunFrom: null,
+    rerunStatuses: [],
     details: false,
     keepTemp: false,
     toolRoot: defaultToolRoot,
@@ -111,6 +114,12 @@ export function parseArgs(argv) {
       options.summary = resolve(readRequiredValue(argv, ++i, arg));
     } else if (arg === "--known-blockers") {
       options.knownBlockers = resolve(readRequiredValue(argv, ++i, arg));
+    } else if (arg === "--case-timeout-ms") {
+      options.caseTimeoutMs = parsePositiveInteger(readRequiredValue(argv, ++i, arg), arg);
+    } else if (arg === "--rerun-from") {
+      options.rerunFrom = resolve(readRequiredValue(argv, ++i, arg));
+    } else if (arg === "--rerun-status") {
+      options.rerunStatuses.push(readRequiredValue(argv, ++i, arg));
     } else if (arg === "--tool-root") {
       options.toolRoot = resolve(readRequiredValue(argv, ++i, arg));
     } else if (arg === "--details") {
@@ -138,14 +147,22 @@ export function parseArgs(argv) {
   if (!["light", "full"].includes(options.terserProfile)) {
     throw new Error(`unsupported --terser-profile ${options.terserProfile}`);
   }
+  for (const status of options.rerunStatuses) {
+    if (!["failed", "rejected", "unsupported"].includes(status)) {
+      throw new Error(`unsupported --rerun-status ${status}`);
+    }
+  }
   for (const preset of options.presets) {
     if (!Object.hasOwn(pathPresets, preset)) {
       throw new Error(`unsupported --preset ${preset}`);
     }
     options.paths.push(...pathPresets[preset]);
   }
-  if (options.paths.length === 0) {
+  if (options.paths.length === 0 && !options.rerunFrom) {
     options.paths = [...defaultPaths];
+  }
+  if (options.rerunFrom && options.rerunStatuses.length === 0) {
+    options.rerunStatuses = ["failed"];
   }
   options.paths = [...new Set(options.paths)];
   return options;
@@ -167,6 +184,9 @@ Options:
   --json <file>         Write full JSON report
   --summary <file>      Write deterministic Markdown summary
   --known-blockers <f>  Known non-Wakaru blocker manifest
+  --case-timeout-ms <n> Per-test timeout. Default: 30000
+  --rerun-from <json>   Run paths from a previous JSON report
+  --rerun-status <s>    failed | rejected | unsupported. Repeatable. Default: failed
   --details             Print skip/failure details
   --keep-temp           Keep temporary transformed files
 `;
@@ -388,10 +408,13 @@ export function discoverTests(test262Root, paths) {
 }
 
 export async function runRoundTrip(options) {
-  const tests = discoverTests(options.test262Root, options.paths);
+  const tests = options.rerunFrom
+    ? discoverTestsFromReport(options.test262Root, options.rerunFrom, options.rerunStatuses)
+    : discoverTests(options.test262Root, options.paths);
   const knownBlockers = loadKnownBlockers(options.knownBlockers ?? defaultKnownBlockersPath);
   const tmpRoot = mkdtempSync(join(tmpdir(), "wakaru-test262-"));
   const report = {
+    complete: false,
     options: {
       test262Root: options.test262Root,
       paths: options.paths,
@@ -401,9 +424,13 @@ export async function runRoundTrip(options) {
       terserProfile: options.terserProfile,
       level: options.level,
       knownBlockers: knownBlockers.path ? relative(repoRoot, knownBlockers.path).split(sep).join("/") : null,
+      caseTimeoutMs: options.caseTimeoutMs,
+      rerunFrom: options.rerunFrom ? relative(repoRoot, options.rerunFrom).split(sep).join("/") : null,
+      rerunStatuses: options.rerunStatuses,
     },
     totals: {
       discovered: tests.length,
+      processed: 0,
       skipped: 0,
       unsupported: 0,
       rejected: 0,
@@ -413,6 +440,7 @@ export async function runRoundTrip(options) {
     },
     results: [],
   };
+  writeReportOutputs(report, options);
 
   try {
     for (const filePath of tests) {
@@ -428,6 +456,8 @@ export async function runRoundTrip(options) {
           status: "skipped",
           reason: classification.reason,
         });
+        report.totals.processed += 1;
+        writeReportOutputs(report, options);
         continue;
       }
 
@@ -443,12 +473,14 @@ export async function runRoundTrip(options) {
           status: "skipped",
           reason: "no-runnable-variant",
         });
+        report.totals.processed += 1;
+        writeReportOutputs(report, options);
         continue;
       }
 
       report.totals.runnable += 1;
       const harnessSource = buildHarnessSource(options.test262Root, metadata);
-      const result = await runOneTest({
+      const result = await runOneTestWithTimeout({
         filePath,
         relativePath,
         source,
@@ -459,6 +491,7 @@ export async function runRoundTrip(options) {
         knownBlockers,
       });
       report.results.push(result);
+      report.totals.processed += 1;
       if (result.status === "passed") {
         report.totals.passed += 1;
       } else if (result.status === "unsupported") {
@@ -468,7 +501,10 @@ export async function runRoundTrip(options) {
       } else {
         report.totals.failed += 1;
       }
+      writeReportOutputs(report, options);
     }
+    report.complete = true;
+    writeReportOutputs(report, options);
   } finally {
     if (!options.keepTemp) {
       rmSync(tmpRoot, { recursive: true, force: true });
@@ -476,6 +512,41 @@ export async function runRoundTrip(options) {
   }
 
   return report;
+}
+
+export function discoverTestsFromReport(test262Root, reportPath, statuses) {
+  const report = JSON.parse(readFileSync(reportPath, "utf8"));
+  const selected = report.results
+    .filter((result) => statuses.includes(result.status))
+    .map((result) => result.path);
+  return discoverTests(test262Root, [...new Set(selected)]);
+}
+
+async function runOneTestWithTimeout(args) {
+  const timeoutMs = args.options.caseTimeoutMs;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return runOneTest(args);
+  }
+  let timer = null;
+  try {
+    return await Promise.race([
+      runOneTest(args),
+      new Promise((resolve) => {
+        timer = setTimeout(() => {
+          resolve(
+            rejected(
+              args.relativePath,
+              "case-timeout",
+              new Error(`case timed out after ${timeoutMs}ms`),
+              "case-timeout",
+            ),
+          );
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function runOneTest({
@@ -527,8 +598,12 @@ async function runOneTest({
       level: options.level,
       tmpRoot,
       basename: relativePath.replaceAll("/", "__"),
+      timeoutMs: options.caseTimeoutMs,
     });
   } catch (error) {
+    if (isTimeoutError(error)) {
+      return rejected(relativePath, "case-timeout", error, "case-timeout");
+    }
     const parseUnsupportedReason = knownWakaruParseUnsupportedReason(
       error,
       variants,
@@ -745,22 +820,23 @@ function allRegexMatch(value, patterns) {
   return !patterns || patterns.every((pattern) => new RegExp(pattern).test(value));
 }
 
-function runWakaru(source, { level, tmpRoot, basename }) {
+function runWakaru(source, { level, tmpRoot, basename, timeoutMs }) {
   const input = join(tmpRoot, `${basename}.js`);
   writeFileSync(input, source);
 
   const configured = process.env.WAKARU;
   if (configured) {
-    return runChecked(configured, ["--level", level, input]).stdout;
+    return runChecked(configured, ["--level", level, input], { timeoutMs }).stdout;
   }
 
   const debugBinary = join(repoRoot, "target", "debug", process.platform === "win32" ? "wakaru.exe" : "wakaru");
   if (existsSync(debugBinary)) {
-    return runChecked(debugBinary, ["--level", level, input]).stdout;
+    return runChecked(debugBinary, ["--level", level, input], { timeoutMs }).stdout;
   }
 
   return runChecked("cargo", ["run", "-q", "-p", "wakaru-cli", "--", "--level", level, input], {
     cwd: repoRoot,
+    timeoutMs,
   }).stdout;
 }
 
@@ -928,7 +1004,11 @@ function runChecked(command, args, options = {}) {
     input: options.input,
     encoding: "utf8",
     maxBuffer: 20 * 1024 * 1024,
+    timeout: options.timeoutMs,
   });
+  if (result.error) {
+    throw new Error(`${command} ${args.join(" ")} failed: ${result.error.message}`);
+  }
   if (result.status !== 0) {
     throw new Error(
       `${command} ${args.join(" ")} failed with exit ${result.status}\n${result.stderr || result.stdout}`,
@@ -955,12 +1035,17 @@ function formatError(error) {
   return String(error);
 }
 
+function isTimeoutError(error) {
+  return /ETIMEDOUT|timed out|timeout/i.test(formatError(error));
+}
+
 export function formatMarkdownSummary(report) {
   const lines = [
     "# Test262 Round-Trip Summary",
     "",
     "## Options",
     "",
+    `- complete: ${report.complete}`,
     `- paths: ${report.options.paths.join(", ")}`,
     `- limit: ${report.options.limit}`,
     `- pipeline: ${report.options.pipeline}`,
@@ -968,6 +1053,9 @@ export function formatMarkdownSummary(report) {
     `- terserProfile: ${report.options.terserProfile}`,
     `- level: ${report.options.level}`,
     `- knownBlockers: ${report.options.knownBlockers ?? "none"}`,
+    `- caseTimeoutMs: ${report.options.caseTimeoutMs}`,
+    `- rerunFrom: ${report.options.rerunFrom ?? "none"}`,
+    `- rerunStatuses: ${(report.options.rerunStatuses ?? []).join(", ") || "none"}`,
     "",
     "## Totals",
     "",
@@ -1020,6 +1108,17 @@ function summarizeReasons(results) {
       return { status, reason, count };
     })
     .sort((a, b) => a.status.localeCompare(b.status) || a.reason.localeCompare(b.reason));
+}
+
+function writeReportOutputs(report, options) {
+  if (options.json) {
+    mkdirSync(dirname(options.json), { recursive: true });
+    writeFileSync(options.json, `${JSON.stringify(report, null, 2)}\n`);
+  }
+  if (options.summary) {
+    mkdirSync(dirname(options.summary), { recursive: true });
+    writeFileSync(options.summary, formatMarkdownSummary(report));
+  }
 }
 
 function printReport(report, details) {
@@ -1090,6 +1189,14 @@ function parseLimit(value, option) {
   return parsed;
 }
 
+function parsePositiveInteger(value, option) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`${option} must be a positive integer`);
+  }
+  return parsed;
+}
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1107,14 +1214,7 @@ if (isMain()) {
     } else {
       const report = await runRoundTrip(options);
       printReport(report, options.details);
-      if (options.json) {
-        mkdirSync(dirname(options.json), { recursive: true });
-        writeFileSync(options.json, `${JSON.stringify(report, null, 2)}\n`);
-      }
-      if (options.summary) {
-        mkdirSync(dirname(options.summary), { recursive: true });
-        writeFileSync(options.summary, formatMarkdownSummary(report));
-      }
+      writeReportOutputs(report, options);
       process.exitCode = report.totals.failed === 0 ? 0 : 1;
     }
   } catch (error) {
