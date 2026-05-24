@@ -866,7 +866,8 @@ See #35 (second pass of UnWebpackInterop).
 | Produces | Arrow function expressions (checks for `this`/`arguments` usage) |
 | Downstream dependents | **ArrowReturn** (hard — needs arrows with block bodies to simplify) |
 | Fact behavior | Neither |
-| Safety | Safe (checks `this`/`arguments` references) |
+| Safety | Heuristic (guarded, but function-to-arrow changes constructability and other observable function semantics) |
+| Notes | Level-gated: disabled below `standard`. The rule checks known blockers such as `this`, `arguments`, named function expressions, and bindings later used with `new`, but broad conversion is not a `minimal`-safe transform because arrows lack `prototype`, cannot be constructed, and differ for `new.target`/function observability. |
 
 ### 57. ArrowReturn
 
