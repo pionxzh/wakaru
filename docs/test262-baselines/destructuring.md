@@ -4,6 +4,7 @@
 
 - paths: test/language/expressions/assignment/dstr, test/language/statements/for-of/dstr, test/language/statements/variable/dstr
 - limit: all
+- pipeline: terser-light
 - transform: terser
 - terserProfile: light
 - level: minimal
@@ -36,4 +37,3 @@
 - test/language/expressions/assignment/dstr/array-elision-iter-nrml-close-skip.js (decompiled-runtime)
 - test/language/expressions/assignment/dstr/array-elision-iter-nrml-close.js (decompiled-runtime)
 - test/language/expressions/assignment/dstr/array-iteration.js (decompiled-runtime)
-

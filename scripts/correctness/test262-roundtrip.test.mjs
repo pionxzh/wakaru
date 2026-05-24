@@ -16,6 +16,7 @@ import {
   loadKnownBlockers,
   parseArgs,
   parseTestMetadata,
+  resolvePipelineName,
   runnableVariants,
   runRoundTrip,
   transformSource,
@@ -131,10 +132,19 @@ globalThis.assert = {
 test("transformSource supports no-op mode without external tools", async () => {
   const source = "const value = 1;\n";
   const output = await transformSource(source, {
-    transform: "none",
+    pipeline: "none",
+    transform: "terser",
+    terserProfile: "light",
   });
 
   assert.equal(output, source);
+});
+
+test("resolvePipelineName maps legacy transform options", () => {
+  assert.equal(resolvePipelineName({ pipeline: "babel-env-terser" }), "babel-env-terser");
+  assert.equal(resolvePipelineName({ transform: "none", terserProfile: "light" }), "none");
+  assert.equal(resolvePipelineName({ transform: "terser", terserProfile: "light" }), "terser-light");
+  assert.equal(resolvePipelineName({ transform: "terser", terserProfile: "full" }), "terser-full");
 });
 
 test("isSloppyOnlyWakaruParseUnsupported detects sloppy-only strict parser rejects", () => {
@@ -166,6 +176,8 @@ test("parseArgs accepts repeatable paths, presets, and all limit", () => {
     "classes",
     "--limit",
     "all",
+    "--pipeline",
+    "babel-env-terser",
     "--summary",
     "target/test262-summary.md",
     "--known-blockers",
@@ -180,6 +192,7 @@ test("parseArgs accepts repeatable paths, presets, and all limit", () => {
   ]);
   assert.equal(options.limit, Number.POSITIVE_INFINITY);
   assert.equal(options.level, "minimal");
+  assert.equal(options.pipeline, "babel-env-terser");
   assert.equal(options.transform, "terser");
   assert.equal(options.terserProfile, "light");
   assert.match(options.summary, /target[\\/]test262-summary\.md$/);
@@ -316,6 +329,7 @@ test("formatMarkdownSummary emits stable totals, reasons, and failures", () => {
     options: {
       paths: ["test/language/sample"],
       limit: "all",
+      pipeline: "terser-light",
       transform: "terser",
       terserProfile: "light",
       level: "minimal",

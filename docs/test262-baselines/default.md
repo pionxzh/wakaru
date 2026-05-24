@@ -4,6 +4,7 @@
 
 - paths: test/language/expressions/coalesce, test/language/expressions/optional-chaining, test/language/expressions/object, test/language/expressions/array, test/language/statements/for-of, test/language/statements/let
 - limit: all
+- pipeline: terser-light
 - transform: terser
 - terserProfile: light
 - level: minimal
@@ -34,4 +35,3 @@
 ## Failures
 
 No Wakaru correctness failures.
-

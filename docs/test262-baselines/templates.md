@@ -4,6 +4,7 @@
 
 - paths: test/language/expressions/template-literal, test/language/expressions/tagged-template
 - limit: all
+- pipeline: terser-light
 - transform: terser
 - terserProfile: light
 - level: minimal
@@ -27,4 +28,3 @@
 ## Failures
 
 No Wakaru correctness failures.
-

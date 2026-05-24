@@ -13,13 +13,15 @@ The runner is intentionally feature-scoped. Prefer `--preset` or focused
 node scripts\correctness\test262-roundtrip.mjs --limit 500
 node scripts\correctness\test262-roundtrip.mjs --limit all --json target\test262-default.json
 node scripts\correctness\test262-roundtrip.mjs --limit all --summary target\test262-default.md
+node scripts\correctness\test262-roundtrip.mjs --preset classes --pipeline babel-env-terser --limit 100 --summary target\test262-classes-babel.md
 node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --json target\test262-classes.json
 node scripts\correctness\compare-test262-reports.mjs target\before.json target\after.json --details
 ```
 
 Defaults:
 
-- `--transform terser`
+- `--pipeline terser-light`
+- legacy equivalent: `--transform terser --terser-profile light`
 - `--terser-profile light`
 - `--level minimal`
 - `--known-blockers scripts/correctness/test262-known-blockers.json`
@@ -29,6 +31,20 @@ Defaults:
 Use `--summary <file>` when you want a stable Markdown report suitable for
 reviewing baseline movement in git diffs. It records options, totals,
 reason-count buckets, and current Wakaru failures without timestamps.
+
+## Pipelines
+
+`--pipeline` selects the producer that creates the code Wakaru decompiles:
+
+- `none`: run the original Test262 source through Wakaru.
+- `terser-light`: current default; Terser prints/minifies without compression or
+  mangling.
+- `terser-full`: Terser with compression and top-level mangling.
+- `babel-env-terser`: Babel `preset-env` targeting IE 11, then `terser-light`.
+
+Babel is an input producer, not the correctness oracle. The Test262 harness
+remains the oracle: the original source, produced source, and Wakaru output must
+all pass the same test.
 
 ## Status Buckets
 

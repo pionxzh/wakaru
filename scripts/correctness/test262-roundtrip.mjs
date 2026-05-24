@@ -31,7 +31,9 @@ const defaultToolRoot = join(repoRoot, "target", "correctness-tools", "test262-r
 const defaultKnownBlockersPath = join(repoRoot, "scripts", "correctness", "test262-known-blockers.json");
 const defaultRewriteLevel = "minimal";
 const defaultTransform = "terser";
+const defaultPipeline = null;
 const supportedTransforms = new Set(["none", "terser"]);
+const supportedPipelines = new Set(["none", "terser-light", "terser-full", "babel-env-terser"]);
 const supportedLevels = new Set(["minimal", "standard", "aggressive"]);
 const defaultPaths = [
   "test/language/expressions/coalesce",
@@ -68,6 +70,7 @@ export function parseArgs(argv) {
     paths: [],
     presets: [],
     limit: 25,
+    pipeline: defaultPipeline,
     transform: defaultTransform,
     terserProfile: "light",
     level: defaultRewriteLevel,
@@ -89,6 +92,8 @@ export function parseArgs(argv) {
       options.presets.push(readRequiredValue(argv, ++i, arg));
     } else if (arg === "--limit") {
       options.limit = parseLimit(readRequiredValue(argv, ++i, arg), arg);
+    } else if (arg === "--pipeline") {
+      options.pipeline = readRequiredValue(argv, ++i, arg);
     } else if (arg === "--transform") {
       options.transform = readRequiredValue(argv, ++i, arg);
     } else if (arg === "--level") {
@@ -119,6 +124,9 @@ export function parseArgs(argv) {
   if (!supportedTransforms.has(options.transform)) {
     throw new Error(`unsupported --transform ${options.transform}`);
   }
+  if (options.pipeline && !supportedPipelines.has(options.pipeline)) {
+    throw new Error(`unsupported --pipeline ${options.pipeline}`);
+  }
   if (!supportedLevels.has(options.level)) {
     throw new Error(`unsupported --level ${options.level}`);
   }
@@ -147,6 +155,7 @@ Options:
   --path <path>         Test file or directory relative to Test262 root. Repeatable.
   --preset <name>       Named path set: ${Object.keys(pathPresets).join(" | ")}
   --limit <n|all>       Maximum runnable tests to execute. Default: 25
+  --pipeline <name>     none | terser-light | terser-full | babel-env-terser
   --transform <name>    none | terser. Default: terser
   --terser-profile <p>  light | full. Default: light
   --level <level>       minimal | standard | aggressive. Default: minimal
@@ -294,12 +303,62 @@ export async function minifyWithTerser(source, options) {
   return `${result.code}\n`;
 }
 
+export async function transformWithBabelEnv(source, options) {
+  await ensureBabel(options.toolRoot);
+  const toolRequire = createRequire(pathToFileURL(join(options.toolRoot, "package.json")));
+  const babel = toolRequire("@babel/core");
+  const presetEnv = toolRequire("@babel/preset-env");
+  const result = await babel.transformAsync(source, {
+    babelrc: false,
+    configFile: false,
+    sourceType: "script",
+    comments: false,
+    presets: [
+      [
+        presetEnv,
+        {
+          bugfixes: true,
+          modules: false,
+          targets: {
+            ie: "11",
+          },
+        },
+      ],
+    ],
+  });
+  if (!result?.code) {
+    throw new Error("babel produced empty output");
+  }
+  return `${result.code}\n`;
+}
+
 export async function transformSource(source, options) {
-  if (options.transform === "none") {
+  const pipeline = resolvePipelineName(options);
+  if (pipeline === "none") {
     return source;
   }
+  if (pipeline === "terser-light") {
+    return minifyWithTerser(source, { ...options, terserProfile: "light" });
+  }
+  if (pipeline === "terser-full") {
+    return minifyWithTerser(source, { ...options, terserProfile: "full" });
+  }
+  if (pipeline === "babel-env-terser") {
+    const transpiled = await transformWithBabelEnv(source, options);
+    return minifyWithTerser(transpiled, { ...options, terserProfile: "light" });
+  }
+  throw new Error(`unsupported pipeline: ${pipeline}`);
+}
+
+export function resolvePipelineName(options) {
+  if (options.pipeline) {
+    return options.pipeline;
+  }
+  if (options.transform === "none") {
+    return "none";
+  }
   if (options.transform === "terser") {
-    return minifyWithTerser(source, options);
+    return options.terserProfile === "full" ? "terser-full" : "terser-light";
   }
   throw new Error(`unsupported transform: ${options.transform}`);
 }
@@ -331,6 +390,7 @@ export async function runRoundTrip(options) {
       test262Root: options.test262Root,
       paths: options.paths,
       limit: Number.isFinite(options.limit) ? options.limit : "all",
+      pipeline: resolvePipelineName(options),
       transform: options.transform,
       terserProfile: options.terserProfile,
       level: options.level,
@@ -699,12 +759,23 @@ function runWakaru(source, { level, tmpRoot, basename }) {
 }
 
 async function ensureTerser(toolRoot) {
-  const packageJson = join(toolRoot, "package.json");
-  const nodeModules = join(toolRoot, "node_modules", "terser");
-  if (existsSync(nodeModules)) {
+  ensureToolPackages(toolRoot, [{ name: "terser", spec: "terser@5.31.6" }]);
+}
+
+function ensureBabel(toolRoot) {
+  ensureToolPackages(toolRoot, [
+    { name: "@babel/core", spec: "@babel/core@7.25.2" },
+    { name: "@babel/preset-env", spec: "@babel/preset-env@7.25.4" },
+  ]);
+}
+
+function ensureToolPackages(toolRoot, packages) {
+  const missing = packages.filter(({ name }) => !existsSync(join(toolRoot, "node_modules", ...name.split("/"))));
+  if (missing.length === 0) {
     return;
   }
 
+  const packageJson = join(toolRoot, "package.json");
   mkdirSync(toolRoot, { recursive: true });
   if (!existsSync(packageJson)) {
     writeFileSync(
@@ -720,7 +791,7 @@ async function ensureTerser(toolRoot) {
       ),
     );
   }
-  runChecked("npm", ["install", "--silent", "--no-save", "terser@5.31.6"], {
+  runChecked("npm", ["install", "--silent", "--no-save", ...missing.map(({ spec }) => spec)], {
     cwd: toolRoot,
   });
 }
@@ -830,6 +901,7 @@ export function formatMarkdownSummary(report) {
     "",
     `- paths: ${report.options.paths.join(", ")}`,
     `- limit: ${report.options.limit}`,
+    `- pipeline: ${report.options.pipeline}`,
     `- transform: ${report.options.transform}`,
     `- terserProfile: ${report.options.terserProfile}`,
     `- level: ${report.options.level}`,

@@ -4,6 +4,7 @@
 
 - paths: test/language/module-code
 - limit: all
+- pipeline: terser-light
 - transform: terser
 - terserProfile: light
 - level: minimal
@@ -29,4 +30,3 @@
 ## Failures
 
 No Wakaru correctness failures.
-

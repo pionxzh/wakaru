@@ -4,6 +4,7 @@
 
 - paths: test/language/expressions/async-arrow-function, test/language/expressions/async-function, test/language/expressions/async-generator, test/language/expressions/generators, test/language/statements/async-function, test/language/statements/async-generator, test/language/statements/generators
 - limit: all
+- pipeline: terser-light
 - transform: terser
 - terserProfile: light
 - level: minimal
@@ -36,4 +37,3 @@
 - test/language/expressions/generators/unscopables-with.js (decompiled-runtime)
 - test/language/statements/generators/unscopables-with-in-nested-fn.js (decompiled-runtime)
 - test/language/statements/generators/unscopables-with.js (decompiled-runtime)
-
