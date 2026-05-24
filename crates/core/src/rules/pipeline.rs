@@ -113,9 +113,9 @@ macro_rules! define_rule_registry {
     };
 }
 
-runner!(run_simplify_sequence, |ctx| SimplifySequence::new(
-    ctx.unresolved_mark
-));
+runner!(run_simplify_sequence, |ctx| {
+    SimplifySequence::new_with_level(ctx.unresolved_mark, ctx.rewrite_level)
+});
 runner!(run_flip_comparisons, |ctx| FlipComparisons::new(
     ctx.unresolved_mark
 ));

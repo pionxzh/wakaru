@@ -1,10 +1,16 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
-use wakaru_core::rules::SimplifySequence;
+use wakaru_core::rules::{RewriteLevel, SimplifySequence};
 
 fn apply(input: &str) -> String {
     render_rule(input, SimplifySequence::new)
+}
+
+fn apply_minimal(input: &str) -> String {
+    render_rule(input, |unresolved_mark| {
+        SimplifySequence::new_with_level(unresolved_mark, RewriteLevel::Minimal)
+    })
 }
 
 #[test]
@@ -129,7 +135,7 @@ fn preserves_sequence_around_anonymous_function_decl_init() {
     let input = r#"
 let x = (0, function() {});
 "#;
-    let output = apply(input);
+    let output = apply_minimal(input);
     assert_eq_normalized(&output, input);
 }
 
@@ -138,8 +144,21 @@ fn preserves_sequence_around_anonymous_class_decl_init() {
     let input = r#"
 let x = (0, class {});
 "#;
-    let output = apply(input);
+    let output = apply_minimal(input);
     assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_splits_sequence_around_anonymous_function_decl_init() {
+    let input = r#"
+let x = (setup(), function() {});
+"#;
+    let expected = r#"
+setup();
+let x = function() {};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]

@@ -11,15 +11,25 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::RewriteLevel;
+
 pub struct SimplifySequence {
     unresolved_mark: Mark,
+    level: RewriteLevel,
 }
 
 type BindingId = (Atom, SyntaxContext);
 
 impl SimplifySequence {
     pub fn new(unresolved_mark: Mark) -> Self {
-        Self { unresolved_mark }
+        Self::new_with_level(unresolved_mark, RewriteLevel::Standard)
+    }
+
+    pub fn new_with_level(unresolved_mark: Mark, level: RewriteLevel) -> Self {
+        Self {
+            unresolved_mark,
+            level,
+        }
     }
 }
 
@@ -36,7 +46,7 @@ impl VisitMut for SimplifySequence {
             match item {
                 ModuleItem::Stmt(stmt) => {
                     let declared = collect_lexical_decl_ids_from_stmt(&stmt);
-                    for stmt in split_stmt(stmt) {
+                    for stmt in split_stmt(stmt, self.level) {
                         if !is_pure_no_op_stmt(&stmt, self.unresolved_mark, &future_lexical) {
                             new_items.push(ModuleItem::Stmt(stmt));
                         }
@@ -64,7 +74,7 @@ impl VisitMut for SimplifySequence {
 
         for stmt in old_stmts {
             let declared = collect_lexical_decl_ids_from_stmt(&stmt);
-            for s in split_stmt(stmt) {
+            for s in split_stmt(stmt, self.level) {
                 if !is_pure_no_op_stmt(&s, self.unresolved_mark, &future_lexical) {
                     new_stmts.push(s);
                 }
@@ -265,7 +275,7 @@ fn prop_has_computed_key(prop: &Prop) -> bool {
     }
 }
 
-fn split_stmt(stmt: Stmt) -> Vec<Stmt> {
+fn split_stmt(stmt: Stmt, level: RewriteLevel) -> Vec<Stmt> {
     match stmt {
         Stmt::Expr(ExprStmt { span, expr }) => {
             // Check assignment-member pattern: (a = expr)[prop] = val
@@ -289,10 +299,10 @@ fn split_stmt(stmt: Stmt) -> Vec<Stmt> {
             arg: Some(arg),
         }) => split_return(span, arg),
         Stmt::Throw(ThrowStmt { span, arg }) => split_throw(span, arg),
-        Stmt::If(if_stmt) => split_if(if_stmt),
+        Stmt::If(if_stmt) => split_if(if_stmt, level),
         Stmt::Switch(switch_stmt) => split_switch(switch_stmt),
-        Stmt::Decl(Decl::Var(var)) => split_var_decl(var),
-        Stmt::For(for_stmt) => split_for_stmt(for_stmt),
+        Stmt::Decl(Decl::Var(var)) => split_var_decl(var, level),
+        Stmt::For(for_stmt) => split_for_stmt(for_stmt, level),
         Stmt::ForIn(for_in_stmt) => split_for_in_stmt(for_in_stmt),
         Stmt::ForOf(for_of_stmt) => split_for_of_stmt(for_of_stmt),
         _ => vec![stmt],
@@ -375,7 +385,7 @@ fn strip_paren(expr: &Expr) -> &Expr {
 // Variable declaration: split by declarator, extract sequence inits
 // ---------------------------------------------------------------------------
 
-fn split_var_decl(var: Box<VarDecl>) -> Vec<Stmt> {
+fn split_var_decl(var: Box<VarDecl>, level: RewriteLevel) -> Vec<Stmt> {
     let span = var.span;
     let kind = var.kind;
     let ctxt = var.ctxt;
@@ -383,7 +393,7 @@ fn split_var_decl(var: Box<VarDecl>) -> Vec<Stmt> {
 
     for decl in var.decls {
         if let Some(init) = decl.init {
-            if sequence_blocks_decl_name_inference(&init) {
+            if level == RewriteLevel::Minimal && sequence_blocks_decl_name_inference(&init) {
                 result.push(Stmt::Decl(Decl::Var(Box::new(VarDecl {
                     span,
                     ctxt,
@@ -432,7 +442,7 @@ fn split_var_decl(var: Box<VarDecl>) -> Vec<Stmt> {
 // For loop: extract sequence from init expression
 // ---------------------------------------------------------------------------
 
-fn split_for_stmt(mut for_stmt: ForStmt) -> Vec<Stmt> {
+fn split_for_stmt(mut for_stmt: ForStmt, level: RewriteLevel) -> Vec<Stmt> {
     let mut prefix = Vec::new();
 
     if let Some(init) = for_stmt.init.take() {
@@ -462,7 +472,7 @@ fn split_for_stmt(mut for_stmt: ForStmt) -> Vec<Stmt> {
                 }
             }
             VarDeclOrExpr::VarDecl(var) => {
-                let (extracted, new_var) = extract_var_decl_prefix(var, for_stmt.span);
+                let (extracted, new_var) = extract_var_decl_prefix(var, for_stmt.span, level);
                 prefix.extend(extracted);
                 for_stmt.init = Some(VarDeclOrExpr::VarDecl(new_var));
             }
@@ -482,6 +492,7 @@ fn split_for_stmt(mut for_stmt: ForStmt) -> Vec<Stmt> {
 fn extract_var_decl_prefix(
     var: Box<VarDecl>,
     span: swc_core::common::Span,
+    level: RewriteLevel,
 ) -> (Vec<Stmt>, Box<VarDecl>) {
     let kind = var.kind;
     let ctxt = var.ctxt;
@@ -491,7 +502,7 @@ fn extract_var_decl_prefix(
 
     for decl in var.decls {
         if let Some(init) = decl.init {
-            if sequence_blocks_decl_name_inference(&init) {
+            if level == RewriteLevel::Minimal && sequence_blocks_decl_name_inference(&init) {
                 new_decls.push(VarDeclarator {
                     span: decl.span,
                     name: decl.name,
@@ -629,10 +640,10 @@ fn split_throw(span: swc_core::common::Span, arg: Box<Expr>) -> Vec<Stmt> {
     stmts
 }
 
-fn split_if(mut if_stmt: IfStmt) -> Vec<Stmt> {
-    if_stmt.cons = normalize_branch_stmt(*if_stmt.cons);
+fn split_if(mut if_stmt: IfStmt, level: RewriteLevel) -> Vec<Stmt> {
+    if_stmt.cons = normalize_branch_stmt(*if_stmt.cons, level);
     if let Some(alt) = if_stmt.alt.take() {
-        if_stmt.alt = Some(normalize_branch_stmt(*alt));
+        if_stmt.alt = Some(normalize_branch_stmt(*alt, level));
     }
 
     let (prefix, last_test) = split_expr_seq(if_stmt.test.clone());
@@ -660,8 +671,8 @@ fn split_switch(mut switch_stmt: SwitchStmt) -> Vec<Stmt> {
     stmts
 }
 
-fn normalize_branch_stmt(stmt: Stmt) -> Box<Stmt> {
-    let mut split = split_stmt(stmt);
+fn normalize_branch_stmt(stmt: Stmt, level: RewriteLevel) -> Box<Stmt> {
+    let mut split = split_stmt(stmt, level);
     if split.len() == 1 {
         Box::new(split.pop().expect("length checked"))
     } else {
