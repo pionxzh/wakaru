@@ -397,6 +397,18 @@ fn preserves_object_literal_computed_key_coercion() {
 }
 
 #[test]
+fn preserves_binary_coercion_no_op_statement() {
+    let input = r#"
+var badKey = Object.create(null);
+function probe() {
+  badKey + "";
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn preserves_function_expression_statement() {
     // A function expression as a statement should not be removed even though
     // it's technically side-effect-free (issue #150: webcrack output wrapper)

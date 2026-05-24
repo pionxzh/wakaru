@@ -2,10 +2,10 @@ use std::collections::HashSet;
 
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, BlockStmt, Decl, Expr, ExprStmt, ForHead, ForInStmt, ForOfStmt,
-    ForStmt, IfStmt, Invalid, Lit, MemberExpr, ModuleDecl, ModuleItem, ParenExpr, Pat, Prop,
-    PropName, PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt,
-    UnaryOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
+    AssignExpr, AssignTarget, BinaryOp, BlockStmt, Decl, Expr, ExprStmt, ForHead, ForInStmt,
+    ForOfStmt, ForStmt, IfStmt, Invalid, Lit, MemberExpr, ModuleDecl, ModuleItem, ParenExpr, Pat,
+    Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt,
+    ThrowStmt, UnaryOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -118,6 +118,9 @@ fn is_pure_no_op_stmt(
     // Computed object literal keys perform ToPropertyKey even when the key
     // expression itself looks pure, and that coercion can throw.
     if has_computed_object_literal_key(expr) {
+        return false;
+    }
+    if has_observable_binary_coercion(expr) {
         return false;
     }
     let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
@@ -298,6 +301,57 @@ fn prop_has_computed_key(prop: &Prop) -> bool {
         Prop::Setter(setter) => matches!(setter.key, PropName::Computed(_)),
         Prop::Method(method) => matches!(method.key, PropName::Computed(_)),
         Prop::Shorthand(_) | Prop::Assign(_) => false,
+    }
+}
+
+fn has_observable_binary_coercion(expr: &Expr) -> bool {
+    match expr {
+        Expr::Bin(bin)
+            if binary_op_can_coerce_or_throw(bin.op)
+                && (!is_known_primitive_literal(&bin.left)
+                    || !is_known_primitive_literal(&bin.right)) =>
+        {
+            true
+        }
+        Expr::Bin(bin) => {
+            has_observable_binary_coercion(&bin.left) || has_observable_binary_coercion(&bin.right)
+        }
+        Expr::Paren(paren) => has_observable_binary_coercion(&paren.expr),
+        _ => false,
+    }
+}
+
+fn binary_op_can_coerce_or_throw(op: BinaryOp) -> bool {
+    matches!(
+        op,
+        BinaryOp::EqEq
+            | BinaryOp::NotEq
+            | BinaryOp::Lt
+            | BinaryOp::LtEq
+            | BinaryOp::Gt
+            | BinaryOp::GtEq
+            | BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::Mod
+            | BinaryOp::BitOr
+            | BinaryOp::BitXor
+            | BinaryOp::BitAnd
+            | BinaryOp::LShift
+            | BinaryOp::RShift
+            | BinaryOp::ZeroFillRShift
+            | BinaryOp::Exp
+            | BinaryOp::In
+            | BinaryOp::InstanceOf
+    )
+}
+
+fn is_known_primitive_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(Lit::Str(_) | Lit::Bool(_) | Lit::Null(_) | Lit::Num(_) | Lit::BigInt(_)) => true,
+        Expr::Paren(paren) => is_known_primitive_literal(&paren.expr),
+        _ => false,
     }
 }
 
