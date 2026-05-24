@@ -45,8 +45,18 @@ const transformers = [
     shouldRecover: true,
   },
   {
+    name: "tsc-es5-downlevel-false-terser",
+    run: (source) => runTerser(runTsc(source, false)),
+    shouldRecover: true,
+  },
+  {
     name: "tsc-es5-downlevel-true",
     run: (source) => runTsc(source, true),
+    shouldRecover: true,
+  },
+  {
+    name: "tsc-es5-downlevel-true-terser",
+    run: (source) => runTerser(runTsc(source, true)),
     shouldRecover: true,
   },
   {
@@ -55,8 +65,18 @@ const transformers = [
     shouldRecover: true,
   },
   {
+    name: "babel-7.28-spec-terser",
+    run: (source) => runTerser(runBabel(source, "spec")),
+    shouldRecover: true,
+  },
+  {
     name: "babel-7.28-loose",
     run: (source) => runBabel(source, "loose"),
+    shouldRecover: true,
+  },
+  {
+    name: "babel-7.28-loose-terser",
+    run: (source) => runTerser(runBabel(source, "loose")),
     shouldRecover: true,
   },
   {
@@ -65,8 +85,18 @@ const transformers = [
     shouldRecover: true,
   },
   {
+    name: "babel-7.28-iterableIsArray-terser",
+    run: (source) => runTerser(runBabel(source, "iterableIsArray")),
+    shouldRecover: true,
+  },
+  {
     name: "swc-es5",
     run: runSwc,
+    shouldRecover: true,
+  },
+  {
+    name: "swc-es5-terser",
+    run: (source) => runTerser(runSwc(source)),
     shouldRecover: true,
   },
   {
@@ -74,6 +104,11 @@ const transformers = [
     run: runEsbuild,
     shouldRecover: true,
     note: "esbuild preserves for-of at ES2015; ES5 for-of lowering is not supported.",
+  },
+  {
+    name: "terser-5",
+    run: runTerser,
+    shouldRecover: true,
   },
 ];
 
@@ -313,6 +348,27 @@ const result = esbuild.transformSync(source, {
   format: "esm",
 });
 process.stdout.write(result.code);
+`,
+  );
+  return runChecked("node", [helper], { input: source, cwd: toolDir });
+}
+
+function runTerser(source) {
+  const toolDir = ensureNodeTool("terser", ["terser@5"]);
+  const helper = join(toolDir, "terser-transform.mjs");
+  writeFileSync(
+    helper,
+    `
+import fs from "node:fs";
+import { minify } from "terser";
+const source = fs.readFileSync(0, "utf8");
+const result = await minify(source, {
+  module: true,
+  compress: { defaults: true, unused: false },
+  mangle: false,
+  format: { comments: false },
+});
+process.stdout.write(result.code + "\\n");
 `,
   );
   return runChecked("node", [helper], { input: source, cwd: toolDir });

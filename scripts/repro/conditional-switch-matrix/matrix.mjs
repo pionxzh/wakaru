@@ -58,6 +58,10 @@ const transformers = [
     name: "swc-1",
     run: runSwc,
   },
+  {
+    name: "swc-1-terser",
+    run: (source) => runTerser(runSwc(source)),
+  },
 ];
 
 try {
@@ -183,8 +187,8 @@ import { minify } from "terser";
 const source = fs.readFileSync(0, "utf8");
 const result = await minify(source, {
   module: true,
-  compress: true,
-  mangle: true,
+  compress: { defaults: true, unused: false },
+  mangle: false,
   format: { comments: false },
 });
 process.stdout.write(result.code + "\\n");

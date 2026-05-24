@@ -4,6 +4,10 @@ This matrix generates async function, async arrow, try/catch, and generator
 snippets through Babel, TypeScript, and SWC, then runs wakaru over each
 generated shape.
 
+The matrix also includes standalone Terser rows and Babel/TypeScript/SWC output
+minified through Terser, because some recoverable shapes only appear after
+compiler output is minified.
+
 Babel is run in two modes:
 
 - `async-generator`: `@babel/plugin-transform-async-to-generator` only, leaving
@@ -22,5 +26,5 @@ node scripts/repro/async-await-matrix/matrix.mjs --level standard
 node scripts/repro/async-await-matrix/matrix.mjs --level standard --details
 ```
 
-The script installs transformer packages under `target/repro-tools/`, so those
-downloads are cached outside the source tree.
+The script installs transformer and minifier packages under
+`target/repro-tools/`, so those downloads are cached outside the source tree.

@@ -4,6 +4,10 @@ This harness checks how common TypeScript-capable tools lower TypeScript enums,
 then runs wakaru on the lowered JavaScript. Babel is tested across transform
 plugin versions and the `optimizeConstEnums` mode.
 
+The matrix also includes Babel/TypeScript/SWC output minified through Terser,
+because enum patterns can change again after a compiler lowers TypeScript to
+JavaScript.
+
 It is for investigation, not as a committed snapshot source. Use it to find
 reproduced tool shapes worth minimizing into focused Rust unit tests.
 
@@ -24,5 +28,5 @@ it falls back to `cargo run -q -p wakaru-cli --`. Set `WAKARU` to test a
 specific binary.
 
 The transformer packages are installed under `target/repro-tools/`, so the
-first run may download Babel, TypeScript, SWC, or esbuild packages. The
+first run may download Babel, TypeScript, SWC, esbuild, or Terser packages. The
 `target/` directory is ignored by git.

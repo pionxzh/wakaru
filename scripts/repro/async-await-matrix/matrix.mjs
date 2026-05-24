@@ -75,23 +75,37 @@ const babelProfiles = [
 ];
 
 const transformers = [
-  ...babelProfiles.flatMap((profile) => [
-    {
-      name: `${profile.name}-async-generator`,
-      run: (source) => runBabel(source, profile, "async-generator"),
-    },
-    {
-      name: `${profile.name}-regenerator`,
-      run: (source) => runBabel(source, profile, "regenerator"),
-    },
-  ]),
+  ...babelProfiles.flatMap((profile) =>
+    ["async-generator", "regenerator"].flatMap((mode) => [
+      {
+        name: `${profile.name}-${mode}`,
+        run: (source) => runBabel(source, profile, mode),
+      },
+      {
+        name: `${profile.name}-${mode}-terser`,
+        run: (source) => runTerser(runBabel(source, profile, mode)),
+      },
+    ]),
+  ),
   {
     name: "tsc-es5",
     run: runTsc,
   },
   {
+    name: "tsc-es5-terser",
+    run: (source) => runTerser(runTsc(source)),
+  },
+  {
     name: "swc-es5",
     run: runSwc,
+  },
+  {
+    name: "swc-es5-terser",
+    run: (source) => runTerser(runSwc(source)),
+  },
+  {
+    name: "terser-5",
+    run: runTerser,
   },
 ];
 
@@ -292,6 +306,27 @@ const result = swc.transformSync(source, {
   module: { type: "es6" },
 });
 process.stdout.write(result.code);
+`,
+  );
+  return runChecked("node", [helper], { input: source, cwd: toolDir });
+}
+
+function runTerser(source) {
+  const toolDir = ensureNodeTool("terser", ["terser@5"]);
+  const helper = join(toolDir, "terser-transform.mjs");
+  writeFileSync(
+    helper,
+    `
+import fs from "node:fs";
+import { minify } from "terser";
+const source = fs.readFileSync(0, "utf8");
+const result = await minify(source, {
+  module: true,
+  compress: { defaults: true, unused: false },
+  mangle: false,
+  format: { comments: false },
+});
+process.stdout.write(result.code + "\\n");
 `,
   );
   return runChecked("node", [helper], { input: source, cwd: toolDir });

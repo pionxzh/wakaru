@@ -5,6 +5,10 @@ snippets, then runs wakaru on the lowered output. Babel is tested across early
 proposal plugins, current transform plugins, and the Babel 8 RC line, with spec,
 loose, and `useBuiltIns` variants where supported.
 
+The matrix also includes standalone Terser rows and Babel/TypeScript/SWC output
+minified through Terser, because object rest/spread helper shapes can change
+again after compiler output is minified.
+
 It is for investigation, not as a committed snapshot source. Use it to find
 reproduced tool shapes worth minimizing into focused Rust unit tests.
 
@@ -25,5 +29,5 @@ it falls back to `cargo run -q -p wakaru-cli --`. Set `WAKARU` to test a
 specific binary.
 
 The transformer packages are installed under `target/repro-tools/`, so the first
-run may download Babel, SWC, or esbuild packages. The `target/` directory is
-ignored by git.
+run may download Babel, TypeScript, SWC, esbuild, or Terser packages. The
+`target/` directory is ignored by git.
