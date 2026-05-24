@@ -1,15 +1,19 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrayLit, BinExpr, BinaryOp, Callee, Decl, Expr, ExprOrSpread, MemberExpr, MemberProp, Module,
-    ModuleItem, Pat, Stmt, VarDecl,
+    ModuleItem, Stmt,
 };
-use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
     collect_helpers, helpers_with_remaining_refs, remove_helper_declarations, BabelHelperKind,
     BindingKey,
+};
+use super::helper_matcher::{
+    binding_key, remaining_refs_outside_var_declarators, remove_var_declarators_by_binding,
+    var_declarator_binding_key,
 };
 
 /// Detects and replaces `_toConsumableArray(arr)` with `[...arr]`.
@@ -61,7 +65,7 @@ impl VisitMut for UnToConsumableArray {
 
 struct ToConsumableArrayReplacer<'a> {
     helpers: &'a HashMap<BindingKey, BabelHelperKind>,
-    ts_spread_array_helpers: &'a Vec<BindingKey>,
+    ts_spread_array_helpers: &'a HashSet<BindingKey>,
 }
 
 impl VisitMut for ToConsumableArrayReplacer<'_> {
@@ -76,7 +80,7 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
             return;
         };
 
-        let key = (id.sym.clone(), id.ctxt);
+        let key = binding_key(id);
         if self.helpers.contains_key(&key) {
             // Only transform single-argument calls
             if call.args.len() != 1 {
@@ -138,7 +142,7 @@ fn append_array_source(
     }
 }
 
-fn collect_ts_spread_array_helpers(module: &Module) -> Vec<BindingKey> {
+fn collect_ts_spread_array_helpers(module: &Module) -> HashSet<BindingKey> {
     module
         .body
         .iter()
@@ -150,12 +154,10 @@ fn collect_ts_spread_array_helpers(module: &Module) -> Vec<BindingKey> {
                 return None;
             }
             let decl = &var.decls[0];
-            let Pat::Ident(binding) = &decl.name else {
-                return None;
-            };
             let init = decl.init.as_deref()?;
             is_ts_spread_array_helper_init(init)
-                .then_some((binding.id.sym.clone(), binding.id.ctxt))
+                .then(|| var_declarator_binding_key(decl))
+                .flatten()
         })
         .collect()
 }
@@ -200,63 +202,12 @@ fn strip_paren_expr(expr: &Expr) -> &Expr {
     }
 }
 
-fn remove_unused_ts_spread_array_helpers(module: &mut Module, helpers: &[BindingKey]) {
-    let unused: Vec<_> = helpers
-        .iter()
-        .filter(|helper| !has_call_to_binding(module, helper))
-        .cloned()
-        .collect();
+fn remove_unused_ts_spread_array_helpers(module: &mut Module, helpers: &HashSet<BindingKey>) {
+    let remaining = remaining_refs_outside_var_declarators(module, helpers, helpers);
+    let unused: HashSet<_> = helpers.difference(&remaining).cloned().collect();
     if unused.is_empty() {
         return;
     }
 
-    module.body.retain(|item| {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
-            return true;
-        };
-        !is_removable_ts_spread_array_decl(var, &unused)
-    });
-}
-
-fn is_removable_ts_spread_array_decl(var: &VarDecl, unused: &[BindingKey]) -> bool {
-    var.decls.len() == 1
-        && var.decls.iter().all(|decl| {
-            let Pat::Ident(binding) = &decl.name else {
-                return false;
-            };
-            unused.contains(&(binding.id.sym.clone(), binding.id.ctxt))
-                && decl
-                    .init
-                    .as_deref()
-                    .is_some_and(is_ts_spread_array_helper_init)
-        })
-}
-
-fn has_call_to_binding(module: &Module, helper: &BindingKey) -> bool {
-    let mut finder = HelperCallFinder {
-        helper: helper.clone(),
-        found: false,
-    };
-    module.visit_with(&mut finder);
-    finder.found
-}
-
-struct HelperCallFinder {
-    helper: BindingKey,
-    found: bool,
-}
-
-impl Visit for HelperCallFinder {
-    fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
-        if let Callee::Expr(callee) = &call.callee {
-            if matches!(
-                callee.as_ref(),
-                Expr::Ident(id) if id.sym == self.helper.0 && id.ctxt == self.helper.1
-            ) {
-                self.found = true;
-                return;
-            }
-        }
-        call.visit_children_with(self);
-    }
+    remove_var_declarators_by_binding(&mut module.body, &unused);
 }
