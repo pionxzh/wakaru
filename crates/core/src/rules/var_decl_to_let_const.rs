@@ -277,11 +277,17 @@ impl Visit for AssignedIdsCollector {
     // is not mutated inside the body. The body is still visited so any assignments
     // inside are captured normally.
     fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
-        stmt.visit_children_with(self);
+        collect_for_head_assignment_ids(&stmt.left, &mut self.assigned);
+        visit_for_head_assignment_expressions(&stmt.left, self);
+        stmt.right.visit_with(self);
+        stmt.body.visit_with(self);
     }
 
     fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
-        stmt.visit_children_with(self);
+        collect_for_head_assignment_ids(&stmt.left, &mut self.assigned);
+        visit_for_head_assignment_expressions(&stmt.left, self);
+        stmt.right.visit_with(self);
+        stmt.body.visit_with(self);
     }
 
     fn visit_for_stmt(&mut self, stmt: &ForStmt) {
@@ -775,6 +781,20 @@ fn collect_refs_in_for_head(head: &ForHead, var_ids: &HashSet<BindingId>) -> Has
     };
     head.visit_with(&mut collector);
     collector.refs
+}
+
+fn collect_for_head_assignment_ids(head: &ForHead, out: &mut HashSet<BindingId>) {
+    if let ForHead::Pat(pat) = head {
+        collect_binding_ids_from_pat(pat, out);
+    }
+}
+
+fn visit_for_head_assignment_expressions(head: &ForHead, visitor: &mut AssignedIdsCollector) {
+    match head {
+        ForHead::VarDecl(var) => var.visit_with(visitor),
+        ForHead::Pat(pat) => pat.visit_with(visitor),
+        _ => {}
+    }
 }
 
 fn collect_refs_in_stmt(stmt: &Stmt, var_ids: &HashSet<BindingId>) -> HashSet<BindingId> {
@@ -1342,6 +1362,13 @@ fn convert_for_iter_var_decl(var: &mut VarDecl, assigned: &HashSet<BindingId>) {
     if var.kind != VarDeclKind::Var {
         return;
     }
+    if var
+        .decls
+        .iter()
+        .any(|d| pat_has_duplicate_bindings(&d.name))
+    {
+        return;
+    }
     let any_assigned = var.decls.iter().any(|d| {
         let mut ids = HashSet::new();
         collect_binding_ids_from_pat(&d.name, &mut ids);
@@ -1380,4 +1407,29 @@ fn convert_single_var_decl(var: &mut VarDecl, assigned: &HashSet<BindingId>) {
     } else {
         var.kind = VarDeclKind::Const;
     }
+}
+
+fn pat_has_duplicate_bindings(pat: &Pat) -> bool {
+    fn visit_pat(pat: &Pat, seen: &mut HashSet<BindingId>) -> bool {
+        match pat {
+            Pat::Ident(bi) => !seen.insert((bi.id.sym.clone(), bi.id.ctxt)),
+            Pat::Array(array) => array
+                .elems
+                .iter()
+                .flatten()
+                .any(|elem| visit_pat(elem, seen)),
+            Pat::Object(object) => object.props.iter().any(|prop| match prop {
+                swc_core::ecma::ast::ObjectPatProp::KeyValue(kv) => visit_pat(&kv.value, seen),
+                swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
+                    !seen.insert((assign.key.sym.clone(), assign.key.ctxt))
+                }
+                swc_core::ecma::ast::ObjectPatProp::Rest(rest) => visit_pat(&rest.arg, seen),
+            }),
+            Pat::Rest(rest) => visit_pat(&rest.arg, seen),
+            Pat::Assign(assign) => visit_pat(&assign.left, seen),
+            _ => false,
+        }
+    }
+
+    visit_pat(pat, &mut HashSet::new())
 }

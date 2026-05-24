@@ -46,14 +46,14 @@ Known non-Wakaru reasons currently classified:
 Recorded on 2026-05-24 with:
 
 ```powershell
-node scripts\correctness\test262-roundtrip.mjs --limit all --json target\test262-roundtrip-default-all-after-classification.json
+node scripts\correctness\test262-roundtrip.mjs --limit all --json target\test262-roundtrip-default-all-after-for-of-var-fix.json
 ```
 
 | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| default | 2180 | 1646 | 534 | 33 | 127 | 1453 | 33 |
+| default | 2180 | 1646 | 534 | 33 | 127 | 1470 | 16 |
 | classes | 8426 | 5063 | 3363 | 28 | 676 | 4292 | 67 |
-| destructuring | 1034 | 891 | 143 | 28 | 45 | 793 | 25 |
+| destructuring | 1034 | 891 | 143 | 28 | 45 | 809 | 9 |
 | async-generators | 1707 | 666 | 1041 | 11 | 6 | 636 | 13 |
 | templates | 84 | 67 | 17 | 2 | 1 | 64 | 0 |
 | modules | 755 | 157 | 598 | 142 | 6 | 9 | 0 |

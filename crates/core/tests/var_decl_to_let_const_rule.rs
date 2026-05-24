@@ -248,6 +248,76 @@ for (const key in obj) { foo(key); }
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn for_of_assignment_destructuring_marks_existing_binding_assigned() {
+    // `for ([x] of values)` assigns to the existing `x` binding. Keeping the
+    // initializer as `const x = null` would throw on the first iteration.
+    let input = r#"
+var x = null;
+for ([x] of values) {
+    use(x);
+}
+"#;
+    let expected = r#"
+let x = null;
+for ([x] of values) {
+    use(x);
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn for_of_assignment_destructuring_default_marks_side_effect_assignment() {
+    let input = r#"
+var flag = false;
+var x;
+for ([x = flag = true] of values) {
+    use(flag, x);
+}
+"#;
+    let expected = r#"
+let flag = false;
+let x;
+for ([x = flag = true] of values) {
+    use(flag, x);
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn for_of_var_destructuring_default_marks_side_effect_assignment() {
+    let input = r#"
+var initCount = 0;
+for (var [x = initCount += 1] of values) {
+    use(x);
+}
+"#;
+    let expected = r#"
+let initCount = 0;
+for (const [x = initCount += 1] of values) {
+    use(x);
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn for_of_var_destructuring_with_duplicate_binding_stays_var() {
+    // `var [x, x]` is valid legacy syntax; `const [x, x]` is a SyntaxError.
+    let input = r#"
+for (var [x, x] of values) {
+    use(x);
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
 // --- block-scope escape analysis ---
 
 #[test]
