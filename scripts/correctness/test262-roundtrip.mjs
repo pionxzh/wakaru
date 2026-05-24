@@ -33,13 +33,22 @@ const defaultRewriteLevel = "minimal";
 const defaultTransform = "terser";
 const defaultPipeline = null;
 const supportedTransforms = new Set(["none", "terser"]);
-const supportedPipelines = new Set(["none", "terser-light", "terser-full", "babel-env-terser"]);
+const supportedPipelines = new Set([
+  "none",
+  "terser-light",
+  "terser-full",
+  "babel-env-terser",
+  "swc-minify",
+  "esbuild-minify",
+]);
 const supportedLevels = new Set(["minimal", "standard", "aggressive"]);
 const terserPackages = [{ name: "terser", spec: "terser@5.31.6" }];
 const babelPackages = [
   { name: "@babel/core", spec: "@babel/core@7.25.2" },
   { name: "@babel/preset-env", spec: "@babel/preset-env@7.25.4" },
 ];
+const swcPackages = [{ name: "@swc/core", spec: "@swc/core@1.7.26" }];
+const esbuildPackages = [{ name: "esbuild", spec: "esbuild@0.23.1" }];
 const defaultPaths = [
   "test/language/expressions/coalesce",
   "test/language/expressions/optional-chaining",
@@ -177,7 +186,7 @@ Options:
   --path <path>         Test file or directory relative to Test262 root. Repeatable.
   --preset <name>       Named path set: ${Object.keys(pathPresets).join(" | ")}
   --limit <n|all>       Maximum runnable tests to execute. Default: 25
-  --pipeline <name>     none | terser-light | terser-full | babel-env-terser
+  --pipeline <name>     none | terser-light | terser-full | babel-env-terser | swc-minify | esbuild-minify
   --transform <name>    none | terser. Default: terser
   --terser-profile <p>  light | full. Default: light
   --level <level>       minimal | standard | aggressive. Default: minimal
@@ -357,6 +366,44 @@ export async function transformWithBabelEnv(source, options) {
   return `${result.code}\n`;
 }
 
+export async function transformWithSwcMinify(source, options) {
+  ensureSwc(options.toolRoot);
+  const toolRequire = createRequire(pathToFileURL(join(options.toolRoot, "package.json")));
+  const swc = toolRequire("@swc/core");
+  const result = await swc.minify(source, {
+    compress: false,
+    mangle: false,
+    format: {
+      ascii_only: true,
+      comments: false,
+    },
+    module: false,
+  });
+  if (!result?.code) {
+    throw new Error("swc produced empty output");
+  }
+  return `${result.code}\n`;
+}
+
+export async function transformWithEsbuildMinify(source, options) {
+  ensureEsbuild(options.toolRoot);
+  const toolRequire = createRequire(pathToFileURL(join(options.toolRoot, "package.json")));
+  const esbuild = toolRequire("esbuild");
+  const result = await esbuild.transform(source, {
+    loader: "js",
+    format: "iife",
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    legalComments: "none",
+    target: "es2020",
+  });
+  if (!result?.code) {
+    throw new Error("esbuild produced empty output");
+  }
+  return `${result.code}\n`;
+}
+
 export async function transformSource(source, options) {
   const pipeline = resolvePipelineName(options);
   if (pipeline === "none") {
@@ -372,6 +419,12 @@ export async function transformSource(source, options) {
     ensureBabelEnvTerser(options.toolRoot);
     const transpiled = await transformWithBabelEnv(source, options);
     return minifyWithTerser(transpiled, { ...options, terserProfile: "light" });
+  }
+  if (pipeline === "swc-minify") {
+    return transformWithSwcMinify(source, options);
+  }
+  if (pipeline === "esbuild-minify") {
+    return transformWithEsbuildMinify(source, options);
   }
   throw new Error(`unsupported pipeline: ${pipeline}`);
 }
@@ -864,6 +917,30 @@ function ensureBabelPackages(toolRoot, packages) {
   }
 }
 
+function ensureSwc(toolRoot) {
+  ensureToolPackages(toolRoot, swcPackages);
+  try {
+    assertSwcUsable(toolRoot);
+  } catch {
+    rmSync(join(toolRoot, "node_modules"), { recursive: true, force: true });
+    rmSync(join(toolRoot, "package-lock.json"), { force: true });
+    ensureToolPackages(toolRoot, swcPackages);
+    assertSwcUsable(toolRoot);
+  }
+}
+
+function ensureEsbuild(toolRoot) {
+  ensureToolPackages(toolRoot, esbuildPackages);
+  try {
+    assertEsbuildUsable(toolRoot);
+  } catch {
+    rmSync(join(toolRoot, "node_modules"), { recursive: true, force: true });
+    rmSync(join(toolRoot, "package-lock.json"), { force: true });
+    ensureToolPackages(toolRoot, esbuildPackages);
+    assertEsbuildUsable(toolRoot);
+  }
+}
+
 function ensureToolPackages(toolRoot, packages) {
   const missing = missingToolPackageSpecs(toolRoot, packages);
   if (missing.length === 0) {
@@ -931,6 +1008,30 @@ function assertBabelUsable(toolRoot) {
   });
   if (!result?.code) {
     throw new Error("babel validation produced empty output");
+  }
+}
+
+function assertSwcUsable(toolRoot) {
+  const toolRequire = createRequire(pathToFileURL(join(toolRoot, "package.json")));
+  const swc = toolRequire("@swc/core");
+  const result = swc.minifySync("let value = input ?? 1;", {
+    compress: false,
+    mangle: false,
+  });
+  if (!result?.code) {
+    throw new Error("swc validation produced empty output");
+  }
+}
+
+function assertEsbuildUsable(toolRoot) {
+  const toolRequire = createRequire(pathToFileURL(join(toolRoot, "package.json")));
+  const esbuild = toolRequire("esbuild");
+  const result = esbuild.transformSync("let value = input ?? 1;", {
+    loader: "js",
+    minifyWhitespace: true,
+  });
+  if (!result?.code) {
+    throw new Error("esbuild validation produced empty output");
   }
 }
 

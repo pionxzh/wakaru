@@ -14,6 +14,8 @@ node scripts\correctness\test262-roundtrip.mjs --limit 500
 node scripts\correctness\test262-roundtrip.mjs --limit all --json target\test262-default.json
 node scripts\correctness\test262-roundtrip.mjs --limit all --summary target\test262-default.md
 node scripts\correctness\test262-roundtrip.mjs --preset classes --pipeline babel-env-terser --limit 100 --summary target\test262-classes-babel.md
+node scripts\correctness\test262-roundtrip.mjs --preset classes --pipeline swc-minify --limit 100 --summary target\test262-classes-swc.md
+node scripts\correctness\test262-roundtrip.mjs --preset classes --pipeline esbuild-minify --limit 100 --summary target\test262-classes-esbuild.md
 node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --json target\test262-classes.json
 node scripts\correctness\compare-test262-reports.mjs target\before.json target\after.json --details
 node scripts\correctness\test262-roundtrip.mjs --rerun-from target\test262-default.json --rerun-status failed --json target\test262-default-rerun.json
@@ -46,6 +48,9 @@ the last saved result is still inspectable.
   mangling.
 - `terser-full`: Terser with compression and top-level mangling.
 - `babel-env-terser`: Babel `preset-env` targeting IE 11, then `terser-light`.
+- `swc-minify`: SWC minifier with compression and mangling disabled.
+- `esbuild-minify`: esbuild transform with syntax/whitespace minification and
+  stable identifiers.
 
 Babel is an input producer, not the correctness oracle. The Test262 harness
 remains the oracle: the original source, produced source, and Wakaru output must

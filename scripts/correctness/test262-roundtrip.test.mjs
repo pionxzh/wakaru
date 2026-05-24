@@ -147,6 +147,8 @@ test("resolvePipelineName maps legacy transform options", () => {
   assert.equal(resolvePipelineName({ transform: "none", terserProfile: "light" }), "none");
   assert.equal(resolvePipelineName({ transform: "terser", terserProfile: "light" }), "terser-light");
   assert.equal(resolvePipelineName({ transform: "terser", terserProfile: "full" }), "terser-full");
+  assert.equal(resolvePipelineName({ pipeline: "swc-minify" }), "swc-minify");
+  assert.equal(resolvePipelineName({ pipeline: "esbuild-minify" }), "esbuild-minify");
 });
 
 test("missingToolPackageSpecs checks package resolution instead of directory presence", () => {
