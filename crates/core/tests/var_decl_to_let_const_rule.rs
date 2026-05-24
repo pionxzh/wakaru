@@ -193,6 +193,38 @@ var x = 1;
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn var_named_let_stays_var() {
+    let input = r#"
+var let = 1;
+var object = { let };
+"#;
+    let expected = r#"
+var let = 1;
+const object = { let };
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn for_of_var_named_let_stays_var() {
+    let input = r#"
+var iterCount = 0;
+for (var let of [23]) {
+    iterCount += let;
+}
+"#;
+    let expected = r#"
+let iterCount = 0;
+for (var let of [23]) {
+    iterCount += let;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
 // --- multi-variable declarations ---
 
 #[test]

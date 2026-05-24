@@ -397,6 +397,15 @@ fn preserves_object_literal_computed_key_coercion() {
 }
 
 #[test]
+fn preserves_object_literal_shorthand_lookup() {
+    let input = r#"
+({ unresolvable });
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn preserves_binary_coercion_no_op_statement() {
     let input = r#"
 var badKey = Object.create(null);

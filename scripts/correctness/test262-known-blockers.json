@@ -56,6 +56,15 @@
       }
     },
     {
+      "reason": "swc-parse-yield-function-name",
+      "status": "unsupported",
+      "phase": "wakaru-parse",
+      "when": {
+        "pathIncludes": ["yield-as-function-expression-binding-identifier"],
+        "errorRegex": ["Expected\\(\"\\(\", \"yield\"\\)"]
+      }
+    },
+    {
       "reason": "swc-array-binding-elision",
       "status": "rejected",
       "phase": "swc-fidelity",

@@ -4,8 +4,8 @@ use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BinaryOp, BlockStmt, Decl, Expr, ExprStmt, ForHead, ForInStmt,
     ForOfStmt, ForStmt, IfStmt, Invalid, Lit, MemberExpr, ModuleDecl, ModuleItem, ParenExpr, Pat,
-    Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt,
-    ThrowStmt, UnaryOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
+    ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, UnaryOp, VarDecl,
+    VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -115,9 +115,10 @@ fn is_pure_no_op_stmt(
     if is_this_read(expr) {
         return false;
     }
-    // Computed object literal keys perform ToPropertyKey even when the key
-    // expression itself looks pure, and that coercion can throw.
-    if has_computed_object_literal_key(expr) {
+    // Object literal evaluation can perform observable identifier lookups,
+    // spreads, value evaluation, and computed-key coercion even when its result
+    // is unused.
+    if has_object_literal(expr) {
         return false;
     }
     if has_observable_binary_coercion(expr) {
@@ -279,28 +280,11 @@ fn remove_ids(ids: &mut HashSet<BindingId>, remove: &HashSet<BindingId>) {
     }
 }
 
-fn has_computed_object_literal_key(expr: &Expr) -> bool {
+fn has_object_literal(expr: &Expr) -> bool {
     match expr {
-        Expr::Object(obj) => obj.props.iter().any(prop_or_spread_has_computed_key),
-        Expr::Paren(paren) => has_computed_object_literal_key(&paren.expr),
+        Expr::Object(_) => true,
+        Expr::Paren(paren) => has_object_literal(&paren.expr),
         _ => false,
-    }
-}
-
-fn prop_or_spread_has_computed_key(prop: &PropOrSpread) -> bool {
-    match prop {
-        PropOrSpread::Spread(_) => false,
-        PropOrSpread::Prop(prop) => prop_has_computed_key(prop),
-    }
-}
-
-fn prop_has_computed_key(prop: &Prop) -> bool {
-    match prop {
-        Prop::KeyValue(kv) => matches!(kv.key, PropName::Computed(_)),
-        Prop::Getter(getter) => matches!(getter.key, PropName::Computed(_)),
-        Prop::Setter(setter) => matches!(setter.key, PropName::Computed(_)),
-        Prop::Method(method) => matches!(method.key, PropName::Computed(_)),
-        Prop::Shorthand(_) | Prop::Assign(_) => false,
     }
 }
 

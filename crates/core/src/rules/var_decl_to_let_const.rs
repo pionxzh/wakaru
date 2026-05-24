@@ -1446,6 +1446,9 @@ fn convert_for_iter_var_decl(var: &mut VarDecl, assigned: &HashSet<BindingId>) {
     if var.kind != VarDeclKind::Var {
         return;
     }
+    if var.decls.iter().any(|d| pat_requires_var_keyword(&d.name)) {
+        return;
+    }
     if var
         .decls
         .iter()
@@ -1469,6 +1472,9 @@ fn convert_single_var_decl(var: &mut VarDecl, assigned: &HashSet<BindingId>) {
     if var.kind != VarDeclKind::Var {
         return;
     }
+    if var.decls.iter().any(|d| pat_requires_var_keyword(&d.name)) {
+        return;
+    }
 
     // Check all declarators in this VarDecl
     // A VarDecl without init must be let (can't be const)
@@ -1490,6 +1496,23 @@ fn convert_single_var_decl(var: &mut VarDecl, assigned: &HashSet<BindingId>) {
         var.kind = VarDeclKind::Let;
     } else {
         var.kind = VarDeclKind::Const;
+    }
+}
+
+fn pat_requires_var_keyword(pat: &Pat) -> bool {
+    match pat {
+        Pat::Ident(bi) => matches!(bi.id.sym.as_ref(), "let"),
+        Pat::Array(array) => array.elems.iter().flatten().any(pat_requires_var_keyword),
+        Pat::Object(object) => object.props.iter().any(|prop| match prop {
+            swc_core::ecma::ast::ObjectPatProp::KeyValue(kv) => pat_requires_var_keyword(&kv.value),
+            swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
+                matches!(assign.key.sym.as_ref(), "let")
+            }
+            swc_core::ecma::ast::ObjectPatProp::Rest(rest) => pat_requires_var_keyword(&rest.arg),
+        }),
+        Pat::Rest(rest) => pat_requires_var_keyword(&rest.arg),
+        Pat::Assign(assign) => pat_requires_var_keyword(&assign.left),
+        _ => false,
     }
 }
 
