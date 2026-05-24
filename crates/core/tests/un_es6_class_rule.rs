@@ -118,6 +118,30 @@ class Child extends Base {
     assert_eq_normalized(&apply(input), expected);
 }
 
+#[test]
+fn detected_inherits_helper_does_not_match_shadowed_iife_param() {
+    let input = r#"
+function h(e, t) {
+    e.prototype = Object.create(t.prototype);
+    e.prototype.constructor = e;
+}
+var Child = (function(h) {
+    h(t, h);
+    function t() {}
+    return t;
+}(Base));
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("class Child"),
+        "shadowed IIFE param must not be treated as detected inherits helper"
+    );
+    assert!(
+        output.contains("h(t, h)"),
+        "shadowed helper-like call should remain in the output"
+    );
+}
+
 // ============================================================
 // Getter and setter via Object.defineProperty
 // ============================================================

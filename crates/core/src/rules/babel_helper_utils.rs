@@ -10,7 +10,7 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 
 use super::match_context::MatchContext;
 
-pub(crate) type BindingKey = (Atom, SyntaxContext);
+pub(crate) use super::helper_matcher::BindingKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BabelHelperKind {
@@ -2370,10 +2370,7 @@ fn is_babel_helper_or_chain(expr: &Expr) -> bool {
 /// Check if a function body matches the `_inherits` pattern:
 /// 2 params, <=5 stmts, body contains `param1.prototype = Object.create(...)`.
 pub(crate) fn is_inherits_fn(func: &Function) -> bool {
-    if func.params.len() != 2 {
-        return false;
-    }
-    let Pat::Ident(param1) = &func.params[0].pat else {
+    let Some(ctx) = MatchContext::from_params(func, &["sub_class", "super_class"]) else {
         return false;
     };
     let body = match &func.body {
@@ -2385,19 +2382,19 @@ pub(crate) fn is_inherits_fn(func: &Function) -> bool {
     }
     body.stmts
         .iter()
-        .any(|s| stmt_has_prototype_object_create(s, &param1.id.sym))
+        .any(|s| stmt_has_prototype_object_create(s, &ctx))
 }
 
 /// Check if a statement contains `param.prototype = Object.create(...)`,
 /// including inside comma/sequence expressions.
-fn stmt_has_prototype_object_create(stmt: &Stmt, param_name: &Atom) -> bool {
+fn stmt_has_prototype_object_create(stmt: &Stmt, ctx: &MatchContext) -> bool {
     let Stmt::Expr(swc_core::ecma::ast::ExprStmt { expr, .. }) = stmt else {
         return false;
     };
-    expr_has_prototype_object_create(expr, param_name)
+    expr_has_prototype_object_create(expr, ctx)
 }
 
-fn expr_has_prototype_object_create(expr: &Expr, param_name: &Atom) -> bool {
+fn expr_has_prototype_object_create(expr: &Expr, ctx: &MatchContext) -> bool {
     match expr {
         Expr::Assign(assign) if assign.op == swc_core::ecma::ast::AssignOp::Assign => {
             let swc_core::ecma::ast::AssignTarget::Simple(
@@ -2409,7 +2406,7 @@ fn expr_has_prototype_object_create(expr: &Expr, param_name: &Atom) -> bool {
             let Expr::Ident(obj) = lhs.obj.as_ref() else {
                 return false;
             };
-            if &obj.sym != param_name {
+            if !ctx.is_ident(obj, "sub_class") {
                 return false;
             }
             if !matches!(&lhs.prop, MemberProp::Ident(n) if n.sym.as_ref() == "prototype") {
@@ -2420,7 +2417,7 @@ fn expr_has_prototype_object_create(expr: &Expr, param_name: &Atom) -> bool {
         Expr::Seq(seq) => seq
             .exprs
             .iter()
-            .any(|e| expr_has_prototype_object_create(e, param_name)),
+            .any(|e| expr_has_prototype_object_create(e, ctx)),
         _ => false,
     }
 }
@@ -2451,12 +2448,19 @@ pub(crate) fn is_call_super_fn(func: &Function) -> bool {
     if func.params.len() < 2 || func.params.len() > 3 {
         return false;
     }
-    let Pat::Ident(param1) = &func.params[0].pat else {
+    let Pat::Ident(self_param) = &func.params[0].pat else {
         return false;
     };
-    let Pat::Ident(param2) = &func.params[1].pat else {
+    let Pat::Ident(super_param) = &func.params[1].pat else {
         return false;
     };
+    let mut ctx = MatchContext::new();
+    ctx.declare("self", self_param.id.sym.clone(), self_param.id.ctxt);
+    ctx.declare(
+        "super_ctor",
+        super_param.id.sym.clone(),
+        super_param.id.ctxt,
+    );
     let body = match &func.body {
         Some(b) => b,
         None => return false,
@@ -2464,23 +2468,18 @@ pub(crate) fn is_call_super_fn(func: &Function) -> bool {
     if body.stmts.len() > 3 {
         return false;
     }
-    body_has_call_super_shape(body, &param1.id.sym, &param2.id.sym)
+    body_has_call_super_shape(body, &ctx)
 }
 
 /// Check for both `Reflect.construct(_, _, _)` (3-arg form) AND
 /// `param2.apply(param1, ...)` in the body. The dual-path pattern is the
 /// structural hallmark of Babel's `_callSuper` helper:
 /// `_isNR() ? Reflect.construct(o, e||[], ...) : o.apply(t, e)`
-fn body_has_call_super_shape(
-    body: &swc_core::ecma::ast::BlockStmt,
-    param1_name: &Atom,
-    param2_name: &Atom,
-) -> bool {
+fn body_has_call_super_shape(body: &swc_core::ecma::ast::BlockStmt, ctx: &MatchContext) -> bool {
     use swc_core::ecma::ast::CallExpr;
 
     struct Finder<'a> {
-        param1_name: &'a Atom,
-        param2_name: &'a Atom,
+        ctx: &'a MatchContext,
         has_reflect_construct_3: bool,
         has_param2_apply_param1: bool,
     }
@@ -2500,9 +2499,9 @@ fn body_has_call_super_shape(
                     // Check for param2.apply(param1, ...)
                     if matches!(&m.prop, MemberProp::Ident(p) if p.sym.as_ref() == "apply") {
                         if let Expr::Ident(obj) = m.obj.as_ref() {
-                            if &obj.sym == self.param2_name && !call.args.is_empty() {
+                            if self.ctx.is_ident(obj, "super_ctor") && !call.args.is_empty() {
                                 if let Expr::Ident(first_arg) = call.args[0].expr.as_ref() {
-                                    if &first_arg.sym == self.param1_name {
+                                    if self.ctx.is_ident(first_arg, "self") {
                                         self.has_param2_apply_param1 = true;
                                     }
                                 }
@@ -2516,8 +2515,7 @@ fn body_has_call_super_shape(
     }
 
     let mut finder = Finder {
-        param1_name,
-        param2_name,
+        ctx,
         has_reflect_construct_3: false,
         has_param2_apply_param1: false,
     };

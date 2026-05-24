@@ -27,17 +27,22 @@
 //! If all references to the helper are call sites we rewrote, the helper
 //! function declaration is dropped. Exported helpers are always preserved.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, Callee, ComputedPropName,
-    Decl, Expr, ExprStmt, FnDecl, Function, Ident, IdentName, KeyValueProp, Lit, MemberExpr,
-    MemberProp, Module, ModuleItem, Param, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
-    SimpleAssignTarget, Stmt,
+    Decl, Expr, ExprStmt, Function, IdentName, KeyValueProp, Lit, MemberExpr, MemberProp, Module,
+    ModuleItem, Prop, PropName, PropOrSpread, ReturnStmt, SimpleAssignTarget, Stmt,
 };
-use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+
+use super::helper_matcher::{
+    binding_key, fn_decl_binding_key, remaining_refs_outside_skipped_items,
+    remove_fn_decls_by_binding, BindingKey,
+};
+use super::match_context::MatchContext;
 
 pub struct UnDefineProperty;
 
@@ -63,9 +68,8 @@ impl VisitMut for UnDefineProperty {
     }
 }
 
-/// Maps `(helper_sym, helper_ctxt) → true` so call-site and reference checks
-/// can match by the resolver's binding identity.
-type HelperSet = HashMap<(Atom, SyntaxContext), ()>;
+/// Helper declaration bindings, keyed by resolver binding identity.
+type HelperSet = HashSet<BindingKey>;
 
 fn find_helpers(module: &Module) -> HelperSet {
     let mut helpers = HelperSet::new();
@@ -74,30 +78,16 @@ fn find_helpers(module: &Module) -> HelperSet {
             continue;
         };
         if is_define_property_fn(&fn_decl.function) {
-            helpers.insert((fn_decl.ident.sym.clone(), fn_decl.ident.ctxt), ());
+            helpers.insert(binding_key(&fn_decl.ident));
         }
     }
     helpers
 }
 
 fn is_define_property_fn(func: &Function) -> bool {
-    if func.params.len() != 3 {
+    let Some(ctx) = MatchContext::from_params(func, &["target", "key", "value"]) else {
         return false;
-    }
-    let params: Vec<&Atom> = func
-        .params
-        .iter()
-        .filter_map(|p| match &p.pat {
-            Pat::Ident(b) => Some(&b.id.sym),
-            _ => None,
-        })
-        .collect();
-    if params.len() != 3 {
-        return false;
-    }
-    let e = params[0];
-    let t = params[1];
-    let n = params[2];
+    };
 
     let Some(body) = &func.body else {
         return false;
@@ -111,16 +101,16 @@ fn is_define_property_fn(func: &Function) -> bool {
     let Stmt::If(if_stmt) = &body.stmts[0] else {
         return false;
     };
-    if !is_in_check(&if_stmt.test, t, e) {
+    if !is_in_check(&if_stmt.test, &ctx) {
         return false;
     }
-    if !if_consequent_matches_define_property(&if_stmt.cons, e, t, n) {
+    if !if_consequent_matches_define_property(&if_stmt.cons, &ctx) {
         return false;
     }
     let Some(alt) = &if_stmt.alt else {
         return false;
     };
-    if !if_alternate_matches_direct_assign(alt, e, t, n) {
+    if !if_alternate_matches_direct_assign(alt, &ctx) {
         return false;
     }
 
@@ -128,10 +118,10 @@ fn is_define_property_fn(func: &Function) -> bool {
     let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = &body.stmts[1] else {
         return false;
     };
-    matches!(arg.as_ref(), Expr::Ident(id) if &id.sym == e)
+    ctx.is_binding(arg, "target")
 }
 
-fn is_in_check(expr: &Expr, left_sym: &Atom, right_sym: &Atom) -> bool {
+fn is_in_check(expr: &Expr, ctx: &MatchContext) -> bool {
     let Expr::Bin(BinExpr {
         op: BinaryOp::In,
         left,
@@ -141,11 +131,10 @@ fn is_in_check(expr: &Expr, left_sym: &Atom, right_sym: &Atom) -> bool {
     else {
         return false;
     };
-    matches!(left.as_ref(), Expr::Ident(id) if &id.sym == left_sym)
-        && matches!(right.as_ref(), Expr::Ident(id) if &id.sym == right_sym)
+    ctx.is_binding(left, "key") && ctx.is_binding(right, "target")
 }
 
-fn if_consequent_matches_define_property(stmt: &Stmt, e: &Atom, t: &Atom, n: &Atom) -> bool {
+fn if_consequent_matches_define_property(stmt: &Stmt, ctx: &MatchContext) -> bool {
     // Accept either a bare ExprStmt or a BlockStmt containing exactly one
     // ExprStmt whose expression is `Object.defineProperty(e, t, {...})`.
     let expr = match stmt {
@@ -181,10 +170,10 @@ fn if_consequent_matches_define_property(stmt: &Stmt, e: &Atom, t: &Atom, n: &At
         return false;
     }
     // arg 0: e, arg 1: t
-    if !matches!(call.args[0].expr.as_ref(), Expr::Ident(id) if &id.sym == e) {
+    if !ctx.is_binding(&call.args[0].expr, "target") {
         return false;
     }
-    if !matches!(call.args[1].expr.as_ref(), Expr::Ident(id) if &id.sym == t) {
+    if !ctx.is_binding(&call.args[1].expr, "key") {
         return false;
     }
     // arg 2: { value: n, enumerable: true, configurable: true, writable: true }
@@ -207,7 +196,7 @@ fn if_consequent_matches_define_property(stmt: &Stmt, e: &Atom, t: &Atom, n: &At
         };
         match name.as_ref() {
             "value" => {
-                has_value = matches!(value.as_ref(), Expr::Ident(id) if &id.sym == n);
+                has_value = ctx.is_binding(value, "value");
             }
             "enumerable" => {
                 if !matches!(value.as_ref(), Expr::Lit(Lit::Bool(b)) if b.value) {
@@ -233,7 +222,7 @@ fn if_consequent_matches_define_property(stmt: &Stmt, e: &Atom, t: &Atom, n: &At
     has_value && has_enumerable && has_configurable && has_writable
 }
 
-fn if_alternate_matches_direct_assign(stmt: &Stmt, e: &Atom, t: &Atom, n: &Atom) -> bool {
+fn if_alternate_matches_direct_assign(stmt: &Stmt, ctx: &MatchContext) -> bool {
     let expr = match stmt {
         Stmt::Expr(ExprStmt { expr, .. }) => expr.as_ref(),
         Stmt::Block(BlockStmt { stmts, .. }) if stmts.len() == 1 => {
@@ -260,17 +249,17 @@ fn if_alternate_matches_direct_assign(stmt: &Stmt, e: &Atom, t: &Atom, n: &Atom)
     let Expr::Ident(obj) = m.obj.as_ref() else {
         return false;
     };
-    if &obj.sym != e {
+    if !ctx.is_ident(obj, "target") {
         return false;
     }
     let MemberProp::Computed(ComputedPropName { expr: key_expr, .. }) = &m.prop else {
         return false;
     };
-    if !matches!(key_expr.as_ref(), Expr::Ident(id) if &id.sym == t) {
+    if !ctx.is_binding(key_expr, "key") {
         return false;
     }
     // right: n
-    matches!(right.as_ref(), Expr::Ident(id) if &id.sym == n)
+    ctx.is_binding(right, "value")
 }
 
 fn prop_name_ident(key: &PropName) -> Option<Atom> {
@@ -300,10 +289,7 @@ impl CallSiteRewriter<'_> {
         let Expr::Ident(callee_ident) = callee_expr.as_ref() else {
             return false;
         };
-        if !self
-            .helpers
-            .contains_key(&(callee_ident.sym.clone(), callee_ident.ctxt))
-        {
+        if !self.helpers.contains(&binding_key(callee_ident)) {
             return false;
         }
         if call.args.len() != 3 {
@@ -349,76 +335,9 @@ impl VisitMut for CallSiteRewriter<'_> {
 }
 
 fn remove_unused_helpers(module: &mut Module, helpers: &HelperSet) {
-    // Collect references to each helper in the current (post-rewrite) AST.
-    let mut collector = HelperReferenceCollector {
-        helpers,
-        referenced: HashSet::new(),
-        in_self_decl: None,
-    };
-    module.visit_with(&mut collector);
-
-    module.body.retain(|item| {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item else {
-            return true;
-        };
-        let key = (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt);
-        if !helpers.contains_key(&key) {
-            return true;
-        }
-        // Drop the helper only if nothing outside its own body references it.
-        collector.referenced.contains(&key)
+    let remaining = remaining_refs_outside_skipped_items(module, helpers, |item| {
+        fn_decl_binding_key(item).is_some_and(|key| helpers.contains(&key))
     });
+    let removable: HashSet<_> = helpers.difference(&remaining).cloned().collect();
+    remove_fn_decls_by_binding(module, &removable);
 }
-
-/// Counts references to helper idents anywhere except inside the helper's own
-/// declaration body (the helper function referencing itself is expected and
-/// shouldn't pin the decl).
-struct HelperReferenceCollector<'a> {
-    helpers: &'a HelperSet,
-    referenced: HashSet<(Atom, SyntaxContext)>,
-    in_self_decl: Option<(Atom, SyntaxContext)>,
-}
-
-impl Visit for HelperReferenceCollector<'_> {
-    fn visit_fn_decl(&mut self, fn_decl: &FnDecl) {
-        let key = (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt);
-        let is_self = self.helpers.contains_key(&key);
-        let prev = if is_self {
-            self.in_self_decl.replace(key)
-        } else {
-            self.in_self_decl.take()
-        };
-        fn_decl.visit_children_with(self);
-        self.in_self_decl = prev;
-    }
-
-    fn visit_ident(&mut self, ident: &Ident) {
-        let key = (ident.sym.clone(), ident.ctxt);
-        if !self.helpers.contains_key(&key) {
-            return;
-        }
-        // Skip occurrences inside the helper's own decl body (the binding
-        // itself, or any recursive self-reference).
-        if self.in_self_decl.as_ref() == Some(&key) {
-            return;
-        }
-        self.referenced.insert(key);
-    }
-
-    fn visit_prop_name(&mut self, prop: &PropName) {
-        if let PropName::Computed(c) = prop {
-            c.visit_with(self);
-        }
-    }
-
-    fn visit_member_prop(&mut self, prop: &MemberProp) {
-        if let MemberProp::Computed(c) = prop {
-            c.visit_with(self);
-        }
-    }
-}
-
-// Silence unused import warnings for Param (re-exported via `Pat::Ident`
-// traversal) — kept imported for clarity.
-#[allow(dead_code)]
-fn _unused_param_marker(_: &Param) {}

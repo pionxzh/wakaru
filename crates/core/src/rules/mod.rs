@@ -9,6 +9,7 @@ pub(crate) mod decl_utils;
 mod exponent;
 pub(crate) mod expr_utils;
 mod flip_comparisons;
+pub(crate) mod helper_matcher;
 mod import_dedup;
 pub(crate) mod match_context;
 mod obj_method_shorthand;

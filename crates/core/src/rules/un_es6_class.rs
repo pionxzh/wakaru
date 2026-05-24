@@ -13,6 +13,7 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{is_call_super_fn, is_inherits_fn};
 use super::expr_utils::is_unresolved_ident;
+use super::helper_matcher::{binding_key, BindingKey};
 
 pub struct UnEs6Class {
     unresolved_mark: Mark,
@@ -61,9 +62,9 @@ impl VisitMut for UnEs6Class {
 
 /// Inner visitor that carries helper name sets through all scopes.
 struct UnEs6ClassInner {
-    inherits_helpers: HashSet<Atom>,
+    inherits_helpers: HashSet<BindingKey>,
     create_class_helpers: HashSet<Atom>,
-    call_super_helpers: HashSet<Atom>,
+    call_super_helpers: HashSet<BindingKey>,
     unresolved_mark: Mark,
 }
 
@@ -140,12 +141,12 @@ impl VisitMut for UnEs6ClassInner {
 }
 
 /// Collect names of functions that match the `_inherits` body shape from statements.
-fn collect_inherits_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<Atom> {
+fn collect_inherits_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
     let mut helpers = HashSet::new();
     for stmt in stmts {
         if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
             if is_inherits_fn(&fn_decl.function) {
-                helpers.insert(fn_decl.ident.sym.clone());
+                helpers.insert(binding_key(&fn_decl.ident));
             }
         }
     }
@@ -153,12 +154,12 @@ fn collect_inherits_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<Atom> {
 }
 
 /// Collect names of functions that match the `_inherits` body shape from module items.
-fn collect_inherits_helpers_from_items(items: &[ModuleItem]) -> HashSet<Atom> {
+fn collect_inherits_helpers_from_items(items: &[ModuleItem]) -> HashSet<BindingKey> {
     let mut helpers = HashSet::new();
     for item in items {
         if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
             if is_inherits_fn(&fn_decl.function) {
-                helpers.insert(fn_decl.ident.sym.clone());
+                helpers.insert(binding_key(&fn_decl.ident));
             }
         }
     }
@@ -166,12 +167,12 @@ fn collect_inherits_helpers_from_items(items: &[ModuleItem]) -> HashSet<Atom> {
 }
 
 /// Collect names of functions that match the `_callSuper` body shape from statements.
-fn collect_call_super_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<Atom> {
+fn collect_call_super_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
     let mut helpers = HashSet::new();
     for stmt in stmts {
         if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
             if is_call_super_fn(&fn_decl.function) {
-                helpers.insert(fn_decl.ident.sym.clone());
+                helpers.insert(binding_key(&fn_decl.ident));
             }
         }
     }
@@ -179,12 +180,12 @@ fn collect_call_super_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<Atom> {
 }
 
 /// Collect names of functions that match the `_callSuper` body shape from module items.
-fn collect_call_super_helpers_from_items(items: &[ModuleItem]) -> HashSet<Atom> {
+fn collect_call_super_helpers_from_items(items: &[ModuleItem]) -> HashSet<BindingKey> {
     let mut helpers = HashSet::new();
     for item in items {
         if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
             if is_call_super_fn(&fn_decl.function) {
-                helpers.insert(fn_decl.ident.sym.clone());
+                helpers.insert(binding_key(&fn_decl.ident));
             }
         }
     }
@@ -426,17 +427,40 @@ impl swc_core::ecma::visit::Visit for HelperRefCounter {
     }
 }
 
+struct BindingHelperRefCounter {
+    helpers: HashSet<BindingKey>,
+    counts: std::collections::HashMap<BindingKey, usize>,
+}
+
+impl BindingHelperRefCounter {
+    fn new(helpers: &HashSet<BindingKey>) -> Self {
+        Self {
+            helpers: helpers.clone(),
+            counts: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl swc_core::ecma::visit::Visit for BindingHelperRefCounter {
+    fn visit_ident(&mut self, id: &Ident) {
+        let key = binding_key(id);
+        if self.helpers.contains(&key) {
+            *self.counts.entry(key).or_insert(0) += 1;
+        }
+    }
+}
+
 /// Remove function declarations from `helpers` that have no remaining references.
-fn remove_orphaned_fn_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<Atom>) {
+fn remove_orphaned_fn_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<BindingKey>) {
     use swc_core::ecma::visit::VisitWith;
 
     if helpers.is_empty() {
         return;
     }
-    let mut counter = HelperRefCounter::new(helpers);
+    let mut counter = BindingHelperRefCounter::new(helpers);
     for stmt in stmts.iter() {
         if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
-            if helpers.contains(&fn_decl.ident.sym) {
+            if helpers.contains(&binding_key(&fn_decl.ident)) {
                 continue;
             }
         }
@@ -444,13 +468,9 @@ fn remove_orphaned_fn_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<Ato
     }
     stmts.retain(|stmt| {
         if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
-            if helpers.contains(&fn_decl.ident.sym) {
-                return counter
-                    .counts
-                    .get(fn_decl.ident.sym.as_ref())
-                    .copied()
-                    .unwrap_or(0)
-                    > 0;
+            let key = binding_key(&fn_decl.ident);
+            if helpers.contains(&key) {
+                return counter.counts.get(&key).copied().unwrap_or(0) > 0;
             }
         }
         true
@@ -458,16 +478,16 @@ fn remove_orphaned_fn_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<Ato
 }
 
 /// Remove function declarations from `helpers` that have no remaining references (module items).
-fn remove_orphaned_fn_helpers_module(items: &mut Vec<ModuleItem>, helpers: &HashSet<Atom>) {
+fn remove_orphaned_fn_helpers_module(items: &mut Vec<ModuleItem>, helpers: &HashSet<BindingKey>) {
     use swc_core::ecma::visit::VisitWith;
 
     if helpers.is_empty() {
         return;
     }
-    let mut counter = HelperRefCounter::new(helpers);
+    let mut counter = BindingHelperRefCounter::new(helpers);
     for item in items.iter() {
         if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
-            if helpers.contains(&fn_decl.ident.sym) {
+            if helpers.contains(&binding_key(&fn_decl.ident)) {
                 continue;
             }
         }
@@ -475,13 +495,9 @@ fn remove_orphaned_fn_helpers_module(items: &mut Vec<ModuleItem>, helpers: &Hash
     }
     items.retain(|item| {
         if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
-            if helpers.contains(&fn_decl.ident.sym) {
-                return counter
-                    .counts
-                    .get(fn_decl.ident.sym.as_ref())
-                    .copied()
-                    .unwrap_or(0)
-                    > 0;
+            let key = binding_key(&fn_decl.ident);
+            if helpers.contains(&key) {
+                return counter.counts.get(&key).copied().unwrap_or(0) > 0;
             }
         }
         true
@@ -496,9 +512,9 @@ fn remove_orphaned_fn_helpers_module(items: &mut Vec<ModuleItem>, helpers: &Hash
 /// Returns None if the pattern doesn't match.
 fn try_iife_to_class(
     var: &VarDecl,
-    inherits_helpers: &HashSet<Atom>,
+    inherits_helpers: &HashSet<BindingKey>,
     create_class_helpers: &HashSet<Atom>,
-    call_super_helpers: &HashSet<Atom>,
+    call_super_helpers: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) -> Option<ClassDecl> {
     // Must be a single declarator
@@ -706,9 +722,9 @@ fn parse_class_body(
     stmts: &[Stmt],
     class_name: &str,
     super_param: Option<&str>,
-    inherits_helpers: &HashSet<Atom>,
+    inherits_helpers: &HashSet<BindingKey>,
     create_class_helpers: &HashSet<Atom>,
-    call_super_helpers: &HashSet<Atom>,
+    call_super_helpers: &HashSet<BindingKey>,
     has_super: bool,
     unresolved_mark: Mark,
 ) -> Option<Vec<ClassMember>> {
@@ -943,7 +959,7 @@ fn try_parse_extends_call(
     stmt: &Stmt,
     ctor_name: &str,
     super_param: &str,
-    inherits_helpers: &HashSet<Atom>,
+    inherits_helpers: &HashSet<BindingKey>,
 ) -> Option<()> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
@@ -961,7 +977,7 @@ fn try_parse_extends_call(
     // Accept known names or any detected inherits helper
     if fn_name.sym.as_ref() != "__extends"
         && fn_name.sym.as_ref() != "_inherits"
-        && !inherits_helpers.contains(&fn_name.sym)
+        && !inherits_helpers.contains(&binding_key(fn_name))
     {
         return None;
     }
@@ -1695,7 +1711,7 @@ fn is_not_null_check(expr: &Expr, name: &str) -> bool {
 fn build_constructor(
     function: &Function,
     super_param: Option<&str>,
-    call_super_helpers: &HashSet<Atom>,
+    call_super_helpers: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) -> Option<Constructor> {
     let mut body = function.body.clone()?;
@@ -2128,7 +2144,7 @@ impl VisitMut for SuperCallRewriter<'_> {
 ///
 /// Sets `bailed = true` if a call is detected but cannot be safely rewritten.
 struct CallSuperRewriter<'a> {
-    helpers: &'a HashSet<Atom>,
+    helpers: &'a HashSet<BindingKey>,
     bailed: bool,
 }
 
@@ -2143,7 +2159,7 @@ impl VisitMut for CallSuperRewriter<'_> {
         let Expr::Ident(fn_name) = strip_parens(callee) else {
             return;
         };
-        if !self.helpers.contains(&fn_name.sym) {
+        if !self.helpers.contains(&binding_key(fn_name)) {
             return;
         }
         // _callSuper(this, Ctor) or _callSuper(this, Ctor, argsExpr)
