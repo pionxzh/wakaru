@@ -217,3 +217,18 @@ var out = css.div`line\n${value}`;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn removes_consumed_template_cache_from_shared_var_decl() {
+    let input = r#"
+var _templateObject, keep = 1;
+function _taggedTemplateLiteral(e, t) { return e; }
+var out = tag(_templateObject || (_templateObject = _taggedTemplateLiteral(["hello ", ""], ["hello ", ""])), name);
+"#;
+    let expected = r#"
+var keep = 1;
+var out = tag`hello ${name}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

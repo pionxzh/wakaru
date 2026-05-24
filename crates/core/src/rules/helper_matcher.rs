@@ -32,6 +32,14 @@ pub(crate) fn expr_matches_binding(expr: &Expr, key: &BindingKey) -> bool {
 }
 
 #[allow(dead_code)]
+pub(crate) fn expr_binding_key(expr: &Expr) -> Option<BindingKey> {
+    let Expr::Ident(id) = expr else {
+        return None;
+    };
+    Some(binding_key(id))
+}
+
+#[allow(dead_code)]
 pub(crate) fn callee_matches_binding(callee: &Callee, key: &BindingKey) -> bool {
     let Callee::Expr(expr) = callee else {
         return false;
@@ -118,6 +126,32 @@ pub(crate) fn remaining_refs_outside_var_declarators(
         found: HashSet::new(),
     };
     module.visit_with(&mut finder);
+    finder.found
+}
+
+/// Collect references to `targets`, skipping function declarations and
+/// individual var declarators whose bindings are in `skipped_decls`.
+pub(crate) fn remaining_refs_outside_declarations(
+    module: &Module,
+    targets: &HashSet<BindingKey>,
+    skipped_decls: &HashSet<BindingKey>,
+) -> HashSet<BindingKey> {
+    let mut finder = VarDeclaratorSkippingRefFinder {
+        targets,
+        skipped_decls,
+        found: HashSet::new(),
+    };
+
+    for item in &module.body {
+        if fn_decl_binding_key(item)
+            .as_ref()
+            .is_some_and(|key| skipped_decls.contains(key))
+        {
+            continue;
+        }
+        item.visit_with(&mut finder);
+    }
+
     finder.found
 }
 
