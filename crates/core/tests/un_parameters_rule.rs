@@ -79,6 +79,17 @@ function foo(a) {
 }
 
 #[test]
+fn duplicate_param_void0_guard_stays_in_body() {
+    let input = r#"
+function foo(a, a) {
+  if (a === void 0) a = 1;
+  return a;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn void0_guard_in_arrow_function() {
     let input = r#"
 const test = (a, b) => {
@@ -330,6 +341,17 @@ function foo(options = {}) {
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn duplicate_param_object_alias_default_stays_in_body() {
+    let input = r#"
+function foo(options, options) {
+  const opts = options === undefined ? {} : options;
+  return opts.name;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]

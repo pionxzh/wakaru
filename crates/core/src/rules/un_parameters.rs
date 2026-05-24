@@ -84,9 +84,9 @@ fn process_pattern_a_params(params: &mut Vec<Param>, body: &mut BlockStmt, unres
     for (stmt_idx, stmt) in body.stmts[..scan_limit].iter().enumerate() {
         let extracted = extract_default_param_from_if(stmt, unresolved_mark);
 
-        if let Some((param_name, default_val)) = extracted {
+        if let Some((param_ident, default_val)) = extracted {
             // Find the matching parameter
-            if let Some(param_idx) = find_plain_param_idx(params, &param_name) {
+            if let Some(param_idx) = find_plain_param_idx(params, &param_ident) {
                 // Replace the param with an assignment pattern
                 let original_pat =
                     std::mem::replace(&mut params[param_idx].pat, Pat::Invalid(Default::default()));
@@ -118,8 +118,8 @@ fn process_pattern_a_arrow_params(
     for (stmt_idx, stmt) in body.stmts[..scan_limit].iter().enumerate() {
         let extracted = extract_default_param_from_if(stmt, unresolved_mark);
 
-        if let Some((param_name, default_val)) = extracted {
-            if let Some(param_idx) = find_plain_pat_idx(params, &param_name) {
+        if let Some((param_ident, default_val)) = extracted {
+            if let Some(param_idx) = find_plain_pat_idx(params, &param_ident) {
                 let original_pat =
                     std::mem::replace(&mut params[param_idx], Pat::Invalid(Default::default()));
                 params[param_idx] = Pat::Assign(AssignPat {
@@ -141,7 +141,7 @@ fn process_pattern_a_arrow_params(
 /// - `if (a === void 0) a = 1;`
 /// - `if (a === void 0) { a = 1; }`
 /// - `if (void 0 === a) a = 1;`  (also handles `undefined`)
-fn extract_default_param_from_if(stmt: &Stmt, unresolved_mark: Mark) -> Option<(Atom, Box<Expr>)> {
+fn extract_default_param_from_if(stmt: &Stmt, unresolved_mark: Mark) -> Option<(Ident, Box<Expr>)> {
     let Stmt::If(IfStmt {
         test, cons, alt, ..
     }) = stmt
@@ -152,16 +152,16 @@ fn extract_default_param_from_if(stmt: &Stmt, unresolved_mark: Mark) -> Option<(
         return None;
     }
 
-    let param_name = extract_void0_check(test, unresolved_mark)?;
-    let default_val = extract_assign_from_cons(cons, &param_name)?;
+    let param_ident = extract_void0_check(test, unresolved_mark)?;
+    let default_val = extract_assign_from_cons(cons, &param_ident)?;
 
-    Some((param_name, default_val))
+    Some((param_ident, default_val))
 }
 
 /// Check if `expr` is `ident === void 0` or `void 0 === ident`
 /// or `ident === undefined` or `undefined === ident`.
-/// Returns the identifier name if matched.
-fn extract_void0_check(expr: &Expr, unresolved_mark: Mark) -> Option<Atom> {
+/// Returns the checked identifier if matched.
+fn extract_void0_check(expr: &Expr, unresolved_mark: Mark) -> Option<Ident> {
     let Expr::Bin(BinExpr {
         op, left, right, ..
     }) = expr
@@ -175,13 +175,13 @@ fn extract_void0_check(expr: &Expr, unresolved_mark: Mark) -> Option<Atom> {
     // left === void 0 / left === undefined
     if is_void0_or_undefined(right, unresolved_mark) {
         if let Expr::Ident(id) = left.as_ref() {
-            return Some(id.sym.clone());
+            return Some(id.clone());
         }
     }
     // void 0 === right / undefined === right
     if is_void0_or_undefined(left, unresolved_mark) {
         if let Expr::Ident(id) = right.as_ref() {
-            return Some(id.sym.clone());
+            return Some(id.clone());
         }
     }
 
@@ -222,9 +222,9 @@ fn is_arguments_ident(id: &Ident, unresolved_mark: Mark) -> bool {
 /// Consequent can be:
 /// - `ExprStmt(Assign { left: ident, op: =, right: val })`
 /// - `Block([ExprStmt(Assign { left: ident, op: =, right: val })])`
-fn extract_assign_from_cons(cons: &Stmt, param_name: &Atom) -> Option<Box<Expr>> {
+fn extract_assign_from_cons(cons: &Stmt, param_ident: &Ident) -> Option<Box<Expr>> {
     match cons {
-        Stmt::Expr(expr_stmt) => extract_assign_expr(&expr_stmt.expr, param_name),
+        Stmt::Expr(expr_stmt) => extract_assign_expr(&expr_stmt.expr, param_ident),
         Stmt::Block(block) => {
             if block.stmts.len() != 1 {
                 return None;
@@ -232,13 +232,13 @@ fn extract_assign_from_cons(cons: &Stmt, param_name: &Atom) -> Option<Box<Expr>>
             let Stmt::Expr(expr_stmt) = &block.stmts[0] else {
                 return None;
             };
-            extract_assign_expr(&expr_stmt.expr, param_name)
+            extract_assign_expr(&expr_stmt.expr, param_ident)
         }
         _ => None,
     }
 }
 
-fn extract_assign_expr(expr: &Expr, param_name: &Atom) -> Option<Box<Expr>> {
+fn extract_assign_expr(expr: &Expr, param_ident: &Ident) -> Option<Box<Expr>> {
     let Expr::Assign(AssignExpr {
         op: AssignOp::Assign,
         left,
@@ -251,7 +251,7 @@ fn extract_assign_expr(expr: &Expr, param_name: &Atom) -> Option<Box<Expr>> {
     let AssignTarget::Simple(SimpleAssignTarget::Ident(ident)) = left else {
         return None;
     };
-    if &ident.id.sym != param_name {
+    if !same_ident(&ident.id, param_ident) {
         return None;
     }
     Some(right.clone())
@@ -265,12 +265,12 @@ fn process_pattern_c_params(params: &mut [Param], body: &mut BlockStmt, unresolv
     let scan_limit = body.stmts.len().min(15);
 
     for stmt_idx in 0..scan_limit {
-        let Some((param_name, default_val)) =
+        let Some((param_ident, default_val)) =
             extract_param_object_default_stmt(&body.stmts[stmt_idx], unresolved_mark)
         else {
             break;
         };
-        let Some((param_idx, param_ident)) = find_plain_param_ident(params, &param_name) else {
+        let Some((param_idx, param_ident)) = find_plain_param_ident(params, &param_ident) else {
             break;
         };
         if !set_param_default(params, param_idx, default_val) {
@@ -284,12 +284,12 @@ fn process_pattern_c_arrow_params(params: &mut [Pat], body: &mut BlockStmt, unre
     let scan_limit = body.stmts.len().min(15);
 
     for stmt_idx in 0..scan_limit {
-        let Some((param_name, default_val)) =
+        let Some((param_ident, default_val)) =
             extract_param_object_default_stmt(&body.stmts[stmt_idx], unresolved_mark)
         else {
             break;
         };
-        let Some((param_idx, param_ident)) = find_plain_arrow_param_ident(params, &param_name)
+        let Some((param_idx, param_ident)) = find_plain_arrow_param_ident(params, &param_ident)
         else {
             break;
         };
@@ -303,7 +303,7 @@ fn process_pattern_c_arrow_params(params: &mut [Pat], body: &mut BlockStmt, unre
 fn extract_param_object_default_stmt(
     stmt: &Stmt,
     unresolved_mark: Mark,
-) -> Option<(Atom, Box<Expr>)> {
+) -> Option<(Ident, Box<Expr>)> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
@@ -317,18 +317,18 @@ fn extract_param_object_default_stmt(
 fn extract_param_object_default_expr(
     expr: &Expr,
     unresolved_mark: Mark,
-) -> Option<(Atom, Box<Expr>)> {
+) -> Option<(Ident, Box<Expr>)> {
     let Expr::Cond(cond) = strip_parens(expr) else {
         return None;
     };
-    let param_name = extract_void0_check(cond.test.as_ref(), unresolved_mark)?;
+    let param_ident = extract_void0_check(cond.test.as_ref(), unresolved_mark)?;
     if !is_empty_object_literal(cond.cons.as_ref()) {
         return None;
     }
-    if !is_ident_named(cond.alt.as_ref(), &param_name) {
+    if !is_ident_expr(cond.alt.as_ref(), &param_ident) {
         return None;
     }
-    Some((param_name, cond.cons.clone()))
+    Some((param_ident, cond.cons.clone()))
 }
 
 fn rewrite_param_object_default_stmt(stmt: &mut Stmt, param_ident: Ident) {
@@ -340,12 +340,15 @@ fn rewrite_param_object_default_stmt(stmt: &mut Stmt, param_ident: Ident) {
     }
 }
 
-fn find_plain_param_ident(params: &[Param], name: &Atom) -> Option<(usize, Ident)> {
+fn find_plain_param_ident(params: &[Param], ident: &Ident) -> Option<(usize, Ident)> {
+    if !plain_param_name_is_unique(params, ident) {
+        return None;
+    }
     params.iter().enumerate().find_map(|(idx, param)| {
         let Pat::Ident(binding) = &param.pat else {
             return None;
         };
-        if &binding.id.sym == name {
+        if same_ident(&binding.id, ident) {
             Some((idx, binding.id.clone()))
         } else {
             None
@@ -353,12 +356,12 @@ fn find_plain_param_ident(params: &[Param], name: &Atom) -> Option<(usize, Ident
     })
 }
 
-fn find_plain_arrow_param_ident(params: &[Pat], name: &Atom) -> Option<(usize, Ident)> {
+fn find_plain_arrow_param_ident(params: &[Pat], ident: &Ident) -> Option<(usize, Ident)> {
     params.iter().enumerate().find_map(|(idx, param)| {
         let Pat::Ident(binding) = param else {
             return None;
         };
-        if &binding.id.sym == name {
+        if same_ident(&binding.id, ident) {
             Some((idx, binding.id.clone()))
         } else {
             None
@@ -400,8 +403,8 @@ fn is_empty_array_literal(expr: &Expr) -> bool {
     matches!(strip_parens(expr), Expr::Array(array) if array.elems.is_empty())
 }
 
-fn is_ident_named(expr: &Expr, name: &Atom) -> bool {
-    matches!(strip_parens(expr), Expr::Ident(id) if &id.sym == name)
+fn is_ident_expr(expr: &Expr, ident: &Ident) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(id) if same_ident(id, ident))
 }
 
 // ============================================================
@@ -507,11 +510,11 @@ fn extract_destructuring_alias_default(
     let Expr::Cond(cond) = strip_parens(expr) else {
         return None;
     };
-    let param_name = extract_void0_check(cond.test.as_ref(), unresolved_mark)?;
+    let param_ident = extract_void0_check(cond.test.as_ref(), unresolved_mark)?;
     let Expr::Ident(alias) = strip_parens(cond.alt.as_ref()) else {
         return None;
     };
-    if alias.sym != param_name {
+    if !same_ident(alias, &param_ident) {
         return None;
     }
     let default_val = cond.cons.clone();
@@ -1087,20 +1090,31 @@ fn extract_num_literal(expr: &Expr) -> Option<usize> {
 // Helpers
 // ============================================================
 
-fn find_plain_param_idx(params: &[Param], name: &Atom) -> Option<usize> {
+fn find_plain_param_idx(params: &[Param], ident: &Ident) -> Option<usize> {
+    if !plain_param_name_is_unique(params, ident) {
+        return None;
+    }
     params.iter().position(|p| {
         if let Pat::Ident(BindingIdent { id, .. }) = &p.pat {
-            &id.sym == name
+            same_ident(id, ident)
         } else {
             false
         }
     })
 }
 
-fn find_plain_pat_idx(params: &[Pat], name: &Atom) -> Option<usize> {
+fn plain_param_name_is_unique(params: &[Param], ident: &Ident) -> bool {
+    params
+        .iter()
+        .filter(|param| matches!(&param.pat, Pat::Ident(binding) if binding.id.sym == ident.sym))
+        .count()
+        == 1
+}
+
+fn find_plain_pat_idx(params: &[Pat], ident: &Ident) -> Option<usize> {
     params.iter().position(|p| {
         if let Pat::Ident(BindingIdent { id, .. }) = p {
-            &id.sym == name
+            same_ident(id, ident)
         } else {
             false
         }

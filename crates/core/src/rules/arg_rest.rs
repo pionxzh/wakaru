@@ -133,17 +133,18 @@ fn detect_copy_var_name(body: &BlockStmt, fixed_param_count: usize) -> Option<At
         .iter()
         .find_map(|stmt| detect_copy_var_name_from_stmt(stmt, fixed_param_count))
         .or_else(|| detect_ts_copy_var_name(body, fixed_param_count))
+        .map(|copy| copy.0)
 }
 
-fn detect_ts_copy_var_name(body: &BlockStmt, fixed_param_count: usize) -> Option<Atom> {
+fn detect_ts_copy_var_name(body: &BlockStmt, fixed_param_count: usize) -> Option<BindingId> {
     body.stmts.windows(2).find_map(|pair| {
-        let copy_sym = ts_empty_array_binding_from_stmt(&pair[0])?;
-        let loop_copy_sym = detect_ts_copy_loop_from_stmt(&pair[1], fixed_param_count)?;
-        (copy_sym == loop_copy_sym).then_some(copy_sym)
+        let copy = ts_empty_array_binding_from_stmt(&pair[0])?;
+        let loop_copy = detect_ts_copy_loop_from_stmt(&pair[1], fixed_param_count)?;
+        (copy == loop_copy).then_some(copy)
     })
 }
 
-fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Option<Atom> {
+fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Option<BindingId> {
     let Stmt::For(for_stmt) = stmt else {
         return None;
     };
@@ -171,7 +172,7 @@ fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Opti
     if !matches!(&m.prop, MemberProp::Ident(p) if p.sym == "length") {
         return None;
     }
-    let len_sym = len_id.sym.clone();
+    let len = (len_id.sym.clone(), len_id.ctxt);
 
     // Decl 1: copy = Array(len) or new Array(len)
     let d1 = &init.decls[1];
@@ -183,7 +184,7 @@ fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Opti
     let one_len_arg = |args: &[swc_core::ecma::ast::ExprOrSpread]| -> bool {
         args.len() == 1
             && args[0].spread.is_none()
-            && is_copy_array_len_expr(args[0].expr.as_ref(), &len_sym, fixed_param_count)
+            && is_copy_array_len_expr(args[0].expr.as_ref(), &len, fixed_param_count)
     };
 
     match d1.init.as_deref()? {
@@ -223,20 +224,20 @@ fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Opti
     if !is_number(idx_init, fixed_param_count) {
         return None;
     }
-    let idx_sym = idx_id.sym.clone();
-    let copy_sym = copy_id.sym.clone();
+    let idx = (idx_id.sym.clone(), idx_id.ctxt);
+    let copy = (copy_id.sym.clone(), copy_id.ctxt);
 
-    if !matches_copy_loop_test(for_stmt.test.as_deref(), &idx_sym, &len_sym)
-        || !matches_copy_loop_update(for_stmt.update.as_deref(), &idx_sym)
-        || !matches_copy_loop_body(&for_stmt.body, &copy_sym, &idx_sym, fixed_param_count)
+    if !matches_copy_loop_test(for_stmt.test.as_deref(), &idx, &len)
+        || !matches_copy_loop_update(for_stmt.update.as_deref(), &idx)
+        || !matches_copy_loop_body(&for_stmt.body, &copy, &idx, fixed_param_count)
     {
         return None;
     }
 
-    Some(copy_sym)
+    Some(copy)
 }
 
-fn ts_empty_array_binding_from_stmt(stmt: &Stmt) -> Option<Atom> {
+fn ts_empty_array_binding_from_stmt(stmt: &Stmt) -> Option<BindingId> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
@@ -251,10 +252,10 @@ fn ts_empty_array_binding_from_stmt(stmt: &Stmt) -> Option<Atom> {
     let Expr::Array(array) = decl.init.as_deref()? else {
         return None;
     };
-    array.elems.is_empty().then_some(id.sym.clone())
+    array.elems.is_empty().then_some((id.sym.clone(), id.ctxt))
 }
 
-fn detect_ts_copy_loop_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Option<Atom> {
+fn detect_ts_copy_loop_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Option<BindingId> {
     let Stmt::For(for_stmt) = stmt else {
         return None;
     };
@@ -273,30 +274,30 @@ fn detect_ts_copy_loop_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Optio
         return None;
     }
 
-    let idx_sym = idx_id.sym.clone();
-    if !matches_ts_copy_loop_test(for_stmt.test.as_deref(), &idx_sym)
-        || !matches_copy_loop_update(for_stmt.update.as_deref(), &idx_sym)
+    let idx = (idx_id.sym.clone(), idx_id.ctxt);
+    if !matches_ts_copy_loop_test(for_stmt.test.as_deref(), &idx)
+        || !matches_copy_loop_update(for_stmt.update.as_deref(), &idx)
     {
         return None;
     }
 
-    copy_var_from_ts_copy_loop_body(&for_stmt.body, &idx_sym, fixed_param_count)
+    copy_var_from_ts_copy_loop_body(&for_stmt.body, &idx, fixed_param_count)
 }
 
-fn matches_ts_copy_loop_test(test: Option<&Expr>, idx_sym: &Atom) -> bool {
+fn matches_ts_copy_loop_test(test: Option<&Expr>, idx: &BindingId) -> bool {
     let Some(Expr::Bin(bin)) = test else {
         return false;
     };
     bin.op == BinaryOp::Lt
-        && matches!(bin.left.as_ref(), Expr::Ident(id) if id.sym == *idx_sym)
+        && matches!(bin.left.as_ref(), Expr::Ident(id) if ident_matches_binding(id, idx))
         && is_arguments_length_expr(bin.right.as_ref())
 }
 
 fn copy_var_from_ts_copy_loop_body(
     body: &Stmt,
-    idx_sym: &Atom,
+    idx: &BindingId,
     fixed_param_count: usize,
-) -> Option<Atom> {
+) -> Option<BindingId> {
     let expr = match body {
         Stmt::Expr(expr) => expr.expr.as_ref(),
         Stmt::Block(block) => {
@@ -327,7 +328,7 @@ fn copy_var_from_ts_copy_loop_body(
     let MemberProp::Computed(left_prop) = &left.prop else {
         return None;
     };
-    if !is_copy_write_index(left_prop.expr.as_ref(), idx_sym, fixed_param_count) {
+    if !is_copy_write_index(left_prop.expr.as_ref(), idx, fixed_param_count) {
         return None;
     }
 
@@ -340,16 +341,16 @@ fn copy_var_from_ts_copy_loop_body(
     let MemberProp::Computed(right_prop) = &right.prop else {
         return None;
     };
-    if !matches!(right_prop.expr.as_ref(), Expr::Ident(id) if id.sym == *idx_sym) {
+    if !matches!(right_prop.expr.as_ref(), Expr::Ident(id) if ident_matches_binding(id, idx)) {
         return None;
     }
 
-    Some(copy_id.sym.clone())
+    Some((copy_id.sym.clone(), copy_id.ctxt))
 }
 
-fn is_copy_array_len_expr(expr: &Expr, len_sym: &Atom, fixed_param_count: usize) -> bool {
+fn is_copy_array_len_expr(expr: &Expr, len: &BindingId, fixed_param_count: usize) -> bool {
     if fixed_param_count == 0 {
-        return matches!(expr, Expr::Ident(id) if id.sym == *len_sym);
+        return matches!(expr, Expr::Ident(id) if ident_matches_binding(id, len));
     }
 
     let Expr::Cond(cond) = expr else {
@@ -360,13 +361,13 @@ fn is_copy_array_len_expr(expr: &Expr, len_sym: &Atom, fixed_param_count: usize)
         cond.test.as_ref(),
         Expr::Bin(bin)
             if bin.op == BinaryOp::Gt
-                && matches!(bin.left.as_ref(), Expr::Ident(id) if id.sym == *len_sym)
+                && matches!(bin.left.as_ref(), Expr::Ident(id) if ident_matches_binding(id, len))
                 && is_number(bin.right.as_ref(), fixed_param_count)
     ) && matches!(
         cond.cons.as_ref(),
         Expr::Bin(bin)
             if bin.op == BinaryOp::Sub
-                && matches!(bin.left.as_ref(), Expr::Ident(id) if id.sym == *len_sym)
+                && matches!(bin.left.as_ref(), Expr::Ident(id) if ident_matches_binding(id, len))
                 && is_number(bin.right.as_ref(), fixed_param_count)
     ) && is_number(cond.alt.as_ref(), 0)
 }
@@ -375,27 +376,27 @@ fn is_number(expr: &Expr, expected: usize) -> bool {
     matches!(expr, Expr::Lit(Lit::Num(number)) if number.value == expected as f64)
 }
 
-fn matches_copy_loop_test(test: Option<&Expr>, idx_sym: &Atom, len_sym: &Atom) -> bool {
+fn matches_copy_loop_test(test: Option<&Expr>, idx: &BindingId, len: &BindingId) -> bool {
     let Some(Expr::Bin(bin)) = test else {
         return false;
     };
     bin.op == BinaryOp::Lt
-        && matches!(bin.left.as_ref(), Expr::Ident(id) if id.sym == *idx_sym)
-        && matches!(bin.right.as_ref(), Expr::Ident(id) if id.sym == *len_sym)
+        && matches!(bin.left.as_ref(), Expr::Ident(id) if ident_matches_binding(id, idx))
+        && matches!(bin.right.as_ref(), Expr::Ident(id) if ident_matches_binding(id, len))
 }
 
-fn matches_copy_loop_update(update: Option<&Expr>, idx_sym: &Atom) -> bool {
+fn matches_copy_loop_update(update: Option<&Expr>, idx: &BindingId) -> bool {
     let Some(Expr::Update(update)) = update else {
         return false;
     };
     update.op == UpdateOp::PlusPlus
-        && matches!(update.arg.as_ref(), Expr::Ident(id) if id.sym == *idx_sym)
+        && matches!(update.arg.as_ref(), Expr::Ident(id) if ident_matches_binding(id, idx))
 }
 
 fn matches_copy_loop_body(
     body: &Stmt,
-    copy_sym: &Atom,
-    idx_sym: &Atom,
+    copy: &BindingId,
+    idx: &BindingId,
     fixed_param_count: usize,
 ) -> bool {
     let expr = match body {
@@ -422,13 +423,13 @@ fn matches_copy_loop_body(
     let AssignTarget::Simple(SimpleAssignTarget::Member(left)) = &assign.left else {
         return false;
     };
-    if !matches!(left.obj.as_ref(), Expr::Ident(id) if id.sym == *copy_sym) {
+    if !matches!(left.obj.as_ref(), Expr::Ident(id) if ident_matches_binding(id, copy)) {
         return false;
     }
     let MemberProp::Computed(left_prop) = &left.prop else {
         return false;
     };
-    if !is_copy_write_index(left_prop.expr.as_ref(), idx_sym, fixed_param_count) {
+    if !is_copy_write_index(left_prop.expr.as_ref(), idx, fixed_param_count) {
         return false;
     }
 
@@ -441,21 +442,25 @@ fn matches_copy_loop_body(
     let MemberProp::Computed(right_prop) = &right.prop else {
         return false;
     };
-    matches!(right_prop.expr.as_ref(), Expr::Ident(id) if id.sym == *idx_sym)
+    matches!(right_prop.expr.as_ref(), Expr::Ident(id) if ident_matches_binding(id, idx))
 }
 
-fn is_copy_write_index(expr: &Expr, idx_sym: &Atom, fixed_param_count: usize) -> bool {
+fn is_copy_write_index(expr: &Expr, idx: &BindingId, fixed_param_count: usize) -> bool {
     if fixed_param_count == 0 {
-        return matches!(expr, Expr::Ident(id) if id.sym == *idx_sym);
+        return matches!(expr, Expr::Ident(id) if ident_matches_binding(id, idx));
     }
 
     matches!(
         expr,
         Expr::Bin(bin)
             if bin.op == BinaryOp::Sub
-                && matches!(bin.left.as_ref(), Expr::Ident(id) if id.sym == *idx_sym)
+                && matches!(bin.left.as_ref(), Expr::Ident(id) if ident_matches_binding(id, idx))
                 && is_number(bin.right.as_ref(), fixed_param_count)
     )
+}
+
+fn ident_matches_binding(id: &Ident, binding: &BindingId) -> bool {
+    id.sym == binding.0 && id.ctxt == binding.1
 }
 
 fn make_rest_param(name: Atom) -> Param {
@@ -753,9 +758,9 @@ fn remove_arguments_copy_loop(body: &mut BlockStmt, fixed_param_count: usize) {
         }
 
         if i + 1 < old.len() {
-            if let Some(copy_sym) = ts_empty_array_binding_from_stmt(&old[i]) {
+            if let Some(copy) = ts_empty_array_binding_from_stmt(&old[i]) {
                 if detect_ts_copy_loop_from_stmt(&old[i + 1], fixed_param_count)
-                    .is_some_and(|loop_copy_sym| loop_copy_sym == copy_sym)
+                    .is_some_and(|loop_copy| loop_copy == copy)
                 {
                     i += 2;
                     continue;

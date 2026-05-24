@@ -118,29 +118,29 @@ fn match_copy_loop(stmt: &Stmt, rest: &BindingId) -> Option<BindingId> {
     }
 
     // Decl 0: len = rest.length
-    let (len_sym, src) = extract_len_decl(&init.decls[0])?;
+    let (len, src) = extract_len_decl(&init.decls[0])?;
     if src != *rest {
         return None;
     }
 
     // Decl 1: copy = Array(len) or new Array(len)
-    let copy = extract_array_copy_decl(&init.decls[1], &len_sym)?;
+    let copy = extract_array_copy_decl(&init.decls[1], &len)?;
 
     // Decl 2: idx = 0
-    let idx_sym = extract_zero_init_decl(&init.decls[2])?;
+    let idx = extract_zero_init_decl(&init.decls[2])?;
 
     // Test: idx < len
-    if !matches_lt_test(for_stmt.test.as_deref(), &idx_sym, &len_sym) {
+    if !matches_lt_test(for_stmt.test.as_deref(), &idx, &len) {
         return None;
     }
 
     // Update: idx++ or ++idx
-    if !matches_increment(for_stmt.update.as_deref(), &idx_sym) {
+    if !matches_increment(for_stmt.update.as_deref(), &idx) {
         return None;
     }
 
     // Body: copy[idx] = rest[idx]  (bare or inside a block)
-    if !matches_copy_body(&for_stmt.body, &copy.0, &idx_sym, &rest.0) {
+    if !matches_copy_body(&for_stmt.body, &copy, &idx, rest) {
         return None;
     }
 
@@ -149,8 +149,8 @@ fn match_copy_loop(stmt: &Stmt, rest: &BindingId) -> Option<BindingId> {
 
 // ── per-declarator extractors ────────────────────────────────────────────────
 
-/// `len = src.length`  →  `(len_sym, src_binding_id)`
-fn extract_len_decl(decl: &VarDeclarator) -> Option<(Atom, BindingId)> {
+/// `len = src.length`  ->  `(len_binding_id, src_binding_id)`
+fn extract_len_decl(decl: &VarDeclarator) -> Option<(BindingId, BindingId)> {
     let Pat::Ident(BindingIdent { id: len_id, .. }) = &decl.name else {
         return None;
     };
@@ -163,11 +163,14 @@ fn extract_len_decl(decl: &VarDeclarator) -> Option<(Atom, BindingId)> {
     if !matches!(&member.prop, MemberProp::Ident(p) if p.sym == "length") {
         return None;
     }
-    Some((len_id.sym.clone(), (src_id.sym.clone(), src_id.ctxt)))
+    Some((
+        (len_id.sym.clone(), len_id.ctxt),
+        (src_id.sym.clone(), src_id.ctxt),
+    ))
 }
 
 /// `copy = Array(len)` or `copy = new Array(len)`  →  `copy_binding_id`
-fn extract_array_copy_decl(decl: &VarDeclarator, len_sym: &Atom) -> Option<BindingId> {
+fn extract_array_copy_decl(decl: &VarDeclarator, len: &BindingId) -> Option<BindingId> {
     let Pat::Ident(BindingIdent { id: copy_id, .. }) = &decl.name else {
         return None;
     };
@@ -176,7 +179,7 @@ fn extract_array_copy_decl(decl: &VarDeclarator, len_sym: &Atom) -> Option<Bindi
     let one_len_arg = |args: &[swc_core::ecma::ast::ExprOrSpread]| -> bool {
         args.len() == 1
             && args[0].spread.is_none()
-            && matches!(args[0].expr.as_ref(), Expr::Ident(id) if &id.sym == len_sym)
+            && matches!(args[0].expr.as_ref(), Expr::Ident(id) if ident_matches_binding(id, len))
     };
 
     match decl.init.as_deref()? {
@@ -209,8 +212,8 @@ fn extract_array_copy_decl(decl: &VarDeclarator, len_sym: &Atom) -> Option<Bindi
     Some((copy_id.sym.clone(), copy_id.ctxt))
 }
 
-/// `idx = 0`  →  `idx_sym`
-fn extract_zero_init_decl(decl: &VarDeclarator) -> Option<Atom> {
+/// `idx = 0`  →  `idx_binding_id`
+fn extract_zero_init_decl(decl: &VarDeclarator) -> Option<BindingId> {
     let Pat::Ident(BindingIdent { id, .. }) = &decl.name else {
         return None;
     };
@@ -218,30 +221,30 @@ fn extract_zero_init_decl(decl: &VarDeclarator) -> Option<Atom> {
         Expr::Lit(swc_core::ecma::ast::Lit::Num(n)) if n.value == 0.0 => {}
         _ => return None,
     }
-    Some(id.sym.clone())
+    Some((id.sym.clone(), id.ctxt))
 }
 
 // ── condition / update / body matchers ──────────────────────────────────────
 
-fn matches_lt_test(test: Option<&Expr>, idx_sym: &Atom, len_sym: &Atom) -> bool {
+fn matches_lt_test(test: Option<&Expr>, idx: &BindingId, len: &BindingId) -> bool {
     let Some(Expr::Bin(bin)) = test else {
         return false;
     };
     bin.op == swc_core::ecma::ast::BinaryOp::Lt
-        && matches!(bin.left.as_ref(), Expr::Ident(id) if &id.sym == idx_sym)
-        && matches!(bin.right.as_ref(), Expr::Ident(id) if &id.sym == len_sym)
+        && matches!(bin.left.as_ref(), Expr::Ident(id) if ident_matches_binding(id, idx))
+        && matches!(bin.right.as_ref(), Expr::Ident(id) if ident_matches_binding(id, len))
 }
 
-fn matches_increment(update: Option<&Expr>, idx_sym: &Atom) -> bool {
+fn matches_increment(update: Option<&Expr>, idx: &BindingId) -> bool {
     let Some(Expr::Update(upd)) = update else {
         return false;
     };
     upd.op == UpdateOp::PlusPlus
-        && matches!(upd.arg.as_ref(), Expr::Ident(id) if &id.sym == idx_sym)
+        && matches!(upd.arg.as_ref(), Expr::Ident(id) if ident_matches_binding(id, idx))
 }
 
 /// Body is `copy[idx] = src[idx]` — either as a bare ExprStmt or inside a block.
-fn matches_copy_body(body: &Stmt, copy_sym: &Atom, idx_sym: &Atom, src_sym: &Atom) -> bool {
+fn matches_copy_body(body: &Stmt, copy: &BindingId, idx: &BindingId, src: &BindingId) -> bool {
     let expr = match body {
         Stmt::Expr(e) => e.expr.as_ref(),
         Stmt::Block(block) => {
@@ -267,13 +270,13 @@ fn matches_copy_body(body: &Stmt, copy_sym: &Atom, idx_sym: &Atom, src_sym: &Ato
     let AssignTarget::Simple(SimpleAssignTarget::Member(lm)) = &assign.left else {
         return false;
     };
-    if !matches!(lm.obj.as_ref(), Expr::Ident(id) if &id.sym == copy_sym) {
+    if !matches!(lm.obj.as_ref(), Expr::Ident(id) if ident_matches_binding(id, copy)) {
         return false;
     }
     let MemberProp::Computed(lp) = &lm.prop else {
         return false;
     };
-    if !matches!(lp.expr.as_ref(), Expr::Ident(id) if &id.sym == idx_sym) {
+    if !matches!(lp.expr.as_ref(), Expr::Ident(id) if ident_matches_binding(id, idx)) {
         return false;
     }
 
@@ -281,13 +284,17 @@ fn matches_copy_body(body: &Stmt, copy_sym: &Atom, idx_sym: &Atom, src_sym: &Ato
     let Expr::Member(rm) = assign.right.as_ref() else {
         return false;
     };
-    if !matches!(rm.obj.as_ref(), Expr::Ident(id) if &id.sym == src_sym) {
+    if !matches!(rm.obj.as_ref(), Expr::Ident(id) if ident_matches_binding(id, src)) {
         return false;
     }
     let MemberProp::Computed(rp) = &rm.prop else {
         return false;
     };
-    matches!(rp.expr.as_ref(), Expr::Ident(id) if &id.sym == idx_sym)
+    matches!(rp.expr.as_ref(), Expr::Ident(id) if ident_matches_binding(id, idx))
+}
+
+fn ident_matches_binding(id: &Ident, binding: &BindingId) -> bool {
+    id.sym == binding.0 && id.ctxt == binding.1
 }
 
 // ── conflict detection ───────────────────────────────────────────────────────
