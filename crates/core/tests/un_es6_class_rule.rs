@@ -142,6 +142,46 @@ var Child = (function(h) {
     );
 }
 
+#[test]
+fn builtin_inherits_name_does_not_match_shadowed_iife_param() {
+    let input = r#"
+var Child = (function(_inherits) {
+    _inherits(t, _inherits);
+    function t() {}
+    return t;
+}(Base));
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("class Child"),
+        "shadowed _inherits param must not be treated as a global helper"
+    );
+    assert!(
+        output.contains("_inherits(t, _inherits)"),
+        "shadowed _inherits call should remain in the output"
+    );
+}
+
+#[test]
+fn builtin_extends_name_does_not_match_shadowed_iife_param() {
+    let input = r#"
+var Child = (function(__extends) {
+    __extends(t, __extends);
+    function t() {}
+    return t;
+}(Base));
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("class Child"),
+        "shadowed __extends param must not be treated as a global helper"
+    );
+    assert!(
+        output.contains("__extends(t, __extends)"),
+        "shadowed __extends call should remain in the output"
+    );
+}
+
 // ============================================================
 // Getter and setter via Object.defineProperty
 // ============================================================

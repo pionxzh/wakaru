@@ -782,7 +782,8 @@ fn parse_class_body(
         // `__extends(t, _super)` or `_inherits(t, _super)` or `customInherits(t, _super)`,
         // or inline IIFE: `((e, t) => { Object.create... })(t, _super)`
         if let Some(sp) = super_param {
-            if try_parse_extends_call(stmt, inner_ctor_name, sp, inherits_helpers).is_some()
+            if try_parse_extends_call(stmt, inner_ctor_name, sp, inherits_helpers, unresolved_mark)
+                .is_some()
                 || is_inline_inherits_iife(stmt, inner_ctor_name, sp, unresolved_mark)
             {
                 extends_handled = true;
@@ -960,6 +961,7 @@ fn try_parse_extends_call(
     ctor_name: &str,
     super_param: &str,
     inherits_helpers: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
 ) -> Option<()> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
@@ -974,11 +976,12 @@ fn try_parse_extends_call(
     let Expr::Ident(fn_name) = callee else {
         return None;
     };
-    // Accept known names or any detected inherits helper
-    if fn_name.sym.as_ref() != "__extends"
-        && fn_name.sym.as_ref() != "_inherits"
-        && !inherits_helpers.contains(&binding_key(fn_name))
-    {
+    // Accept collected helper bindings, or unresolved built-in helper names.
+    // A local IIFE param named `_inherits` / `__extends` must not be treated as
+    // a helper purely by symbol.
+    let is_unresolved_builtin = matches!(fn_name.sym.as_ref(), "__extends" | "_inherits")
+        && fn_name.ctxt.outer() == unresolved_mark;
+    if !is_unresolved_builtin && !inherits_helpers.contains(&binding_key(fn_name)) {
         return None;
     }
     if call.args.len() != 2 {
