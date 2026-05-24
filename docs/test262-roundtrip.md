@@ -13,6 +13,7 @@ The runner is intentionally feature-scoped. Prefer `--preset` or focused
 node scripts\correctness\test262-roundtrip.mjs --limit 500
 node scripts\correctness\test262-roundtrip.mjs --limit all --json target\test262-default.json
 node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --json target\test262-classes.json
+node scripts\correctness\compare-test262-reports.mjs target\before.json target\after.json --details
 ```
 
 Defaults:
