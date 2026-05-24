@@ -476,15 +476,21 @@ function f() {
 }
 
 #[test]
-fn standard_preserves_builtin_global_member_aliases() {
+fn standard_inlines_builtin_global_member_aliases() {
+    // stable_builtins: standard mode assumes Object.defineProperty and
+    // Object.getOwnPropertyNames are not patched between alias capture and use.
     let input = r#"
 const a = Object.defineProperty;
 const b = Object.getOwnPropertyNames;
 a(target, key, desc);
 b(source);
 "#;
+    let expected = r#"
+Object.defineProperty(target, key, desc);
+Object.getOwnPropertyNames(source);
+"#;
     let output = apply(input);
-    assert_eq_normalized(&output, input);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
@@ -498,9 +504,7 @@ a(target, key, desc);
 }
 
 #[test]
-fn aggressive_inlines_builtin_global_member_aliases() {
-    // stable_builtins: aggressive mode assumes Object.defineProperty and
-    // Object.getOwnPropertyNames are not patched between alias capture and use.
+fn aggressive_keeps_builtin_global_member_alias_inlining() {
     let input = r#"
 const a = Object.defineProperty;
 const b = Object.getOwnPropertyNames;
@@ -516,8 +520,8 @@ Object.getOwnPropertyNames(source);
 }
 
 #[test]
-fn aggressive_inlines_builtin_global_ident_aliases() {
-    // stable_builtins: aggressive mode opts into re-reading Object/TypeError at
+fn standard_inlines_builtin_global_ident_aliases() {
+    // stable_builtins: standard mode opts into re-reading Object/TypeError at
     // the use site instead of preserving the captured alias value.
     let input = r#"
 const O = Object;
@@ -529,23 +533,23 @@ throw new E("bad");
 const x = Object.create(null);
 throw new TypeError("bad");
 "#;
-    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn aggressive_does_not_remove_builtin_alias_with_blocked_shorthand_use() {
+fn standard_does_not_remove_builtin_alias_with_blocked_shorthand_use() {
     let input = r#"
 const E = TypeError;
 const errors = { E };
 throw new E("bad");
 "#;
-    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    let output = apply(input);
     assert_eq_normalized(&output, input);
 }
 
 #[test]
-fn aggressive_inlines_builtin_global_math_member_aliases() {
+fn standard_inlines_builtin_global_math_member_aliases() {
     let input = r#"
 const a = Math.ceil;
 const b = Math.floor;
@@ -556,12 +560,12 @@ b(2.5);
 Math.ceil(1.5);
 Math.floor(2.5);
 "#;
-    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn aggressive_builtin_global_multi_use_also_inlined() {
+fn standard_builtin_global_multi_use_also_inlined() {
     // Even when used multiple times, builtin aliases can be inlined under
     // stable_builtins.
     let input = r#"
@@ -573,14 +577,14 @@ a(t2, k2, d2);
 Object.defineProperty(t1, k1, d1);
 Object.defineProperty(t2, k2, d2);
 "#;
-    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn aggressive_builtin_global_accesses_inlined_through_pipeline() {
+fn standard_builtin_global_accesses_inlined_through_pipeline() {
     // All builtin global aliases are inlined back to Object.X(...) form in
-    // aggressive mode.
+    // standard mode.
     let input = r#"
 const i = Object.defineProperty;
 const c = Object.getPrototypeOf;
@@ -591,14 +595,14 @@ i(target, key, desc);
 const s = Object.getPrototypeOf && Object.getPrototypeOf(Object);
 Object.defineProperty(target, key, desc);
 "#;
-    let output = apply_pipeline_with_level(input, RewriteLevel::Aggressive);
+    let output = apply_pipeline_with_level(input, RewriteLevel::Standard);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn aggressive_builtin_alias_inlined_in_function_scope() {
+fn standard_builtin_alias_inlined_in_function_scope() {
     // Math.floor/Math.ceil aliases declared inside a function body can be
-    // inlined in aggressive mode.
+    // inlined in standard mode.
     let input = r#"
 const x = (function() {
     const Math_ceil = Math.ceil;
@@ -617,7 +621,7 @@ const x = (()=>{
     return compute(3.5);
 })();
 "#;
-    let output = apply_pipeline_with_level(input, RewriteLevel::Aggressive);
+    let output = apply_pipeline_with_level(input, RewriteLevel::Standard);
     assert_eq_normalized(&output, expected);
 }
 

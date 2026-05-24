@@ -970,7 +970,7 @@ See #35 (second pass of UnWebpackInterop).
 | Downstream dependents | **UnIife2** (hard — catches IIFEs created by SmartInline), SmartRename (aliases removed) |
 | Fact behavior | Neither |
 | Safety | Heuristic (usage counting for inline decisions) |
-| Notes | Level-gated: temp-var inlining, useState tuple folding, and property destructuring grouping require `standard`. Builtin/global alias inlining (`const floor = Math.floor`, `const E = TypeError` → inline) and index-based destructuring grouping (`obj[0]`, `obj[1]` → array destructuring) require `aggressive`. |
+| Notes | Level-gated: temp-var inlining, useState tuple folding, property destructuring grouping, and builtin/global alias inlining (`const floor = Math.floor`, `const E = TypeError` → inline) require `standard`. Index-based destructuring grouping (`obj[0]`, `obj[1]` → array destructuring) requires `aggressive`. |
 
 ### 64. UnIife2
 

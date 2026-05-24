@@ -46,9 +46,9 @@ impl VisitMut for SmartInline {
         inline_module_arrow_wrappers(module);
 
         // Step 0b: Inline builtin global aliases (const c = Object.defineProperty) globally.
-        // This depends on the aggressive `stable_builtins` assumption: the alias
+        // This depends on the standard+ `stable_builtins` assumption: the alias
         // captures the global/property now, while inlining reads it later.
-        if self.level >= RewriteLevel::Aggressive {
+        if self.level >= RewriteLevel::Standard {
             inline_module_builtin_aliases(module);
         }
 
@@ -109,9 +109,9 @@ fn process_stmts(
     use_state_bindings: &HashSet<BindingKey>,
 ) -> Vec<Stmt> {
     // Pass 0: inline builtin global aliases (const x = Math.floor → replace x with Math.floor)
-    // Aggressive only; this assumes globals and builtin properties are not patched
+    // Standard+ only; this assumes globals and builtin properties are not patched
     // between alias capture and use.
-    let stmts = if level >= RewriteLevel::Aggressive {
+    let stmts = if level >= RewriteLevel::Standard {
         inline_builtin_aliases_stmts(stmts)
     } else {
         stmts
@@ -164,7 +164,7 @@ struct GlobalUsageStats {
 /// Inline `const c = Object.defineProperty` → replace all `c(...)` with `Object.defineProperty(...)`.
 /// Also handles bare builtin aliases like `const E = TypeError` and `const O = Object`.
 /// These aliases are created by minifiers to save bytes and can be restored under
-/// the aggressive `stable_builtins` assumption.
+/// the standard+ `stable_builtins` assumption.
 fn inline_module_builtin_aliases(module: &mut Module) {
     let mut candidates: HashMap<BindingKey, Box<Expr>> = HashMap::new();
     for item in &module.body {

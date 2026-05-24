@@ -134,7 +134,7 @@ semantic guarantee from the AST alone.
 
 Affects: `SmartInline` (builtin/global alias inlining).
 
-Level: `aggressive` only.
+Level: `standard` and above. `minimal` preserves captured builtin aliases.
 
 ## Generated Temporaries
 
