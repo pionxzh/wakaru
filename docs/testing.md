@@ -19,6 +19,132 @@ cargo test --test smart_inline_rule -- inline_single_use
 
 Snapshots auto-update on `cargo test` (via `.cargo/config.toml`).
 
+## Required Verification Before Commit
+
+For code changes, run the full relevant checklist before committing. Do not
+count a snapshot update alone as coverage for a rule change; add or update the
+focused rule regression test as well.
+
+1. Focused regression test for the rule or behavior you touched:
+
+   ```bash
+   cargo test -p wakaru-core --test my_rule_rule
+   ```
+
+2. Pipeline tests:
+
+   ```bash
+   cargo test -p wakaru-core --test noop_pipeline
+   cargo test -p wakaru-core --test webpack4_unpack
+   cargo test -p wakaru-core --test webpack4_unpack_raw
+   cargo test -p wakaru-core --test bundle_unpack
+   cargo test -p wakaru-core --test esbuild_unpack
+   ```
+
+3. Formatting and linting:
+
+   ```bash
+   cargo fmt --check
+   cargo clippy -p wakaru-core --all-targets -- -D warnings
+   ```
+
+   If you touched non-core crates or shared workspace code, run the matching
+   package clippy command, or use:
+
+   ```bash
+   cargo clippy --workspace --all-targets -- -D warnings
+   ```
+
+4. Build the release-profile CLI only when you need a standalone binary, such
+   as before running reproduction matrices with `WAKARU=target/dev-release/wakaru.exe`
+   or when validating CLI/build behavior directly:
+
+   ```bash
+   cargo build --profile dev-release -p wakaru-cli
+   ```
+
+   The fixture runner below builds this profile itself, so do not run this as
+   a separate required step only to prepare fixtures.
+
+5. Fixtures, when the change can affect decompile output, unpacking, bundler
+   behavior, rule ordering, helper detection, or CLI behavior. Run this only
+   if you have the sibling `wakaru-fixtures` repository checked out:
+
+   ```powershell
+   ..\wakaru-fixtures\run.ps1
+   ```
+
+   ```bash
+   ../wakaru-fixtures/run.sh
+   ```
+
+6. Final cleanliness checks:
+
+   ```bash
+   git diff --check
+   git status --short
+   ```
+
+   Normal `cargo test` runs update `.snap` files directly because
+   `.cargo/config.toml` sets `INSTA_UPDATE=always`. If you override that with
+   `INSTA_UPDATE=new`, make sure no `.snap.new` files remain; review and accept
+   or remove them before committing.
+
+Review every snapshot diff before committing. A snapshot change is acceptable
+only when the output is semantically better or the test fixture expectation is
+intentionally changing.
+
+## Running Checks From a Worktree
+
+All Cargo commands should be run from the wakaru worktree that contains the
+changes you are validating, not from the main checkout by habit. The worktree
+root is the directory that contains this repo's `Cargo.toml` and `docs/`
+directory.
+
+```powershell
+cd ..\wakaru-my-worktree
+cargo test -p wakaru-core --test my_rule_rule
+cargo clippy -p wakaru-core --all-targets -- -D warnings
+```
+
+When a reproduction matrix needs a `WAKARU` binary, build and point to the
+binary in the same worktree:
+
+```powershell
+cd ..\wakaru-my-worktree
+cargo build --profile dev-release -p wakaru-cli
+$env:WAKARU = "$PWD\target\dev-release\wakaru.exe"
+node scripts\repro\array-spread-rest-matrix\matrix.mjs --details
+```
+
+Do not reuse `target\dev-release\wakaru.exe` from another checkout unless you
+are intentionally comparing against that checkout. A stale binary from `main`
+can make a matrix pass or fail for the wrong code.
+
+Fixture runs are launched from the wakaru worktree under test, but they write
+outputs and `report.txt` in the sibling `wakaru-fixtures` repository:
+
+```powershell
+cd ..\wakaru-my-worktree
+..\wakaru-fixtures\run.ps1
+```
+
+```bash
+cd ../wakaru-my-worktree
+../wakaru-fixtures/run.sh
+```
+
+After fixtures finish, check both repositories:
+
+```powershell
+git -C ..\wakaru-my-worktree status --short
+git -C ..\wakaru-fixtures status --short
+```
+
+If `wakaru-fixtures\report.txt` changed only because of timestamp, commit hash,
+or timing noise and the fixture run reported no output diff, restore it instead
+of committing run metadata.
+
 ## Test Organization
 
 All test files live under `crates/core/tests/`.
