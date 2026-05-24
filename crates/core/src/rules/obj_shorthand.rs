@@ -1,4 +1,4 @@
-use swc_core::ecma::ast::{Expr, Prop, PropName};
+use swc_core::ecma::ast::{AssignPatProp, Expr, ObjectPat, ObjectPatProp, Pat, Prop, PropName};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 /// Converts `{ foo: foo }` → `{ foo }` (ES6 object property shorthand).
@@ -7,6 +7,52 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 pub struct ObjShorthand;
 
 impl VisitMut for ObjShorthand {
+    fn visit_mut_object_pat(&mut self, obj: &mut ObjectPat) {
+        obj.visit_mut_children_with(self);
+
+        obj.props = obj
+            .props
+            .drain(..)
+            .map(|prop| match prop {
+                ObjectPatProp::KeyValue(kv) => {
+                    let PropName::Ident(key_ident) = &kv.key else {
+                        return ObjectPatProp::KeyValue(kv);
+                    };
+
+                    match *kv.value {
+                        Pat::Ident(binding) if key_ident.sym == binding.id.sym => {
+                            ObjectPatProp::Assign(AssignPatProp {
+                                span: binding.id.span,
+                                key: binding,
+                                value: None,
+                            })
+                        }
+                        Pat::Assign(assign)
+                            if matches!(
+                                assign.left.as_ref(),
+                                Pat::Ident(binding) if key_ident.sym == binding.id.sym
+                            ) =>
+                        {
+                            let Pat::Ident(binding) = *assign.left else {
+                                unreachable!()
+                            };
+                            ObjectPatProp::Assign(AssignPatProp {
+                                span: binding.id.span,
+                                key: binding,
+                                value: Some(assign.right),
+                            })
+                        }
+                        value => ObjectPatProp::KeyValue(swc_core::ecma::ast::KeyValuePatProp {
+                            key: kv.key,
+                            value: Box::new(value),
+                        }),
+                    }
+                }
+                other => other,
+            })
+            .collect();
+    }
+
     fn visit_mut_prop(&mut self, prop: &mut Prop) {
         prop.visit_mut_children_with(self);
 
