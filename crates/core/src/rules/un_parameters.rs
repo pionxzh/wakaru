@@ -1,11 +1,11 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, BinExpr, BinaryOp,
-    BindingIdent, BlockStmt, BlockStmtOrExpr, Bool, CatchClause, ClassDecl, Decl, Expr, FnDecl,
-    Function, Ident, IdentName, IfStmt, KeyValuePatProp, Lit, MemberExpr, MemberProp, Number,
-    ObjectPat, ObjectPatProp, Param, Pat, PropName, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp,
-    VarDecl, VarDeclKind,
+    ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, BinExpr,
+    BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr, Bool, CatchClause, ClassDecl, Decl, Expr,
+    FnDecl, Function, Ident, IdentName, IfStmt, KeyValuePatProp, Lit, MemberExpr, MemberProp,
+    Number, ObjectPat, ObjectPatProp, Param, Pat, PropName, SimpleAssignTarget, Stmt, UnaryExpr,
+    UnaryOp, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -61,6 +61,7 @@ fn process_function_params(
         rewrite_inline_arguments_defaults(params, body, unresolved_mark, &body_bindings);
         materialize_inline_temp_defaults(body, unresolved_mark);
         fold_object_property_param_aliases(params, body, unresolved_mark);
+        fold_array_index_param_aliases(params, body, unresolved_mark);
         fold_destructured_param_aliases(params, body, unresolved_mark);
     }
 }
@@ -684,6 +685,36 @@ fn fold_object_property_param_aliases(
     }
 }
 
+fn fold_array_index_param_aliases(
+    params: &mut [Param],
+    body: &mut BlockStmt,
+    unresolved_mark: Mark,
+) {
+    loop {
+        let Some((param_idx, alias, destructured_pat, default_val, remove_count)) =
+            extract_prefix_array_index_aliases(params, body, unresolved_mark)
+        else {
+            break;
+        };
+        if destructured_pat_references_alias(&destructured_pat, &alias)
+            || destructured_pat_references_later_decl_name(
+                &destructured_pat,
+                &body.stmts[remove_count..],
+            )
+            || destructured_pat_reuses_other_param_name(&destructured_pat, params, param_idx)
+            || !replace_param_alias_pat(
+                &mut params[param_idx].pat,
+                &alias,
+                destructured_pat,
+                default_val,
+            )
+        {
+            break;
+        }
+        body.stmts.drain(0..remove_count);
+    }
+}
+
 fn fold_destructured_arrow_param_aliases(
     params: &mut [Pat],
     body: &mut BlockStmt,
@@ -789,6 +820,34 @@ fn extract_prefix_object_property_aliases(
     None
 }
 
+fn extract_prefix_array_index_aliases(
+    params: &[Param],
+    body: &BlockStmt,
+    unresolved_mark: Mark,
+) -> Option<(usize, Ident, Pat, Option<Box<Expr>>, usize)> {
+    for (param_idx, param) in params.iter().enumerate() {
+        let alias = param_alias_ident(&param.pat)?;
+        let Some((elems, default_val, remove_count)) =
+            extract_array_index_alias_elems(body, &alias, unresolved_mark)
+        else {
+            continue;
+        };
+        return Some((
+            param_idx,
+            alias,
+            Pat::Array(ArrayPat {
+                span: DUMMY_SP,
+                elems,
+                optional: false,
+                type_ann: None,
+            }),
+            default_val,
+            remove_count,
+        ));
+    }
+    None
+}
+
 fn param_alias_ident(param: &Pat) -> Option<Ident> {
     match param {
         Pat::Ident(binding) => Some(binding.id.clone()),
@@ -801,6 +860,131 @@ fn param_alias_ident(param: &Pat) -> Option<Ident> {
         }
         _ => None,
     }
+}
+
+fn extract_array_index_alias_elems(
+    body: &BlockStmt,
+    alias: &Ident,
+    unresolved_mark: Mark,
+) -> Option<(Vec<Option<Pat>>, Option<Box<Expr>>, usize)> {
+    let mut accesses = Vec::new();
+    let mut stmt_idx = 0;
+    let mut default_val = None;
+
+    while let Some(local) = body
+        .stmts
+        .get(stmt_idx)
+        .and_then(extract_uninit_local_ident)
+    {
+        if stmts_reference_ident(&body.stmts[stmt_idx + 1..], &local.id) {
+            break;
+        }
+        stmt_idx += 1;
+    }
+
+    while stmt_idx < body.stmts.len() {
+        let Some(index_alias) =
+            extract_array_index_alias_stmt(&body.stmts[stmt_idx], alias, unresolved_mark)
+        else {
+            break;
+        };
+        if accesses
+            .iter()
+            .any(|(index, _): &(usize, Pat)| *index == index_alias.index)
+        {
+            break;
+        }
+        if default_val.is_none() {
+            default_val = index_alias.default_val.clone();
+        }
+
+        if let Some(next_stmt) = body.stmts.get(stmt_idx + 1) {
+            if let Some((binding, default)) =
+                extract_default_from_temp_stmt(next_stmt, &index_alias.local.id, unresolved_mark)
+            {
+                if stmts_reference_ident(&body.stmts[stmt_idx + 2..], &index_alias.local.id) {
+                    break;
+                }
+                accesses.push((
+                    index_alias.index,
+                    Pat::Assign(AssignPat {
+                        span: DUMMY_SP,
+                        left: Box::new(Pat::Ident(binding)),
+                        right: default,
+                    }),
+                ));
+                stmt_idx += 2;
+                continue;
+            }
+        }
+
+        accesses.push((index_alias.index, Pat::Ident(index_alias.local)));
+        stmt_idx += 1;
+    }
+
+    if accesses.is_empty() {
+        return None;
+    }
+
+    let max_index = accesses.iter().map(|(index, _)| *index).max()?;
+    let mut elems = vec![None; max_index + 1];
+    for (index, pat) in accesses {
+        elems[index] = Some(pat);
+    }
+    Some((elems, default_val, stmt_idx))
+}
+
+struct ArrayIndexAlias {
+    index: usize,
+    local: BindingIdent,
+    default_val: Option<Box<Expr>>,
+}
+
+fn extract_array_index_alias_stmt(
+    stmt: &Stmt,
+    alias: &Ident,
+    unresolved_mark: Mark,
+) -> Option<ArrayIndexAlias> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let declarator = &var.decls[0];
+    let Pat::Ident(local) = &declarator.name else {
+        return None;
+    };
+    let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens(declarator.init.as_ref()?) else {
+        return None;
+    };
+    let default_val = extract_array_index_alias_default(obj.as_ref(), alias, unresolved_mark)?;
+    let MemberProp::Computed(computed) = prop else {
+        return None;
+    };
+    let index = extract_num_literal(computed.expr.as_ref())?;
+    Some(ArrayIndexAlias {
+        index,
+        local: local.clone(),
+        default_val,
+    })
+}
+
+fn extract_array_index_alias_default(
+    obj: &Expr,
+    alias: &Ident,
+    unresolved_mark: Mark,
+) -> Option<Option<Box<Expr>>> {
+    let obj = strip_parens(obj);
+    if matches!(obj, Expr::Ident(obj) if same_param_alias_reference(obj, alias)) {
+        return Some(None);
+    }
+
+    let (default_alias, default_val) = extract_destructuring_alias_default(obj, unresolved_mark)?;
+    if !same_param_alias_reference(&default_alias, alias) || !is_empty_array_literal(&default_val) {
+        return None;
+    }
+    Some(Some(default_val))
 }
 
 fn extract_object_property_alias_props(

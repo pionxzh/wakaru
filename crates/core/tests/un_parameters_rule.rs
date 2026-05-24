@@ -796,6 +796,42 @@ function foo([first, second = fallback] = []) {
 }
 
 #[test]
+fn array_index_aliases_become_param_pattern() {
+    let input = r#"
+function first(_ref = []) {
+  let head = _ref[0];
+  let _ref$ = _ref[1];
+  let second = _ref$ === undefined ? fallback : _ref$;
+  return use(head, second);
+}
+"#;
+    let expected = r#"
+function first([head, second = fallback] = []) {
+  return use(head, second);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn conditional_array_index_aliases_become_param_pattern() {
+    let input = r#"
+function first(_ref) {
+  let head = (_ref === undefined ? [] : _ref)[0];
+  let _ref$ = _ref[1];
+  let second = _ref$ === undefined ? fallback : _ref$;
+  return use(head, second);
+}
+"#;
+    let expected = r#"
+function first([head, second = fallback] = []) {
+  return use(head, second);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn arrow_object_destructuring_alias_becomes_param_pattern() {
     let input = r#"
 const foo = (_ref) => {
