@@ -5,9 +5,9 @@ loop-head lowerings across TypeScript, Babel, SWC, and esbuild. It is intended
 to expose whether `UnForOf` recovers the major index-loop and iterator-helper
 shapes.
 
-The matrix also includes standalone Terser rows and Babel/TypeScript/SWC output
-minified through Terser, because loop shapes can change after compiler output is
-minified.
+The matrix also includes standalone Terser rows and Babel/TypeScript/SWC/esbuild
+output minified through Terser, because loop shapes can change after compiler
+output is minified.
 
 ```bash
 node scripts/repro/for-of-iteration-matrix/matrix.mjs --level standard

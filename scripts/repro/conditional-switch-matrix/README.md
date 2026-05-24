@@ -4,8 +4,9 @@ This matrix explores switch-like conditional decision trees emitted or
 preserved by common minifiers. It is meant to capture concrete shapes before
 adding `UnConditionals` rewrites.
 
-The matrix includes standalone Terser and SWC output minified through Terser so
-compound minification shapes are visible beside each tool's direct output.
+The matrix includes standalone Terser plus SWC and esbuild output minified
+through Terser so compound minification shapes are visible beside each tool's
+direct output.
 
 ```bash
 node scripts/repro/conditional-switch-matrix/matrix.mjs --level standard

@@ -139,6 +139,10 @@ const transformers = [
     run: runEsbuild,
   },
   {
+    name: "esbuild-es2015-terser",
+    run: (source) => runTerser(runEsbuild(source)),
+  },
+  {
     name: "terser-5",
     run: runTerser,
   },

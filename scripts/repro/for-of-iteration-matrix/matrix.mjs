@@ -106,6 +106,12 @@ const transformers = [
     note: "esbuild preserves for-of at ES2015; ES5 for-of lowering is not supported.",
   },
   {
+    name: "esbuild-es2015-terser",
+    run: (source) => runTerser(runEsbuild(source)),
+    shouldRecover: true,
+    note: "esbuild preserves for-of at ES2015; ES5 for-of lowering is not supported.",
+  },
+  {
     name: "terser-5",
     run: runTerser,
     shouldRecover: true,

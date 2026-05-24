@@ -150,6 +150,10 @@ const transformers = [
     name: "esbuild-es2015",
     run: runEsbuild,
   },
+  {
+    name: "esbuild-es2015-terser",
+    run: (source) => runTerser(runEsbuild(source)),
+  },
 ];
 
 try {

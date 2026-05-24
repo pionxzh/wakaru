@@ -5,8 +5,8 @@ coalescing snippets, then runs wakaru on the lowered output. Babel is tested
 across a few meaningful lines: early proposal plugins, assumptions-era Babel 7,
 current transform plugins, and the Babel 8 RC line.
 
-The matrix also includes standalone Terser rows and Babel/TypeScript/SWC output
-minified through Terser, because optional/nullish lowering can become a
+The matrix also includes standalone Terser rows and Babel/TypeScript/SWC/esbuild
+output minified through Terser, because optional/nullish lowering can become a
 different recoverable shape after minification.
 
 It is for investigation, not as a committed snapshot source. Use it to find

@@ -4,9 +4,9 @@ This harness checks how common TypeScript-capable tools lower TypeScript enums,
 then runs wakaru on the lowered JavaScript. Babel is tested across transform
 plugin versions and the `optimizeConstEnums` mode.
 
-The matrix also includes Babel/TypeScript/SWC output minified through Terser,
-because enum patterns can change again after a compiler lowers TypeScript to
-JavaScript.
+The matrix also includes Babel/TypeScript/SWC/esbuild output minified through
+Terser, because enum patterns can change again after a compiler lowers
+TypeScript to JavaScript.
 
 It is for investigation, not as a committed snapshot source. Use it to find
 reproduced tool shapes worth minimizing into focused Rust unit tests.

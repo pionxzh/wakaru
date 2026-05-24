@@ -104,6 +104,14 @@ const transformers = [
     run: (source) => runTerser(runSwc(source)),
   },
   {
+    name: "esbuild-es2015",
+    run: runEsbuild,
+  },
+  {
+    name: "esbuild-es2015-terser",
+    run: (source) => runTerser(runEsbuild(source)),
+  },
+  {
     name: "terser-5",
     run: runTerser,
   },
@@ -304,6 +312,26 @@ const result = swc.transformSync(source, {
     parser: { syntax: "ecmascript" },
   },
   module: { type: "es6" },
+});
+process.stdout.write(result.code);
+`,
+  );
+  return runChecked("node", [helper], { input: source, cwd: toolDir });
+}
+
+function runEsbuild(source) {
+  const toolDir = ensureNodeTool("esbuild-0.28", ["esbuild@0.28.0"]);
+  const helper = join(toolDir, "esbuild-transform.cjs");
+  writeFileSync(
+    helper,
+    `
+const fs = require("node:fs");
+const esbuild = require("esbuild");
+const source = fs.readFileSync(0, "utf8");
+const result = esbuild.transformSync(source, {
+  loader: "js",
+  target: "es2015",
+  format: "esm",
 });
 process.stdout.write(result.code);
 `,

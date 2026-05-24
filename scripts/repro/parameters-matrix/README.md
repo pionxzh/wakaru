@@ -5,9 +5,9 @@ parameters and destructured parameters, then runs wakaru on the generated
 JavaScript. Esbuild is checked at ES2015 because it does not lower
 default/destructured parameters to ES5.
 
-The matrix also includes standalone Terser rows and Babel/TypeScript/SWC output
-minified through Terser, because parameter lowering can expose different shapes
-after minification.
+The matrix also includes standalone Terser rows and Babel/TypeScript/SWC/esbuild
+output minified through Terser, because parameter lowering can expose different
+shapes after minification.
 
 It is for investigation, not as a committed snapshot source. Use it to find
 compiler shapes worth minimizing into focused Rust unit tests.

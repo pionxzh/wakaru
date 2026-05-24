@@ -5,9 +5,9 @@ snippets, then runs wakaru on the lowered output. Babel is tested across early
 proposal plugins, current transform plugins, and the Babel 8 RC line, with spec,
 loose, and `useBuiltIns` variants where supported.
 
-The matrix also includes standalone Terser rows and Babel/TypeScript/SWC output
-minified through Terser, because object rest/spread helper shapes can change
-again after compiler output is minified.
+The matrix also includes standalone Terser rows and Babel/TypeScript/SWC/esbuild
+output minified through Terser, because object rest/spread helper shapes can
+change again after compiler output is minified.
 
 It is for investigation, not as a committed snapshot source. Use it to find
 reproduced tool shapes worth minimizing into focused Rust unit tests.

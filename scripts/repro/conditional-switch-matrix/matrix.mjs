@@ -55,6 +55,10 @@ const transformers = [
     run: runEsbuild,
   },
   {
+    name: "esbuild-0.28-terser",
+    run: (source) => runTerser(runEsbuild(source)),
+  },
+  {
     name: "swc-1",
     run: runSwc,
   },
