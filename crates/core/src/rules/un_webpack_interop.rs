@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BindingIdent, BlockStmtOrExpr, CallExpr, Callee, Expr, Ident,
     IdentName, IfStmt, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
@@ -10,6 +10,9 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::collect_pat_names;
+use super::helper_matcher::{
+    binding_key, ident_matches_binding, var_declarator_binding_key, BindingKey,
+};
 use super::rename_utils::{
     binding_replacement_would_be_shadowed, collect_module_names, rename_bindings_in_module,
     BindingRename,
@@ -50,8 +53,6 @@ impl UnWebpackInterop {
         Self { unresolved_mark }
     }
 }
-
-type BindingKey = (Atom, SyntaxContext);
 
 #[derive(Default)]
 struct UsageStats {
@@ -102,7 +103,7 @@ impl VisitMut for UnWebpackInterop {
                         )
                     })
                 {
-                    candidates.insert((binding.id.sym.clone(), binding.id.ctxt), base);
+                    candidates.insert(binding_key(&binding.id), base);
                 }
             }
         }
@@ -174,7 +175,7 @@ fn collect_module_bindings(module: &Module, unresolved_mark: Mark) -> HashSet<Bi
                         ImportSpecifier::Default(default) => &default.local,
                         ImportSpecifier::Namespace(namespace) => &namespace.local,
                     };
-                    bindings.insert((local.sym.clone(), local.ctxt));
+                    bindings.insert(binding_key(local));
                 }
             }
             ModuleItem::Stmt(Stmt::Decl(swc_core::ecma::ast::Decl::Var(var))) => {
@@ -186,7 +187,7 @@ fn collect_module_bindings(module: &Module, unresolved_mark: Mark) -> HashSet<Bi
                         continue;
                     };
                     if is_require_call(init.as_ref(), unresolved_mark) {
-                        bindings.insert((binding.id.sym.clone(), binding.id.ctxt));
+                        bindings.insert(binding_key(&binding.id));
                     }
                 }
             }
@@ -251,7 +252,7 @@ fn match_require_n_getter(
     let Expr::Ident(base) = call.args[0].expr.as_ref() else {
         return None;
     };
-    if !module_bindings.contains(&(base.sym.clone(), base.ctxt)) {
+    if !module_bindings.contains(&binding_key(base)) {
         return None;
     }
     Some(base.clone())
@@ -277,7 +278,7 @@ fn match_require_t_namespace(
             };
             match_require_t_namespace(assign.right.as_ref(), module_bindings, unresolved_mark).map(
                 |mut namespace| {
-                    namespace.cache = Some((cache.id.sym.clone(), cache.id.ctxt));
+                    namespace.cache = Some(binding_key(&cache.id));
                     namespace
                 },
             )
@@ -291,7 +292,7 @@ fn match_require_t_namespace(
             let Expr::Ident(left) = strip_parens(bin.left.as_ref()) else {
                 return None;
             };
-            if &(left.sym.clone(), left.ctxt) != cache {
+            if !ident_matches_binding(left, cache) {
                 return None;
             }
             Some(namespace)
@@ -333,7 +334,7 @@ fn match_require_t_call(
     let Expr::Ident(base) = call.args[0].expr.as_ref() else {
         return None;
     };
-    if !module_bindings.contains(&(base.sym.clone(), base.ctxt)) {
+    if !module_bindings.contains(&binding_key(base)) {
         return None;
     }
     if !matches!(call.args[1].expr.as_ref(), Expr::Lit(Lit::Num(mode)) if mode.value == 2.0) {
@@ -409,7 +410,7 @@ fn collect_binding_refs(module: &Module, targets: &HashSet<BindingKey>) -> HashS
 
     impl Visit for RefCollector<'_> {
         fn visit_ident(&mut self, ident: &Ident) {
-            let key = (ident.sym.clone(), ident.ctxt);
+            let key = binding_key(ident);
             if self.targets.contains(&key) {
                 self.refs.insert(key);
             }
@@ -432,10 +433,7 @@ fn is_empty_decl_for_binding(decl: &VarDeclarator, bindings: &HashSet<BindingKey
     if decl.init.is_some() {
         return false;
     }
-    let Pat::Ident(binding) = &decl.name else {
-        return false;
-    };
-    bindings.contains(&(binding.id.sym.clone(), binding.id.ctxt))
+    var_declarator_binding_key(decl).is_some_and(|key| bindings.contains(&key))
 }
 
 fn collect_binding_ref_counts(module: &Module) -> HashMap<BindingKey, usize> {
@@ -445,10 +443,7 @@ fn collect_binding_ref_counts(module: &Module) -> HashMap<BindingKey, usize> {
 
     impl Visit for RefCounter {
         fn visit_ident(&mut self, ident: &Ident) {
-            *self
-                .refs
-                .entry((ident.sym.clone(), ident.ctxt))
-                .or_insert(0) += 1;
+            *self.refs.entry(binding_key(ident)).or_insert(0) += 1;
         }
 
         fn visit_binding_ident(&mut self, _: &BindingIdent) {}
@@ -471,7 +466,7 @@ fn count_binding_refs_in_expr(expr: &Expr, target: &BindingKey) -> usize {
 
     impl Visit for RefCounter<'_> {
         fn visit_ident(&mut self, ident: &Ident) {
-            if &(ident.sym.clone(), ident.ctxt) == self.target {
+            if ident_matches_binding(ident, self.target) {
                 self.refs += 1;
             }
         }
@@ -500,7 +495,7 @@ fn match_interop_cond(expr: &Expr, require_bindings: &HashSet<BindingKey>) -> Op
     let Expr::Ident(base) = test.left.as_ref() else {
         return None;
     };
-    let base_key = (base.sym.clone(), base.ctxt);
+    let base_key = binding_key(base);
     if !require_bindings.contains(&base_key) {
         return None;
     }
@@ -514,7 +509,7 @@ fn match_interop_cond(expr: &Expr, require_bindings: &HashSet<BindingKey>) -> Op
     let Expr::Ident(alt_ident) = cond.alt.as_ref() else {
         return None;
     };
-    if alt_ident.sym != base.sym || alt_ident.ctxt != base.ctxt {
+    if !ident_matches_binding(alt_ident, &base_key) {
         return None;
     }
 
@@ -558,7 +553,7 @@ fn match_interop_block(
     let Expr::Ident(base) = test_bin.left.as_ref() else {
         return None;
     };
-    let base_key = (base.sym.clone(), base.ctxt);
+    let base_key = binding_key(base);
     if !require_bindings.contains(&base_key) {
         return None;
     }
@@ -592,7 +587,7 @@ fn match_interop_block(
     let Expr::Ident(alt_ident) = alt_arg.as_ref() else {
         return None;
     };
-    if alt_ident.sym != base.sym || alt_ident.ctxt != base.ctxt {
+    if !ident_matches_binding(alt_ident, &base_key) {
         return None;
     }
 
@@ -614,7 +609,7 @@ fn matches_member(expr: &Expr, base: &Ident, prop_name: &str) -> bool {
     let Expr::Ident(obj_ident) = member.obj.as_ref() else {
         return false;
     };
-    if obj_ident.sym != base.sym || obj_ident.ctxt != base.ctxt {
+    if !ident_matches_binding(obj_ident, &binding_key(base)) {
         return false;
     }
     match &member.prop {
@@ -627,10 +622,7 @@ fn matches_member(expr: &Expr, base: &Ident, prop_name: &str) -> bool {
 }
 
 fn should_remove_decl(decl: &VarDeclarator, to_inline: &HashMap<BindingKey, Ident>) -> bool {
-    let Pat::Ident(binding) = &decl.name else {
-        return false;
-    };
-    to_inline.contains_key(&(binding.id.sym.clone(), binding.id.ctxt))
+    var_declarator_binding_key(decl).is_some_and(|key| to_inline.contains_key(&key))
 }
 
 fn build_shadow_avoidance_renames(
@@ -645,7 +637,7 @@ fn build_shadow_avoidance_renames(
             continue;
         }
 
-        let base_key = (replacement.sym.clone(), replacement.ctxt);
+        let base_key = binding_key(replacement);
         let new_name = base_renames
             .entry(base_key)
             .or_insert_with(|| fresh_prefixed_name(&replacement.sym, &mut used_names))
@@ -711,13 +703,13 @@ impl GetterUsageCollector<'_> {
     }
 
     fn mark_supported(&mut self, ident: &Ident) {
-        if let Some(stats) = self.usage.get_mut(&(ident.sym.clone(), ident.ctxt)) {
+        if let Some(stats) = self.usage.get_mut(&binding_key(ident)) {
             stats.supported += 1;
         }
     }
 
     fn mark_unsupported(&mut self, ident: &Ident) {
-        if let Some(stats) = self.usage.get_mut(&(ident.sym.clone(), ident.ctxt)) {
+        if let Some(stats) = self.usage.get_mut(&binding_key(ident)) {
             stats.unsupported = true;
         }
     }
@@ -735,7 +727,7 @@ impl Visit for GetterUsageCollector<'_> {
     fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
         if let Callee::Expr(callee) = &call.callee {
             if let Expr::Ident(id) = callee.as_ref() {
-                if self.usage.contains_key(&(id.sym.clone(), id.ctxt)) {
+                if self.usage.contains_key(&binding_key(id)) {
                     if call.args.is_empty() {
                         self.mark_supported(id);
                     } else {
@@ -753,7 +745,7 @@ impl Visit for GetterUsageCollector<'_> {
 
     fn visit_member_expr(&mut self, member: &MemberExpr) {
         if let Expr::Ident(id) = member.obj.as_ref() {
-            if self.usage.contains_key(&(id.sym.clone(), id.ctxt)) {
+            if self.usage.contains_key(&binding_key(id)) {
                 let is_dot_a = match &member.prop {
                     MemberProp::Ident(prop) => prop.sym.as_ref() == "a",
                     MemberProp::Computed(prop) => {
@@ -800,7 +792,7 @@ impl VisitMut for GetterReplacer<'_> {
             if let Callee::Expr(callee) = &call.callee {
                 if let Expr::Ident(id) = callee.as_ref() {
                     if call.args.is_empty() {
-                        if let Some(replacement) = self.map.get(&(id.sym.clone(), id.ctxt)) {
+                        if let Some(replacement) = self.map.get(&binding_key(id)) {
                             *expr = Expr::Ident(replacement.clone());
                             return;
                         }
@@ -819,7 +811,7 @@ impl VisitMut for GetterReplacer<'_> {
                     _ => false,
                 };
                 if is_dot_a {
-                    if let Some(replacement) = self.map.get(&(id.sym.clone(), id.ctxt)) {
+                    if let Some(replacement) = self.map.get(&binding_key(id)) {
                         *expr = Expr::Ident(replacement.clone());
                     }
                 }
