@@ -2,14 +2,16 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignTarget, BinExpr, BinaryOp, BindingIdent,
-    BlockStmt, BlockStmtOrExpr, Bool, Decl, Expr, Function, Ident, IfStmt, Lit, MemberExpr,
-    MemberProp, Number, ObjectPatProp, Param, Pat, PropName, SimpleAssignTarget, Stmt, UnaryExpr,
-    UnaryOp, VarDeclKind,
+    BlockStmt, BlockStmtOrExpr, Bool, CatchClause, ClassDecl, Decl, Expr, FnDecl, Function, Ident,
+    IfStmt, Lit, MemberExpr, MemberProp, Number, ObjectPatProp, Param, Pat, PropName,
+    SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::same_ident;
 use super::RewriteLevel;
+
+type BindingId = (Atom, SyntaxContext);
 
 pub struct UnParameters {
     unresolved_mark: Mark,
@@ -49,11 +51,13 @@ fn process_function_params(
     level: RewriteLevel,
     unresolved_mark: Mark,
 ) {
-    process_pattern_a_params(params, body, unresolved_mark);
+    let body_bindings = collect_body_bindings(body);
+
+    process_pattern_a_params(params, body, unresolved_mark, &body_bindings);
     if level >= RewriteLevel::Standard {
-        process_pattern_c_params(params, body, unresolved_mark);
-        process_pattern_b_params(params, body, unresolved_mark);
-        rewrite_inline_arguments_defaults(params, body, unresolved_mark);
+        process_pattern_c_params(params, body, unresolved_mark, &body_bindings);
+        process_pattern_b_params(params, body, unresolved_mark, &body_bindings);
+        rewrite_inline_arguments_defaults(params, body, unresolved_mark, &body_bindings);
         fold_destructured_param_aliases(params, body, unresolved_mark);
     }
 }
@@ -65,9 +69,11 @@ fn process_arrow_params(
     level: RewriteLevel,
     unresolved_mark: Mark,
 ) {
-    process_pattern_a_arrow_params(params, body, unresolved_mark);
+    let body_bindings = collect_body_bindings(body);
+
+    process_pattern_a_arrow_params(params, body, unresolved_mark, &body_bindings);
     if level >= RewriteLevel::Standard {
-        process_pattern_c_arrow_params(params, body, unresolved_mark);
+        process_pattern_c_arrow_params(params, body, unresolved_mark, &body_bindings);
         fold_destructured_arrow_param_aliases(params, body, unresolved_mark);
     }
 }
@@ -76,7 +82,12 @@ fn process_arrow_params(
 // Pattern A: `if (a === void 0) { a = 1; }` → default param
 // ============================================================
 
-fn process_pattern_a_params(params: &mut Vec<Param>, body: &mut BlockStmt, unresolved_mark: Mark) {
+fn process_pattern_a_params(
+    params: &mut Vec<Param>,
+    body: &mut BlockStmt,
+    unresolved_mark: Mark,
+    body_bindings: &[BindingId],
+) {
     let mut to_remove: Vec<usize> = Vec::new();
 
     // Only scan first 15 statements
@@ -88,6 +99,14 @@ fn process_pattern_a_params(params: &mut Vec<Param>, body: &mut BlockStmt, unres
         if let Some((param_ident, default_val)) = extracted {
             // Find the matching parameter
             if let Some(param_idx) = find_plain_param_idx(params, &param_ident) {
+                if default_references_blocked_param_binding(
+                    params,
+                    param_idx,
+                    &default_val,
+                    body_bindings,
+                ) {
+                    continue;
+                }
                 // Replace the param with an assignment pattern
                 let original_pat =
                     std::mem::replace(&mut params[param_idx].pat, Pat::Invalid(Default::default()));
@@ -111,6 +130,7 @@ fn process_pattern_a_arrow_params(
     params: &mut Vec<Pat>,
     body: &mut BlockStmt,
     unresolved_mark: Mark,
+    body_bindings: &[BindingId],
 ) {
     let mut to_remove: Vec<usize> = Vec::new();
 
@@ -121,6 +141,14 @@ fn process_pattern_a_arrow_params(
 
         if let Some((param_ident, default_val)) = extracted {
             if let Some(param_idx) = find_plain_pat_idx(params, &param_ident) {
+                if default_references_blocked_arrow_binding(
+                    params,
+                    param_idx,
+                    &default_val,
+                    body_bindings,
+                ) {
+                    continue;
+                }
                 let original_pat =
                     std::mem::replace(&mut params[param_idx], Pat::Invalid(Default::default()));
                 params[param_idx] = Pat::Assign(AssignPat {
@@ -262,7 +290,12 @@ fn extract_assign_expr(expr: &Expr, param_ident: &Ident) -> Option<Box<Expr>> {
 // Pattern C: `const alias = param === undefined ? {} : param`
 // ============================================================
 
-fn process_pattern_c_params(params: &mut [Param], body: &mut BlockStmt, unresolved_mark: Mark) {
+fn process_pattern_c_params(
+    params: &mut [Param],
+    body: &mut BlockStmt,
+    unresolved_mark: Mark,
+    body_bindings: &[BindingId],
+) {
     let scan_limit = body.stmts.len().min(15);
 
     for stmt_idx in 0..scan_limit {
@@ -274,14 +307,19 @@ fn process_pattern_c_params(params: &mut [Param], body: &mut BlockStmt, unresolv
         let Some((param_idx, param_ident)) = find_plain_param_ident(params, &param_ident) else {
             break;
         };
-        if !set_param_default(params, param_idx, default_val) {
+        if !set_param_default(params, param_idx, default_val, body_bindings) {
             break;
         }
         rewrite_param_object_default_stmt(&mut body.stmts[stmt_idx], param_ident);
     }
 }
 
-fn process_pattern_c_arrow_params(params: &mut [Pat], body: &mut BlockStmt, unresolved_mark: Mark) {
+fn process_pattern_c_arrow_params(
+    params: &mut [Pat],
+    body: &mut BlockStmt,
+    unresolved_mark: Mark,
+    body_bindings: &[BindingId],
+) {
     let scan_limit = body.stmts.len().min(15);
 
     for stmt_idx in 0..scan_limit {
@@ -294,7 +332,7 @@ fn process_pattern_c_arrow_params(params: &mut [Pat], body: &mut BlockStmt, unre
         else {
             break;
         };
-        if !set_arrow_param_default(params, param_idx, default_val) {
+        if !set_arrow_param_default(params, param_idx, default_val, body_bindings) {
             break;
         }
         rewrite_param_object_default_stmt(&mut body.stmts[stmt_idx], param_ident);
@@ -370,7 +408,168 @@ fn find_plain_arrow_param_ident(params: &[Pat], ident: &Ident) -> Option<(usize,
     })
 }
 
-fn set_param_default(params: &mut [Param], idx: usize, default_val: Box<Expr>) -> bool {
+fn default_references_current_or_later_param(
+    params: &[Param],
+    idx: usize,
+    default_val: &Expr,
+) -> bool {
+    let blocked = current_or_later_param_bindings(params, idx);
+    expr_references_any_binding(default_val, &blocked)
+}
+
+fn default_references_current_or_later_arrow_param(
+    params: &[Pat],
+    idx: usize,
+    default_val: &Expr,
+) -> bool {
+    let blocked = current_or_later_arrow_param_bindings(params, idx);
+    expr_references_any_binding(default_val, &blocked)
+}
+
+fn default_references_blocked_param_binding(
+    params: &[Param],
+    idx: usize,
+    default_val: &Expr,
+    body_bindings: &[BindingId],
+) -> bool {
+    default_references_current_or_later_param(params, idx, default_val)
+        || expr_references_any_binding(default_val, body_bindings)
+}
+
+fn default_references_blocked_arrow_binding(
+    params: &[Pat],
+    idx: usize,
+    default_val: &Expr,
+    body_bindings: &[BindingId],
+) -> bool {
+    default_references_current_or_later_arrow_param(params, idx, default_val)
+        || expr_references_any_binding(default_val, body_bindings)
+}
+
+fn current_or_later_param_bindings(params: &[Param], idx: usize) -> Vec<BindingId> {
+    let mut bindings = Vec::new();
+    for param in params.iter().skip(idx) {
+        collect_pat_binding_ids(&param.pat, &mut bindings);
+    }
+    bindings
+}
+
+fn current_or_later_arrow_param_bindings(params: &[Pat], idx: usize) -> Vec<BindingId> {
+    let mut bindings = Vec::new();
+    for param in params.iter().skip(idx) {
+        collect_pat_binding_ids(param, &mut bindings);
+    }
+    bindings
+}
+
+fn collect_pat_binding_ids(pat: &Pat, out: &mut Vec<BindingId>) {
+    match pat {
+        Pat::Ident(binding) => out.push((binding.id.sym.clone(), binding.id.ctxt)),
+        Pat::Assign(assign) => collect_pat_binding_ids(&assign.left, out),
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_binding_ids(elem, out);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(kv) => collect_pat_binding_ids(&kv.value, out),
+                    ObjectPatProp::Assign(assign) => {
+                        out.push((assign.key.id.sym.clone(), assign.key.id.ctxt));
+                    }
+                    ObjectPatProp::Rest(rest) => collect_pat_binding_ids(&rest.arg, out),
+                }
+            }
+        }
+        Pat::Rest(rest) => collect_pat_binding_ids(&rest.arg, out),
+        _ => {}
+    }
+}
+
+fn collect_body_bindings(body: &BlockStmt) -> Vec<BindingId> {
+    let mut collector = BodyBindingCollector {
+        bindings: Vec::new(),
+    };
+    body.visit_with(&mut collector);
+    collector.bindings
+}
+
+struct BodyBindingCollector {
+    bindings: Vec<BindingId>,
+}
+
+impl Visit for BodyBindingCollector {
+    fn visit_var_decl(&mut self, var: &VarDecl) {
+        for decl in &var.decls {
+            collect_pat_binding_ids(&decl.name, &mut self.bindings);
+        }
+    }
+
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        self.bindings
+            .push((decl.ident.sym.clone(), decl.ident.ctxt));
+    }
+
+    fn visit_class_decl(&mut self, decl: &ClassDecl) {
+        self.bindings
+            .push((decl.ident.sym.clone(), decl.ident.ctxt));
+    }
+
+    fn visit_catch_clause(&mut self, clause: &CatchClause) {
+        if let Some(param) = &clause.param {
+            collect_pat_binding_ids(param, &mut self.bindings);
+        }
+        clause.body.visit_with(self);
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+}
+
+fn expr_references_any_binding(expr: &Expr, bindings: &[BindingId]) -> bool {
+    if bindings.is_empty() {
+        return false;
+    }
+    let mut finder = BindingReferenceFinder {
+        bindings,
+        found: false,
+    };
+    expr.visit_with(&mut finder);
+    finder.found
+}
+
+struct BindingReferenceFinder<'a> {
+    bindings: &'a [BindingId],
+    found: bool,
+}
+
+impl Visit for BindingReferenceFinder<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if self
+            .bindings
+            .iter()
+            .any(|(sym, ctxt)| *sym == ident.sym && *ctxt == ident.ctxt)
+        {
+            self.found = true;
+        }
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+}
+
+fn set_param_default(
+    params: &mut [Param],
+    idx: usize,
+    default_val: Box<Expr>,
+    body_bindings: &[BindingId],
+) -> bool {
+    if default_references_blocked_param_binding(params, idx, &default_val, body_bindings) {
+        return false;
+    }
     let Pat::Ident(binding) = &params[idx].pat else {
         return false;
     };
@@ -383,7 +582,15 @@ fn set_param_default(params: &mut [Param], idx: usize, default_val: Box<Expr>) -
     true
 }
 
-fn set_arrow_param_default(params: &mut [Pat], idx: usize, default_val: Box<Expr>) -> bool {
+fn set_arrow_param_default(
+    params: &mut [Pat],
+    idx: usize,
+    default_val: Box<Expr>,
+    body_bindings: &[BindingId],
+) -> bool {
+    if default_references_blocked_arrow_binding(params, idx, &default_val, body_bindings) {
+        return false;
+    }
     let Pat::Ident(binding) = &params[idx] else {
         return false;
     };
@@ -831,7 +1038,12 @@ impl Visit for IdentReferenceFinder<'_> {
 // Pattern B: arguments-based default params
 // ============================================================
 
-fn process_pattern_b_params(params: &mut Vec<Param>, body: &mut BlockStmt, unresolved_mark: Mark) {
+fn process_pattern_b_params(
+    params: &mut Vec<Param>,
+    body: &mut BlockStmt,
+    unresolved_mark: Mark,
+    body_bindings: &[BindingId],
+) {
     let mut to_remove: Vec<usize> = Vec::new();
 
     // Scan entire body for var declarations matching the arguments pattern
@@ -840,7 +1052,8 @@ fn process_pattern_b_params(params: &mut Vec<Param>, body: &mut BlockStmt, unres
             extract_arguments_default(stmt, unresolved_mark)
         {
             if param_slot_can_use_name(params, param_idx, &param_name)
-                && ensure_default_param(params, param_idx, param_name, default_val).is_some()
+                && ensure_default_param(params, param_idx, param_name, default_val, body_bindings)
+                    .is_some()
             {
                 to_remove.push(stmt_idx);
             }
@@ -1144,10 +1357,12 @@ fn rewrite_inline_arguments_defaults(
     params: &mut Vec<Param>,
     body: &mut BlockStmt,
     unresolved_mark: Mark,
+    body_bindings: &[BindingId],
 ) {
     let mut rewriter = InlineArgumentsDefaultRewriter {
         params,
         unresolved_mark,
+        body_bindings,
     };
     body.visit_mut_with(&mut rewriter);
 }
@@ -1193,8 +1408,15 @@ fn ensure_default_param(
     idx: usize,
     preferred_name: Atom,
     default_val: Box<Expr>,
+    body_bindings: &[BindingId],
 ) -> Option<Ident> {
+    if expr_references_any_binding(&default_val, body_bindings) {
+        return None;
+    }
     ensure_params_len(params, idx);
+    if default_references_current_or_later_param(params, idx, &default_val) {
+        return None;
+    }
 
     let (ident, can_replace) = match &params[idx].pat {
         Pat::Ident(binding) => {
@@ -1225,6 +1447,7 @@ fn ensure_default_param(
 struct InlineArgumentsDefaultRewriter<'a> {
     params: &'a mut Vec<Param>,
     unresolved_mark: Mark,
+    body_bindings: &'a [BindingId],
 }
 
 impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
@@ -1238,8 +1461,13 @@ impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
 
         let preferred_name = placeholder_name(idx);
         if param_slot_can_use_name(self.params, idx, &preferred_name) {
-            if let Some(ident) = ensure_default_param(self.params, idx, preferred_name, default_val)
-            {
+            if let Some(ident) = ensure_default_param(
+                self.params,
+                idx,
+                preferred_name,
+                default_val,
+                self.body_bindings,
+            ) {
                 *expr = Expr::Ident(ident);
             }
         }

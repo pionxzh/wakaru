@@ -103,6 +103,75 @@ const test = (a = 1, b = 2) => {};
     assert_eq_normalized(&apply(input), expected);
 }
 
+#[test]
+fn default_guard_referencing_later_param_stays_in_body() {
+    let input = r#"
+function foo(a, b) {
+  if (a === void 0) a = b.value;
+  return a;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arrow_default_guard_referencing_later_param_stays_in_body() {
+    let input = r#"
+const foo = (a, b) => {
+  if (a === void 0) a = b.value;
+  return a;
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn default_guard_referencing_same_param_stays_in_body() {
+    let input = r#"
+function foo(a) {
+  if (a === void 0) a = a;
+  return a;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn default_guard_referencing_body_var_stays_in_body() {
+    let input = r#"
+function foo(a) {
+  if (a === void 0) a = x;
+  var x = 1;
+  return a;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn default_guard_referencing_earlier_body_var_stays_in_body() {
+    let input = r#"
+function foo(a) {
+  var x = 1;
+  if (a === void 0) a = x;
+  return a;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arrow_default_guard_referencing_body_var_stays_in_body() {
+    let input = r#"
+const foo = (a) => {
+  if (a === void 0) a = x;
+  var x = 1;
+  return a;
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
 // --- falsy-coalescing patterns are intentionally not rewritten ---
 
 #[test]
@@ -321,6 +390,52 @@ fn arguments_default_to_existing_param_name_stays_in_body() {
 function foo(a) {
   var b = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : 1;
   return b;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arguments_default_referencing_later_param_stays_in_body() {
+    let input = r#"
+function foo(q, K, _, z) {
+  var q = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : _.bits || 2048;
+  var K = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : _.e || 65537;
+  return [q, K, _, z];
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arguments_default_referencing_same_param_stays_in_body() {
+    let input = r#"
+function foo(a) {
+  var a = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : a;
+  return a;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn arguments_default_referencing_body_var_stays_in_body() {
+    let input = r#"
+function foo(a) {
+  var a = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : x;
+  var x = 1;
+  return a;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn inline_arguments_default_referencing_body_var_stays_in_body() {
+    let input = r#"
+function foo() {
+  return arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : x;
+  var x = 1;
 }
 "#;
     assert_eq_normalized(&apply(input), input);

@@ -538,8 +538,16 @@ fn analyze_stmt_in_order(
         Stmt::Block(block) => {
             analyze_stmts_in_order(&block.stmts, var_ids, declared_so_far, must_stay);
         }
-        Stmt::Decl(Decl::Var(var)) if var.kind == VarDeclKind::Var => {
-            analyze_var_decl_in_order(var, var_ids, declared_so_far, must_stay);
+        Stmt::Decl(Decl::Var(var)) => {
+            if var.kind == VarDeclKind::Var {
+                analyze_var_decl_in_order(var, var_ids, declared_so_far, must_stay);
+            } else {
+                mark_refs_before_decl(
+                    collect_refs_in_var_decl(var, var_ids),
+                    declared_so_far,
+                    must_stay,
+                );
+            }
         }
         Stmt::Decl(Decl::Class(class_decl)) => {
             mark_refs_before_decl(
@@ -797,21 +805,27 @@ fn visit_for_head_assignment_expressions(head: &ForHead, visitor: &mut AssignedI
     }
 }
 
+fn collect_refs_in_var_decl(var: &VarDecl, var_ids: &HashSet<BindingId>) -> HashSet<BindingId> {
+    let mut collector = VarRefCollector {
+        var_ids,
+        refs: HashSet::new(),
+    };
+    for decl in &var.decls {
+        if let Some(init) = &decl.init {
+            init.visit_with(&mut collector);
+        }
+        visit_pat_defaults(&decl.name, &mut collector);
+    }
+    collector.refs
+}
+
 fn collect_refs_in_stmt(stmt: &Stmt, var_ids: &HashSet<BindingId>) -> HashSet<BindingId> {
     let mut collector = VarRefCollector {
         var_ids,
         refs: HashSet::new(),
     };
     if let Stmt::Decl(Decl::Var(var)) = stmt {
-        if var.kind == VarDeclKind::Var {
-            for d in &var.decls {
-                if let Some(init) = &d.init {
-                    init.visit_with(&mut collector);
-                }
-                visit_pat_defaults(&d.name, &mut collector);
-            }
-            return collector.refs;
-        }
+        return collect_refs_in_var_decl(var, var_ids);
     }
     stmt.visit_with(&mut collector);
     collector.refs

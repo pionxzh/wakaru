@@ -167,6 +167,32 @@ function f(xs) {
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn var_used_by_lexical_decl_before_for_head_stays_var() {
+    let input = r#"
+const re = new RegExp(`[${items.map((item) => item.name).join("")}]`);
+for (var items = [{ name: "a" }], i = 0; i < items.length; i++) {
+    use(items[i]);
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn var_used_by_lexical_decl_initializer_before_declaration_stays_var() {
+    let input = r#"
+const y = x + 1;
+var x = 1;
+"#;
+    let expected = r#"
+const y = x + 1;
+var x = 1;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
 // --- multi-variable declarations ---
 
 #[test]
