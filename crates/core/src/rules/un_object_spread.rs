@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    Callee, Expr, ImportSpecifier, Module, ModuleDecl, ModuleItem, ObjectLit, Prop, PropName,
-    PropOrSpread, SpreadElement,
+    BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, Function, Ident, ImportSpecifier, Module,
+    ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SpreadElement, Stmt,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{HelperKind, ModuleFactsMap};
 
@@ -47,7 +47,7 @@ impl<'a> UnObjectSpread<'a> {
 impl VisitMut for UnObjectSpread<'_> {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let all_helpers = collect_helpers(module);
-        let local_helpers: HashMap<BindingKey, BabelHelperKind> = all_helpers
+        let mut local_helpers: HashMap<BindingKey, BabelHelperKind> = all_helpers
             .into_iter()
             .filter(|(_, kind)| {
                 *kind == BabelHelperKind::Extends
@@ -55,6 +55,7 @@ impl VisitMut for UnObjectSpread<'_> {
                     || *kind == BabelHelperKind::HelperDependency
             })
             .collect();
+        local_helpers.extend(collect_uninitialized_object_spread_stubs(module));
         let mut helpers = local_helpers.clone();
         if let Some(module_facts) = self.module_facts {
             helpers.extend(collect_cross_module_object_spread_helpers(
@@ -85,6 +86,34 @@ impl Default for UnObjectSpread<'_> {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn collect_uninitialized_object_spread_stubs(
+    module: &Module,
+) -> HashMap<BindingKey, BabelHelperKind> {
+    let mut helpers = HashMap::new();
+
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for decl in &var.decls {
+            if decl.init.is_some() {
+                continue;
+            }
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            if matches!(binding.id.sym.as_ref(), "__spreadValues" | "__spreadProps") {
+                helpers.insert(
+                    (binding.id.sym.clone(), binding.id.ctxt),
+                    BabelHelperKind::HelperDependency,
+                );
+            }
+        }
+    }
+
+    helpers
 }
 
 fn collect_cross_module_object_spread_helpers(
@@ -161,20 +190,9 @@ impl VisitMut for SpreadReplacer<'_> {
         let Callee::Expr(callee) = &call.callee else {
             return;
         };
-        let Expr::Ident(id) = callee.as_ref() else {
+        if !is_object_spread_callee(callee, self.helpers) {
             return;
-        };
-
-        let key = (id.sym.clone(), id.ctxt);
-        let Some(kind) = self.helpers.get(&key) else {
-            return;
-        };
-        if !matches!(
-            kind,
-            BabelHelperKind::Extends | BabelHelperKind::ObjectSpread
-        ) {
-            return;
-        };
+        }
 
         if call.args.is_empty() {
             return;
@@ -221,6 +239,160 @@ impl VisitMut for SpreadReplacer<'_> {
             span: DUMMY_SP,
             props: properties,
         });
+    }
+}
+
+fn is_object_spread_callee(callee: &Expr, helpers: &HashMap<BindingKey, BabelHelperKind>) -> bool {
+    match strip_parens(callee) {
+        Expr::Ident(id) => {
+            let key = (id.sym.clone(), id.ctxt);
+            matches!(
+                helpers.get(&key),
+                Some(BabelHelperKind::Extends | BabelHelperKind::ObjectSpread)
+            )
+        }
+        expr => is_inline_object_spread_helper(expr),
+    }
+}
+
+fn is_inline_object_spread_helper(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Fn(fn_expr) => function_matches_inline_object_spread(&fn_expr.function),
+        Expr::Arrow(arrow) => {
+            let Some((target, source)) = arrow_param_pair(&arrow.params) else {
+                return false;
+            };
+            match arrow.body.as_ref() {
+                BlockStmtOrExpr::BlockStmt(block) => {
+                    block_matches_inline_object_spread(&block.stmts, target, source)
+                }
+                BlockStmtOrExpr::Expr(expr) => {
+                    expr_matches_inline_object_spread(expr, target, source)
+                }
+            }
+        }
+        _ => false,
+    }
+}
+
+fn function_matches_inline_object_spread(function: &Function) -> bool {
+    let Some(body) = &function.body else {
+        return false;
+    };
+    let params: Vec<_> = function.params.iter().map(|param| &param.pat).collect();
+    let Some((target, source)) = pat_pair(&params) else {
+        return false;
+    };
+    block_matches_inline_object_spread(&body.stmts, target, source)
+}
+
+fn block_matches_inline_object_spread(stmts: &[Stmt], target: &Ident, source: &Ident) -> bool {
+    if !matches!(
+        stmts.last(),
+        Some(Stmt::Return(ret)) if ret.arg.as_deref().is_some_and(|arg| is_binding_ref(arg, target))
+    ) {
+        return false;
+    }
+
+    let mut marker = InlineSpreadMarker::new(target, source);
+    stmts.visit_with(&mut marker);
+    marker.is_match()
+}
+
+fn expr_matches_inline_object_spread(expr: &Expr, target: &Ident, source: &Ident) -> bool {
+    let mut marker = InlineSpreadMarker::new(target, source);
+    expr.visit_with(&mut marker);
+    marker.is_match()
+}
+
+fn arrow_param_pair(params: &[Pat]) -> Option<(&Ident, &Ident)> {
+    let refs: Vec<_> = params.iter().collect();
+    pat_pair(&refs)
+}
+
+fn pat_pair<'a>(params: &[&'a Pat]) -> Option<(&'a Ident, &'a Ident)> {
+    let [Pat::Ident(target), Pat::Ident(source)] = params else {
+        return None;
+    };
+    Some((&target.id, &source.id))
+}
+
+struct InlineSpreadMarker<'a> {
+    target: &'a Ident,
+    source: &'a Ident,
+    saw_generated_spread_helper: bool,
+    saw_target_helper_arg: bool,
+    saw_source_ref: bool,
+}
+
+impl<'a> InlineSpreadMarker<'a> {
+    fn new(target: &'a Ident, source: &'a Ident) -> Self {
+        Self {
+            target,
+            source,
+            saw_generated_spread_helper: false,
+            saw_target_helper_arg: false,
+            saw_source_ref: false,
+        }
+    }
+
+    fn is_match(&self) -> bool {
+        self.saw_generated_spread_helper && self.saw_target_helper_arg && self.saw_source_ref
+    }
+}
+
+impl Visit for InlineSpreadMarker<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident_matches(ident, self.source) {
+            self.saw_source_ref = true;
+        }
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if is_generated_spread_helper_callee(&call.callee) {
+            self.saw_generated_spread_helper = true;
+            if call
+                .args
+                .first()
+                .is_some_and(|arg| arg.spread.is_none() && is_binding_ref(&arg.expr, self.target))
+            {
+                self.saw_target_helper_arg = true;
+            }
+        }
+
+        call.visit_children_with(self);
+    }
+}
+
+fn is_generated_spread_helper_callee(callee: &Callee) -> bool {
+    let Callee::Expr(expr) = callee else {
+        return false;
+    };
+    match strip_parens(expr) {
+        Expr::Ident(id) => matches!(id.sym.as_ref(), "__defNormalProp" | "__defProps"),
+        Expr::Member(member) => match &member.prop {
+            swc_core::ecma::ast::MemberProp::Ident(prop) => {
+                matches!(prop.sym.as_ref(), "defineProperty" | "defineProperties")
+            }
+            swc_core::ecma::ast::MemberProp::PrivateName(_)
+            | swc_core::ecma::ast::MemberProp::Computed(_) => false,
+        },
+        _ => false,
+    }
+}
+
+fn is_binding_ref(expr: &Expr, binding: &Ident) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(id) if ident_matches(id, binding))
+}
+
+fn ident_matches(left: &Ident, right: &Ident) -> bool {
+    left.sym == right.sym && left.ctxt == right.ctxt
+}
+
+fn strip_parens(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_parens(&paren.expr),
+        _ => expr,
     }
 }
 
