@@ -409,6 +409,7 @@ struct RefOutsideDeclBlockCollector<'a> {
     refs_outside: HashSet<BindingId>,
     block_stack: Vec<usize>,
     next_block_id: usize,
+    nested_scope_depth: usize,
 }
 
 impl<'a> RefOutsideDeclBlockCollector<'a> {
@@ -418,6 +419,7 @@ impl<'a> RefOutsideDeclBlockCollector<'a> {
             refs_outside: HashSet::new(),
             block_stack: Vec::new(),
             next_block_id: 0,
+            nested_scope_depth: 0,
         }
     }
 }
@@ -433,6 +435,11 @@ impl Visit for RefOutsideDeclBlockCollector<'_> {
     }
 
     fn visit_block_stmt(&mut self, block: &BlockStmt) {
+        if self.nested_scope_depth > 0 {
+            block.visit_children_with(self);
+            return;
+        }
+
         let block_id = self.next_block_id;
         self.next_block_id += 1;
         self.block_stack.push(block_id);
@@ -451,9 +458,23 @@ impl Visit for RefOutsideDeclBlockCollector<'_> {
         self.block_stack.pop();
     }
 
-    fn visit_function(&mut self, _: &Function) {}
-    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
-    fn visit_class(&mut self, _: &Class) {}
+    fn visit_function(&mut self, func: &Function) {
+        self.nested_scope_depth += 1;
+        func.visit_children_with(self);
+        self.nested_scope_depth -= 1;
+    }
+
+    fn visit_arrow_expr(&mut self, expr: &ArrowExpr) {
+        self.nested_scope_depth += 1;
+        expr.visit_children_with(self);
+        self.nested_scope_depth -= 1;
+    }
+
+    fn visit_class(&mut self, class: &Class) {
+        self.nested_scope_depth += 1;
+        class.visit_children_with(self);
+        self.nested_scope_depth -= 1;
+    }
 }
 
 // ============================================================

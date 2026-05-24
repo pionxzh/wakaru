@@ -92,6 +92,47 @@ export var x = validate(obj);
 }
 
 #[test]
+fn preserves_identifier_argument_guard() {
+    let input = r#"
+function _assertThisInitialized(e) {
+    if (e === undefined) {
+        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    }
+    return e;
+}
+function _possibleConstructorReturn(t, e) {
+    if (e && (typeof e === "object" || typeof e === "function")) {
+        return e;
+    }
+    if (e !== undefined) {
+        throw new TypeError("Derived constructors may only return object or undefined");
+    }
+    return _assertThisInitialized(t);
+}
+var value = _possibleConstructorReturn(self, call);
+"#;
+    let expected = r#"
+function _assertThisInitialized(e) {
+    if (e === undefined) {
+        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    }
+    return e;
+}
+function _possibleConstructorReturn(t, e) {
+    if (e && (typeof e === "object" || typeof e === "function")) {
+        return e;
+    }
+    if (e !== undefined) {
+        throw new TypeError("Derived constructors may only return object or undefined");
+    }
+    return _assertThisInitialized(t);
+}
+const value = _possibleConstructorReturn(self, call);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn preserves_reference_error_with_different_message() {
     // Same shape but different error message — not a Babel helper
     let input = r#"

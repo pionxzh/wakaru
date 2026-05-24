@@ -379,6 +379,41 @@ if (true) {
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn var_inside_try_block_referenced_outside_stays_var() {
+    // Babel helpers commonly probe inside try/catch and read the var after the
+    // try statement. Converting the try-local `var` to `const` would make the
+    // trailing read see a different binding.
+    let input = r#"
+function isNativeReflectConstruct() {
+    try {
+        var t = Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function() {}));
+    } catch (t) {}
+    return !!t;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn var_inside_try_block_referenced_by_later_closure_stays_var() {
+    // Babel's _isNativeReflectConstruct helper memoizes a closure after a
+    // try/catch probe. The closure still closes over the function-scoped `var`.
+    let input = r#"
+function isNativeReflectConstruct() {
+    try {
+        var t = Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function() {}));
+    } catch (t) {}
+    return function isNativeReflectConstruct() {
+        return !!t;
+    }();
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
 // --- use-before-declaration (var hoisting) ---
 
 #[test]

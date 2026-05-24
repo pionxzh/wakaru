@@ -20,7 +20,11 @@ use super::babel_helper_utils::{
 /// }
 /// ```
 ///
-/// Simplification: `p(x)` → `x` (identity function with a guard).
+/// Simplification: `p(this)` → `this`.
+///
+/// The helper is not a general identity function: `p(x)` must still throw when
+/// `x` is `undefined`. Rewriting is only safe for direct `this`, because reading
+/// `this` before `super()` already throws before the helper call can run.
 pub struct UnAssertThisInitialized;
 
 impl VisitMut for UnAssertThisInitialized {
@@ -69,6 +73,8 @@ impl VisitMut for AtiReplacer<'_> {
             return;
         }
 
-        *expr = *call.args[0].expr.clone();
+        if matches!(call.args[0].expr.as_ref(), Expr::This(_)) {
+            *expr = *call.args[0].expr.clone();
+        }
     }
 }
