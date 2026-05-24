@@ -44,9 +44,9 @@ the whole rule.
 After the initial rollout, the remaining whole-rule heuristic defaults are:
 
 - `minimal`: `UnConditionals`, `SmartRename`
-- `standard`: `UnIndirectCall`, `UnObjectRest`, `UnTypeConstructor`, `UnEnum`,
-  `UnEs6Class`, `UnClassFields`, `UnAsyncAwait`, `UnEsm`, `UnPrototypeClass`,
-  `ArgRest`, `UnForOf`
+- `standard`: `UnObjectRest`, `UnTypeConstructor`, `UnEnum`, `UnEs6Class`,
+  `UnClassFields`, `UnAsyncAwait`, `UnEsm`, `UnPrototypeClass`, `ArgRest`,
+  `UnForOf`
 
 ---
 
@@ -152,7 +152,8 @@ These rules normalize minified syntax into canonical forms. Most are independent
 | Produces | Direct function calls (removes `(0, fn)()` and `Object(fn)()` wrappers) |
 | Downstream dependents | UnInteropRequireDefault, UnInteropRequireWildcard (need to see direct `require()` or `helper(require())` calls) |
 | Fact behavior | Neither |
-| Safety | Heuristic (changes `this` binding, but this is intentional for decompilation) |
+| Safety | Mixed: safe subset plus standard heuristic |
+| Notes | Level-gated by shape: `minimal` only removes indirect-call wrappers around direct identifier callees such as `(0, fn)()` → `fn()`, excluding `eval` and calls inside `with` scopes. Member callees and `Object(fn)` wrappers require `standard` because rewriting `(0, obj.method)()` → `obj.method()` changes the receiver `this` binding. |
 
 ### 8. UnTypeof
 

@@ -178,8 +178,9 @@ function foo() {
 }
 
 #[test]
-fn minimal_preserves_indirect_calls() {
+fn minimal_simplifies_safe_identifier_indirect_calls() {
     let input = r#"
+const value = (0, fn)(arg);
 const ref = (0, s.useRef)(0);
 const result = (0, eval)("this");
 "#;
@@ -195,7 +196,12 @@ const result = (0, eval)("this");
     .expect("decompile should succeed")
     .code;
 
-    assert_eq_normalized(&output, input);
+    let expected = r#"
+const value = fn(arg);
+const ref = (0, s.useRef)(0);
+const result = (0, eval)("this");
+"#;
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]

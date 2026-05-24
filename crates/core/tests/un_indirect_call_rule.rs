@@ -24,6 +24,36 @@ const countRef = s.useRef(0);
 }
 
 #[test]
+fn transforms_indirect_identifier_call() {
+    let input = r#"
+const result = (0, fn)(arg);
+"#;
+    let expected = r#"
+const result = fn(arg);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_indirect_eval_call() {
+    let input = r#"
+const result = (0, eval)("this");
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_object_wrapped_eval_call() {
+    let input = r#"
+const result = Object(eval)("this");
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn transforms_multiple_indirect_calls() {
     // Reused pattern from packages/unminify/src/transformations/__tests__/un-indirect-call.spec.ts
     // UnEsm converts `const s = require("react")` → `import s from "react"`

@@ -134,7 +134,9 @@ fn run_remove_void(module: &mut Module, ctx: RuleRunContext<'_>) {
 runner!(run_unminify_booleans, UnminifyBooleans);
 runner!(run_un_double_negation, UnDoubleNegation);
 runner!(run_un_infinity, UnInfinity);
-runner!(run_un_indirect_call, UnIndirectCall);
+runner!(run_un_indirect_call, |ctx| UnIndirectCall::new(
+    ctx.rewrite_level
+));
 runner!(run_un_typeof, UnTypeof);
 runner!(run_un_numeric_literal, UnNumericLiteral);
 runner!(run_un_bracket_notation, UnBracketNotation);
@@ -272,7 +274,7 @@ define_rule_registry! {
     ("UnminifyBooleans", Syntax, run_unminify_booleans, always_enabled),
     ("UnDoubleNegation", Syntax, run_un_double_negation, always_enabled),
     ("UnInfinity", Syntax, run_un_infinity, always_enabled),
-    ("UnIndirectCall", Syntax, run_un_indirect_call, standard_or_above),
+    ("UnIndirectCall", Syntax, run_un_indirect_call, always_enabled),
     ("UnTypeof", Syntax, run_un_typeof, always_enabled),
     ("UnNumericLiteral", Syntax, run_un_numeric_literal, always_enabled),
     ("UnBracketNotation", Syntax, run_un_bracket_notation, always_enabled),
