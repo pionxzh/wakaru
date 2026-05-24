@@ -1,10 +1,11 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignTarget, BinExpr, BinaryOp, BindingIdent,
-    BlockStmt, BlockStmtOrExpr, Bool, CatchClause, ClassDecl, Decl, Expr, FnDecl, Function, Ident,
-    IfStmt, Lit, MemberExpr, MemberProp, Number, ObjectPatProp, Param, Pat, PropName,
-    SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
+    ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, BinExpr, BinaryOp,
+    BindingIdent, BlockStmt, BlockStmtOrExpr, Bool, CatchClause, ClassDecl, Decl, Expr, FnDecl,
+    Function, Ident, IdentName, IfStmt, KeyValuePatProp, Lit, MemberExpr, MemberProp, Number,
+    ObjectPat, ObjectPatProp, Param, Pat, PropName, SimpleAssignTarget, Stmt, UnaryExpr, UnaryOp,
+    VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -58,6 +59,8 @@ fn process_function_params(
         process_pattern_c_params(params, body, unresolved_mark, &body_bindings);
         process_pattern_b_params(params, body, unresolved_mark, &body_bindings);
         rewrite_inline_arguments_defaults(params, body, unresolved_mark, &body_bindings);
+        materialize_inline_temp_defaults(body, unresolved_mark);
+        fold_object_property_param_aliases(params, body, unresolved_mark);
         fold_destructured_param_aliases(params, body, unresolved_mark);
     }
 }
@@ -651,6 +654,31 @@ fn fold_destructured_param_aliases(
     }
 }
 
+fn fold_object_property_param_aliases(
+    params: &mut [Param],
+    body: &mut BlockStmt,
+    unresolved_mark: Mark,
+) {
+    loop {
+        let Some((param_idx, alias, destructured_pat, remove_count)) =
+            extract_prefix_object_property_aliases(params, body, unresolved_mark)
+        else {
+            break;
+        };
+        if destructured_pat_references_alias(&destructured_pat, &alias)
+            || destructured_pat_references_later_decl_name(
+                &destructured_pat,
+                &body.stmts[remove_count..],
+            )
+            || destructured_pat_reuses_other_param_name(&destructured_pat, params, param_idx)
+            || !replace_param_alias_pat(&mut params[param_idx].pat, &alias, destructured_pat, None)
+        {
+            break;
+        }
+        body.stmts.drain(0..remove_count);
+    }
+}
+
 fn fold_destructured_arrow_param_aliases(
     params: &mut [Pat],
     body: &mut BlockStmt,
@@ -726,6 +754,335 @@ fn extract_destructuring_alias_default(
         return None;
     }
     Some((alias.clone(), default_val))
+}
+
+fn extract_prefix_object_property_aliases(
+    params: &[Param],
+    body: &BlockStmt,
+    unresolved_mark: Mark,
+) -> Option<(usize, Ident, Pat, usize)> {
+    for (param_idx, param) in params.iter().enumerate() {
+        let alias = param_alias_ident(&param.pat)?;
+        let Some((props, remove_count)) =
+            extract_object_property_alias_props(body, &alias, unresolved_mark)
+        else {
+            continue;
+        };
+        return Some((
+            param_idx,
+            alias,
+            Pat::Object(ObjectPat {
+                span: DUMMY_SP,
+                props,
+                optional: false,
+                type_ann: None,
+            }),
+            remove_count,
+        ));
+    }
+    None
+}
+
+fn param_alias_ident(param: &Pat) -> Option<Ident> {
+    match param {
+        Pat::Ident(binding) => Some(binding.id.clone()),
+        Pat::Assign(assign) => {
+            if let Pat::Ident(binding) = assign.left.as_ref() {
+                Some(binding.id.clone())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn extract_object_property_alias_props(
+    body: &BlockStmt,
+    alias: &Ident,
+    unresolved_mark: Mark,
+) -> Option<(Vec<ObjectPatProp>, usize)> {
+    let mut props = Vec::new();
+    let mut stmt_idx = 0;
+
+    while stmt_idx < body.stmts.len() {
+        let Some(prop_alias) = extract_property_alias_stmt(&body.stmts[stmt_idx], alias) else {
+            break;
+        };
+
+        if let Some(next_stmt) = body.stmts.get(stmt_idx + 1) {
+            if let Some((binding, default_val)) =
+                extract_default_from_temp_stmt(next_stmt, &prop_alias.local.id, unresolved_mark)
+            {
+                if stmts_reference_ident(&body.stmts[stmt_idx + 2..], &prop_alias.local.id) {
+                    break;
+                }
+                props.push(object_pat_prop(prop_alias.prop, binding, Some(default_val)));
+                stmt_idx += 2;
+                continue;
+            }
+        }
+
+        props.push(object_pat_prop(prop_alias.prop, prop_alias.local, None));
+        stmt_idx += 1;
+    }
+
+    if props.is_empty() {
+        None
+    } else {
+        Some((props, stmt_idx))
+    }
+}
+
+struct PropertyAlias {
+    prop: Atom,
+    local: BindingIdent,
+}
+
+fn extract_property_alias_stmt(stmt: &Stmt, alias: &Ident) -> Option<PropertyAlias> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let declarator = &var.decls[0];
+    let Pat::Ident(local) = &declarator.name else {
+        return None;
+    };
+    let init = strip_parens(declarator.init.as_ref()?);
+    let Expr::Member(MemberExpr { obj, prop, .. }) = init else {
+        return None;
+    };
+    if !matches!(obj.as_ref(), Expr::Ident(obj) if same_param_alias_reference(obj, alias)) {
+        return None;
+    }
+    let MemberProp::Ident(prop) = prop else {
+        return None;
+    };
+    Some(PropertyAlias {
+        prop: prop.sym.clone(),
+        local: local.clone(),
+    })
+}
+
+fn same_param_alias_reference(reference: &Ident, alias: &Ident) -> bool {
+    same_ident(reference, alias)
+        || (alias.ctxt == SyntaxContext::empty() && reference.sym == alias.sym)
+}
+
+fn extract_default_from_temp_stmt(
+    stmt: &Stmt,
+    temp: &Ident,
+    unresolved_mark: Mark,
+) -> Option<(BindingIdent, Box<Expr>)> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let declarator = &var.decls[0];
+    let Pat::Ident(binding) = &declarator.name else {
+        return None;
+    };
+    let Expr::Cond(cond) = strip_parens(declarator.init.as_ref()?) else {
+        return None;
+    };
+    let checked = extract_void0_check(cond.test.as_ref(), unresolved_mark)?;
+    if !same_ident(&checked, temp) || !is_ident_expr(cond.alt.as_ref(), temp) {
+        return None;
+    }
+    Some((binding.clone(), cond.cons.clone()))
+}
+
+fn materialize_inline_temp_defaults(body: &mut BlockStmt, unresolved_mark: Mark) {
+    let mut stmt_idx = 1;
+    while stmt_idx + 1 < body.stmts.len() {
+        let Some(temp) = extract_member_alias_local_ident(&body.stmts[stmt_idx - 1]) else {
+            stmt_idx += 1;
+            continue;
+        };
+        let Some(local) = extract_uninit_local_ident(&body.stmts[stmt_idx]) else {
+            stmt_idx += 1;
+            continue;
+        };
+        let later = &body.stmts[stmt_idx + 1..];
+        let Some(default_expr) = find_single_inline_temp_default(later, &temp, unresolved_mark)
+        else {
+            stmt_idx += 1;
+            continue;
+        };
+
+        set_single_var_init(&mut body.stmts[stmt_idx], default_expr);
+        let mut rewriter = InlineTempDefaultRewriter {
+            temp: &temp,
+            replacement: &local.id,
+            unresolved_mark,
+        };
+        for stmt in &mut body.stmts[stmt_idx + 1..] {
+            stmt.visit_mut_with(&mut rewriter);
+        }
+        stmt_idx += 1;
+    }
+}
+
+fn extract_member_alias_local_ident(stmt: &Stmt) -> Option<Ident> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let declarator = &var.decls[0];
+    let Pat::Ident(local) = &declarator.name else {
+        return None;
+    };
+    if !matches!(strip_parens(declarator.init.as_ref()?), Expr::Member(_)) {
+        return None;
+    }
+    Some(local.id.clone())
+}
+
+fn extract_uninit_local_ident(stmt: &Stmt) -> Option<BindingIdent> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 || var.decls[0].init.is_some() {
+        return None;
+    }
+    let Pat::Ident(local) = &var.decls[0].name else {
+        return None;
+    };
+    Some(local.clone())
+}
+
+fn set_single_var_init(stmt: &mut Stmt, init: Box<Expr>) {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return;
+    };
+    if let Some(declarator) = var.decls.first_mut() {
+        declarator.init = Some(init);
+    }
+}
+
+fn find_single_inline_temp_default(
+    stmts: &[Stmt],
+    temp: &Ident,
+    unresolved_mark: Mark,
+) -> Option<Box<Expr>> {
+    let mut finder = InlineTempDefaultFinder {
+        temp,
+        unresolved_mark,
+        matched_expr: None,
+        match_count: 0,
+        other_temp_refs: 0,
+    };
+    stmts.visit_with(&mut finder);
+    if finder.match_count == 1 && finder.other_temp_refs == 0 {
+        finder.matched_expr
+    } else {
+        None
+    }
+}
+
+fn extract_temp_default_expr(
+    expr: &Expr,
+    temp: &Ident,
+    unresolved_mark: Mark,
+) -> Option<Box<Expr>> {
+    let Expr::Cond(cond) = strip_parens(expr) else {
+        return None;
+    };
+    let checked = extract_void0_check(cond.test.as_ref(), unresolved_mark)?;
+    if !same_ident(&checked, temp) || !is_ident_expr(cond.alt.as_ref(), temp) {
+        return None;
+    }
+    Some(Box::new(expr.clone()))
+}
+
+struct InlineTempDefaultFinder<'a> {
+    temp: &'a Ident,
+    unresolved_mark: Mark,
+    matched_expr: Option<Box<Expr>>,
+    match_count: usize,
+    other_temp_refs: usize,
+}
+
+impl Visit for InlineTempDefaultFinder<'_> {
+    fn visit_expr(&mut self, expr: &Expr) {
+        if let Some(default_expr) = extract_temp_default_expr(expr, self.temp, self.unresolved_mark)
+        {
+            self.match_count += 1;
+            self.matched_expr = Some(default_expr);
+            return;
+        }
+        expr.visit_children_with(self);
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        if same_ident(ident, self.temp) {
+            self.other_temp_refs += 1;
+        }
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+}
+
+struct InlineTempDefaultRewriter<'a> {
+    temp: &'a Ident,
+    replacement: &'a Ident,
+    unresolved_mark: Mark,
+}
+
+impl VisitMut for InlineTempDefaultRewriter<'_> {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if extract_temp_default_expr(expr, self.temp, self.unresolved_mark).is_some() {
+            *expr = Expr::Ident(self.replacement.clone());
+            return;
+        }
+        expr.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_function(&mut self, _: &mut Function) {}
+
+    fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
+}
+
+fn object_pat_prop(
+    prop: Atom,
+    binding: BindingIdent,
+    default_val: Option<Box<Expr>>,
+) -> ObjectPatProp {
+    let key = PropName::Ident(IdentName::new(prop.clone(), DUMMY_SP));
+    let value_pat = if let Some(default_val) = default_val {
+        Pat::Assign(AssignPat {
+            span: DUMMY_SP,
+            left: Box::new(Pat::Ident(binding.clone())),
+            right: default_val,
+        })
+    } else {
+        Pat::Ident(binding.clone())
+    };
+
+    if binding.id.sym == prop {
+        let value = match value_pat {
+            Pat::Assign(assign) => Some(assign.right),
+            _ => None,
+        };
+        ObjectPatProp::Assign(AssignPatProp {
+            span: DUMMY_SP,
+            key: binding,
+            value,
+        })
+    } else {
+        ObjectPatProp::KeyValue(KeyValuePatProp {
+            key,
+            value: Box::new(value_pat),
+        })
+    }
 }
 
 fn find_param_alias_idx(params: &[Param], alias: &Ident) -> Option<usize> {
@@ -1359,12 +1716,18 @@ fn rewrite_inline_arguments_defaults(
     unresolved_mark: Mark,
     body_bindings: &[BindingId],
 ) {
+    let param_name_candidates = collect_inline_param_name_candidates(body);
+    let initial_param_count = params.len();
     let mut rewriter = InlineArgumentsDefaultRewriter {
         params,
+        initial_param_count,
         unresolved_mark,
         body_bindings,
+        param_name_candidates,
+        consumed_param_name_bindings: Vec::new(),
     };
     body.visit_mut_with(&mut rewriter);
+    remove_consumed_empty_param_name_decls(body, &rewriter.consumed_param_name_bindings);
 }
 
 fn ensure_params_len(params: &mut Vec<Param>, idx: usize) {
@@ -1444,30 +1807,51 @@ fn ensure_default_param(
     Some(ident)
 }
 
+#[derive(Clone)]
+struct InlineParamNameCandidate {
+    sym: Atom,
+    binding: BindingId,
+}
+
 struct InlineArgumentsDefaultRewriter<'a> {
     params: &'a mut Vec<Param>,
+    initial_param_count: usize,
     unresolved_mark: Mark,
     body_bindings: &'a [BindingId],
+    param_name_candidates: Vec<Option<InlineParamNameCandidate>>,
+    consumed_param_name_bindings: Vec<BindingId>,
 }
 
 impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
-        let Some((idx, default_val)) = extract_arguments_default_expr(expr, self.unresolved_mark)
-        else {
+        if let Some((idx, default_val)) = extract_arguments_default_expr(expr, self.unresolved_mark)
+        {
+            let preferred_name = self.preferred_param_name(idx);
+            if param_slot_can_use_name(self.params, idx, &preferred_name) {
+                if let Some(ident) = ensure_default_param(
+                    self.params,
+                    idx,
+                    preferred_name,
+                    default_val,
+                    self.body_bindings,
+                ) {
+                    self.mark_param_name_consumed(idx);
+                    *expr = Expr::Ident(ident);
+                }
+            }
+            return;
+        }
+
+        let Some(idx) = extract_simple_arguments_optional(expr, self.unresolved_mark) else {
             return;
         };
 
-        let preferred_name = placeholder_name(idx);
+        let preferred_name = self.preferred_param_name(idx);
         if param_slot_can_use_name(self.params, idx, &preferred_name) {
-            if let Some(ident) = ensure_default_param(
-                self.params,
-                idx,
-                preferred_name,
-                default_val,
-                self.body_bindings,
-            ) {
+            if let Some(ident) = ensure_plain_param(self.params, idx, preferred_name) {
+                self.mark_param_name_consumed(idx);
                 *expr = Expr::Ident(ident);
             }
         }
@@ -1476,4 +1860,100 @@ impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
     fn visit_mut_function(&mut self, _: &mut Function) {}
 
     fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
+}
+
+impl InlineArgumentsDefaultRewriter<'_> {
+    fn preferred_param_name(&self, idx: usize) -> Atom {
+        self.param_name_candidate(idx)
+            .map(|candidate| candidate.sym.clone())
+            .unwrap_or_else(|| placeholder_name(idx))
+    }
+
+    fn mark_param_name_consumed(&mut self, idx: usize) {
+        let Some(binding) = self
+            .param_name_candidate(idx)
+            .map(|candidate| candidate.binding.clone())
+        else {
+            return;
+        };
+        if !self
+            .consumed_param_name_bindings
+            .iter()
+            .any(|consumed| consumed == &binding)
+        {
+            self.consumed_param_name_bindings.push(binding);
+        }
+    }
+
+    fn param_name_candidate(&self, idx: usize) -> Option<&InlineParamNameCandidate> {
+        self.param_name_candidates
+            .get(idx)
+            .and_then(|candidate| candidate.as_ref())
+            .or_else(|| {
+                idx.checked_sub(self.initial_param_count)
+                    .and_then(|offset| {
+                        self.param_name_candidates
+                            .get(offset)
+                            .and_then(|candidate| candidate.as_ref())
+                    })
+            })
+    }
+}
+
+fn collect_inline_param_name_candidates(body: &BlockStmt) -> Vec<Option<InlineParamNameCandidate>> {
+    let mut candidates = Vec::new();
+
+    for (stmt_idx, stmt) in body.stmts.iter().enumerate() {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            break;
+        };
+        if var.kind == VarDeclKind::Const {
+            break;
+        }
+
+        let mut stmt_candidates = Vec::new();
+        for declarator in &var.decls {
+            if declarator.init.is_some() {
+                return candidates;
+            }
+            let Pat::Ident(binding) = &declarator.name else {
+                return candidates;
+            };
+            if stmts_reference_ident(&body.stmts[stmt_idx + 1..], &binding.id) {
+                stmt_candidates.push(None);
+            } else {
+                stmt_candidates.push(Some(InlineParamNameCandidate {
+                    sym: binding.id.sym.clone(),
+                    binding: (binding.id.sym.clone(), binding.id.ctxt),
+                }));
+            }
+        }
+        candidates.extend(stmt_candidates);
+    }
+
+    candidates
+}
+
+fn remove_consumed_empty_param_name_decls(body: &mut BlockStmt, consumed: &[BindingId]) {
+    if consumed.is_empty() {
+        return;
+    }
+
+    body.stmts.retain_mut(|stmt| {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            return true;
+        };
+        var.decls.retain(|declarator| {
+            if declarator.init.is_some() {
+                return true;
+            }
+            let Pat::Ident(binding) = &declarator.name else {
+                return true;
+            };
+            !consumed
+                .iter()
+                .any(|(sym, ctxt)| *sym == binding.id.sym && *ctxt == binding.id.ctxt)
+        });
+        !var.decls.is_empty()
+    });
 }

@@ -321,6 +321,64 @@ function foo(a, b, _param_2 = null) {
 }
 
 #[test]
+fn inline_arguments_defaults_use_unused_empty_decl_names() {
+    let input = r#"
+function greet() {
+  let name, count;
+  return use(
+    arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : "world",
+    arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 1
+  );
+}
+"#;
+    let expected = r#"
+function greet(name = "world", count = 1) {
+  return use(name, count);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn inline_arguments_optional_alias_uses_unused_empty_decl_name() {
+    let input = r#"
+function range() {
+  let start, end;
+  return use(
+    arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : 0,
+    arguments.length > 1 ? arguments[1] : undefined
+  );
+}
+"#;
+    let expected = r#"
+function range(start = 0, end) {
+  return use(start, end);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn inline_arguments_default_keeps_referenced_empty_decl_name() {
+    let input = r#"
+function foo() {
+  let name;
+  return use(
+    name,
+    arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : "world"
+  );
+}
+"#;
+    let expected = r#"
+function foo(_param_0 = "world") {
+  let name;
+  return use(name, _param_0);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn minimal_does_not_recover_inline_arguments_default_expression() {
     let input = r#"
 function foo(a, b) {
@@ -543,6 +601,77 @@ function foo(_ref) {
     let expected = r#"
 function foo({ name = fallback } = {}) {
   return name;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_property_aliases_become_param_pattern() {
+    let input = r#"
+function pick(_ref = {}) {
+  let name = _ref.name;
+  let _ref$age = _ref.age;
+  let age = _ref$age === undefined ? 0 : _ref$age;
+  return use(name, age);
+}
+"#;
+    let expected = r#"
+function pick({ name, age = 0 } = {}) {
+  return use(name, age);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_property_inline_default_aliases_become_param_pattern() {
+    let input = r#"
+function pick(_ref = {}) {
+  let name = _ref.name;
+  let _ref$age = _ref.age;
+  let age;
+  return use(name, _ref$age === undefined ? 0 : _ref$age);
+}
+"#;
+    let expected = r#"
+function pick({ name, age = 0 } = {}) {
+  return use(name, age);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn arguments_object_property_inline_default_aliases_become_param_pattern() {
+    let input = r#"
+function pick() {
+  let _ref = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
+  let name = _ref.name;
+  let _ref$age = _ref.age;
+  let age;
+  return use(name, _ref$age === undefined ? 0 : _ref$age);
+}
+"#;
+    let expected = r#"
+function pick({ name, age = 0 } = {}) {
+  return use(name, age);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_property_alias_with_rename_becomes_param_pattern() {
+    let input = r#"
+function config(_ref = {}) {
+  let appMode = _ref.mode;
+  return use(appMode);
+}
+"#;
+    let expected = r#"
+function config({ mode: appMode } = {}) {
+  return use(appMode);
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
