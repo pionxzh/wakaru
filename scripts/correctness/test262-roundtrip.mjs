@@ -411,6 +411,9 @@ async function runOneTest({ filePath, relativePath, source, harnessSource, varia
       basename: relativePath.replaceAll("/", "__"),
     });
   } catch (error) {
+    if (isSloppyOnlyWakaruParseUnsupported(error, variants)) {
+      return unsupported(relativePath, "wakaru-parse", error);
+    }
     return failure(relativePath, "wakaru", error, { transformed });
   }
 
@@ -463,6 +466,14 @@ function rejected(path, phase, error) {
     phase,
     error: formatError(error),
   };
+}
+
+export function isSloppyOnlyWakaruParseUnsupported(error, variants) {
+  return (
+    variants.length > 0 &&
+    variants.every((variant) => !variant.strict) &&
+    formatError(error).includes("InvalidIdentInStrict")
+  );
 }
 
 function runWakaru(source, { level, tmpRoot, basename }) {

@@ -275,6 +275,20 @@ fn preserves_tdz_identifier_read_before_lexical_declaration() {
 }
 
 #[test]
+fn preserves_object_literal_computed_key_coercion() {
+    let input = r#"
+({
+  get [badKey]() {}
+});
+({
+  set [badKey](_) {}
+});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn preserves_function_expression_statement() {
     // A function expression as a statement should not be removed even though
     // it's technically side-effect-free (issue #150: webcrack output wrapper)

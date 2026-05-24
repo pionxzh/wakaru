@@ -8,6 +8,7 @@ import {
   buildHarnessSource,
   classifyTest,
   executeTestSource,
+  isSloppyOnlyWakaruParseUnsupported,
   parseArgs,
   parseTestMetadata,
   runnableVariants,
@@ -129,6 +130,25 @@ test("transformSource supports no-op mode without external tools", async () => {
   });
 
   assert.equal(output, source);
+});
+
+test("isSloppyOnlyWakaruParseUnsupported detects sloppy-only strict parser rejects", () => {
+  const error = new Error('failed to parse input.js: InvalidIdentInStrict("yield")');
+
+  assert.equal(
+    isSloppyOnlyWakaruParseUnsupported(error, [{ name: "sloppy", strict: false }]),
+    true,
+  );
+  assert.equal(
+    isSloppyOnlyWakaruParseUnsupported(error, [{ name: "strict", strict: true }]),
+    false,
+  );
+  assert.equal(
+    isSloppyOnlyWakaruParseUnsupported(new Error("runtime failed"), [
+      { name: "sloppy", strict: false },
+    ]),
+    false,
+  );
 });
 
 test("parseArgs accepts repeatable paths and defaults to minimal terser", () => {

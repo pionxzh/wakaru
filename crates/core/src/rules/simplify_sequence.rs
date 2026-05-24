@@ -1,8 +1,9 @@
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BlockStmt, Decl, Expr, ExprStmt, ForInStmt, ForOfStmt, ForStmt,
-    IfStmt, Invalid, Lit, MemberExpr, ModuleItem, ParenExpr, ReturnStmt, SeqExpr,
-    SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, VarDecl, VarDeclOrExpr, VarDeclarator,
+    IfStmt, Invalid, Lit, MemberExpr, ModuleItem, ParenExpr, Prop, PropName, PropOrSpread,
+    ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, VarDecl, VarDeclOrExpr,
+    VarDeclarator,
 };
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -79,6 +80,11 @@ fn is_pure_no_op_stmt(stmt: &Stmt, unresolved_mark: Mark) -> bool {
     if is_ident_read(expr) {
         return false;
     }
+    // Computed object literal keys perform ToPropertyKey even when the key
+    // expression itself looks pure, and that coercion can throw.
+    if has_computed_object_literal_key(expr) {
+        return false;
+    }
     let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
     let ctx = ExprCtx {
         unresolved_ctxt,
@@ -102,6 +108,31 @@ fn is_ident_read(expr: &Expr) -> bool {
         Expr::Ident(_) => true,
         Expr::Paren(paren) => is_ident_read(&paren.expr),
         _ => false,
+    }
+}
+
+fn has_computed_object_literal_key(expr: &Expr) -> bool {
+    match expr {
+        Expr::Object(obj) => obj.props.iter().any(prop_or_spread_has_computed_key),
+        Expr::Paren(paren) => has_computed_object_literal_key(&paren.expr),
+        _ => false,
+    }
+}
+
+fn prop_or_spread_has_computed_key(prop: &PropOrSpread) -> bool {
+    match prop {
+        PropOrSpread::Spread(_) => false,
+        PropOrSpread::Prop(prop) => prop_has_computed_key(prop),
+    }
+}
+
+fn prop_has_computed_key(prop: &Prop) -> bool {
+    match prop {
+        Prop::KeyValue(kv) => matches!(kv.key, PropName::Computed(_)),
+        Prop::Getter(getter) => matches!(getter.key, PropName::Computed(_)),
+        Prop::Setter(setter) => matches!(setter.key, PropName::Computed(_)),
+        Prop::Method(method) => matches!(method.key, PropName::Computed(_)),
+        Prop::Shorthand(_) | Prop::Assign(_) => false,
     }
 }
 
