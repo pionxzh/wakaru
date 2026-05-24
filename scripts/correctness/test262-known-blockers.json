@@ -25,7 +25,7 @@
       "phase": "wakaru-parse",
       "when": {
         "pathIncludes": ["/class/class-name-ident-await"],
-        "errorIncludes": ["Expected(\"{\", \"await\")"]
+        "errorRegex": ["Expected\\(\"(?:\\{|\\()\", \"await\"\\)"]
       }
     },
     {

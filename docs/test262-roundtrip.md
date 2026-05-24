@@ -53,7 +53,7 @@ all pass the same test.
 
 ## Timeouts and Reruns
 
-`--case-timeout-ms <n>` bounds each runnable test case. The default is 30000 ms.
+`--case-timeout-ms <n>` bounds each runnable test case. The default is 5000 ms.
 Timeouts are recorded as `rejected` with reason `case-timeout`, so they are
 visible in JSON and Markdown reports without losing the whole run.
 

@@ -82,7 +82,7 @@ export function parseArgs(argv) {
     json: null,
     summary: null,
     knownBlockers: defaultKnownBlockersPath,
-    caseTimeoutMs: 30_000,
+    caseTimeoutMs: 5_000,
     rerunFrom: null,
     rerunStatuses: [],
     details: false,
@@ -184,7 +184,7 @@ Options:
   --json <file>         Write full JSON report
   --summary <file>      Write deterministic Markdown summary
   --known-blockers <f>  Known non-Wakaru blocker manifest
-  --case-timeout-ms <n> Per-test timeout. Default: 30000
+  --case-timeout-ms <n> Per-test timeout. Default: 5000
   --rerun-from <json>   Run paths from a previous JSON report
   --rerun-status <s>    failed | rejected | unsupported. Repeatable. Default: failed
   --details             Print skip/failure details
@@ -1036,7 +1036,8 @@ function formatError(error) {
 }
 
 function isTimeoutError(error) {
-  return /ETIMEDOUT|timed out|timeout/i.test(formatError(error));
+  const message = formatError(error);
+  return /\bETIMEDOUT\b/.test(message) || /spawnSync .* ETIMEDOUT/.test(message);
 }
 
 export function formatMarkdownSummary(report) {

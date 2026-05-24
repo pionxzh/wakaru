@@ -10,7 +10,7 @@
 - terserProfile: light
 - level: minimal
 - knownBlockers: scripts/correctness/test262-known-blockers.json
-- caseTimeoutMs: 30000
+- caseTimeoutMs: 5000
 - rerunFrom: none
 - rerunStatuses: none
 

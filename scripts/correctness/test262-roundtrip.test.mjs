@@ -350,6 +350,14 @@ test("knownWakaruParseUnsupportedReason classifies SWC parser gaps", () => {
     ),
     "swc-parse-await-class-name",
   );
+  assert.equal(
+    knownWakaruParseUnsupportedReason(
+      new Error('failed to parse input.js: Error { error: (1128..1133, Expected("(", "await")) }'),
+      [{ name: "sloppy", strict: false }],
+      "test/language/expressions/class/class-name-ident-await-escaped.js",
+    ),
+    "swc-parse-await-class-name",
+  );
 });
 
 test("knownSwcFidelityIssueReason classifies array binding elision printer gaps", () => {
@@ -397,7 +405,7 @@ test("formatMarkdownSummary emits stable totals, reasons, and failures", () => {
       terserProfile: "light",
       level: "minimal",
       knownBlockers: "scripts/correctness/test262-known-blockers.json",
-      caseTimeoutMs: 30000,
+      caseTimeoutMs: 5000,
       rerunFrom: null,
       rerunStatuses: [],
     },
@@ -420,7 +428,7 @@ test("formatMarkdownSummary emits stable totals, reasons, and failures", () => {
 
   assert.match(summary, /# Test262 Round-Trip Summary/);
   assert.match(summary, /- complete: false/);
-  assert.match(summary, /- caseTimeoutMs: 30000/);
+  assert.match(summary, /- caseTimeoutMs: 5000/);
   assert.match(summary, /\| 3 \| 2 \| 1 \| 0 \| 1 \| 0 \| 1 \|/);
   assert.match(summary, /\| rejected \| swc-array-binding-elision \| 1 \|/);
   assert.match(summary, /- c\.js \(decompiled-runtime\)/);
