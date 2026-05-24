@@ -1,6 +1,6 @@
 mod common;
 
-use common::assert_eq_normalized;
+use common::{assert_eq_normalized, render_pipeline_until};
 use swc_core::common::GLOBALS;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::rules::UnEnum;
@@ -147,6 +147,68 @@ var Direction = {
   Down: 2,
   1: "Up",
   2: "Down"
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_concise_arrow_sequence_initializer_enum() {
+    let input = r#"
+var Direction = (Direction2 => (
+  Direction2[Direction2.Up = 1] = "Up",
+  Direction2[Direction2.Down = 2] = "Down",
+  Direction2[Direction2.Right = -4] = "Right",
+  Direction2
+))(Direction || {});
+"#;
+    let expected = r#"
+var Direction = {
+  Up: 1,
+  Down: 2,
+  Right: -4,
+  1: "Up",
+  2: "Down",
+  [-4]: "Right"
+};
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn pipeline_recovers_sequence_return_enum_after_conditionals() {
+    let input = r#"
+var Direction=(Direction2=>(Direction2[Direction2.Up=1]="Up",Direction2[Direction2.Down=2]="Down",Direction2[Direction2.Left=4]="Left",Direction2[Direction2.Right=-4]="Right",Direction2))(Direction||{});use(1,Direction[2],-4);
+"#;
+    let expected = r#"
+var Direction = {
+  Up: 1,
+  Down: 2,
+  Left: 4,
+  Right: -4,
+  1: "Up",
+  2: "Down",
+  4: "Left",
+  [-4]: "Right"
+};
+use(1, Direction[2], -4);
+"#;
+    assert_eq_normalized(&render_pipeline_until(input, "UnEnum"), expected);
+}
+
+#[test]
+fn test_concise_arrow_sequence_string_enum() {
+    let input = r#"
+var Status = (Status2 => (
+  Status2.Ready = "ready",
+  Status2.Done = "done",
+  Status2
+))(Status || {});
+"#;
+    let expected = r#"
+var Status = {
+  Ready: "ready",
+  Done: "done"
 };
 "#;
     assert_eq_normalized(&apply(input), expected);

@@ -241,8 +241,6 @@ fn parse_enum_iife_expr_inner(
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
-    let (inner_param_name, body_stmts) = extract_enum_iife_body(callee)?;
-
     // Single arg matching `Name || (Name = {})`
     if call.args.len() != 1 {
         return None;
@@ -251,8 +249,32 @@ fn parse_enum_iife_expr_inner(
         return None;
     }
 
+    if let Some((inner_param_name, body_expr)) = extract_enum_iife_expr_body(callee) {
+        return parse_enum_expr_body(body_expr, inner_param_name);
+    }
+
     // Parse body
+    let (inner_param_name, body_stmts) = extract_enum_iife_body(callee)?;
     parse_enum_body(body_stmts, inner_param_name)
+}
+
+fn extract_enum_iife_expr_body(expr: &Expr) -> Option<(&Atom, &Expr)> {
+    match expr {
+        Expr::Arrow(arrow) => {
+            if arrow.params.len() != 1 {
+                return None;
+            }
+            let Pat::Ident(param_ident) = &arrow.params[0] else {
+                return None;
+            };
+            let BlockStmtOrExpr::Expr(body) = arrow.body.as_ref() else {
+                return None;
+            };
+            Some((&param_ident.id.sym, body.as_ref()))
+        }
+        Expr::Paren(paren) => extract_enum_iife_expr_body(&paren.expr),
+        _ => None,
+    }
 }
 
 fn extract_enum_iife_body(expr: &Expr) -> Option<(&Atom, &[Stmt])> {
@@ -383,8 +405,17 @@ fn parse_enum_body(stmts: &[Stmt], enum_param: &Atom) -> Option<Vec<EnumMember>>
 
     for stmt in stmts {
         match stmt {
-            // `return EnumName;` - ignore
-            Stmt::Return(_) => continue,
+            // `return EnumName;` - ignore. Minified arrow IIFEs can become
+            // `return Enum[Enum.A = 1] = "A", Enum;` after UnConditionals.
+            Stmt::Return(return_stmt) => {
+                let Some(expr) = &return_stmt.arg else {
+                    continue;
+                };
+                if matches!(strip_parens(expr), Expr::Ident(id) if &id.sym == enum_param) {
+                    continue;
+                }
+                members.extend(parse_enum_expr_body(expr, enum_param)?);
+            }
             Stmt::Expr(ExprStmt { expr, .. }) => {
                 let member = parse_enum_member_expr(expr, enum_param)?;
                 members.push(member);
@@ -394,6 +425,31 @@ fn parse_enum_body(stmts: &[Stmt], enum_param: &Atom) -> Option<Vec<EnumMember>>
     }
 
     Some(members)
+}
+
+fn parse_enum_expr_body(expr: &Expr, enum_param: &Atom) -> Option<Vec<EnumMember>> {
+    let mut members = Vec::new();
+
+    match strip_parens(expr) {
+        Expr::Seq(seq) => {
+            for expr in &seq.exprs {
+                let expr = strip_parens(expr);
+                if matches!(expr, Expr::Ident(id) if &id.sym == enum_param) {
+                    continue;
+                }
+                members.push(parse_enum_member_expr(expr, enum_param)?);
+            }
+        }
+        expr => {
+            members.push(parse_enum_member_expr(expr, enum_param)?);
+        }
+    }
+
+    if members.is_empty() {
+        None
+    } else {
+        Some(members)
+    }
 }
 
 /// Parse a single enum member expression.
