@@ -3,7 +3,8 @@ use std::collections::HashSet;
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    Callee, Decl, Expr, Ident, Lit, MemberProp, Module, ModuleItem, Pat, VarDeclarator,
+    Callee, Decl, Expr, Ident, ImportSpecifier, Lit, MemberProp, Module, ModuleItem, Pat,
+    VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -79,6 +80,15 @@ pub(crate) fn member_of_binding<'a>(
 #[allow(dead_code)]
 pub(crate) fn var_declarator_binding_key(decl: &VarDeclarator) -> Option<BindingKey> {
     binding_key_from_ident_pat(&decl.name)
+}
+
+#[allow(dead_code)]
+pub(crate) fn import_specifier_binding_key(specifier: &ImportSpecifier) -> BindingKey {
+    match specifier {
+        ImportSpecifier::Default(default) => binding_key(&default.local),
+        ImportSpecifier::Named(named) => binding_key(&named.local),
+        ImportSpecifier::Namespace(namespace) => binding_key(&namespace.local),
+    }
 }
 
 pub(crate) fn fn_decl_binding_key(item: &ModuleItem) -> Option<BindingKey> {
@@ -189,6 +199,8 @@ impl Visit for VarDeclaratorSkippingRefFinder<'_> {
         }
     }
 
+    fn visit_import_decl(&mut self, _: &swc_core::ecma::ast::ImportDecl) {}
+
     fn visit_ident(&mut self, ident: &Ident) {
         let key = binding_key(ident);
         if self.targets.contains(&key) {
@@ -198,9 +210,14 @@ impl Visit for VarDeclaratorSkippingRefFinder<'_> {
 }
 
 pub(crate) fn remove_fn_decls_by_binding(module: &mut Module, removable: &HashSet<BindingKey>) {
-    module
-        .body
-        .retain(|item| fn_decl_binding_key(item).is_none_or(|key| !removable.contains(&key)));
+    remove_fn_decls_from_body_by_binding(&mut module.body, removable);
+}
+
+pub(crate) fn remove_fn_decls_from_body_by_binding(
+    body: &mut Vec<ModuleItem>,
+    removable: &HashSet<BindingKey>,
+) {
+    body.retain(|item| fn_decl_binding_key(item).is_none_or(|key| !removable.contains(&key)));
 }
 
 pub(crate) fn remove_var_declarators_by_binding(
@@ -220,6 +237,27 @@ pub(crate) fn remove_var_declarators_by_binding(
             return true;
         };
         !var.decls.is_empty()
+    });
+}
+
+#[allow(dead_code)]
+pub(crate) fn remove_import_specifiers_by_binding(
+    body: &mut Vec<ModuleItem>,
+    removable: &HashSet<BindingKey>,
+) {
+    for item in body.iter_mut() {
+        let ModuleItem::ModuleDecl(swc_core::ecma::ast::ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        import
+            .specifiers
+            .retain(|specifier| !removable.contains(&import_specifier_binding_key(specifier)));
+    }
+    body.retain(|item| {
+        let ModuleItem::ModuleDecl(swc_core::ecma::ast::ModuleDecl::Import(import)) = item else {
+            return true;
+        };
+        !import.specifiers.is_empty()
     });
 }
 

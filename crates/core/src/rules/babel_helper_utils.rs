@@ -3,11 +3,17 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BinaryOp, BlockStmtOrExpr, Callee, Decl, Expr, ForHead, Function, IfStmt, ImportSpecifier, Lit,
-    MemberProp, Module, ModuleDecl, ModuleItem, Pat, ReturnStmt, Stmt, UnaryOp, VarDeclarator,
+    BinaryOp, BlockStmtOrExpr, Callee, Decl, Expr, ForHead, Function, Ident, IfStmt,
+    ImportSpecifier, Lit, MemberProp, Module, ModuleDecl, ModuleItem, Pat, ReturnStmt, Stmt,
+    UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+use super::helper_matcher::{
+    binding_key, remaining_refs_outside_declarations, remove_fn_decls_from_body_by_binding,
+    remove_import_specifiers_by_binding, remove_var_declarators_by_binding,
+    var_declarator_binding_key,
+};
 use super::match_context::MatchContext;
 
 pub(crate) use super::helper_matcher::BindingKey;
@@ -103,7 +109,7 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
                 if let Some(kind) = detect_helper_from_fn(&fn_decl.function, has_sub_helpers)
                     .or_else(|| generated_fn_helper_name_kind(fn_decl.ident.sym.as_ref()))
                 {
-                    helpers.insert((fn_decl.ident.sym.clone(), fn_decl.ident.ctxt), kind);
+                    helpers.insert(binding_key(&fn_decl.ident), kind);
                 }
             }
             // var _ird = function(obj) { ... }  OR  var _ird = require("@babel/runtime/...")
@@ -126,7 +132,7 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
                 for specifier in &import.specifiers {
                     match specifier {
                         ImportSpecifier::Default(default) => {
-                            helpers.insert((default.local.sym.clone(), default.local.ctxt), kind);
+                            helpers.insert(binding_key(&default.local), kind);
                         }
                         ImportSpecifier::Named(named)
                             if named
@@ -134,7 +140,7 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
                                 .as_ref()
                                 .is_some_and(|imported| export_name_is(imported, "default")) =>
                         {
-                            helpers.insert((named.local.sym.clone(), named.local.ctxt), kind);
+                            helpers.insert(binding_key(&named.local), kind);
                         }
                         _ => {}
                     }
@@ -146,7 +152,7 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
                     if let Some(kind) = detect_helper_from_fn(&fn_decl.function, has_sub_helpers)
                         .or_else(|| generated_fn_helper_name_kind(fn_decl.ident.sym.as_ref()))
                     {
-                        helpers.insert((fn_decl.ident.sym.clone(), fn_decl.ident.ctxt), kind);
+                        helpers.insert(binding_key(&fn_decl.ident), kind);
                     }
                 }
                 Decl::Var(var) => {
@@ -223,91 +229,8 @@ pub(crate) fn helpers_with_remaining_refs(
     module: &Module,
     helpers: &HashMap<BindingKey, BabelHelperKind>,
 ) -> HashSet<BindingKey> {
-    use swc_core::ecma::visit::{Visit, VisitWith};
-
-    // First, collect the declaration spans/positions so we can exclude them
-    let mut decl_idents: HashSet<BindingKey> = HashSet::new();
-    for item in &module.body {
-        match item {
-            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
-                let key = (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt);
-                if helpers.contains_key(&key) {
-                    decl_idents.insert(key);
-                }
-            }
-            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-                for decl in &var.decls {
-                    let Pat::Ident(bi) = &decl.name else { continue };
-                    let key = (bi.id.sym.clone(), bi.id.ctxt);
-                    if helpers.contains_key(&key) {
-                        decl_idents.insert(key);
-                    }
-                }
-            }
-            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
-                for specifier in &import.specifiers {
-                    if let Some(key) = import_specifier_binding_key(specifier) {
-                        if helpers.contains_key(&key) {
-                            decl_idents.insert(key);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // Scan for references, skipping entire helper declarations (name + body).
-    // Self-references inside a helper body (e.g. `_extends = Object.assign || ...`)
-    // should not count as external usage.
-    struct RefScanner<'a> {
-        helpers: &'a HashMap<BindingKey, BabelHelperKind>,
-        decl_idents: &'a HashSet<BindingKey>,
-        found: HashSet<BindingKey>,
-    }
-
-    impl Visit for RefScanner<'_> {
-        fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
-            // If this var declarator IS a helper, skip it entirely (name + init)
-            if let Pat::Ident(bi) = &decl.name {
-                let key = (bi.id.sym.clone(), bi.id.ctxt);
-                if self.decl_idents.contains(&key) {
-                    return;
-                }
-            }
-            // Otherwise skip just the binding name, scan the init
-            if let Some(init) = &decl.init {
-                init.visit_with(self);
-            }
-        }
-
-        fn visit_fn_decl(&mut self, fn_decl: &swc_core::ecma::ast::FnDecl) {
-            let key = (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt);
-            // If this fn decl IS a helper, skip it entirely (name + body)
-            if self.decl_idents.contains(&key) {
-                return;
-            }
-            // Otherwise skip just the name, scan the body
-            fn_decl.function.visit_with(self);
-        }
-
-        fn visit_import_decl(&mut self, _: &swc_core::ecma::ast::ImportDecl) {}
-
-        fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
-            let key = (ident.sym.clone(), ident.ctxt);
-            if self.helpers.contains_key(&key) {
-                self.found.insert(key);
-            }
-        }
-    }
-
-    let mut scanner = RefScanner {
-        helpers,
-        decl_idents: &decl_idents,
-        found: HashSet::new(),
-    };
-    module.visit_with(&mut scanner);
-    scanner.found
+    let helper_keys: HashSet<_> = helpers.keys().cloned().collect();
+    remaining_refs_outside_declarations(module, &helper_keys, &helper_keys)
 }
 
 /// Remove helper declarations from the module body.
@@ -315,54 +238,18 @@ pub(crate) fn remove_helper_declarations(
     body: &mut Vec<ModuleItem>,
     helpers: &HashMap<BindingKey, BabelHelperKind>,
 ) {
-    let mut new_body = Vec::with_capacity(body.len());
-    for item in body.drain(..) {
-        match &item {
-            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
-                let key = (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt);
-                if helpers.contains_key(&key) {
-                    continue;
-                }
-                new_body.push(item);
-            }
-            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-                let mut var = var.clone();
-                var.decls.retain(|decl| {
-                    let Pat::Ident(bi) = &decl.name else {
-                        return true;
-                    };
-                    let key = (bi.id.sym.clone(), bi.id.ctxt);
-                    !helpers.contains_key(&key)
-                });
-                if !var.decls.is_empty() {
-                    new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))));
-                }
-            }
-            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
-                let mut import = import.clone();
-                import.specifiers.retain(|specifier| {
-                    import_specifier_binding_key(specifier)
-                        .is_none_or(|key| !helpers.contains_key(&key))
-                });
-                if !import.specifiers.is_empty() {
-                    new_body.push(ModuleItem::ModuleDecl(ModuleDecl::Import(import)));
-                }
-            }
-            _ => new_body.push(item),
-        }
-    }
-    *body = new_body;
+    let helper_keys: HashSet<_> = helpers.keys().cloned().collect();
+    remove_fn_decls_from_body_by_binding(body, &helper_keys);
+    remove_var_declarators_by_binding(body, &helper_keys);
+    remove_import_specifiers_by_binding(body, &helper_keys);
 }
 
 fn detect_helper_from_var_decl(
     decl: &VarDeclarator,
     has_sub_helpers: bool,
 ) -> Option<(BindingKey, BabelHelperKind)> {
-    let Pat::Ident(bi) = &decl.name else {
-        return None;
-    };
     let init = decl.init.as_ref()?;
-    let key = (bi.id.sym.clone(), bi.id.ctxt);
+    let key = var_declarator_binding_key(decl)?;
 
     // var _ird = function(obj) { ... }
     if let Expr::Fn(fn_expr) = init.as_ref() {
@@ -508,16 +395,6 @@ pub(crate) fn detect_helper_from_path(path: &str) -> Option<BabelHelperKind> {
     None
 }
 
-fn import_specifier_binding_key(specifier: &ImportSpecifier) -> Option<BindingKey> {
-    match specifier {
-        ImportSpecifier::Default(default) => Some((default.local.sym.clone(), default.local.ctxt)),
-        ImportSpecifier::Named(named) => Some((named.local.sym.clone(), named.local.ctxt)),
-        ImportSpecifier::Namespace(namespace) => {
-            Some((namespace.local.sym.clone(), namespace.local.ctxt))
-        }
-    }
-}
-
 fn export_name_is(name: &swc_core::ecma::ast::ModuleExportName, expected: &str) -> bool {
     match name {
         swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.as_ref() == expected,
@@ -578,7 +455,8 @@ fn detect_helper_from_arrow(
             return None;
         };
         let mut ctx = MatchContext::new();
-        ctx.declare("obj", param.id.sym.clone(), param.id.ctxt);
+        let param_key = binding_key(&param.id);
+        ctx.declare("obj", param_key.0, param_key.1);
 
         match &*arrow.body {
             BlockStmtOrExpr::BlockStmt(block) => {
@@ -1327,7 +1205,7 @@ fn find_empty_object_accumulator(stmts: &[Stmt]) -> Option<(Atom, SyntaxContext)
             };
             if let Some(init) = &decl.init {
                 if matches!(init.as_ref(), Expr::Object(obj) if obj.props.is_empty()) {
-                    return Some((bi.id.sym.clone(), bi.id.ctxt));
+                    return Some(binding_key(&bi.id));
                 }
             }
         }
@@ -1344,6 +1222,11 @@ enum ComputedKey {
         prop: Atom,
         prop_ctxt: SyntaxContext,
     },
+}
+
+fn computed_key_from_ident(ident: &Ident) -> ComputedKey {
+    let key = binding_key(ident);
+    ComputedKey::Ident(key.0, key.1)
 }
 
 struct GuardedCopyInIfChecker<'a> {
@@ -1393,7 +1276,7 @@ fn find_accumulator_in_for_init(stmts: &[Stmt]) -> Option<(Atom, SyntaxContext)>
             };
             if let Some(init) = &decl.init {
                 if matches!(init.as_ref(), Expr::Object(obj) if obj.props.is_empty()) {
-                    return Some((bi.id.sym.clone(), bi.id.ctxt));
+                    return Some(binding_key(&bi.id));
                 }
             }
         }
@@ -1417,7 +1300,7 @@ fn find_call_accumulator_from_source_excluded(
                 continue;
             };
             if is_call_with_source_excluded(init, ctx) {
-                return Some((bi.id.sym.clone(), bi.id.ctxt));
+                return Some(binding_key(&bi.id));
             }
         }
     }
@@ -1454,13 +1337,13 @@ fn for_in_key(left: &ForHead) -> Option<ComputedKey> {
             let Pat::Ident(binding) = &var.decls[0].name else {
                 return None;
             };
-            Some(ComputedKey::Ident(binding.id.sym.clone(), binding.id.ctxt))
+            Some(computed_key_from_ident(&binding.id))
         }
         ForHead::Pat(pat) => {
             let Pat::Ident(binding) = pat.as_ref() else {
                 return None;
             };
-            Some(ComputedKey::Ident(binding.id.sym.clone(), binding.id.ctxt))
+            Some(computed_key_from_ident(&binding.id))
         }
         _ => None,
     }
@@ -1507,7 +1390,7 @@ fn computed_ident_key(prop: &MemberProp) -> Option<(Atom, SyntaxContext)> {
     let Expr::Ident(id) = computed.expr.as_ref() else {
         return None;
     };
-    Some((id.sym.clone(), id.ctxt))
+    Some(binding_key(id))
 }
 
 fn computed_member_key(prop: &MemberProp) -> Option<ComputedKey> {
@@ -1519,7 +1402,7 @@ fn computed_member_key(prop: &MemberProp) -> Option<ComputedKey> {
 
 fn computed_key_expr(expr: &Expr) -> Option<ComputedKey> {
     match expr {
-        Expr::Ident(id) => Some(ComputedKey::Ident(id.sym.clone(), id.ctxt)),
+        Expr::Ident(id) => Some(computed_key_from_ident(id)),
         Expr::Member(member) => {
             let Expr::Ident(obj) = member.obj.as_ref() else {
                 return None;
@@ -2455,12 +2338,10 @@ pub(crate) fn is_call_super_fn(func: &Function) -> bool {
         return false;
     };
     let mut ctx = MatchContext::new();
-    ctx.declare("self", self_param.id.sym.clone(), self_param.id.ctxt);
-    ctx.declare(
-        "super_ctor",
-        super_param.id.sym.clone(),
-        super_param.id.ctxt,
-    );
+    let self_key = binding_key(&self_param.id);
+    ctx.declare("self", self_key.0, self_key.1);
+    let super_key = binding_key(&super_param.id);
+    ctx.declare("super_ctor", super_key.0, super_key.1);
     let body = match &func.body {
         Some(b) => b,
         None => return false,
