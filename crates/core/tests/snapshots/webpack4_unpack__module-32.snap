@@ -48,25 +48,31 @@ u[ForwardRef] = {
     propTypes: true
 };
 u[Memo] = a;
+const Object_defineProperty = Object.defineProperty;
+const Object_getOwnPropertyNames = Object.getOwnPropertyNames;
+const Object_getOwnPropertySymbols = Object.getOwnPropertySymbols;
+const Object_getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const Object_getPrototypeOf = Object.getPrototypeOf;
+const Object_prototype = Object.prototype;
 export default (function e(t, n, r) {
     if (typeof n !== "string") {
-        if (Object.prototype) {
-            const o = Object.getPrototypeOf(n);
-            if (o && o !== Object.prototype) {
+        if (Object_prototype) {
+            const o = Object_getPrototypeOf(n);
+            if (o && o !== Object_prototype) {
                 e(t, o, r);
             }
         }
-        let a = Object.getOwnPropertyNames(n);
-        if (Object.getOwnPropertySymbols) {
-            a = a.concat(Object.getOwnPropertySymbols(n));
+        let a = Object_getOwnPropertyNames(n);
+        if (Object_getOwnPropertySymbols) {
+            a = a.concat(Object_getOwnPropertySymbols(n));
         }
         const u = l(t);
         const m = l(n);
         for (const v of a){
             if (!(i[v] || r && r[v] || m && m[v] || u && u[v])) {
-                const b = Object.getOwnPropertyDescriptor(n, v);
+                const b = Object_getOwnPropertyDescriptor(n, v);
                 try {
-                    Object.defineProperty(t, v, b);
+                    Object_defineProperty(t, v, b);
                 } catch (e) {}
             }
         }

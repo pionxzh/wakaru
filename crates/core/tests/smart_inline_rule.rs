@@ -1,7 +1,7 @@
 mod common;
 
 use common::{assert_eq_normalized, render_pipeline, render_rule};
-use wakaru_core::{rules::SmartInline, RewriteLevel};
+use wakaru_core::{decompile, rules::SmartInline, DecompileOptions, RewriteLevel};
 
 fn apply(input: &str) -> String {
     apply_with_level(input, RewriteLevel::Standard)
@@ -13,6 +13,19 @@ fn apply_with_level(input: &str, level: RewriteLevel) -> String {
 
 fn apply_pipeline(input: &str) -> String {
     render_pipeline(input)
+}
+
+fn apply_pipeline_with_level(input: &str, level: RewriteLevel) -> String {
+    decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code
 }
 
 #[test]
@@ -463,9 +476,31 @@ function f() {
 }
 
 #[test]
-fn builtin_global_methods_inlined_not_destructured() {
-    // Object.defineProperty etc. should be inlined back to member access form,
-    // not destructured. Destructuring breaks readability and `this` binding.
+fn standard_preserves_builtin_global_member_aliases() {
+    let input = r#"
+const a = Object.defineProperty;
+const b = Object.getOwnPropertyNames;
+a(target, key, desc);
+b(source);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn minimal_preserves_builtin_global_member_aliases() {
+    let input = r#"
+const a = Object.defineProperty;
+a(target, key, desc);
+"#;
+    let output = apply_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn aggressive_inlines_builtin_global_member_aliases() {
+    // stable_builtins: aggressive mode assumes Object.defineProperty and
+    // Object.getOwnPropertyNames are not patched between alias capture and use.
     let input = r#"
 const a = Object.defineProperty;
 const b = Object.getOwnPropertyNames;
@@ -476,25 +511,41 @@ b(source);
 Object.defineProperty(target, key, desc);
 Object.getOwnPropertyNames(source);
 "#;
-    let output = apply(input);
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn minimal_keeps_builtin_global_alias_inlining() {
+fn aggressive_inlines_builtin_global_ident_aliases() {
+    // stable_builtins: aggressive mode opts into re-reading Object/TypeError at
+    // the use site instead of preserving the captured alias value.
     let input = r#"
-const a = Object.defineProperty;
-a(target, key, desc);
+const O = Object;
+const E = TypeError;
+const x = O.create(null);
+throw new E("bad");
 "#;
     let expected = r#"
-Object.defineProperty(target, key, desc);
+const x = Object.create(null);
+throw new TypeError("bad");
 "#;
-    let output = apply_with_level(input, RewriteLevel::Minimal);
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn builtin_global_math_inlined_not_destructured() {
+fn aggressive_does_not_remove_builtin_alias_with_blocked_shorthand_use() {
+    let input = r#"
+const E = TypeError;
+const errors = { E };
+throw new E("bad");
+"#;
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn aggressive_inlines_builtin_global_math_member_aliases() {
     let input = r#"
 const a = Math.ceil;
 const b = Math.floor;
@@ -505,13 +556,14 @@ b(2.5);
 Math.ceil(1.5);
 Math.floor(2.5);
 "#;
-    let output = apply(input);
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn builtin_global_multi_use_also_inlined() {
-    // Even when used multiple times, builtin aliases should be inlined
+fn aggressive_builtin_global_multi_use_also_inlined() {
+    // Even when used multiple times, builtin aliases can be inlined under
+    // stable_builtins.
     let input = r#"
 const a = Object.defineProperty;
 a(t1, k1, d1);
@@ -521,13 +573,14 @@ a(t2, k2, d2);
 Object.defineProperty(t1, k1, d1);
 Object.defineProperty(t2, k2, d2);
 "#;
-    let output = apply(input);
+    let output = apply_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn builtin_global_accesses_inlined_through_pipeline() {
-    // All builtin global aliases are inlined back to Object.X(...) form
+fn aggressive_builtin_global_accesses_inlined_through_pipeline() {
+    // All builtin global aliases are inlined back to Object.X(...) form in
+    // aggressive mode.
     let input = r#"
 const i = Object.defineProperty;
 const c = Object.getPrototypeOf;
@@ -538,13 +591,14 @@ i(target, key, desc);
 const s = Object.getPrototypeOf && Object.getPrototypeOf(Object);
 Object.defineProperty(target, key, desc);
 "#;
-    let output = apply_pipeline(input);
+    let output = apply_pipeline_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn builtin_alias_inlined_in_function_scope() {
-    // Math.floor/Math.ceil aliases declared inside a function body should be inlined
+fn aggressive_builtin_alias_inlined_in_function_scope() {
+    // Math.floor/Math.ceil aliases declared inside a function body can be
+    // inlined in aggressive mode.
     let input = r#"
 const x = (function() {
     const Math_ceil = Math.ceil;
@@ -563,7 +617,7 @@ const x = (()=>{
     return compute(3.5);
 })();
 "#;
-    let output = apply_pipeline(input);
+    let output = apply_pipeline_with_level(input, RewriteLevel::Aggressive);
     assert_eq_normalized(&output, expected);
 }
 

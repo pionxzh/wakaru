@@ -92,6 +92,7 @@ pub enum RewriteLevel {
 pub struct RewriteAssumptions {
     pub no_document_all: bool,
     pub pure_getters: bool,
+    pub stable_builtins: bool,
 }
 
 impl RewriteAssumptions {
@@ -100,14 +101,17 @@ impl RewriteAssumptions {
             RewriteLevel::Minimal => Self {
                 no_document_all: false,
                 pure_getters: false,
+                stable_builtins: false,
             },
             RewriteLevel::Standard => Self {
                 no_document_all: true,
                 pure_getters: false,
+                stable_builtins: false,
             },
             RewriteLevel::Aggressive => Self {
                 no_document_all: true,
                 pure_getters: true,
+                stable_builtins: true,
             },
         }
     }

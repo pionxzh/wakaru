@@ -107,9 +107,34 @@ Level: `standard` and above for identifier bases (e.g. `x.prop`). Member
 expression bases (e.g. `a.b.prop`) should require `aggressive` unless a temp
 proves single evaluation.
 
-Other assumptions (e.g. `stable_builtins` for monkey-patched globals/prototypes)
-are intentionally deferred until a concrete rule needs one and the boundary is
-well-defined.
+### `stable_builtins`
+
+Global builtins and their methods are not patched between an alias capture and
+its later use.
+
+Minifiers often create aliases to save bytes:
+
+```js
+const O = Object;
+const E = TypeError;
+const def = Object.defineProperty;
+```
+
+Inlining those aliases changes when the global or property is read:
+
+```js
+const E = TypeError;
+patchTypeError();
+throw new E("x");        // uses captured TypeError
+throw new TypeError("x"); // reads TypeError after patchTypeError()
+```
+
+That is usually acceptable for generated production bundles, but it is not a
+semantic guarantee from the AST alone.
+
+Affects: `SmartInline` (builtin/global alias inlining).
+
+Level: `aggressive` only.
 
 ## Generated Temporaries
 

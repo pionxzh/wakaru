@@ -46,8 +46,11 @@ impl VisitMut for SmartInline {
         inline_module_arrow_wrappers(module);
 
         // Step 0b: Inline builtin global aliases (const c = Object.defineProperty) globally.
-        // Minifiers extract these to save bytes; restore to Object.defineProperty(...) form.
-        inline_module_builtin_aliases(module);
+        // This depends on the aggressive `stable_builtins` assumption: the alias
+        // captures the global/property now, while inlining reads it later.
+        if self.level >= RewriteLevel::Aggressive {
+            inline_module_builtin_aliases(module);
+        }
 
         // Process module-level statements
         let stmts: Vec<Stmt> = module
@@ -106,7 +109,13 @@ fn process_stmts(
     use_state_bindings: &HashSet<BindingKey>,
 ) -> Vec<Stmt> {
     // Pass 0: inline builtin global aliases (const x = Math.floor → replace x with Math.floor)
-    let stmts = inline_builtin_aliases_stmts(stmts);
+    // Aggressive only; this assumes globals and builtin properties are not patched
+    // between alias capture and use.
+    let stmts = if level >= RewriteLevel::Aggressive {
+        inline_builtin_aliases_stmts(stmts)
+    } else {
+        stmts
+    };
     if level < RewriteLevel::Standard {
         return stmts;
     }
@@ -153,8 +162,9 @@ struct GlobalUsageStats {
 }
 
 /// Inline `const c = Object.defineProperty` → replace all `c(...)` with `Object.defineProperty(...)`.
-/// These aliases are created by minifiers to save bytes and should be restored for readability.
-/// Safe to inline across function boundaries since builtin globals are immutable.
+/// Also handles bare builtin aliases like `const E = TypeError` and `const O = Object`.
+/// These aliases are created by minifiers to save bytes and can be restored under
+/// the aggressive `stable_builtins` assumption.
 fn inline_module_builtin_aliases(module: &mut Module) {
     let mut candidates: HashMap<BindingKey, Box<Expr>> = HashMap::new();
     for item in &module.body {
@@ -167,17 +177,8 @@ fn inline_module_builtin_aliases(module: &mut Module) {
         let decl = &var.decls[0];
         let Pat::Ident(bi) = &decl.name else { continue };
         let Some(init) = &decl.init else { continue };
-        if let Expr::Member(MemberExpr {
-            obj,
-            prop: MemberProp::Ident(_),
-            ..
-        }) = init.as_ref()
-        {
-            if let Expr::Ident(obj_id) = obj.as_ref() {
-                if is_builtin_global(&obj_id.sym) {
-                    candidates.insert((bi.id.sym.clone(), bi.id.ctxt), init.clone());
-                }
-            }
+        if is_builtin_alias_expr(init) {
+            candidates.insert((bi.id.sym.clone(), bi.id.ctxt), init.clone());
         }
     }
 
@@ -185,12 +186,26 @@ fn inline_module_builtin_aliases(module: &mut Module) {
         return;
     }
 
-    // Remove definition stmts and replace all usages globally
+    let usage_stats = collect_builtin_alias_usage_in_module(module, &candidates);
+    let to_inline: HashMap<BindingKey, Box<Expr>> = candidates
+        .into_iter()
+        .filter(|(key, _)| {
+            usage_stats
+                .get(key)
+                .is_some_and(|stats| stats.replaceable_uses > 0 && stats.blocked_uses == 0)
+        })
+        .collect();
+
+    if to_inline.is_empty() {
+        return;
+    }
+
+    // Remove definition stmts and replace all usages globally.
     module.body.retain(|item| {
         if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item {
             if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
                 if let Pat::Ident(bi) = &var.decls[0].name {
-                    if candidates.contains_key(&(bi.id.sym.clone(), bi.id.ctxt)) {
+                    if to_inline.contains_key(&(bi.id.sym.clone(), bi.id.ctxt)) {
                         return false;
                     }
                 }
@@ -199,7 +214,7 @@ fn inline_module_builtin_aliases(module: &mut Module) {
         true
     });
 
-    let mut inliner = BuiltinAliasInliner { map: &candidates };
+    let mut inliner = BuiltinAliasInliner { map: &to_inline };
     module.visit_mut_with(&mut inliner);
 }
 
@@ -217,17 +232,8 @@ fn inline_builtin_aliases_stmts(mut stmts: Vec<Stmt>) -> Vec<Stmt> {
         let decl = &var.decls[0];
         let Pat::Ident(bi) = &decl.name else { continue };
         let Some(init) = &decl.init else { continue };
-        if let Expr::Member(MemberExpr {
-            obj,
-            prop: MemberProp::Ident(_),
-            ..
-        }) = init.as_ref()
-        {
-            if let Expr::Ident(obj_id) = obj.as_ref() {
-                if is_builtin_global(&obj_id.sym) {
-                    candidates.insert((bi.id.sym.clone(), bi.id.ctxt), init.clone());
-                }
-            }
+        if is_builtin_alias_expr(init) {
+            candidates.insert((bi.id.sym.clone(), bi.id.ctxt), init.clone());
         }
     }
 
@@ -235,12 +241,26 @@ fn inline_builtin_aliases_stmts(mut stmts: Vec<Stmt>) -> Vec<Stmt> {
         return stmts;
     }
 
-    // Remove definition stmts
+    let usage_stats = collect_builtin_alias_usage_in_stmts(&stmts, &candidates);
+    let to_inline: HashMap<BindingKey, Box<Expr>> = candidates
+        .into_iter()
+        .filter(|(key, _)| {
+            usage_stats
+                .get(key)
+                .is_some_and(|stats| stats.replaceable_uses > 0 && stats.blocked_uses == 0)
+        })
+        .collect();
+
+    if to_inline.is_empty() {
+        return stmts;
+    }
+
+    // Remove definition stmts.
     stmts.retain(|stmt| {
         if let Stmt::Decl(Decl::Var(var)) = stmt {
             if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
                 if let Pat::Ident(bi) = &var.decls[0].name {
-                    if candidates.contains_key(&(bi.id.sym.clone(), bi.id.ctxt)) {
+                    if to_inline.contains_key(&(bi.id.sym.clone(), bi.id.ctxt)) {
                         return false;
                     }
                 }
@@ -250,9 +270,132 @@ fn inline_builtin_aliases_stmts(mut stmts: Vec<Stmt>) -> Vec<Stmt> {
     });
 
     // Replace all usages
-    let mut inliner = BuiltinAliasInliner { map: &candidates };
+    let mut inliner = BuiltinAliasInliner { map: &to_inline };
     stmts.visit_mut_with(&mut inliner);
     stmts
+}
+
+fn is_builtin_alias_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ident(id) => is_builtin_global(&id.sym),
+        Expr::Member(MemberExpr {
+            obj,
+            prop: MemberProp::Ident(_),
+            ..
+        }) => {
+            if let Expr::Ident(obj_id) = obj.as_ref() {
+                is_builtin_global(&obj_id.sym)
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+#[derive(Default)]
+struct BuiltinAliasUsageStats {
+    replaceable_uses: usize,
+    blocked_uses: usize,
+}
+
+fn collect_builtin_alias_usage_in_module(
+    module: &Module,
+    candidates: &HashMap<BindingKey, Box<Expr>>,
+) -> HashMap<BindingKey, BuiltinAliasUsageStats> {
+    let mut stats: HashMap<BindingKey, BuiltinAliasUsageStats> = candidates
+        .keys()
+        .map(|key| (key.clone(), BuiltinAliasUsageStats::default()))
+        .collect();
+
+    for item in &module.body {
+        if is_builtin_alias_definition_item(item, candidates) {
+            continue;
+        }
+        let mut counter = BuiltinAliasUsageCounter { stats: &mut stats };
+        item.visit_with(&mut counter);
+    }
+
+    stats
+}
+
+fn collect_builtin_alias_usage_in_stmts(
+    stmts: &[Stmt],
+    candidates: &HashMap<BindingKey, Box<Expr>>,
+) -> HashMap<BindingKey, BuiltinAliasUsageStats> {
+    let mut stats: HashMap<BindingKey, BuiltinAliasUsageStats> = candidates
+        .keys()
+        .map(|key| (key.clone(), BuiltinAliasUsageStats::default()))
+        .collect();
+
+    for stmt in stmts {
+        if is_builtin_alias_definition_stmt(stmt, candidates) {
+            continue;
+        }
+        let mut counter = BuiltinAliasUsageCounter { stats: &mut stats };
+        stmt.visit_with(&mut counter);
+    }
+
+    stats
+}
+
+fn is_builtin_alias_definition_item(
+    item: &ModuleItem,
+    candidates: &HashMap<BindingKey, Box<Expr>>,
+) -> bool {
+    matches!(item, ModuleItem::Stmt(stmt) if is_builtin_alias_definition_stmt(stmt, candidates))
+}
+
+fn is_builtin_alias_definition_stmt(
+    stmt: &Stmt,
+    candidates: &HashMap<BindingKey, Box<Expr>>,
+) -> bool {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return false;
+    };
+    if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
+        return false;
+    }
+    let Pat::Ident(bi) = &var.decls[0].name else {
+        return false;
+    };
+    candidates.contains_key(&(bi.id.sym.clone(), bi.id.ctxt))
+}
+
+struct BuiltinAliasUsageCounter<'a> {
+    stats: &'a mut HashMap<BindingKey, BuiltinAliasUsageStats>,
+}
+
+impl Visit for BuiltinAliasUsageCounter<'_> {
+    fn visit_new_expr(&mut self, new_expr: &swc_core::ecma::ast::NewExpr) {
+        new_expr.callee.visit_with(self);
+        new_expr.args.visit_with(self);
+        new_expr.type_args.visit_with(self);
+    }
+
+    fn visit_expr(&mut self, expr: &Expr) {
+        if let Expr::Ident(id) = expr {
+            if let Some(stats) = self.stats.get_mut(&(id.sym.clone(), id.ctxt)) {
+                stats.replaceable_uses += 1;
+                return;
+            }
+        }
+        expr.visit_children_with(self);
+    }
+
+    fn visit_ident(&mut self, id: &Ident) {
+        if let Some(stats) = self.stats.get_mut(&(id.sym.clone(), id.ctxt)) {
+            stats.blocked_uses += 1;
+        }
+    }
+
+    fn visit_member_prop(&mut self, prop: &MemberProp) {
+        if let MemberProp::Computed(c) = prop {
+            c.visit_with(self);
+        }
+    }
+
+    fn visit_prop_name(&mut self, _: &PropName) {}
 }
 
 /// Replaces all ident usages with the builtin member expression, across all scopes.
@@ -261,6 +404,12 @@ struct BuiltinAliasInliner<'a> {
 }
 
 impl VisitMut for BuiltinAliasInliner<'_> {
+    fn visit_mut_new_expr(&mut self, new_expr: &mut swc_core::ecma::ast::NewExpr) {
+        new_expr.callee.visit_mut_with(self);
+        new_expr.args.visit_mut_with(self);
+        new_expr.type_args.visit_mut_with(self);
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
         if let Expr::Ident(id) = expr {
@@ -671,23 +820,7 @@ fn is_simple_expr(expr: &Expr) -> bool {
     // Only inline identifier aliases (const t = someVar), not literals.
     // Literal constants (const g = 'url', const n = 42) are intentionally named
     // and should not be collapsed back into their usage site.
-    match expr {
-        Expr::Ident(_) => true,
-        // Also inline member accesses on built-in globals:
-        // `const c = Object.defineProperty` → inline to `Object.defineProperty(...)`
-        Expr::Member(MemberExpr {
-            obj,
-            prop: MemberProp::Ident(_),
-            ..
-        }) => {
-            if let Expr::Ident(obj_id) = obj.as_ref() {
-                is_builtin_global(&obj_id.sym)
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
+    matches!(expr, Expr::Ident(_))
 }
 
 struct StmtIdentCounter<'a> {
@@ -785,6 +918,13 @@ fn is_builtin_global(name: &str) -> bool {
             | "WeakMap"
             | "WeakSet"
             | "Error"
+            | "EvalError"
+            | "RangeError"
+            | "ReferenceError"
+            | "SyntaxError"
+            | "TypeError"
+            | "URIError"
+            | "AggregateError"
             | "console"
             | "Proxy"
             | "Intl"
