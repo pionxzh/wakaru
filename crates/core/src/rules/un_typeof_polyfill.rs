@@ -1,14 +1,16 @@
 use std::collections::HashSet;
 
-use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     BinaryOp, BlockStmtOrExpr, Callee, Decl, Expr, Lit, MemberProp, Module, ModuleItem, Pat, Stmt,
     UnaryExpr, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-type BindingKey = (Atom, SyntaxContext);
+use super::helper_matcher::{
+    binding_key, expr_matches_binding, remaining_refs_outside_var_declarators,
+    remove_var_declarators_by_binding, var_declarator_binding_key, BindingKey,
+};
 
 /// Detects and simplifies Babel's `_typeof` polyfill.
 ///
@@ -34,10 +36,10 @@ impl VisitMut for UnTypeofPolyfill {
         module.visit_mut_with(&mut replacer);
 
         // Remove declarations if no remaining references
-        let remaining = find_remaining_refs(module, &helpers);
+        let remaining = remaining_refs_outside_var_declarators(module, &helpers, &helpers);
         let safe_to_remove: HashSet<BindingKey> = helpers.difference(&remaining).cloned().collect();
         if !safe_to_remove.is_empty() {
-            remove_declarations(&mut module.body, &safe_to_remove);
+            remove_var_declarators_by_binding(&mut module.body, &safe_to_remove);
         }
     }
 }
@@ -54,8 +56,10 @@ fn collect_typeof_helpers(module: &Module) -> HashSet<BindingKey> {
         };
         for decl in &var.decls {
             if is_typeof_polyfill_decl(decl) {
-                let Pat::Ident(bi) = &decl.name else { continue };
-                helpers.insert((bi.id.sym.clone(), bi.id.ctxt));
+                let Some(key) = var_declarator_binding_key(decl) else {
+                    continue;
+                };
+                helpers.insert(key);
             }
         }
     }
@@ -154,10 +158,9 @@ fn is_typeof_identity_fn(expr: &Expr) -> bool {
             let Pat::Ident(param) = &arrow.params[0] else {
                 return false;
             };
+            let param_key = binding_key(&param.id);
             match &*arrow.body {
-                BlockStmtOrExpr::Expr(body_expr) => {
-                    is_typeof_of_binding(body_expr, &param.id.sym, param.id.ctxt)
-                }
+                BlockStmtOrExpr::Expr(body_expr) => is_typeof_of_binding(body_expr, &param_key),
                 BlockStmtOrExpr::BlockStmt(block) => {
                     if block.stmts.len() != 1 {
                         return false;
@@ -166,7 +169,7 @@ fn is_typeof_identity_fn(expr: &Expr) -> bool {
                         return false;
                     };
                     let Some(arg) = &ret.arg else { return false };
-                    is_typeof_of_binding(arg, &param.id.sym, param.id.ctxt)
+                    is_typeof_of_binding(arg, &param_key)
                 }
             }
         }
@@ -177,6 +180,7 @@ fn is_typeof_identity_fn(expr: &Expr) -> bool {
             let Pat::Ident(param) = &fn_expr.function.params[0].pat else {
                 return false;
             };
+            let param_key = binding_key(&param.id);
             let Some(body) = &fn_expr.function.body else {
                 return false;
             };
@@ -187,13 +191,13 @@ fn is_typeof_identity_fn(expr: &Expr) -> bool {
                 return false;
             };
             let Some(arg) = &ret.arg else { return false };
-            is_typeof_of_binding(arg, &param.id.sym, param.id.ctxt)
+            is_typeof_of_binding(arg, &param_key)
         }
         _ => false,
     }
 }
 
-fn is_typeof_of_binding(expr: &Expr, sym: &Atom, ctxt: SyntaxContext) -> bool {
+fn is_typeof_of_binding(expr: &Expr, binding: &BindingKey) -> bool {
     let Expr::Unary(UnaryExpr {
         op: UnaryOp::TypeOf,
         arg,
@@ -202,7 +206,7 @@ fn is_typeof_of_binding(expr: &Expr, sym: &Atom, ctxt: SyntaxContext) -> bool {
     else {
         return false;
     };
-    matches!(arg.as_ref(), Expr::Ident(id) if id.sym == *sym && id.ctxt == ctxt)
+    expr_matches_binding(arg, binding)
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +229,7 @@ impl VisitMut for TypeofReplacer<'_> {
             return;
         };
 
-        let key = (id.sym.clone(), id.ctxt);
+        let key = binding_key(id);
         if !self.helpers.contains(&key) {
             return;
         }
@@ -241,69 +245,4 @@ impl VisitMut for TypeofReplacer<'_> {
             arg: call.args[0].expr.clone(),
         });
     }
-}
-
-// ---------------------------------------------------------------------------
-// Cleanup: remove declarations and find remaining references
-// ---------------------------------------------------------------------------
-
-fn find_remaining_refs(module: &Module, helpers: &HashSet<BindingKey>) -> HashSet<BindingKey> {
-    use swc_core::ecma::visit::{Visit, VisitWith};
-
-    struct RefScanner<'a> {
-        helpers: &'a HashSet<BindingKey>,
-        decl_bindings: HashSet<BindingKey>,
-        found: HashSet<BindingKey>,
-    }
-
-    impl Visit for RefScanner<'_> {
-        fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
-            if let Pat::Ident(bi) = &decl.name {
-                let key = (bi.id.sym.clone(), bi.id.ctxt);
-                if self.decl_bindings.contains(&key) {
-                    return;
-                }
-            }
-            if let Some(init) = &decl.init {
-                init.visit_with(self);
-            }
-        }
-
-        fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
-            let key = (ident.sym.clone(), ident.ctxt);
-            if self.helpers.contains(&key) {
-                self.found.insert(key);
-            }
-        }
-    }
-
-    let decl_bindings: HashSet<BindingKey> = helpers.clone();
-    let mut scanner = RefScanner {
-        helpers,
-        decl_bindings,
-        found: HashSet::new(),
-    };
-    module.visit_with(&mut scanner);
-    scanner.found
-}
-
-fn remove_declarations(body: &mut Vec<ModuleItem>, helpers: &HashSet<BindingKey>) {
-    for item in body.iter_mut() {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
-            continue;
-        };
-        var.decls.retain(|decl| {
-            let Pat::Ident(bi) = &decl.name else {
-                return true;
-            };
-            let key = (bi.id.sym.clone(), bi.id.ctxt);
-            !helpers.contains(&key)
-        });
-    }
-    body.retain(|item| {
-        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
-            return true;
-        };
-        !var.decls.is_empty()
-    });
 }

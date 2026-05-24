@@ -104,6 +104,23 @@ where
     finder.found
 }
 
+/// Collect references to `targets`, skipping only var declarators whose binding
+/// is in `skipped_decls`. This is useful for helper declarations that can share
+/// a `var` statement with unrelated declarators.
+pub(crate) fn remaining_refs_outside_var_declarators(
+    module: &Module,
+    targets: &HashSet<BindingKey>,
+    skipped_decls: &HashSet<BindingKey>,
+) -> HashSet<BindingKey> {
+    let mut finder = VarDeclaratorSkippingRefFinder {
+        targets,
+        skipped_decls,
+        found: HashSet::new(),
+    };
+    module.visit_with(&mut finder);
+    finder.found
+}
+
 struct RemainingRefFinder<'a> {
     targets: &'a HashSet<BindingKey>,
     found: HashSet<BindingKey>,
@@ -118,10 +135,58 @@ impl Visit for RemainingRefFinder<'_> {
     }
 }
 
+struct VarDeclaratorSkippingRefFinder<'a> {
+    targets: &'a HashSet<BindingKey>,
+    skipped_decls: &'a HashSet<BindingKey>,
+    found: HashSet<BindingKey>,
+}
+
+impl Visit for VarDeclaratorSkippingRefFinder<'_> {
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        if var_declarator_binding_key(decl)
+            .as_ref()
+            .is_some_and(|key| self.skipped_decls.contains(key))
+        {
+            return;
+        }
+
+        if let Some(init) = &decl.init {
+            init.visit_with(self);
+        }
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        let key = binding_key(ident);
+        if self.targets.contains(&key) {
+            self.found.insert(key);
+        }
+    }
+}
+
 pub(crate) fn remove_fn_decls_by_binding(module: &mut Module, removable: &HashSet<BindingKey>) {
     module
         .body
         .retain(|item| fn_decl_binding_key(item).is_none_or(|key| !removable.contains(&key)));
+}
+
+pub(crate) fn remove_var_declarators_by_binding(
+    body: &mut Vec<ModuleItem>,
+    removable: &HashSet<BindingKey>,
+) {
+    for item in body.iter_mut() {
+        let ModuleItem::Stmt(swc_core::ecma::ast::Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        var.decls.retain(|decl| {
+            var_declarator_binding_key(decl).is_none_or(|key| !removable.contains(&key))
+        });
+    }
+    body.retain(|item| {
+        let ModuleItem::Stmt(swc_core::ecma::ast::Stmt::Decl(Decl::Var(var))) = item else {
+            return true;
+        };
+        !var.decls.is_empty()
+    });
 }
 
 #[cfg(test)]
