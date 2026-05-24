@@ -61,19 +61,26 @@ record it as a `failed` baseline instead.
 
 ## Baselines
 
-Recorded on 2026-05-24 with:
+Tracked baseline summaries live in `docs/test262-baselines/`. Regenerate them
+with:
 
 ```powershell
-node scripts\correctness\test262-roundtrip.mjs --limit all --json target\test262-roundtrip-default-all-after-use-strict-gate-and-yield-classification.json
-node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --json target\test262-roundtrip-classes-after-cleanup.json
+node scripts\correctness\test262-roundtrip.mjs --limit all --summary docs\test262-baselines\default.md
+node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --summary docs\test262-baselines\classes.md
+node scripts\correctness\test262-roundtrip.mjs --preset destructuring --limit all --summary docs\test262-baselines\destructuring.md
+node scripts\correctness\test262-roundtrip.mjs --preset async-generators --limit all --summary docs\test262-baselines\async-generators.md
+node scripts\correctness\test262-roundtrip.mjs --preset templates --limit all --summary docs\test262-baselines\templates.md
+node scripts\correctness\test262-roundtrip.mjs --preset modules --limit all --summary docs\test262-baselines\modules.md
 ```
+
+Recorded on 2026-05-25:
 
 | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | default | 2180 | 1646 | 534 | 34 | 127 | 1485 | 0 |
 | classes | 8426 | 5063 | 3363 | 34 | 680 | 4349 | 0 |
 | destructuring | 1034 | 891 | 143 | 28 | 45 | 809 | 9 |
-| async-generators | 1707 | 666 | 1041 | 11 | 6 | 636 | 13 |
+| async-generators | 1707 | 666 | 1041 | 13 | 6 | 642 | 5 |
 | templates | 84 | 67 | 17 | 2 | 1 | 64 | 0 |
 | modules | 755 | 157 | 598 | 142 | 6 | 9 | 0 |
 
