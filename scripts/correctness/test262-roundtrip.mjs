@@ -35,6 +35,11 @@ const defaultPipeline = null;
 const supportedTransforms = new Set(["none", "terser"]);
 const supportedPipelines = new Set(["none", "terser-light", "terser-full", "babel-env-terser"]);
 const supportedLevels = new Set(["minimal", "standard", "aggressive"]);
+const terserPackages = [{ name: "terser", spec: "terser@5.31.6" }];
+const babelPackages = [
+  { name: "@babel/core", spec: "@babel/core@7.25.2" },
+  { name: "@babel/preset-env", spec: "@babel/preset-env@7.25.4" },
+];
 const defaultPaths = [
   "test/language/expressions/coalesce",
   "test/language/expressions/optional-chaining",
@@ -344,6 +349,7 @@ export async function transformSource(source, options) {
     return minifyWithTerser(source, { ...options, terserProfile: "full" });
   }
   if (pipeline === "babel-env-terser") {
+    ensureBabelEnvTerser(options.toolRoot);
     const transpiled = await transformWithBabelEnv(source, options);
     return minifyWithTerser(transpiled, { ...options, terserProfile: "light" });
   }
@@ -759,18 +765,31 @@ function runWakaru(source, { level, tmpRoot, basename }) {
 }
 
 async function ensureTerser(toolRoot) {
-  ensureToolPackages(toolRoot, [{ name: "terser", spec: "terser@5.31.6" }]);
+  ensureToolPackages(toolRoot, terserPackages);
 }
 
 function ensureBabel(toolRoot) {
-  ensureToolPackages(toolRoot, [
-    { name: "@babel/core", spec: "@babel/core@7.25.2" },
-    { name: "@babel/preset-env", spec: "@babel/preset-env@7.25.4" },
-  ]);
+  ensureBabelPackages(toolRoot, babelPackages);
+}
+
+function ensureBabelEnvTerser(toolRoot) {
+  ensureBabelPackages(toolRoot, [...babelPackages, ...terserPackages]);
+}
+
+function ensureBabelPackages(toolRoot, packages) {
+  ensureToolPackages(toolRoot, packages);
+  try {
+    assertBabelUsable(toolRoot);
+  } catch {
+    rmSync(join(toolRoot, "node_modules"), { recursive: true, force: true });
+    rmSync(join(toolRoot, "package-lock.json"), { force: true });
+    ensureToolPackages(toolRoot, packages);
+    assertBabelUsable(toolRoot);
+  }
 }
 
 function ensureToolPackages(toolRoot, packages) {
-  const missing = packages.filter(({ name }) => !existsSync(join(toolRoot, "node_modules", ...name.split("/"))));
+  const missing = missingToolPackageSpecs(toolRoot, packages);
   if (missing.length === 0) {
     return;
   }
@@ -791,9 +810,52 @@ function ensureToolPackages(toolRoot, packages) {
       ),
     );
   }
-  runChecked("npm", ["install", "--silent", "--no-save", ...missing.map(({ spec }) => spec)], {
+  try {
+    installToolPackages(toolRoot, packages);
+  } catch (error) {
+    rmSync(join(toolRoot, "node_modules"), { recursive: true, force: true });
+    rmSync(join(toolRoot, "package-lock.json"), { force: true });
+    installToolPackages(toolRoot, packages);
+  }
+}
+
+export function missingToolPackageSpecs(toolRoot, packages) {
+  const packageJson = join(toolRoot, "package.json");
+  const toolRequire = existsSync(packageJson)
+    ? createRequire(pathToFileURL(packageJson))
+    : null;
+  return packages.filter(({ name }) => {
+    if (!toolRequire) {
+      return true;
+    }
+    try {
+      toolRequire.resolve(name);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+}
+
+function installToolPackages(toolRoot, packages) {
+  runChecked("npm", ["install", "--silent", "--no-save", ...packages.map(({ spec }) => spec)], {
     cwd: toolRoot,
   });
+}
+
+function assertBabelUsable(toolRoot) {
+  const toolRequire = createRequire(pathToFileURL(join(toolRoot, "package.json")));
+  const babel = toolRequire("@babel/core");
+  const presetEnv = toolRequire("@babel/preset-env");
+  const result = babel.transformSync("let value = input ?? 1;", {
+    babelrc: false,
+    configFile: false,
+    sourceType: "script",
+    presets: [[presetEnv, { modules: false, targets: { ie: "11" } }]],
+  });
+  if (!result?.code) {
+    throw new Error("babel validation produced empty output");
+  }
 }
 
 function createTestContext() {

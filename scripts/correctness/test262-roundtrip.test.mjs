@@ -14,6 +14,7 @@ import {
   knownSwcFidelityIssueReason,
   knownWakaruParseUnsupportedReason,
   loadKnownBlockers,
+  missingToolPackageSpecs,
   parseArgs,
   parseTestMetadata,
   resolvePipelineName,
@@ -145,6 +146,29 @@ test("resolvePipelineName maps legacy transform options", () => {
   assert.equal(resolvePipelineName({ transform: "none", terserProfile: "light" }), "none");
   assert.equal(resolvePipelineName({ transform: "terser", terserProfile: "light" }), "terser-light");
   assert.equal(resolvePipelineName({ transform: "terser", terserProfile: "full" }), "terser-full");
+});
+
+test("missingToolPackageSpecs checks package resolution instead of directory presence", () => {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-tools-unit-"));
+  try {
+    mkdirSync(join(root, "node_modules", "@babel", "core"), { recursive: true });
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({
+        private: true,
+        type: "module",
+      }),
+    );
+
+    assert.deepEqual(
+      missingToolPackageSpecs(root, [
+        { name: "@babel/core", spec: "@babel/core@7.25.2" },
+      ]),
+      [{ name: "@babel/core", spec: "@babel/core@7.25.2" }],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("isSloppyOnlyWakaruParseUnsupported detects sloppy-only strict parser rejects", () => {
