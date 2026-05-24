@@ -275,6 +275,20 @@ fn preserves_tdz_identifier_read_before_lexical_declaration() {
 }
 
 #[test]
+fn drops_safe_identifier_read_statements() {
+    let input = r#"
+undefined;
+let value;
+value;
+"#;
+    let expected = r#"
+let value;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn preserves_object_literal_computed_key_coercion() {
     let input = r#"
 ({

@@ -1,9 +1,12 @@
+use std::collections::HashSet;
+
+use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BlockStmt, Decl, Expr, ExprStmt, ForInStmt, ForOfStmt, ForStmt,
-    IfStmt, Invalid, Lit, MemberExpr, ModuleItem, ParenExpr, Prop, PropName, PropOrSpread,
-    ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, VarDecl, VarDeclOrExpr,
-    VarDeclarator,
+    IfStmt, Invalid, Lit, MemberExpr, ModuleDecl, ModuleItem, ParenExpr, Pat, Prop, PropName,
+    PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, VarDecl,
+    VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -11,6 +14,8 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 pub struct SimplifySequence {
     unresolved_mark: Mark,
 }
+
+type BindingId = (Atom, SyntaxContext);
 
 impl SimplifySequence {
     pub fn new(unresolved_mark: Mark) -> Self {
@@ -25,16 +30,24 @@ impl VisitMut for SimplifySequence {
         let old_items = std::mem::take(items);
         let mut new_items = Vec::with_capacity(old_items.len());
 
+        let mut future_lexical = collect_lexical_decl_ids_from_module_items(&old_items);
+
         for item in old_items {
             match item {
                 ModuleItem::Stmt(stmt) => {
+                    let declared = collect_lexical_decl_ids_from_stmt(&stmt);
                     for stmt in split_stmt(stmt) {
-                        if !is_pure_no_op_stmt(&stmt, self.unresolved_mark) {
+                        if !is_pure_no_op_stmt(&stmt, self.unresolved_mark, &future_lexical) {
                             new_items.push(ModuleItem::Stmt(stmt));
                         }
                     }
+                    remove_ids(&mut future_lexical, &declared);
                 }
-                ModuleItem::ModuleDecl(decl) => new_items.push(ModuleItem::ModuleDecl(decl)),
+                ModuleItem::ModuleDecl(decl) => {
+                    let declared = collect_lexical_decl_ids_from_module_decl(&decl);
+                    new_items.push(ModuleItem::ModuleDecl(decl));
+                    remove_ids(&mut future_lexical, &declared);
+                }
             }
         }
 
@@ -47,12 +60,16 @@ impl VisitMut for SimplifySequence {
         let old_stmts = std::mem::take(stmts);
         let mut new_stmts = Vec::with_capacity(old_stmts.len());
 
+        let mut future_lexical = collect_lexical_decl_ids_from_stmts(&old_stmts);
+
         for stmt in old_stmts {
+            let declared = collect_lexical_decl_ids_from_stmt(&stmt);
             for s in split_stmt(stmt) {
-                if !is_pure_no_op_stmt(&s, self.unresolved_mark) {
+                if !is_pure_no_op_stmt(&s, self.unresolved_mark, &future_lexical) {
                     new_stmts.push(s);
                 }
             }
+            remove_ids(&mut future_lexical, &declared);
         }
 
         *stmts = new_stmts;
@@ -62,7 +79,11 @@ impl VisitMut for SimplifySequence {
 /// Returns true for expression statements that are provably side-effect-free.
 /// String literals are intentionally excluded because they may be directive prologues
 /// (e.g., "use strict") handled by a later pass.
-fn is_pure_no_op_stmt(stmt: &Stmt, unresolved_mark: Mark) -> bool {
+fn is_pure_no_op_stmt(
+    stmt: &Stmt,
+    unresolved_mark: Mark,
+    future_lexical: &HashSet<BindingId>,
+) -> bool {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return false;
     };
@@ -77,7 +98,7 @@ fn is_pure_no_op_stmt(stmt: &Stmt, unresolved_mark: Mark) -> bool {
     }
     // Identifier reads are observable: unresolved identifiers throw ReferenceError,
     // and lexical bindings can throw before initialization (TDZ).
-    if is_ident_read(expr) {
+    if is_observable_ident_read(expr, unresolved_mark, future_lexical) {
         return false;
     }
     // Computed object literal keys perform ToPropertyKey even when the key
@@ -103,11 +124,119 @@ fn is_fn_or_arrow(expr: &Expr) -> bool {
     }
 }
 
-fn is_ident_read(expr: &Expr) -> bool {
+fn is_observable_ident_read(
+    expr: &Expr,
+    unresolved_mark: Mark,
+    future_lexical: &HashSet<BindingId>,
+) -> bool {
     match expr {
-        Expr::Ident(_) => true,
-        Expr::Paren(paren) => is_ident_read(&paren.expr),
+        Expr::Ident(ident) => {
+            let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
+            if ident.ctxt == unresolved_ctxt {
+                return ident.sym.as_ref() != "undefined";
+            }
+            future_lexical.contains(&(ident.sym.clone(), ident.ctxt))
+        }
+        Expr::Paren(paren) => {
+            is_observable_ident_read(&paren.expr, unresolved_mark, future_lexical)
+        }
         _ => false,
+    }
+}
+
+fn collect_lexical_decl_ids_from_module_items(items: &[ModuleItem]) -> HashSet<BindingId> {
+    let mut ids = HashSet::new();
+    for item in items {
+        match item {
+            ModuleItem::Stmt(stmt) => collect_lexical_decl_ids_from_stmt_into(stmt, &mut ids),
+            ModuleItem::ModuleDecl(decl) => {
+                collect_lexical_decl_ids_from_module_decl_into(decl, &mut ids)
+            }
+        }
+    }
+    ids
+}
+
+fn collect_lexical_decl_ids_from_stmts(stmts: &[Stmt]) -> HashSet<BindingId> {
+    let mut ids = HashSet::new();
+    for stmt in stmts {
+        collect_lexical_decl_ids_from_stmt_into(stmt, &mut ids);
+    }
+    ids
+}
+
+fn collect_lexical_decl_ids_from_module_decl(decl: &ModuleDecl) -> HashSet<BindingId> {
+    let mut ids = HashSet::new();
+    collect_lexical_decl_ids_from_module_decl_into(decl, &mut ids);
+    ids
+}
+
+fn collect_lexical_decl_ids_from_module_decl_into(decl: &ModuleDecl, ids: &mut HashSet<BindingId>) {
+    if let ModuleDecl::ExportDecl(export) = decl {
+        collect_lexical_decl_ids_from_decl(&export.decl, ids);
+    }
+}
+
+fn collect_lexical_decl_ids_from_stmt(stmt: &Stmt) -> HashSet<BindingId> {
+    let mut ids = HashSet::new();
+    collect_lexical_decl_ids_from_stmt_into(stmt, &mut ids);
+    ids
+}
+
+fn collect_lexical_decl_ids_from_stmt_into(stmt: &Stmt, ids: &mut HashSet<BindingId>) {
+    if let Stmt::Decl(decl) = stmt {
+        collect_lexical_decl_ids_from_decl(decl, ids);
+    }
+}
+
+fn collect_lexical_decl_ids_from_decl(decl: &Decl, ids: &mut HashSet<BindingId>) {
+    match decl {
+        Decl::Var(var) if matches!(var.kind, VarDeclKind::Let | VarDeclKind::Const) => {
+            for decl in &var.decls {
+                collect_binding_ids_from_pat(&decl.name, ids);
+            }
+        }
+        Decl::Class(class) => {
+            ids.insert((class.ident.sym.clone(), class.ident.ctxt));
+        }
+        _ => {}
+    }
+}
+
+fn collect_binding_ids_from_pat(pat: &Pat, ids: &mut HashSet<BindingId>) {
+    match pat {
+        Pat::Ident(ident) => {
+            ids.insert((ident.id.sym.clone(), ident.id.ctxt));
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_binding_ids_from_pat(elem, ids);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    swc_core::ecma::ast::ObjectPatProp::KeyValue(kv) => {
+                        collect_binding_ids_from_pat(&kv.value, ids);
+                    }
+                    swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
+                        ids.insert((assign.key.sym.clone(), assign.key.ctxt));
+                    }
+                    swc_core::ecma::ast::ObjectPatProp::Rest(rest) => {
+                        collect_binding_ids_from_pat(&rest.arg, ids);
+                    }
+                }
+            }
+        }
+        Pat::Rest(rest) => collect_binding_ids_from_pat(&rest.arg, ids),
+        Pat::Assign(assign) => collect_binding_ids_from_pat(&assign.left, ids),
+        _ => {}
+    }
+}
+
+fn remove_ids(ids: &mut HashSet<BindingId>, remove: &HashSet<BindingId>) {
+    for id in remove {
+        ids.remove(id);
     }
 }
 
