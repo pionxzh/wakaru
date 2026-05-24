@@ -1,6 +1,6 @@
 {
   "name": "@wakaru/cli-darwin-arm64",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Wakaru CLI binary for macOS ARM64",
   "author": "Pionxzh",
   "license": "Apache-2.0",
