@@ -660,7 +660,7 @@ fn fold_object_property_param_aliases(
     unresolved_mark: Mark,
 ) {
     loop {
-        let Some((param_idx, alias, destructured_pat, remove_count)) =
+        let Some((param_idx, alias, destructured_pat, default_val, remove_count)) =
             extract_prefix_object_property_aliases(params, body, unresolved_mark)
         else {
             break;
@@ -671,7 +671,12 @@ fn fold_object_property_param_aliases(
                 &body.stmts[remove_count..],
             )
             || destructured_pat_reuses_other_param_name(&destructured_pat, params, param_idx)
-            || !replace_param_alias_pat(&mut params[param_idx].pat, &alias, destructured_pat, None)
+            || !replace_param_alias_pat(
+                &mut params[param_idx].pat,
+                &alias,
+                destructured_pat,
+                default_val,
+            )
         {
             break;
         }
@@ -760,10 +765,10 @@ fn extract_prefix_object_property_aliases(
     params: &[Param],
     body: &BlockStmt,
     unresolved_mark: Mark,
-) -> Option<(usize, Ident, Pat, usize)> {
+) -> Option<(usize, Ident, Pat, Option<Box<Expr>>, usize)> {
     for (param_idx, param) in params.iter().enumerate() {
         let alias = param_alias_ident(&param.pat)?;
-        let Some((props, remove_count)) =
+        let Some((props, default_val, remove_count)) =
             extract_object_property_alias_props(body, &alias, unresolved_mark)
         else {
             continue;
@@ -777,6 +782,7 @@ fn extract_prefix_object_property_aliases(
                 optional: false,
                 type_ann: None,
             }),
+            default_val,
             remove_count,
         ));
     }
@@ -801,14 +807,31 @@ fn extract_object_property_alias_props(
     body: &BlockStmt,
     alias: &Ident,
     unresolved_mark: Mark,
-) -> Option<(Vec<ObjectPatProp>, usize)> {
+) -> Option<(Vec<ObjectPatProp>, Option<Box<Expr>>, usize)> {
     let mut props = Vec::new();
     let mut stmt_idx = 0;
+    let mut default_val = None;
+
+    while let Some(local) = body
+        .stmts
+        .get(stmt_idx)
+        .and_then(extract_uninit_local_ident)
+    {
+        if stmts_reference_ident(&body.stmts[stmt_idx + 1..], &local.id) {
+            break;
+        }
+        stmt_idx += 1;
+    }
 
     while stmt_idx < body.stmts.len() {
-        let Some(prop_alias) = extract_property_alias_stmt(&body.stmts[stmt_idx], alias) else {
+        let Some(prop_alias) =
+            extract_property_alias_stmt(&body.stmts[stmt_idx], alias, unresolved_mark)
+        else {
             break;
         };
+        if default_val.is_none() {
+            default_val = prop_alias.default_val.clone();
+        }
 
         if let Some(next_stmt) = body.stmts.get(stmt_idx + 1) {
             if let Some((binding, default_val)) =
@@ -830,16 +853,21 @@ fn extract_object_property_alias_props(
     if props.is_empty() {
         None
     } else {
-        Some((props, stmt_idx))
+        Some((props, default_val, stmt_idx))
     }
 }
 
 struct PropertyAlias {
     prop: Atom,
     local: BindingIdent,
+    default_val: Option<Box<Expr>>,
 }
 
-fn extract_property_alias_stmt(stmt: &Stmt, alias: &Ident) -> Option<PropertyAlias> {
+fn extract_property_alias_stmt(
+    stmt: &Stmt,
+    alias: &Ident,
+    unresolved_mark: Mark,
+) -> Option<PropertyAlias> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
@@ -854,16 +882,33 @@ fn extract_property_alias_stmt(stmt: &Stmt, alias: &Ident) -> Option<PropertyAli
     let Expr::Member(MemberExpr { obj, prop, .. }) = init else {
         return None;
     };
-    if !matches!(obj.as_ref(), Expr::Ident(obj) if same_param_alias_reference(obj, alias)) {
-        return None;
-    }
+    let default_val = extract_property_alias_default(obj.as_ref(), alias, unresolved_mark)?;
     let MemberProp::Ident(prop) = prop else {
         return None;
     };
     Some(PropertyAlias {
         prop: prop.sym.clone(),
         local: local.clone(),
+        default_val,
     })
+}
+
+fn extract_property_alias_default(
+    obj: &Expr,
+    alias: &Ident,
+    unresolved_mark: Mark,
+) -> Option<Option<Box<Expr>>> {
+    let obj = strip_parens(obj);
+    if matches!(obj, Expr::Ident(obj) if same_param_alias_reference(obj, alias)) {
+        return Some(None);
+    }
+
+    let (default_alias, default_val) = extract_destructuring_alias_default(obj, unresolved_mark)?;
+    if !same_param_alias_reference(&default_alias, alias) || !is_empty_object_literal(&default_val)
+    {
+        return None;
+    }
+    Some(Some(default_val))
 }
 
 fn same_param_alias_reference(reference: &Ident, alias: &Ident) -> bool {

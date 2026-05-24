@@ -662,6 +662,76 @@ function pick({ name, age = 0 } = {}) {
 }
 
 #[test]
+fn arguments_object_property_default_alias_becomes_param_pattern() {
+    let input = r#"
+function config() {
+  let _ref$mode = (arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {}).mode;
+  let appMode;
+  return use(_ref$mode === undefined ? "prod" : _ref$mode);
+}
+"#;
+    let expected = r#"
+function config({ mode: appMode = "prod" } = {}) {
+  return use(appMode);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn generated_param_object_property_default_alias_becomes_param_pattern() {
+    let input = r#"
+function config(_param_0 = {}) {
+  let _ref$mode = _param_0.mode;
+  let appMode;
+  return use(_ref$mode === undefined ? "prod" : _ref$mode);
+}
+"#;
+    let expected = r#"
+function config({ mode: appMode = "prod" } = {}) {
+  return use(appMode);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn conditional_object_property_default_alias_becomes_param_pattern() {
+    let input = r#"
+function config(_temp) {
+  let _ref;
+  let _ref$mode = (_temp === undefined ? {} : _temp).mode;
+  let appMode;
+  return use(_ref$mode === undefined ? "prod" : _ref$mode);
+}
+"#;
+    let expected = r#"
+function config({ mode: appMode = "prod" } = {}) {
+  return use(appMode);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn const_conditional_object_property_default_alias_becomes_param_pattern() {
+    let input = r#"
+function config(_a) {
+  let _b;
+  const mode = (_a === undefined ? {} : _a).mode;
+  const appMode = mode === undefined ? "prod" : mode;
+  return use(appMode);
+}
+"#;
+    let expected = r#"
+function config({ mode: appMode = "prod" } = {}) {
+  return use(appMode);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn object_property_alias_with_rename_becomes_param_pattern() {
     let input = r#"
 function config(_ref = {}) {
