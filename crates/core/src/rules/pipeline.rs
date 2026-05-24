@@ -70,6 +70,10 @@ fn dead_code_elimination_enabled(ctx: RuleRunContext<'_>) -> bool {
     ctx.dead_code_elimination
 }
 
+fn standard_or_above(ctx: RuleRunContext<'_>) -> bool {
+    ctx.rewrite_level >= RewriteLevel::Standard
+}
+
 macro_rules! runner {
     ($name:ident, |$ctx:ident| $rule:expr) => {
         fn $name(module: &mut Module, $ctx: RuleRunContext<'_>) {
@@ -297,7 +301,7 @@ define_rule_registry! {
     // docs/rule-dependency-inventory.md.
     ("UnCurlyBraces", Helpers, run_un_curly_braces, always_enabled),
     ("UnEsmoduleFlag", Helpers, run_un_esmodule_flag, always_enabled),
-    ("UnUseStrict", Helpers, run_un_use_strict, always_enabled),
+    ("UnUseStrict", Helpers, run_un_use_strict, standard_or_above),
     ("UnAssignmentMerging", Helpers, run_un_assignment_merging, always_enabled, requires: [
         "UnCurlyBraces"
     ]),

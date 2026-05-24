@@ -190,6 +190,14 @@ test("knownWakaruParseUnsupportedReason classifies SWC parser gaps", () => {
     ),
     "swc-parse-static-init-await",
   );
+  assert.equal(
+    knownWakaruParseUnsupportedReason(
+      new Error("failed to parse input.js: Error { error: (39..44, TS1109) }"),
+      [{ name: "sloppy", strict: false }],
+      "test/language/expressions/object/method-definition/yield-as-identifier-in-nested-function.js",
+    ),
+    "swc-parse-yield-ident",
+  );
 });
 
 test("knownSwcFidelityIssueReason classifies array binding elision printer gaps", () => {

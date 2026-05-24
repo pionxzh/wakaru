@@ -530,6 +530,9 @@ export function knownWakaruParseUnsupportedReason(error, variants, path) {
   if (message.includes("ExpectedIdent") && normalized.includes("static-init-await")) {
     return "swc-parse-static-init-await";
   }
+  if (message.includes("TS1109") && normalized.includes("yield-as-identifier")) {
+    return "swc-parse-yield-ident";
+  }
   return null;
 }
 

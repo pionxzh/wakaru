@@ -122,6 +122,62 @@ fn standard_keeps_loose_optional_chaining_recovery_enabled() {
 }
 
 #[test]
+fn minimal_preserves_use_strict_directives() {
+    let input = r#"
+function foo(a, b, c) {
+  "use strict";
+  for (var value of arguments) {
+    a = b;
+    b = c;
+    c = value;
+  }
+}
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Minimal,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("\"use strict\""),
+        "minimal should preserve strict directives: {output}"
+    );
+}
+
+#[test]
+fn standard_strips_use_strict_directives() {
+    let input = r#"
+function foo() {
+  "use strict";
+  return 1;
+}
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Standard,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        !output.contains("\"use strict\""),
+        "standard should keep existing cleanup behavior: {output}"
+    );
+}
+
+#[test]
 fn standard_keeps_babel_strict_optional_chaining_assignment_recovery() {
     let input =
         r#"const x = (_a = e.ownerDocument) === null || _a === void 0 ? void 0 : _a.defaultView;"#;

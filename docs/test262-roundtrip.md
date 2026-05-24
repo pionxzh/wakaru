@@ -40,6 +40,7 @@ Known non-Wakaru reasons currently classified:
 - `sloppy-only-strict-ident`
 - `swc-parse-async-ident`
 - `swc-parse-static-init-await`
+- `swc-parse-yield-ident`
 - `swc-array-binding-elision`
 
 ## Baselines
@@ -47,12 +48,12 @@ Known non-Wakaru reasons currently classified:
 Recorded on 2026-05-24 with:
 
 ```powershell
-node scripts\correctness\test262-roundtrip.mjs --limit all --json target\test262-roundtrip-default-all-after-arrow-tdz-fixes.json
+node scripts\correctness\test262-roundtrip.mjs --limit all --json target\test262-roundtrip-default-all-after-use-strict-gate-and-yield-classification.json
 ```
 
 | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| default | 2180 | 1646 | 534 | 33 | 127 | 1476 | 10 |
+| default | 2180 | 1646 | 534 | 34 | 127 | 1485 | 0 |
 | classes | 8426 | 5063 | 3363 | 28 | 676 | 4292 | 67 |
 | destructuring | 1034 | 891 | 143 | 28 | 45 | 809 | 9 |
 | async-generators | 1707 | 666 | 1041 | 11 | 6 | 636 | 13 |
