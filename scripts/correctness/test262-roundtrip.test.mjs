@@ -198,6 +198,22 @@ test("knownWakaruParseUnsupportedReason classifies SWC parser gaps", () => {
     ),
     "swc-parse-yield-ident",
   );
+  assert.equal(
+    knownWakaruParseUnsupportedReason(
+      new Error("failed to parse input.js: Error { error: (26..37, AsyncConstructor) }"),
+      [{ name: "sloppy", strict: false }],
+      "test/language/expressions/class/elements/syntax/valid/grammar-static-ctor-async-meth-valid.js",
+    ),
+    "swc-parse-static-async-constructor-method",
+  );
+  assert.equal(
+    knownWakaruParseUnsupportedReason(
+      new Error('failed to parse input.js: Error { error: (13..18, Expected("{", "await")) }'),
+      [{ name: "sloppy", strict: false }],
+      "test/language/expressions/class/class-name-ident-await.js",
+    ),
+    "swc-parse-await-class-name",
+  );
 });
 
 test("knownSwcFidelityIssueReason classifies array binding elision printer gaps", () => {
@@ -216,6 +232,22 @@ test("knownSwcFidelityIssueReason classifies array binding elision printer gaps"
       decompiled: "for ({ x } of values) {}",
     }),
     null,
+  );
+  assert.equal(
+    knownSwcFidelityIssueReason({
+      path: "test/language/expressions/class/elements/syntax/valid/grammar-static-ctor-meth-valid.js",
+      error: new Error("SyntaxError: A class may only have one constructor"),
+      decompiled: "class {\nconstructor(){}\nconstructor(){}\n}",
+    }),
+    "swc-print-static-constructor-method",
+  );
+  assert.equal(
+    knownSwcFidelityIssueReason({
+      path: "test/language/expressions/class/heritage-arrow-function.js",
+      error: new Error("SyntaxError: Unexpected token '=>'"),
+      decompiled: "var C = class extends ()=>{} {\n};",
+    }),
+    "swc-print-class-extends-arrow-parens",
   );
 });
 

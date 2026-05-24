@@ -178,6 +178,99 @@ function foo() {
 }
 
 #[test]
+fn minimal_preserves_indirect_calls() {
+    let input = r#"
+const ref = (0, s.useRef)(0);
+const result = (0, eval)("this");
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Minimal,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_simplifies_indirect_calls() {
+    let input = r#"
+const ref = (0, s.useRef)(0);
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Standard,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    let expected = r#"
+const ref = s.useRef(0);
+"#;
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minimal_preserves_function_expressions() {
+    let input = r#"
+const fn = function() {
+  return value;
+};
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Minimal,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert_eq_normalized(&output, input.trim());
+}
+
+#[test]
+fn standard_keeps_arrow_function_recovery() {
+    let input = r#"
+const fn = function() {
+  return value;
+};
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Standard,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    let expected = r#"
+const fn = () => value;
+"#;
+    assert_eq_normalized(&output, expected.trim());
+}
+
+#[test]
 fn standard_keeps_babel_strict_optional_chaining_assignment_recovery() {
     let input =
         r#"const x = (_a = e.ownerDocument) === null || _a === void 0 ? void 0 : _a.defaultView;"#;

@@ -99,9 +99,9 @@ fn is_pure_no_op_stmt(
     if matches!(expr.as_ref(), Expr::Lit(Lit::Str(_))) {
         return false;
     }
-    // Never drop function/arrow expressions — they represent intentional wrapper
-    // patterns (e.g. webcrack output wrapped in `(function anonymous(...) { ... })`)
-    if is_fn_or_arrow(expr) {
+    // Never drop function/arrow/class expressions — they can represent
+    // intentional wrapper patterns, and class evaluation can throw.
+    if is_fn_arrow_or_class(expr) {
         return false;
     }
     // Identifier reads are observable: unresolved identifiers throw ReferenceError,
@@ -110,6 +110,9 @@ fn is_pure_no_op_stmt(
         return false;
     }
     if is_observable_typeof(expr, unresolved_mark) {
+        return false;
+    }
+    if is_this_read(expr) {
         return false;
     }
     // Computed object literal keys perform ToPropertyKey even when the key
@@ -141,10 +144,18 @@ fn is_observable_typeof(expr: &Expr, unresolved_mark: Mark) -> bool {
     }
 }
 
-fn is_fn_or_arrow(expr: &Expr) -> bool {
+fn is_this_read(expr: &Expr) -> bool {
     match expr {
-        Expr::Fn(_) | Expr::Arrow(_) => true,
-        Expr::Paren(paren) => is_fn_or_arrow(&paren.expr),
+        Expr::This(_) => true,
+        Expr::Paren(paren) => is_this_read(&paren.expr),
+        _ => false,
+    }
+}
+
+fn is_fn_arrow_or_class(expr: &Expr) -> bool {
+    match expr {
+        Expr::Fn(_) | Expr::Arrow(_) | Expr::Class(_) => true,
+        Expr::Paren(paren) => is_fn_arrow_or_class(&paren.expr),
         _ => false,
     }
 }

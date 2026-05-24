@@ -354,6 +354,21 @@ function probe() {
 }
 
 #[test]
+fn preserves_this_read_statement() {
+    let input = r#"
+class C extends Base {
+  constructor() {
+    (() => {
+      this;
+    })();
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn drops_safe_identifier_read_statements() {
     let input = r#"
 undefined;
@@ -417,6 +432,18 @@ doSomething();
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_class_expression_statement() {
+    let input = r#"
+(class {
+  static [name] = value;
+});
+doSomething();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]

@@ -160,6 +160,17 @@ class C {
 }
 
 #[test]
+fn keeps_computed_static_prototype_field() {
+    let input = r#"
+class C {
+    static ["prototype"] = value;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn keeps_computed_proto_object_key() {
     let input = r#"
 const obj = {

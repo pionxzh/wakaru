@@ -48,7 +48,7 @@ impl VisitMut for UnBracketNotation {
             _ => return,
         };
 
-        if is_computed && matches!(value.as_str(), "__proto__" | "constructor") {
+        if is_computed && matches!(value.as_str(), "__proto__" | "constructor" | "prototype") {
             return;
         }
 

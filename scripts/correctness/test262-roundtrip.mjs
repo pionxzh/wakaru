@@ -533,6 +533,15 @@ export function knownWakaruParseUnsupportedReason(error, variants, path) {
   if (message.includes("TS1109") && normalized.includes("yield-as-identifier")) {
     return "swc-parse-yield-ident";
   }
+  if (message.includes("AsyncConstructor") && normalized.includes("grammar-static-ctor-async")) {
+    return "swc-parse-static-async-constructor-method";
+  }
+  if (
+    message.includes('Expected("{", "await")') &&
+    normalized.includes("/class/class-name-ident-await")
+  ) {
+    return "swc-parse-await-class-name";
+  }
   return null;
 }
 
@@ -545,6 +554,21 @@ export function knownSwcFidelityIssueReason({ path, error, decompiled }) {
     /Test262Error|TypeError/.test(formatError(error))
   ) {
     return "swc-array-binding-elision";
+  }
+  if (
+    normalized.includes("grammar-static-ctor-meth-valid.js") &&
+    /A class may only have one constructor/.test(formatError(error)) &&
+    /\bconstructor\s*\(\)\s*\{\}\s*constructor\s*\(\)/.test(decompiled)
+  ) {
+    return "swc-print-static-constructor-method";
+  }
+  if (
+    normalized.includes("/class/heritage-") &&
+    normalized.includes("arrow-function") &&
+    /Unexpected token '=>'/.test(formatError(error)) &&
+    /\bclass\s+extends\s+(?:async\s*)?\([^)]*\)\s*=>/.test(decompiled)
+  ) {
+    return "swc-print-class-extends-arrow-parens";
   }
   return null;
 }
