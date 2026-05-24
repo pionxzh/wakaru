@@ -28,6 +28,7 @@ import vm from "node:vm";
 const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const defaultTest262Root = resolve(repoRoot, "..", "test262");
 const defaultToolRoot = join(repoRoot, "target", "correctness-tools", "test262-roundtrip");
+const defaultKnownBlockersPath = join(repoRoot, "scripts", "correctness", "test262-known-blockers.json");
 const defaultRewriteLevel = "minimal";
 const defaultTransform = "terser";
 const supportedTransforms = new Set(["none", "terser"]);
@@ -71,6 +72,8 @@ export function parseArgs(argv) {
     terserProfile: "light",
     level: defaultRewriteLevel,
     json: null,
+    summary: null,
+    knownBlockers: defaultKnownBlockersPath,
     details: false,
     keepTemp: false,
     toolRoot: defaultToolRoot,
@@ -94,6 +97,10 @@ export function parseArgs(argv) {
       options.terserProfile = readRequiredValue(argv, ++i, arg);
     } else if (arg === "--json") {
       options.json = resolve(readRequiredValue(argv, ++i, arg));
+    } else if (arg === "--summary") {
+      options.summary = resolve(readRequiredValue(argv, ++i, arg));
+    } else if (arg === "--known-blockers") {
+      options.knownBlockers = resolve(readRequiredValue(argv, ++i, arg));
     } else if (arg === "--tool-root") {
       options.toolRoot = resolve(readRequiredValue(argv, ++i, arg));
     } else if (arg === "--details") {
@@ -144,6 +151,8 @@ Options:
   --terser-profile <p>  light | full. Default: light
   --level <level>       minimal | standard | aggressive. Default: minimal
   --json <file>         Write full JSON report
+  --summary <file>      Write deterministic Markdown summary
+  --known-blockers <f>  Known non-Wakaru blocker manifest
   --details             Print skip/failure details
   --keep-temp           Keep temporary transformed files
 `;
@@ -315,6 +324,7 @@ export function discoverTests(test262Root, paths) {
 
 export async function runRoundTrip(options) {
   const tests = discoverTests(options.test262Root, options.paths);
+  const knownBlockers = loadKnownBlockers(options.knownBlockers ?? defaultKnownBlockersPath);
   const tmpRoot = mkdtempSync(join(tmpdir(), "wakaru-test262-"));
   const report = {
     options: {
@@ -324,6 +334,7 @@ export async function runRoundTrip(options) {
       transform: options.transform,
       terserProfile: options.terserProfile,
       level: options.level,
+      knownBlockers: knownBlockers.path ? relative(repoRoot, knownBlockers.path).split(sep).join("/") : null,
     },
     totals: {
       discovered: tests.length,
@@ -379,6 +390,7 @@ export async function runRoundTrip(options) {
         variants,
         tmpRoot,
         options,
+        knownBlockers,
       });
       report.results.push(result);
       if (result.status === "passed") {
@@ -400,7 +412,16 @@ export async function runRoundTrip(options) {
   return report;
 }
 
-async function runOneTest({ filePath, relativePath, source, harnessSource, variants, tmpRoot, options }) {
+async function runOneTest({
+  filePath,
+  relativePath,
+  source,
+  harnessSource,
+  variants,
+  tmpRoot,
+  options,
+  knownBlockers,
+}) {
   try {
     for (const variant of variants) {
       executeTestSource({
@@ -442,7 +463,12 @@ async function runOneTest({ filePath, relativePath, source, harnessSource, varia
       basename: relativePath.replaceAll("/", "__"),
     });
   } catch (error) {
-    const parseUnsupportedReason = knownWakaruParseUnsupportedReason(error, variants, relativePath);
+    const parseUnsupportedReason = knownWakaruParseUnsupportedReason(
+      error,
+      variants,
+      relativePath,
+      knownBlockers,
+    );
     if (parseUnsupportedReason) {
       return unsupported(relativePath, "wakaru-parse", error, parseUnsupportedReason);
     }
@@ -459,7 +485,12 @@ async function runOneTest({ filePath, relativePath, source, harnessSource, varia
       });
     }
   } catch (error) {
-    const fidelityReason = knownSwcFidelityIssueReason({ path: relativePath, error, decompiled });
+    const fidelityReason = knownSwcFidelityIssueReason({
+      path: relativePath,
+      error,
+      decompiled,
+      knownBlockers,
+    });
     if (fidelityReason) {
       return rejected(relativePath, "swc-fidelity", error, fidelityReason, {
         transformed,
@@ -514,63 +545,138 @@ export function isSloppyOnlyWakaruParseUnsupported(error, variants) {
   return knownWakaruParseUnsupportedReason(error, variants, "") === "sloppy-only-strict-ident";
 }
 
-export function knownWakaruParseUnsupportedReason(error, variants, path) {
-  const message = formatError(error);
-  const normalized = path.split("\\").join("/");
-  if (
-    variants.length > 0 &&
-    variants.every((variant) => !variant.strict) &&
-    message.includes("InvalidIdentInStrict")
-  ) {
-    return "sloppy-only-strict-ident";
+export function knownWakaruParseUnsupportedReason(
+  error,
+  variants,
+  path,
+  knownBlockers = defaultKnownBlockers(),
+) {
+  return classifyKnownBlocker({
+    knownBlockers,
+    status: "unsupported",
+    phase: "wakaru-parse",
+    path,
+    error,
+    variants,
+  });
+}
+
+export function knownSwcFidelityIssueReason({
+  path,
+  error,
+  decompiled,
+  knownBlockers = defaultKnownBlockers(),
+}) {
+  return classifyKnownBlocker({
+    knownBlockers,
+    status: "rejected",
+    phase: "swc-fidelity",
+    path,
+    error,
+    decompiled,
+  });
+}
+
+let cachedDefaultKnownBlockers = null;
+
+function defaultKnownBlockers() {
+  cachedDefaultKnownBlockers ??= loadKnownBlockers(defaultKnownBlockersPath);
+  return cachedDefaultKnownBlockers;
+}
+
+export function loadKnownBlockers(path) {
+  if (!path) {
+    return { path: null, entries: [] };
   }
-  if (message.includes("InvalidIdentInAsync")) {
-    return "swc-parse-async-ident";
+  const normalizedPath = resolve(path);
+  const manifest = JSON.parse(readFileSync(normalizedPath, "utf8"));
+  if (manifest.version !== 1 || !Array.isArray(manifest.entries)) {
+    throw new Error(`invalid known blocker manifest: ${path}`);
   }
-  if (message.includes("ExpectedIdent") && normalized.includes("static-init-await")) {
-    return "swc-parse-static-init-await";
+  return {
+    path: normalizedPath,
+    entries: manifest.entries.map((entry) => validateKnownBlockerEntry(entry, path)),
+  };
+}
+
+function validateKnownBlockerEntry(entry, path) {
+  if (!entry || typeof entry !== "object") {
+    throw new Error(`invalid known blocker entry in ${path}`);
   }
-  if (message.includes("TS1109") && normalized.includes("yield-as-identifier")) {
-    return "swc-parse-yield-ident";
+  for (const key of ["reason", "status", "phase", "when"]) {
+    if (!entry[key]) {
+      throw new Error(`known blocker entry missing ${key} in ${path}`);
+    }
   }
-  if (message.includes("AsyncConstructor") && normalized.includes("grammar-static-ctor-async")) {
-    return "swc-parse-static-async-constructor-method";
-  }
-  if (
-    message.includes('Expected("{", "await")') &&
-    normalized.includes("/class/class-name-ident-await")
-  ) {
-    return "swc-parse-await-class-name";
+  return entry;
+}
+
+export function classifyKnownBlocker({
+  knownBlockers,
+  status,
+  phase,
+  path,
+  error = null,
+  decompiled = "",
+  variants = [],
+}) {
+  const normalizedPath = path.split("\\").join("/");
+  const message = error ? formatError(error) : "";
+  for (const entry of knownBlockers.entries) {
+    if (entry.status !== status || entry.phase !== phase) {
+      continue;
+    }
+    if (matchesKnownBlocker(entry.when, {
+      path: normalizedPath,
+      error: message,
+      decompiled,
+      variants,
+    })) {
+      return entry.reason;
+    }
   }
   return null;
 }
 
-export function knownSwcFidelityIssueReason({ path, error, decompiled }) {
-  const normalized = path.split("\\").join("/");
-  if (
-    normalized.startsWith("test/language/statements/for-of/dstr/") &&
-    /array-(?:elem-trlg-iter-)?elision|array-iteration/.test(normalized) &&
-    /\bfor\s*\(\s*\[(?:\]|[^,\]]+\]\s+of)/.test(decompiled) &&
-    /Test262Error|TypeError/.test(formatError(error))
-  ) {
-    return "swc-array-binding-elision";
+function matchesKnownBlocker(when, context) {
+  if (when.variants === "sloppy-only" && !isSloppyOnly(context.variants)) {
+    return false;
   }
-  if (
-    normalized.includes("grammar-static-ctor-meth-valid.js") &&
-    /A class may only have one constructor/.test(formatError(error)) &&
-    /\bconstructor\s*\(\)\s*\{\}\s*constructor\s*\(\)/.test(decompiled)
-  ) {
-    return "swc-print-static-constructor-method";
+  if (!allIncludes(context.path, when.pathIncludes)) {
+    return false;
   }
-  if (
-    normalized.includes("/class/heritage-") &&
-    normalized.includes("arrow-function") &&
-    /Unexpected token '=>'/.test(formatError(error)) &&
-    /\bclass\s+extends\s+(?:async\s*)?\([^)]*\)\s*=>/.test(decompiled)
-  ) {
-    return "swc-print-class-extends-arrow-parens";
+  if (!anyStartsWith(context.path, when.pathStartsWith)) {
+    return false;
   }
-  return null;
+  if (!allIncludes(context.error, when.errorIncludes)) {
+    return false;
+  }
+  if (!allRegexMatch(context.path, when.pathRegex)) {
+    return false;
+  }
+  if (!allRegexMatch(context.error, when.errorRegex)) {
+    return false;
+  }
+  if (!allRegexMatch(context.decompiled, when.decompiledRegex)) {
+    return false;
+  }
+  return true;
+}
+
+function isSloppyOnly(variants) {
+  return variants.length > 0 && variants.every((variant) => !variant.strict);
+}
+
+function allIncludes(value, needles) {
+  return !needles || needles.every((needle) => value.includes(needle));
+}
+
+function anyStartsWith(value, prefixes) {
+  return !prefixes || prefixes.some((prefix) => value.startsWith(prefix));
+}
+
+function allRegexMatch(value, patterns) {
+  return !patterns || patterns.every((pattern) => new RegExp(pattern).test(value));
 }
 
 function runWakaru(source, { level, tmpRoot, basename }) {
@@ -716,6 +822,72 @@ function formatError(error) {
   return String(error);
 }
 
+export function formatMarkdownSummary(report) {
+  const lines = [
+    "# Test262 Round-Trip Summary",
+    "",
+    "## Options",
+    "",
+    `- paths: ${report.options.paths.join(", ")}`,
+    `- limit: ${report.options.limit}`,
+    `- transform: ${report.options.transform}`,
+    `- terserProfile: ${report.options.terserProfile}`,
+    `- level: ${report.options.level}`,
+    `- knownBlockers: ${report.options.knownBlockers ?? "none"}`,
+    "",
+    "## Totals",
+    "",
+    "| Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |",
+    "|---:|---:|---:|---:|---:|---:|---:|",
+    `| ${report.totals.discovered} | ${report.totals.runnable} | ${report.totals.skipped} | ${report.totals.unsupported} | ${report.totals.rejected} | ${report.totals.passed} | ${report.totals.failed} |`,
+    "",
+    "## Reasons",
+    "",
+  ];
+
+  const reasonCounts = summarizeReasons(report.results);
+  if (reasonCounts.length === 0) {
+    lines.push("No unsupported, rejected, or skipped reasons recorded.", "");
+  } else {
+    lines.push("| Status | Reason | Count |", "|---|---|---:|");
+    for (const item of reasonCounts) {
+      lines.push(`| ${item.status} | ${item.reason} | ${item.count} |`);
+    }
+    lines.push("");
+  }
+
+  const failed = report.results.filter((result) => result.status === "failed");
+  lines.push("## Failures", "");
+  if (failed.length === 0) {
+    lines.push("No Wakaru correctness failures.", "");
+  } else {
+    for (const result of failed) {
+      lines.push(`- ${result.path} (${result.phase})`);
+    }
+    lines.push("");
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function summarizeReasons(results) {
+  const counts = new Map();
+  for (const result of results) {
+    if (!["skipped", "unsupported", "rejected"].includes(result.status)) {
+      continue;
+    }
+    const reason = result.reason ?? result.phase ?? "unknown";
+    const key = `${result.status}\0${reason}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([key, count]) => {
+      const [status, reason] = key.split("\0");
+      return { status, reason, count };
+    })
+    .sort((a, b) => a.status.localeCompare(b.status) || a.reason.localeCompare(b.reason));
+}
+
 function printReport(report, details) {
   console.log("# Test262 round-trip");
   console.log(`discovered: ${report.totals.discovered}`);
@@ -804,6 +976,10 @@ if (isMain()) {
       if (options.json) {
         mkdirSync(dirname(options.json), { recursive: true });
         writeFileSync(options.json, `${JSON.stringify(report, null, 2)}\n`);
+      }
+      if (options.summary) {
+        mkdirSync(dirname(options.summary), { recursive: true });
+        writeFileSync(options.summary, formatMarkdownSummary(report));
       }
       process.exitCode = report.totals.failed === 0 ? 0 : 1;
     }

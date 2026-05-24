@@ -12,6 +12,7 @@ The runner is intentionally feature-scoped. Prefer `--preset` or focused
 ```powershell
 node scripts\correctness\test262-roundtrip.mjs --limit 500
 node scripts\correctness\test262-roundtrip.mjs --limit all --json target\test262-default.json
+node scripts\correctness\test262-roundtrip.mjs --limit all --summary target\test262-default.md
 node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --json target\test262-classes.json
 node scripts\correctness\compare-test262-reports.mjs target\before.json target\after.json --details
 ```
@@ -21,8 +22,13 @@ Defaults:
 - `--transform terser`
 - `--terser-profile light`
 - `--level minimal`
+- `--known-blockers scripts/correctness/test262-known-blockers.json`
 - default paths: coalesce, optional chaining, object expressions, array
   expressions, `for-of`, and `let`
+
+Use `--summary <file>` when you want a stable Markdown report suitable for
+reviewing baseline movement in git diffs. It records options, totals,
+reason-count buckets, and current Wakaru failures without timestamps.
 
 ## Status Buckets
 
@@ -46,6 +52,12 @@ Known non-Wakaru reasons currently classified:
 - `swc-array-binding-elision`
 - `swc-print-class-extends-arrow-parens`
 - `swc-print-static-constructor-method`
+
+Most known non-Wakaru classifications live in
+`scripts/correctness/test262-known-blockers.json`. Keep entries narrow: match the
+status, phase, path shape, error text, and decompiled output shape when possible.
+Do not add a manifest entry for a real Wakaru semantic failure; fix the rule or
+record it as a `failed` baseline instead.
 
 ## Baselines
 

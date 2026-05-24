@@ -6,11 +6,14 @@ import test from "node:test";
 
 import {
   buildHarnessSource,
+  classifyKnownBlocker,
   classifyTest,
   executeTestSource,
+  formatMarkdownSummary,
   isSloppyOnlyWakaruParseUnsupported,
   knownSwcFidelityIssueReason,
   knownWakaruParseUnsupportedReason,
+  loadKnownBlockers,
   parseArgs,
   parseTestMetadata,
   runnableVariants,
@@ -163,6 +166,10 @@ test("parseArgs accepts repeatable paths, presets, and all limit", () => {
     "classes",
     "--limit",
     "all",
+    "--summary",
+    "target/test262-summary.md",
+    "--known-blockers",
+    "scripts/correctness/test262-known-blockers.json",
   ]);
 
   assert.deepEqual(options.paths, [
@@ -175,6 +182,59 @@ test("parseArgs accepts repeatable paths, presets, and all limit", () => {
   assert.equal(options.level, "minimal");
   assert.equal(options.transform, "terser");
   assert.equal(options.terserProfile, "light");
+  assert.match(options.summary, /target[\\/]test262-summary\.md$/);
+  assert.match(options.knownBlockers, /scripts[\\/]correctness[\\/]test262-known-blockers\.json$/);
+});
+
+test("loadKnownBlockers and classifyKnownBlocker use manifest entries", () => {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-known-blockers-unit-"));
+  const manifestPath = join(root, "known-blockers.json");
+  try {
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        version: 1,
+        entries: [
+          {
+            reason: "tool-printer-gap",
+            status: "rejected",
+            phase: "swc-fidelity",
+            when: {
+              pathIncludes: ["sample"],
+              errorIncludes: ["SyntaxError"],
+              decompiledRegex: ["class\\s+extends\\s+\\(\\)\\s*=>"],
+            },
+          },
+        ],
+      }),
+    );
+
+    const knownBlockers = loadKnownBlockers(manifestPath);
+    assert.equal(
+      classifyKnownBlocker({
+        knownBlockers,
+        status: "rejected",
+        phase: "swc-fidelity",
+        path: "test/language/sample.js",
+        error: new Error("SyntaxError"),
+        decompiled: "class extends () => {}",
+      }),
+      "tool-printer-gap",
+    );
+    assert.equal(
+      classifyKnownBlocker({
+        knownBlockers,
+        status: "unsupported",
+        phase: "wakaru-parse",
+        path: "test/language/sample.js",
+        error: new Error("SyntaxError"),
+        decompiled: "class extends () => {}",
+      }),
+      null,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("knownWakaruParseUnsupportedReason classifies SWC parser gaps", () => {
@@ -249,6 +309,38 @@ test("knownSwcFidelityIssueReason classifies array binding elision printer gaps"
     }),
     "swc-print-class-extends-arrow-parens",
   );
+});
+
+test("formatMarkdownSummary emits stable totals, reasons, and failures", () => {
+  const summary = formatMarkdownSummary({
+    options: {
+      paths: ["test/language/sample"],
+      limit: "all",
+      transform: "terser",
+      terserProfile: "light",
+      level: "minimal",
+      knownBlockers: "scripts/correctness/test262-known-blockers.json",
+    },
+    totals: {
+      discovered: 3,
+      runnable: 2,
+      skipped: 1,
+      unsupported: 0,
+      rejected: 1,
+      passed: 0,
+      failed: 1,
+    },
+    results: [
+      { path: "a.js", status: "skipped", reason: "flag:async" },
+      { path: "b.js", status: "rejected", reason: "swc-array-binding-elision" },
+      { path: "c.js", status: "failed", phase: "decompiled-runtime" },
+    ],
+  });
+
+  assert.match(summary, /# Test262 Round-Trip Summary/);
+  assert.match(summary, /\| 3 \| 2 \| 1 \| 0 \| 1 \| 0 \| 1 \|/);
+  assert.match(summary, /\| rejected \| swc-array-binding-elision \| 1 \|/);
+  assert.match(summary, /- c\.js \(decompiled-runtime\)/);
 });
 
 test("runRoundTrip reports baseline failures as unsupported inputs", async () => {

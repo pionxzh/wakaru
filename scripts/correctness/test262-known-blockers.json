@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "reason": "sloppy-only-strict-ident",
+      "status": "unsupported",
+      "phase": "wakaru-parse",
+      "when": {
+        "variants": "sloppy-only",
+        "errorIncludes": ["InvalidIdentInStrict"]
+      },
+      "note": "SWC parses these identifiers as strict-mode-only rejects even when the Test262 variant is sloppy-only."
+    },
+    {
+      "reason": "swc-parse-async-ident",
+      "status": "unsupported",
+      "phase": "wakaru-parse",
+      "when": {
+        "errorIncludes": ["InvalidIdentInAsync"]
+      }
+    },
+    {
+      "reason": "swc-parse-await-class-name",
+      "status": "unsupported",
+      "phase": "wakaru-parse",
+      "when": {
+        "pathIncludes": ["/class/class-name-ident-await"],
+        "errorIncludes": ["Expected(\"{\", \"await\")"]
+      }
+    },
+    {
+      "reason": "swc-parse-static-init-await",
+      "status": "unsupported",
+      "phase": "wakaru-parse",
+      "when": {
+        "pathIncludes": ["static-init-await"],
+        "errorIncludes": ["ExpectedIdent"]
+      }
+    },
+    {
+      "reason": "swc-parse-static-async-constructor-method",
+      "status": "unsupported",
+      "phase": "wakaru-parse",
+      "when": {
+        "pathIncludes": ["grammar-static-ctor-async"],
+        "errorIncludes": ["AsyncConstructor"]
+      }
+    },
+    {
+      "reason": "swc-parse-yield-ident",
+      "status": "unsupported",
+      "phase": "wakaru-parse",
+      "when": {
+        "pathIncludes": ["yield-as-identifier"],
+        "errorIncludes": ["TS1109"]
+      }
+    },
+    {
+      "reason": "swc-array-binding-elision",
+      "status": "rejected",
+      "phase": "swc-fidelity",
+      "when": {
+        "pathStartsWith": ["test/language/statements/for-of/dstr/"],
+        "pathRegex": ["array-(?:elem-trlg-iter-)?elision|array-iteration"],
+        "errorRegex": ["Test262Error|TypeError"],
+        "decompiledRegex": ["\\bfor\\s*\\(\\s*\\[(?:\\]|[^,\\]]+\\]\\s+of)"]
+      },
+      "note": "SWC currently prints array binding elisions in a way that does not preserve this Test262 runtime behavior."
+    },
+    {
+      "reason": "swc-print-class-extends-arrow-parens",
+      "status": "rejected",
+      "phase": "swc-fidelity",
+      "when": {
+        "pathIncludes": ["/class/heritage-", "arrow-function"],
+        "errorIncludes": ["Unexpected token '=>'"],
+        "decompiledRegex": ["\\bclass\\s+extends\\s+(?:async\\s*)?\\([^)]*\\)\\s*=>"]
+      }
+    },
+    {
+      "reason": "swc-print-static-constructor-method",
+      "status": "rejected",
+      "phase": "swc-fidelity",
+      "when": {
+        "pathIncludes": ["grammar-static-ctor-meth-valid.js"],
+        "errorIncludes": ["A class may only have one constructor"],
+        "decompiledRegex": ["\\bconstructor\\s*\\(\\)\\s*\\{\\}\\s*constructor\\s*\\(\\)"]
+      }
+    }
+  ]
+}
