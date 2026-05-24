@@ -39,7 +39,7 @@ impl VisitMut for VarDeclToLetConst {
         must_stay_var.extend(collect_duplicate_decl_bindings_module(&module.body));
         must_stay_var.extend(collect_use_before_decl_vars_module(&module.body, &var_ids));
         must_stay_var.extend(collect_loop_captured_vars_module(&module.body));
-        keep_direct_eval_affected_vars(&module.body, &var_ids, &mut must_stay_var);
+        keep_eval_affected_vars(&module.body, &var_ids, &mut must_stay_var, true);
 
         // Convert all var decls in module (recursively through blocks, stopping at function boundaries)
         let mut converter = VarConverter {
@@ -82,7 +82,7 @@ impl VisitMut for VarDeclToLetConst {
         ));
         must_stay_var.extend(collect_use_before_decl_vars_stmts(&body.stmts, &var_ids));
         must_stay_var.extend(collect_loop_captured_vars_stmts(&body.stmts));
-        keep_direct_eval_affected_vars(&body.stmts, &var_ids, &mut must_stay_var);
+        keep_eval_affected_vars(&body.stmts, &var_ids, &mut must_stay_var, false);
 
         let mut converter = VarConverter {
             assigned: &assigned,
@@ -1051,20 +1051,27 @@ impl VisitDirectEvalWith for [Stmt] {
     }
 }
 
-fn keep_direct_eval_affected_vars<T>(
+fn keep_eval_affected_vars<T>(
     items: &[T],
     var_ids: &HashSet<BindingId>,
     must_stay_var: &mut HashSet<BindingId>,
+    include_indirect_eval: bool,
 ) where
     [T]: VisitDirectEvalWith,
 {
     let mut analyzer = DirectEvalAnalyzer::default();
     items.visit_direct_eval_with(&mut analyzer);
 
+    let sources = analyzer.known_direct_eval_sources.iter().chain(
+        include_indirect_eval
+            .then_some(&analyzer.known_indirect_eval_sources)
+            .into_iter()
+            .flatten(),
+    );
+
     for var_id in var_ids {
-        if analyzer
-            .known_eval_sources
-            .iter()
+        if sources
+            .clone()
             .any(|source| js_source_mentions_binding(source, &var_id.0))
         {
             must_stay_var.insert(var_id.clone());
@@ -1074,26 +1081,68 @@ fn keep_direct_eval_affected_vars<T>(
 
 #[derive(Default)]
 struct DirectEvalAnalyzer {
-    known_eval_sources: Vec<String>,
+    known_direct_eval_sources: Vec<String>,
+    known_indirect_eval_sources: Vec<String>,
 }
 
 impl Visit for DirectEvalAnalyzer {
     fn visit_call_expr(&mut self, expr: &swc_core::ecma::ast::CallExpr) {
-        if let Callee::Expr(callee) = &expr.callee {
-            if let Expr::Ident(id) = callee.as_ref() {
-                if id.sym == "eval" {
-                    if let Some(source) = expr
-                        .args
-                        .first()
-                        .and_then(|arg| eval_static_string(arg.expr.as_ref()))
-                    {
-                        self.known_eval_sources.push(source);
-                    }
-                    return;
-                }
+        if let Some(source) = expr
+            .args
+            .first()
+            .and_then(|arg| eval_static_string(arg.expr.as_ref()))
+        {
+            if is_direct_eval_call(expr) {
+                self.known_direct_eval_sources.push(source);
+                return;
+            }
+            if is_indirect_eval_call(expr) {
+                self.known_indirect_eval_sources.push(source);
+                return;
             }
         }
         expr.visit_children_with(self);
+    }
+}
+
+fn is_direct_eval_call(expr: &swc_core::ecma::ast::CallExpr) -> bool {
+    let Callee::Expr(callee) = &expr.callee else {
+        return false;
+    };
+    matches!(callee.as_ref(), Expr::Ident(id) if id.sym == "eval")
+}
+
+fn is_indirect_eval_call(expr: &swc_core::ecma::ast::CallExpr) -> bool {
+    let Callee::Expr(callee) = &expr.callee else {
+        return false;
+    };
+    match strip_parens(callee.as_ref()) {
+        Expr::Seq(seq) => {
+            matches!(seq.exprs.last().map(|expr| expr.as_ref()), Some(Expr::Ident(id)) if id.sym == "eval")
+        }
+        Expr::Call(call) => is_object_wrapped_eval_call(call),
+        _ => false,
+    }
+}
+
+fn is_object_wrapped_eval_call(call: &swc_core::ecma::ast::CallExpr) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    if !matches!(strip_parens(callee.as_ref()), Expr::Ident(id) if id.sym == "Object") {
+        return false;
+    }
+    let Some(arg) = call.args.first() else {
+        return false;
+    };
+    arg.spread.is_none()
+        && matches!(strip_parens(arg.expr.as_ref()), Expr::Ident(id) if id.sym == "eval")
+}
+
+fn strip_parens(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_parens(&paren.expr),
+        _ => expr,
     }
 }
 

@@ -812,6 +812,46 @@ function f() {
 }
 
 #[test]
+fn top_level_indirect_eval_keeps_referenced_var() {
+    let input = r#"
+var count = 0;
+(0, eval)("count += 1");
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn function_indirect_eval_does_not_block_local_var() {
+    let input = r#"
+function f() {
+    var count = 0;
+    (0, eval)("count += 1");
+    return count;
+}
+"#;
+    let expected = r#"
+function f() {
+    const count = 0;
+    (0, eval)("count += 1");
+    return count;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn top_level_object_wrapped_eval_keeps_referenced_var() {
+    let input = r#"
+var count = 0;
+Object(eval)("count += 1");
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn direct_eval_hidden_require_does_not_block_unrelated_var() {
     let input = r#"
 function f(moduleName) {
