@@ -508,7 +508,8 @@ impl ArgumentsChecker {
                     Expr::Ident(id)
                         if self
                             .allowed_loop_indices
-                            .contains(&(id.sym.clone(), id.ctxt))
+                            .iter()
+                            .any(|index| ident_matches_binding(id, index))
                 )
                 || matches!(
                     expr,
@@ -519,7 +520,8 @@ impl ArgumentsChecker {
                                 Expr::Ident(id)
                                     if self
                                         .allowed_loop_indices
-                                        .contains(&(id.sym.clone(), id.ctxt))
+                                        .iter()
+                                        .any(|index| ident_matches_binding(id, index))
                             )
                 );
         }
@@ -617,7 +619,7 @@ fn arguments_length_alias_from_stmt(stmt: &Stmt) -> Option<BindingId> {
     if is_arguments_ident(&member.obj)
         && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "length")
     {
-        return Some((binding.id.sym.clone(), binding.id.ctxt));
+        return Some(binding_id(&binding.id));
     }
 
     None
@@ -635,7 +637,7 @@ fn zero_initialized_bindings_from_stmt(stmt: &Stmt) -> Vec<BindingId> {
                 return None;
             };
             if matches!(decl.init.as_deref(), Some(expr) if is_number(expr, 0)) {
-                return Some((binding.id.sym.clone(), binding.id.ctxt));
+                return Some(binding_id(&binding.id));
             }
             None
         })
@@ -670,10 +672,10 @@ fn arguments_length_for_loop_index(
         let Pat::Ident(binding) = &decl.name else {
             continue;
         };
-        let binding_id = (binding.id.sym.clone(), binding.id.ctxt);
+        let binding = binding_id(&binding.id);
         match decl.init.as_deref() {
-            Some(expr) if is_number(expr, 0) => index_candidates.push(binding_id),
-            Some(expr) if is_arguments_length_expr(expr) => local_length_aliases.push(binding_id),
+            Some(expr) if is_number(expr, 0) => index_candidates.push(binding),
+            Some(expr) if is_arguments_length_expr(expr) => local_length_aliases.push(binding),
             _ => {}
         }
     }
@@ -707,7 +709,7 @@ fn matches_arguments_length_loop_test(
     if bin.op != BinaryOp::Lt {
         return false;
     }
-    if !matches!(bin.left.as_ref(), Expr::Ident(id) if id.sym == index.0 && id.ctxt == index.1) {
+    if !matches!(bin.left.as_ref(), Expr::Ident(id) if ident_matches_binding(id, index)) {
         return false;
     }
     is_arguments_length_expr(bin.right.as_ref())
@@ -719,7 +721,7 @@ fn matches_loop_index_update(update: Option<&Expr>, index: &BindingId) -> bool {
         return false;
     };
     update.op == UpdateOp::PlusPlus
-        && matches!(update.arg.as_ref(), Expr::Ident(id) if id.sym == index.0 && id.ctxt == index.1)
+        && matches!(update.arg.as_ref(), Expr::Ident(id) if ident_matches_binding(id, index))
 }
 
 fn is_arguments_length_expr(expr: &Expr) -> bool {
@@ -731,7 +733,7 @@ fn is_arguments_length_expr(expr: &Expr) -> bool {
 }
 
 fn is_binding_ident(expr: &Expr, bindings: &[BindingId]) -> bool {
-    matches!(expr, Expr::Ident(id) if bindings.contains(&(id.sym.clone(), id.ctxt)))
+    matches!(expr, Expr::Ident(id) if bindings.iter().any(|binding| ident_matches_binding(id, binding)))
 }
 
 // ============================================================

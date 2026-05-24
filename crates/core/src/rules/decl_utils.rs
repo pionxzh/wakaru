@@ -49,10 +49,10 @@ pub fn collect_decl_binding_ids(decl: &Decl, ids: &mut HashSet<BindingId>) {
     match decl {
         Decl::Var(var) => collect_var_decl_binding_ids(var, ids),
         Decl::Fn(f) => {
-            ids.insert((f.ident.sym.clone(), f.ident.ctxt));
+            ids.insert(binding_id(&f.ident));
         }
         Decl::Class(c) => {
-            ids.insert((c.ident.sym.clone(), c.ident.ctxt));
+            ids.insert(binding_id(&c.ident));
         }
         _ => {}
     }
