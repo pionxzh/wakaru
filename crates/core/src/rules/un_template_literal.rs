@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, BinExpr, BinaryOp, CallExpr, Callee, Decl, Expr, Lit, MemberExpr,
-    MemberProp, Module, ModuleItem, SimpleAssignTarget, Stmt, TaggedTpl, Tpl, TplElement,
+    AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, Lit,
+    MemberExpr, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt, TaggedTpl, Tpl,
+    TplElement,
 };
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -273,13 +274,22 @@ fn extract_direct_template_helper_call(expr: &Expr) -> Option<(TemplateData, Opt
         return None;
     }
 
-    let Callee::Expr(callee) = &call.callee else {
-        return None;
+    let helper = match &call.callee {
+        Callee::Expr(callee) => {
+            let callee = strip_paren_expr(callee);
+            if let Some(helper) = expr_binding_key(callee) {
+                if !is_template_helper_name(helper.0.as_ref()) {
+                    return None;
+                }
+                Some(helper)
+            } else if is_inline_template_helper(callee) {
+                None
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
     };
-    let helper = expr_binding_key(strip_paren_expr(callee))?;
-    if !is_template_helper_name(helper.0.as_ref()) {
-        return None;
-    }
 
     let cooked = collect_template_array(call.args[0].expr.as_ref())?;
     let raw = if call.args.len() == 2 {
@@ -303,8 +313,46 @@ fn extract_direct_template_helper_call(expr: &Expr) -> Option<(TemplateData, Opt
             raw,
             helper: None,
         },
-        Some(helper),
+        helper,
     ))
+}
+
+fn is_inline_template_helper(expr: &Expr) -> bool {
+    match strip_paren_expr(expr) {
+        Expr::Fn(fn_expr) => {
+            if fn_expr.function.params.len() != 2 {
+                return false;
+            }
+            if !fn_expr
+                .function
+                .params
+                .iter()
+                .all(|param| matches!(param.pat, Pat::Ident(_)))
+            {
+                return false;
+            }
+            fn_expr.function.body.as_ref().is_some_and(|body| {
+                body.stmts
+                    .iter()
+                    .any(|stmt| matches!(stmt, Stmt::Return(_)))
+            })
+        }
+        Expr::Arrow(arrow) => {
+            arrow.params.len() == 2
+                && arrow
+                    .params
+                    .iter()
+                    .all(|param| matches!(param, Pat::Ident(_)))
+                && match arrow.body.as_ref() {
+                    BlockStmtOrExpr::Expr(_) => true,
+                    BlockStmtOrExpr::BlockStmt(body) => body
+                        .stmts
+                        .iter()
+                        .any(|stmt| matches!(stmt, Stmt::Return(_))),
+                }
+        }
+        _ => false,
+    }
 }
 
 /// Convert `"str" + a + b` (binary `+` chains with at least one string literal)

@@ -187,6 +187,32 @@ var out = tag`hello ${name}`;
 }
 
 #[test]
+fn restores_esbuild_terser_inlined_cached_tagged_template() {
+    let input = r#"
+var _a;
+var out = tag(_a || (_a = function(cooked, raw) { return cooked; }(["hello ", ""], ["hello ", ""])), name);
+"#;
+    let expected = r#"
+var out = tag`hello ${name}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn restores_esbuild_terser_inlined_raw_tagged_template() {
+    let input = r#"
+var _a;
+var out = tag(_a || (_a = function(cooked, raw) { return cooked; }(["line\n", "😀"], ["line\\n", "\\u{1f600}"])), value);
+"#;
+    let expected = r#"
+var out = tag`line\n${value}\u{1f600}`;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn restores_babel_cache_function_tagged_template() {
     let input = r#"
 function _templateObject() {
