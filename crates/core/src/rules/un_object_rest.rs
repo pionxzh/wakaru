@@ -6,8 +6,8 @@ use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignPat, AssignPatProp, BinaryOp, BindingIdent, BlockStmtOrExpr, Bool, CallExpr,
     Callee, CondExpr, Decl, Expr, ExprStmt, FnExpr, Ident, KeyValuePatProp, Lit, MemberExpr,
-    MemberProp, ObjectPat, ObjectPatProp, Pat, PropName, RestPat, Stmt, VarDecl, VarDeclKind,
-    VarDeclarator,
+    MemberProp, ObjectPat, ObjectPatProp, Pat, PropName, PropOrSpread, RestPat, Stmt, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -53,6 +53,11 @@ impl VisitMut for UnObjectRest {
             unresolved_mark: self.unresolved_mark,
         };
         module.visit_mut_children_with(&mut processor);
+        reattach_elided_object_rest_in_module_items(
+            &mut module.body,
+            &named_helpers,
+            self.unresolved_mark,
+        );
 
         // Process module-level statements
         let mut new_body = Vec::with_capacity(module.body.len());
@@ -133,6 +138,7 @@ struct ObjectRestProcessor<'a> {
 impl VisitMut for ObjectRestProcessor<'_> {
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
+        reattach_elided_object_rest_in_stmts(stmts, self.named_helpers, self.unresolved_mark);
 
         let mut new_stmts = Vec::with_capacity(stmts.len());
 
@@ -176,6 +182,216 @@ impl VisitMut for ObjectRestProcessor<'_> {
 }
 
 use swc_core::ecma::ast::ModuleItem;
+
+fn reattach_elided_object_rest_in_module_items(
+    items: &mut [ModuleItem],
+    named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+    unresolved_mark: Mark,
+) {
+    for item in items.iter_mut() {
+        if let ModuleItem::Stmt(stmt) = item {
+            reattach_elided_object_rest_in_stmt(stmt, named_helpers, unresolved_mark);
+        }
+    }
+
+    for rest_idx in 0..items.len() {
+        let Some(rest_binding) = module_item_single_undefined_binding(&items[rest_idx]) else {
+            continue;
+        };
+        let preceding: Vec<Stmt> = items[..rest_idx]
+            .iter()
+            .filter_map(|item| match item {
+                ModuleItem::Stmt(stmt) => Some(stmt.clone()),
+                ModuleItem::ModuleDecl(_) => None,
+            })
+            .collect();
+
+        let mut replacement_init = None;
+        for item in items.iter_mut().skip(rest_idx + 1) {
+            let ModuleItem::Stmt(stmt) = item else {
+                continue;
+            };
+            let mut replacer = ElidedRestSpreadReplacer {
+                rest_binding: &rest_binding,
+                named_helpers,
+                preceding: Some(&preceding),
+                unresolved_mark,
+                replacement_init: None,
+            };
+            stmt.visit_mut_with(&mut replacer);
+            if replacer.replacement_init.is_some() {
+                replacement_init = replacer.replacement_init;
+                break;
+            }
+        }
+
+        if let Some(init) = replacement_init {
+            set_module_item_single_decl_init(&mut items[rest_idx], init);
+        }
+    }
+}
+
+fn reattach_elided_object_rest_in_stmts(
+    stmts: &mut [Stmt],
+    named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+    unresolved_mark: Mark,
+) {
+    for stmt in stmts.iter_mut() {
+        reattach_elided_object_rest_in_stmt(stmt, named_helpers, unresolved_mark);
+    }
+
+    for rest_idx in 0..stmts.len() {
+        let Some(rest_binding) = stmt_single_undefined_binding(&stmts[rest_idx]) else {
+            continue;
+        };
+        let preceding = stmts[..rest_idx].to_vec();
+
+        let mut replacement_init = None;
+        for stmt in stmts.iter_mut().skip(rest_idx + 1) {
+            let mut replacer = ElidedRestSpreadReplacer {
+                rest_binding: &rest_binding,
+                named_helpers,
+                preceding: Some(&preceding),
+                unresolved_mark,
+                replacement_init: None,
+            };
+            stmt.visit_mut_with(&mut replacer);
+            if replacer.replacement_init.is_some() {
+                replacement_init = replacer.replacement_init;
+                break;
+            }
+        }
+
+        if let Some(init) = replacement_init {
+            set_stmt_single_decl_init(&mut stmts[rest_idx], init);
+        }
+    }
+}
+
+fn reattach_elided_object_rest_in_stmt(
+    stmt: &mut Stmt,
+    named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+    unresolved_mark: Mark,
+) {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return;
+    };
+
+    for rest_idx in 0..var.decls.len() {
+        let Some(rest_binding) = undefined_ident_declarator(&var.decls[rest_idx]) else {
+            continue;
+        };
+
+        let mut replacement_init = None;
+        for decl in var.decls.iter_mut().skip(rest_idx + 1) {
+            let mut replacer = ElidedRestSpreadReplacer {
+                rest_binding: &rest_binding,
+                named_helpers,
+                preceding: None,
+                unresolved_mark,
+                replacement_init: None,
+            };
+            decl.visit_mut_with(&mut replacer);
+            if replacer.replacement_init.is_some() {
+                replacement_init = replacer.replacement_init;
+                break;
+            }
+        }
+
+        if let Some(init) = replacement_init {
+            var.decls[rest_idx].init = Some(init);
+            break;
+        }
+    }
+}
+
+struct ElidedRestSpreadReplacer<'a> {
+    rest_binding: &'a BindingIdent,
+    named_helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    preceding: Option<&'a [Stmt]>,
+    unresolved_mark: Mark,
+    replacement_init: Option<Box<Expr>>,
+}
+
+impl VisitMut for ElidedRestSpreadReplacer<'_> {
+    fn visit_mut_prop_or_spread(&mut self, prop: &mut PropOrSpread) {
+        if self.replacement_init.is_some() {
+            return;
+        }
+
+        let PropOrSpread::Spread(spread) = prop else {
+            prop.visit_mut_children_with(self);
+            return;
+        };
+
+        let extraction = extract_named_owp_args(&spread.expr, self.named_helpers)
+            .or_else(|| try_extract_owp_call(&spread.expr));
+        let Some((source, excluded_keys)) = extraction else {
+            spread.visit_mut_children_with(self);
+            return;
+        };
+
+        if let Some(preceding) = self.preceding {
+            let (absorbed, _) =
+                scan_preceding(preceding, &source, &excluded_keys, self.unresolved_mark);
+            if absorbed == 0 {
+                spread.visit_mut_children_with(self);
+                return;
+            }
+        }
+
+        self.replacement_init = Some(spread.expr.clone());
+        *spread.expr = Expr::Ident(self.rest_binding.id.clone());
+    }
+}
+
+fn module_item_single_undefined_binding(item: &ModuleItem) -> Option<BindingIdent> {
+    let ModuleItem::Stmt(stmt) = item else {
+        return None;
+    };
+    stmt_single_undefined_binding(stmt)
+}
+
+fn stmt_single_undefined_binding(stmt: &Stmt) -> Option<BindingIdent> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    let [decl] = var.decls.as_slice() else {
+        return None;
+    };
+    undefined_ident_declarator(decl)
+}
+
+fn undefined_ident_declarator(decl: &VarDeclarator) -> Option<BindingIdent> {
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    match &decl.init {
+        Some(init) if is_undefined_expr(init) => Some(binding.clone()),
+        None => Some(binding.clone()),
+        _ => None,
+    }
+}
+
+fn set_module_item_single_decl_init(item: &mut ModuleItem, init: Box<Expr>) {
+    if let ModuleItem::Stmt(stmt) = item {
+        set_stmt_single_decl_init(stmt, init);
+    }
+}
+
+fn set_stmt_single_decl_init(stmt: &mut Stmt, init: Box<Expr>) {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return;
+    };
+    let [decl] = var.decls.as_mut_slice() else {
+        return;
+    };
+    decl.init = Some(init);
+}
+
+fn is_undefined_expr(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(id) if id.sym.as_ref() == "undefined")
+}
 
 /// Extracted info from a preceding statement that accesses the same source object.
 enum PrecedingAccess {

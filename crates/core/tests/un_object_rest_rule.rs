@@ -703,6 +703,70 @@ use(name, version, rest_info);
 }
 
 #[test]
+fn reattaches_terser_elided_swc_rest_binding_from_later_spread() {
+    let input = r#"
+function _object_without_properties(source, excluded) {
+    if (source == null) return {};
+    var target = {}, sourceKeys, key, i;
+    if (typeof Reflect !== "undefined" && Reflect.ownKeys) {
+        sourceKeys = Reflect.ownKeys(Object(source));
+        for (i = 0; i < sourceKeys.length; i++)
+            key = sourceKeys[i], excluded.indexOf(key) >= 0 || Object.prototype.propertyIsEnumerable.call(source, key) && (target[key] = source[key]);
+        return target;
+    }
+    target = _object_without_properties_loose(source, excluded);
+    if (Object.getOwnPropertySymbols)
+        for (sourceKeys = Object.getOwnPropertySymbols(source), i = 0; i < sourceKeys.length; i++)
+            key = sourceKeys[i], excluded.indexOf(key) >= 0 || Object.prototype.propertyIsEnumerable.call(source, key) && (target[key] = source[key]);
+    return target;
+}
+function _object_without_properties_loose(source, excluded) {
+    if (source == null) return {};
+    var target = {}, sourceKeys = Object.getOwnPropertyNames(source), key, i;
+    for (i = 0; i < sourceKeys.length; i++)
+        key = sourceKeys[i], excluded.indexOf(key) >= 0 || Object.prototype.propertyIsEnumerable.call(source, key) && (target[key] = source[key]);
+    return target;
+}
+var name = app_info.name, rest_info, out = { ..._object_without_properties(app_info, ["name"]), name };
+use(out);
+"#;
+    let expected = r#"
+const { name, ...rest_info } = app_info;
+const out = { ...rest_info, name };
+use(out);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn reattaches_terser_elided_esbuild_rest_binding_from_later_spread() {
+    let input = r#"
+var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __propIsEnum = Object.prototype.propertyIsEnumerable;
+var __objRest = (source, exclude) => {
+    var target = {};
+    for (var prop in source)
+        if (__hasOwnProp.call(source, prop) && exclude.indexOf(prop) < 0)
+            target[prop] = source[prop];
+    if (source != null && __getOwnPropSymbols)
+        for (var prop of __getOwnPropSymbols(source))
+            if (exclude.indexOf(prop) < 0 && __propIsEnum.call(source, prop))
+                target[prop] = source[prop];
+    return target;
+};
+const _a = app_info, { name } = _a, rest_info = undefined, out = { ...__objRest(_a, ["name"]), name };
+use(out);
+"#;
+    let expected = r#"
+const { name, ...rest_info } = app_info;
+const out = { ...rest_info, name };
+use(out);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn named_owp_helper_for_in_requires_guarded_copy() {
     let input = r#"
 function m(e, t) {
