@@ -19,6 +19,9 @@ cargo test --test smart_inline_rule -- inline_single_use
 
 Snapshots auto-update on `cargo test` (via `.cargo/config.toml`).
 
+For semantic round-trip coverage with Test262, see
+[Test262 Round-Trip](test262-roundtrip.md).
+
 ## Required Verification Before Commit
 
 For code changes, run the full relevant checklist before committing. Do not

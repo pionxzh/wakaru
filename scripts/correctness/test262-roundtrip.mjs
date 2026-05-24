@@ -40,11 +40,32 @@ const defaultPaths = [
   "test/language/statements/for-of",
   "test/language/statements/let",
 ];
+const pathPresets = {
+  default: defaultPaths,
+  classes: ["test/language/expressions/class", "test/language/statements/class"],
+  destructuring: [
+    "test/language/expressions/assignment/dstr",
+    "test/language/statements/for-of/dstr",
+    "test/language/statements/variable/dstr",
+  ],
+  "async-generators": [
+    "test/language/expressions/async-arrow-function",
+    "test/language/expressions/async-function",
+    "test/language/expressions/async-generator",
+    "test/language/expressions/generators",
+    "test/language/statements/async-function",
+    "test/language/statements/async-generator",
+    "test/language/statements/generators",
+  ],
+  templates: ["test/language/expressions/template-literal", "test/language/expressions/tagged-template"],
+  modules: ["test/language/module-code"],
+};
 
 export function parseArgs(argv) {
   const options = {
     test262Root: defaultTest262Root,
     paths: [],
+    presets: [],
     limit: 25,
     transform: defaultTransform,
     terserProfile: "light",
@@ -61,8 +82,10 @@ export function parseArgs(argv) {
       options.test262Root = resolve(readRequiredValue(argv, ++i, arg));
     } else if (arg === "--path") {
       options.paths.push(readRequiredValue(argv, ++i, arg));
+    } else if (arg === "--preset") {
+      options.presets.push(readRequiredValue(argv, ++i, arg));
     } else if (arg === "--limit") {
-      options.limit = parsePositiveInt(readRequiredValue(argv, ++i, arg), arg);
+      options.limit = parseLimit(readRequiredValue(argv, ++i, arg), arg);
     } else if (arg === "--transform") {
       options.transform = readRequiredValue(argv, ++i, arg);
     } else if (arg === "--level") {
@@ -95,9 +118,16 @@ export function parseArgs(argv) {
   if (!["light", "full"].includes(options.terserProfile)) {
     throw new Error(`unsupported --terser-profile ${options.terserProfile}`);
   }
+  for (const preset of options.presets) {
+    if (!Object.hasOwn(pathPresets, preset)) {
+      throw new Error(`unsupported --preset ${preset}`);
+    }
+    options.paths.push(...pathPresets[preset]);
+  }
   if (options.paths.length === 0) {
     options.paths = [...defaultPaths];
   }
+  options.paths = [...new Set(options.paths)];
   return options;
 }
 
@@ -108,7 +138,8 @@ export function usage() {
 Options:
   --test262 <dir>       Test262 checkout. Default: ../test262
   --path <path>         Test file or directory relative to Test262 root. Repeatable.
-  --limit <n>           Maximum runnable tests to execute. Default: 25
+  --preset <name>       Named path set: ${Object.keys(pathPresets).join(" | ")}
+  --limit <n|all>       Maximum runnable tests to execute. Default: 25
   --transform <name>    none | terser. Default: terser
   --terser-profile <p>  light | full. Default: light
   --level <level>       minimal | standard | aggressive. Default: minimal
@@ -289,7 +320,7 @@ export async function runRoundTrip(options) {
     options: {
       test262Root: options.test262Root,
       paths: options.paths,
-      limit: options.limit,
+      limit: Number.isFinite(options.limit) ? options.limit : "all",
       transform: options.transform,
       terserProfile: options.terserProfile,
       level: options.level,
@@ -323,7 +354,7 @@ export async function runRoundTrip(options) {
         continue;
       }
 
-      if (report.totals.runnable >= options.limit) {
+      if (Number.isFinite(options.limit) && report.totals.runnable >= options.limit) {
         break;
       }
 
@@ -380,14 +411,14 @@ async function runOneTest({ filePath, relativePath, source, harnessSource, varia
       });
     }
   } catch (error) {
-    return unsupported(relativePath, "baseline", error);
+    return unsupported(relativePath, "baseline", error, "node-vm-baseline");
   }
 
   let transformed;
   try {
     transformed = await transformSource(source, options);
   } catch (error) {
-    return rejected(relativePath, "transform", error);
+    return rejected(relativePath, "transform", error, "transform-reject");
   }
 
   try {
@@ -400,7 +431,7 @@ async function runOneTest({ filePath, relativePath, source, harnessSource, varia
       });
     }
   } catch (error) {
-    return rejected(relativePath, "transformed-runtime", error);
+    return rejected(relativePath, "transformed-runtime", error, "transform-runtime");
   }
 
   let decompiled;
@@ -411,8 +442,9 @@ async function runOneTest({ filePath, relativePath, source, harnessSource, varia
       basename: relativePath.replaceAll("/", "__"),
     });
   } catch (error) {
-    if (isSloppyOnlyWakaruParseUnsupported(error, variants)) {
-      return unsupported(relativePath, "wakaru-parse", error);
+    const parseUnsupportedReason = knownWakaruParseUnsupportedReason(error, variants, relativePath);
+    if (parseUnsupportedReason) {
+      return unsupported(relativePath, "wakaru-parse", error, parseUnsupportedReason);
     }
     return failure(relativePath, "wakaru", error, { transformed });
   }
@@ -427,6 +459,13 @@ async function runOneTest({ filePath, relativePath, source, harnessSource, varia
       });
     }
   } catch (error) {
+    const fidelityReason = knownSwcFidelityIssueReason({ path: relativePath, error, decompiled });
+    if (fidelityReason) {
+      return rejected(relativePath, "swc-fidelity", error, fidelityReason, {
+        transformed,
+        decompiled,
+      });
+    }
     return failure(relativePath, "decompiled-runtime", error, {
       transformed,
       decompiled,
@@ -450,30 +489,61 @@ function failure(path, phase, error, extra = {}) {
   };
 }
 
-function unsupported(path, phase, error) {
+function unsupported(path, phase, error, reason = null) {
   return {
     path,
     status: "unsupported",
     phase,
+    reason,
     error: formatError(error),
   };
 }
 
-function rejected(path, phase, error) {
+function rejected(path, phase, error, reason = null, extra = {}) {
   return {
     path,
     status: "rejected",
     phase,
+    reason,
     error: formatError(error),
+    ...extra,
   };
 }
 
 export function isSloppyOnlyWakaruParseUnsupported(error, variants) {
-  return (
+  return knownWakaruParseUnsupportedReason(error, variants, "") === "sloppy-only-strict-ident";
+}
+
+export function knownWakaruParseUnsupportedReason(error, variants, path) {
+  const message = formatError(error);
+  const normalized = path.split("\\").join("/");
+  if (
     variants.length > 0 &&
     variants.every((variant) => !variant.strict) &&
-    formatError(error).includes("InvalidIdentInStrict")
-  );
+    message.includes("InvalidIdentInStrict")
+  ) {
+    return "sloppy-only-strict-ident";
+  }
+  if (message.includes("InvalidIdentInAsync")) {
+    return "swc-parse-async-ident";
+  }
+  if (message.includes("ExpectedIdent") && normalized.includes("static-init-await")) {
+    return "swc-parse-static-init-await";
+  }
+  return null;
+}
+
+export function knownSwcFidelityIssueReason({ path, error, decompiled }) {
+  const normalized = path.split("\\").join("/");
+  if (
+    normalized.startsWith("test/language/statements/for-of/dstr/") &&
+    /array-(?:elem-trlg-iter-)?elision|array-iteration/.test(normalized) &&
+    /\bfor\s*\(\s*\[(?:\]|[^,\]]+\]\s+of)/.test(decompiled) &&
+    /Test262Error|TypeError/.test(formatError(error))
+  ) {
+    return "swc-array-binding-elision";
+  }
+  return null;
 }
 
 function runWakaru(source, { level, tmpRoot, basename }) {
@@ -639,12 +709,12 @@ function printReport(report, details) {
     } else if (result.status === "skipped") {
       console.log(`SKIP ${result.path} (${result.reason})`);
     } else if (result.status === "unsupported") {
-      console.log(`UNSUPPORTED ${result.path} (${result.phase})`);
+      console.log(`UNSUPPORTED ${result.path} (${formatPhase(result)})`);
       if (details) {
         console.log(indent(result.error));
       }
     } else if (result.status === "rejected") {
-      console.log(`REJECT ${result.path} (${result.phase})`);
+      console.log(`REJECT ${result.path} (${formatPhase(result)})`);
       if (details) {
         console.log(indent(result.error));
       }
@@ -655,6 +725,10 @@ function printReport(report, details) {
       }
     }
   }
+}
+
+function formatPhase(result) {
+  return result.reason ? `${result.phase}:${result.reason}` : result.phase;
 }
 
 function indent(text) {
@@ -672,10 +746,13 @@ function readRequiredValue(argv, index, option) {
   return value;
 }
 
-function parsePositiveInt(value, option) {
+function parseLimit(value, option) {
+  if (value === "all") {
+    return Number.POSITIVE_INFINITY;
+  }
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(`${option} must be a positive integer`);
+    throw new Error(`${option} must be a positive integer or all`);
   }
   return parsed;
 }

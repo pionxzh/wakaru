@@ -9,6 +9,8 @@ import {
   classifyTest,
   executeTestSource,
   isSloppyOnlyWakaruParseUnsupported,
+  knownSwcFidelityIssueReason,
+  knownWakaruParseUnsupportedReason,
   parseArgs,
   parseTestMetadata,
   runnableVariants,
@@ -151,14 +153,62 @@ test("isSloppyOnlyWakaruParseUnsupported detects sloppy-only strict parser rejec
   );
 });
 
-test("parseArgs accepts repeatable paths and defaults to minimal terser", () => {
-  const options = parseArgs(["--path", "test/language/a", "--path", "test/language/b", "--limit", "3"]);
+test("parseArgs accepts repeatable paths, presets, and all limit", () => {
+  const options = parseArgs([
+    "--path",
+    "test/language/a",
+    "--path",
+    "test/language/b",
+    "--preset",
+    "classes",
+    "--limit",
+    "all",
+  ]);
 
-  assert.deepEqual(options.paths, ["test/language/a", "test/language/b"]);
-  assert.equal(options.limit, 3);
+  assert.deepEqual(options.paths, [
+    "test/language/a",
+    "test/language/b",
+    "test/language/expressions/class",
+    "test/language/statements/class",
+  ]);
+  assert.equal(options.limit, Number.POSITIVE_INFINITY);
   assert.equal(options.level, "minimal");
   assert.equal(options.transform, "terser");
   assert.equal(options.terserProfile, "light");
+});
+
+test("knownWakaruParseUnsupportedReason classifies SWC parser gaps", () => {
+  assert.equal(
+    knownWakaruParseUnsupportedReason(new Error("InvalidIdentInAsync"), [{ name: "strict", strict: true }], ""),
+    "swc-parse-async-ident",
+  );
+  assert.equal(
+    knownWakaruParseUnsupportedReason(
+      new Error("ExpectedIdent"),
+      [{ name: "sloppy", strict: false }],
+      "test/language/statements/let/static-init-await-binding-valid.js",
+    ),
+    "swc-parse-static-init-await",
+  );
+});
+
+test("knownSwcFidelityIssueReason classifies array binding elision printer gaps", () => {
+  assert.equal(
+    knownSwcFidelityIssueReason({
+      path: "test/language/statements/for-of/dstr/array-iteration.js",
+      error: new Error("Test262Error"),
+      decompiled: "for ([] of [g()]) {}",
+    }),
+    "swc-array-binding-elision",
+  );
+  assert.equal(
+    knownSwcFidelityIssueReason({
+      path: "test/language/statements/for-of/dstr/obj-id.js",
+      error: new Error("TypeError"),
+      decompiled: "for ({ x } of values) {}",
+    }),
+    null,
+  );
 });
 
 test("runRoundTrip reports baseline failures as unsupported inputs", async () => {
@@ -184,6 +234,7 @@ test("runRoundTrip reports baseline failures as unsupported inputs", async () =>
     assert.equal(report.totals.failed, 0);
     assert.equal(report.results[0].status, "unsupported");
     assert.equal(report.results[0].phase, "baseline");
+    assert.equal(report.results[0].reason, "node-vm-baseline");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
