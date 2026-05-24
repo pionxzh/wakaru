@@ -47,6 +47,61 @@ These ideas were explored and rejected:
 
 ## Architecture
 
+Helper recovery is intentionally split into three layers. This gives us more
+structure than scattered hand-written tuple checks, without committing to a
+general AST pattern DSL.
+
+### Binding-aware matching (`match_context.rs`)
+
+`MatchContext` is used inside helper body-shape matchers when several
+identifiers must refer to the same binding. It extracts named slots from
+function params or discovered locals, then exposes checks like
+`ctx.is_binding(expr, "source")` and `ctx.is_member_of(expr, "source", "default")`.
+
+Use it when matching a helper implementation where shadowing or swapped
+operands would produce a false positive. Examples include Babel helpers such as
+`_classCallCheck`, `_inherits`, `_possibleConstructorReturn`, and
+`_objectWithoutProperties`.
+
+Do not use `MatchContext` as a full AST pattern engine. The surrounding matcher
+should still be ordinary Rust over SWC nodes; `MatchContext` exists to make
+binding identity explicit and hard to forget.
+
+### Helper lifecycle utilities (`helper_matcher.rs`)
+
+`helper_matcher.rs` contains the low-level binding primitives shared by helper
+rules across Babel, TypeScript, webpack, and template helper recovery:
+
+- `BindingKey` and extraction helpers such as `binding_key()`,
+  `expr_binding_key()`, and `var_declarator_binding_key()`
+- binding-safe predicates such as `ident_matches_binding()`,
+  `expr_matches_binding()`, and `member_of_binding()`
+- declaration cleanup helpers such as `remaining_refs_outside_*()`,
+  `remove_fn_decls_by_binding()`, and `remove_var_declarators_by_binding()`
+
+Use these when a rule has already identified helper bindings and needs to track
+uses, rewrite call sites, or remove consumed declarations. This keeps the common
+scope-sensitive lifecycle code in one place while leaving each rule's semantic
+matching local to that rule.
+
+### Rule-local matching
+
+Rules still own domain-specific shape recognition. For example:
+
+- `babel_helper_utils.rs` classifies known Babel helper bodies and runtime
+  imports.
+- `un_typeof_polyfill.rs` recognizes TypeScript `typeof Symbol.iterator`
+  polyfills.
+- `un_to_consumable_array.rs` recognizes TypeScript `__spreadArray`.
+- `un_template_literal.rs` recognizes Babel/SWC/TypeScript tagged-template
+  helper calls and cache factories.
+- `un_webpack_interop.rs` recognizes webpack `require.n`, `require.t`, and
+  `require.o` helper forms.
+
+This is deliberate. A helper matcher should encode the smallest semantic shape
+that proves the transform is safe, while shared utilities handle binding
+identity and declaration lifecycle mechanics.
+
 ### Detection (`babel_helper_utils.rs`)
 
 The `collect_helpers()` function scans module-level declarations (function declarations, function-assigned variables, and Babel runtime imports) and returns a `HashMap<BindingKey, BabelHelperKind>` by running each candidate through a set of shape matchers or matching known runtime package paths.

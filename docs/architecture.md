@@ -225,6 +225,8 @@ crates/
         mod.rs                      — rule module declarations and public exports
         pipeline.rs                 — rule descriptor registry and pipeline execution
         babel_helper_utils.rs       — shared helper detection (body shape + import path)
+        match_context.rs            — binding-aware slots for helper body matchers
+        helper_matcher.rs           — shared helper binding/lifecycle primitives
         rename_utils.rs             — shared binding rename utilities
         *.rs                        — one file per transformation rule
       unpacker/
