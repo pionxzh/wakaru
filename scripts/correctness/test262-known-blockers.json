@@ -77,6 +77,18 @@
       "note": "SWC currently prints array binding elisions in a way that does not preserve this Test262 runtime behavior."
     },
     {
+      "reason": "swc-array-binding-elision",
+      "status": "rejected",
+      "phase": "swc-fidelity",
+      "when": {
+        "pathStartsWith": ["test/language/expressions/assignment/dstr/"],
+        "pathRegex": ["array-(?:elem-trlg-iter-)?elision|array-iteration"],
+        "errorRegex": ["Test262Error|TypeError"],
+        "decompiledRegex": ["\\[(?:\\]|[^,\\]]+\\]\\s*=)"]
+      },
+      "note": "SWC currently prints array binding elisions in a way that does not preserve this Test262 runtime behavior."
+    },
+    {
       "reason": "swc-print-class-extends-arrow-parens",
       "status": "rejected",
       "phase": "swc-fidelity",

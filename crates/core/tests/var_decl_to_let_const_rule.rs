@@ -208,6 +208,38 @@ const object = { let };
 }
 
 #[test]
+fn module_var_observed_through_global_this_stays_var() {
+    let input = r#"
+var v = 1;
+assert.sameValue(globalThis.v, 1);
+"#;
+    let expected = r#"
+var v = 1;
+assert.sameValue(globalThis.v, 1);
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn module_var_observed_in_global_with_stays_var() {
+    let input = r#"
+var v = 1;
+with (globalThis) {
+    assert.sameValue(v, 1);
+}
+"#;
+    let expected = r#"
+var v = 1;
+with (globalThis) {
+    assert.sameValue(v, 1);
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn for_of_var_named_let_stays_var() {
     let input = r#"
 var iterCount = 0;

@@ -287,18 +287,38 @@ export function buildHarnessSource(test262Root, metadata) {
     .join("\n");
 }
 
-export function executeTestSource({ harnessSource, testSource, filename, strict }) {
+export async function executeTestSource({ harnessSource, testSource, filename, strict }) {
+  const unhandledRejections = [];
+  const onUnhandledRejection = (reason) => {
+    unhandledRejections.push(reason);
+  };
+  process.prependListener("unhandledRejection", onUnhandledRejection);
   const context = createTestContext();
-  vm.runInContext(harnessSource, context, {
-    filename: "test262-harness.js",
-    timeout: 1000,
-  });
+  try {
+    vm.runInContext(harnessSource, context, {
+      filename: "test262-harness.js",
+      timeout: 1000,
+    });
 
-  const source = strict ? `"use strict";\n${testSource}` : testSource;
-  vm.runInContext(source, context, {
-    filename,
-    timeout: 1000,
-  });
+    const source = strict ? `"use strict";\n${testSource}` : testSource;
+    const result = vm.runInContext(source, context, {
+      filename,
+      timeout: 1000,
+    });
+    if (isThenable(result)) {
+      await result;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    if (unhandledRejections.length > 0) {
+      throw unhandledRejections[0];
+    }
+  } finally {
+    process.removeListener("unhandledRejection", onUnhandledRejection);
+  }
+}
+
+function isThenable(value) {
+  return value != null && typeof value.then === "function";
 }
 
 export async function minifyWithTerser(source, options) {
@@ -614,7 +634,7 @@ async function runOneTest({
 }) {
   try {
     for (const variant of variants) {
-      executeTestSource({
+      await executeTestSource({
         harnessSource,
         testSource: source,
         filename: `${relativePath}:${variant.name}:original`,
@@ -634,7 +654,7 @@ async function runOneTest({
 
   try {
     for (const variant of variants) {
-      executeTestSource({
+      await executeTestSource({
         harnessSource,
         testSource: transformed,
         filename: `${relativePath}:${variant.name}:transformed`,
@@ -671,7 +691,7 @@ async function runOneTest({
 
   try {
     for (const variant of variants) {
-      executeTestSource({
+      await executeTestSource({
         harnessSource,
         testSource: decompiled,
         filename: `${relativePath}:${variant.name}:decompiled`,

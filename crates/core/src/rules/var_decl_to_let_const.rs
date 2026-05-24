@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BlockStmt, Callee, Class, Decl, Expr, ForHead, ForInStmt,
-    ForOfStmt, ForStmt, Function, Ident, Lit, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt,
-    UpdateExpr, VarDecl, VarDeclKind,
+    ForOfStmt, ForStmt, Function, Ident, Lit, MemberProp, Module, ModuleItem, Pat,
+    SimpleAssignTarget, Stmt, UpdateExpr, VarDecl, VarDeclKind, WithStmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -40,6 +40,7 @@ impl VisitMut for VarDeclToLetConst {
         must_stay_var.extend(collect_use_before_decl_vars_module(&module.body, &var_ids));
         must_stay_var.extend(collect_loop_captured_vars_module(&module.body));
         keep_eval_affected_vars(&module.body, &var_ids, &mut must_stay_var, true);
+        keep_global_observed_vars(&module.body, &var_ids, &mut must_stay_var);
 
         // Convert all var decls in module (recursively through blocks, stopping at function boundaries)
         let mut converter = VarConverter {
@@ -1097,6 +1098,73 @@ fn keep_eval_affected_vars<T>(
         {
             must_stay_var.insert(var_id.clone());
         }
+    }
+}
+
+fn keep_global_observed_vars(
+    items: &[ModuleItem],
+    var_ids: &HashSet<BindingId>,
+    must_stay_var: &mut HashSet<BindingId>,
+) {
+    let mut observer = GlobalVarObserver {
+        var_ids,
+        observed: HashSet::new(),
+    };
+    for item in items {
+        item.visit_with(&mut observer);
+    }
+    must_stay_var.extend(observer.observed);
+}
+
+struct GlobalVarObserver<'a> {
+    var_ids: &'a HashSet<BindingId>,
+    observed: HashSet<BindingId>,
+}
+
+impl GlobalVarObserver<'_> {
+    fn mark_name(&mut self, name: &Atom) {
+        self.observed
+            .extend(self.var_ids.iter().filter(|(sym, _)| sym == name).cloned());
+    }
+
+    fn mark_refs(&mut self, refs: HashSet<BindingId>) {
+        self.observed
+            .extend(refs.into_iter().filter(|id| self.var_ids.contains(id)));
+    }
+}
+
+impl Visit for GlobalVarObserver<'_> {
+    fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
+        if is_global_object_expr(member.obj.as_ref()) {
+            if let Some(name) = static_member_prop_name(&member.prop) {
+                self.mark_name(&name);
+            }
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_with_stmt(&mut self, stmt: &WithStmt) {
+        if is_global_object_expr(&stmt.obj) {
+            let mut refs = AllIdentRefCollector::default();
+            stmt.body.visit_with(&mut refs);
+            self.mark_refs(refs.refs);
+        }
+        stmt.visit_children_with(self);
+    }
+}
+
+fn is_global_object_expr(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(id) if matches!(id.sym.as_ref(), "globalThis" | "window" | "self"))
+}
+
+fn static_member_prop_name(prop: &MemberProp) -> Option<Atom> {
+    match prop {
+        MemberProp::Ident(id) => Some(id.sym.clone()),
+        MemberProp::Computed(computed) => match strip_parens(&computed.expr) {
+            Expr::Lit(Lit::Str(s)) => s.value.as_str().map(Atom::from),
+            _ => None,
+        },
+        MemberProp::PrivateName(_) => None,
     }
 }
 

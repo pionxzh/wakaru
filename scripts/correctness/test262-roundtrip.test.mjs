@@ -112,7 +112,7 @@ test("buildHarnessSource loads required Test262 harness files", () => {
   }
 });
 
-test("executeTestSource runs harness and strict test source in a script realm", () => {
+test("executeTestSource runs harness and strict test source in a script realm", async () => {
   const harnessSource = `
 globalThis.assert = {
   sameValue(actual, expected) {
@@ -123,12 +123,24 @@ globalThis.assert = {
 };
 `;
 
-  executeTestSource({
+  await executeTestSource({
     harnessSource,
     testSource: "assert.sameValue(function f() { return this; }(), undefined);",
     filename: "strict-fixture.js",
     strict: true,
   });
+});
+
+test("executeTestSource captures unhandled rejections as test failures", async () => {
+  await assert.rejects(
+    executeTestSource({
+      harnessSource: "",
+      testSource: "async function f() { await new Promise(); }\nf();",
+      filename: "unhandled-rejection-fixture.js",
+      strict: false,
+    }),
+    /Promise resolver undefined is not a function/,
+  );
 });
 
 test("transformSource supports no-op mode without external tools", async () => {
@@ -376,6 +388,22 @@ test("knownSwcFidelityIssueReason classifies array binding elision printer gaps"
       path: "test/language/statements/for-of/dstr/array-iteration.js",
       error: new Error("Test262Error"),
       decompiled: "for ([] of [g()]) {}",
+    }),
+    "swc-array-binding-elision",
+  );
+  assert.equal(
+    knownSwcFidelityIssueReason({
+      path: "test/language/expressions/assignment/dstr/array-elision-iter-nrml-close.js",
+      error: new Error("Test262Error"),
+      decompiled: "[x] = iterable;",
+    }),
+    "swc-array-binding-elision",
+  );
+  assert.equal(
+    knownSwcFidelityIssueReason({
+      path: "test/language/expressions/assignment/dstr/array-iteration.js",
+      error: new Error("Test262Error"),
+      decompiled: "result = vals;\n[] = vals;",
     }),
     "swc-array-binding-elision",
   );
