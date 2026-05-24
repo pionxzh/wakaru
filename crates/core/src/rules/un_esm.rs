@@ -14,7 +14,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
-use super::decl_utils::{collect_decl_names, collect_pat_names};
+use super::decl_utils::{collect_decl_names, collect_pat_names, same_ident};
 use super::rename_utils::{rename_bindings, BindingRename};
 use super::RewriteLevel;
 
@@ -1279,10 +1279,6 @@ fn strip_expr_parens(mut expr: &Expr) -> &Expr {
         expr = paren.expr.as_ref();
     }
     expr
-}
-
-fn same_ident(a: &Ident, b: &Ident) -> bool {
-    a.sym == b.sym && a.ctxt == b.ctxt
 }
 
 fn build_import_decls(src: &str, entry: &SourceEntry, out: &mut Vec<ModuleItem>) {

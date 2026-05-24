@@ -10,6 +10,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::decl_utils::same_ident;
 use super::RewriteLevel;
 
 pub struct SmartInline {
@@ -1042,10 +1043,6 @@ fn ident_is_referenced_in_stmts(id: &Ident, stmts: &[Stmt]) -> bool {
         }
     }
     false
-}
-
-fn same_ident(a: &Ident, b: &Ident) -> bool {
-    a.sym == b.sym && a.ctxt == b.ctxt
 }
 
 fn group_destructuring(stmts: Vec<Stmt>, level: RewriteLevel) -> Vec<Stmt> {

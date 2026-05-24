@@ -8,6 +8,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::decl_utils::same_ident;
 use super::RewriteLevel;
 
 pub struct UnParameters {
@@ -821,10 +822,6 @@ impl Visit for IdentReferenceFinder<'_> {
     fn visit_function(&mut self, _: &Function) {}
 
     fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
-}
-
-fn same_ident(left: &Ident, right: &Ident) -> bool {
-    left.sym == right.sym && left.ctxt == right.ctxt
 }
 
 // ============================================================

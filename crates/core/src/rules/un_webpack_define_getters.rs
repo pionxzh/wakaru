@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
-use swc_core::atoms::Atom;
-use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     Bool, CallExpr, Callee, Decl, Expr, ExprStmt, Ident, IdentName, KeyValueProp, Lit, Module,
     ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, Stmt, Str, VarDeclarator,
@@ -9,7 +8,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-type BindingId = (Atom, SyntaxContext);
+use super::decl_utils::BindingId;
 
 pub struct UnWebpackDefineGetters {
     unresolved_mark: Mark,

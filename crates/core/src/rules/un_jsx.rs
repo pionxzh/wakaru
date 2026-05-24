@@ -14,6 +14,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::decl_utils::BindingId;
 use super::{RewriteLevel, Rule};
 
 const CLASSIC_PRAGMA: &str = "createElement";
@@ -24,8 +25,6 @@ fn is_automatic_pragma(name: &str) -> bool {
         "jsx" | "jsxs" | "_jsx" | "_jsxs" | "jsxDEV" | "jsxsDEV"
     )
 }
-
-type BindingId = (Atom, SyntaxContext);
 
 #[derive(Clone)]
 struct ScopedRename {

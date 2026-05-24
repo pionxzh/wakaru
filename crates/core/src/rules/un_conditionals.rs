@@ -8,6 +8,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::decl_utils::same_ident;
+
 pub struct UnConditionals;
 
 impl VisitMut for UnConditionals {
@@ -299,10 +301,6 @@ fn expr_to_case_stmts(expr: Expr, append_break: bool) -> Vec<Stmt> {
 
 fn chain_has_action(chain: &SwitchChain) -> bool {
     chain.cases.iter().any(|(_, body)| is_action_expr(body)) || is_action_expr(&chain.default)
-}
-
-fn same_ident(left: &Ident, right: &Ident) -> bool {
-    left.sym == right.sym && left.ctxt == right.ctxt
 }
 
 fn literal_case_key(expr: &Expr) -> Option<String> {

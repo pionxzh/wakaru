@@ -1,5 +1,5 @@
 use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, BlockStmt, Callee, Constructor,
     Decl, Expr, Function, Ident, Lit, MemberExpr, MemberProp, Number, Param, ParamOrTsParamProp,
@@ -7,9 +7,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::decl_utils::{binding_id, ident_matches_binding, BindingId};
 use super::RewriteLevel;
-
-type BindingId = (Atom, SyntaxContext);
 
 /// Replaces `arguments[N]` / `arguments.length` patterns with a rest parameter
 /// `...args` and rewrites safe accesses to use `args`.
@@ -172,7 +171,7 @@ fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Opti
     if !matches!(&m.prop, MemberProp::Ident(p) if p.sym == "length") {
         return None;
     }
-    let len = (len_id.sym.clone(), len_id.ctxt);
+    let len = binding_id(len_id);
 
     // Decl 1: copy = Array(len) or new Array(len)
     let d1 = &init.decls[1];
@@ -224,8 +223,8 @@ fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Opti
     if !is_number(idx_init, fixed_param_count) {
         return None;
     }
-    let idx = (idx_id.sym.clone(), idx_id.ctxt);
-    let copy = (copy_id.sym.clone(), copy_id.ctxt);
+    let idx = binding_id(idx_id);
+    let copy = binding_id(copy_id);
 
     if !matches_copy_loop_test(for_stmt.test.as_deref(), &idx, &len)
         || !matches_copy_loop_update(for_stmt.update.as_deref(), &idx)
@@ -252,7 +251,7 @@ fn ts_empty_array_binding_from_stmt(stmt: &Stmt) -> Option<BindingId> {
     let Expr::Array(array) = decl.init.as_deref()? else {
         return None;
     };
-    array.elems.is_empty().then_some((id.sym.clone(), id.ctxt))
+    array.elems.is_empty().then(|| binding_id(id))
 }
 
 fn detect_ts_copy_loop_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Option<BindingId> {
@@ -274,7 +273,7 @@ fn detect_ts_copy_loop_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Optio
         return None;
     }
 
-    let idx = (idx_id.sym.clone(), idx_id.ctxt);
+    let idx = binding_id(idx_id);
     if !matches_ts_copy_loop_test(for_stmt.test.as_deref(), &idx)
         || !matches_copy_loop_update(for_stmt.update.as_deref(), &idx)
     {
@@ -345,7 +344,7 @@ fn copy_var_from_ts_copy_loop_body(
         return None;
     }
 
-    Some((copy_id.sym.clone(), copy_id.ctxt))
+    Some(binding_id(copy_id))
 }
 
 fn is_copy_array_len_expr(expr: &Expr, len: &BindingId, fixed_param_count: usize) -> bool {
@@ -457,10 +456,6 @@ fn is_copy_write_index(expr: &Expr, idx: &BindingId, fixed_param_count: usize) -
                 && matches!(bin.left.as_ref(), Expr::Ident(id) if ident_matches_binding(id, idx))
                 && is_number(bin.right.as_ref(), fixed_param_count)
     )
-}
-
-fn ident_matches_binding(id: &Ident, binding: &BindingId) -> bool {
-    id.sym == binding.0 && id.ctxt == binding.1
 }
 
 fn make_rest_param(name: Atom) -> Param {

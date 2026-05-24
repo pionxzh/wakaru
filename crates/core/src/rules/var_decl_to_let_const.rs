@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignTarget, BlockStmt, Callee, Class, Decl, Expr, ForHead, ForInStmt,
     ForOfStmt, ForStmt, Function, Ident, Lit, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt,
@@ -9,10 +8,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-/// A binding identity: sym + SyntaxContext (set by `resolver()`).
-/// Two variables with the same name but different SyntaxContexts are different bindings.
-/// This allows scope-aware analysis without relying on string names alone.
-type BindingId = (Atom, SyntaxContext);
+use super::decl_utils::BindingId;
 
 pub struct VarDeclToLetConst;
 

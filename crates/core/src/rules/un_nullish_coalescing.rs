@@ -8,7 +8,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::binding_facts::{collect_binding_facts, BindingId};
+use super::binding_facts::collect_binding_facts;
+use super::decl_utils::BindingId;
 pub(crate) use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::{RewriteLevel, RewritePolicy};
 

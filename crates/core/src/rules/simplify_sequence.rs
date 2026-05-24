@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 
-use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BlockStmt, Decl, Expr, ExprStmt, ForInStmt, ForOfStmt, ForStmt,
@@ -11,14 +10,13 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::decl_utils::BindingId;
 use super::RewriteLevel;
 
 pub struct SimplifySequence {
     unresolved_mark: Mark,
     level: RewriteLevel,
 }
-
-type BindingId = (Atom, SyntaxContext);
 
 impl SimplifySequence {
     pub fn new(unresolved_mark: Mark) -> Self {

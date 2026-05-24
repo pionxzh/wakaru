@@ -1,14 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{Ident, Module, Pat, VarDeclarator};
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-pub(crate) type BindingId = (swc_core::atoms::Atom, SyntaxContext);
-
-pub(crate) fn binding_id(ident: &Ident) -> BindingId {
-    (ident.sym.clone(), ident.ctxt)
-}
+use super::decl_utils::{binding_id, BindingId};
 
 pub(crate) struct BindingFacts {
     pub(crate) uninitialized: HashSet<BindingId>,

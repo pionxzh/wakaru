@@ -2,10 +2,22 @@ use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
-use swc_core::ecma::ast::{Decl, Id, Pat, VarDecl};
+use swc_core::ecma::ast::{Decl, Id, Ident, Pat, VarDecl};
 use swc_core::ecma::utils::find_pat_ids;
 
 pub type BindingId = (Atom, SyntaxContext);
+
+pub fn binding_id(ident: &Ident) -> BindingId {
+    (ident.sym.clone(), ident.ctxt)
+}
+
+pub fn ident_matches_binding(ident: &Ident, binding: &BindingId) -> bool {
+    ident.sym == binding.0 && ident.ctxt == binding.1
+}
+
+pub fn same_ident(left: &Ident, right: &Ident) -> bool {
+    left.sym == right.sym && left.ctxt == right.ctxt
+}
 
 /// Collect all binding names declared by a `Decl` (top-level only, does not
 /// recurse into function bodies). Handles all destructuring forms via SWC's

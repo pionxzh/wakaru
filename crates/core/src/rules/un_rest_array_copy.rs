@@ -1,11 +1,12 @@
 use swc_core::atoms::Atom;
-use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, Callee, Expr, Function, Ident,
     MemberProp, ObjectPatProp, Pat, SimpleAssignTarget, Stmt, UpdateOp, VarDeclOrExpr,
     VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+
+use super::decl_utils::{binding_id, ident_matches_binding, BindingId};
 
 /// Eliminates the Babel-compiled rest-args array-copy loop.
 ///
@@ -74,14 +75,12 @@ impl VisitMut for UnRestArrayCopy {
     }
 }
 
-type BindingId = (Atom, SyntaxContext);
-
 /// Return the `(sym, ctxt)` of the function's rest parameter, if any.
 fn get_rest_param(func: &Function) -> Option<BindingId> {
     func.params.iter().rev().find_map(|p| {
         if let Pat::Rest(rest) = &p.pat {
             if let Pat::Ident(BindingIdent { id, .. }) = rest.arg.as_ref() {
-                return Some((id.sym.clone(), id.ctxt));
+                return Some(binding_id(id));
             }
         }
         None
@@ -163,10 +162,7 @@ fn extract_len_decl(decl: &VarDeclarator) -> Option<(BindingId, BindingId)> {
     if !matches!(&member.prop, MemberProp::Ident(p) if p.sym == "length") {
         return None;
     }
-    Some((
-        (len_id.sym.clone(), len_id.ctxt),
-        (src_id.sym.clone(), src_id.ctxt),
-    ))
+    Some((binding_id(len_id), binding_id(src_id)))
 }
 
 /// `copy = Array(len)` or `copy = new Array(len)`  →  `copy_binding_id`
@@ -209,7 +205,7 @@ fn extract_array_copy_decl(decl: &VarDeclarator, len: &BindingId) -> Option<Bind
         _ => return None,
     }
 
-    Some((copy_id.sym.clone(), copy_id.ctxt))
+    Some(binding_id(copy_id))
 }
 
 /// `idx = 0`  →  `idx_binding_id`
@@ -221,7 +217,7 @@ fn extract_zero_init_decl(decl: &VarDeclarator) -> Option<BindingId> {
         Expr::Lit(swc_core::ecma::ast::Lit::Num(n)) if n.value == 0.0 => {}
         _ => return None,
     }
-    Some((id.sym.clone(), id.ctxt))
+    Some(binding_id(id))
 }
 
 // ── condition / update / body matchers ──────────────────────────────────────
@@ -291,10 +287,6 @@ fn matches_copy_body(body: &Stmt, copy: &BindingId, idx: &BindingId, src: &Bindi
         return false;
     };
     matches!(rp.expr.as_ref(), Expr::Ident(id) if ident_matches_binding(id, idx))
-}
-
-fn ident_matches_binding(id: &Ident, binding: &BindingId) -> bool {
-    id.sym == binding.0 && id.ctxt == binding.1
 }
 
 // ── conflict detection ───────────────────────────────────────────────────────
