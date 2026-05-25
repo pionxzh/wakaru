@@ -183,7 +183,7 @@ n.resolve = function() {
 };
 n.sync = r.n(n.resolve, r.z("put.sync", "put.resolve"));
 const H = (e)=>(t)=>t && t[o] && t[e];
-const W = {
+var W = {
     take: H(i),
     put: H(a),
     all: H(u),

@@ -206,7 +206,7 @@ export function connectAdvanced(e, t = {}) {
             initSelector() {
                 const t = e(this.store.dispatch, a);
                 this.selector = ((e, t)=>{
-                    const n = {
+                    var n = {
                         run (r) {
                             try {
                                 const o = e(t.getState(), r);

@@ -130,6 +130,39 @@ r.dependsOnOwnProps = true;
 }
 
 #[test]
+fn var_referenced_by_nested_callback_in_initializer_stays_var() {
+    let input = r#"
+function eventChannel(subscribe) {
+    var unsubscribe = subscribe(() => {
+        if (unsubscribe) {
+            unsubscribe();
+        }
+    });
+    return unsubscribe;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn var_captured_by_earlier_closure_used_during_initializer_stays_var() {
+    let input = r#"
+function eventChannel(subscribe) {
+    const close = () => {
+        if (unsubscribe) {
+            unsubscribe();
+        }
+    };
+    var unsubscribe = subscribe(() => close());
+    return unsubscribe;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn earlier_function_initializer_reference_to_later_var_stays_var() {
     let input = r#"
 var read = function() {

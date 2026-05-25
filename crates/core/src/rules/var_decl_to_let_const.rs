@@ -628,11 +628,10 @@ fn analyze_stmt_in_order(
             if var.kind == VarDeclKind::Var {
                 analyze_var_decl_in_order(var, var_ids, declared_so_far, must_stay);
             } else {
-                mark_refs_before_decl(
-                    collect_refs_in_var_decl(var, var_ids),
-                    declared_so_far,
-                    must_stay,
-                );
+                let mut refs = collect_refs_in_var_decl(var, var_ids);
+                refs.extend(collect_function_like_refs_in_var_decl(var, var_ids));
+                refs.extend(collect_nested_function_like_refs_in_var_decl(var, var_ids));
+                mark_refs_before_decl(refs, declared_so_far, must_stay);
             }
         }
         Stmt::Decl(Decl::Class(class_decl)) => {
@@ -830,6 +829,11 @@ fn analyze_var_decl_in_order(
             let mut function_like_refs = collect_refs_in_function_like_expr(init, var_ids);
             function_like_refs.retain(|id| !current_decl_ids.contains(id));
             mark_refs_before_decl(function_like_refs, declared_so_far, must_stay);
+            mark_refs_before_decl(
+                collect_refs_in_nested_function_like_expr(init, var_ids),
+                declared_so_far,
+                must_stay,
+            );
         }
         let mut default_refs = VarRefCollector {
             var_ids,
@@ -913,6 +917,30 @@ fn collect_refs_in_function_like_expr(
     }
 }
 
+fn collect_refs_in_nested_function_like_expr(
+    expr: &Expr,
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    if is_direct_function_like_expr(expr) {
+        return HashSet::new();
+    }
+
+    let mut collector = NestedFunctionLikeRefCollector {
+        var_ids,
+        refs: HashSet::new(),
+    };
+    expr.visit_with(&mut collector);
+    collector.refs
+}
+
+fn is_direct_function_like_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Fn(_) | Expr::Arrow(_) => true,
+        Expr::Paren(paren) => is_direct_function_like_expr(&paren.expr),
+        _ => false,
+    }
+}
+
 fn collect_refs_in_for_head(head: &ForHead, var_ids: &HashSet<BindingId>) -> HashSet<BindingId> {
     let mut collector = VarRefCollector {
         var_ids,
@@ -950,6 +978,32 @@ fn collect_refs_in_var_decl(var: &VarDecl, var_ids: &HashSet<BindingId>) -> Hash
     collector.refs
 }
 
+fn collect_nested_function_like_refs_in_var_decl(
+    var: &VarDecl,
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    let mut refs = HashSet::new();
+    for decl in &var.decls {
+        if let Some(init) = &decl.init {
+            refs.extend(collect_refs_in_nested_function_like_expr(init, var_ids));
+        }
+    }
+    refs
+}
+
+fn collect_function_like_refs_in_var_decl(
+    var: &VarDecl,
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    let mut refs = HashSet::new();
+    for decl in &var.decls {
+        if let Some(init) = &decl.init {
+            refs.extend(collect_refs_in_function_like_expr(init, var_ids));
+        }
+    }
+    refs
+}
+
 fn collect_refs_in_stmt(stmt: &Stmt, var_ids: &HashSet<BindingId>) -> HashSet<BindingId> {
     let mut collector = VarRefCollector {
         var_ids,
@@ -960,6 +1014,29 @@ fn collect_refs_in_stmt(stmt: &Stmt, var_ids: &HashSet<BindingId>) -> HashSet<Bi
     }
     stmt.visit_with(&mut collector);
     collector.refs
+}
+
+struct NestedFunctionLikeRefCollector<'a> {
+    var_ids: &'a HashSet<BindingId>,
+    refs: HashSet<BindingId>,
+}
+
+impl Visit for NestedFunctionLikeRefCollector<'_> {
+    fn visit_function(&mut self, function: &Function) {
+        self.refs
+            .extend(collect_refs_in_function(function, self.var_ids));
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        let mut collector = VarRefCollector {
+            var_ids: self.var_ids,
+            refs: HashSet::new(),
+        };
+        arrow.body.visit_with(&mut collector);
+        self.refs.extend(collector.refs);
+    }
+
+    fn visit_class(&mut self, _: &Class) {}
 }
 
 struct VarRefCollector<'a> {
