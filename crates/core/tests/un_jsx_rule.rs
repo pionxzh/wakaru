@@ -170,6 +170,98 @@ function render(U) {
 }
 
 #[test]
+fn renames_lowercase_var_component_bindings() {
+    let input = r#"
+function Content(children) {
+  return X.jsx(ea, {
+    children
+  });
+}
+var ea = styled.div();
+"#;
+    let expected = r#"
+function Content(children) {
+  return <Ea>{children}</Ea>;
+}
+var Ea = styled.div();
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn lowercase_var_component_rename_does_not_affect_dom_create_element() {
+    let input = r#"
+function render(doc, t) {
+  var i = t.type;
+  return doc.createElement(i, {
+    is: t.is
+  });
+}
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn lowercase_var_component_rename_does_not_capture_prop_component() {
+    let input = r#"
+export function Icon({ icon, className }) {
+  return J.jsx(icon, {
+    className
+  });
+}
+function Wrapper(props) {
+  return J.jsx("svg", props);
+}
+"#;
+    let expected = r#"
+export function Icon({ icon, className }) {
+  return J.jsx(icon, {
+    className
+  });
+}
+function Wrapper(props) {
+  return <svg {...props}/>;
+}
+"#;
+
+    let output = render_with_level(input, RewriteLevel::Standard);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn lowercase_var_component_rename_does_not_capture_shadowed_alias() {
+    let input = r#"
+function Icon(U) {
+  var icon = U.icon;
+  var wrapper = icon;
+  return J.jsx(wrapper, {
+    className: U.className
+  });
+}
+function wrapper(props) {
+  return J.jsx("svg", props);
+}
+"#;
+    let expected = r#"
+function Icon(U) {
+  var icon = U.icon;
+  var wrapper = icon;
+  return J.jsx(wrapper, {
+    className: U.className
+  });
+}
+function wrapper(props) {
+  return <svg {...props}/>;
+}
+"#;
+
+    let output = render_with_level(input, RewriteLevel::Standard);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn renames_components_from_display_name() {
     let input = r#"
 var t = () => React.createElement("div", null);

@@ -740,14 +740,14 @@ fn collect_lowercase_component_renames_from_stmts(
 struct LowercaseComponentRenameCollector<'a> {
     unresolved_mark: Mark,
     used_names: &'a mut HashSet<String>,
-    eligible_bindings: HashMap<BindingId, Option<String>>,
+    eligible_bindings: HashMap<BindingId, ComponentBindingEligibility>,
     import_pragmas: &'a HashMap<BindingId, &'static str>,
     renames: Vec<ScopedRename>,
 }
 
 impl Visit for LowercaseComponentRenameCollector<'_> {
     fn visit_call_expr(&mut self, call: &CallExpr) {
-        let Some(_) = get_pragma(&call.callee, self.import_pragmas) else {
+        let Some(pragma) = get_pragma(&call.callee, self.import_pragmas) else {
             call.visit_children_with(self);
             return;
         };
@@ -757,20 +757,23 @@ impl Visit for LowercaseComponentRenameCollector<'_> {
                 if let Expr::Ident(ident) = first.expr.as_ref() {
                     if starts_with_lowercase(ident.sym.as_ref())
                         && ident.ctxt.outer() != self.unresolved_mark
-                        && self
-                            .eligible_bindings
-                            .contains_key(&(ident.sym.clone(), ident.ctxt))
                     {
-                        let target_name = self
-                            .eligible_bindings
-                            .get(&(ident.sym.clone(), ident.ctxt))
-                            .and_then(Clone::clone)
-                            .unwrap_or_else(|| pascalize(ident.sym.as_ref()));
-                        let new_name = generate_unique_name(self.used_names, target_name);
-                        self.renames.push(ScopedRename {
-                            old: (ident.sym.clone(), ident.ctxt),
-                            new: new_name.into(),
-                        });
+                        let binding_id = (ident.sym.clone(), ident.ctxt);
+                        if let Some(eligibility) = self.eligible_bindings.get(&binding_id) {
+                            let can_rename = eligibility.allow_classic_create_element
+                                || is_automatic_pragma(pragma);
+                            if can_rename {
+                                let target_name = eligibility
+                                    .hint
+                                    .clone()
+                                    .unwrap_or_else(|| pascalize(ident.sym.as_ref()));
+                                let new_name = generate_unique_name(self.used_names, target_name);
+                                self.renames.push(ScopedRename {
+                                    old: binding_id,
+                                    new: new_name.into(),
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -803,54 +806,62 @@ impl VisitMut for ScopedRenamer {
 
 #[derive(Default)]
 struct EligibleComponentBindingCollector {
-    bindings: HashMap<BindingId, Option<String>>,
+    bindings: HashMap<BindingId, ComponentBindingEligibility>,
     include_all_const_bindings: bool,
+}
+
+#[derive(Clone)]
+struct ComponentBindingEligibility {
+    hint: Option<String>,
+    allow_classic_create_element: bool,
 }
 
 impl Visit for EligibleComponentBindingCollector {
     fn visit_fn_decl(&mut self, decl: &swc_core::ecma::ast::FnDecl) {
-        self.record(&decl.ident, None);
+        self.record(&decl.ident, None, true);
     }
 
     fn visit_class_decl(&mut self, decl: &swc_core::ecma::ast::ClassDecl) {
-        self.record(&decl.ident, None);
+        self.record(&decl.ident, None, true);
     }
 
     fn visit_import_decl(&mut self, decl: &ImportDecl) {
         for specifier in &decl.specifiers {
             match specifier {
                 ImportSpecifier::Named(named) => {
-                    self.record(&named.local, None);
+                    self.record(&named.local, None, true);
                 }
                 ImportSpecifier::Default(default) => {
-                    self.record(&default.local, None);
+                    self.record(&default.local, None, true);
                 }
                 ImportSpecifier::Namespace(namespace) => {
-                    self.record(&namespace.local, None);
+                    self.record(&namespace.local, None, true);
                 }
             }
         }
     }
 
     fn visit_var_decl(&mut self, decl: &VarDecl) {
-        if decl.kind != VarDeclKind::Const {
+        if !matches!(decl.kind, VarDeclKind::Const | VarDeclKind::Var) {
             return;
         }
 
         for declarator in &decl.decls {
             if self.include_all_const_bindings {
-                self.add_pat(&declarator.name);
+                self.add_pat(&declarator.name, decl.kind == VarDeclKind::Const);
                 continue;
             }
             if declarator.init.is_some() {
                 if let Pat::Ident(binding) = &declarator.name {
-                    let hint = declarator
-                        .init
-                        .as_deref()
-                        .and_then(component_name_hint_from_expr);
-                    self.record(&binding.id, hint);
+                    let init = declarator.init.as_deref().expect("checked above");
+                    let is_const = decl.kind == VarDeclKind::Const;
+                    if !is_const && !is_likely_var_component_initializer(init) {
+                        continue;
+                    }
+                    let hint = component_name_hint_from_expr(init);
+                    self.record(&binding.id, hint, is_const);
                 } else {
-                    self.add_pat(&declarator.name);
+                    self.add_pat(&declarator.name, decl.kind == VarDeclKind::Const);
                 }
             }
         }
@@ -865,48 +876,54 @@ impl Visit for EligibleComponentBindingCollector {
 
     fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
         for param in &arrow.params {
-            self.add_pat(param);
+            self.add_pat(param, true);
         }
         arrow.visit_children_with(self);
     }
 }
 
 impl EligibleComponentBindingCollector {
-    fn record(&mut self, ident: &Ident, hint: Option<String>) {
-        self.bindings.insert((ident.sym.clone(), ident.ctxt), hint);
+    fn record(&mut self, ident: &Ident, hint: Option<String>, allow_classic_create_element: bool) {
+        self.bindings.insert(
+            (ident.sym.clone(), ident.ctxt),
+            ComponentBindingEligibility {
+                hint,
+                allow_classic_create_element,
+            },
+        );
     }
 
     fn add_param(&mut self, param: &Param) {
-        self.add_pat(&param.pat);
+        self.add_pat(&param.pat, true);
     }
 
-    fn add_pat(&mut self, pat: &Pat) {
+    fn add_pat(&mut self, pat: &Pat, allow_classic_create_element: bool) {
         match pat {
             Pat::Ident(binding) => {
-                self.record(&binding.id, None);
+                self.record(&binding.id, None, allow_classic_create_element);
             }
             Pat::Array(array) => {
                 for elem in array.elems.iter().flatten() {
-                    self.add_pat(elem);
+                    self.add_pat(elem, allow_classic_create_element);
                 }
             }
             Pat::Object(object) => {
                 for prop in &object.props {
                     match prop {
                         swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
-                            self.record(&assign.key, None);
+                            self.record(&assign.key, None, allow_classic_create_element);
                         }
                         swc_core::ecma::ast::ObjectPatProp::KeyValue(key_value) => {
-                            self.add_pat(&key_value.value);
+                            self.add_pat(&key_value.value, allow_classic_create_element);
                         }
                         swc_core::ecma::ast::ObjectPatProp::Rest(rest) => {
-                            self.add_pat(&rest.arg);
+                            self.add_pat(&rest.arg, allow_classic_create_element);
                         }
                     }
                 }
             }
-            Pat::Assign(assign) => self.add_pat(&assign.left),
-            Pat::Rest(rest) => self.add_pat(&rest.arg),
+            Pat::Assign(assign) => self.add_pat(&assign.left, allow_classic_create_element),
+            Pat::Rest(rest) => self.add_pat(&rest.arg, allow_classic_create_element),
             _ => {}
         }
     }
@@ -914,7 +931,7 @@ impl EligibleComponentBindingCollector {
 
 fn collect_eligible_component_bindings_from_module_items(
     items: &[ModuleItem],
-) -> HashMap<BindingId, Option<String>> {
+) -> HashMap<BindingId, ComponentBindingEligibility> {
     let mut collector = EligibleComponentBindingCollector::default();
     items.visit_with(&mut collector);
     collector.bindings
@@ -922,7 +939,7 @@ fn collect_eligible_component_bindings_from_module_items(
 
 fn collect_eligible_component_bindings_from_stmts(
     stmts: &[Stmt],
-) -> HashMap<BindingId, Option<String>> {
+) -> HashMap<BindingId, ComponentBindingEligibility> {
     let mut collector = EligibleComponentBindingCollector::default();
     stmts.visit_with(&mut collector);
     collector.bindings
@@ -937,6 +954,18 @@ fn component_name_hint_from_expr(expr: &Expr) -> Option<String> {
     };
     let name = prop.sym.as_ref();
     starts_with_lowercase(name).then(|| pascalize(name))
+}
+
+fn is_likely_var_component_initializer(expr: &Expr) -> bool {
+    match expr {
+        Expr::Arrow(_) | Expr::Call(_) | Expr::Class(_) | Expr::Fn(_) | Expr::New(_) => true,
+        Expr::Paren(paren) => is_likely_var_component_initializer(&paren.expr),
+        Expr::Seq(seq) => seq
+            .exprs
+            .last()
+            .is_some_and(|expr| is_likely_var_component_initializer(expr)),
+        _ => false,
+    }
 }
 
 fn get_pragma(
