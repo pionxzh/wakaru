@@ -748,6 +748,29 @@ function config({ mode: appMode } = {}) {
 }
 
 #[test]
+fn object_property_aliases_keep_body_when_param_used_later() {
+    let input = r#"
+function config(e) {
+  const key = e.key;
+  if (key === "css") {
+    return e.container;
+  }
+  return use(e.nonce, key);
+}
+"#;
+    let expected = r#"
+function config(e) {
+  const key = e.key;
+  if (key === "css") {
+    return e.container;
+  }
+  return use(e.nonce, key);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn nested_object_destructuring_alias_becomes_param_pattern() {
     let input = r#"
 function nested(_ref = {}) {
@@ -808,6 +831,23 @@ function first(_ref = []) {
     let expected = r#"
 function first([head, second = fallback] = []) {
   return use(head, second);
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn array_index_aliases_keep_body_when_param_used_later() {
+    let input = r#"
+function first(items) {
+  const head = items[0];
+  return use(head, items.length);
+}
+"#;
+    let expected = r#"
+function first(items) {
+  const head = items[0];
+  return use(head, items.length);
 }
 "#;
     assert_eq_normalized(&apply(input), expected);

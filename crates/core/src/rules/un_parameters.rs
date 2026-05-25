@@ -671,6 +671,7 @@ fn fold_object_property_param_aliases(
                 &destructured_pat,
                 &body.stmts[remove_count..],
             )
+            || stmts_reference_ident(&body.stmts[remove_count..], &alias)
             || destructured_pat_reuses_other_param_name(&destructured_pat, params, param_idx)
             || !replace_param_alias_pat(
                 &mut params[param_idx].pat,
@@ -701,6 +702,7 @@ fn fold_array_index_param_aliases(
                 &destructured_pat,
                 &body.stmts[remove_count..],
             )
+            || stmts_reference_ident(&body.stmts[remove_count..], &alias)
             || destructured_pat_reuses_other_param_name(&destructured_pat, params, param_idx)
             || !replace_param_alias_pat(
                 &mut params[param_idx].pat,
