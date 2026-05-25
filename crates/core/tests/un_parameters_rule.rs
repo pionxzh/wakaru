@@ -1,6 +1,11 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
+use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, SyntaxContext, GLOBALS};
+use swc_core::ecma::ast::{BindingIdent, Decl, EsVersion, Function, ModuleItem, Pat, Stmt};
+use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+use swc_core::ecma::transforms::base::resolver;
+use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::{rules::UnParameters, RewriteLevel};
 
 fn apply(input: &str) -> String {
@@ -1031,4 +1036,91 @@ function foo(options) {
 }
 "#;
     assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn inline_arguments_default_preserves_candidate_binding_context() {
+    let input = r#"
+function greet() {
+  let name;
+  return arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : "world";
+}
+"#;
+
+    let (candidate_ctxt, param_ctxt) = recovered_first_param_context(input);
+
+    assert_eq!(
+        param_ctxt, candidate_ctxt,
+        "recovered parameter should keep the resolver binding context from the consumed declaration"
+    );
+    assert_ne!(
+        param_ctxt,
+        SyntaxContext::empty(),
+        "regression input should use a scoped local binding"
+    );
+}
+
+fn recovered_first_param_context(input: &str) -> (SyntaxContext, SyntaxContext) {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let fm = cm.new_source_file(
+            FileName::Custom("fixture.js".to_string()).into(),
+            input.to_string(),
+        );
+        let lexer = Lexer::new(
+            Syntax::Es(EsSyntax {
+                jsx: true,
+                ..Default::default()
+            }),
+            EsVersion::latest(),
+            StringInput::from(&*fm),
+            None,
+        );
+        let mut parser = Parser::new_from(lexer);
+        let mut module = parser.parse_module().expect("input should parse");
+
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        let candidate_ctxt = first_body_var_context(first_function(&module).function.as_ref());
+
+        module.visit_mut_with(&mut UnParameters::new(
+            unresolved_mark,
+            RewriteLevel::Standard,
+        ));
+
+        (
+            candidate_ctxt,
+            first_param_context(first_function(&module).function.as_ref()),
+        )
+    })
+}
+
+fn first_function(module: &swc_core::ecma::ast::Module) -> &swc_core::ecma::ast::FnDecl {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) = &module.body[0] else {
+        panic!("expected function declaration");
+    };
+    function
+}
+
+fn first_body_var_context(function: &Function) -> SyntaxContext {
+    let body = function.body.as_ref().expect("expected function body");
+    let Stmt::Decl(Decl::Var(var)) = &body.stmts[0] else {
+        panic!("expected first body statement to be a var declaration");
+    };
+    let Pat::Ident(BindingIdent { id, .. }) = &var.decls[0].name else {
+        panic!("expected identifier declaration");
+    };
+    id.ctxt
+}
+
+fn first_param_context(function: &Function) -> SyntaxContext {
+    let Pat::Assign(assign) = &function.params[0].pat else {
+        panic!("expected recovered default parameter");
+    };
+    let Pat::Ident(BindingIdent { id, .. }) = assign.left.as_ref() else {
+        panic!("expected identifier parameter");
+    };
+    id.ctxt
 }

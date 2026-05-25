@@ -1839,11 +1839,11 @@ fn process_pattern_b_params(
 
     // Scan entire body for var declarations matching the arguments pattern
     for (stmt_idx, stmt) in body.stmts.iter().enumerate() {
-        if let Some((param_idx, param_name, default_val)) =
+        if let Some((param_idx, param_ident, default_val)) =
             extract_arguments_default(stmt, unresolved_mark)
         {
-            if param_slot_can_use_name(params, param_idx, &param_name)
-                && ensure_default_param(params, param_idx, param_name, default_val, body_bindings)
+            if param_slot_can_use_ident(params, param_idx, &param_ident)
+                && ensure_default_param(params, param_idx, param_ident, default_val, body_bindings)
                     .is_some()
             {
                 to_remove.push(stmt_idx);
@@ -1851,9 +1851,9 @@ fn process_pattern_b_params(
             continue;
         }
 
-        if let Some((param_idx, param_name)) = extract_arguments_alias(stmt, unresolved_mark) {
-            if param_slot_can_use_name(params, param_idx, &param_name)
-                && ensure_plain_param(params, param_idx, param_name).is_some()
+        if let Some((param_idx, param_ident)) = extract_arguments_alias(stmt, unresolved_mark) {
+            if param_slot_can_use_ident(params, param_idx, &param_ident)
+                && ensure_plain_param(params, param_idx, param_ident).is_some()
             {
                 to_remove.push(stmt_idx);
             }
@@ -1871,7 +1871,7 @@ fn process_pattern_b_params(
 fn extract_arguments_default(
     stmt: &Stmt,
     unresolved_mark: Mark,
-) -> Option<(usize, Atom, Box<Expr>)> {
+) -> Option<(usize, Ident, Box<Expr>)> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
@@ -1889,7 +1889,7 @@ fn extract_arguments_default(
     let init = declarator.init.as_ref()?;
 
     let (param_idx, default_val) = extract_arguments_default_expr(init.as_ref(), unresolved_mark)?;
-    Some((param_idx, var_ident.sym.clone(), default_val))
+    Some((param_idx, var_ident.clone(), default_val))
 }
 
 /// Check if `expr` is `arguments.length > N ? arguments[N] : undefined` (simple optional)
@@ -2021,7 +2021,7 @@ fn extract_arguments_default_expr(
     }
 }
 
-fn extract_arguments_alias(stmt: &Stmt, unresolved_mark: Mark) -> Option<(usize, Atom)> {
+fn extract_arguments_alias(stmt: &Stmt, unresolved_mark: Mark) -> Option<(usize, Ident)> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
@@ -2035,7 +2035,7 @@ fn extract_arguments_alias(stmt: &Stmt, unresolved_mark: Mark) -> Option<(usize,
     let init = declarator.init.as_ref()?;
     let param_idx = extract_arguments_index_expr(init.as_ref(), unresolved_mark)
         .or_else(|| extract_simple_arguments_optional(init.as_ref(), unresolved_mark))?;
-    Some((param_idx, var_ident.sym.clone()))
+    Some((param_idx, var_ident.clone()))
 }
 
 fn extract_arguments_index_expr(expr: &Expr, unresolved_mark: Mark) -> Option<usize> {
@@ -2189,13 +2189,21 @@ fn param_slot_can_use_name(params: &[Param], idx: usize, preferred_name: &Atom) 
     binding.id.sym == *preferred_name || is_placeholder(&binding.id.sym, idx)
 }
 
-fn ensure_plain_param(params: &mut Vec<Param>, idx: usize, preferred_name: Atom) -> Option<Ident> {
+fn param_slot_can_use_ident(params: &[Param], idx: usize, preferred_ident: &Ident) -> bool {
+    param_slot_can_use_name(params, idx, &preferred_ident.sym)
+}
+
+fn ensure_plain_param(
+    params: &mut Vec<Param>,
+    idx: usize,
+    preferred_ident: Ident,
+) -> Option<Ident> {
     ensure_params_len(params, idx);
     let Pat::Ident(binding) = &mut params[idx].pat else {
         return None;
     };
     if is_placeholder(&binding.id.sym, idx) {
-        binding.id.sym = preferred_name;
+        binding.id = preferred_ident;
     }
     Some(binding.id.clone())
 }
@@ -2203,7 +2211,7 @@ fn ensure_plain_param(params: &mut Vec<Param>, idx: usize, preferred_name: Atom)
 fn ensure_default_param(
     params: &mut Vec<Param>,
     idx: usize,
-    preferred_name: Atom,
+    preferred_ident: Ident,
     default_val: Box<Expr>,
     body_bindings: &[BindingId],
 ) -> Option<Ident> {
@@ -2219,11 +2227,11 @@ fn ensure_default_param(
         Pat::Ident(binding) => {
             let mut id = binding.id.clone();
             if is_placeholder(&id.sym, idx) {
-                id.sym = preferred_name;
+                id = preferred_ident;
             }
             (id, true)
         }
-        _ => (Ident::new_no_ctxt(preferred_name, DUMMY_SP), false),
+        _ => (preferred_ident, false),
     };
 
     if !can_replace {
@@ -2243,7 +2251,7 @@ fn ensure_default_param(
 
 #[derive(Clone)]
 struct InlineParamNameCandidate {
-    sym: Atom,
+    ident: Ident,
     binding: BindingId,
 }
 
@@ -2262,12 +2270,12 @@ impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
 
         if let Some((idx, default_val)) = extract_arguments_default_expr(expr, self.unresolved_mark)
         {
-            let preferred_name = self.preferred_param_name(idx);
-            if param_slot_can_use_name(self.params, idx, &preferred_name) {
+            let preferred_ident = self.preferred_param_ident(idx);
+            if param_slot_can_use_ident(self.params, idx, &preferred_ident) {
                 if let Some(ident) = ensure_default_param(
                     self.params,
                     idx,
-                    preferred_name,
+                    preferred_ident,
                     default_val,
                     self.body_bindings,
                 ) {
@@ -2282,9 +2290,9 @@ impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
             return;
         };
 
-        let preferred_name = self.preferred_param_name(idx);
-        if param_slot_can_use_name(self.params, idx, &preferred_name) {
-            if let Some(ident) = ensure_plain_param(self.params, idx, preferred_name) {
+        let preferred_ident = self.preferred_param_ident(idx);
+        if param_slot_can_use_ident(self.params, idx, &preferred_ident) {
+            if let Some(ident) = ensure_plain_param(self.params, idx, preferred_ident) {
                 self.mark_param_name_consumed(idx);
                 *expr = Expr::Ident(ident);
             }
@@ -2297,10 +2305,10 @@ impl VisitMut for InlineArgumentsDefaultRewriter<'_> {
 }
 
 impl InlineArgumentsDefaultRewriter<'_> {
-    fn preferred_param_name(&self, idx: usize) -> Atom {
+    fn preferred_param_ident(&self, idx: usize) -> Ident {
         self.param_name_candidate(idx)
-            .map(|candidate| candidate.sym.clone())
-            .unwrap_or_else(|| placeholder_name(idx))
+            .map(|candidate| candidate.ident.clone())
+            .unwrap_or_else(|| Ident::new_no_ctxt(placeholder_name(idx), DUMMY_SP))
     }
 
     fn mark_param_name_consumed(&mut self, idx: usize) {
@@ -2357,7 +2365,7 @@ fn collect_inline_param_name_candidates(body: &BlockStmt) -> Vec<Option<InlinePa
                 stmt_candidates.push(None);
             } else {
                 stmt_candidates.push(Some(InlineParamNameCandidate {
-                    sym: binding.id.sym.clone(),
+                    ident: binding.id.clone(),
                     binding: (binding.id.sym.clone(), binding.id.ctxt),
                 }));
             }
