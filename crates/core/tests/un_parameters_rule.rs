@@ -748,6 +748,55 @@ function config({ mode: appMode } = {}) {
 }
 
 #[test]
+fn object_property_short_alias_renames_to_property_name() {
+    let input = r#"
+function reducer(e = s, t = {}) {
+  var n = t.type;
+  var r = t.payload;
+  if (n === LOCATION_CHANGE) {
+    return {
+      ...e,
+      location: r
+    };
+  }
+  return e;
+}
+"#;
+    let expected = r#"
+function reducer(e = s, { type, payload: r } = {}) {
+  if (type === LOCATION_CHANGE) {
+    return {
+      ...e,
+      location: r
+    };
+  }
+  return e;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn object_property_short_alias_rename_avoids_nested_capture() {
+    let input = r#"
+function reducer(t = {}) {
+  var n = t.type;
+  return function(type) {
+    return n + type;
+  };
+}
+"#;
+    let expected = r#"
+function reducer({ type: n } = {}) {
+  return function(type) {
+    return n + type;
+  };
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn object_property_aliases_keep_body_when_param_used_later() {
     let input = r#"
 function config(e) {

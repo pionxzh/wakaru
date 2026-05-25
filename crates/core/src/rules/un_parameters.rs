@@ -4,12 +4,13 @@ use swc_core::ecma::ast::{
     ArrayPat, ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, BinExpr,
     BinaryOp, BindingIdent, BlockStmt, BlockStmtOrExpr, Bool, CatchClause, ClassDecl, Decl, Expr,
     FnDecl, Function, Ident, IdentName, IfStmt, KeyValuePatProp, Lit, MemberExpr, MemberProp,
-    Number, ObjectPat, ObjectPatProp, Param, Pat, PropName, SimpleAssignTarget, Stmt, UnaryExpr,
-    UnaryOp, VarDecl, VarDeclKind,
+    Number, ObjectPat, ObjectPatProp, Param, Pat, Prop, PropName, SimpleAssignTarget, Stmt,
+    UnaryExpr, UnaryOp, VarDecl, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::same_ident;
+use super::rename_utils::{rename_bindings, BindingRename};
 use super::RewriteLevel;
 
 type BindingId = (Atom, SyntaxContext);
@@ -661,11 +662,17 @@ fn fold_object_property_param_aliases(
     unresolved_mark: Mark,
 ) {
     loop {
-        let Some((param_idx, alias, destructured_pat, default_val, remove_count)) =
+        let Some((param_idx, alias, mut destructured_pat, default_val, remove_count)) =
             extract_prefix_object_property_aliases(params, body, unresolved_mark)
         else {
             break;
         };
+        let short_alias_renames = rename_short_object_property_aliases(
+            params,
+            param_idx,
+            &mut destructured_pat,
+            &body.stmts[remove_count..],
+        );
         if destructured_pat_references_alias(&destructured_pat, &alias)
             || destructured_pat_references_later_decl_name(
                 &destructured_pat,
@@ -683,6 +690,7 @@ fn fold_object_property_param_aliases(
             break;
         }
         body.stmts.drain(0..remove_count);
+        rename_bindings(&mut body.stmts, &short_alias_renames);
     }
 }
 
@@ -1316,6 +1324,89 @@ fn object_pat_prop(
     }
 }
 
+fn rename_short_object_property_aliases(
+    params: &[Param],
+    param_idx: usize,
+    pat: &mut Pat,
+    later_stmts: &[Stmt],
+) -> Vec<BindingRename> {
+    let Pat::Object(object) = pat else {
+        return Vec::new();
+    };
+
+    let mut renames = Vec::new();
+    let mut reserved_names = Vec::new();
+    for (idx, param) in params.iter().enumerate() {
+        if idx != param_idx {
+            collect_pat_bound_emitted_names(&param.pat, &mut reserved_names);
+        }
+    }
+
+    for prop in &mut object.props {
+        let Some((old, new, replacement)) =
+            rename_short_object_property_alias_prop(prop, later_stmts, &reserved_names)
+        else {
+            continue;
+        };
+        *prop = replacement;
+        reserved_names.push(new.clone());
+        renames.push(BindingRename { old, new });
+    }
+
+    renames
+}
+
+fn rename_short_object_property_alias_prop(
+    prop: &mut ObjectPatProp,
+    later_stmts: &[Stmt],
+    reserved_names: &[Atom],
+) -> Option<(BindingId, Atom, ObjectPatProp)> {
+    let ObjectPatProp::KeyValue(kv) = prop else {
+        return None;
+    };
+    let PropName::Ident(key) = &kv.key else {
+        return None;
+    };
+    let key_sym = key.sym.clone();
+    let binding = key_value_pat_binding_mut(kv)?;
+    if !is_short_alias_for_key(&key_sym, &binding.id.sym)
+        || !is_preferred_short_alias_target(&key_sym)
+        || is_reserved_binding_name(key_sym.as_ref())
+        || reserved_names.iter().any(|name| name == &key_sym)
+        || stmts_contain_emitted_ident_name(later_stmts, &key_sym)
+        || binding_used_as_named_object_value(later_stmts, &binding.id)
+    {
+        return None;
+    }
+
+    let old = (binding.id.sym.clone(), binding.id.ctxt);
+    binding.id.sym = key_sym.clone();
+    let replacement = ObjectPatProp::Assign(AssignPatProp {
+        span: DUMMY_SP,
+        key: binding.clone(),
+        value: key_value_pat_default(kv),
+    });
+    Some((old, key_sym, replacement))
+}
+
+fn key_value_pat_binding_mut(kv: &mut KeyValuePatProp) -> Option<&mut BindingIdent> {
+    match kv.value.as_mut() {
+        Pat::Ident(binding) => Some(binding),
+        Pat::Assign(assign) => match assign.left.as_mut() {
+            Pat::Ident(binding) => Some(binding),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn key_value_pat_default(kv: &KeyValuePatProp) -> Option<Box<Expr>> {
+    match kv.value.as_ref() {
+        Pat::Assign(assign) => Some(assign.right.clone()),
+        _ => None,
+    }
+}
+
 fn find_param_alias_idx(params: &[Param], alias: &Ident) -> Option<usize> {
     params
         .iter()
@@ -1488,6 +1579,122 @@ fn key_value_pat_has_minified_alias(kv: &swc_core::ecma::ast::KeyValuePatProp) -
 
 fn is_short_alias_for_key(key: &Atom, alias: &Atom) -> bool {
     key != alias && alias.len() <= 2
+}
+
+fn is_preferred_short_alias_target(key: &Atom) -> bool {
+    matches!(key.as_ref(), "type" | "kind" | "name" | "key")
+}
+
+fn is_reserved_binding_name(name: &str) -> bool {
+    matches!(
+        name,
+        "await"
+            | "break"
+            | "case"
+            | "catch"
+            | "class"
+            | "const"
+            | "continue"
+            | "debugger"
+            | "default"
+            | "delete"
+            | "do"
+            | "else"
+            | "enum"
+            | "export"
+            | "extends"
+            | "false"
+            | "finally"
+            | "for"
+            | "function"
+            | "if"
+            | "import"
+            | "in"
+            | "instanceof"
+            | "let"
+            | "new"
+            | "null"
+            | "return"
+            | "static"
+            | "super"
+            | "switch"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typeof"
+            | "var"
+            | "void"
+            | "while"
+            | "with"
+            | "yield"
+            | "arguments"
+            | "eval"
+    )
+}
+
+fn stmts_contain_emitted_ident_name(stmts: &[Stmt], name: &Atom) -> bool {
+    let mut finder = EmittedIdentNameFinder2 { name, found: false };
+    stmts.visit_with(&mut finder);
+    finder.found
+}
+
+struct EmittedIdentNameFinder2<'a> {
+    name: &'a Atom,
+    found: bool,
+}
+
+impl Visit for EmittedIdentNameFinder2<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym == *self.name {
+            self.found = true;
+        }
+    }
+
+    fn visit_prop_name(&mut self, _: &PropName) {}
+
+    fn visit_member_prop(&mut self, prop: &MemberProp) {
+        if let MemberProp::Computed(computed) = prop {
+            computed.visit_children_with(self);
+        }
+    }
+}
+
+fn binding_used_as_named_object_value(stmts: &[Stmt], binding: &Ident) -> bool {
+    let mut finder = NamedObjectValueFinder {
+        binding,
+        found: false,
+    };
+    stmts.visit_with(&mut finder);
+    finder.found
+}
+
+struct NamedObjectValueFinder<'a> {
+    binding: &'a Ident,
+    found: bool,
+}
+
+impl Visit for NamedObjectValueFinder<'_> {
+    fn visit_prop(&mut self, prop: &Prop) {
+        if let Prop::KeyValue(key_value) = prop {
+            if let (PropName::Ident(key), Expr::Ident(value)) =
+                (&key_value.key, key_value.value.as_ref())
+            {
+                if key.sym != self.binding.sym
+                    && key.sym.len() > 2
+                    && same_ident(value, self.binding)
+                {
+                    self.found = true;
+                    return;
+                }
+            }
+        }
+        prop.visit_children_with(self);
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
 }
 
 fn destructured_pat_references_later_decl_name(pat: &Pat, later_stmts: &[Stmt]) -> bool {
