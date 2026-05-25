@@ -1,6 +1,11 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
+use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, SyntaxContext, GLOBALS};
+use swc_core::ecma::ast::{BindingIdent, Decl, EsVersion, Function, ModuleItem, Pat, Stmt};
+use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+use swc_core::ecma::transforms::base::resolver;
+use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::{rules::ArgRest, RewriteLevel};
 
 fn apply(input: &str) -> String {
@@ -485,4 +490,90 @@ function foo() {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn copy_loop_rest_param_preserves_binding_context() {
+    let input = r#"
+function foo(a) {
+    for (var _len = arguments.length, _args = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
+        _args[_key - 1] = arguments[_key];
+    }
+    console.log(_args);
+}
+"#;
+
+    let (copy_var_ctxt, rest_param_ctxt) = rest_param_context_from_copy_loop(input);
+
+    assert_eq!(
+        rest_param_ctxt, copy_var_ctxt,
+        "rest parameter should keep the binding context from the consumed copy variable"
+    );
+    assert_ne!(
+        rest_param_ctxt,
+        SyntaxContext::empty(),
+        "regression input should use a scoped local binding"
+    );
+}
+
+fn rest_param_context_from_copy_loop(input: &str) -> (SyntaxContext, SyntaxContext) {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let fm = cm.new_source_file(
+            FileName::Custom("fixture.js".to_string()).into(),
+            input.to_string(),
+        );
+        let lexer = Lexer::new(
+            Syntax::Es(EsSyntax::default()),
+            EsVersion::latest(),
+            StringInput::from(&*fm),
+            None,
+        );
+        let mut parser = Parser::new_from(lexer);
+        let mut module = parser.parse_module().expect("input should parse");
+
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        let copy_var_ctxt = for_loop_copy_var_context(first_function(&module).function.as_ref());
+
+        module.visit_mut_with(&mut ArgRest::new(RewriteLevel::Standard));
+
+        let rest_param_ctxt = last_rest_param_context(first_function(&module).function.as_ref());
+
+        (copy_var_ctxt, rest_param_ctxt)
+    })
+}
+
+fn first_function(module: &swc_core::ecma::ast::Module) -> &swc_core::ecma::ast::FnDecl {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) = &module.body[0] else {
+        panic!("expected function declaration");
+    };
+    function
+}
+
+fn for_loop_copy_var_context(function: &Function) -> SyntaxContext {
+    let body = function.body.as_ref().expect("expected function body");
+    let Stmt::For(for_stmt) = &body.stmts[0] else {
+        panic!("expected for statement");
+    };
+    let Some(swc_core::ecma::ast::VarDeclOrExpr::VarDecl(init)) = &for_stmt.init else {
+        panic!("expected var decl in for init");
+    };
+    let Pat::Ident(BindingIdent { id, .. }) = &init.decls[1].name else {
+        panic!("expected identifier for copy var (second declarator)");
+    };
+    id.ctxt
+}
+
+fn last_rest_param_context(function: &Function) -> SyntaxContext {
+    let last_param = function.params.last().expect("expected at least one param");
+    let Pat::Rest(rest) = &last_param.pat else {
+        panic!("expected rest parameter");
+    };
+    let Pat::Ident(BindingIdent { id, .. }) = rest.arg.as_ref() else {
+        panic!("expected identifier in rest parameter");
+    };
+    id.ctxt
 }

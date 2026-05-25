@@ -60,12 +60,12 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>) {
                 }
 
                 // Check if this is a bare var decl like `var Direction;`
-                if let Some(bare_var_name) = get_bare_var_decl_name(&stmt) {
+                if let Some(bare_var_ident) = get_bare_var_decl_ident(&stmt) {
                     if let Some(ModuleItem::Stmt(next_stmt)) = iter.peek() {
-                        if let Some(members) = parse_enum_iife(next_stmt, &bare_var_name) {
+                        if let Some(members) = parse_enum_iife(next_stmt, &bare_var_ident.sym) {
                             // Consume the IIFE statement
                             iter.next();
-                            let new_stmt = build_enum_var_decl(&bare_var_name, members, &stmt);
+                            let new_stmt = build_enum_var_decl(&bare_var_ident, members, &stmt);
                             items.push(ModuleItem::Stmt(new_stmt));
                             continue;
                         }
@@ -73,8 +73,8 @@ fn process_module_items_for_enum(items: &mut Vec<ModuleItem>) {
                 }
 
                 // Try standalone enum IIFE (without preceding bare var)
-                if let Some((name, members)) = parse_enum_iife_standalone(&stmt) {
-                    let new_stmt = build_enum_assign_stmt(name, members);
+                if let Some((ident, members)) = parse_enum_iife_standalone(&stmt) {
+                    let new_stmt = build_enum_assign_stmt(ident, members);
                     items.push(ModuleItem::Stmt(new_stmt));
                     continue;
                 }
@@ -104,19 +104,19 @@ fn process_stmts_for_enum(stmts: &mut Vec<Stmt>) {
             continue;
         }
 
-        if let Some(bare_var_name) = get_bare_var_decl_name(&stmt) {
+        if let Some(bare_var_ident) = get_bare_var_decl_ident(&stmt) {
             if let Some(peeked) = iter.peek() {
-                if let Some(members) = parse_enum_iife(peeked, &bare_var_name) {
+                if let Some(members) = parse_enum_iife(peeked, &bare_var_ident.sym) {
                     iter.next(); // consume the IIFE
-                    let new_stmt = build_enum_var_decl(&bare_var_name, members, &stmt);
+                    let new_stmt = build_enum_var_decl(&bare_var_ident, members, &stmt);
                     stmts.push(new_stmt);
                     continue;
                 }
             }
         }
 
-        if let Some((name, members)) = parse_enum_iife_standalone(&stmt) {
-            let new_stmt = build_enum_assign_stmt(name, members);
+        if let Some((ident, members)) = parse_enum_iife_standalone(&stmt) {
+            let new_stmt = build_enum_assign_stmt(ident, members);
             stmts.push(new_stmt);
             continue;
         }
@@ -167,7 +167,7 @@ fn rewrite_enum_var_decl(var: &mut VarDecl) -> bool {
 // ============================================================
 
 /// Check if stmt is `var Name;` (VarDecl with 1 declarator, no init)
-fn get_bare_var_decl_name(stmt: &Stmt) -> Option<Atom> {
+fn get_bare_var_decl_ident(stmt: &Stmt) -> Option<Ident> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
@@ -181,7 +181,7 @@ fn get_bare_var_decl_name(stmt: &Stmt) -> Option<Atom> {
     let Pat::Ident(BindingIdent { id, .. }) = &declarator.name else {
         return None;
     };
-    Some(id.sym.clone())
+    Some(id.clone())
 }
 
 /// Parse an enum IIFE where the inner function param name matches `expected_name`.
@@ -195,8 +195,8 @@ fn parse_enum_iife(stmt: &Stmt, expected_name: &Atom) -> Option<Vec<EnumMember>>
 }
 
 /// Parse a standalone enum IIFE (no preceding bare var).
-/// Returns `(enum_name, members)` if matched.
-fn parse_enum_iife_standalone(stmt: &Stmt) -> Option<(Atom, Vec<EnumMember>)> {
+/// Returns `(enum_ident, members)` if matched.
+fn parse_enum_iife_standalone(stmt: &Stmt) -> Option<(Ident, Vec<EnumMember>)> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
     };
@@ -205,10 +205,10 @@ fn parse_enum_iife_standalone(stmt: &Stmt) -> Option<(Atom, Vec<EnumMember>)> {
     let Expr::Call(call) = expr else {
         return None;
     };
-    let enum_name = extract_enum_name_from_arg(&call.args)?;
+    let enum_ident = extract_enum_name_from_arg(&call.args)?;
 
     // Validate that there is no preceding bare var (this is for standalone)
-    parse_enum_iife_expr_inner(call, &enum_name, None).map(|members| (enum_name, members))
+    parse_enum_iife_expr_inner(call, &enum_ident.sym, None).map(|members| (enum_ident, members))
 }
 
 fn parse_enum_iife_expr(expr: &Expr, expected_name: Option<&Atom>) -> Option<Vec<EnumMember>> {
@@ -220,7 +220,7 @@ fn parse_enum_iife_expr(expr: &Expr, expected_name: Option<&Atom>) -> Option<Vec
     let enum_name = if let Some(n) = expected_name {
         n.clone()
     } else {
-        extract_enum_name_from_arg(&call.args)?
+        extract_enum_name_from_arg(&call.args)?.sym
     };
 
     if let Some(n) = expected_name {
@@ -320,7 +320,7 @@ fn strip_unary_bang(expr: &Expr) -> &Expr {
     expr
 }
 
-fn extract_enum_name_from_arg(args: &[swc_core::ecma::ast::ExprOrSpread]) -> Option<Atom> {
+fn extract_enum_name_from_arg(args: &[swc_core::ecma::ast::ExprOrSpread]) -> Option<Ident> {
     if args.len() != 1 {
         return None;
     }
@@ -336,7 +336,7 @@ fn extract_enum_name_from_arg(args: &[swc_core::ecma::ast::ExprOrSpread]) -> Opt
     let Expr::Ident(id) = left.as_ref() else {
         return None;
     };
-    Some(id.sym.clone())
+    Some(id.clone())
 }
 
 fn validate_enum_iife_arg(args: &[swc_core::ecma::ast::ExprOrSpread], name: &Atom) -> bool {
@@ -593,7 +593,7 @@ fn is_valid_identifier(s: &str) -> bool {
 // ============================================================
 
 /// Build `var Name = { ... }` using the original var stmt's structure
-fn build_enum_var_decl(name: &Atom, members: Vec<EnumMember>, original_stmt: &Stmt) -> Stmt {
+fn build_enum_var_decl(ident: &Ident, members: Vec<EnumMember>, original_stmt: &Stmt) -> Stmt {
     let obj = build_enum_object(members);
 
     // Get VarDeclKind from original
@@ -611,7 +611,7 @@ fn build_enum_var_decl(name: &Atom, members: Vec<EnumMember>, original_stmt: &St
         decls: vec![VarDeclarator {
             span: DUMMY_SP,
             name: Pat::Ident(BindingIdent {
-                id: Ident::new_no_ctxt(name.clone(), DUMMY_SP),
+                id: ident.clone(),
                 type_ann: None,
             }),
             init: Some(Box::new(obj)),
@@ -622,7 +622,7 @@ fn build_enum_var_decl(name: &Atom, members: Vec<EnumMember>, original_stmt: &St
 
 /// Build an assignment statement for standalone IIFE (no preceding bare var):
 /// `Name = { ... }` as an ExprStmt
-fn build_enum_assign_stmt(name: Atom, members: Vec<EnumMember>) -> Stmt {
+fn build_enum_assign_stmt(ident: Ident, members: Vec<EnumMember>) -> Stmt {
     let obj = build_enum_object(members);
     Stmt::Expr(ExprStmt {
         span: DUMMY_SP,
@@ -631,7 +631,7 @@ fn build_enum_assign_stmt(name: Atom, members: Vec<EnumMember>) -> Stmt {
             op: AssignOp::Assign,
             left: AssignTarget::Simple(SimpleAssignTarget::Ident(
                 swc_core::ecma::ast::BindingIdent {
-                    id: Ident::new_no_ctxt(name, DUMMY_SP),
+                    id: ident,
                     type_ann: None,
                 },
             )),

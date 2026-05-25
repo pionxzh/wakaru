@@ -1,7 +1,10 @@
 mod common;
 
 use common::{assert_eq_normalized, render_pipeline_until};
-use swc_core::common::GLOBALS;
+use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, SyntaxContext, GLOBALS};
+use swc_core::ecma::ast::{BindingIdent, Decl, EsVersion, ModuleItem, Pat, Stmt};
+use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::rules::UnEnum;
 
@@ -263,4 +266,162 @@ var x = 1;
 console.log(x);
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn bare_var_enum_preserves_binding_context() {
+    let input = r#"
+var Direction;
+(function(Direction) {
+    Direction[Direction["Up"] = 0] = "Up";
+    Direction[Direction["Down"] = 1] = "Down";
+})(Direction || (Direction = {}));
+console.log(Direction.Up);
+"#;
+
+    let (original_ctxt, output_ctxt) = enum_var_binding_context(input);
+
+    assert_eq!(
+        output_ctxt, original_ctxt,
+        "enum var declaration should preserve the original binding context"
+    );
+    assert_ne!(
+        output_ctxt,
+        SyntaxContext::empty(),
+        "regression input should use a scoped binding"
+    );
+}
+
+#[test]
+fn standalone_enum_preserves_binding_context() {
+    let input = r#"
+(function(Status) {
+    Status[Status["Active"] = 0] = "Active";
+    Status[Status["Inactive"] = 1] = "Inactive";
+})(Status || (Status = {}));
+console.log(Status.Active);
+"#;
+
+    let (original_ctxt, output_ctxt) = standalone_enum_binding_context(input);
+
+    assert_eq!(
+        output_ctxt, original_ctxt,
+        "standalone enum assignment should preserve the original binding context"
+    );
+    assert_ne!(
+        output_ctxt,
+        SyntaxContext::empty(),
+        "regression input should use a scoped binding"
+    );
+}
+
+fn enum_var_binding_context(input: &str) -> (SyntaxContext, SyntaxContext) {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let fm = cm.new_source_file(
+            FileName::Custom("fixture.js".to_string()).into(),
+            input.to_string(),
+        );
+        let lexer = Lexer::new(
+            Syntax::Es(EsSyntax::default()),
+            EsVersion::latest(),
+            StringInput::from(&*fm),
+            None,
+        );
+        let mut parser = Parser::new_from(lexer);
+        let mut module = parser.parse_module().expect("input should parse");
+
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        let original_ctxt = first_var_decl_context(&module);
+
+        module.visit_mut_with(&mut UnEnum);
+
+        let output_ctxt = first_var_decl_context(&module);
+
+        (original_ctxt, output_ctxt)
+    })
+}
+
+fn standalone_enum_binding_context(input: &str) -> (SyntaxContext, SyntaxContext) {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let fm = cm.new_source_file(
+            FileName::Custom("fixture.js".to_string()).into(),
+            input.to_string(),
+        );
+        let lexer = Lexer::new(
+            Syntax::Es(EsSyntax::default()),
+            EsVersion::latest(),
+            StringInput::from(&*fm),
+            None,
+        );
+        let mut parser = Parser::new_from(lexer);
+        let mut module = parser.parse_module().expect("input should parse");
+
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        let original_ctxt = iife_arg_ident_context(&module);
+
+        module.visit_mut_with(&mut UnEnum);
+
+        let output_ctxt = first_assign_target_context(&module);
+
+        (original_ctxt, output_ctxt)
+    })
+}
+
+fn first_var_decl_context(module: &swc_core::ecma::ast::Module) -> SyntaxContext {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = &module.body[0] else {
+        panic!("expected var declaration as first statement");
+    };
+    let Pat::Ident(BindingIdent { id, .. }) = &var.decls[0].name else {
+        panic!("expected identifier in var declaration");
+    };
+    id.ctxt
+}
+
+fn iife_arg_ident_context(module: &swc_core::ecma::ast::Module) -> SyntaxContext {
+    use swc_core::ecma::ast::{CallExpr, Expr, ExprStmt};
+    let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = &module.body[0] else {
+        panic!("expected expression statement");
+    };
+    let Expr::Call(CallExpr { args, .. }) = expr.as_ref() else {
+        panic!("expected call expression");
+    };
+    let arg = strip_parens_ref(&args[0].expr);
+    let Expr::Bin(bin) = arg else {
+        panic!("expected binary expression in arg");
+    };
+    let Expr::Ident(id) = bin.left.as_ref() else {
+        panic!("expected ident in left of LogicalOr");
+    };
+    id.ctxt
+}
+
+fn strip_parens_ref(expr: &swc_core::ecma::ast::Expr) -> &swc_core::ecma::ast::Expr {
+    use swc_core::ecma::ast::Expr;
+    let mut current = expr;
+    while let Expr::Paren(p) = current {
+        current = p.expr.as_ref();
+    }
+    current
+}
+
+fn first_assign_target_context(module: &swc_core::ecma::ast::Module) -> SyntaxContext {
+    use swc_core::ecma::ast::{AssignExpr, AssignTarget, Expr, ExprStmt, SimpleAssignTarget};
+    let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = &module.body[0] else {
+        panic!("expected expression statement after transformation");
+    };
+    let Expr::Assign(AssignExpr { left, .. }) = expr.as_ref() else {
+        panic!("expected assignment expression");
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(BindingIdent { id, .. })) = left else {
+        panic!("expected identifier assign target");
+    };
+    id.ctxt
 }

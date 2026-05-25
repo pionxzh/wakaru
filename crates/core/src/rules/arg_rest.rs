@@ -49,7 +49,7 @@ impl VisitMut for ArgRest {
         let Some(body) = &func.body else { return };
         let fixed_param_count = func.params.len();
 
-        let copy_var = detect_copy_var_name(body, fixed_param_count);
+        let copy_var = detect_copy_var_ident(body, fixed_param_count);
         let mut checker = ArgumentsChecker::new(fixed_param_count);
         body.visit_with(&mut checker);
 
@@ -57,19 +57,19 @@ impl VisitMut for ArgRest {
             return;
         }
 
-        // Use the copy variable's name when a Babel copy loop is present; it is
-        // already unique within the scope and avoids any naming conflict.
-        let rest_name: Atom = copy_var.clone().unwrap_or_else(|| "args".into());
-        func.params.push(make_rest_param(rest_name.clone()));
+        let rest_ident = copy_var
+            .clone()
+            .unwrap_or_else(|| Ident::new_no_ctxt("args".into(), DUMMY_SP));
+        func.params.push(make_rest_param(rest_ident.clone()));
 
-        // Rewrite `arguments` → `args` in the body
+        // Rewrite `arguments` → rest param in the body
         if let Some(body) = &mut func.body {
             // Remove the Babel copy loop since the rest param replaces it
             if copy_var.is_some() {
                 remove_arguments_copy_loop(body, fixed_param_count);
             }
             body.visit_mut_with(&mut ArgumentsRewriter {
-                name: rest_name,
+                ident: rest_ident,
                 fixed_param_count,
             });
         }
@@ -92,7 +92,7 @@ impl VisitMut for ArgRest {
         let Some(body) = &ctor.body else { return };
         let fixed_param_count = ctor.params.len();
 
-        let copy_var = detect_copy_var_name(body, fixed_param_count);
+        let copy_var = detect_copy_var_ident(body, fixed_param_count);
         let mut checker = ArgumentsChecker::new(fixed_param_count);
         body.visit_with(&mut checker);
 
@@ -100,9 +100,11 @@ impl VisitMut for ArgRest {
             return;
         }
 
-        let rest_name: Atom = copy_var.clone().unwrap_or_else(|| "args".into());
+        let rest_ident = copy_var
+            .clone()
+            .unwrap_or_else(|| Ident::new_no_ctxt("args".into(), DUMMY_SP));
         ctor.params.push(ParamOrTsParamProp::Param(make_rest_param(
-            rest_name.clone(),
+            rest_ident.clone(),
         )));
 
         if let Some(body) = &mut ctor.body {
@@ -111,7 +113,7 @@ impl VisitMut for ArgRest {
                 remove_arguments_copy_loop(body, fixed_param_count);
             }
             body.visit_mut_with(&mut ArgumentsRewriter {
-                name: rest_name,
+                ident: rest_ident,
                 fixed_param_count,
             });
         }
@@ -127,23 +129,22 @@ impl VisitMut for ArgRest {
 /// ```text
 /// for (var len = arguments.length, copy = Array(len), idx = 0; …) …
 /// ```
-fn detect_copy_var_name(body: &BlockStmt, fixed_param_count: usize) -> Option<Atom> {
+fn detect_copy_var_ident(body: &BlockStmt, fixed_param_count: usize) -> Option<Ident> {
     body.stmts
         .iter()
-        .find_map(|stmt| detect_copy_var_name_from_stmt(stmt, fixed_param_count))
-        .or_else(|| detect_ts_copy_var_name(body, fixed_param_count))
-        .map(|copy| copy.0)
+        .find_map(|stmt| detect_copy_var_ident_from_stmt(stmt, fixed_param_count))
+        .or_else(|| detect_ts_copy_var_ident(body, fixed_param_count))
 }
 
-fn detect_ts_copy_var_name(body: &BlockStmt, fixed_param_count: usize) -> Option<BindingId> {
+fn detect_ts_copy_var_ident(body: &BlockStmt, fixed_param_count: usize) -> Option<Ident> {
     body.stmts.windows(2).find_map(|pair| {
-        let copy = ts_empty_array_binding_from_stmt(&pair[0])?;
+        let copy_id = ts_empty_array_ident_from_stmt(&pair[0])?;
         let loop_copy = detect_ts_copy_loop_from_stmt(&pair[1], fixed_param_count)?;
-        (copy == loop_copy).then_some(copy)
+        (binding_id(&copy_id) == loop_copy).then_some(copy_id)
     })
 }
 
-fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Option<BindingId> {
+fn detect_copy_var_ident_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Option<Ident> {
     let Stmt::For(for_stmt) = stmt else {
         return None;
     };
@@ -233,10 +234,10 @@ fn detect_copy_var_name_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Opti
         return None;
     }
 
-    Some(copy)
+    Some(copy_id.clone())
 }
 
-fn ts_empty_array_binding_from_stmt(stmt: &Stmt) -> Option<BindingId> {
+fn ts_empty_array_ident_from_stmt(stmt: &Stmt) -> Option<Ident> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
@@ -251,7 +252,7 @@ fn ts_empty_array_binding_from_stmt(stmt: &Stmt) -> Option<BindingId> {
     let Expr::Array(array) = decl.init.as_deref()? else {
         return None;
     };
-    array.elems.is_empty().then(|| binding_id(id))
+    array.elems.is_empty().then(|| id.clone())
 }
 
 fn detect_ts_copy_loop_from_stmt(stmt: &Stmt, fixed_param_count: usize) -> Option<BindingId> {
@@ -458,7 +459,7 @@ fn is_copy_write_index(expr: &Expr, idx: &BindingId, fixed_param_count: usize) -
     )
 }
 
-fn make_rest_param(name: Atom) -> Param {
+fn make_rest_param(ident: Ident) -> Param {
     Param {
         span: DUMMY_SP,
         decorators: vec![],
@@ -466,7 +467,7 @@ fn make_rest_param(name: Atom) -> Param {
             span: DUMMY_SP,
             dot3_token: DUMMY_SP,
             arg: Box::new(Pat::Ident(BindingIdent {
-                id: Ident::new_no_ctxt(name, DUMMY_SP),
+                id: ident,
                 type_ann: None,
             })),
             type_ann: None,
@@ -538,7 +539,7 @@ impl Visit for ArgumentsChecker {
         self.zero_initialized_indices
             .extend(zero_initialized_bindings_from_stmt(stmt));
 
-        if detect_copy_var_name_from_stmt(stmt, self.fixed_param_count).is_some() {
+        if detect_copy_var_ident_from_stmt(stmt, self.fixed_param_count).is_some() {
             self.has_any = true;
             return;
         }
@@ -749,15 +750,15 @@ fn remove_arguments_copy_loop(body: &mut BlockStmt, fixed_param_count: usize) {
     let mut i = 0;
 
     while i < old.len() {
-        if detect_copy_var_name_from_stmt(&old[i], fixed_param_count).is_some() {
+        if detect_copy_var_ident_from_stmt(&old[i], fixed_param_count).is_some() {
             i += 1;
             continue;
         }
 
         if i + 1 < old.len() {
-            if let Some(copy) = ts_empty_array_binding_from_stmt(&old[i]) {
+            if let Some(copy) = ts_empty_array_ident_from_stmt(&old[i]) {
                 if detect_ts_copy_loop_from_stmt(&old[i + 1], fixed_param_count)
-                    .is_some_and(|loop_copy| loop_copy == copy)
+                    .is_some_and(|loop_copy| loop_copy == binding_id(&copy))
                 {
                     i += 2;
                     continue;
@@ -778,7 +779,7 @@ fn remove_arguments_copy_loop(body: &mut BlockStmt, fixed_param_count: usize) {
 }
 
 struct ArgumentsRewriter {
-    name: Atom,
+    ident: Ident,
     fixed_param_count: usize,
 }
 
@@ -787,7 +788,7 @@ impl VisitMut for ArgumentsRewriter {
         if let Expr::Member(member) = expr {
             if is_arguments_ident(&member.obj) {
                 if self.fixed_param_count == 0 {
-                    *member.obj = Expr::Ident(Ident::new_no_ctxt(self.name.clone(), DUMMY_SP));
+                    *member.obj = Expr::Ident(self.ident.clone());
                     return;
                 }
 
@@ -797,10 +798,7 @@ impl VisitMut for ArgumentsRewriter {
                     {
                         *expr = Expr::Member(MemberExpr {
                             span: member.span,
-                            obj: Box::new(Expr::Ident(Ident::new_no_ctxt(
-                                self.name.clone(),
-                                DUMMY_SP,
-                            ))),
+                            obj: Box::new(Expr::Ident(self.ident.clone())),
                             prop: MemberProp::Computed(swc_core::ecma::ast::ComputedPropName {
                                 span: computed.span,
                                 expr: Box::new(rewritten_index),
