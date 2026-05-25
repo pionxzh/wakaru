@@ -2250,6 +2250,122 @@ fn is_babel_helper_or_chain(expr: &Expr) -> bool {
 // _inherits helper detection
 // ============================================================
 
+/// Check if a function body matches Babel's `_setPrototypeOf` helper:
+/// `return (_setPrototypeOf = Object.setPrototypeOf ? ... : ...__proto__...)(o, p);`
+pub(crate) fn is_set_prototype_of_fn(func: &Function) -> bool {
+    let Some(body) = &func.body else {
+        return false;
+    };
+    if func.params.len() != 2 {
+        return false;
+    }
+    if body.stmts.len() > 3 {
+        return false;
+    }
+
+    let mut detector = SetPrototypeOfDetector::new(func);
+    body.visit_with(&mut detector);
+    detector.has_object_set_prototype_of && detector.has_proto_assignment
+}
+
+struct SetPrototypeOfDetector {
+    has_object_set_prototype_of: bool,
+    has_proto_assignment: bool,
+    param_pairs: Vec<(BindingKey, BindingKey)>,
+}
+
+impl SetPrototypeOfDetector {
+    fn new(func: &Function) -> Self {
+        let mut param_pairs = Vec::new();
+        if let Some(pair) = set_prototype_param_pair(func) {
+            param_pairs.push(pair);
+        }
+        Self {
+            has_object_set_prototype_of: false,
+            has_proto_assignment: false,
+            param_pairs,
+        }
+    }
+}
+
+impl Visit for SetPrototypeOfDetector {
+    fn visit_function(&mut self, func: &Function) {
+        let pair = set_prototype_param_pair(func);
+        if let Some(pair) = pair.clone() {
+            self.param_pairs.push(pair);
+        }
+        func.visit_children_with(self);
+        if pair.is_some() {
+            self.param_pairs.pop();
+        }
+    }
+
+    fn visit_expr(&mut self, expr: &Expr) {
+        if is_object_set_prototype_of_member(expr) {
+            self.has_object_set_prototype_of = true;
+        }
+        expr.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
+        if self
+            .param_pairs
+            .iter()
+            .any(|(object, proto)| is_proto_assignment_for_pair(assign, object, proto))
+        {
+            self.has_proto_assignment = true;
+        }
+        assign.visit_children_with(self);
+    }
+}
+
+fn set_prototype_param_pair(func: &Function) -> Option<(BindingKey, BindingKey)> {
+    if func.params.len() != 2 {
+        return None;
+    }
+    let Pat::Ident(object) = &func.params[0].pat else {
+        return None;
+    };
+    let Pat::Ident(proto) = &func.params[1].pat else {
+        return None;
+    };
+    Some((binding_key(&object.id), binding_key(&proto.id)))
+}
+
+fn is_proto_assignment_for_pair(
+    assign: &swc_core::ecma::ast::AssignExpr,
+    object: &BindingKey,
+    proto: &BindingKey,
+) -> bool {
+    let swc_core::ecma::ast::AssignTarget::Simple(swc_core::ecma::ast::SimpleAssignTarget::Member(
+        member,
+    )) = &assign.left
+    else {
+        return false;
+    };
+    if !matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "__proto__") {
+        return false;
+    }
+    let Expr::Ident(lhs_obj) = member.obj.as_ref() else {
+        return false;
+    };
+    let Expr::Ident(rhs) = assign.right.as_ref() else {
+        return false;
+    };
+    binding_key(lhs_obj) == *object && binding_key(rhs) == *proto
+}
+
+fn is_object_set_prototype_of_member(expr: &Expr) -> bool {
+    let Expr::Member(member) = expr else {
+        return false;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    obj.sym.as_ref() == "Object"
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "setPrototypeOf")
+}
+
 /// Check if a function body matches the `_inherits` pattern:
 /// 2 params, <=5 stmts, body contains `param1.prototype = Object.create(...)`.
 pub(crate) fn is_inherits_fn(func: &Function) -> bool {

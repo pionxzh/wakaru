@@ -11,7 +11,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::babel_helper_utils::{is_call_super_fn, is_inherits_fn};
+use super::babel_helper_utils::{is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn};
 use super::expr_utils::is_unresolved_ident;
 use super::helper_matcher::{binding_key, BindingKey};
 
@@ -30,12 +30,14 @@ impl VisitMut for UnEs6Class {
         // Pre-scan for helpers at module level BEFORE visiting children,
         // so nested scopes (function bodies) can also detect custom helper calls.
         let inherits_helpers = collect_inherits_helpers_from_items(items);
+        let set_prototype_of_helpers = collect_set_prototype_of_helpers_from_items(items);
         let create_class_helpers =
             collect_create_class_helpers_from_items(items, self.unresolved_mark);
         let call_super_helpers = collect_call_super_helpers_from_items(items);
 
         let mut inner = UnEs6ClassInner {
             inherits_helpers,
+            set_prototype_of_helpers,
             create_class_helpers,
             call_super_helpers,
             unresolved_mark: self.unresolved_mark,
@@ -46,12 +48,14 @@ impl VisitMut for UnEs6Class {
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         // Non-module context: scan local scope for helpers
         let inherits_helpers = collect_inherits_helpers_from_stmts(stmts);
+        let set_prototype_of_helpers = collect_set_prototype_of_helpers_from_stmts(stmts);
         let create_class_helpers =
             collect_create_class_helpers_from_stmts(stmts, self.unresolved_mark);
         let call_super_helpers = collect_call_super_helpers_from_stmts(stmts);
 
         let mut inner = UnEs6ClassInner {
             inherits_helpers,
+            set_prototype_of_helpers,
             create_class_helpers,
             call_super_helpers,
             unresolved_mark: self.unresolved_mark,
@@ -63,6 +67,7 @@ impl VisitMut for UnEs6Class {
 /// Inner visitor that carries helper name sets through all scopes.
 struct UnEs6ClassInner {
     inherits_helpers: HashSet<BindingKey>,
+    set_prototype_of_helpers: HashSet<BindingKey>,
     create_class_helpers: HashSet<Atom>,
     call_super_helpers: HashSet<BindingKey>,
     unresolved_mark: Mark,
@@ -100,6 +105,7 @@ impl VisitMut for UnEs6ClassInner {
                 self.unresolved_mark,
             );
             remove_orphaned_fn_helpers_stmts(stmts, &self.inherits_helpers);
+            remove_orphaned_fn_helpers_stmts(stmts, &self.set_prototype_of_helpers);
             remove_orphaned_fn_helpers_stmts(stmts, &self.call_super_helpers);
         }
     }
@@ -135,9 +141,34 @@ impl VisitMut for UnEs6ClassInner {
                 self.unresolved_mark,
             );
             remove_orphaned_fn_helpers_module(items, &self.inherits_helpers);
+            remove_orphaned_fn_helpers_module(items, &self.set_prototype_of_helpers);
             remove_orphaned_fn_helpers_module(items, &self.call_super_helpers);
         }
     }
+}
+
+fn collect_set_prototype_of_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
+    let mut helpers = HashSet::new();
+    for stmt in stmts {
+        if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
+            if is_set_prototype_of_fn(&fn_decl.function) {
+                helpers.insert(binding_key(&fn_decl.ident));
+            }
+        }
+    }
+    helpers
+}
+
+fn collect_set_prototype_of_helpers_from_items(items: &[ModuleItem]) -> HashSet<BindingKey> {
+    let mut helpers = HashSet::new();
+    for item in items {
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
+            if is_set_prototype_of_fn(&fn_decl.function) {
+                helpers.insert(binding_key(&fn_decl.ident));
+            }
+        }
+    }
+    helpers
 }
 
 /// Collect names of functions that match the `_inherits` body shape from statements.

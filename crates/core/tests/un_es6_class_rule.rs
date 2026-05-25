@@ -119,6 +119,68 @@ class Child extends Base {
 }
 
 #[test]
+fn orphaned_set_prototype_of_helper_removed_after_inherits_helper() {
+    let input = r#"
+function _setPrototypeOf(o, p) {
+    return (_setPrototypeOf = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function(o, p) {
+        o.__proto__ = p;
+        return o;
+    })(o, p);
+}
+function _inherits(subClass, superClass) {
+    subClass.prototype = Object.create(superClass.prototype);
+    subClass.prototype.constructor = subClass;
+    _setPrototypeOf(subClass, superClass);
+}
+var Child = (function(_super) {
+    _inherits(t, _super);
+    function t() {
+        _super.apply(this, arguments);
+    }
+    t.prototype.run = function run() {
+        return true;
+    };
+    return t;
+}(Base));
+"#;
+    let expected = r#"
+class Child extends Base {
+    run() {
+        return true;
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn non_helper_set_prototype_function_is_preserved() {
+    let input = r#"
+function keep(o, p) {
+    Object.setPrototypeOf(o, p);
+    other.__proto__ = p;
+}
+var Child = (function(_super) {
+    _inherits(t, _super);
+    function t() {}
+    t.prototype.run = function run() {
+        return true;
+    };
+    return t;
+}(Base));
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("function keep"),
+        "unreferenced non-helper functions should not be removed by class recovery"
+    );
+    assert!(
+        output.contains("class Child extends Base"),
+        "class conversion should still happen"
+    );
+}
+
+#[test]
 fn detected_inherits_helper_does_not_match_shadowed_iife_param() {
     let input = r#"
 function h(e, t) {
