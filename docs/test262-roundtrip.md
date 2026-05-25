@@ -88,6 +88,7 @@ Known non-Wakaru reasons currently classified:
 - `swc-parse-await-class-name`
 - `swc-parse-static-init-await`
 - `swc-parse-static-async-constructor-method`
+- `swc-parse-yield-function-name`
 - `swc-parse-yield-ident`
 - `swc-array-binding-elision`
 - `swc-print-class-extends-arrow-parens`
@@ -113,6 +114,25 @@ node scripts\correctness\test262-roundtrip.mjs --preset templates --limit all --
 node scripts\correctness\test262-roundtrip.mjs --preset modules --limit all --summary docs\test262-baselines\modules.md
 ```
 
+Producer-specific baselines live under `docs/test262-baselines/<pipeline>/`.
+Regenerate them by adding `--pipeline <name>` and writing into that directory:
+
+```powershell
+node scripts\correctness\test262-roundtrip.mjs --limit all --pipeline swc-minify --summary docs\test262-baselines\swc-minify\default.md
+node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --pipeline swc-minify --summary docs\test262-baselines\swc-minify\classes.md
+node scripts\correctness\test262-roundtrip.mjs --preset destructuring --limit all --pipeline swc-minify --summary docs\test262-baselines\swc-minify\destructuring.md
+node scripts\correctness\test262-roundtrip.mjs --preset async-generators --limit all --pipeline swc-minify --summary docs\test262-baselines\swc-minify\async-generators.md
+node scripts\correctness\test262-roundtrip.mjs --preset templates --limit all --pipeline swc-minify --summary docs\test262-baselines\swc-minify\templates.md
+node scripts\correctness\test262-roundtrip.mjs --preset modules --limit all --pipeline swc-minify --summary docs\test262-baselines\swc-minify\modules.md
+
+node scripts\correctness\test262-roundtrip.mjs --limit all --pipeline esbuild-minify --summary docs\test262-baselines\esbuild-minify\default.md
+node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --pipeline esbuild-minify --summary docs\test262-baselines\esbuild-minify\classes.md
+node scripts\correctness\test262-roundtrip.mjs --preset destructuring --limit all --pipeline esbuild-minify --summary docs\test262-baselines\esbuild-minify\destructuring.md
+node scripts\correctness\test262-roundtrip.mjs --preset async-generators --limit all --pipeline esbuild-minify --summary docs\test262-baselines\esbuild-minify\async-generators.md
+node scripts\correctness\test262-roundtrip.mjs --preset templates --limit all --pipeline esbuild-minify --summary docs\test262-baselines\esbuild-minify\templates.md
+node scripts\correctness\test262-roundtrip.mjs --preset modules --limit all --pipeline esbuild-minify --summary docs\test262-baselines\esbuild-minify\modules.md
+```
+
 Recorded on 2026-05-25:
 
 | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
@@ -123,6 +143,23 @@ Recorded on 2026-05-25:
 | async-generators | 1707 | 666 | 1041 | 13 | 6 | 642 | 5 |
 | templates | 84 | 67 | 17 | 2 | 1 | 64 | 0 |
 | modules | 755 | 157 | 598 | 142 | 6 | 9 | 0 |
+
+Additional producer baselines recorded on 2026-05-25:
+
+| Pipeline | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| swc-minify | default | 2180 | 1646 | 534 | 30 | 99 | 1517 | 0 |
+| swc-minify | classes | 8426 | 5063 | 3363 | 27 | 155 | 4881 | 0 |
+| swc-minify | destructuring | 1034 | 891 | 143 | 27 | 49 | 815 | 0 |
+| swc-minify | async-generators | 1707 | 666 | 1041 | 17 | 19 | 630 | 0 |
+| swc-minify | templates | 84 | 67 | 17 | 2 | 0 | 65 | 0 |
+| swc-minify | modules | 755 | 157 | 598 | 142 | 2 | 13 | 0 |
+| esbuild-minify | default | 2180 | 1646 | 534 | 4 | 110 | 1532 | 0 |
+| esbuild-minify | classes | 8426 | 5063 | 3363 | 28 | 387 | 4648 | 0 |
+| esbuild-minify | destructuring | 1034 | 891 | 143 | 0 | 84 | 807 | 0 |
+| esbuild-minify | async-generators | 1707 | 666 | 1041 | 7 | 40 | 619 | 0 |
+| esbuild-minify | templates | 84 | 67 | 17 | 2 | 1 | 64 | 0 |
+| esbuild-minify | modules | 755 | 157 | 598 | 141 | 1 | 15 | 0 |
 
 Treat baseline movement as follows:
 
