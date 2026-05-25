@@ -155,9 +155,9 @@ try {
         failures.push(result.failure);
       }
       console.log(
-        `| ${snippet.name} | ${shape.label} | ${escapeCell(shape.tools.join(", "))} | ${
-          result.recovered ? "yes" : "no"
-        } | ${escapeCell(
+        `| ${snippet.name} | ${shape.label} | ${escapeCell(shape.tools.join(", "))} | ${escapeCell(
+          result.status,
+        )} | ${escapeCell(
           result.notes,
         )} |`,
       );
@@ -226,23 +226,28 @@ function collectShapes(snippet) {
 
 function runShape(snippet, shape) {
   if (shape.transformError) {
-    return { recovered: false, notes: `transform failed: ${shape.transformError.message}` };
+    return {
+      status: "no",
+      recovered: false,
+      notes: `transform failed: ${shape.transformError.message}`,
+    };
   }
 
   let recovered;
   try {
     recovered = runWakaru(shape.lowered, `${snippet.name}-${shape.label.replaceAll(" ", "-")}.js`);
   } catch (error) {
-    return { recovered: false, notes: `wakaru failed: ${error.message}` };
+    return { status: "no", recovered: false, notes: `wakaru failed: ${error.message}` };
   }
 
   const missing = snippet.expected.filter((needle) => !recovered.includes(needle));
   if (missing.length === 0) {
-    return { recovered: true, notes: "expected syntax present" };
+    return { status: "yes", recovered: true, notes: "expected syntax present" };
   }
 
   if (isExpectedLevelGate(snippet, shape)) {
     return {
+      status: "gated",
       recovered: false,
       notes: `gated at ${rewriteLevel}; Babel loose repeated-property optional calls require aggressive`,
     };
@@ -251,6 +256,7 @@ function runShape(snippet, shape) {
   const loweredShape = summarize(shape.lowered);
   const recoveredShape = summarize(recovered);
   return {
+    status: "no",
     recovered: false,
     notes: `missing ${missing.join(", ")}; lowered: ${loweredShape}; wakaru: ${recoveredShape}`,
     failure: {
@@ -270,7 +276,7 @@ function isExpectedLevelGate(snippet, shape) {
   if (!["optional-call-nullish", "nested-receiver-call"].includes(snippet.name)) {
     return false;
   }
-  return shape.tools.some((tool) => tool.endsWith("-loose"));
+  return shape.tools.some((tool) => tool.includes("-loose"));
 }
 
 function babelModeOptions(mode) {
