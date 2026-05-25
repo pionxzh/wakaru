@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BinaryOp, BlockStmt, Decl, Expr, ExprStmt, ForHead, ForInStmt,
-    ForOfStmt, ForStmt, IfStmt, Invalid, Lit, MemberExpr, ModuleDecl, ModuleItem, ParenExpr, Pat,
-    ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, UnaryOp, VarDecl,
-    VarDeclKind, VarDeclOrExpr, VarDeclarator,
+    ForOfStmt, ForStmt, IfStmt, ImportSpecifier, Invalid, Lit, MemberExpr, ModuleDecl, ModuleItem,
+    ParenExpr, Pat, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, UnaryOp,
+    VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -16,6 +16,7 @@ use super::RewriteLevel;
 pub struct SimplifySequence {
     unresolved_mark: Mark,
     level: RewriteLevel,
+    observable_ident_reads: HashSet<BindingId>,
 }
 
 impl SimplifySequence {
@@ -27,11 +28,22 @@ impl SimplifySequence {
         Self {
             unresolved_mark,
             level,
+            observable_ident_reads: HashSet::new(),
         }
     }
 }
 
 impl VisitMut for SimplifySequence {
+    fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
+        let outer_observable_ident_reads = self.observable_ident_reads.clone();
+        self.observable_ident_reads
+            .extend(collect_import_binding_ids_from_module_items(&module.body));
+
+        module.visit_mut_children_with(self);
+
+        self.observable_ident_reads = outer_observable_ident_reads;
+    }
+
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         items.visit_mut_children_with(self);
 
@@ -45,7 +57,12 @@ impl VisitMut for SimplifySequence {
                 ModuleItem::Stmt(stmt) => {
                     let declared = collect_lexical_decl_ids_from_stmt(&stmt);
                     for stmt in split_stmt(stmt, self.level) {
-                        if !is_pure_no_op_stmt(&stmt, self.unresolved_mark, &future_lexical) {
+                        if !is_pure_no_op_stmt(
+                            &stmt,
+                            self.unresolved_mark,
+                            &future_lexical,
+                            &self.observable_ident_reads,
+                        ) {
                             new_items.push(ModuleItem::Stmt(stmt));
                         }
                     }
@@ -73,7 +90,12 @@ impl VisitMut for SimplifySequence {
         for stmt in old_stmts {
             let declared = collect_lexical_decl_ids_from_stmt(&stmt);
             for s in split_stmt(stmt, self.level) {
-                if !is_pure_no_op_stmt(&s, self.unresolved_mark, &future_lexical) {
+                if !is_pure_no_op_stmt(
+                    &s,
+                    self.unresolved_mark,
+                    &future_lexical,
+                    &self.observable_ident_reads,
+                ) {
                     new_stmts.push(s);
                 }
             }
@@ -91,6 +113,7 @@ fn is_pure_no_op_stmt(
     stmt: &Stmt,
     unresolved_mark: Mark,
     future_lexical: &HashSet<BindingId>,
+    observable_ident_reads: &HashSet<BindingId>,
 ) -> bool {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return false;
@@ -106,7 +129,12 @@ fn is_pure_no_op_stmt(
     }
     // Identifier reads are observable: unresolved identifiers throw ReferenceError,
     // and lexical bindings can throw before initialization (TDZ).
-    if is_observable_ident_read(expr, unresolved_mark, future_lexical) {
+    if is_observable_ident_read(
+        expr,
+        unresolved_mark,
+        future_lexical,
+        observable_ident_reads,
+    ) {
         return false;
     }
     if is_observable_typeof(expr, unresolved_mark) {
@@ -168,6 +196,7 @@ fn is_observable_ident_read(
     expr: &Expr,
     unresolved_mark: Mark,
     future_lexical: &HashSet<BindingId>,
+    observable_ident_reads: &HashSet<BindingId>,
 ) -> bool {
     match expr {
         Expr::Ident(ident) => {
@@ -175,13 +204,42 @@ fn is_observable_ident_read(
             if ident.ctxt == unresolved_ctxt {
                 return ident.sym.as_ref() != "undefined";
             }
+            if observable_ident_reads.contains(&(ident.sym.clone(), ident.ctxt)) {
+                return true;
+            }
             future_lexical.contains(&(ident.sym.clone(), ident.ctxt))
         }
-        Expr::Paren(paren) => {
-            is_observable_ident_read(&paren.expr, unresolved_mark, future_lexical)
-        }
+        Expr::Paren(paren) => is_observable_ident_read(
+            &paren.expr,
+            unresolved_mark,
+            future_lexical,
+            observable_ident_reads,
+        ),
         _ => false,
     }
+}
+
+fn collect_import_binding_ids_from_module_items(items: &[ModuleItem]) -> HashSet<BindingId> {
+    let mut ids = HashSet::new();
+    for item in items {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        for specifier in &import.specifiers {
+            match specifier {
+                ImportSpecifier::Named(named) => {
+                    ids.insert((named.local.sym.clone(), named.local.ctxt));
+                }
+                ImportSpecifier::Default(default) => {
+                    ids.insert((default.local.sym.clone(), default.local.ctxt));
+                }
+                ImportSpecifier::Namespace(namespace) => {
+                    ids.insert((namespace.local.sym.clone(), namespace.local.ctxt));
+                }
+            }
+        }
+    }
+    ids
 }
 
 fn collect_lexical_decl_ids_from_module_items(items: &[ModuleItem]) -> HashSet<BindingId> {

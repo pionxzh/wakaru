@@ -234,7 +234,9 @@ runner!(run_un_then_catch, |ctx| UnThenCatch::new(
 runner!(run_un_undefined_init, |ctx| UnUndefinedInit::new(
     ctx.unresolved_mark
 ));
-runner!(run_var_decl_to_let_const, VarDeclToLetConst);
+runner!(run_var_decl_to_let_const, |ctx| {
+    VarDeclToLetConst::new_with_level(ctx.rewrite_level)
+});
 runner!(run_obj_shorthand, ObjShorthand);
 runner!(run_obj_method_shorthand, ObjMethodShorthand);
 runner!(run_un_prototype_class, UnPrototypeClass);
@@ -251,7 +253,9 @@ runner!(run_un_webpack_object_getters, |ctx| {
     UnWebpackObjectGetters::new(ctx.unresolved_mark)
 });
 runner!(run_import_dedup, ImportDedup);
-runner!(run_un_import_rename, UnImportRename);
+runner!(run_un_import_rename, |ctx| UnImportRename::new(
+    ctx.unresolved_mark
+));
 runner!(run_un_export_rename, UnExportRename);
 runner!(run_un_destructuring, |ctx| {
     UnDestructuring::new_with_level(ctx.unresolved_mark, ctx.rewrite_level)

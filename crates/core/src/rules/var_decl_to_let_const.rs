@@ -2,15 +2,35 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, Callee, Class, Decl, Expr, ForHead, ForInStmt,
-    ForOfStmt, ForStmt, Function, Ident, Lit, MemberProp, Module, ModuleItem, Pat,
-    SimpleAssignTarget, Stmt, UpdateExpr, VarDecl, VarDeclKind, WithStmt,
+    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, Callee, Class, Decl, ExportSpecifier, Expr,
+    ForHead, ForInStmt, ForOfStmt, ForStmt, Function, Ident, Lit, MemberProp, Module, ModuleDecl,
+    ModuleExportName, ModuleItem, Pat, SimpleAssignTarget, Stmt, UpdateExpr, VarDecl, VarDeclKind,
+    WithStmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::BindingId;
+use super::RewriteLevel;
 
-pub struct VarDeclToLetConst;
+pub struct VarDeclToLetConst {
+    level: RewriteLevel,
+}
+
+impl VarDeclToLetConst {
+    pub fn new() -> Self {
+        Self::new_with_level(RewriteLevel::Standard)
+    }
+
+    pub fn new_with_level(level: RewriteLevel) -> Self {
+        Self { level }
+    }
+}
+
+impl Default for VarDeclToLetConst {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl VisitMut for VarDeclToLetConst {
     fn visit_mut_module(&mut self, module: &mut Module) {
@@ -41,6 +61,9 @@ impl VisitMut for VarDeclToLetConst {
         must_stay_var.extend(collect_loop_captured_vars_module(&module.body));
         keep_eval_affected_vars(&module.body, &var_ids, &mut must_stay_var, true);
         keep_global_observed_vars(&module.body, &var_ids, &mut must_stay_var);
+        if self.level == RewriteLevel::Minimal {
+            must_stay_var.extend(collect_exported_var_bindings_module(&module.body, &var_ids));
+        }
 
         // Convert all var decls in module (recursively through blocks, stopping at function boundaries)
         let mut converter = VarConverter {
@@ -192,6 +215,47 @@ fn collect_param_duplicate_var_bindings(
 ) -> HashSet<BindingId> {
     let vars = collect_all_var_ids_in_stmts(stmts);
     params.intersection(&vars).cloned().collect()
+}
+
+fn collect_exported_var_bindings_module(
+    items: &[ModuleItem],
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    let mut exported = HashSet::new();
+    for item in items {
+        let ModuleItem::ModuleDecl(decl) = item else {
+            continue;
+        };
+        match decl {
+            ModuleDecl::ExportDecl(export) => {
+                let Decl::Var(var) = &export.decl else {
+                    continue;
+                };
+                if var.kind != VarDeclKind::Var {
+                    continue;
+                }
+                for decl in &var.decls {
+                    collect_binding_ids_from_pat(&decl.name, &mut exported);
+                }
+            }
+            ModuleDecl::ExportNamed(named) if named.src.is_none() => {
+                for specifier in &named.specifiers {
+                    let ExportSpecifier::Named(specifier) = specifier else {
+                        continue;
+                    };
+                    let ModuleExportName::Ident(local) = &specifier.orig else {
+                        continue;
+                    };
+                    let id = (local.sym.clone(), local.ctxt);
+                    if var_ids.contains(&id) {
+                        exported.insert(id);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    exported
 }
 
 #[derive(Default)]
@@ -578,6 +642,13 @@ fn analyze_stmt_in_order(
                 must_stay,
             );
         }
+        Stmt::Decl(Decl::Fn(fn_decl)) => {
+            mark_refs_before_decl(
+                collect_refs_in_function(&fn_decl.function, var_ids),
+                declared_so_far,
+                must_stay,
+            );
+        }
         Stmt::Decl(_) => {}
         Stmt::Expr(expr) => {
             mark_refs_before_decl(
@@ -754,6 +825,11 @@ fn analyze_var_decl_in_order(
                 declared_so_far,
                 must_stay,
             );
+            let mut current_decl_ids = HashSet::new();
+            collect_binding_ids_from_pat(&decl.name, &mut current_decl_ids);
+            let mut function_like_refs = collect_refs_in_function_like_expr(init, var_ids);
+            function_like_refs.retain(|id| !current_decl_ids.contains(id));
+            mark_refs_before_decl(function_like_refs, declared_so_far, must_stay);
         }
         let mut default_refs = VarRefCollector {
             var_ids,
@@ -802,6 +878,39 @@ fn collect_refs_in_class(
     };
     class.visit_with(&mut collector);
     collector.refs
+}
+
+fn collect_refs_in_function(
+    function: &Function,
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    let mut collector = VarRefCollector {
+        var_ids,
+        refs: HashSet::new(),
+    };
+    if let Some(body) = &function.body {
+        body.visit_with(&mut collector);
+    }
+    collector.refs
+}
+
+fn collect_refs_in_function_like_expr(
+    expr: &Expr,
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    match expr {
+        Expr::Fn(fn_expr) => collect_refs_in_function(&fn_expr.function, var_ids),
+        Expr::Arrow(arrow) => {
+            let mut collector = VarRefCollector {
+                var_ids,
+                refs: HashSet::new(),
+            };
+            arrow.body.visit_with(&mut collector);
+            collector.refs
+        }
+        Expr::Paren(paren) => collect_refs_in_function_like_expr(&paren.expr, var_ids),
+        _ => HashSet::new(),
+    }
 }
 
 fn collect_refs_in_for_head(head: &ForHead, var_ids: &HashSet<BindingId>) -> HashSet<BindingId> {

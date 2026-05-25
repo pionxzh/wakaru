@@ -361,7 +361,7 @@ export function createBrowserHistory(e = {}) {
         }
     }
     let z = false;
-    const q = {
+    var q = {
         length: window_history.length,
         action: "POP",
         location: M,
@@ -594,7 +594,7 @@ export function createHashHistory(e = {}) {
         }
     }
     let z = false;
-    const q = {
+    var q = {
         length: window_history.length,
         action: "POP",
         location: A,
@@ -716,7 +716,7 @@ export function createMemoryHistory({ getUserConfirmation, initialEntries = [
             }
         });
     }
-    const g = {
+    var g = {
         length: h.length,
         action: "POP",
         location: h[p],

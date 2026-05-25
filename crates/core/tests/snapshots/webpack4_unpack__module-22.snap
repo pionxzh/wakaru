@@ -322,10 +322,8 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             return E(e, v, w);
         }
         if (k = u.d.take(e)) {
-            return ((e, t)=>{
-                let e_channel = e.channel;
-                const { pattern, maybe } = e;
-                e_channel = e_channel || C;
+            return (({ channel, pattern, maybe }, t)=>{
+                channel = channel || C;
                 const a = (e)=>{
                     if (e instanceof Error) {
                         return t(e, true);
@@ -336,7 +334,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
                     return t(e);
                 };
                 try {
-                    e_channel.take(a, m(pattern));
+                    channel.take(a, m(pattern));
                 } catch (e) {
                     return t(e, true);
                 }

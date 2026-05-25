@@ -383,6 +383,19 @@ let value;
 }
 
 #[test]
+fn preserves_import_binding_read_statement_inside_function() {
+    let input = r#"
+import { x as y } from './self.js';
+assert.throws(ReferenceError, function() {
+  y;
+});
+export const x = 23;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn preserves_object_literal_computed_key_coercion() {
     let input = r#"
 ({

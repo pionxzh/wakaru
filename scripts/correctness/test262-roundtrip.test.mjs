@@ -8,7 +8,9 @@ import {
   buildHarnessSource,
   classifyKnownBlocker,
   classifyTest,
+  collectStaticModuleSpecifiers,
   executeTestSource,
+  executeModuleGraph,
   discoverTestsFromReport,
   formatMarkdownSummary,
   isSloppyOnlyWakaruParseUnsupported,
@@ -18,6 +20,7 @@ import {
   missingToolPackageSpecs,
   parseArgs,
   parseTestMetadata,
+  readModuleGraph,
   resolvePipelineName,
   runnableVariants,
   runRoundTrip,
@@ -69,7 +72,9 @@ test("runnableVariants follows Test262 strict mode flags", () => {
   assert.deepEqual(runnableVariants({ flags: ["onlyStrict"], negative: null }), [
     { name: "strict", strict: true },
   ]);
-  assert.deepEqual(runnableVariants({ flags: ["module"], negative: null }), []);
+  assert.deepEqual(runnableVariants({ flags: ["module"], negative: null }), [
+    { name: "module", strict: true, module: true },
+  ]);
 });
 
 test("classifyTest skips unsupported host-sensitive tests", () => {
@@ -86,6 +91,13 @@ test("classifyTest skips unsupported host-sensitive tests", () => {
       negative: null,
     }),
     { runnable: false, reason: "flag:async" },
+  );
+  assert.deepEqual(
+    classifyTest("test/language/module-code/example_FIXTURE.js", "export const value = 1;", {
+      flags: [],
+      negative: null,
+    }),
+    { runnable: false, reason: "fixture" },
   );
   assert.deepEqual(
     classifyTest("test/language/example.js", "assert.sameValue(1, 1);", {
@@ -143,6 +155,77 @@ test("executeTestSource captures unhandled rejections as test failures", async (
   );
 });
 
+test("collectStaticModuleSpecifiers finds imports and re-exports", () => {
+  assert.deepEqual(
+    collectStaticModuleSpecifiers(`
+import "./side-effect.js";
+import value, { named } from "./dep.js";
+export { named } from "./re-export.js";
+export * as ns from "./namespace.js";
+`),
+    ["./side-effect.js", "./dep.js", "./re-export.js", "./namespace.js"],
+  );
+});
+
+test("readModuleGraph recursively follows relative module imports", () => {
+  const root = makeTempTest262();
+  try {
+    const testDir = join(root, "test", "language", "module-code");
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(
+      join(testDir, "main.js"),
+      `import { value } from "./dep.js";\nassert.sameValue(value, 2);\n`,
+    );
+    writeFileSync(
+      join(testDir, "dep.js"),
+      `export { value } from "./nested.js";\n`,
+    );
+    writeFileSync(join(testDir, "nested.js"), `export const value = 2;\n`);
+
+    const graph = readModuleGraph(root, join(testDir, "main.js"));
+
+    assert.deepEqual([...graph.sources.keys()].sort(), [
+      "test/language/module-code/dep.js",
+      "test/language/module-code/main.js",
+      "test/language/module-code/nested.js",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("executeModuleGraph runs a Test262-style ESM graph with harness globals", () => {
+  const root = mkdtempSync(join(tmpdir(), "wakaru-module-graph-unit-"));
+  try {
+    const harnessSource = `
+function Test262Error(message) { this.message = message; }
+globalThis.assert = {
+  sameValue(actual, expected) {
+    if (!Object.is(actual, expected)) throw new Test262Error(\`\${actual} !== \${expected}\`);
+  }
+};
+`;
+    const sources = new Map([
+      [
+        "test/language/module-code/main.js",
+        `import { value } from "./dep.js";\nassert.sameValue(this, undefined);\nawait Promise.resolve();\nassert.sameValue(value, 2);\n`,
+      ],
+      ["test/language/module-code/dep.js", `export let value = 1;\nvalue += 1;\n`],
+    ]);
+
+    executeModuleGraph({
+      harnessSource,
+      entryPath: "test/language/module-code/main.js",
+      sources,
+      tmpRoot: root,
+      phase: "unit",
+      timeoutMs: 1000,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("transformSource supports no-op mode without external tools", async () => {
   const source = "const value = 1;\n";
   const output = await transformSource(source, {
@@ -152,6 +235,40 @@ test("transformSource supports no-op mode without external tools", async () => {
   });
 
   assert.equal(output, source);
+});
+
+test("runRoundTrip executes module graphs", async () => {
+  const root = makeTempTest262();
+  try {
+    const testDir = join(root, "test", "language", "module-code");
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(
+      join(testDir, "main.js"),
+      `/*---\nflags: [module]\n---*/\nimport { value } from "./dep.js";\nassert.sameValue(value, 2);\n`,
+    );
+    writeFileSync(join(testDir, "dep.js"), `export let value = 1;\nvalue += 1;\n`);
+
+    const report = await runRoundTrip({
+      test262Root: root,
+      paths: ["test/language/module-code/main.js"],
+      limit: 1,
+      pipeline: "none",
+      transform: "terser",
+      terserProfile: "light",
+      level: "minimal",
+      toolRoot: join(root, "tools"),
+      keepTemp: false,
+      caseTimeoutMs: 5000,
+    });
+
+    assert.equal(report.totals.runnable, 1);
+    assert.equal(report.totals.passed, 1);
+    assert.equal(report.totals.failed, 0);
+    assert.equal(report.results[0].variants[0], "module");
+    assert.equal(report.results[0].modules, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("resolvePipelineName maps legacy transform options", () => {
@@ -430,6 +547,14 @@ test("knownSwcFidelityIssueReason classifies array binding elision printer gaps"
       decompiled: "var C = class extends ()=>{} {\n};",
     }),
     "swc-print-class-extends-arrow-parens",
+  );
+  assert.equal(
+    knownSwcFidelityIssueReason({
+      path: "test/language/module-code/instn-named-bndng-dflt-expr.js",
+      error: new Error("binding is created but not initialized"),
+      decompiled: "export default function() {};",
+    }),
+    "swc-print-export-default-function-expression",
   );
 });
 

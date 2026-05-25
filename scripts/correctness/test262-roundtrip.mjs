@@ -228,7 +228,7 @@ export function runnableVariants(metadata) {
     return [];
   }
   if (metadata.flags.includes("module")) {
-    return [];
+    return [{ name: "module", strict: true, module: true }];
   }
   if (metadata.flags.includes("async")) {
     return [];
@@ -250,7 +250,7 @@ export function runnableVariants(metadata) {
 
 export function classifyTest(filePath, source, metadata) {
   const normalized = filePath.split(sep).join("/");
-  if (normalized.includes("/_FIXTURE")) {
+  if (normalized.includes("_FIXTURE")) {
     return { runnable: false, reason: "fixture" };
   }
   if (normalized.includes("/intl402/")) {
@@ -259,7 +259,7 @@ export function classifyTest(filePath, source, metadata) {
   if (metadata.negative) {
     return { runnable: false, reason: "negative" };
   }
-  for (const flag of ["raw", "module", "async"]) {
+  for (const flag of ["raw", "async"]) {
     if (metadata.flags.includes(flag)) {
       return { runnable: false, reason: `flag:${flag}` };
     }
@@ -321,12 +321,12 @@ function isThenable(value) {
   return value != null && typeof value.then === "function";
 }
 
-export async function minifyWithTerser(source, options) {
+export async function minifyWithTerser(source, options, transformOptions = {}) {
   await ensureTerser(options.toolRoot);
   const toolRequire = createRequire(pathToFileURL(join(options.toolRoot, "package.json")));
   const terserModule = await import(pathToFileURL(toolRequire.resolve("terser")).href);
   const result = await terserModule.minify(source, {
-    module: false,
+    module: transformOptions.module === true,
     format: {
       ascii_only: true,
       comments: false,
@@ -357,7 +357,7 @@ export async function minifyWithTerser(source, options) {
   return `${result.code}\n`;
 }
 
-export async function transformWithBabelEnv(source, options) {
+export async function transformWithBabelEnv(source, options, transformOptions = {}) {
   await ensureBabel(options.toolRoot);
   const toolRequire = createRequire(pathToFileURL(join(options.toolRoot, "package.json")));
   const babel = toolRequire("@babel/core");
@@ -365,7 +365,7 @@ export async function transformWithBabelEnv(source, options) {
   const result = await babel.transformAsync(source, {
     babelrc: false,
     configFile: false,
-    sourceType: "script",
+    sourceType: transformOptions.module === true ? "module" : "script",
     comments: false,
     presets: [
       [
@@ -386,7 +386,7 @@ export async function transformWithBabelEnv(source, options) {
   return `${result.code}\n`;
 }
 
-export async function transformWithSwcMinify(source, options) {
+export async function transformWithSwcMinify(source, options, transformOptions = {}) {
   ensureSwc(options.toolRoot);
   const toolRequire = createRequire(pathToFileURL(join(options.toolRoot, "package.json")));
   const swc = toolRequire("@swc/core");
@@ -397,7 +397,7 @@ export async function transformWithSwcMinify(source, options) {
       ascii_only: true,
       comments: false,
     },
-    module: false,
+    module: transformOptions.module === true,
   });
   if (!result?.code) {
     throw new Error("swc produced empty output");
@@ -405,13 +405,13 @@ export async function transformWithSwcMinify(source, options) {
   return `${result.code}\n`;
 }
 
-export async function transformWithEsbuildMinify(source, options) {
+export async function transformWithEsbuildMinify(source, options, transformOptions = {}) {
   ensureEsbuild(options.toolRoot);
   const toolRequire = createRequire(pathToFileURL(join(options.toolRoot, "package.json")));
   const esbuild = toolRequire("esbuild");
   const result = await esbuild.transform(source, {
     loader: "js",
-    format: "iife",
+    format: transformOptions.module === true ? "esm" : "iife",
     minifyWhitespace: true,
     minifySyntax: true,
     minifyIdentifiers: false,
@@ -424,27 +424,27 @@ export async function transformWithEsbuildMinify(source, options) {
   return `${result.code}\n`;
 }
 
-export async function transformSource(source, options) {
+export async function transformSource(source, options, transformOptions = {}) {
   const pipeline = resolvePipelineName(options);
   if (pipeline === "none") {
     return source;
   }
   if (pipeline === "terser-light") {
-    return minifyWithTerser(source, { ...options, terserProfile: "light" });
+    return minifyWithTerser(source, { ...options, terserProfile: "light" }, transformOptions);
   }
   if (pipeline === "terser-full") {
-    return minifyWithTerser(source, { ...options, terserProfile: "full" });
+    return minifyWithTerser(source, { ...options, terserProfile: "full" }, transformOptions);
   }
   if (pipeline === "babel-env-terser") {
     ensureBabelEnvTerser(options.toolRoot);
-    const transpiled = await transformWithBabelEnv(source, options);
-    return minifyWithTerser(transpiled, { ...options, terserProfile: "light" });
+    const transpiled = await transformWithBabelEnv(source, options, transformOptions);
+    return minifyWithTerser(transpiled, { ...options, terserProfile: "light" }, transformOptions);
   }
   if (pipeline === "swc-minify") {
-    return transformWithSwcMinify(source, options);
+    return transformWithSwcMinify(source, options, transformOptions);
   }
   if (pipeline === "esbuild-minify") {
-    return transformWithEsbuildMinify(source, options);
+    return transformWithEsbuildMinify(source, options, transformOptions);
   }
   throw new Error(`unsupported pipeline: ${pipeline}`);
 }
@@ -632,6 +632,17 @@ async function runOneTest({
   options,
   knownBlockers,
 }) {
+  if (variants.some((variant) => variant.module)) {
+    return runOneModuleTest({
+      filePath,
+      relativePath,
+      harnessSource,
+      tmpRoot,
+      options,
+      knownBlockers,
+    });
+  }
+
   try {
     for (const variant of variants) {
       await executeTestSource({
@@ -721,6 +732,125 @@ async function runOneTest({
     path: relativePath,
     status: "passed",
     variants: variants.map((variant) => variant.name),
+  };
+}
+
+async function runOneModuleTest({
+  filePath,
+  relativePath,
+  harnessSource,
+  tmpRoot,
+  options,
+  knownBlockers,
+}) {
+  let originalGraph;
+  try {
+    originalGraph = readModuleGraph(options.test262Root, filePath);
+  } catch (error) {
+    return unsupported(relativePath, "baseline", error, "module-graph-baseline");
+  }
+
+  try {
+    executeModuleGraph({
+      harnessSource,
+      entryPath: relativePath,
+      sources: originalGraph.sources,
+      tmpRoot,
+      phase: "original",
+      timeoutMs: options.caseTimeoutMs,
+    });
+  } catch (error) {
+    return unsupported(relativePath, "baseline", error, "node-module-baseline");
+  }
+
+  let transformedSources;
+  try {
+    transformedSources = new Map();
+    for (const [path, moduleSource] of originalGraph.sources) {
+      transformedSources.set(path, await transformSource(moduleSource, options, { module: true }));
+    }
+  } catch (error) {
+    return rejected(relativePath, "transform", error, "transform-reject");
+  }
+
+  try {
+    executeModuleGraph({
+      harnessSource,
+      entryPath: relativePath,
+      sources: transformedSources,
+      tmpRoot,
+      phase: "transformed",
+      timeoutMs: options.caseTimeoutMs,
+    });
+  } catch (error) {
+    return rejected(relativePath, "transformed-runtime", error, "transform-runtime");
+  }
+
+  const decompiledSources = new Map();
+  try {
+    for (const [path, moduleSource] of transformedSources) {
+      decompiledSources.set(
+        path,
+        runWakaru(moduleSource, {
+          level: options.level,
+          tmpRoot,
+          basename: `${relativePath.replaceAll("/", "__")}__${path.replaceAll("/", "__")}`,
+          timeoutMs: options.caseTimeoutMs,
+        }),
+      );
+    }
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      return rejected(relativePath, "case-timeout", error, "case-timeout");
+    }
+    const parseUnsupportedReason = knownWakaruParseUnsupportedReason(
+      error,
+      [{ name: "module", strict: true, module: true }],
+      relativePath,
+      knownBlockers,
+    );
+    if (parseUnsupportedReason) {
+      return unsupported(relativePath, "wakaru-parse", error, parseUnsupportedReason);
+    }
+    return failure(relativePath, "wakaru", error, {
+      transformed: Object.fromEntries(transformedSources),
+    });
+  }
+
+  try {
+    executeModuleGraph({
+      harnessSource,
+      entryPath: relativePath,
+      sources: decompiledSources,
+      tmpRoot,
+      phase: "decompiled",
+      timeoutMs: options.caseTimeoutMs,
+    });
+  } catch (error) {
+    const decompiled = decompiledSources.get(relativePath) ?? "";
+    const fidelityReason = knownSwcFidelityIssueReason({
+      path: relativePath,
+      error,
+      decompiled,
+      knownBlockers,
+    });
+    if (fidelityReason) {
+      return rejected(relativePath, "swc-fidelity", error, fidelityReason, {
+        transformed: Object.fromEntries(transformedSources),
+        decompiled: Object.fromEntries(decompiledSources),
+      });
+    }
+    return failure(relativePath, "decompiled-runtime", error, {
+      transformed: Object.fromEntries(transformedSources),
+      decompiled: Object.fromEntries(decompiledSources),
+    });
+  }
+
+  return {
+    path: relativePath,
+    status: "passed",
+    variants: ["module"],
+    modules: originalGraph.sources.size,
   };
 }
 
@@ -1290,6 +1420,107 @@ function indent(text) {
     .split(/\r?\n/)
     .map((line) => `  ${line}`)
     .join("\n");
+}
+
+export function readModuleGraph(test262Root, entryPath) {
+  const root = resolve(test262Root);
+  const entryAbsolute = resolve(entryPath);
+  const sources = new Map();
+  const visiting = new Set();
+
+  function visit(filePath) {
+    const absolute = resolve(filePath);
+    const relativeToRoot = relative(root, absolute);
+    if (relativeToRoot.startsWith("..") || isAbsolute(relativeToRoot)) {
+      throw new Error(`module import escapes Test262 root: ${absolute}`);
+    }
+    const normalizedPath = relativeToRoot.split(sep).join("/");
+    if (sources.has(normalizedPath)) {
+      return;
+    }
+    if (visiting.has(normalizedPath)) {
+      return;
+    }
+    if (!existsSync(absolute)) {
+      throw new Error(`missing module import: ${normalizedPath}`);
+    }
+
+    visiting.add(normalizedPath);
+    const source = readFileSync(absolute, "utf8");
+    sources.set(normalizedPath, source);
+    for (const specifier of collectStaticModuleSpecifiers(source)) {
+      if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
+        throw new Error(`unsupported bare module import ${specifier} in ${normalizedPath}`);
+      }
+      visit(resolveModuleSpecifier(absolute, specifier));
+    }
+    visiting.delete(normalizedPath);
+  }
+
+  visit(entryAbsolute);
+  return { entryPath: relative(root, entryAbsolute).split(sep).join("/"), sources };
+}
+
+export function collectStaticModuleSpecifiers(source) {
+  const specifiers = [];
+  const patterns = [
+    /\bimport\s*(?:["']([^"']+)["']|(?:[\s\S]*?)\s+from\s*["']([^"']+)["'])/g,
+    /\bexport\s+(?:[\s\S]*?)\s+from\s*["']([^"']+)["']/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      specifiers.push(match[1] ?? match[2]);
+    }
+  }
+  return [...new Set(specifiers)];
+}
+
+function resolveModuleSpecifier(fromPath, specifier) {
+  const basePath = specifier.startsWith("/")
+    ? resolve(specifier.slice(1))
+    : resolve(dirname(fromPath), specifier);
+  if (existsSync(basePath)) {
+    return basePath;
+  }
+  if (!extname(basePath) && existsSync(`${basePath}.js`)) {
+    return `${basePath}.js`;
+  }
+  return basePath;
+}
+
+export function executeModuleGraph({ harnessSource, entryPath, sources, tmpRoot, phase, timeoutMs }) {
+  const graphRoot = join(tmpRoot, `module-${phase}-${sanitizePathForFile(entryPath)}`);
+  rmSync(graphRoot, { recursive: true, force: true });
+  mkdirSync(graphRoot, { recursive: true });
+  writeFileSync(join(graphRoot, "package.json"), "{\"type\":\"module\"}\n");
+  for (const [path, source] of sources) {
+    const outputPath = join(graphRoot, path);
+    mkdirSync(dirname(outputPath), { recursive: true });
+    writeFileSync(outputPath, source);
+  }
+
+  const bootstrapPath = join(graphRoot, "__wakaru_module_bootstrap__.mjs");
+  writeFileSync(
+    bootstrapPath,
+    `globalThis.print = () => {};\n` +
+      `globalThis.$262 = {\n` +
+      `  global: globalThis,\n` +
+      `  evalScript(source) { return (0, eval)(source); },\n` +
+      `  createRealm() { return globalThis.$262; },\n` +
+      `  gc() { throw new Error("$262.gc is not available in this runner"); }\n` +
+      `};\n` +
+      `(0, eval)(${JSON.stringify(harnessSource)});\n` +
+      `await import(${JSON.stringify(pathToFileURL(join(graphRoot, entryPath)).href)});\n`,
+  );
+
+  return runChecked("node", [bootstrapPath], {
+    cwd: graphRoot,
+    timeoutMs,
+  });
+}
+
+function sanitizePathForFile(path) {
+  return path.replace(/[^A-Za-z0-9._-]+/g, "__");
 }
 
 function readRequiredValue(argv, index, option) {

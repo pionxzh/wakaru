@@ -4,7 +4,7 @@ use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::UnImportRename;
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnImportRename)
+    render_rule(input, UnImportRename::new)
 }
 
 #[test]
@@ -197,6 +197,72 @@ function inner() {
   return ab;
 }
 foo();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn keeps_alias_when_imported_name_is_reserved() {
+    let input = r#"
+import {
+  if as if_,
+  import as import_,
+  await as await_,
+  arguments as arguments_,
+  eval as eval_
+} from './module.js';
+assert.sameValue(if_, 1);
+assert.sameValue(import_, 2);
+assert.sameValue(await_, 3);
+assert.sameValue(arguments_, 4);
+assert.sameValue(eval_, 5);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn avoids_capturing_unresolved_reference_with_imported_name() {
+    let input = r#"
+import { A as A2 } from './self.js';
+try {
+  A;
+} catch (error) {
+  results.push(error.name);
+}
+export { A2 as B };
+"#;
+    let expected = r#"
+import { A as A_1 } from './self.js';
+try {
+  A;
+} catch (error) {
+  results.push(error.name);
+}
+export { A_1 as B };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn nested_local_reference_does_not_block_top_level_import_rename() {
+    let input = r#"
+import { b as b_2 } from './module.js';
+b_2("topLeft", "topRight");
+function Component() {
+  const b = useValue();
+  return b;
+}
+"#;
+    let expected = r#"
+import { b } from './module.js';
+b("topLeft", "topRight");
+function Component() {
+  const b = useValue();
+  return b;
+}
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);

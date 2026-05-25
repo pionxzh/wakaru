@@ -10,11 +10,11 @@ export const LOCATION_CHANGE = "@@router/LOCATION_CHANGE";
 const s = {
     location: null
 };
-export function routerReducer(e = s, { type, payload } = {}) {
-    if (type === LOCATION_CHANGE) {
+export function routerReducer(e = s, { type: n, payload: location } = {}) {
+    if (n === LOCATION_CHANGE) {
         return {
             ...e,
-            location: payload
+            location
         };
     }
     return e;

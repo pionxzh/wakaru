@@ -771,6 +771,37 @@ function config(e) {
 }
 
 #[test]
+fn object_property_aliases_keep_uninit_locals_used_in_closure() {
+    let input = r#"
+function U(e, t, n, r, o) {
+  var i;
+  var a;
+  var u;
+  var l;
+  var c;
+  var s = o.areStatesEqual;
+  var f = o.areOwnPropsEqual;
+  var d = o.areStatePropsEqual;
+  var p = false;
+  function h(o, p) {
+    const h = !f(p, a);
+    const m = !s(o, i);
+    i = o;
+    a = p;
+    u = e(i, a);
+    l = t(r, a);
+    return c = n(u, l, a);
+  }
+  return function(o, s) {
+    return p ? h(o, s) : c;
+  };
+}
+"#;
+    let expected = input;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn nested_object_destructuring_alias_becomes_param_pattern() {
     let input = r#"
 function nested(_ref = {}) {

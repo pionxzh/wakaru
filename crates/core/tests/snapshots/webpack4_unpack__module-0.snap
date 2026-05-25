@@ -23,7 +23,7 @@ const hasOwnProperty = Object.prototype.hasOwnProperty;
 function b(e, t) {
     return q.notUndef(e) && hasOwnProperty.call(e, t);
 }
-export const q = {
+export var q = {
     undef (e) {
         return e === null || e === undefined;
     },

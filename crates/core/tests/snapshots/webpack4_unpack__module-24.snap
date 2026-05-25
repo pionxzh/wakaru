@@ -531,7 +531,7 @@ export class Switch extends Component {
         Children.forEach(children, (t)=>{
             if (r == null && isValidElement(t)) {
                 const i = t.props;
-                const { path: u, exact: exact, strict: strict, sensitive: sensitive, from: f } = i;
+                const { path: u, exact, strict, sensitive, from: f } = i;
                 const d = u || f;
                 o = t;
                 r = a(n.pathname, {

@@ -107,6 +107,17 @@
         "errorIncludes": ["A class may only have one constructor"],
         "decompiledRegex": ["\\bconstructor\\s*\\(\\)\\s*\\{\\}\\s*constructor\\s*\\(\\)"]
       }
+    },
+    {
+      "reason": "swc-print-export-default-function-expression",
+      "status": "rejected",
+      "phase": "swc-fidelity",
+      "when": {
+        "pathIncludes": ["test/language/module-code/instn-named-bndng-dflt-expr.js"],
+        "errorIncludes": ["binding is created but not initialized"],
+        "decompiledRegex": ["\\bexport\\s+default\\s+function\\s*\\("]
+      },
+      "note": "SWC prints `export default (function() {})` as a default function declaration, which changes self-import TDZ behavior."
     }
   ]
 }

@@ -272,7 +272,7 @@ fn unpack_multi_module(
                 if let Some(sm) = sm_ref {
                     module.visit_mut_with(&mut ImportDedup);
                     apply_sourcemap_renames(&mut module, sm, &cm, unresolved_mark);
-                    module.visit_mut_with(&mut UnImportRename);
+                    module.visit_mut_with(&mut UnImportRename::new(unresolved_mark));
                 }
 
                 let mut diag_warnings = if options.diagnostics {

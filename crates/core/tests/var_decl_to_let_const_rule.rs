@@ -1,10 +1,14 @@
 mod common;
 
 use common::{assert_eq_normalized, render_pipeline, render_rule};
-use wakaru_core::rules::VarDeclToLetConst;
+use wakaru_core::{rules::VarDeclToLetConst, RewriteLevel};
 
 fn apply_rule(input: &str) -> String {
-    render_rule(input, |_| VarDeclToLetConst)
+    render_rule(input, |_| VarDeclToLetConst::new())
+}
+
+fn apply_rule_with_level(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |_| VarDeclToLetConst::new_with_level(level))
 }
 
 #[test]
@@ -96,6 +100,48 @@ let counter = 0;
 function inc() {
     counter++;
 }
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn var_self_referenced_only_inside_arrow_initializer_becomes_const() {
+    let input = r#"
+var r = (e, t) => {
+    if (r.dependsOnOwnProps) {
+        return r.mapToProps(e, t);
+    }
+    return r.mapToProps(e);
+};
+r.dependsOnOwnProps = true;
+"#;
+    let expected = r#"
+const r = (e, t) => {
+    if (r.dependsOnOwnProps) {
+        return r.mapToProps(e, t);
+    }
+    return r.mapToProps(e);
+};
+r.dependsOnOwnProps = true;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn earlier_function_initializer_reference_to_later_var_stays_var() {
+    let input = r#"
+var read = function() {
+    return value;
+};
+var value = 1;
+"#;
+    let expected = r#"
+const read = function() {
+    return value;
+};
+var value = 1;
 "#;
     let output = apply_rule(input);
     assert_eq_normalized(&output, expected);
@@ -237,6 +283,50 @@ with (globalThis) {
 "#;
     let output = apply_rule(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn exported_module_var_stays_var_in_minimal() {
+    let input = r#"
+import { x as y } from './self.js';
+assert.sameValue(y, undefined);
+export var x = 23;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(
+        &output,
+        r#"
+import { x as y } from './self.js';
+assert.sameValue(y, undefined);
+export const x = 23;
+"#,
+    );
+
+    let output = apply_rule_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn module_var_exported_by_named_export_stays_var_in_minimal() {
+    let input = r#"
+import { x as y } from './self.js';
+assert.sameValue(y, undefined);
+var x = 23;
+export { x };
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(
+        &output,
+        r#"
+import { x as y } from './self.js';
+assert.sameValue(y, undefined);
+const x = 23;
+export { x };
+"#,
+    );
+
+    let output = apply_rule_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
@@ -522,6 +612,105 @@ function foo(t) {
 "#;
     let output = apply_rule(input);
     assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn for_head_var_referenced_by_prior_function_stays_var() {
+    let input = r#"
+function read() {
+    return arr[i];
+}
+for (var i = 0, arr = [1]; i < arr.length; i++) {
+    read();
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn for_head_var_referenced_by_prior_function_expression_stays_var() {
+    let input = r#"
+var read = function() {
+    return arr[i];
+};
+for (var i = 0, arr = [1]; i < arr.length; i++) {
+    read();
+}
+"#;
+    let expected = r#"
+const read = function() {
+    return arr[i];
+};
+for (var i = 0, arr = [1]; i < arr.length; i++) {
+    read();
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn for_head_var_referenced_by_prior_arrow_expression_stays_var() {
+    let input = r#"
+var read = () => arr[i];
+for (var i = 0, arr = [1]; i < arr.length; i++) {
+    read();
+}
+"#;
+    let expected = r#"
+const read = () => arr[i];
+for (var i = 0, arr = [1]; i < arr.length; i++) {
+    read();
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn module_for_head_var_referenced_by_prior_function_expression_stays_var() {
+    let input = r#"
+import * as ns from "./define-own-property.js";
+export var local1;
+var local2;
+export { local2 as renamed };
+var read = function() {
+    return arr[i];
+};
+for (var i = 0, arr = [1]; i < arr.length; i++) {
+    read();
+}
+"#;
+    let expected = r#"
+import * as ns from "./define-own-property.js";
+export let local1;
+let local2;
+export { local2 as renamed };
+const read = function() {
+    return arr[i];
+};
+for (var i = 0, arr = [1]; i < arr.length; i++) {
+    read();
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+
+    let minimal_expected = r#"
+import * as ns from "./define-own-property.js";
+export var local1;
+var local2;
+export { local2 as renamed };
+const read = function() {
+    return arr[i];
+};
+for (var i = 0, arr = [1]; i < arr.length; i++) {
+    read();
+}
+"#;
+    let minimal_output = apply_rule_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&minimal_output, minimal_expected);
 }
 
 #[test]

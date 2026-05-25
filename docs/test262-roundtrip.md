@@ -3,6 +3,8 @@
 `scripts/correctness/test262-roundtrip.mjs` checks semantic preservation by
 running a Test262 file in Node's `vm`, transforming it, decompiling it with
 wakaru, and running the decompiled result through the same Test262 harness.
+Module tests are different: `--preset modules` follows static relative
+imports/re-exports, writes a temporary ESM graph, and runs that graph in Node.
 
 The runner is intentionally feature-scoped. Prefer `--preset` or focused
 `--path` values over running the whole Test262 repository.
@@ -17,6 +19,9 @@ node scripts\correctness\test262-roundtrip.mjs --preset classes --pipeline babel
 node scripts\correctness\test262-roundtrip.mjs --preset classes --pipeline swc-minify --limit 100 --summary target\test262-classes-swc.md
 node scripts\correctness\test262-roundtrip.mjs --preset classes --pipeline esbuild-minify --limit 100 --summary target\test262-classes-esbuild.md
 node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --json target\test262-classes.json
+node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline swc-minify --limit all --case-timeout-ms 2000 --summary target\test262-modules-graph-swc.md
+node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline esbuild-minify --limit all --case-timeout-ms 2000 --summary target\test262-modules-graph-esbuild.md
+node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline babel-env-terser --limit all --case-timeout-ms 2000 --summary target\test262-modules-graph-babel.md
 node scripts\correctness\compare-test262-reports.mjs target\before.json target\after.json --details
 node scripts\correctness\test262-roundtrip.mjs --rerun-from target\test262-default.json --rerun-status failed --json target\test262-default-rerun.json
 ```
@@ -56,6 +61,23 @@ Babel is an input producer, not the correctness oracle. The Test262 harness
 remains the oracle: the original source, produced source, and Wakaru output must
 all pass the same test.
 
+## Module Graphs
+
+`--preset modules` runs Test262 files with `flags: [module]` as module graphs
+instead of single script files. The runner:
+
+- parses static relative `import` and `export ... from` specifiers;
+- recursively collects the entry module and local module dependencies;
+- transforms every module with the selected producer in ESM mode;
+- decompiles every transformed module independently with Wakaru;
+- executes the original, transformed, and decompiled graphs through a temporary
+  Node ESM package.
+
+This is still not bundle testing. No packer is involved, and Wakaru is not run
+with `--unpack`. The current purpose is to catch correctness bugs caused by ESM
+semantics across files: live bindings, namespace objects, cycles, TDZ, export
+aliases, and top-level await.
+
 ## Timeouts and Reruns
 
 `--case-timeout-ms <n>` bounds each runnable test case. The default is 5000 ms.
@@ -92,6 +114,7 @@ Known non-Wakaru reasons currently classified:
 - `swc-parse-yield-ident`
 - `swc-array-binding-elision`
 - `swc-print-class-extends-arrow-parens`
+- `swc-print-export-default-function-expression`
 - `swc-print-static-constructor-method`
 
 Most known non-Wakaru classifications live in
@@ -133,6 +156,15 @@ node scripts\correctness\test262-roundtrip.mjs --preset templates --limit all --
 node scripts\correctness\test262-roundtrip.mjs --preset modules --limit all --pipeline esbuild-minify --summary docs\test262-baselines\esbuild-minify\modules.md
 ```
 
+Module graph baselines live under `docs/test262-baselines/module-graph/`:
+
+```powershell
+node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline none --limit all --case-timeout-ms 2000 --summary docs\test262-baselines\module-graph\none.md
+node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline swc-minify --limit all --case-timeout-ms 2000 --summary docs\test262-baselines\module-graph\swc-minify.md
+node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline esbuild-minify --limit all --case-timeout-ms 2000 --summary docs\test262-baselines\module-graph\esbuild-minify.md
+node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline babel-env-terser --limit all --case-timeout-ms 2000 --summary docs\test262-baselines\module-graph\babel-env-terser.md
+```
+
 Recorded on 2026-05-25:
 
 | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
@@ -160,6 +192,15 @@ Additional producer baselines recorded on 2026-05-25:
 | esbuild-minify | async-generators | 1707 | 666 | 1041 | 7 | 40 | 619 | 0 |
 | esbuild-minify | templates | 84 | 67 | 17 | 2 | 1 | 64 | 0 |
 | esbuild-minify | modules | 755 | 157 | 598 | 141 | 1 | 15 | 0 |
+
+Module graph baselines recorded on 2026-05-25:
+
+| Pipeline | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| none | 755 | 358 | 397 | 10 | 1 | 347 | 0 |
+| swc-minify | 755 | 358 | 397 | 10 | 1 | 347 | 0 |
+| esbuild-minify | 755 | 358 | 397 | 9 | 244 | 105 | 0 |
+| babel-env-terser | 755 | 358 | 397 | 10 | 39 | 309 | 0 |
 
 Treat baseline movement as follows:
 

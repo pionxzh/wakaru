@@ -1,18 +1,33 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::ecma::ast::{ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem};
-use swc_core::ecma::visit::VisitMut;
+use swc_core::common::Mark;
+use swc_core::ecma::ast::{
+    Expr, ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem,
+};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
 use super::rename_utils::{
     collect_module_names, rename_bindings_in_module, BindingId, BindingRename, RenameShadowIndex,
 };
 
-pub struct UnImportRename;
+pub struct UnImportRename {
+    unresolved_mark: Mark,
+}
+
+impl UnImportRename {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
 
 impl VisitMut for UnImportRename {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let mut all_names = collect_module_names(module);
+        all_names.extend(collect_unresolved_reference_names(
+            module,
+            self.unresolved_mark,
+        ));
 
         let mut candidates: Vec<(BindingId, Atom)> = Vec::new();
         let mut candidate_bindings = HashSet::new();
@@ -30,6 +45,9 @@ impl VisitMut for UnImportRename {
                     _ => continue, // skip Str exports and shorthand
                 };
                 if imported == local {
+                    continue;
+                }
+                if is_reserved_binding_name(imported.as_ref()) {
                     continue;
                 }
 
@@ -86,6 +104,31 @@ impl VisitMut for UnImportRename {
     }
 }
 
+fn collect_unresolved_reference_names(module: &Module, unresolved_mark: Mark) -> HashSet<Atom> {
+    let mut collector = UnresolvedReferenceNameCollector {
+        unresolved_mark,
+        names: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.names
+}
+
+struct UnresolvedReferenceNameCollector {
+    unresolved_mark: Mark,
+    names: HashSet<Atom>,
+}
+
+impl Visit for UnresolvedReferenceNameCollector {
+    fn visit_expr(&mut self, expr: &Expr) {
+        if let Expr::Ident(ident) = expr {
+            if ident.ctxt.outer() == self.unresolved_mark {
+                self.names.insert(ident.sym.clone());
+            }
+        }
+        expr.visit_children_with(self);
+    }
+}
+
 fn generate_unique_name(base: Atom, existing: &HashSet<Atom>) -> Atom {
     if !existing.contains(&base) {
         return base;
@@ -98,4 +141,50 @@ fn generate_unique_name(base: Atom, existing: &HashSet<Atom>) -> Atom {
         }
         i += 1;
     }
+}
+
+fn is_reserved_binding_name(name: &str) -> bool {
+    matches!(
+        name,
+        "await"
+            | "break"
+            | "case"
+            | "catch"
+            | "class"
+            | "const"
+            | "continue"
+            | "debugger"
+            | "default"
+            | "delete"
+            | "do"
+            | "else"
+            | "enum"
+            | "export"
+            | "extends"
+            | "false"
+            | "finally"
+            | "for"
+            | "function"
+            | "if"
+            | "import"
+            | "in"
+            | "instanceof"
+            | "new"
+            | "null"
+            | "return"
+            | "super"
+            | "switch"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typeof"
+            | "var"
+            | "void"
+            | "while"
+            | "with"
+            | "yield"
+            | "arguments"
+            | "eval"
+    )
 }

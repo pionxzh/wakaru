@@ -1616,10 +1616,6 @@ impl Visit for IdentReferenceFinder<'_> {
             self.found = true;
         }
     }
-
-    fn visit_function(&mut self, _: &Function) {}
-
-    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
 }
 
 // ============================================================
