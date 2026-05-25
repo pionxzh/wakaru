@@ -15,9 +15,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, CatchClause, Expr, Function, Ident, ImportDecl, ImportNamedSpecifier,
-    ImportSpecifier, JSXElementName, JSXObject, MemberExpr, MemberProp, Module, ModuleDecl,
-    ModuleExportName, ModuleItem, Param, Pat, SimpleAssignTarget, UnaryExpr, UnaryOp, UpdateExpr,
+    AssignExpr, AssignTarget, CallExpr, Callee, CatchClause, Expr, Function, Ident, ImportDecl,
+    ImportNamedSpecifier, ImportSpecifier, JSXElementName, JSXObject, MemberExpr, MemberProp,
+    Module, ModuleDecl, ModuleExportName, ModuleItem, Param, Pat, SimpleAssignTarget, UnaryExpr,
+    UnaryOp, UpdateExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -415,6 +416,25 @@ impl Visit for UsageAnalyzer<'_> {
         self.in_import_decl = false;
     }
 
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if is_jsx_factory_callee(&call.callee) {
+            if let Some(first_arg) = call.args.first() {
+                if first_arg.spread.is_none() {
+                    if let Expr::Member(member) = first_arg.expr.as_ref() {
+                        if self.is_target_member(member) {
+                            if let MemberProp::Ident(prop) = &member.prop {
+                                if starts_with_lowercase(prop.sym.as_ref()) {
+                                    self.safe = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        call.visit_children_with(self);
+    }
+
     fn visit_assign_expr(&mut self, assign: &AssignExpr) {
         if self.is_target_member_assign_target(&assign.left) {
             self.safe = false;
@@ -685,6 +705,36 @@ impl VisitMut for UsageRewriter<'_> {
             prop.visit_mut_with(self);
         }
     }
+}
+
+fn is_jsx_factory_callee(callee: &Callee) -> bool {
+    let Callee::Expr(expr) = callee else {
+        return false;
+    };
+    match expr.as_ref() {
+        Expr::Ident(ident) => is_jsx_factory_name(ident.sym.as_ref()),
+        Expr::Member(member) => {
+            let MemberProp::Ident(prop) = &member.prop else {
+                return false;
+            };
+            is_jsx_factory_name(prop.sym.as_ref())
+        }
+        _ => false,
+    }
+}
+
+fn is_jsx_factory_name(name: &str) -> bool {
+    matches!(
+        name,
+        "createElement" | "jsx" | "jsxs" | "jsxDEV" | "_jsx" | "_jsxs"
+    )
+}
+
+fn starts_with_lowercase(value: &str) -> bool {
+    value
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_lowercase())
 }
 
 #[cfg(test)]

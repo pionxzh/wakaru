@@ -959,6 +959,42 @@ const x = <u.a />;
 }
 
 #[test]
+fn jsx_factory_lowercase_member_arg_prevents_decomposition() {
+    let target_facts = facts_for(r#"export function a() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    // `jsx(u.a, ...)` is equivalent to `<u.a />`; decomposing to `jsx(a, ...)`
+    // would later recover as `<a />`, an intrinsic anchor element.
+    let input = r#"
+import u from "./mod.js";
+const x = jsx(u.a, {});
+"#;
+    let output = run_decomp(input, &facts);
+    assert!(
+        normalize(&output).contains("import u from"),
+        "lowercase JSX factory tag should prevent decomposition, got: {output}"
+    );
+}
+
+#[test]
+fn jsx_factory_uppercase_member_arg_decomposes() {
+    let target_facts = facts_for(r#"export function Icon() {}"#);
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./mod.js", target_facts);
+
+    let input = r#"
+import u from "./mod.js";
+const x = jsx(u.Icon, {});
+"#;
+    let expected = r#"
+import { Icon } from "./mod.js";
+const x = jsx(Icon, {});
+"#;
+    assert_eq_normalized(&run_decomp(input, &facts), expected.trim());
+}
+
+#[test]
 fn jsx_member_expr_decomposes() {
     let target_facts = facts_for(
         r#"
