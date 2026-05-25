@@ -39,6 +39,7 @@ pub struct UnJsx {
     used_names: Vec<HashSet<String>>,
     string_consts: Vec<HashMap<BindingId, Str>>,
     import_pragmas: HashMap<BindingId, &'static str>,
+    converted_classic_pragma: bool,
 }
 
 impl UnJsx {
@@ -54,10 +55,12 @@ impl UnJsx {
             used_names: Vec::new(),
             string_consts: Vec::new(),
             import_pragmas: HashMap::new(),
+            converted_classic_pragma: false,
         }
     }
 
     fn process_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        self.converted_classic_pragma = false;
         self.import_pragmas = collect_import_pragmas(items);
         let renames = collect_module_renames(items, self.unresolved_mark, &self.import_pragmas);
         if !renames.is_empty() {
@@ -84,6 +87,10 @@ impl UnJsx {
         self.string_consts.pop();
         self.used_names.pop();
         *items = rewritten;
+
+        if self.converted_classic_pragma {
+            strip_unused_classic_pragma_imports(items);
+        }
     }
 
     fn process_stmts(&mut self, stmts: &mut Vec<Stmt>) {
@@ -177,6 +184,9 @@ impl UnJsx {
         };
 
         if is_fragment_name(&tag) && attrs.is_empty() {
+            if pragma == CLASSIC_PRAGMA {
+                self.converted_classic_pragma = true;
+            }
             return Some(Expr::JSXFragment(JSXFragment {
                 span: DUMMY_SP,
                 opening: JSXOpeningFragment { span: DUMMY_SP },
@@ -191,6 +201,9 @@ impl UnJsx {
             name: tag.clone(),
         });
 
+        if pragma == CLASSIC_PRAGMA {
+            self.converted_classic_pragma = true;
+        }
         Some(Expr::JSXElement(Box::new(JSXElement {
             span: DUMMY_SP,
             opening: JSXOpeningElement {
@@ -512,6 +525,42 @@ impl Visit for NameCollector {
 
     fn visit_binding_ident(&mut self, ident: &BindingIdent) {
         self.names.insert(ident.id.sym.to_string());
+    }
+}
+
+fn strip_unused_classic_pragma_imports(items: &mut [ModuleItem]) {
+    let mut collector = BindingReferenceCollector::default();
+    items.visit_with(&mut collector);
+    let referenced = collector.refs;
+
+    for item in items {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        import.specifiers.retain(|spec| match spec {
+            ImportSpecifier::Default(default) if default.local.sym == *CLASSIC_PRAGMA => {
+                referenced.contains(&(default.local.sym.clone(), default.local.ctxt))
+            }
+            ImportSpecifier::Named(named) if named.local.sym == *CLASSIC_PRAGMA => {
+                referenced.contains(&(named.local.sym.clone(), named.local.ctxt))
+            }
+            _ => true,
+        });
+    }
+}
+
+#[derive(Default)]
+struct BindingReferenceCollector {
+    refs: HashSet<BindingId>,
+}
+
+impl Visit for BindingReferenceCollector {
+    fn visit_import_decl(&mut self, _: &ImportDecl) {
+        // Import specifier locals are bindings, not references.
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        self.refs.insert((ident.sym.clone(), ident.ctxt));
     }
 }
 

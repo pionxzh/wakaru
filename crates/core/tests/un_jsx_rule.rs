@@ -331,3 +331,37 @@ function App() {
 
     assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
 }
+
+#[test]
+fn removes_unused_classic_create_element_named_import() {
+    let input = r#"
+import { createElement } from "react";
+
+export const app = createElement("div", null);
+"#;
+    let expected = r#"
+import "react";
+
+export const app = <div />;
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn keeps_classic_create_element_import_when_still_referenced() {
+    let input = r#"
+import { createElement } from "react";
+
+const el = createElement("div", null);
+export const factory = createElement;
+"#;
+    let expected = r#"
+import { createElement } from "react";
+
+const el = <div />;
+export const factory = createElement;
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
