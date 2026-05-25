@@ -104,6 +104,29 @@ fn swc_systemjs_raw_reconstructs_context_and_assignment_exports() {
     );
 }
 
+#[test]
+fn babel_systemjs_raw_reconstructs_outer_exports() {
+    let raw = unpack_fixture_raw("babel/entry.js");
+    assert_eq!(raw.len(), 1);
+
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains(r#"import greet, { named } from "./dep.js";"#),
+        "Babel setter imports should recover default + named imports:\n{entry}"
+    );
+    assert!(
+        entry.contains(r#"import("./lazy.js")"#),
+        "Babel _context.import should become import():\n{entry}"
+    );
+    assert!(
+        entry.contains("import.meta.url.length"),
+        "Babel _context.meta should become import.meta:\n{entry}"
+    );
+    assert!(
+        entry.contains("export { run, value };") || entry.contains("export { value, run };"),
+        "Babel outer export and execute export should both survive:\n{entry}"
+    );
+}
 
 #[test]
 fn tsc_systemjs_raw_reconstructs_namespace_import_and_outer_exports() {
@@ -132,6 +155,27 @@ fn tsc_systemjs_raw_reconstructs_namespace_import_and_outer_exports() {
     );
 }
 
+#[test]
+fn webpack_system_library_raw_recurses_into_inner_bundle() {
+    let raw = unpack_fixture_raw("webpack-system/bundle.js");
+    assert_eq!(raw.len(), 2);
+
+    let entry = module_code(&raw, "entry.js");
+    assert!(
+        entry.contains(r#"from "./webpack-src/dep.js";"#),
+        "webpack System.register wrapper should expose the inner entry module:\n{entry}"
+    );
+    assert!(
+        entry.contains("export const value") && entry.contains("export default run"),
+        "webpack inner entry should recover exports:\n{entry}"
+    );
+
+    let dep = module_code(&raw, "webpack-src/dep.js");
+    assert!(
+        dep.contains("export const named") && dep.contains("export default double"),
+        "webpack inner dependency should recover exports:\n{dep}"
+    );
+}
 
 #[test]
 fn named_register_bundle_unpacks_multiple_modules() {

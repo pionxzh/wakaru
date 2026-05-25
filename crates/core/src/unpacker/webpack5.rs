@@ -505,23 +505,8 @@ fn extract_webpack5_modules(
     }
 
     // Check for trailing IIFE entry point
-    let has_trailing_entry = if let Some(entry_body) = bootstrap_body
-        .stmts
-        .last()
-        .and_then(extract_iife_stmt_body)
-        .map(|body| body.stmts.clone())
-    {
-        let mut synthetic_module = build_module_from_stmts(entry_body);
-        let unresolved_mark = Mark::new();
-        let top_level_mark = Mark::new();
-        synthetic_module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-        run_rules(
-            &mut synthetic_module,
-            unresolved_mark,
-            RulePipelineOptions::until("UnEsm"),
-        );
-        synthetic_module.visit_mut_with(&mut fixer(None));
-        let code = emit_module(&synthetic_module, cm.clone()).ok()?;
+    let has_trailing_entry = if let Some(entry_body) = extract_trailing_entry_body(bootstrap_body) {
+        let code = emit_webpack5_entry_module(entry_body, cm.clone(), &id_to_filename)?;
         modules.push(UnpackedModule {
             id: "entry".to_string(),
             is_entry: true,
@@ -552,6 +537,68 @@ fn extract_webpack5_modules(
     }
 
     Some(UnpackResult { modules })
+}
+
+fn emit_webpack5_entry_module(
+    body_stmts: Vec<Stmt>,
+    cm: Lrc<SourceMap>,
+    id_to_filename: &HashMap<usize, String>,
+) -> Option<String> {
+    let mut synthetic_module = build_module_from_stmts(body_stmts);
+    let unresolved_mark = Mark::new();
+    let top_level_mark = Mark::new();
+    synthetic_module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+    let require_sym = Atom::from("__webpack_require__");
+    let exports_sym = Atom::from("__webpack_exports__");
+    let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
+
+    let mut id_rewriter = RequireIdRewriter {
+        require_sym: require_sym.clone(),
+        unresolved_mark,
+        id_to_filename,
+    };
+    synthetic_module.visit_mut_with(&mut id_rewriter);
+
+    rewrite_require_n_accesses(&mut synthetic_module, require_sym.clone(), unresolved_mark);
+
+    replace_ident(
+        &mut synthetic_module,
+        (require_sym.clone(), unresolved_ctxt),
+        &Ident::new(Atom::from("require"), Default::default(), unresolved_ctxt),
+    );
+    replace_ident(
+        &mut synthetic_module,
+        (exports_sym.clone(), unresolved_ctxt),
+        &Ident::new(Atom::from("exports"), Default::default(), unresolved_ctxt),
+    );
+
+    let mut normalizer = Webpack5RuntimeNormalizer {
+        require_sym: Atom::from("require"),
+        exports_sym: Atom::from("exports"),
+        unresolved_mark,
+    };
+    synthetic_module.visit_mut_with(&mut normalizer);
+
+    run_rules(
+        &mut synthetic_module,
+        unresolved_mark,
+        RulePipelineOptions::until("UnEsm"),
+    );
+    synthetic_module.visit_mut_with(&mut fixer(None));
+    emit_module(&synthetic_module, cm).ok()
+}
+
+fn extract_trailing_entry_body(
+    bootstrap_body: &swc_core::ecma::ast::BlockStmt,
+) -> Option<Vec<Stmt>> {
+    bootstrap_body
+        .stmts
+        .iter()
+        .rev()
+        .find(|stmt| !matches!(stmt, Stmt::Return(_)))
+        .and_then(extract_iife_stmt_body)
+        .map(|body| body.stmts.clone())
 }
 
 /// Extract a string module ID from any `PropName` variant.

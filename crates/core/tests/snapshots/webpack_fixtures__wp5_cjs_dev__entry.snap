@@ -2,7 +2,7 @@
 source: crates/core/tests/webpack_fixtures.rs
 expression: code
 ---
-const { greet } = __webpack_require__("./src/greet.js");
-const utils = __webpack_require__("./src/utils.js");
+import { greet } from "./src/greet.js";
+import { add } from "./src/utils.js";
 console.log(greet('world'));
-console.log(utils.add(1, 2));
+console.log(add(1, 2));

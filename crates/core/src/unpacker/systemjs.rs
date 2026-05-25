@@ -40,6 +40,10 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     let mut seen = HashSet::new();
     let mut modules = Vec::new();
     for (idx, register) in registers.into_iter().enumerate() {
+        if let Some(result) = try_unpack_dynamic_export_bundle(&register, cm.clone()) {
+            modules.extend(result.modules);
+            continue;
+        }
 
         let filename = filename_for_register(register.name.as_deref(), idx, multiple, &mut seen);
         let code = emit_system_module(&register, filename.clone(), cm.clone())?;
@@ -55,6 +59,43 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     Some(UnpackResult { modules })
 }
 
+fn try_unpack_dynamic_export_bundle(
+    register: &SystemRegister,
+    cm: Lrc<SourceMap>,
+) -> Option<UnpackResult> {
+    let export_sym = param_sym(&register.declare, 0)?;
+    let body = register.declare.body.as_ref()?;
+    let descriptor = extract_register_descriptor(body)?;
+    let execute_body = descriptor.execute.body.as_ref()?;
+    let expr = dynamic_export_expr(execute_body, &export_sym)?;
+    let source = emit_expr_module(expr, cm).ok()?;
+    crate::unpacker::try_unpack_bundle(&source).ok().flatten()
+}
+
+fn dynamic_export_expr<'a>(body: &'a BlockStmt, export_sym: &Atom) -> Option<&'a Expr> {
+    if body.stmts.len() != 1 {
+        return None;
+    }
+    let Stmt::Expr(expr_stmt) = &body.stmts[0] else {
+        return None;
+    };
+    let Expr::Call(call) = expr_stmt.expr.as_ref() else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym == *export_sym) {
+        return None;
+    }
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return None;
+    }
+    if matches!(call.args[0].expr.as_ref(), Expr::Object(_)) {
+        return None;
+    }
+    Some(call.args[0].expr.as_ref())
+}
 
 struct SystemRegister {
     name: Option<String>,
@@ -835,6 +876,17 @@ fn emit_module(module: &Module, filename: String, cm: Lrc<SourceMap>) -> anyhow:
     String::from_utf8(output).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
+fn emit_expr_module(expr: &Expr, cm: Lrc<SourceMap>) -> anyhow::Result<String> {
+    let module = Module {
+        span: DUMMY_SP,
+        body: vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(expr.clone()),
+        }))],
+        shebang: None,
+    };
+    emit_module(&module, "systemjs-inner-bundle.js".to_string(), cm)
+}
 
 #[cfg(test)]
 mod tests {
