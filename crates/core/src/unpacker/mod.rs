@@ -1,6 +1,7 @@
 pub mod browserify;
 pub mod esbuild;
 pub mod scope_hoist;
+pub mod systemjs;
 pub mod webpack4;
 pub mod webpack5;
 
@@ -66,6 +67,15 @@ pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
             let span = tracing::info_span!("detect_browserify");
             let _enter = span.enter();
             browserify::detect_from_module(&module, cm.clone())
+        };
+        if result.is_some() {
+            return Ok(result);
+        }
+
+        let result = {
+            let span = tracing::info_span!("detect_systemjs");
+            let _enter = span.enter();
+            systemjs::detect_from_module(&module, cm.clone())
         };
         if result.is_some() {
             return Ok(result);
