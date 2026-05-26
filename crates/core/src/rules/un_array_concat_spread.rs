@@ -14,6 +14,10 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 /// Only transforms when the receiver is an **array literal** — variable
 /// receivers like `arr.concat(other)` are left as-is since `concat` may
 /// be overridden or the receiver may not be a plain array.
+///
+/// This is a generated-code heuristic gated to `standard` and above. For
+/// arbitrary runtime values, `concat` and spread differ for scalars, strings,
+/// patched `Array.prototype.concat`, and `Symbol.isConcatSpreadable`.
 pub struct UnArrayConcatSpread;
 
 impl VisitMut for UnArrayConcatSpread {

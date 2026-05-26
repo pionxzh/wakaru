@@ -478,7 +478,8 @@ These rules restore structural patterns and clean up minification artifacts.
 | Produces | Array spread: `[a].concat(b)` → `[a, ...b]` |
 | Downstream dependents | UnSpreadArrayLiteral |
 | Fact behavior | Neither |
-| Safety | Safe |
+| Safety | Heuristic (`standard` and above): assumes generated concat-spread arguments behave like arrays/rest args |
+| Notes | Level-gated: disabled below `standard`. The useful generated shape is usually `[fixed].concat(args)`; this is not strictly equivalent for arbitrary values because `Array.prototype.concat` and spread differ for scalars, strings, patched concat, and `Symbol.isConcatSpreadable`. |
 
 ### 30. UnSpreadArrayLiteral
 

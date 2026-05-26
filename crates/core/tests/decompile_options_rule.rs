@@ -563,6 +563,45 @@ fn standard_keeps_argument_spread_recovery() {
 }
 
 #[test]
+fn minimal_disables_array_concat_spread_recovery() {
+    let input = r#"const x = [this].concat(args);"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Minimal,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_keeps_array_concat_spread_recovery() {
+    let input = r#"const x = [this].concat(args);"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Standard,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    let expected = r#"const x = [this, ...args];"#;
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn minimal_disables_arguments_default_param_recovery() {
     let input = r#"
 function foo(a) {

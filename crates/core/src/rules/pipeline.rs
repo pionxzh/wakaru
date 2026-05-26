@@ -327,7 +327,7 @@ define_rule_registry! {
     ("UnTypeConstructor", Structural, run_un_type_constructor, always_enabled),
     ("UnBuiltinPrototype", Structural, run_un_builtin_prototype, always_enabled),
     ("UnArgumentSpread", Structural, run_un_argument_spread, always_enabled),
-    ("UnArrayConcatSpread", Structural, run_un_array_concat_spread, always_enabled),
+    ("UnArrayConcatSpread", Structural, run_un_array_concat_spread, standard_or_above),
     ("UnSpreadArrayLiteral", Structural, run_un_spread_array_literal, always_enabled),
     ("ObjectAssignSpread", Structural, run_object_assign_spread, always_enabled),
     ("UnVariableMerging", Structural, run_un_variable_merging, always_enabled),
