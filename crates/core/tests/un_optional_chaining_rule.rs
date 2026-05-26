@@ -880,6 +880,22 @@ const hidden = !settings?.role?.blocks?.hideList.includes(blockName);
 }
 
 #[test]
+fn standard_transforms_babel_7_8_loose_nested_ternary_member_call_tail() {
+    // Reproduces @babel/plugin-proposal-optional-chaining 7.8 loose output for:
+    //   const hidden = !settings?.role?.blocks?.hideList.includes(blockName);
+    let input = r#"
+var _settings, _settings$role, _settings$role$blocks;
+const hidden = !((_settings = settings) == null ? void 0 : (_settings$role = _settings.role) == null ? void 0 : (_settings$role$blocks = _settings$role.blocks) == null ? void 0 : _settings$role$blocks.hideList.includes(blockName));
+"#;
+    let expected = r#"
+var _settings, _settings$role, _settings$role$blocks;
+const hidden = !settings?.role?.blocks?.hideList.includes(blockName);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn standard_transforms_issue_166_logical_and_chain_in_if_test() {
     let input = r#"
 let e;

@@ -1710,6 +1710,10 @@ fn find_ident_by_binding(access: &Expr, binding: &Ident) -> Option<Expr> {
             callee: Callee::Expr(callee_expr),
             ..
         }) => find_ident_by_binding(callee_expr, binding),
+        Expr::OptChain(OptChainExpr { base, .. }) => match base.as_ref() {
+            OptChainBase::Member(MemberExpr { obj, .. }) => find_ident_by_binding(obj, binding),
+            OptChainBase::Call(OptCall { callee, .. }) => find_ident_by_binding(callee, binding),
+        },
         _ => None,
     }
 }
