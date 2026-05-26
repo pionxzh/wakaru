@@ -160,6 +160,7 @@ All test files live under `crates/core/tests/`.
 - `webpack4_unpack_raw.rs` -- Snapshot tests for webpack4 raw-unpack normalization, before the normal decompile pipeline.
 - `bundle_unpack.rs` -- Pipeline snapshot tests for webpack5 + browserify bundles.
 - `esbuild_unpack.rs` -- esbuild bundle detection and unpack tests.
+- `systemjs_unpack.rs` -- SystemJS unpack tests using generated compiler and bundler fixtures.
 - `webpack5_chunk_unpack.rs` -- webpack5 chunk splitting tests.
 - `facts_rule.rs` -- Cross-module fact extraction tests.
 - `pipeline_helpers_rule.rs` -- Transpiler helper detection + restoration pipeline tests.

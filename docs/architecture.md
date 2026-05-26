@@ -45,8 +45,10 @@ Each unpacker detects a specific bundle format and extracts individual modules a
 
 1. **webpack5** — IIFE/arrow with module factory array or object
 2. **webpack4** — `(function(modules) { ... })([...])` with `__webpack_require__` runtime
-3. **browserify** — `(function e(t,n,r) { ... })({1:[function(...){...}, {...}], ...})`
-4. **esbuild / Bun-compatible scope-hoisted ESM** — scope-hoisted ESM
+3. **webpack5 chunk** — JSONP chunk push with a webpack module object
+4. **browserify** — `(function e(t,n,r) { ... })({1:[function(...){...}, {...}], ...})`
+5. **SystemJS** — top-level `System.register(...)` modules
+6. **esbuild / Bun-compatible scope-hoisted ESM** — scope-hoisted ESM
    namespace boundaries (`__export(ns, ...)`) and esbuild lazy-module helpers
    (`__commonJS` / `__esm`)
 
@@ -249,6 +251,7 @@ crates/
         webpack4.rs                 — webpack4 splitter + normalization
         webpack5.rs                 — webpack5 splitter
         browserify.rs               — browserify splitter
+        systemjs.rs                 — System.register splitter + ESM reconstruction
         esbuild.rs                  — esbuild splitter
         scope_hoist.rs              — esbuild/Bun scope-hoisted ESM extraction
       utils/
@@ -260,6 +263,7 @@ crates/
       webpack4_unpack_raw.rs        — raw-unpack normalization snapshot tests
       esbuild_unpack.rs             — esbuild detection tests
       bundle_unpack.rs              — webpack5 + browserify tests
+      systemjs_unpack.rs            — SystemJS compiler/bundler fixture tests
       noop_pipeline.rs              — stability tests
       snapshots/                    — insta snapshot files
 
