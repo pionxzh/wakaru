@@ -47,6 +47,7 @@ body {
   display: flex;
   align-items: baseline;
   gap: 10px;
+  min-width: 0;
 }
 
 .header-title {
@@ -58,6 +59,33 @@ body {
 .header-subtitle {
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.header-version {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  white-space: nowrap;
+}
+
+.header-commit {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+
+.header-commit:hover {
+  color: var(--text-primary);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .header-link {
@@ -91,6 +119,12 @@ body {
   gap: 12px;
 }
 
+.controls-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .controls-label {
   display: flex;
   align-items: center;
@@ -115,6 +149,9 @@ body {
 }
 
 .controls-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: var(--accent);
   color: #ffffff;
   border: none;
@@ -126,6 +163,17 @@ body {
   transition: background 0.15s;
 }
 
+.controls-button-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
 .controls-button:hover:not(:disabled) {
   background: var(--accent-hover);
 }
@@ -135,10 +183,60 @@ body {
   cursor: not-allowed;
 }
 
+.controls-separator {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+}
+
+.controls-button-secondary {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+}
+
+.controls-button-secondary:hover {
+  border-color: var(--accent);
+}
+
+.controls-share-status {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .controls-elapsed {
   font-size: 12px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .header {
+    padding: 0 10px;
+  }
+
+  .header-subtitle,
+  .header-version,
+  .header-commit {
+    display: none;
+  }
+
+  .controls {
+    min-height: 44px;
+    height: auto;
+    padding: 6px 10px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .controls-left {
+    flex-wrap: wrap;
+  }
+
+  .controls-separator {
+    display: none;
+  }
 }
 
 /* Editor area */

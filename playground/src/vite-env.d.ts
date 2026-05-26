@@ -1,5 +1,14 @@
 /// <reference types="vite/client" />
 
+interface ImportMetaEnv {
+  readonly VITE_WAKARU_VERSION: string;
+  readonly VITE_WAKARU_GIT_HASH: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+
 declare module "wakaru-wasm" {
   export default function init(
     input?: RequestInfo | URL | Response | BufferSource | WebAssembly.Module

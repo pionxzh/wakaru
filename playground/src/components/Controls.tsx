@@ -1,21 +1,37 @@
 import { LEVELS, type Level } from "../lib/constants";
 
+function ShareIcon() {
+  return (
+    <svg className="controls-button-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <line x1="8.59" x2="15.42" y1="13.51" y2="17.49" />
+      <line x1="15.41" x2="8.59" y1="6.51" y2="10.49" />
+    </svg>
+  );
+}
+
 interface ControlsProps {
   level: Level;
   onLevelChange: (level: Level) => void;
   onRun: () => void;
+  onShare: () => void;
   isLoading: boolean;
   wasmReady: boolean;
   elapsed: number | null;
+  shareStatus: string | null;
 }
 
 export function Controls({
   level,
   onLevelChange,
   onRun,
+  onShare,
   isLoading,
   wasmReady,
   elapsed,
+  shareStatus,
 }: ControlsProps) {
   return (
     <div className="controls">
@@ -41,8 +57,18 @@ export function Controls({
         >
           {isLoading ? "Running..." : wasmReady ? "Decompile" : "Loading WASM..."}
         </button>
+        <span className="controls-separator" aria-hidden="true" />
+        <button className="controls-button controls-button-secondary" onClick={onShare}>
+          <ShareIcon />
+          Share
+        </button>
       </div>
       <div className="controls-right">
+        {shareStatus && (
+          <span className="controls-share-status" role="status">
+            {shareStatus}
+          </span>
+        )}
         {elapsed !== null && (
           <span className="controls-elapsed">{elapsed.toFixed(0)}ms</span>
         )}

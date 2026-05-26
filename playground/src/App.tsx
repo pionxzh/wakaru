@@ -9,17 +9,25 @@ import { WasmBridge } from "./wasm/bridge";
 import type { WakaruWarning } from "./wasm/types";
 import type { Level } from "./lib/constants";
 import { DEFAULT_EXAMPLE } from "./lib/examples";
+import { createShareUrl, readShareState, SHARE_LIMIT_MESSAGE } from "./lib/share";
+
+const WAKARU_VERSION = import.meta.env.VITE_WAKARU_VERSION;
+const WAKARU_GIT_HASH = import.meta.env.VITE_WAKARU_GIT_HASH;
+const VERSION_LABEL = `v${WAKARU_VERSION}+${WAKARU_GIT_HASH}`;
+const INITIAL_SHARE_STATE = readShareState();
 
 export function App() {
-  const [source, setSource] = useState(DEFAULT_EXAMPLE);
+  const [source, setSource] = useState(INITIAL_SHARE_STATE?.source ?? DEFAULT_EXAMPLE);
   const [output, setOutput] = useState("");
   const [warnings, setWarnings] = useState<WakaruWarning[]>([]);
-  const [level, setLevel] = useState<Level>("standard");
+  const [level, setLevel] = useState<Level>(INITIAL_SHARE_STATE?.level ?? "standard");
   const [isLoading, setIsLoading] = useState(false);
   const [wasmReady, setWasmReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState<number | null>(null);
+  const [shareStatus, setShareStatus] = useState<string | null>(null);
   const bridgeRef = useRef<WasmBridge | null>(null);
+  const shareStatusTimeoutRef = useRef<number | null>(null);
 
   const runDecompile = useCallback(async (src: string, lvl: string) => {
     if (!bridgeRef.current) return;
@@ -59,16 +67,66 @@ export function App() {
     runDecompile(source, level);
   }, [source, level, wasmReady, runDecompile]);
 
+  const showShareStatus = useCallback((message: string) => {
+    if (shareStatusTimeoutRef.current !== null) {
+      window.clearTimeout(shareStatusTimeoutRef.current);
+    }
+    setShareStatus(message);
+    shareStatusTimeoutRef.current = window.setTimeout(() => {
+      setShareStatus(null);
+      shareStatusTimeoutRef.current = null;
+    }, 2400);
+  }, []);
+
+  const handleShare = useCallback(async () => {
+    let shareUrl: string;
+    try {
+      shareUrl = createShareUrl({
+        source,
+        level,
+        version: VERSION_LABEL,
+      });
+    } catch (e) {
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.hash = "";
+      window.history.replaceState(null, "", cleanUrl.toString());
+      showShareStatus(e instanceof Error ? e.message : SHARE_LIMIT_MESSAGE);
+      return;
+    }
+
+    window.history.replaceState(null, "", shareUrl);
+
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      showShareStatus("Copied");
+    } catch {
+      showShareStatus("URL updated");
+    }
+  }, [level, showShareStatus, source]);
+
+  useEffect(() => {
+    return () => {
+      if (shareStatusTimeoutRef.current !== null) {
+        window.clearTimeout(shareStatusTimeoutRef.current);
+      }
+    };
+  }, []);
+
   return (
     <div className="app">
-      <Header />
+      <Header
+        version={WAKARU_VERSION}
+        gitHash={WAKARU_GIT_HASH}
+      />
       <Controls
         level={level}
         onLevelChange={setLevel}
         onRun={handleRun}
+        onShare={handleShare}
         isLoading={isLoading}
         wasmReady={wasmReady}
         elapsed={elapsed}
+        shareStatus={shareStatus}
       />
       <SplitLayout>
         <Editor value={source} onChange={setSource} />
