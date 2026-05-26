@@ -40,6 +40,18 @@ impl VisitMut for UnOptionalChaining {
     }
 
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if let Some(result) = try_boolean_context_logical_and_optional_chain(
+            expr,
+            self.unresolved_mark,
+            self.policy,
+            &self.uninitialized_bindings,
+            &self.binding_references,
+        ) {
+            *expr = result;
+            expr.visit_mut_children_with(self);
+            return;
+        }
+
         if let Some(result) = try_optional_chaining(
             expr,
             self.unresolved_mark,
@@ -75,6 +87,18 @@ impl VisitMut for UnOptionalChaining {
 
     fn visit_mut_stmt(&mut self, stmt: &mut Stmt) {
         stmt.visit_mut_children_with(self);
+
+        if let Stmt::If(if_stmt) = stmt {
+            if let Some(result) = try_logical_and_optional_chain(
+                if_stmt.test.as_ref(),
+                self.unresolved_mark,
+                self.policy,
+                &self.uninitialized_bindings,
+                &self.binding_references,
+            ) {
+                *if_stmt.test = result;
+            }
+        }
 
         if let Some(result) = try_optional_call_short_circuit_stmt(stmt, self.unresolved_mark) {
             *stmt = result;
@@ -266,6 +290,251 @@ fn try_optional_chaining(
     }
 
     None
+}
+
+fn try_boolean_context_logical_and_optional_chain(
+    expr: &Expr,
+    unresolved_mark: Mark,
+    policy: RewritePolicy,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> Option<Expr> {
+    let Expr::Unary(UnaryExpr {
+        op: UnaryOp::Bang,
+        arg,
+        span,
+    }) = expr
+    else {
+        return None;
+    };
+
+    Some(Expr::Unary(UnaryExpr {
+        span: *span,
+        op: UnaryOp::Bang,
+        arg: Box::new(try_logical_and_optional_chain(
+            arg,
+            unresolved_mark,
+            policy,
+            uninitialized_bindings,
+            binding_references,
+        )?),
+    }))
+}
+
+fn try_logical_and_optional_chain(
+    expr: &Expr,
+    unresolved_mark: Mark,
+    policy: RewritePolicy,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> Option<Expr> {
+    if policy.level < RewriteLevel::Standard {
+        return None;
+    }
+
+    let mut terms = Vec::new();
+    collect_logical_and_terms(expr, &mut terms);
+    if terms.len() < 3 {
+        return None;
+    }
+
+    let first = extract_logical_and_non_null_segment(&terms, 0, unresolved_mark, policy)?;
+    let mut temps = Vec::new();
+    let mut temp_values = HashMap::new();
+    let mut temp_call_contexts = HashMap::new();
+    let mut chain = if let Some(real_rhs) = first.real_rhs.as_ref() {
+        let Expr::Ident(tmp) = strip_parens(&first.checked) else {
+            return None;
+        };
+        temps.push(tmp.clone());
+        record_flattened_temp_value(
+            tmp,
+            real_rhs,
+            flattened_member_call_context(real_rhs, &temp_values),
+            &mut temp_values,
+            &mut temp_call_contexts,
+        );
+        real_rhs.clone()
+    } else {
+        if !matches!(strip_parens(&first.checked), Expr::Ident(_))
+            && !policy.assumptions.pure_getters
+        {
+            return None;
+        }
+        first.checked.clone()
+    };
+    let mut current_tmp = first.checked;
+    let mut index = first.consumed;
+
+    while index < terms.len() - 1 {
+        let segment = extract_logical_and_non_null_segment(&terms, index, unresolved_mark, policy)?;
+        let real_rhs = segment.real_rhs.as_ref()?;
+        let Expr::Ident(tmp) = strip_parens(&segment.checked) else {
+            return None;
+        };
+        let tmp = tmp.clone();
+        chain = make_optional_chain_replacing(&current_tmp, &chain, real_rhs, unresolved_mark)?;
+        let call_context = flattened_member_call_context(real_rhs, &temp_values);
+        record_flattened_temp_value(
+            &tmp,
+            &chain,
+            call_context,
+            &mut temp_values,
+            &mut temp_call_contexts,
+        );
+        current_tmp = segment.checked;
+        temps.push(tmp);
+        index += segment.consumed;
+    }
+
+    if index != terms.len() - 1 {
+        return None;
+    }
+
+    if !chain_temps_are_safe(
+        &temps,
+        &[expr],
+        policy.level,
+        uninitialized_bindings,
+        binding_references,
+    ) {
+        return None;
+    }
+
+    make_flattened_final_access(
+        &current_tmp,
+        &chain,
+        terms[index],
+        &temp_values,
+        &temp_call_contexts,
+        unresolved_mark,
+    )
+}
+
+struct LogicalAndSegment {
+    checked: Expr,
+    real_rhs: Option<Expr>,
+    consumed: usize,
+}
+
+fn extract_logical_and_non_null_segment(
+    terms: &[&Expr],
+    index: usize,
+    unresolved_mark: Mark,
+    policy: RewritePolicy,
+) -> Option<LogicalAndSegment> {
+    if index + 1 < terms.len() {
+        if let Some(null_value) = extract_strict_not_null_single(terms[index]) {
+            if let Some(undefined_value) =
+                extract_strict_not_undefined_single(terms[index + 1], unresolved_mark)
+            {
+                if let Some((tmp, real_rhs)) = extract_assign_parts(&null_value) {
+                    let checked = Expr::Ident(tmp);
+                    if exprs_structurally_equal(&checked, &undefined_value) {
+                        return Some(LogicalAndSegment {
+                            checked,
+                            real_rhs: Some((**real_rhs).clone()),
+                            consumed: 2,
+                        });
+                    }
+                    return None;
+                }
+
+                if exprs_structurally_equal(&null_value, &undefined_value) {
+                    return Some(LogicalAndSegment {
+                        checked: *undefined_value,
+                        real_rhs: None,
+                        consumed: 2,
+                    });
+                }
+            }
+        }
+    }
+
+    if !policy.assumptions.no_document_all {
+        return None;
+    }
+    let checked = extract_loose_not_null_single(terms[index], unresolved_mark)?;
+    let (checked, real_rhs) = split_optional_assignment_checked_value(checked);
+    Some(LogicalAndSegment {
+        checked,
+        real_rhs,
+        consumed: 1,
+    })
+}
+
+fn split_optional_assignment_checked_value(checked: Expr) -> (Expr, Option<Expr>) {
+    if let Some((tmp, real_rhs)) = extract_assign_parts(&checked) {
+        (Expr::Ident(tmp), Some((**real_rhs).clone()))
+    } else {
+        (checked, None)
+    }
+}
+
+fn collect_logical_and_terms<'a>(expr: &'a Expr, terms: &mut Vec<&'a Expr>) {
+    match strip_parens(expr) {
+        Expr::Bin(BinExpr {
+            op: BinaryOp::LogicalAnd,
+            left,
+            right,
+            ..
+        }) => {
+            collect_logical_and_terms(left, terms);
+            collect_logical_and_terms(right, terms);
+        }
+        expr => terms.push(expr),
+    }
+}
+
+fn extract_strict_not_null_single(expr: &Expr) -> Option<Box<Expr>> {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::NotEqEq,
+        left,
+        right,
+        ..
+    }) = strip_parens(expr)
+    else {
+        return None;
+    };
+    if matches!(&**right, Expr::Lit(Lit::Null(_))) {
+        return Some(left.clone());
+    }
+    if matches!(&**left, Expr::Lit(Lit::Null(_))) {
+        return Some(right.clone());
+    }
+    None
+}
+
+fn extract_strict_not_undefined_single(expr: &Expr, unresolved_mark: Mark) -> Option<Box<Expr>> {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::NotEqEq,
+        left,
+        right,
+        ..
+    }) = strip_parens(expr)
+    else {
+        return None;
+    };
+    if is_unresolved_undefined(right, unresolved_mark) {
+        return Some(left.clone());
+    }
+    if is_unresolved_undefined(left, unresolved_mark) {
+        return Some(right.clone());
+    }
+    None
+}
+
+fn extract_loose_not_null_single(expr: &Expr, unresolved_mark: Mark) -> Option<Expr> {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::NotEq,
+        left,
+        right,
+        ..
+    }) = strip_parens(expr)
+    else {
+        return None;
+    };
+    extract_loose_null_operand(left, right, unresolved_mark)
 }
 
 fn try_flattened_optional_chain(
@@ -812,7 +1081,23 @@ fn flattened_chain_temps_are_safe(
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
 ) -> bool {
-    let pattern_references = count_binding_references_in_exprs(&[test, alt]);
+    chain_temps_are_safe(
+        temps,
+        &[test, alt],
+        level,
+        uninitialized_bindings,
+        binding_references,
+    )
+}
+
+fn chain_temps_are_safe(
+    temps: &[Ident],
+    pattern_exprs: &[&Expr],
+    level: RewriteLevel,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> bool {
+    let pattern_references = count_binding_references_in_exprs(pattern_exprs);
     let unique_temps: HashSet<BindingId> = temps.iter().map(binding_id).collect();
 
     unique_temps.iter().all(|binding_id| {
@@ -1145,6 +1430,21 @@ fn make_optional_chain_replacing(
                     }));
                 }
             }
+            if let Some(replaced_callee) =
+                make_optional_chain_replacing(tmp, real_rhs, callee_expr, unresolved_mark)
+            {
+                return Some(Expr::OptChain(OptChainExpr {
+                    span: DUMMY_SP,
+                    optional: false,
+                    base: Box::new(OptChainBase::Call(OptCall {
+                        span: *span,
+                        ctxt: *ctxt,
+                        callee: Box::new(replaced_callee),
+                        args: args.clone(),
+                        type_args: type_args.clone(),
+                    })),
+                }));
+            }
             None
         }
 
@@ -1409,16 +1709,7 @@ fn find_ident_by_binding(access: &Expr, binding: &Ident) -> Option<Expr> {
         Expr::Call(CallExpr {
             callee: Callee::Expr(callee_expr),
             ..
-        }) => {
-            if let Expr::Member(MemberExpr { obj, .. }) = &**callee_expr {
-                if let Expr::Ident(id) = &**obj {
-                    if same_binding(id, binding) {
-                        return Some(Expr::Ident(id.clone()));
-                    }
-                }
-            }
-            None
-        }
+        }) => find_ident_by_binding(callee_expr, binding),
         _ => None,
     }
 }

@@ -840,11 +840,72 @@ use(n);
     assert_eq_normalized(&output, expected);
 }
 
-// --- known-broken semantic regressions ---
+// --- logical AND boolean-context recovery ---
 
 #[test]
-fn known_bug_logical_and_expression_value_not_converted() {
+fn logical_and_expression_value_stays_as_is() {
     let input = r#"x !== null && x !== undefined && x.foo"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_transforms_issue_166_logical_and_chain_in_negation() {
+    let input = r#"
+let l;
+let i;
+const hidden = !(tt != null && (l = tt[bt]) !== null && l !== undefined && (i = l.blocks) !== null && i !== undefined && i.hideList.includes(t.name));
+"#;
+    let expected = r#"
+let l;
+let i;
+const hidden = !tt?.[bt]?.blocks?.hideList.includes(t.name);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_issue_166_nested_ternary_member_call_tail() {
+    let input = r#"
+let _b;
+const hidden = !((_b = settings?.role?.blocks) == null ? undefined : _b.hideList.includes(blockName));
+"#;
+    let expected = r#"
+let _b;
+const hidden = !settings?.role?.blocks?.hideList.includes(blockName);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_issue_166_logical_and_chain_in_if_test() {
+    let input = r#"
+let e;
+let l;
+if (tt != null && (e = tt[bt]) !== null && e !== undefined && (l = e.blocks) !== null && l !== undefined && l.hideList) {
+    update();
+}
+"#;
+    let expected = r#"
+let e;
+let l;
+if (tt?.[bt]?.blocks?.hideList) {
+    update();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_preserves_logical_and_chain_when_temp_is_observed_later() {
+    let input = r#"
+let l;
+const hidden = !(settings != null && (l = settings.role) !== null && l !== undefined && l.blocks);
+use(l);
+"#;
     let output = apply(input);
     assert_eq_normalized(&output, input);
 }

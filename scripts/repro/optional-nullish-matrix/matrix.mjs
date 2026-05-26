@@ -49,6 +49,11 @@ const snippets = [
     expected: ["?.[", "??"],
   },
   {
+    name: "logical-and-negated-member-call",
+    source: "const hidden = !settings?.role?.blocks?.hideList.includes(blockName);\n",
+    expected: ["!settings?.role?.blocks?.hideList.includes(blockName)"],
+  },
+  {
     name: "nullish-only",
     source: "const out = value ?? fallback;\n",
     expected: ["??"],
