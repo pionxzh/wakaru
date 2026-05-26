@@ -49,6 +49,27 @@ const snippets = [
     expected: ["tag`hello ${name}`"],
   },
   {
+    name: "tagged-multiline-newlines",
+    source: `var out = tag\`
+  staticOne
+  staticTwo
+  \${dynamicOne}
+  \${dynamicTwo}
+  staticThree
+  \${dynamicThree}
+\`;
+use(out);
+`,
+    expected: `tag\`
+  staticOne
+  staticTwo
+  \${dynamicOne}
+  \${dynamicTwo}
+  staticThree
+  \${dynamicThree}
+\``,
+  },
+  {
     name: "tagged-raw-cooked",
     source: "var out = tag`line\\n${value}\\u{1f600}`;\nuse(out);\n",
     expected: ["tag`line\\n${value}\\u{1f600}`"],
@@ -225,7 +246,7 @@ function runShape(snippet, shape) {
     return { recovered: false, notes: `wakaru failed: ${error.message}` };
   }
 
-  const missing = snippet.expected.filter((needle) => !recovered.includes(needle));
+  const missing = expectedNeedles(snippet).filter((needle) => !recovered.includes(needle));
   if (missing.length === 0) {
     return { recovered: true, notes: "expected syntax present" };
   }
@@ -461,6 +482,10 @@ function escapeCell(value) {
 
 function shapeKey(code) {
   return code.replaceAll("\r\n", "\n").trim();
+}
+
+function expectedNeedles(snippet) {
+  return Array.isArray(snippet.expected) ? snippet.expected : [snippet.expected];
 }
 
 function readOption(name, fallback) {
