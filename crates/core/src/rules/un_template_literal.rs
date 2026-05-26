@@ -299,7 +299,7 @@ fn extract_direct_template_helper_call(expr: &Expr) -> Option<(TemplateData, Opt
     } else {
         cooked
             .iter()
-            .map(|value| value.as_deref().map(escape_template_raw))
+            .map(|value| value.as_deref().map(escape_template_raw_cooked_copy))
             .collect::<Option<Vec<_>>>()?
     };
 
@@ -593,6 +593,13 @@ fn escape_template_raw(input: &str) -> String {
         .replace('\n', "\\n")
         .replace('\t', "\\t")
         .replace('\r', "\\r")
+}
+
+fn escape_template_raw_cooked_copy(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")
+        .replace('`', "\\`")
+        .replace("${", "\\${")
 }
 
 fn strip_paren_expr(expr: &Expr) -> &Expr {

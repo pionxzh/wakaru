@@ -173,6 +173,38 @@ var out = tag`hello ${name}`;
 }
 
 #[test]
+fn restores_swc_tagged_template_newlines_without_raw_argument() {
+    let input = r#"
+function _tagged_template_literal(strings, raw) { return strings; }
+function _templateObject() {
+    var data = _tagged_template_literal([
+        "\n  staticOne\n  staticTwo\n  ",
+        "\n  ",
+        "\n  staticThree\n  ",
+        "\n"
+    ]);
+    _templateObject = function _templateObject() {
+        return data;
+    };
+    return data;
+}
+var out = tag(_templateObject(), dynamicOne, dynamicTwo, dynamicThree);
+"#;
+    let expected = r#"var out = tag`
+  staticOne
+  staticTwo
+  ${dynamicOne}
+  ${dynamicTwo}
+  staticThree
+  ${dynamicThree}
+`;
+"#;
+
+    let output = apply(input);
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn restores_esbuild_cached_tagged_template() {
     let input = r#"
 var __template = function(cooked, raw) { return cooked; };
