@@ -2,9 +2,4 @@
 source: crates/core/tests/un_sliced_to_array_rule.rs
 expression: output
 ---
-function c(e) {
-    if (Array.isArray(e)) {
-        return e;
-    }
-}
 const key = pair[0];

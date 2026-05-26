@@ -2,9 +2,4 @@
 source: crates/core/tests/un_sliced_to_array_rule.rs
 expression: output
 ---
-function _arrayWithHoles(arr) {
-    if (Array.isArray(arr)) {
-        return arr;
-    }
-}
 const key = pair[0];

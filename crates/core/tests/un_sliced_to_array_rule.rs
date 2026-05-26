@@ -160,6 +160,97 @@ var key = _ref[0];
 }
 
 #[test]
+fn folds_swc_sliced_to_array_declaration_group() {
+    let input = r#"
+function _array_like_to_array(arr, len) {
+    return arr;
+}
+function _array_with_holes(arr) {
+    if (Array.isArray(arr)) return arr;
+}
+function _iterable_to_array_limit(arr, i) {
+    return arr;
+}
+function _unsupported_iterable_to_array(o, minLen) {
+    return _array_like_to_array(o, minLen);
+}
+function _non_iterable_rest() {
+    throw new TypeError("Invalid attempt to destructure non-iterable instance.");
+}
+function _sliced_to_array(arr, i) {
+    return _array_with_holes(arr) || _iterable_to_array_limit(arr, i) || _unsupported_iterable_to_array(arr, i) || _non_iterable_rest();
+}
+var _useState = _sliced_to_array(useState(value), 2), current = _useState[0], setCurrent = _useState[1];
+use(current, setCurrent);
+"#;
+    let expected = r#"
+const [current, setCurrent] = useState(value);
+use(current, setCurrent);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn preserves_ref_when_sliced_to_array_temp_is_reused() {
+    let input = r#"
+function _arrayWithHoles(arr) {
+    if (Array.isArray(arr)) return arr;
+}
+function _slicedToArray(arr, i) {
+    return _arrayWithHoles(arr) || _iterableToArrayLimit(arr, i) || _unsupportedIterableToArray(arr, i) || _nonIterableRest();
+}
+var _ref = _slicedToArray(pair, 2), key = _ref[0], value = _ref[1];
+use(key, value, _ref);
+"#;
+    let expected = r#"
+const _ref = pair;
+const key = _ref[0];
+const value = _ref[1];
+use(key, value, _ref);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn does_not_fold_plain_ref_index_reads_without_helper_call() {
+    let input = r#"
+var _ref = arr;
+var key = _ref[0];
+var value = _ref[1];
+use(key, value);
+"#;
+    let expected = r#"
+const _ref = arr;
+const key = _ref[0];
+const value = _ref[1];
+use(key, value);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn preserves_unreferenced_name_collision_dependency() {
+    let input = r#"
+var _slicedToArray = require("@babel/runtime/helpers/slicedToArray");
+function _arrayWithHoles(arr) {
+    return custom(arr);
+}
+var _ref = _slicedToArray(pair, 2);
+var key = _ref[0];
+var value = _ref[1];
+use(key, value);
+"#;
+    let expected = r#"
+function _arrayWithHoles(arr) {
+    return custom(arr);
+}
+const [key, value] = pair;
+use(key, value);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn no_false_positive_two_param_unrelated() {
     // A two-param function that doesn't match the helper shape
     let input = r#"

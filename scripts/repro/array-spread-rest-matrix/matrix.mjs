@@ -59,6 +59,28 @@ const snippets = [
     source: "const [first, , second = fallback, ...rest_items] = items;\nuse(first, second, rest_items);\n",
     expected: ["first", "second = fallback", "...rest_items"],
   },
+  {
+    name: "array-destructure-tuple",
+    source:
+      'import { useState } from "react";\nconst [current, setCurrent] = useState(value);\nuse(current, setCurrent);\n',
+    expected: ["const [current, setCurrent]", "use(current, setCurrent)"],
+    unexpected: [
+      "_sliced_to_array",
+      "_slicedToArray",
+      "_array_with_holes",
+      "_arrayWithHoles",
+      "_iterable_to_array_limit",
+      "_iterableToArrayLimit",
+      "_unsupported_iterable_to_array",
+      "_unsupportedIterableToArray",
+      "_array_like_to_array",
+      "_arrayLikeToArray",
+      "_non_iterable_rest",
+      "_nonIterableRest",
+      "_useState[0]",
+      "_useState[1]",
+    ],
+  },
 ];
 
 const babelProfiles = [
@@ -237,7 +259,8 @@ function runShape(snippet, shape) {
   }
 
   const missing = snippet.expected.filter((needle) => !recovered.includes(needle));
-  if (missing.length === 0) {
+  const unexpected = (snippet.unexpected ?? []).filter((needle) => recovered.includes(needle));
+  if (missing.length === 0 && unexpected.length === 0) {
     return { recovered: true, notes: "expected syntax present" };
   }
   if (isExpectedLevelGate(snippet, shape)) {
@@ -249,9 +272,13 @@ function runShape(snippet, shape) {
 
   const loweredShape = summarize(shape.lowered);
   const recoveredShape = summarize(recovered);
+  const problems = [
+    missing.length > 0 ? `missing ${missing.join(", ")}` : null,
+    unexpected.length > 0 ? `unexpected ${unexpected.join(", ")}` : null,
+  ].filter(Boolean);
   return {
     recovered: false,
-    notes: `missing ${missing.join(", ")}; lowered: ${loweredShape}; wakaru: ${recoveredShape}`,
+    notes: `${problems.join("; ")}; lowered: ${loweredShape}; wakaru: ${recoveredShape}`,
     failure: {
       snippet: snippet.name,
       shape: shape.label,
