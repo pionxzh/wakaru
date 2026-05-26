@@ -64,6 +64,19 @@ const x = { ...app_info, app_name: name };
 }
 
 #[test]
+fn handles_swc_external_object_spread_imports() {
+    let input = r#"
+import { _ as _object_spread } from "@swc/helpers/_/_object_spread";
+import { _ as _object_spread_props } from "@swc/helpers/_/_object_spread_props";
+var x = _object_spread_props(_object_spread({}, app_info), { app_name: name });
+"#;
+    let expected = r#"
+const x = { ...app_info, app_name: name };
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn handles_cross_module_extends_helper_fact() {
     let mut facts = ModuleFactsMap::new();
     facts.insert(

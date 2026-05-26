@@ -115,6 +115,14 @@ const transformers = [
     run: (source) => runTerser(runSwc(source)),
   },
   {
+    name: "swc-es5-external",
+    run: (source) => runSwc(source, { externalHelpers: true }),
+  },
+  {
+    name: "swc-es5-external-terser",
+    run: (source) => runTerser(runSwc(source, { externalHelpers: true })),
+  },
+  {
     name: "esbuild-es2017",
     run: runEsbuild,
   },
@@ -315,7 +323,7 @@ process.stdout.write(result.outputText);
   return runChecked("node", [helper], { input: source, cwd: toolDir });
 }
 
-function runSwc(source) {
+function runSwc(source, options = {}) {
   const toolDir = ensureNodeTool("swc", ["@swc/core@1"]);
   const helper = join(toolDir, "swc-transform.cjs");
   writeFileSync(
@@ -324,10 +332,12 @@ function runSwc(source) {
 const fs = require("node:fs");
 const swc = require("@swc/core");
 const source = fs.readFileSync(0, "utf8");
+const options = JSON.parse(process.env.MATRIX_SWC_OPTIONS || "{}");
 const result = swc.transformSync(source, {
   filename: "input.js",
   jsc: {
     target: "es5",
+    externalHelpers: Boolean(options.externalHelpers),
     parser: { syntax: "ecmascript" },
   },
   module: { type: "es6" },
@@ -335,7 +345,11 @@ const result = swc.transformSync(source, {
 process.stdout.write(result.code);
 `,
   );
-  return runChecked("node", [helper], { input: source, cwd: toolDir });
+  return runChecked("node", [helper], {
+    input: source,
+    cwd: toolDir,
+    env: { MATRIX_SWC_OPTIONS: JSON.stringify(options) },
+  });
 }
 
 function runEsbuild(source) {

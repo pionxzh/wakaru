@@ -254,6 +254,20 @@ use(x, rest);
 }
 
 #[test]
+fn named_owp_helper_swc_external_import() {
+    let input = r#"
+import { _ as _object_without_properties } from "@swc/helpers/_/_object_without_properties";
+var name = app_info.name, rest_info = _object_without_properties(app_info, ["name"]);
+use(name, rest_info);
+"#;
+    let expected = r#"
+const { name, ...rest_info } = app_info;
+use(name, rest_info);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn named_owp_helper_with_preceding_destructuring() {
     let input = r#"
 function m(e, t) {

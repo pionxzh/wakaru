@@ -62,11 +62,14 @@ const OBJECT_SPREAD_PATHS: &[&str] = &[
     "@babel/runtime/helpers/esm/objectSpread2",
     "@babel/runtime/helpers/objectSpread",
     "@babel/runtime/helpers/esm/objectSpread",
+    "@swc/helpers/_/_object_spread",
+    "@swc/helpers/_/_object_spread_props",
 ];
 
 const SLICED_TO_ARRAY_PATHS: &[&str] = &[
     "@babel/runtime/helpers/slicedToArray",
     "@babel/runtime/helpers/esm/slicedToArray",
+    "@swc/helpers/_/_sliced_to_array",
 ];
 
 const OBJECT_WITHOUT_PROPERTIES_PATHS: &[&str] = &[
@@ -74,6 +77,8 @@ const OBJECT_WITHOUT_PROPERTIES_PATHS: &[&str] = &[
     "@babel/runtime/helpers/esm/objectWithoutProperties",
     "@babel/runtime/helpers/objectWithoutPropertiesLoose",
     "@babel/runtime/helpers/esm/objectWithoutPropertiesLoose",
+    "@swc/helpers/_/_object_without_properties",
+    "@swc/helpers/_/_object_without_properties_loose",
 ];
 
 const INHERITS_PATHS: &[&str] = &[
@@ -125,8 +130,8 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
                 if import.type_only {
                     continue;
                 }
-                let Some(kind) = detect_helper_from_path(import.src.value.as_str().unwrap_or(""))
-                else {
+                let path = import.src.value.as_str().unwrap_or("");
+                let Some(kind) = detect_helper_from_path(path) else {
                     continue;
                 };
                 for specifier in &import.specifiers {
@@ -134,12 +139,7 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
                         ImportSpecifier::Default(default) => {
                             helpers.insert(binding_key(&default.local), kind);
                         }
-                        ImportSpecifier::Named(named)
-                            if named
-                                .imported
-                                .as_ref()
-                                .is_some_and(|imported| export_name_is(imported, "default")) =>
-                        {
+                        ImportSpecifier::Named(named) if named_import_is_helper(path, named) => {
                             helpers.insert(binding_key(&named.local), kind);
                         }
                         _ => {}
@@ -400,6 +400,24 @@ fn export_name_is(name: &swc_core::ecma::ast::ModuleExportName, expected: &str) 
         swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.as_ref() == expected,
         swc_core::ecma::ast::ModuleExportName::Str(s) => s.value.as_str() == Some(expected),
     }
+}
+
+fn named_import_is_helper(path: &str, named: &swc_core::ecma::ast::ImportNamedSpecifier) -> bool {
+    named
+        .imported
+        .as_ref()
+        .is_some_and(|imported| export_name_is(imported, "default"))
+        || (is_swc_helper_path(path)
+            && named
+                .imported
+                .as_ref()
+                .map_or(named.local.sym.as_ref() == "_", |imported| {
+                    export_name_is(imported, "_")
+                }))
+}
+
+fn is_swc_helper_path(path: &str) -> bool {
+    path.starts_with("@swc/helpers/_/_")
 }
 
 fn detect_helper_from_fn(func: &Function, has_sub_helpers: bool) -> Option<BabelHelperKind> {

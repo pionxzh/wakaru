@@ -50,6 +50,20 @@ var value = _ref[1];
 }
 
 #[test]
+fn handles_swc_external_helper_import() {
+    let input = r#"
+import { _ as _sliced_to_array } from "@swc/helpers/_/_sliced_to_array";
+var _ref = _sliced_to_array(pair, 2);
+var key = _ref[0];
+var value = _ref[1];
+"#;
+    let expected = r#"
+const [key, value] = pair;
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn skips_invalid_arg_counts() {
     let input = r#"
 var _slicedToArray = require("@babel/runtime/helpers/slicedToArray");
