@@ -5,7 +5,7 @@ use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{ImportSpecifier, Module, ModuleDecl, ModuleExportName, ModuleItem, Str};
 use swc_core::ecma::visit::VisitMut;
 
-use super::rename_utils::{rename_bindings_in_module, BindingId, BindingRename};
+use super::rename_utils::{rename_bindings_in_module, BindingRename};
 
 fn src_to_key(src: &Str) -> String {
     src.value.as_str().unwrap_or("").to_string()
@@ -68,50 +68,53 @@ fn dedup_imports(module: &mut Module) {
     // (source_module, ImportKey) → canonical local (sym, ctxt)
     let mut canonical: HashMap<(String, ImportKey), (Atom, SyntaxContext)> = HashMap::new();
     let mut renames: Vec<BindingRename> = Vec::new();
-    // Set of (sym, ctxt) for specifiers that should be removed
-    let mut to_remove: HashSet<BindingId> = HashSet::new();
+    // Set of (module item index, specifier index) for duplicate specifiers.
+    let mut to_remove: HashSet<(usize, usize)> = HashSet::new();
 
-    for item in &module.body {
+    for (item_index, item) in module.body.iter().enumerate() {
         let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
             continue;
         };
         let src = src_to_key(&import.src);
 
-        for spec in &import.specifiers {
+        for (specifier_index, spec) in import.specifiers.iter().enumerate() {
             let Some((key, local_sym, local_ctxt)) = spec_key_and_local(spec) else {
                 continue;
             };
 
             let map_key = (src.clone(), key);
-            let entry = canonical
-                .entry(map_key)
-                .or_insert_with(|| (local_sym.clone(), local_ctxt));
-
-            if *entry != (local_sym.clone(), local_ctxt) {
-                // This specifier is a duplicate — schedule it for removal and rename
-                to_remove.insert((local_sym.clone(), local_ctxt));
-                renames.push(BindingRename {
-                    old: (local_sym, local_ctxt),
-                    new: entry.0.clone(),
-                });
+            if let Some(entry) = canonical.get(&map_key) {
+                // This specifier is a duplicate. Remove the occurrence even
+                // when it has the same binding id as the canonical specifier;
+                // resolver can assign identical top-level contexts to exact
+                // duplicate imports.
+                to_remove.insert((item_index, specifier_index));
+                if *entry != (local_sym.clone(), local_ctxt) {
+                    renames.push(BindingRename {
+                        old: (local_sym, local_ctxt),
+                        new: entry.0.clone(),
+                    });
+                }
+            } else {
+                canonical.insert(map_key, (local_sym, local_ctxt));
             }
         }
     }
 
-    if renames.is_empty() {
+    if to_remove.is_empty() {
         return;
     }
 
-    // Remove duplicate specifiers first (before renaming, while (sym, ctxt) still match)
-    for item in &mut module.body {
+    // Remove duplicate specifiers first (before renaming, while indexes still match).
+    for (item_index, item) in module.body.iter_mut().enumerate() {
         let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
             continue;
         };
-        import.specifiers.retain(|spec| {
-            let Some((_, local_sym, local_ctxt)) = spec_key_and_local(spec) else {
-                return true; // keep unsupported specifiers
-            };
-            !to_remove.contains(&(local_sym, local_ctxt))
+        let mut specifier_index = 0;
+        import.specifiers.retain(|_| {
+            let keep = !to_remove.contains(&(item_index, specifier_index));
+            specifier_index += 1;
+            keep
         });
     }
 
@@ -123,8 +126,10 @@ fn dedup_imports(module: &mut Module) {
         )
     });
 
-    // Rewrite all uses of duplicate bindings to the canonical local name
-    rename_bindings_in_module(module, &renames);
+    if !renames.is_empty() {
+        // Rewrite all uses of duplicate bindings to the canonical local name.
+        rename_bindings_in_module(module, &renames);
+    }
 }
 
 /// Merges separate import statements from the same source into a single statement.
