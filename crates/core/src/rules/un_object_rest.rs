@@ -188,6 +188,10 @@ fn reattach_elided_object_rest_in_module_items(
     named_helpers: &HashMap<BindingKey, BabelHelperKind>,
     unresolved_mark: Mark,
 ) {
+    if !module_items_contain_owp_spread_candidate(items, named_helpers) {
+        return;
+    }
+
     for item in items.iter_mut() {
         if let ModuleItem::Stmt(stmt) = item {
             reattach_elided_object_rest_in_stmt(stmt, named_helpers, unresolved_mark);
@@ -236,6 +240,10 @@ fn reattach_elided_object_rest_in_stmts(
     named_helpers: &HashMap<BindingKey, BabelHelperKind>,
     unresolved_mark: Mark,
 ) {
+    if !stmts_contain_owp_spread_candidate(stmts, named_helpers) {
+        return;
+    }
+
     for stmt in stmts.iter_mut() {
         reattach_elided_object_rest_in_stmt(stmt, named_helpers, unresolved_mark);
     }
@@ -265,6 +273,68 @@ fn reattach_elided_object_rest_in_stmts(
         if let Some(init) = replacement_init {
             set_stmt_single_decl_init(&mut stmts[rest_idx], init);
         }
+    }
+}
+
+fn module_items_contain_owp_spread_candidate(
+    items: &[ModuleItem],
+    named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+) -> bool {
+    let mut visitor = ObjectRestSpreadCandidateVisitor {
+        named_helpers,
+        found: false,
+    };
+    for item in items {
+        item.visit_with(&mut visitor);
+        if visitor.found {
+            return true;
+        }
+    }
+    false
+}
+
+fn stmts_contain_owp_spread_candidate(
+    stmts: &[Stmt],
+    named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+) -> bool {
+    let mut visitor = ObjectRestSpreadCandidateVisitor {
+        named_helpers,
+        found: false,
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut visitor);
+        if visitor.found {
+            return true;
+        }
+    }
+    false
+}
+
+struct ObjectRestSpreadCandidateVisitor<'a> {
+    named_helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    found: bool,
+}
+
+impl Visit for ObjectRestSpreadCandidateVisitor<'_> {
+    fn visit_prop_or_spread(&mut self, prop: &PropOrSpread) {
+        if self.found {
+            return;
+        }
+
+        let PropOrSpread::Spread(spread) = prop else {
+            prop.visit_children_with(self);
+            return;
+        };
+
+        if extract_named_owp_args(&spread.expr, self.named_helpers)
+            .or_else(|| try_extract_owp_call(&spread.expr))
+            .is_some()
+        {
+            self.found = true;
+            return;
+        }
+
+        spread.expr.visit_with(self);
     }
 }
 

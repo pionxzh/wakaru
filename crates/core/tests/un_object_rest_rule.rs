@@ -67,6 +67,18 @@ use(x, rest);
 }
 
 #[test]
+fn plain_spreads_do_not_trigger_elided_rest_reattachment() {
+    let input = r#"
+var missing;
+var value = {
+    ...source
+};
+use(missing, value);
+"#;
+    assert_eq_normalized(&render_rule(input, UnObjectRest::new), input.trim());
+}
+
+#[test]
 fn with_bare_access() {
     // props.replace; (bare access, no binding) — absorbed, "to" gets _prefix since no binding
     let input = r#"
