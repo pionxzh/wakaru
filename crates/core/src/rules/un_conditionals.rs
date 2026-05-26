@@ -475,10 +475,7 @@ fn build_return_chain(
         cons: Box::new(Stmt::Block(BlockStmt {
             span: DUMMY_SP,
             ctxt: Default::default(),
-            stmts: vec![Stmt::Return(ReturnStmt {
-                span,
-                arg: Some(cons),
-            })],
+            stmts: return_stmts_from_expr(*cons, span),
         })),
         alt: None,
     }));
@@ -494,5 +491,15 @@ fn build_return_chain(
                 arg: Some(Box::new(other)),
             }));
         }
+    }
+}
+
+fn return_stmts_from_expr(expr: Expr, span: Span) -> Vec<Stmt> {
+    match expr {
+        Expr::Cond(_) => try_split_return_ternary(expr, span).expect("checked it is Cond above"),
+        other => vec![Stmt::Return(ReturnStmt {
+            span,
+            arg: Some(Box::new(other)),
+        })],
     }
 }

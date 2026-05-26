@@ -346,6 +346,38 @@ function fn() {
 }
 
 #[test]
+fn return_nested_consequent_ternary_split() {
+    let input = r#"
+function fn(match, Component, props, render, children) {
+  return Component ? match ? createElement(Component, props) : null : render ? match ? render(props) : null : children;
+}
+"#;
+    let expected = r#"
+function fn(match, Component, props, render, children) {
+  if (Component) {
+    if (match) {
+      return createElement(Component, props);
+    }
+
+    return null;
+  }
+
+  if (render) {
+    if (match) {
+      return render(props);
+    }
+
+    return null;
+  }
+
+  return children;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn ternary_with_sequence_branches_converted() {
     // cond ? (a(), b()) : (c(), d()) → if (cond) { a(); b(); } else { c(); d(); }
     // Common webpack pattern for conditional side-effect blocks

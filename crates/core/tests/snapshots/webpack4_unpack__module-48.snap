@@ -985,9 +985,11 @@ function nt(e, t) {
     }
     if (Array.isArray(e)) {
         if (Array.isArray(t)) {
-            return e.push(...t), e;
+            e.push(...t);
+            return e;
         }
-        return e.push(t), e;
+        e.push(t);
+        return e;
     }
     if (Array.isArray(t)) {
         return [
@@ -3649,9 +3651,14 @@ function Si(e) {
         t.index = r;
         if (e) {
             if ((r = t.alternate) !== null) {
-                return (r = r.index) < n ? (t.effectTag = 2, n) : r;
+                if ((r = r.index) < n) {
+                    t.effectTag = 2;
+                    return n;
+                }
+                return r;
             }
-            return t.effectTag = 2, n;
+            t.effectTag = 2;
+            return n;
         }
         return n;
     }
