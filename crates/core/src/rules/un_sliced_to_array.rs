@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
@@ -8,8 +8,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helpers, helpers_with_remaining_refs, remove_helper_declarations, BabelHelperKind,
-    BindingKey,
+    collect_helper_dependencies, collect_helpers, helpers_with_remaining_refs,
+    remove_helper_declarations, BabelHelperKind, BindingKey,
 };
 
 /// Detects and unwraps `_slicedToArray(expr, N)` helper calls.
@@ -33,8 +33,6 @@ impl VisitMut for UnSlicedToArray {
         if helpers.is_empty() {
             return;
         }
-        let helper_dependencies = collect_sliced_to_array_dependencies(module, &helpers);
-
         fold_sliced_to_array_stmt_groups(&mut module.body, &helpers);
 
         // Walk all var declarators and unwrap slicedToArray calls
@@ -45,11 +43,18 @@ impl VisitMut for UnSlicedToArray {
             rewrite_sliced_to_array_decls(&mut var.decls, &helpers);
         }
 
-        // Only remove declaration if no untransformed calls remain
-        let removable_helpers = helpers
+        // Only remove root helpers whose calls were fully transformed. Dependencies
+        // referenced by retained helpers must stay with those helpers.
+        let remaining_roots = helpers_with_remaining_refs(module, &helpers);
+        let removable_roots = helpers
             .iter()
-            .chain(helper_dependencies.iter())
+            .filter(|(key, _)| !remaining_roots.contains(*key))
             .map(|(key, kind)| (key.clone(), *kind))
+            .collect::<HashMap<_, _>>();
+        let helper_dependencies = collect_helper_dependencies(module, &removable_roots);
+        let removable_helpers = removable_roots
+            .into_iter()
+            .chain(helper_dependencies)
             .collect::<HashMap<_, _>>();
         let remaining = helpers_with_remaining_refs(module, &removable_helpers);
         let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = removable_helpers
@@ -58,113 +63,6 @@ impl VisitMut for UnSlicedToArray {
             .collect();
         if !safe_to_remove.is_empty() {
             remove_helper_declarations(&mut module.body, &safe_to_remove);
-        }
-    }
-}
-
-fn collect_sliced_to_array_dependencies(
-    module: &Module,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
-) -> HashMap<BindingKey, BabelHelperKind> {
-    let ref_graph = collect_top_level_callable_ref_graph(module);
-    let mut dependencies = HashSet::new();
-    let mut stack: Vec<_> = helpers.keys().cloned().collect();
-
-    while let Some(key) = stack.pop() {
-        let Some(refs) = ref_graph.get(&key) else {
-            continue;
-        };
-        for dep in refs {
-            if helpers.contains_key(dep) || !dependencies.insert(dep.clone()) {
-                continue;
-            }
-            stack.push(dep.clone());
-        }
-    }
-
-    dependencies
-        .into_iter()
-        .map(|key| (key, BabelHelperKind::HelperDependency))
-        .collect()
-}
-
-fn collect_top_level_callable_ref_graph(
-    module: &Module,
-) -> HashMap<BindingKey, HashSet<BindingKey>> {
-    let mut candidates = HashSet::new();
-    for item in &module.body {
-        match item {
-            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
-                candidates.insert((fn_decl.ident.sym.clone(), fn_decl.ident.ctxt));
-            }
-            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-                for decl in &var.decls {
-                    if !matches!(
-                        decl.init.as_deref(),
-                        Some(Expr::Fn(_)) | Some(Expr::Arrow(_))
-                    ) {
-                        continue;
-                    }
-                    if let Pat::Ident(binding) = &decl.name {
-                        candidates.insert((binding.id.sym.clone(), binding.id.ctxt));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut refs = HashMap::new();
-    for item in &module.body {
-        match item {
-            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
-                let key = (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt);
-                if candidates.contains(&key) {
-                    refs.insert(key, collect_refs(&fn_decl.function, &candidates));
-                }
-            }
-            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-                for decl in &var.decls {
-                    let Pat::Ident(binding) = &decl.name else {
-                        continue;
-                    };
-                    let key = (binding.id.sym.clone(), binding.id.ctxt);
-                    if !candidates.contains(&key) {
-                        continue;
-                    }
-                    if let Some(init) = &decl.init {
-                        refs.insert(key, collect_refs(init, &candidates));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    refs
-}
-
-fn collect_refs<T>(node: &T, targets: &HashSet<BindingKey>) -> HashSet<BindingKey>
-where
-    for<'a> T: VisitWith<IdentRefCollector<'a>>,
-{
-    let mut collector = IdentRefCollector {
-        targets,
-        refs: HashSet::new(),
-    };
-    node.visit_with(&mut collector);
-    collector.refs
-}
-
-struct IdentRefCollector<'a> {
-    targets: &'a HashSet<BindingKey>,
-    refs: HashSet<BindingKey>,
-}
-
-impl Visit for IdentRefCollector<'_> {
-    fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
-        let key = (ident.sym.clone(), ident.ctxt);
-        if self.targets.contains(&key) {
-            self.refs.insert(key);
         }
     }
 }

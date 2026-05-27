@@ -378,6 +378,136 @@ use(out);
 }
 
 #[test]
+fn removes_minified_babel_object_spread_helper_dependencies() {
+    let input = r#"
+function l(e) {
+    l = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function(e) {
+        return typeof e;
+    } : function(e) {
+        return e && typeof Symbol === "function" && e.constructor === Symbol && e !== Symbol.prototype ? "symbol" : typeof e;
+    };
+    return l(e);
+}
+function a(e, t) {
+    var r = Object.keys(e);
+    if (Object.getOwnPropertySymbols) {
+        var n = Object.getOwnPropertySymbols(e);
+        if (t) {
+            n = n.filter(function(t) {
+                return Object.getOwnPropertyDescriptor(e, t).enumerable;
+            });
+        }
+        r.push.apply(r, n);
+    }
+    return r;
+}
+function i(e, t, r) {
+    t = function(e) {
+        var t = function(e) {
+            if (l(e) != "object" || !e) {
+                return e;
+            }
+            var t = e[Symbol.toPrimitive];
+            if (t !== undefined) {
+                var r = t.call(e, "string");
+                if (l(r) != "object") {
+                    return r;
+                }
+                throw new TypeError("@@toPrimitive must return a primitive value.");
+            }
+            return String(e);
+        }(e);
+        return l(t) == "symbol" ? t : t + "";
+    }(t);
+    if (t in e) {
+        Object.defineProperty(e, t, {
+            value: r,
+            enumerable: true,
+            configurable: true,
+            writable: true
+        });
+    } else {
+        e[t] = r;
+    }
+    return e;
+}
+function o(e) {
+    for (var t = 1; t < arguments.length; t++) {
+        var r = arguments[t] != null ? arguments[t] : {};
+        if (t % 2) {
+            a(Object(r), true).forEach(function(t) {
+                i(e, t, r[t]);
+            });
+        } else if (Object.getOwnPropertyDescriptors) {
+            Object.defineProperties(e, Object.getOwnPropertyDescriptors(r));
+        } else {
+            a(Object(r)).forEach(function(t) {
+                Object.defineProperty(e, t, Object.getOwnPropertyDescriptor(r, t));
+            });
+        }
+    }
+    return e;
+}
+var out = o({}, app_info, { name: value });
+use(out);
+"#;
+    let expected = r#"
+var out = { ...app_info, name: value };
+use(out);
+"#;
+
+    assert_eq_normalized(&render_rule(input, |_| UnObjectSpread::new()), expected);
+}
+
+#[test]
+fn preserves_dependencies_when_object_spread_helper_call_remains() {
+    let input = r#"
+function ownKeys(object, enumerableOnly) {
+    var keys = Object.keys(object);
+    if (Object.getOwnPropertySymbols) {
+        var symbols = Object.getOwnPropertySymbols(object);
+        if (enumerableOnly) {
+            symbols = symbols.filter(function(sym) {
+                return Object.getOwnPropertyDescriptor(object, sym).enumerable;
+            });
+        }
+        keys.push.apply(keys, symbols);
+    }
+    return keys;
+}
+function _objectSpread2(target) {
+    for (var i = 1; i < arguments.length; i++) {
+        var source = arguments[i] != null ? arguments[i] : {};
+        i % 2 ? ownKeys(Object(source), true).forEach(function(key) {
+            Object.defineProperty(target, key, {
+                value: source[key],
+                enumerable: true,
+                configurable: true,
+                writable: true
+            });
+        }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : ownKeys(Object(source)).forEach(function(key) {
+            Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
+        });
+    }
+    return target;
+}
+var out = _objectSpread2(target, source);
+use(out);
+"#;
+
+    let output = render_rule(input, |_| UnObjectSpread::new());
+
+    assert!(
+        output.contains("function ownKeys"),
+        "retained object spread helper must keep ownKeys dependency:\n{output}"
+    );
+    assert!(
+        output.contains("function _objectSpread2"),
+        "untransformed object spread helper should remain:\n{output}"
+    );
+}
+
+#[test]
 fn detects_esbuild_object_spread_helpers() {
     let input = r#"
 var __defProp = Object.defineProperty;

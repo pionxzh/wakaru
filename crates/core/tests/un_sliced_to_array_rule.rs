@@ -265,6 +265,29 @@ use(key, value);
 }
 
 #[test]
+fn preserves_dependencies_when_sliced_to_array_helper_call_remains() {
+    let input = r#"
+function _arrayWithHoles(arr) {
+    if (Array.isArray(arr)) return arr;
+}
+function _slicedToArray(arr, i) {
+    return _arrayWithHoles(arr) || _iterableToArrayLimit(arr, i) || _unsupportedIterableToArray(arr, i) || _nonIterableRest();
+}
+_slicedToArray(pair);
+"#;
+    let output = render(input);
+
+    assert!(
+        output.contains("function _arrayWithHoles"),
+        "retained slicedToArray helper must keep _arrayWithHoles dependency:\n{output}"
+    );
+    assert!(
+        output.contains("function _slicedToArray"),
+        "untransformed slicedToArray helper should remain:\n{output}"
+    );
+}
+
+#[test]
 fn no_false_positive_two_param_unrelated() {
     // A two-param function that doesn't match the helper shape
     let input = r#"

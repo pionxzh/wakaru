@@ -233,6 +233,113 @@ pub(crate) fn helpers_with_remaining_refs(
     remaining_refs_outside_declarations(module, &helper_keys, &helper_keys)
 }
 
+pub(crate) fn collect_helper_dependencies(
+    module: &Module,
+    helpers: &HashMap<BindingKey, BabelHelperKind>,
+) -> HashMap<BindingKey, BabelHelperKind> {
+    let ref_graph = collect_top_level_callable_ref_graph(module);
+    let mut dependencies = HashSet::new();
+    let mut stack: Vec<_> = helpers.keys().cloned().collect();
+
+    while let Some(key) = stack.pop() {
+        let Some(refs) = ref_graph.get(&key) else {
+            continue;
+        };
+        for dep in refs {
+            if helpers.contains_key(dep) || !dependencies.insert(dep.clone()) {
+                continue;
+            }
+            stack.push(dep.clone());
+        }
+    }
+
+    dependencies
+        .into_iter()
+        .map(|key| (key, BabelHelperKind::HelperDependency))
+        .collect()
+}
+
+fn collect_top_level_callable_ref_graph(
+    module: &Module,
+) -> HashMap<BindingKey, HashSet<BindingKey>> {
+    let mut candidates = HashSet::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
+                candidates.insert((fn_decl.ident.sym.clone(), fn_decl.ident.ctxt));
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    if !matches!(
+                        decl.init.as_deref(),
+                        Some(Expr::Fn(_)) | Some(Expr::Arrow(_))
+                    ) {
+                        continue;
+                    }
+                    if let Pat::Ident(binding) = &decl.name {
+                        candidates.insert((binding.id.sym.clone(), binding.id.ctxt));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut refs = HashMap::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
+                let key = (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt);
+                if candidates.contains(&key) {
+                    refs.insert(key, collect_refs(&fn_decl.function, &candidates));
+                }
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    let Pat::Ident(binding) = &decl.name else {
+                        continue;
+                    };
+                    let key = (binding.id.sym.clone(), binding.id.ctxt);
+                    if !candidates.contains(&key) {
+                        continue;
+                    }
+                    if let Some(init) = &decl.init {
+                        refs.insert(key, collect_refs(init, &candidates));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    refs
+}
+
+fn collect_refs<T>(node: &T, targets: &HashSet<BindingKey>) -> HashSet<BindingKey>
+where
+    for<'a> T: VisitWith<IdentRefCollector<'a>>,
+{
+    let mut collector = IdentRefCollector {
+        targets,
+        refs: HashSet::new(),
+    };
+    node.visit_with(&mut collector);
+    collector.refs
+}
+
+struct IdentRefCollector<'a> {
+    targets: &'a HashSet<BindingKey>,
+    refs: HashSet<BindingKey>,
+}
+
+impl Visit for IdentRefCollector<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        let key = (ident.sym.clone(), ident.ctxt);
+        if self.targets.contains(&key) {
+            self.refs.insert(key);
+        }
+    }
+}
+
 /// Remove helper declarations from the module body.
 pub(crate) fn remove_helper_declarations(
     body: &mut Vec<ModuleItem>,
