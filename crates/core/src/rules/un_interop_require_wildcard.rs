@@ -1,14 +1,18 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    Callee, Decl, Expr, Ident, ImportDecl, ImportStarAsSpecifier, Lit, Module, ModuleDecl,
-    ModuleItem, Pat, Stmt,
+    Callee, Decl, Expr, ExprStmt, Ident, ImportDecl, ImportStarAsSpecifier, Lit, Module,
+    ModuleDecl, ModuleItem, Pat, Stmt, VarDecl,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helpers, remove_helper_declarations, BabelHelperKind, BindingKey,
+    collect_helper_dependencies, collect_helpers, helpers_with_remaining_refs,
+    remove_helper_declarations, BabelHelperKind, BindingKey,
+};
+use super::helper_matcher::{
+    binding_key, import_specifier_binding_key, var_declarator_binding_key,
 };
 
 /// Detects and unwraps `interopRequireWildcard` helper calls.
@@ -49,8 +53,61 @@ impl VisitMut for UnInteropRequireWildcard {
         let mut unwrapper = WildcardCallUnwrapper { helpers: &helpers };
         module.visit_mut_with(&mut unwrapper);
 
-        // Phase 3: Remove helper declarations.
-        remove_helper_declarations(&mut module.body, &helpers);
+        // Phase 3: Remove helper declarations only if no untransformed calls
+        // remain. When the helper is removed, also clean helper-owned local and
+        // import dependencies.
+        let remaining_roots = helpers_with_remaining_refs(module, &helpers);
+        let removable_roots: HashMap<BindingKey, BabelHelperKind> = helpers
+            .into_iter()
+            .filter(|(key, _)| !remaining_roots.contains(key))
+            .collect();
+        if removable_roots.is_empty() {
+            return;
+        }
+
+        let helper_dependencies = collect_helper_dependencies(module, &removable_roots);
+        let dependency_roots: HashMap<BindingKey, BabelHelperKind> = removable_roots
+            .iter()
+            .chain(helper_dependencies.iter())
+            .map(|(key, kind)| (key.clone(), *kind))
+            .collect();
+        let import_dependencies = collect_import_dependencies(module, &dependency_roots);
+        let var_require_dependencies = collect_var_require_dependencies(module, &dependency_roots);
+        let removable_helpers: HashMap<BindingKey, BabelHelperKind> = dependency_roots
+            .into_iter()
+            .chain(
+                import_dependencies
+                    .iter()
+                    .map(|key| (key.clone(), BabelHelperKind::HelperDependency)),
+            )
+            .chain(
+                var_require_dependencies
+                    .iter()
+                    .map(|key| (key.clone(), BabelHelperKind::HelperDependency)),
+            )
+            .collect();
+        let remaining = helpers_with_remaining_refs(module, &removable_helpers);
+        let safe_declarations: HashMap<BindingKey, BabelHelperKind> = removable_helpers
+            .iter()
+            .filter(|(key, _)| {
+                !remaining.contains(*key)
+                    && !import_dependencies.contains(*key)
+                    && !var_require_dependencies.contains(*key)
+            })
+            .map(|(key, kind)| (key.clone(), *kind))
+            .collect();
+        let safe_imports: HashSet<BindingKey> = import_dependencies
+            .into_iter()
+            .filter(|key| !remaining.contains(key))
+            .collect();
+        let safe_var_requires: HashSet<BindingKey> = var_require_dependencies
+            .into_iter()
+            .filter(|key| !remaining.contains(key))
+            .collect();
+
+        remove_helper_declarations(&mut module.body, &safe_declarations);
+        remove_var_require_bindings_preserve_side_effects(&mut module.body, &safe_var_requires);
+        remove_import_bindings_preserve_side_effects(&mut module.body, &safe_imports);
     }
 }
 
@@ -199,4 +256,217 @@ fn is_require_call(expr: &Expr) -> bool {
         return false;
     };
     id.sym.as_ref() == "require" && call.args.len() == 1
+}
+
+fn collect_import_dependencies(
+    module: &Module,
+    helpers: &HashMap<BindingKey, BabelHelperKind>,
+) -> HashSet<BindingKey> {
+    let import_bindings = collect_import_bindings(module);
+    if import_bindings.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut collector = ImportDependencyCollector {
+        helpers,
+        import_bindings: &import_bindings,
+        dependencies: HashSet::new(),
+    };
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl)))
+                if helpers.contains_key(&binding_key(&fn_decl.ident)) =>
+            {
+                fn_decl.function.visit_with(&mut collector);
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    if var_declarator_binding_key(decl)
+                        .as_ref()
+                        .is_some_and(|key| helpers.contains_key(key))
+                    {
+                        if let Some(init) = &decl.init {
+                            init.visit_with(&mut collector);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    collector.dependencies
+}
+
+fn collect_var_require_dependencies(
+    module: &Module,
+    helpers: &HashMap<BindingKey, BabelHelperKind>,
+) -> HashSet<BindingKey> {
+    let var_require_bindings = collect_var_require_bindings(module);
+    if var_require_bindings.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut collector = VarRequireDependencyCollector {
+        helpers,
+        var_require_bindings: &var_require_bindings,
+        dependencies: HashSet::new(),
+    };
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl)))
+                if helpers.contains_key(&binding_key(&fn_decl.ident)) =>
+            {
+                fn_decl.function.visit_with(&mut collector);
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    if var_declarator_binding_key(decl)
+                        .as_ref()
+                        .is_some_and(|key| helpers.contains_key(key))
+                    {
+                        if let Some(init) = &decl.init {
+                            init.visit_with(&mut collector);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    collector.dependencies
+}
+
+fn collect_var_require_bindings(module: &Module) -> HashSet<BindingKey> {
+    let mut bindings = HashSet::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for decl in &var.decls {
+            if decl.init.as_deref().is_some_and(is_require_call) {
+                if let Some(key) = var_declarator_binding_key(decl) {
+                    bindings.insert(key);
+                }
+            }
+        }
+    }
+    bindings
+}
+
+fn collect_import_bindings(module: &Module) -> HashSet<BindingKey> {
+    let mut bindings = HashSet::new();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        bindings.extend(import.specifiers.iter().map(import_specifier_binding_key));
+    }
+    bindings
+}
+
+struct ImportDependencyCollector<'a> {
+    helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    import_bindings: &'a HashSet<BindingKey>,
+    dependencies: HashSet<BindingKey>,
+}
+
+impl Visit for ImportDependencyCollector<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        let key = binding_key(ident);
+        if self.import_bindings.contains(&key) && !self.helpers.contains_key(&key) {
+            self.dependencies.insert(key);
+        }
+    }
+}
+
+struct VarRequireDependencyCollector<'a> {
+    helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    var_require_bindings: &'a HashSet<BindingKey>,
+    dependencies: HashSet<BindingKey>,
+}
+
+impl Visit for VarRequireDependencyCollector<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        let key = binding_key(ident);
+        if self.var_require_bindings.contains(&key) && !self.helpers.contains_key(&key) {
+            self.dependencies.insert(key);
+        }
+    }
+}
+
+fn remove_var_require_bindings_preserve_side_effects(
+    body: &mut Vec<ModuleItem>,
+    removable: &HashSet<BindingKey>,
+) {
+    if removable.is_empty() {
+        return;
+    }
+
+    let mut new_body = Vec::with_capacity(body.len());
+    for item in body.drain(..) {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            new_body.push(item);
+            continue;
+        };
+
+        let mut original_var = *var;
+        let decls = std::mem::take(&mut original_var.decls);
+        let mut pending_decls = Vec::new();
+        let mut changed = false;
+        for decl in decls {
+            if var_declarator_binding_key(&decl).is_some_and(|key| removable.contains(&key)) {
+                changed = true;
+                push_var_decl(&mut new_body, &original_var, &mut pending_decls);
+                if let Some(init) = decl.init {
+                    new_body.push(ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+                        span: DUMMY_SP,
+                        expr: init,
+                    })));
+                }
+            } else {
+                pending_decls.push(decl);
+            }
+        }
+
+        if changed {
+            push_var_decl(&mut new_body, &original_var, &mut pending_decls);
+        } else {
+            original_var.decls = pending_decls;
+            new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(
+                original_var,
+            )))));
+        }
+    }
+    *body = new_body;
+}
+
+fn push_var_decl(
+    body: &mut Vec<ModuleItem>,
+    original: &VarDecl,
+    decls: &mut Vec<swc_core::ecma::ast::VarDeclarator>,
+) {
+    if decls.is_empty() {
+        return;
+    }
+    let mut var = original.clone();
+    var.decls = std::mem::take(decls);
+    body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(var)))));
+}
+
+fn remove_import_bindings_preserve_side_effects(
+    body: &mut [ModuleItem],
+    removable: &HashSet<BindingKey>,
+) {
+    if removable.is_empty() {
+        return;
+    }
+
+    for item in body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        import
+            .specifiers
+            .retain(|specifier| !removable.contains(&import_specifier_binding_key(specifier)));
+    }
 }

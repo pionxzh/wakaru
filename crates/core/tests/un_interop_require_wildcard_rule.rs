@@ -37,8 +37,15 @@ var ns = _interopRequireWildcard(factory());
 console.log(ns.default);
 "#;
     let output = render(input);
-    // Non-require arg must NOT be unwrapped — helper synthesizes namespace object
-    insta::assert_snapshot!(output);
+    // Non-require arg must NOT be unwrapped — helper synthesizes namespace object.
+    assert!(
+        output.contains("_interopRequireWildcard(factory())"),
+        "non-require wildcard call should remain:\n{output}"
+    );
+    assert!(
+        output.contains("@babel/runtime/helpers/interopRequireWildcard"),
+        "retained wildcard call must keep the helper binding:\n{output}"
+    );
 }
 
 #[test]
@@ -49,4 +56,86 @@ var _a = _interopRequireWildcard(require("a"));
 "#;
     let output = render(input);
     insta::assert_snapshot!(output);
+}
+
+#[test]
+fn removes_wildcard_helper_import_dependencies_as_side_effect_imports() {
+    let input = r#"
+import _typeof from "./typeof.js";
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interopRequireWildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) return obj;
+    if (obj === null || _typeof(obj) !== "object" && typeof obj !== "function") {
+        return { default: obj };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) return cache.get(obj);
+    var newObj = {};
+    for (var key in obj) {
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            newObj[key] = obj[key];
+        }
+    }
+    newObj.default = obj;
+    if (cache) cache.set(obj, newObj);
+    return newObj;
+}
+var ns = _interopRequireWildcard(require("./mod.js"));
+use(ns);
+"#;
+    let expected = r#"
+import "./typeof.js";
+import * as ns from "./mod.js";
+use(ns);
+"#;
+
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn removes_wildcard_helper_require_dependencies_as_side_effect_requires() {
+    let input = r#"
+var _typeof = require("./typeof.js");
+function _getRequireWildcardCache(nodeInterop) {
+    if (typeof WeakMap !== "function") return null;
+    var cacheBabelInterop = new WeakMap();
+    var cacheNodeInterop = new WeakMap();
+    return (_getRequireWildcardCache = function(nodeInterop) {
+        return nodeInterop ? cacheNodeInterop : cacheBabelInterop;
+    })(nodeInterop);
+}
+function _interopRequireWildcard(obj, nodeInterop) {
+    if (!nodeInterop && obj && obj.__esModule) return obj;
+    if (obj === null || _typeof(obj) !== "object" && typeof obj !== "function") {
+        return { default: obj };
+    }
+    var cache = _getRequireWildcardCache(nodeInterop);
+    if (cache && cache.has(obj)) return cache.get(obj);
+    var newObj = {};
+    for (var key in obj) {
+        if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) {
+            newObj[key] = obj[key];
+        }
+    }
+    newObj.default = obj;
+    if (cache) cache.set(obj, newObj);
+    return newObj;
+}
+var ns = _interopRequireWildcard(require("./mod.js"));
+use(ns);
+"#;
+    let expected = r#"
+import "./typeof.js";
+import * as ns from "./mod.js";
+use(ns);
+"#;
+
+    assert_eq_normalized(&render(input), expected);
 }
