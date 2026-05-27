@@ -111,6 +111,44 @@ fn pipeline_between_single_rule() {
     );
 }
 
+#[test]
+fn import_rename_runs_after_export_rename_frees_name() {
+    let input = r#"
+import { a as a_2 } from "./effects.js";
+function a() {}
+export { a as takeLatest };
+export const actionChannel = a_2;
+"#;
+    let expected = r#"
+import { a } from "./effects.js";
+export function takeLatest() {}
+export const actionChannel = a;
+"#;
+    let result = render_pipeline_between(input, "ImportDedup", "UnImportRename");
+    assert_eq_normalized(&result, expected);
+}
+
+#[test]
+fn late_export_rename_runs_after_smart_rename_frees_name() {
+    let input = r#"
+const v = Object.prototype.hasOwnProperty;
+function has(e, t) {
+    return v.call(e, t);
+}
+const w = { assign(e, t) { return Object.assign(e, t); } };
+export { w as v };
+"#;
+    let expected = r#"
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+function has(e, t) {
+    return hasOwnProperty.call(e, t);
+}
+export const v = { assign(e, t) { return Object.assign(e, t); } };
+"#;
+    let result = render_pipeline_until(input, "UnExportRename2");
+    assert_eq_normalized(&result, expected);
+}
+
 // ============================================================
 // rule_names test
 // ============================================================
@@ -217,6 +255,7 @@ fn rule_descriptors_expose_dependency_metadata() {
     assert_eq!(requires("UnWebpackInterop2"), &["UnAsyncAwait"]);
     assert_eq!(requires("UnWebpackInterop3"), &["UnEsm"]);
     assert_eq!(requires("UnParameters2"), &["UnDestructuring"]);
+    assert_eq!(requires("UnExportRename2"), &["SmartRename"]);
     assert_eq!(requires("UnJsx2"), &["SmartRename"]);
     assert_eq!(requires("DeadImports"), &["DeadDecls"]);
 }

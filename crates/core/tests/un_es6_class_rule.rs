@@ -854,6 +854,35 @@ class Foo extends Parent {
 }
 
 #[test]
+fn orphaned_set_prototype_of_helper_removed_with_inherits_helper() {
+    let input = r#"
+function r(e, t) {
+    return (r = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function(e, t) {
+        e.__proto__ = t;
+        return e;
+    })(e, t);
+}
+function o(e, t) {
+    e.prototype = Object.create(t.prototype);
+    e.prototype.constructor = e;
+    r(e, t);
+}
+var Foo = (function(t) {
+    o(a, t);
+    function a() {
+        t.call(this);
+    }
+    return a;
+})(Parent);
+"#;
+    let expected = r#"
+class Foo extends Parent {
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn test_seq_return_no_methods() {
     // Edge: just `return e;` (no comma expression) — already handled, verifying no regression
     let input = r#"

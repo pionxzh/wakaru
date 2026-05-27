@@ -62,6 +62,33 @@ console.log(r);
 }
 
 #[test]
+fn detects_compact_babel_helper_after_normalization() {
+    // Raw webpack module-36 shape: Babel's helper starts as a ternary return
+    // wrapped in a comma sequence, so UnConditionals must normalize it first.
+    let input = r#"
+function a(e, t, n) {
+    return t in e ? Object.defineProperty(e, t, {
+        value: n,
+        enumerable: !0,
+        configurable: !0,
+        writable: !0
+    }) : e[t] = n, e;
+}
+let r;
+a(r = {}, FETCH_DATA + START, (e) => ({ ...e, isLoading: true }));
+a(r, FETCH_DATA + SUCCESS, (e, t) => ({ ...e, data: t }));
+console.log(r);
+"#;
+    let expected = r#"
+let r;
+(r = {})[FETCH_DATA + START] = (e) => ({ ...e, isLoading: true });
+r[FETCH_DATA + SUCCESS] = (e, data) => ({ ...e, data });
+console.log(r);
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
 fn removes_helper_after_all_call_sites_rewritten() {
     // When helper's only references are calls we rewrote, drop the decl.
     let input = r#"

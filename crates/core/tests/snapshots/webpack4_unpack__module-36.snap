@@ -11,7 +11,8 @@ const u = {
     data: [],
     error: ""
 };
-(r = {})[FETCH_DATA + START] = (e)=>({
+r = {};
+r[FETCH_DATA + START] = (e)=>({
         ...e,
         isLoading: true
     });

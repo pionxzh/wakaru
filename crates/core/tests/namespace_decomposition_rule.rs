@@ -357,6 +357,30 @@ function run(t, r, e) {
 }
 
 #[test]
+fn lowercase_member_component_in_classic_jsx_keeps_namespace() {
+    let target_facts = facts_for(
+        r#"
+export function a() {}
+"#,
+    );
+    let mut facts = ModuleFactsMap::new();
+    facts.insert("./router.js", target_facts);
+
+    let input = r#"
+import s from "./router.js";
+const el = createElement(s.a, { history });
+"#;
+    let expected = r#"
+import s from "./router.js";
+const el = <s.a history={history}/>;
+"#;
+    assert_eq_normalized(
+        &run_decomp_then_late_pipeline(input, &facts),
+        expected.trim(),
+    );
+}
+
+#[test]
 fn decomposition_aliases_against_other_import_locals() {
     let target_facts = facts_for(
         r#"

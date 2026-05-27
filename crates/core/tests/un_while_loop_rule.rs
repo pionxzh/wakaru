@@ -1,6 +1,7 @@
 mod common;
 
-use common::{assert_eq_normalized, render_rule};
+use common::render_rule;
+use common::{assert_eq_normalized, render_pipeline};
 use wakaru_core::rules::UnWhileLoop;
 
 fn apply(input: &str) -> String {
@@ -63,4 +64,26 @@ for (;; i++) {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn pipeline_revisits_for_after_initializer_removed() {
+    let input = r#"
+function flush() {
+    let item;
+    for (var unused = void 0; !locked && (item = queue.shift()) !== undefined;) {
+        run(item);
+    }
+}
+"#;
+    let expected = r#"
+function flush() {
+    let item;
+    let unused;
+    while (!locked && (item = queue.shift()) !== undefined) {
+        run(item);
+    }
+}
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected);
 }

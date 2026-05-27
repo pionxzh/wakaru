@@ -1,5 +1,5 @@
 mod common;
-use common::{assert_eq_normalized, render};
+use common::{assert_eq_normalized, render, render_pipeline};
 
 #[test]
 fn simplifies_assert_this_initialized_call() {
@@ -59,6 +59,36 @@ export function Foo() {
 }
 "#;
     assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn simplifies_calls_exposed_by_class_recovery() {
+    let input = r#"
+function p(e) {
+    if (void 0 === e) {
+        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
+    }
+    return e;
+}
+var Foo = (function(n) {
+    function u() {
+        var o;
+        return (o = n.call(this) || this).setWrappedInstance = o.setWrappedInstance.bind(p(p(o))), o;
+    }
+    u.prototype = Object.create(n && n.prototype);
+    u.prototype.constructor = u;
+    return u;
+})(Base);
+"#;
+    let expected = r#"
+class Foo extends Base {
+    constructor() {
+        super();
+        this.setWrappedInstance = this.setWrappedInstance.bind(this);
+    }
+}
+"#;
+    assert_eq_normalized(&render_pipeline(input), expected);
 }
 
 #[test]

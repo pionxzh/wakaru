@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, normalize, render_rule};
+use common::{assert_eq_normalized, normalize, render_pipeline_between, render_rule};
 use wakaru_core::rules::SmartRename;
 
 fn apply(input: &str) -> String {
@@ -563,6 +563,44 @@ const f = (data, error) => ({
 });
 "#;
     let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn value_position_renames_arguments_default_param_after_un_parameters() {
+    let input = r#"
+const f = "proc first argument must be an iterator";
+use(f);
+function L(e, s) {
+    var f = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : "";
+    var h = arguments[3];
+    if (sagaMonitor) {
+        sagaMonitor.effectTriggered({
+            effectId: v,
+            parentEffectId: s,
+            label: f,
+            effect: e
+        });
+    }
+    use(e, h);
+}
+"#;
+    let expected = r#"
+const f = "proc first argument must be an iterator";
+use(f);
+function L(e, parentEffectId, label = "", h) {
+    if (sagaMonitor) {
+        sagaMonitor.effectTriggered({
+            effectId: v,
+            parentEffectId,
+            label,
+            effect: e
+        });
+    }
+    use(e, h);
+}
+"#;
+    let output = render_pipeline_between(input, "UnParameters", "SmartRename");
     assert_eq_normalized(&output, expected);
 }
 

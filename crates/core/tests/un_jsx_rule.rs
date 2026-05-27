@@ -29,6 +29,48 @@ function fn() {
 }
 
 #[test]
+fn removes_unused_imported_create_element_after_classic_jsx_conversion() {
+    let input = r#"
+import { Component, createElement } from "./react.js";
+
+class App extends Component {
+  render() {
+    return createElement("div", null, "hello");
+  }
+}
+"#;
+    let expected = r#"
+import { Component } from "./react.js";
+
+class App extends Component {
+  render() {
+    return <div>hello</div>;
+  }
+}
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn keeps_imported_create_element_when_still_referenced() {
+    let input = r#"
+import { createElement } from "./react.js";
+
+const el = createElement;
+const view = createElement("div", null);
+"#;
+    let expected = r#"
+import { createElement } from "./react.js";
+
+const el = createElement;
+const view = <div />;
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
 fn converts_nested_children() {
     let input = r#"
 function fn() {

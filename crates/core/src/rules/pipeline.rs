@@ -296,10 +296,8 @@ define_rule_registry! {
         "UnBracketNotation"
     ]),
     ("UnSlicedToArray", Helpers, run_un_sliced_to_array, always_enabled),
-    ("UnDefineProperty", Helpers, run_un_define_property, always_enabled),
     ("UnClassCallCheck", Helpers, run_un_class_call_check, always_enabled),
     ("UnPossibleConstructorReturn", Helpers, run_un_possible_constructor_return, always_enabled),
-    ("UnAssertThisInitialized", Helpers, run_un_assert_this_initialized, always_enabled),
     ("UnTypeofPolyfill", Helpers, run_un_typeof_polyfill, always_enabled),
     // UnEsm prerequisites: add braces to enable assignment splitting, remove
     // __esModule flags, strip "use strict", split chained assignments, and
@@ -323,7 +321,6 @@ define_rule_registry! {
         "UnWebpackInterop"
     ]),
     ("UnTemplateLiteral", Structural, run_un_template_literal, always_enabled),
-    ("UnWhileLoop", Structural, run_un_while_loop, always_enabled),
     ("UnTypeConstructor", Structural, run_un_type_constructor, always_enabled),
     ("UnBuiltinPrototype", Structural, run_un_builtin_prototype, always_enabled),
     ("UnArgumentSpread", Structural, run_un_argument_spread, always_enabled),
@@ -335,13 +332,27 @@ define_rule_registry! {
     ("UnOptionalChaining", Structural, run_un_optional_chaining, always_enabled),
     ("UnIife", Complex, run_un_iife, always_enabled),
     ("UnConditionals", Complex, run_un_conditionals, always_enabled),
+    // UnConditionals expands compact Babel _defineProperty helpers into the
+    // if/else shape recognized by UnDefineProperty.
+    ("UnDefineProperty", Complex, run_un_define_property, always_enabled, requires: [
+        "UnConditionals"
+    ]),
     ("UnParameters", Complex, run_un_parameters, always_enabled, requires: [
         "FlipComparisons",
         "RemoveVoid"
     ]),
+    // UnParameters can remove a for-loop initializer, exposing `for(; test;)`.
+    ("UnWhileLoop", Complex, run_un_while_loop, always_enabled, requires: [
+        "UnParameters"
+    ]),
     ("UnEnum", Complex, run_un_enum, always_enabled),
     ("UnJsx", Complex, run_un_jsx, always_enabled),
     ("UnEs6Class", Complex, run_un_es6_class, always_enabled),
+    // UnEs6Class can expose nested _assertThisInitialized(this) calls after
+    // constructor recovery.
+    ("UnAssertThisInitialized", Complex, run_un_assert_this_initialized, always_enabled, requires: [
+        "UnEs6Class"
+    ]),
     ("UnClassFields", Complex, run_un_class_fields, always_enabled),
     ("UnTsHelpers", Complex, run_un_ts_helpers, always_enabled),
     ("UnRegenerator", Complex, run_un_regenerator, always_enabled),
@@ -365,8 +376,10 @@ define_rule_registry! {
     ("UnWebpackDefineGetters", Cleanup, run_un_webpack_define_getters, always_enabled),
     ("UnWebpackObjectGetters", Cleanup, run_un_webpack_object_getters, always_enabled),
     ("ImportDedup", Cleanup, run_import_dedup, always_enabled),
-    ("UnImportRename", Cleanup, run_un_import_rename, always_enabled),
     ("UnExportRename", Cleanup, run_un_export_rename, always_enabled),
+    ("UnImportRename", Cleanup, run_un_import_rename, always_enabled, requires: [
+        "UnExportRename"
+    ]),
     // Third pass: UnEsm can convert require() bindings to imports, exposing
     // direct require.n(importBinding) helpers.
     ("UnWebpackInterop3", Cleanup, run_un_webpack_interop, always_enabled, requires: [
@@ -383,12 +396,17 @@ define_rule_registry! {
     ("SmartInline", Cleanup, run_smart_inline, always_enabled, requires: [
         "UnDestructuring"
     ]),
-    // SmartInline can create new (() => expr)() patterns.
-    ("UnIife2", Cleanup, run_un_iife, always_enabled, requires: [
-        "SmartInline"
-    ]),
     ("SmartRename", Cleanup, run_smart_rename, always_enabled, requires: [
         "SmartInline"
+    ]),
+    // SmartRename can free minified export target names that were occupied
+    // when the first UnExportRename pass ran.
+    ("UnExportRename2", Cleanup, run_un_export_rename, always_enabled, requires: [
+        "SmartRename"
+    ]),
+    // SmartRename can recover argument names that make IIFE params readable.
+    ("UnIife2", Cleanup, run_un_iife, always_enabled, requires: [
+        "SmartRename"
     ]),
     // SmartRename may capitalize component bindings that UnJsx intentionally
     // skipped earlier because lowercase JSX tags are HTML elements.
