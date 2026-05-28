@@ -1,7 +1,7 @@
 mod common;
 
 use common::normalize;
-use wakaru_core::{unpack_webpack4, unpack_webpack4_raw};
+use wakaru_core::{unpack, unpack_webpack4, unpack_webpack4_raw, DecompileOptions};
 
 fn raw_modules(source: &str) -> Vec<(String, String)> {
     unpack_webpack4_raw(source).expect("raw webpack4 unpack should succeed")
@@ -187,4 +187,45 @@ console.log("not a webpack bundle");
 
     assert!(unpack_webpack4_raw(source).is_none());
     assert!(unpack_webpack4(source).is_none());
+}
+
+#[test]
+fn unpack_driver_simplifies_sequences_exposed_by_curly_braces() {
+    let source = r#"
+!function(modules) {
+  function __webpack_require__(id) {}
+  __webpack_require__.s = 0;
+  __webpack_require__(0);
+}([
+  function(module, exports, require) {
+    function* fib(limit) {
+      var current = 0;
+      var next = 1;
+      while (current < limit)
+        yield current, [current, next] = [next, current + next];
+    }
+    exports.fib = fib;
+  }
+]);
+"#;
+
+    let result = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack4 unpack should succeed");
+    let code = result
+        .modules
+        .into_iter()
+        .find(|(filename, _)| filename == "entry.js")
+        .map(|(_, code)| normalize(&code))
+        .expect("expected entry.js module");
+
+    assert!(
+        code.contains("yield current;\n        [current, next] = ["),
+        "late sequence cleanup should split yield/update sequence:\n{code}"
+    );
 }

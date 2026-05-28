@@ -1,7 +1,10 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
-use wakaru_core::rules::{RewriteLevel, SimplifySequence};
+use swc_core::common::Mark;
+use swc_core::ecma::ast::Module;
+use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use wakaru_core::rules::{RewriteLevel, SimplifySequence, UnCurlyBraces};
 
 fn apply(input: &str) -> String {
     render_rule(input, SimplifySequence::new)
@@ -10,6 +13,23 @@ fn apply(input: &str) -> String {
 fn apply_minimal(input: &str) -> String {
     render_rule(input, |unresolved_mark| {
         SimplifySequence::new_with_level(unresolved_mark, RewriteLevel::Minimal)
+    })
+}
+
+fn apply_after_curly_braces(input: &str) -> String {
+    struct CurlyThenSimplify {
+        unresolved_mark: Mark,
+    }
+
+    impl VisitMut for CurlyThenSimplify {
+        fn visit_mut_module(&mut self, module: &mut Module) {
+            module.visit_mut_with(&mut UnCurlyBraces);
+            module.visit_mut_with(&mut SimplifySequence::new(self.unresolved_mark));
+        }
+    }
+
+    render_rule(input, |unresolved_mark| CurlyThenSimplify {
+        unresolved_mark,
     })
 }
 
@@ -112,6 +132,45 @@ if (e !== null) {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn splits_bare_yield_sequence_after_curly_braces() {
+    let input = r#"
+function* fib(limit) {
+  let current = 0;
+  let next = 1;
+  while (current < limit)
+    yield current, [current, next] = [next, current + next];
+}
+"#;
+    let expected = r#"
+function* fib(limit) {
+  let current = 0;
+  let next = 1;
+  while (current < limit) {
+    yield current;
+    [current, next] = [next, current + next];
+  }
+}
+"#;
+    let output = apply_after_curly_braces(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_parenthesized_yield_sequence() {
+    let input = r#"
+function* fib(limit) {
+  let current = 0;
+  let next = 1;
+  while (current < limit) {
+    yield (current, [current, next] = [next, current + next]);
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
 }
 
 // ---------- Current Focus: new tests ----------

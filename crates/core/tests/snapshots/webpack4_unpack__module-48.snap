@@ -2633,7 +2633,11 @@ function Qr(e, t) {
     if (Br && qr(Br, n)) {
         return null;
     }
-    return Br = n, (e = Bn.getPooled(Hr.select, $r, e, t)).type = "select", e.target = Wr, Fn(e), e;
+    Br = n;
+    (e = Bn.getPooled(Hr.select, $r, e, t)).type = "select";
+    e.target = Wr;
+    Fn(e);
+    return e;
 }
 const SelectEventPlugin = {
     eventTypes: Hr,
@@ -3578,7 +3582,7 @@ function ki(e, t, n) {
             if (t !== null && t.ref !== null && typeof t.ref === "function" && t.ref._stringRef === o) {
                 return t.ref;
             }
-            (t = (e)=>{
+            t = (e)=>{
                 let r_refs = r.refs;
                 if (r_refs === refs) {
                     r_refs = r.refs = {};
@@ -3588,7 +3592,8 @@ function ki(e, t, n) {
                 } else {
                     r_refs[o] = e;
                 }
-            })._stringRef = o;
+            };
+            t._stringRef = o;
             return t;
         }
         if (typeof e !== "string") {
@@ -3670,36 +3675,44 @@ function Si(e) {
     }
     function l(e, t, n, r) {
         if (t === null || t.tag !== 6) {
-            (t = Ll(n, e.mode, r)).return = e;
+            t = Ll(n, e.mode, r);
+            t.return = e;
             return t;
         }
-        (t = o(t, n)).return = e;
+        t = o(t, n);
+        t.return = e;
         return t;
     }
     function c(e, t, n, r) {
         if (t !== null && t.elementType === n.type) {
-            (r = o(t, n.props)).ref = ki(e, t, n);
+            r = o(t, n.props);
+            r.ref = ki(e, t, n);
             r.return = e;
             return r;
         }
-        (r = Ml(n.type, n.key, n.props, null, e.mode, r)).ref = ki(e, t, n);
+        r = Ml(n.type, n.key, n.props, null, e.mode, r);
+        r.ref = ki(e, t, n);
         r.return = e;
         return r;
     }
     function s(e, t, n, r) {
         if (t === null || t.tag !== 4 || t.stateNode.containerInfo !== n.containerInfo || t.stateNode.implementation !== n.implementation) {
-            (t = Il(n, e.mode, r)).return = e;
+            t = Il(n, e.mode, r);
+            t.return = e;
             return t;
         }
-        (t = o(t, n.children || [])).return = e;
+        t = o(t, n.children || []);
+        t.return = e;
         return t;
     }
     function f(e, t, n, r, i) {
         if (t === null || t.tag !== 7) {
-            (t = Al(n, e.mode, r, i)).return = e;
+            t = Al(n, e.mode, r, i);
+            t.return = e;
             return t;
         }
-        (t = o(t, n)).return = e;
+        t = o(t, n);
+        t.return = e;
         return t;
     }
     function d(e, t, n) {
@@ -4859,7 +4872,8 @@ function Aa(e, t, n, r, o, i) {
     if (e === null) {
         var a = n.type;
         if (typeof a !== "function" || Rl(a) || a.defaultProps !== undefined || n.compare !== null || n.defaultProps !== undefined) {
-            (e = Ml(n.type, null, r, null, t.mode, i)).ref = t.ref;
+            e = Ml(n.type, null, r, null, t.mode, i);
+            e.ref = t.ref;
             e.return = t;
             return t.child = e;
         }
@@ -4872,7 +4886,8 @@ function Aa(e, t, n, r, o, i) {
         return Ga(e, t, i);
     }
     t.effectTag |= 1;
-    (e = Nl(a, r)).ref = t.ref;
+    e = Nl(a, r);
+    e.ref = t.ref;
     e.return = t;
     return t.child = e;
 }
@@ -5297,7 +5312,8 @@ function Ga(e, t, n) {
         t.child = n;
         for(n.return = t; e.sibling !== null;){
             e = e.sibling;
-            (n = n.sibling = Nl(e, e.pendingProps)).return = t;
+            n = n.sibling = Nl(e, e.pendingProps);
+            n.return = t;
         }
         n.sibling = null;
     }
@@ -5716,7 +5732,8 @@ function Ja(e, t, n) {
                             t.lastEffect = t_pendingProps.lastEffect;
                             for(t_pendingProps = t.child; t_pendingProps !== null;){
                                 u = n;
-                                (i = t_pendingProps).effectTag &= 2;
+                                i = t_pendingProps;
+                                i.effectTag &= 2;
                                 i.nextEffect = null;
                                 i.firstEffect = null;
                                 i.lastEffect = null;

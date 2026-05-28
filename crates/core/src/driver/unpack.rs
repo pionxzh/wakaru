@@ -15,8 +15,8 @@ use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
-    apply_rules, ImportDedup, RewriteLevel, RulePipelineOptions, UnEsm, UnImportRename,
-    UnObjectSpread,
+    apply_rules, ImportDedup, RewriteLevel, RulePipelineOptions, SimplifySequence,
+    UnAssignmentMerging, UnEsm, UnImportRename, UnObjectSpread,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::{scope_hoist, try_unpack_bundle, UnpackResult};
@@ -267,6 +267,13 @@ fn unpack_multi_module(
                         .with_rewrite_level(options.level)
                         .with_module_facts(facts_ref),
                 );
+                // Later rules can expose sequence expressions. Keep the narrow
+                // syntax cleanup without restoring the old full second pass.
+                module.visit_mut_with(&mut SimplifySequence::new_with_level(
+                    unresolved_mark,
+                    options.level,
+                ));
+                module.visit_mut_with(&mut UnAssignmentMerging);
 
                 // Source-map-enhanced passes
                 if let Some(sm) = sm_ref {

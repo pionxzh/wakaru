@@ -5,7 +5,7 @@ use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BinaryOp, BlockStmt, Decl, Expr, ExprStmt, ForHead, ForInStmt,
     ForOfStmt, ForStmt, IfStmt, ImportSpecifier, Invalid, Lit, MemberExpr, ModuleDecl, ModuleItem,
     ParenExpr, Pat, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, UnaryOp,
-    VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
+    VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -409,6 +409,13 @@ fn split_stmt(stmt: Stmt, level: RewriteLevel) -> Vec<Stmt> {
                     .into_iter()
                     .map(|expr| Stmt::Expr(ExprStmt { span, expr }))
                     .collect(),
+                Expr::Yield(yield_expr) => split_yield_arg_sequence(yield_expr.clone(), span)
+                    .unwrap_or_else(|| {
+                        vec![Stmt::Expr(ExprStmt {
+                            span,
+                            expr: Box::new(Expr::Yield(yield_expr)),
+                        })]
+                    }),
                 Expr::Paren(paren) => split_expr_stmt_paren(paren, span),
                 other => vec![Stmt::Expr(ExprStmt {
                     span,
@@ -445,6 +452,31 @@ fn split_expr_stmt_paren(paren: ParenExpr, span: swc_core::common::Span) -> Vec<
             })),
         })],
     }
+}
+
+fn split_yield_arg_sequence(
+    mut yield_expr: YieldExpr,
+    span: swc_core::common::Span,
+) -> Option<Vec<Stmt>> {
+    let Expr::Seq(SeqExpr { mut exprs, .. }) = *yield_expr.arg.take()? else {
+        return None;
+    };
+    if exprs.len() <= 1 {
+        return None;
+    }
+
+    yield_expr.arg = Some(exprs.remove(0));
+    let mut stmts = Vec::with_capacity(exprs.len() + 1);
+    stmts.push(Stmt::Expr(ExprStmt {
+        span,
+        expr: Box::new(Expr::Yield(yield_expr)),
+    }));
+    stmts.extend(
+        exprs
+            .into_iter()
+            .map(|expr| Stmt::Expr(ExprStmt { span, expr })),
+    );
+    Some(stmts)
 }
 
 // ---------------------------------------------------------------------------
