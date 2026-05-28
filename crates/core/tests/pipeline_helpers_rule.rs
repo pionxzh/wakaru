@@ -164,6 +164,26 @@ const cfg = ({ theme })=>theme("blur");
     assert_eq_normalized(&result, expected);
 }
 
+#[test]
+fn jsx_alias_rename_runs_after_late_jsx_recovery() {
+    let input = r#"
+function render(U) {
+    const { widget } = U;
+    const W = widget;
+    return <W value={payload}/>;
+}
+"#;
+    let expected = r#"
+function render(U) {
+    const { widget } = U;
+    const Widget = widget;
+    return <Widget value={payload}/>;
+}
+"#;
+    let result = render_pipeline_between(input, "UnJsx2", "SmartRename2");
+    assert_eq_normalized(&result, expected);
+}
+
 // ============================================================
 // rule_names test
 // ============================================================
@@ -177,6 +197,10 @@ fn rule_names_contains_key_rules() {
     );
     assert!(names.contains(&"SmartInline"), "missing SmartInline");
     assert!(names.contains(&"SmartRename"), "missing SmartRename");
+    assert!(
+        names.contains(&"SmartRename2"),
+        "missing SmartRename2 (second pass)"
+    );
     assert!(names.contains(&"UnReturn"), "missing UnReturn (last rule)");
     assert!(names.contains(&"UnIife2"), "missing UnIife2 (second pass)");
     assert!(

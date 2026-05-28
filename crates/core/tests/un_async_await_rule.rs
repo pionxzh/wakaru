@@ -151,6 +151,36 @@ async function f() {}
 }
 
 #[test]
+fn empty_async_function_keeps_param_hints_from_erased_state_machine() {
+    let input = r#"
+function runTask(A, B, C, D, E) {
+  return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          return [3 /*break*/, {
+            details: {
+              resourceName: A,
+              payload: JSON.stringify(B),
+              attemptCount: C,
+              waitMs: D
+            }
+          }];
+        case 1:
+          return [2 /*return*/];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+async function runTask(resourceName, B, attemptCount, waitMs, E) {}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn async_with_simple_awaits() {
     // __awaiter + __generator: simple sequential awaits, no try/catch
     let input = r#"

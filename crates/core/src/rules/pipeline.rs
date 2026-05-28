@@ -422,6 +422,10 @@ define_rule_registry! {
     ("UnJsx2", Cleanup, run_un_jsx, always_enabled, requires: [
         "SmartRename"
     ]),
+    // UnJsx2 can expose component aliases and value-position hints in JSX.
+    ("SmartRename2", Cleanup, run_smart_rename, always_enabled, requires: [
+        "UnJsx2"
+    ]),
     // DeadDecls first: removing dead helpers can leave import specifiers
     // unreferenced, which DeadImports then cleans up.
     ("DeadDecls", Cleanup, run_dead_decls, dead_code_elimination_enabled),

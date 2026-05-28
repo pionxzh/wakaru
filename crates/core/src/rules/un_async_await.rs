@@ -1,15 +1,21 @@
+use std::collections::{HashMap, HashSet};
+
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AwaitExpr, BlockStmt, CatchClause, Expr, ExprStmt, Function, Ident, Pat, Stmt, SwitchCase,
-    TryStmt, YieldExpr,
+    AwaitExpr, BlockStmt, CatchClause, Expr, ExprStmt, Function, Ident, Pat, Prop, PropName, Stmt,
+    SwitchCase, TryStmt, YieldExpr,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith, VisitWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+
+use super::rename_utils::BindingId;
 
 pub struct UnAsyncAwait;
 
 impl VisitMut for UnAsyncAwait {
     fn visit_mut_function(&mut self, func: &mut Function) {
+        let awaiter_param_hints = collect_awaiter_param_hints(func);
+
         // Recurse into children first
         func.visit_mut_children_with(self);
 
@@ -30,6 +36,7 @@ impl VisitMut for UnAsyncAwait {
         if try_transform_awaiter(body) {
             try_transform_generator(body);
             func.is_async = true;
+            apply_unused_param_hints(func, awaiter_param_hints);
         }
     }
 }
@@ -615,6 +622,232 @@ fn replace_yield_with_await(stmts: &mut Vec<Stmt>) {
     for s in stmts.iter_mut() {
         s.visit_mut_with(&mut v);
     }
+}
+
+fn collect_awaiter_param_hints(func: &Function) -> HashMap<BindingId, Atom> {
+    let Some(body) = &func.body else {
+        return HashMap::new();
+    };
+    if !body.stmts.iter().any(is_awaiter_return) {
+        return HashMap::new();
+    }
+
+    let param_ids: HashSet<BindingId> = func
+        .params
+        .iter()
+        .filter_map(|param| match &param.pat {
+            Pat::Ident(binding) if binding.id.sym.chars().count() <= 2 => {
+                Some((binding.id.sym.clone(), binding.id.ctxt))
+            }
+            _ => None,
+        })
+        .collect();
+    if param_ids.is_empty() {
+        return HashMap::new();
+    }
+
+    #[derive(Default)]
+    struct Collector {
+        param_ids: HashSet<BindingId>,
+        targets: HashMap<BindingId, HashSet<Atom>>,
+    }
+
+    impl Visit for Collector {
+        fn visit_prop(&mut self, prop: &Prop) {
+            if let Prop::KeyValue(kv) = prop {
+                if let Expr::Ident(value) = kv.value.as_ref() {
+                    let bid = (value.sym.clone(), value.ctxt);
+                    if self.param_ids.contains(&bid) {
+                        if let Some(target) = key_as_param_hint(&kv.key) {
+                            self.targets.entry(bid).or_default().insert(target);
+                        }
+                    }
+                }
+            }
+            prop.visit_children_with(self);
+        }
+    }
+
+    let mut collector = Collector {
+        param_ids,
+        targets: HashMap::new(),
+    };
+    body.visit_with(&mut collector);
+
+    collector
+        .targets
+        .into_iter()
+        .filter_map(|(bid, targets)| {
+            if targets.len() == 1 {
+                Some((bid, targets.into_iter().next().unwrap()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn apply_unused_param_hints(func: &mut Function, hints: HashMap<BindingId, Atom>) {
+    if hints.is_empty() {
+        return;
+    }
+    let Some(body) = &func.body else { return };
+
+    struct UseCollector {
+        uses: HashSet<BindingId>,
+    }
+
+    impl Visit for UseCollector {
+        fn visit_ident(&mut self, ident: &Ident) {
+            self.uses.insert((ident.sym.clone(), ident.ctxt));
+        }
+
+        fn visit_pat(&mut self, pat: &Pat) {
+            match pat {
+                Pat::Array(array) => {
+                    for elem in array.elems.iter().flatten() {
+                        self.visit_pat(elem);
+                    }
+                }
+                Pat::Object(object) => {
+                    for prop in &object.props {
+                        match prop {
+                            swc_core::ecma::ast::ObjectPatProp::KeyValue(kv) => {
+                                if let PropName::Computed(computed) = &kv.key {
+                                    computed.expr.visit_with(self);
+                                }
+                                self.visit_pat(&kv.value);
+                            }
+                            swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
+                                if let Some(default) = &assign.value {
+                                    default.visit_with(self);
+                                }
+                            }
+                            swc_core::ecma::ast::ObjectPatProp::Rest(rest) => {
+                                self.visit_pat(&rest.arg);
+                            }
+                        }
+                    }
+                }
+                Pat::Assign(assign) => {
+                    self.visit_pat(&assign.left);
+                    assign.right.visit_with(self);
+                }
+                Pat::Rest(rest) => self.visit_pat(&rest.arg),
+                Pat::Expr(expr) => expr.visit_with(self),
+                Pat::Ident(_) | Pat::Invalid(_) => {}
+            }
+        }
+
+        fn visit_prop_name(&mut self, name: &PropName) {
+            if let PropName::Computed(computed) = name {
+                computed.expr.visit_with(self);
+            }
+        }
+    }
+
+    let mut collector = UseCollector {
+        uses: HashSet::new(),
+    };
+    body.visit_with(&mut collector);
+
+    let mut reserved_param_names: HashSet<Atom> = func
+        .params
+        .iter()
+        .filter_map(|param| match &param.pat {
+            Pat::Ident(binding) => Some(binding.id.sym.clone()),
+            _ => None,
+        })
+        .collect();
+
+    for param in &mut func.params {
+        let Pat::Ident(binding) = &mut param.pat else {
+            continue;
+        };
+        let bid = (binding.id.sym.clone(), binding.id.ctxt);
+        if collector.uses.contains(&bid) {
+            continue;
+        }
+        let Some(target) = hints.get(&bid) else {
+            continue;
+        };
+        if !is_valid_param_hint(target.as_ref()) || reserved_param_names.contains(target) {
+            continue;
+        }
+        reserved_param_names.remove(&binding.id.sym);
+        binding.id.sym = target.clone();
+        reserved_param_names.insert(target.clone());
+    }
+}
+
+fn key_as_param_hint(key: &PropName) -> Option<Atom> {
+    let raw = match key {
+        PropName::Ident(ident) => ident.sym.as_ref(),
+        PropName::Str(str_) => str_.value.as_str()?,
+        _ => return None,
+    };
+    if is_valid_param_hint(raw) {
+        Some(raw.into())
+    } else {
+        None
+    }
+}
+
+fn is_valid_param_hint(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+        return false;
+    }
+    if !chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()) {
+        return false;
+    }
+    !matches!(
+        value,
+        "arguments"
+            | "await"
+            | "break"
+            | "case"
+            | "catch"
+            | "class"
+            | "const"
+            | "continue"
+            | "debugger"
+            | "default"
+            | "delete"
+            | "do"
+            | "else"
+            | "enum"
+            | "eval"
+            | "export"
+            | "extends"
+            | "false"
+            | "finally"
+            | "for"
+            | "function"
+            | "if"
+            | "import"
+            | "in"
+            | "instanceof"
+            | "let"
+            | "new"
+            | "null"
+            | "return"
+            | "super"
+            | "switch"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typeof"
+            | "var"
+            | "void"
+            | "while"
+            | "with"
+            | "yield"
+    )
 }
 
 // ============================================================
