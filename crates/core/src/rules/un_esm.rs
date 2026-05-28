@@ -69,6 +69,8 @@ enum CjsExportKind {
     },
     /// exports.default = expr → export default expr
     NamedDefault { expr: Box<Expr> },
+    /// exports.default = expr; module.exports = exports.default → keep the real default
+    DefaultMirror,
     /// module.exports.default = module.exports pattern → remove
     SelfRef,
 }
@@ -142,6 +144,13 @@ impl VisitMut for UnEsm {
             classified.push(classify_item(item, self.unresolved_mark));
         }
 
+        // Webpack/Babel interop often emits:
+        //   exports.default = value;
+        //   module.exports = exports.default;
+        // The second assignment only mirrors the CommonJS shape.  If treated as
+        // the last default export, it strands the real value as a side-effect.
+        remove_default_export_mirrors(&mut classified, self.unresolved_mark);
+
         // Phase 2: export dedup
         struct ExportEntry {
             classified_idx: usize,
@@ -156,6 +165,14 @@ impl VisitMut for UnEsm {
                     CjsExportKind::ModuleExportsDefault { .. } => (None, false),
                     CjsExportKind::NamedDefault { .. } => (None, false),
                     CjsExportKind::Named { name, is_void, .. } => (Some(name.clone()), *is_void),
+                    CjsExportKind::DefaultMirror => {
+                        export_entries.push(ExportEntry {
+                            classified_idx: idx,
+                            name: None,
+                            is_void: true,
+                        });
+                        continue;
+                    }
                     CjsExportKind::SelfRef => {
                         export_entries.push(ExportEntry {
                             classified_idx: idx,
@@ -453,6 +470,7 @@ impl VisitMut for UnEsm {
         }
 
         merge_decl_and_named_export(&mut new_body);
+        inline_adjacent_default_export_aliases(&mut new_body);
         module.body = new_body;
     }
 }
@@ -516,6 +534,96 @@ fn merge_decl_and_named_export(body: &mut Vec<ModuleItem>) {
             }));
         }
         i += 1;
+    }
+}
+
+fn inline_adjacent_default_export_aliases(body: &mut Vec<ModuleItem>) {
+    let mut index = 0;
+    while index + 1 < body.len() {
+        let Some((alias, init)) = default_export_alias_decl(&body[index]) else {
+            index += 1;
+            continue;
+        };
+        let Some(export_ident) = default_export_ident(&body[index + 1]) else {
+            index += 1;
+            continue;
+        };
+        if !same_ident(&alias, export_ident) {
+            index += 1;
+            continue;
+        }
+
+        let alias_key = (alias.sym.clone(), alias.ctxt);
+        if count_binding_refs(body, &alias_key, Some(index)) != 1 {
+            index += 1;
+            continue;
+        }
+
+        let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) = &mut body[index + 1]
+        else {
+            index += 1;
+            continue;
+        };
+        export.expr = init;
+        body.remove(index);
+    }
+}
+
+fn default_export_alias_decl(item: &ModuleItem) -> Option<(Ident, Box<Expr>)> {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let decl = &var.decls[0];
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    let Some(init) = &decl.init else {
+        return None;
+    };
+    if !matches!(init.as_ref(), Expr::Ident(_)) {
+        return None;
+    }
+    Some((binding.id.clone(), init.clone()))
+}
+
+fn default_export_ident(item: &ModuleItem) -> Option<&Ident> {
+    let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) = item else {
+        return None;
+    };
+    let Expr::Ident(id) = export.expr.as_ref() else {
+        return None;
+    };
+    Some(id)
+}
+
+fn count_binding_refs(
+    body: &[ModuleItem],
+    key: &(Atom, SyntaxContext),
+    skip_index: Option<usize>,
+) -> usize {
+    let mut counter = BindingRefCounter { key, count: 0 };
+    for (index, item) in body.iter().enumerate() {
+        if skip_index == Some(index) {
+            continue;
+        }
+        item.visit_with(&mut counter);
+    }
+    counter.count
+}
+
+struct BindingRefCounter<'a> {
+    key: &'a (Atom, SyntaxContext),
+    count: usize,
+}
+
+impl Visit for BindingRefCounter<'_> {
+    fn visit_ident(&mut self, id: &Ident) {
+        if id.sym == self.key.0 && id.ctxt == self.key.1 {
+            self.count += 1;
+        }
     }
 }
 
@@ -1365,6 +1473,7 @@ fn build_export_items(kind: CjsExportKind) -> Vec<ModuleItem> {
                 expr,
             }),
         )],
+        CjsExportKind::DefaultMirror => vec![],
         CjsExportKind::Named {
             name,
             expr,
@@ -1440,7 +1549,9 @@ fn build_dropped_export_side_effect_items(kind: CjsExportKind) -> Vec<ModuleItem
             is_void: false,
             ..
         } => expr,
-        CjsExportKind::Named { is_void: true, .. } | CjsExportKind::SelfRef => return vec![],
+        CjsExportKind::Named { is_void: true, .. }
+        | CjsExportKind::DefaultMirror
+        | CjsExportKind::SelfRef => return vec![],
     };
 
     vec![ModuleItem::Stmt(Stmt::Expr(ExprStmt {
@@ -1845,6 +1956,28 @@ fn classify_item(item: ModuleItem, unresolved_mark: Mark) -> Classified {
             Classified::Keep(item)
         }
         other => Classified::Keep(other),
+    }
+}
+
+fn remove_default_export_mirrors(classified: &mut [Classified], unresolved_mark: Mark) {
+    let mut saw_named_default = false;
+
+    for item in classified {
+        let Classified::CjsExport { kind } = item else {
+            continue;
+        };
+
+        match kind {
+            CjsExportKind::NamedDefault { .. } => {
+                saw_named_default = true;
+            }
+            CjsExportKind::ModuleExportsDefault { expr }
+                if saw_named_default && is_exports_default_expr(expr.as_ref(), unresolved_mark) =>
+            {
+                *kind = CjsExportKind::DefaultMirror;
+            }
+            _ => {}
+        }
     }
 }
 
@@ -2405,7 +2538,7 @@ fn rename_export_kind(kind: &mut CjsExportKind, renames: &[BindingRename]) {
         | CjsExportKind::NamedDefault { expr } => {
             rename_bindings(expr.as_mut(), renames);
         }
-        CjsExportKind::SelfRef => {}
+        CjsExportKind::DefaultMirror | CjsExportKind::SelfRef => {}
     }
 }
 

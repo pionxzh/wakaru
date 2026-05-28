@@ -199,6 +199,33 @@ fn exports_default_prop() {
 }
 
 #[test]
+fn module_exports_default_mirror_keeps_real_default() {
+    let input = r#"
+exports.default = value;
+module.exports = exports.default;
+"#;
+    let expected = "export default value;";
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn module_exports_default_mirror_keeps_alias_value() {
+    let input = r#"
+const makeDefault = () => ({});
+const entry = makeDefault;
+exports.default = entry;
+module.exports = exports.default;
+"#;
+    let expected = r#"
+const makeDefault = () => ({});
+export default makeDefault;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn export_dedup_void_init() {
     // void 0 → undefined after RemoveVoid rule, but the un_esm rule runs and detects void expr
     let input = r#"
