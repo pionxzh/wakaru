@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use swc_core::common::{sync::Lrc, Mark, SourceMap, GLOBALS};
+use swc_core::ecma::ast::Module;
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::visit::VisitMutWith;
 
@@ -16,8 +17,8 @@ use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
     apply_rules, ArrowFunction, ArrowReturn, ImportDedup, RewriteLevel, RulePipelineOptions,
-    SimplifySequence, UnAssignmentMerging, UnConditionals, UnEsm, UnExportRename, UnIife,
-    UnImportRename, UnObjectSpread, UnOptionalChaining,
+    SimplifySequence, UnAssignmentMerging, UnConditionalsAssignmentOnly, UnEsm, UnExportRename,
+    UnIife, UnImportRename, UnObjectSpread, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::{scope_hoist, try_unpack_bundle, UnpackResult};
@@ -138,9 +139,27 @@ fn normalize_raw_unpacked_module(source: &str, filename: &str) -> Result<String>
         let top_level_mark = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
         module.visit_mut_with(&mut UnEsm::new(unresolved_mark, RewriteLevel::Standard));
+        recover_late_esm_from_factory_iifes(&mut module, unresolved_mark, RewriteLevel::Standard);
         module.visit_mut_with(&mut fixer(None));
         print_js(&module, cm)
     })
+}
+
+fn recover_late_esm_from_factory_iifes(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    level: RewriteLevel,
+) {
+    module.visit_mut_with(&mut ArrowFunction);
+    module.visit_mut_with(&mut ArrowReturn);
+    module.visit_mut_with(&mut UnIife::new(level));
+    apply_rules(
+        module,
+        unresolved_mark,
+        RulePipelineOptions::between("UnCurlyBraces", "UnEsm").with_rewrite_level(level),
+    );
+    module.visit_mut_with(&mut UnExportRename);
+    module.visit_mut_with(&mut ArrowReturn);
 }
 
 /// Multi-module unpack with cross-module late pass.
@@ -209,6 +228,11 @@ fn unpack_multi_module(
                     &mut module,
                     unresolved_mark,
                     RulePipelineOptions::until("UnEsm"),
+                );
+                recover_late_esm_from_factory_iifes(
+                    &mut module,
+                    unresolved_mark,
+                    RewriteLevel::Standard,
                 );
                 (collect_module_facts(&module), None)
             });
@@ -280,7 +304,7 @@ fn unpack_multi_module(
                 // shape without restoring the old full second pass.
                 recover_late_esm_from_factory_iifes(&mut module, unresolved_mark, options.level);
                 module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
-                module.visit_mut_with(&mut UnConditionals);
+                module.visit_mut_with(&mut UnConditionalsAssignmentOnly);
 
                 // Source-map-enhanced passes
                 if let Some(sm) = sm_ref {

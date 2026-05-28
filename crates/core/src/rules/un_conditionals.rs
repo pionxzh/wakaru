@@ -38,6 +38,34 @@ impl VisitMut for UnConditionals {
     }
 }
 
+pub struct UnConditionalsAssignmentOnly;
+
+impl VisitMut for UnConditionalsAssignmentOnly {
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        items.visit_mut_children_with(self);
+
+        let old = std::mem::take(items);
+        for item in old {
+            match item {
+                ModuleItem::Stmt(stmt) => {
+                    let converted = convert_assignment_only_stmt(stmt);
+                    items.extend(converted.into_iter().map(ModuleItem::Stmt));
+                }
+                other => items.push(other),
+            }
+        }
+    }
+
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        stmts.visit_mut_children_with(self);
+
+        let old = std::mem::take(stmts);
+        for stmt in old {
+            stmts.extend(convert_assignment_only_stmt(stmt));
+        }
+    }
+}
+
 /// Convert a single statement, returning one or more statements.
 fn convert_stmt(stmt: Stmt) -> Vec<Stmt> {
     match stmt {
@@ -58,6 +86,81 @@ fn convert_stmt(stmt: Stmt) -> Vec<Stmt> {
         }
         other => vec![other],
     }
+}
+
+fn convert_assignment_only_stmt(stmt: Stmt) -> Vec<Stmt> {
+    match stmt {
+        Stmt::Expr(ExprStmt { expr, span }) => try_convert_assignment_only_expr_stmt(span, *expr),
+        other => vec![other],
+    }
+}
+
+fn try_convert_assignment_only_expr_stmt(span: Span, expr: Expr) -> Vec<Stmt> {
+    match expr {
+        Expr::Bin(BinExpr {
+            op: BinaryOp::LogicalAnd,
+            left,
+            right,
+            ..
+        }) if is_assignment_only_expr(&right) => vec![Stmt::If(IfStmt {
+            span: DUMMY_SP,
+            test: left,
+            cons: Box::new(expr_to_assignment_only_block_stmt(*right)),
+            alt: None,
+        })],
+        Expr::Bin(BinExpr {
+            op: BinaryOp::LogicalOr,
+            left,
+            right,
+            ..
+        }) if is_assignment_only_expr(&right) => vec![Stmt::If(IfStmt {
+            span: DUMMY_SP,
+            test: negate_expr(*left),
+            cons: Box::new(expr_to_assignment_only_block_stmt(*right)),
+            alt: None,
+        })],
+        other => vec![Stmt::Expr(ExprStmt {
+            span,
+            expr: Box::new(other),
+        })],
+    }
+}
+
+fn is_assignment_only_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Assign(_) => true,
+        Expr::Seq(seq) => seq.exprs.iter().all(|expr| is_assignment_only_expr(expr)),
+        Expr::Paren(paren) => is_assignment_only_expr(&paren.expr),
+        _ => false,
+    }
+}
+
+fn expr_to_assignment_only_block_stmt(expr: Expr) -> Stmt {
+    let inner = match expr {
+        Expr::Paren(paren) => *paren.expr,
+        other => other,
+    };
+    let stmts = match inner {
+        Expr::Seq(seq) => seq
+            .exprs
+            .into_iter()
+            .flat_map(|expr| {
+                convert_assignment_only_stmt(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr,
+                }))
+            })
+            .collect(),
+        other => vec![Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(other),
+        })],
+    };
+    Stmt::Block(BlockStmt {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        stmts,
+    })
 }
 
 /// Try to convert an ExprStmt-level expression to an if statement.

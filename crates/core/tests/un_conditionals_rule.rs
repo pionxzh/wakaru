@@ -1,10 +1,14 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
-use wakaru_core::rules::UnConditionals;
+use wakaru_core::rules::{UnConditionals, UnConditionalsAssignmentOnly};
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnConditionals)
+}
+
+fn apply_assignment_only(input: &str) -> String {
+    render_rule(input, |_| UnConditionalsAssignmentOnly)
 }
 
 #[test]
@@ -75,6 +79,39 @@ if (x) {
 !x ?? c();
 "#;
     let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn assignment_only_converts_short_circuit_assignments_without_call_statements() {
+    let input = r#"
+x && call();
+x || call();
+x && (value = null);
+x || (value = 1);
+x && (a = 1, b = 2);
+x && (call(), value = 3);
+"#;
+    let expected = r#"
+x && call();
+x || call();
+
+if (x) {
+  value = null;
+}
+
+if (!x) {
+  value = 1;
+}
+
+if (x) {
+  a = 1;
+  b = 2;
+}
+
+x && (call(), value = 3);
+"#;
+    let output = apply_assignment_only(input);
     assert_eq_normalized(&output, expected);
 }
 
