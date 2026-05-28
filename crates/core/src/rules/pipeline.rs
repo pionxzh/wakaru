@@ -399,6 +399,15 @@ define_rule_registry! {
     ("SmartRename", Cleanup, run_smart_rename, always_enabled, requires: [
         "SmartInline"
     ]),
+    // SmartRename can make destructured aliases readable enough to fold into
+    // parameters, e.g. `{ theme: t } = opts` -> `{ theme } = opts`.
+    ("UnParameters3", Cleanup, run_un_parameters, always_enabled, requires: [
+        "SmartRename"
+    ]),
+    // UnParameters3 can remove every non-return statement from an arrow body.
+    ("ArrowReturn2", Cleanup, run_arrow_return, always_enabled, requires: [
+        "UnParameters3"
+    ]),
     // SmartRename can free minified export target names that were occupied
     // when the first UnExportRename pass ran.
     ("UnExportRename2", Cleanup, run_un_export_rename, always_enabled, requires: [

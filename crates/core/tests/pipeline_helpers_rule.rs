@@ -149,6 +149,21 @@ export const v = { assign(e, t) { return Object.assign(e, t); } };
     assert_eq_normalized(&result, expected);
 }
 
+#[test]
+fn late_parameters_fold_destructuring_after_smart_rename() {
+    let input = r#"
+const cfg = (B) => {
+    const { theme: t } = B;
+    return t("blur");
+};
+"#;
+    let expected = r#"
+const cfg = ({ theme })=>theme("blur");
+"#;
+    let result = render_pipeline_until(input, "ArrowReturn2");
+    assert_eq_normalized(&result, expected);
+}
+
 // ============================================================
 // rule_names test
 // ============================================================
@@ -175,6 +190,14 @@ fn rule_names_contains_key_rules() {
     assert!(
         names.contains(&"UnParameters2"),
         "missing UnParameters2 (second pass)"
+    );
+    assert!(
+        names.contains(&"UnParameters3"),
+        "missing UnParameters3 (third pass)"
+    );
+    assert!(
+        names.contains(&"ArrowReturn2"),
+        "missing ArrowReturn2 (second pass)"
     );
     // First element should be SimplifySequence
     assert_eq!(names[0], "SimplifySequence");
@@ -255,6 +278,8 @@ fn rule_descriptors_expose_dependency_metadata() {
     assert_eq!(requires("UnWebpackInterop2"), &["UnAsyncAwait"]);
     assert_eq!(requires("UnWebpackInterop3"), &["UnEsm"]);
     assert_eq!(requires("UnParameters2"), &["UnDestructuring"]);
+    assert_eq!(requires("UnParameters3"), &["SmartRename"]);
+    assert_eq!(requires("ArrowReturn2"), &["UnParameters3"]);
     assert_eq!(requires("UnExportRename2"), &["SmartRename"]);
     assert_eq!(requires("UnJsx2"), &["SmartRename"]);
     assert_eq!(requires("DeadImports"), &["DeadDecls"]);
