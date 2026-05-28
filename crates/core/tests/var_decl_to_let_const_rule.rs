@@ -634,6 +634,46 @@ var o = r;
 }
 
 #[test]
+fn export_default_function_body_before_var_declaration_stays_var() {
+    // Keep the later var hoisted when an earlier default-exported function
+    // closes over it.
+    let input = r#"
+export default function(value) {
+  return read(value);
+}
+var read = (value) => value;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn export_default_function_member_ref_before_var_declaration_stays_var() {
+    let input = r#"
+import dep from "dep";
+export default function(value) {
+  return read.default(value);
+}
+var read = dep;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn export_default_function_nested_callback_before_var_declaration_stays_var() {
+    let input = r#"
+import dep from "dep";
+export default function(values) {
+  return values.map((value) => read.default(value));
+}
+var read = dep;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn var_after_return_in_function_stays_var() {
     // Unreachable var still hoists; references before it rely on hoisting.
     let input = r#"

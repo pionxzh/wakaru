@@ -2,10 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, Callee, Class, Decl, ExportSpecifier, Expr,
-    ForHead, ForInStmt, ForOfStmt, ForStmt, Function, Ident, Lit, MemberProp, Module, ModuleDecl,
-    ModuleExportName, ModuleItem, Pat, SimpleAssignTarget, Stmt, UpdateExpr, VarDecl, VarDeclKind,
-    WithStmt,
+    ArrowExpr, AssignExpr, AssignTarget, BlockStmt, Callee, Class, Decl, DefaultDecl,
+    ExportSpecifier, Expr, ForHead, ForInStmt, ForOfStmt, ForStmt, Function, Ident, Lit,
+    MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem, Pat, SimpleAssignTarget, Stmt,
+    UpdateExpr, VarDecl, VarDeclKind, WithStmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -592,8 +592,14 @@ fn analyze_module_items_in_order(
             ModuleItem::ModuleDecl(decl) => {
                 use swc_core::ecma::ast::{ExportDefaultExpr, ModuleDecl};
                 if let ModuleDecl::ExportDefaultExpr(ExportDefaultExpr { expr, .. }) = decl {
+                    let mut refs = collect_refs_in_expr(expr, var_ids);
+                    refs.extend(collect_refs_in_function_like_expr(expr, var_ids));
+                    refs.extend(collect_refs_in_nested_function_like_expr(expr, var_ids));
+                    mark_refs_before_decl(refs, declared_so_far, must_stay);
+                }
+                if let ModuleDecl::ExportDefaultDecl(default_decl) = decl {
                     mark_refs_before_decl(
-                        collect_refs_in_expr(expr, var_ids),
+                        collect_refs_in_default_decl(&default_decl.decl, var_ids),
                         declared_so_far,
                         must_stay,
                     );
@@ -884,11 +890,43 @@ fn collect_refs_in_class(
     collector.refs
 }
 
+fn collect_refs_in_default_decl(
+    decl: &DefaultDecl,
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    match decl {
+        DefaultDecl::Class(class) => collect_refs_in_class(&class.class, var_ids),
+        DefaultDecl::Fn(function) => {
+            let mut refs = collect_refs_in_function(&function.function, var_ids);
+            refs.extend(collect_nested_function_like_refs_in_function(
+                &function.function,
+                var_ids,
+            ));
+            refs
+        }
+        DefaultDecl::TsInterfaceDecl(_) => HashSet::new(),
+    }
+}
+
 fn collect_refs_in_function(
     function: &Function,
     var_ids: &HashSet<BindingId>,
 ) -> HashSet<BindingId> {
     let mut collector = VarRefCollector {
+        var_ids,
+        refs: HashSet::new(),
+    };
+    if let Some(body) = &function.body {
+        body.visit_with(&mut collector);
+    }
+    collector.refs
+}
+
+fn collect_nested_function_like_refs_in_function(
+    function: &Function,
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    let mut collector = NestedFunctionLikeRefCollector {
         var_ids,
         refs: HashSet::new(),
     };
