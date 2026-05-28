@@ -76,6 +76,71 @@ fn runtime_getter_exports_become_esm_after_rules() {
 }
 
 #[test]
+fn unpack_driver_recovers_optional_calls_exposed_by_late_cleanup() {
+    let source = r#"
+!function(modules) {
+  function __webpack_require__(id) {
+    var module = { exports: {} };
+    modules[id].call(module.exports, module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__.s = 0;
+  __webpack_require__(0);
+}([
+  function(module, exports, require) {
+    var G = function() {
+      function U() {
+        this.value = {};
+        this.onDefaultValueFallback = null;
+      }
+      U.prototype.get = function(U, B, G) {
+        var Y;
+        var Z = this.getValue(U, B);
+        var J = Array.isArray(B) ? "array" : typeof B;
+        var X = Array.isArray(Z) ? "array" : typeof Z;
+        return G ? G(Z) ? Z : ((Y = this.onDefaultValueFallback) === null || Y === undefined || Y.call(this, this, U, J, X), B) : Z;
+      };
+      U.prototype.getValue = function(U, B) {
+        return U == null ? this.value : (B == null && (B = null), this.value[U] == null) ? B : this.value[U];
+      };
+      return U;
+    }();
+    exports.default = G;
+  }
+]);
+"#;
+
+    let result = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack4 unpack should succeed");
+    let code = result
+        .modules
+        .into_iter()
+        .find(|(filename, _)| filename == "entry.js")
+        .map(|(_, code)| normalize(&code))
+        .expect("expected entry.js module");
+
+    assert!(
+        code.contains("this.onDefaultValueFallback?.(this, U, J, X);"),
+        "late cleanup should recover optional calls exposed by class/IIFE recovery:\n{code}"
+    );
+    assert!(
+        code.contains("if (B == null)"),
+        "late cleanup should expand short-circuit assignment statements exposed late:\n{code}"
+    );
+    assert!(
+        !code.contains("(Y = this.onDefaultValueFallback) === null")
+            && !code.contains("B == null && (B = null)"),
+        "unpack output should not leave lowered optional calls or short-circuit assignment statements:\n{code}"
+    );
+}
+
+#[test]
 fn require_n_getter_accessor_rewrites_to_call_in_raw_output() {
     let source = r#"
 !function(modules) {

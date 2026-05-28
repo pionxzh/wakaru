@@ -15,8 +15,9 @@ use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
-    apply_rules, ImportDedup, RewriteLevel, RulePipelineOptions, SimplifySequence,
-    UnAssignmentMerging, UnEsm, UnImportRename, UnObjectSpread,
+    apply_rules, ArrowFunction, ArrowReturn, ImportDedup, RewriteLevel, RulePipelineOptions,
+    SimplifySequence, UnAssignmentMerging, UnConditionals, UnEsm, UnExportRename, UnIife,
+    UnImportRename, UnObjectSpread, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::{scope_hoist, try_unpack_bundle, UnpackResult};
@@ -274,6 +275,12 @@ fn unpack_multi_module(
                     options.level,
                 ));
                 module.visit_mut_with(&mut UnAssignmentMerging);
+                // UnIife2 can expose webpack export helpers that were hidden in
+                // factory wrappers at the Stage 2 barrier. Recover just that ESM
+                // shape without restoring the old full second pass.
+                recover_late_esm_from_factory_iifes(&mut module, unresolved_mark, options.level);
+                module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
+                module.visit_mut_with(&mut UnConditionals);
 
                 // Source-map-enhanced passes
                 if let Some(sm) = sm_ref {
