@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::common::{Mark, DUMMY_SP};
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, BlockStmtOrExpr,
     CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod, ComputedPropName, Constructor,
@@ -621,6 +621,8 @@ fn try_iife_to_class(
         }
     }
 
+    let inner_ctor_ident = find_inner_constructor_ident(body_stmts)?;
+    let inner_ctor_name = inner_ctor_ident.sym.as_ref();
     let class_body = parse_class_body(
         body_stmts,
         &class_name.sym,
@@ -631,6 +633,15 @@ fn try_iife_to_class(
         super_class.is_some(),
         unresolved_mark,
     )?;
+    if class_name.sym.as_ref() != inner_ctor_name
+        && class_members_reference_binding(
+            &class_body,
+            &inner_ctor_ident.sym,
+            inner_ctor_ident.ctxt,
+        )
+    {
+        return None;
+    }
 
     Some(ClassDecl {
         ident: class_name.clone(),
@@ -647,6 +658,36 @@ fn try_iife_to_class(
             implements: vec![],
         }),
     })
+}
+
+fn class_members_reference_binding(
+    members: &[ClassMember],
+    name: &Atom,
+    ctxt: SyntaxContext,
+) -> bool {
+    use swc_core::ecma::visit::{Visit, VisitWith};
+
+    struct Finder<'a> {
+        name: &'a Atom,
+        ctxt: SyntaxContext,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_ident(&mut self, id: &Ident) {
+            if &id.sym == self.name && id.ctxt == self.ctxt {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = Finder {
+        name,
+        ctxt,
+        found: false,
+    };
+    members.visit_with(&mut finder);
+    finder.found
 }
 
 /// Scan an IIFE body for an inline `_inherits` IIFE call and extract the super class expression.
@@ -1345,9 +1386,13 @@ fn parse_create_class_array(
 /// Find the name of the inner constructor function (`t` in the IIFE body).
 /// The first `function <name>(...) { ... }` declaration in the body is the constructor.
 fn find_inner_constructor_name(stmts: &[Stmt]) -> Option<&str> {
+    find_inner_constructor_ident(stmts).map(|id| id.sym.as_ref())
+}
+
+fn find_inner_constructor_ident(stmts: &[Stmt]) -> Option<&Ident> {
     for stmt in stmts {
         if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
-            return Some(fn_decl.ident.sym.as_ref());
+            return Some(&fn_decl.ident);
         }
     }
     None

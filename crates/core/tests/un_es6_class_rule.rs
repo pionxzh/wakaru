@@ -331,11 +331,47 @@ var MyClass = (function() {
 }());
 "#;
     let expected = r#"
-class MyClass {
-    constructor(x) { this.x = x; }
-    getX() { return this.x; }
-    static create(x) { return new t(x); }
+var MyClass = function() {
+    function t(x) { this.x = x; }
+    return _createClass(t, [{
+        key: "getX",
+        value: function getX() { return this.x; }
+    }], [{
+        key: "create",
+        value: function create(x) { return new t(x); }
+    }]);
+}();
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
+
+#[test]
+fn test_static_method_referencing_inner_constructor_name_stays_iife_when_outer_name_differs() {
+    let input = r#"
+var G = (function() {
+    function U() {}
+    U.getItemAsync = function(B) {
+        var G;
+        if (U.asyncStorage) {
+            return U.asyncStorage.getItem(B);
+        }
+        return null;
+    };
+    return U;
+}());
+"#;
+    let expected = r#"
+var G = function() {
+    function U() {}
+    U.getItemAsync = function(B) {
+        var G;
+        if (U.asyncStorage) {
+            return U.asyncStorage.getItem(B);
+        }
+        return null;
+    };
+    return U;
+}();
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
