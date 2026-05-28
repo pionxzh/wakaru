@@ -11,7 +11,7 @@ use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::VisitMutWith;
 
-use crate::rules::apply_default_rules;
+use crate::rules::{apply_rules as run_rules, RulePipelineOptions};
 use crate::unpacker::{UnpackResult, UnpackedModule};
 
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
@@ -210,7 +210,11 @@ fn emit_browserify_module(
         replace_ident(&mut synthetic_module, from_id, &to_ident);
     }
 
-    apply_default_rules(&mut synthetic_module, unresolved_mark);
+    run_rules(
+        &mut synthetic_module,
+        unresolved_mark,
+        RulePipelineOptions::until("UnEsm"),
+    );
     synthetic_module.visit_mut_with(&mut fixer(None));
 
     emit_module(&synthetic_module, cm).ok()

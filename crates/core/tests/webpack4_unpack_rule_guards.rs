@@ -1,7 +1,7 @@
 mod common;
 
 use common::normalize;
-use wakaru_core::{unpack, unpack_webpack4, unpack_webpack4_raw, DecompileOptions};
+use wakaru_core::{unpack, unpack_raw, unpack_webpack4, unpack_webpack4_raw, DecompileOptions};
 
 fn raw_modules(source: &str) -> Vec<(String, String)> {
     unpack_webpack4_raw(source).expect("raw webpack4 unpack should succeed")
@@ -70,8 +70,67 @@ fn runtime_getter_exports_become_esm_after_rules() {
         .map(|module| normalize(&module.code))
         .expect("expected entry.js module");
     assert!(
-        code.contains("export function $G"),
-        "runtime getter export should become ESM after rules:\n{code}"
+        code.contains("export { V as $G }"),
+        "runtime getter export should become ESM named export after Stage 1+2 rules:\n{code}"
+    );
+}
+
+#[test]
+fn unpack_driver_simplifies_sequences_recreated_after_late_pass() {
+    let source = r#"
+!function(modules) {
+  function __webpack_require__(id) {
+    var module = { exports: {} };
+    modules[id].call(module.exports, module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__.s = 0;
+  __webpack_require__(0);
+}([
+  function(module, exports, require) {
+    function f(e, t) {
+      if (e) return t = make(), t && use(t), t;
+      return e = t = null, e;
+    }
+    exports.f = f;
+  }
+]);
+"#;
+
+    let result = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack4 unpack should succeed");
+    let code = result
+        .modules
+        .into_iter()
+        .find(|(filename, _)| filename == "entry.js")
+        .map(|(_, code)| normalize(&code))
+        .expect("expected entry.js module");
+
+    assert!(
+        code.contains("t = make();"),
+        "sequence side effects should be split into statements:\n{code}"
+    );
+    assert!(
+        code.contains("return t;"),
+        "sequence return value should remain as the return expression:\n{code}"
+    );
+    assert!(
+        !code.contains("return t = make(),"),
+        "unpack output should not keep collapsed return sequences:\n{code}"
+    );
+    assert!(
+        code.contains("e = null;") && code.contains("t = null;"),
+        "assignment chains exposed by late sequence splitting should be split:\n{code}"
+    );
+    assert!(
+        !code.contains("e = t = null"),
+        "unpack output should not keep chained assignments exposed late:\n{code}"
     );
 }
 
@@ -137,6 +196,65 @@ fn unpack_driver_recovers_optional_calls_exposed_by_late_cleanup() {
         !code.contains("(Y = this.onDefaultValueFallback) === null")
             && !code.contains("B == null && (B = null)"),
         "unpack output should not leave lowered optional calls or short-circuit assignment statements:\n{code}"
+    );
+}
+
+#[test]
+fn raw_unpack_driver_recovers_esm_after_factory_iife_unwrap() {
+    let source = r#"
+!function(modules) {
+  function __webpack_require__(id) {
+    var module = { exports: {} };
+    modules[id].call(module.exports, module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__.d = function(exports, name, getter) {
+    Object.defineProperty(exports, name, { enumerable: true, get: getter });
+  };
+  __webpack_require__.s = 0;
+  __webpack_require__(0);
+}([
+  function(module, exports, require) {
+    require.d(exports, "named", function() { return named; });
+    require(1);
+    const value = { ok: true };
+    exports.default = value;
+    const named = "named";
+  },
+  function(module, exports, require) {}
+]);
+"#;
+
+    let result = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("raw webpack4 unpack should succeed");
+    let code = result
+        .modules
+        .into_iter()
+        .find(|(filename, _)| filename == "entry.js")
+        .map(|(_, code)| normalize(&code))
+        .expect("expected entry.js module");
+
+    assert!(
+        code.contains(r#"import "./module-1.js""#),
+        "raw unpack normalization should recover side-effect imports from unwrapped factory IIFEs:\n{code}"
+    );
+    assert!(
+        code.contains("export default value"),
+        "raw unpack normalization should recover default exports from unwrapped factory IIFEs:\n{code}"
+    );
+    assert!(
+        code.contains("export const named"),
+        "raw unpack normalization should promote recovered named exports:\n{code}"
+    );
+    assert!(
+        !code.contains("require.d") && !code.contains("exports.default") && !code.contains(".call"),
+        "raw unpack output should not leave webpack export helpers or factory wrapper calls:\n{code}"
     );
 }
 

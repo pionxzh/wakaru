@@ -505,7 +505,7 @@ export const connect = (({ connectHOC = connectAdvanced, mapStateToPropsFactorie
         const initMapStateToProps = W(e, mapStateToPropsFactories, "mapStateToProps");
         const initMapDispatchToProps = W(t, mapDispatchToPropsFactories, "mapDispatchToProps");
         const initMergeProps = W(n, mergePropsFactories, "mergeProps");
-        return connectHOC(selectorFactory, a({
+        return connectHOC(selectorFactory, {
             methodName: "connect",
             getDisplayName (e) {
                 return `Connect(${e})`;
@@ -518,6 +518,7 @@ export const connect = (({ connectHOC = connectAdvanced, mapStateToPropsFactorie
             areStatesEqual,
             areOwnPropsEqual,
             areStatePropsEqual,
-            areMergedPropsEqual
-        }, rest));
+            areMergedPropsEqual,
+            ...rest
+        });
     })();

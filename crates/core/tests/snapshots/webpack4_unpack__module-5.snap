@@ -2,7 +2,7 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-export default ((e, t, n, r, o, i, a, u)=>{
+export default function(e, t, n, r, o, i, a, u) {
     if (!e) {
         let l;
         if (t === undefined) {
@@ -23,4 +23,5 @@ export default ((e, t, n, r, o, i, a, u)=>{
         l.framesToPop = 1;
         throw l;
     }
-});
+}
+;

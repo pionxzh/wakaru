@@ -15,7 +15,7 @@ use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use crate::rules::apply_default_rules;
+use crate::rules::{apply_rules as run_rules, RulePipelineOptions};
 use crate::unpacker::webpack4::{rewrite_require_n_accesses, RequireIdRewriter};
 use crate::unpacker::{UnpackResult, UnpackedModule};
 
@@ -515,7 +515,11 @@ fn extract_webpack5_modules(
         let unresolved_mark = Mark::new();
         let top_level_mark = Mark::new();
         synthetic_module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-        apply_default_rules(&mut synthetic_module, unresolved_mark);
+        run_rules(
+            &mut synthetic_module,
+            unresolved_mark,
+            RulePipelineOptions::until("UnEsm"),
+        );
         synthetic_module.visit_mut_with(&mut fixer(None));
         let code = emit_module(&synthetic_module, cm.clone()).ok()?;
         modules.push(UnpackedModule {
@@ -721,7 +725,11 @@ fn emit_webpack5_module(
     {
         let span = tracing::info_span!("webpack5: rules");
         let _enter = span.enter();
-        apply_default_rules(&mut synthetic_module, unresolved_mark);
+        run_rules(
+            &mut synthetic_module,
+            unresolved_mark,
+            RulePipelineOptions::until("UnEsm"),
+        );
     }
 
     {

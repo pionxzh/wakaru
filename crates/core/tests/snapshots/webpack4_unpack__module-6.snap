@@ -2,7 +2,7 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-import { b as b_2, c as c_2, h as h_2, p, q, w } from "./module-0.js";
+import { b, c as c_2, h as h_2, p as p_2, q, w } from "./module-0.js";
 import { a as a_3 } from "./module-9.js";
 import { a as a_4 } from "./module-12.js";
 export const a = {
@@ -26,15 +26,15 @@ function c() {
 }
 const s = "invalid buffer passed to channel factory function";
 const f = "Saga was provided with an undefined action";
-export function b(e = a_3.fixed()) {
+function d(e = a_3.fixed()) {
     let t = false;
     let n = [];
     function i() {
         if (t && n.length) {
-            throw p("Cannot have a closed channel with pending takers");
+            throw p_2("Cannot have a closed channel with pending takers");
         }
         if (n.length && !e.isEmpty()) {
-            throw p("Cannot have pending takers with non empty buffer");
+            throw p_2("Cannot have pending takers with non empty buffer");
         }
     }
     h_2(e, q.buffer, s);
@@ -60,7 +60,7 @@ export function b(e = a_3.fixed()) {
                 }
                 for(let a = 0; a < n.length; a++){
                     const u = n[a];
-                    if (!u[b_2] || u[b_2](o)) {
+                    if (!u[b] || u[b](o)) {
                         n.splice(a, 1);
                         return u(o);
                     }
@@ -94,11 +94,11 @@ export function b(e = a_3.fixed()) {
         }
     };
 }
-export function d(e, t = a_3.none(), n) {
+function p(e, t = a_3.none(), n) {
     if (arguments.length > 2) {
         h_2(n, q.func, "Invalid match function passed to eventChannel");
     }
-    const i = b(t);
+    const i = d(t);
     const a = ()=>{
         if (!i.__closed__) {
             if (u) {
@@ -127,7 +127,7 @@ export function d(e, t = a_3.none(), n) {
     };
 }
 function h(e) {
-    const t = d((t)=>e((e)=>{
+    const t = p((t)=>e((e)=>{
             if (e[c_2]) {
                 t(e);
             } else {
@@ -139,7 +139,7 @@ function h(e) {
         take (e, n) {
             if (arguments.length > 1) {
                 h_2(n, q.func, "channel.take's matcher argument must be a function");
-                e[b_2] = n;
+                e[b] = n;
             }
             t.take(e);
         }
@@ -147,4 +147,6 @@ function h(e) {
 }
 export { l as e };
 export { c };
+export { d as b };
+export { p as d };
 export { h as f };

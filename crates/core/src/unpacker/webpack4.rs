@@ -15,7 +15,7 @@ use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::rules::apply_default_rules;
+use crate::rules::{apply_rules as run_rules, RulePipelineOptions};
 use crate::unpacker::{UnpackResult, UnpackedModule};
 
 /// Identifies a webpack module by either its numeric index (array-form) or
@@ -609,7 +609,11 @@ fn extract_webpack4_array_modules(
             });
 
         if apply_rules {
-            apply_default_rules(&mut synthetic_module, unresolved_mark);
+            run_rules(
+                &mut synthetic_module,
+                unresolved_mark,
+                RulePipelineOptions::until("UnEsm"),
+            );
         }
         synthetic_module.visit_mut_with(&mut fixer(None));
 
@@ -754,7 +758,11 @@ fn extract_webpack4_object_modules(
             });
 
         if apply_rules {
-            apply_default_rules(&mut synthetic_module, unresolved_mark);
+            run_rules(
+                &mut synthetic_module,
+                unresolved_mark,
+                RulePipelineOptions::until("UnEsm"),
+            );
         }
         synthetic_module.visit_mut_with(&mut fixer(None));
 

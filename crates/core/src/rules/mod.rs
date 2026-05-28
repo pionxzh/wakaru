@@ -144,7 +144,7 @@ pub use import_dedup::ImportDedup;
 pub use obj_method_shorthand::ObjMethodShorthand;
 pub use obj_shorthand::ObjShorthand;
 pub use object_assign_spread::ObjectAssignSpread;
-pub(crate) use pipeline::{apply_default_rules, apply_rules_with_observer};
+pub(crate) use pipeline::apply_rules_with_observer;
 pub use pipeline::{
     apply_rules, rule_descriptors, rule_names, RuleDescriptor, RulePipelineOptions, RuleStage,
 };

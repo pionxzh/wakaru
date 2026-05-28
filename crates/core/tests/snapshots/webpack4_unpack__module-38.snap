@@ -2,7 +2,7 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-import "./module-3.js";
+import "./module-50.js";
 import { Route, Switch } from "./module-24.js";
 import i from "./module-37.js";
 const a = <Switch><Route exact path="/" component={i.FrontPage}/></Switch>;

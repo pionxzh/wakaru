@@ -486,10 +486,6 @@ impl<'a> RulePipelineOptions<'a> {
     }
 }
 
-pub(crate) fn apply_default_rules(module: &mut Module, unresolved_mark: Mark) {
-    apply_rules(module, unresolved_mark, RulePipelineOptions::default());
-}
-
 pub fn apply_rules(module: &mut Module, unresolved_mark: Mark, options: RulePipelineOptions<'_>) {
     apply_rules_impl(module, unresolved_mark, options, None);
 }

@@ -6,7 +6,7 @@ import r from "./module-44.js";
 function o() {}
 function i() {}
 i.resetWarningCache = o;
-export default (()=>{
+export default function() {
     function e(e, t, n, o, i, a) {
         if (a !== r) {
             const u = new Error("Calling PropTypes validators directly is not supported by the `prop-types` package. Use PropTypes.checkPropTypes() to call them. Read more at http://fb.me/use-check-prop-types");
@@ -43,4 +43,5 @@ export default (()=>{
     };
     n.PropTypes = n;
     return n;
-});
+}
+;

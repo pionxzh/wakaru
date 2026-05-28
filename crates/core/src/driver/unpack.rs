@@ -292,8 +292,9 @@ fn unpack_multi_module(
                         .with_rewrite_level(options.level)
                         .with_module_facts(facts_ref),
                 );
-                // Later rules can expose sequence expressions. Keep the narrow
-                // syntax cleanup without restoring the old full second pass.
+                // Later rules can expose sequence expressions. The old unpack
+                // path cleaned those by running a second full module pipeline;
+                // keep only the syntax cleanup needed after the split.
                 module.visit_mut_with(&mut SimplifySequence::new_with_level(
                     unresolved_mark,
                     options.level,

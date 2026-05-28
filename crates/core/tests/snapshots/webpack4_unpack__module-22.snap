@@ -622,7 +622,8 @@ export function runSaga(e, t, ...r) {
         a = t(...r);
         o.h(a, q.iterator, b);
     }
-    const { subscribe, dispatch, getState, context, sagaMonitor, logger, onError } = e;
+    const u = e;
+    const { subscribe, dispatch, getState, context, sagaMonitor, logger, onError } = u;
     const m = o.y();
     if (sagaMonitor) {
         sagaMonitor.effectTriggered = sagaMonitor.effectTriggered || o.u;
@@ -651,7 +652,7 @@ export function runSaga(e, t, ...r) {
     }
     return y;
 }
-export default (({ context = {}, ...rest } = {})=>{
+export default function({ context = {}, ...rest } = {}) {
     const { sagaMonitor, logger, onError } = rest;
     if (q.func(rest)) {
         throw new Error("Saga middleware no longer accept Generator functions. Use sagaMiddleware.run instead");
@@ -694,7 +695,8 @@ export default (({ context = {}, ...rest } = {})=>{
         o.v.assign(context, e);
     };
     return c;
-});
+}
+;
 export const END = i.a;
 export const eventChannel = i.d;
 export const channel = i.b;

@@ -4,7 +4,7 @@ expression: code
 ---
 import r from "./module-3.js";
 import o from "./module-29.js";
-import i from "./module-47.js";
+import * as i from "./module-46.js";
 function a(e) {
     let t = `https://reactjs.org/docs/error-decoder.html?invariant=${e}`;
     for(let n = 1; n < arguments.length; n++){
@@ -1217,9 +1217,7 @@ function Pt(e, t) {
 function _t(e, t, n, r, o, i) {
     if (e === null || e.nativeEvent !== i) {
         e = Ct(t, n, r, o, i);
-        if (t !== null && (t = _n(t)) !== null) {
-            mt(t);
-        }
+        t !== null && (t = _n(t)) !== null && mt(t);
         return e;
     }
     e.eventSystemFlags |= r;
@@ -2617,27 +2615,16 @@ function Qr(e, t) {
     if (Vr || Wr == null || Wr !== un(n)) {
         return null;
     }
-    if ("selectionStart" in (n = Wr) && fn(n)) {
-        n = {
-            start: n.selectionStart,
-            end: n.selectionEnd
-        };
-    } else {
-        n = {
-            anchorNode: (n = (n.ownerDocument && n.ownerDocument.defaultView || window).getSelection()).anchorNode,
-            anchorOffset: n.anchorOffset,
-            focusNode: n.focusNode,
-            focusOffset: n.focusOffset
-        };
-    }
-    if (Br && qr(Br, n)) {
-        return null;
-    }
-    Br = n;
-    (e = Bn.getPooled(Hr.select, $r, e, t)).type = "select";
-    e.target = Wr;
-    Fn(e);
-    return e;
+    "selectionStart" in (n = Wr) && fn(n) ? n = {
+        start: n.selectionStart,
+        end: n.selectionEnd
+    } : n = {
+        anchorNode: (n = (n.ownerDocument && n.ownerDocument.defaultView || window).getSelection()).anchorNode,
+        anchorOffset: n.anchorOffset,
+        focusNode: n.focusNode,
+        focusOffset: n.focusOffset
+    };
+    return Br && qr(Br, n) ? null : (Br = n, (e = Bn.getPooled(Hr.select, $r, e, t)).type = "select", e.target = Wr, Fn(e), e);
 }
 const SelectEventPlugin = {
     eventTypes: Hr,
@@ -3582,7 +3569,7 @@ function ki(e, t, n) {
             if (t !== null && t.ref !== null && typeof t.ref === "function" && t.ref._stringRef === o) {
                 return t.ref;
             }
-            t = (e)=>{
+            (t = (e)=>{
                 let r_refs = r.refs;
                 if (r_refs === refs) {
                     r_refs = r.refs = {};
@@ -3592,8 +3579,7 @@ function ki(e, t, n) {
                 } else {
                     r_refs[o] = e;
                 }
-            };
-            t._stringRef = o;
+            })._stringRef = o;
             return t;
         }
         if (typeof e !== "string") {
@@ -3675,44 +3661,36 @@ function Si(e) {
     }
     function l(e, t, n, r) {
         if (t === null || t.tag !== 6) {
-            t = Ll(n, e.mode, r);
-            t.return = e;
+            (t = Ll(n, e.mode, r)).return = e;
             return t;
         }
-        t = o(t, n);
-        t.return = e;
+        (t = o(t, n)).return = e;
         return t;
     }
     function c(e, t, n, r) {
         if (t !== null && t.elementType === n.type) {
-            r = o(t, n.props);
-            r.ref = ki(e, t, n);
+            (r = o(t, n.props)).ref = ki(e, t, n);
             r.return = e;
             return r;
         }
-        r = Ml(n.type, n.key, n.props, null, e.mode, r);
-        r.ref = ki(e, t, n);
+        (r = Ml(n.type, n.key, n.props, null, e.mode, r)).ref = ki(e, t, n);
         r.return = e;
         return r;
     }
     function s(e, t, n, r) {
         if (t === null || t.tag !== 4 || t.stateNode.containerInfo !== n.containerInfo || t.stateNode.implementation !== n.implementation) {
-            t = Il(n, e.mode, r);
-            t.return = e;
+            (t = Il(n, e.mode, r)).return = e;
             return t;
         }
-        t = o(t, n.children || []);
-        t.return = e;
+        (t = o(t, n.children || [])).return = e;
         return t;
     }
     function f(e, t, n, r, i) {
         if (t === null || t.tag !== 7) {
-            t = Al(n, e.mode, r, i);
-            t.return = e;
+            (t = Al(n, e.mode, r, i)).return = e;
             return t;
         }
-        t = o(t, n);
-        t.return = e;
+        (t = o(t, n)).return = e;
         return t;
     }
     function d(e, t, n) {
@@ -4872,8 +4850,7 @@ function Aa(e, t, n, r, o, i) {
     if (e === null) {
         var a = n.type;
         if (typeof a !== "function" || Rl(a) || a.defaultProps !== undefined || n.compare !== null || n.defaultProps !== undefined) {
-            e = Ml(n.type, null, r, null, t.mode, i);
-            e.ref = t.ref;
+            (e = Ml(n.type, null, r, null, t.mode, i)).ref = t.ref;
             e.return = t;
             return t.child = e;
         }
@@ -4886,8 +4863,7 @@ function Aa(e, t, n, r, o, i) {
         return Ga(e, t, i);
     }
     t.effectTag |= 1;
-    e = Nl(a, r);
-    e.ref = t.ref;
+    (e = Nl(a, r)).ref = t.ref;
     e.return = t;
     return t.child = e;
 }
@@ -5683,14 +5659,7 @@ function Ja(e, t, n) {
             }
             n = t_pendingProps !== null;
             t_pendingProps = false;
-            if (e === null) {
-                if (t.memoizedProps.fallback !== undefined) {
-                    Pa(t);
-                }
-            } else {
-                t_pendingProps = (i = e.memoizedState) !== null;
-                n || i === null || (i = e.child.sibling) !== null && ((u = t.firstEffect) !== null ? (t.firstEffect = i, i.nextEffect = u) : (t.firstEffect = t.lastEffect = i, i.nextEffect = null), i.effectTag = 8);
-            }
+            e === null ? t.memoizedProps.fallback !== undefined && Pa(t) : (t_pendingProps = (i = e.memoizedState) !== null, n || i === null || (i = e.child.sibling) !== null && ((u = t.firstEffect) !== null ? (t.firstEffect = i, i.nextEffect = u) : (t.firstEffect = t.lastEffect = i, i.nextEffect = null), i.effectTag = 8));
             n && !t_pendingProps && (2 & t.mode) != 0 && (e === null && t.memoizedProps.unstable_avoidThisFallback !== true || (1 & Di.current) != 0 ? Iu === Ou && (Iu = _u) : (Iu !== Ou && Iu !== _u || (Iu = ju), Uu !== 0 && Mu !== null && (Fl(Mu, Lu), zl(Mu, Uu))));
             if (n || t_pendingProps) {
                 t.effectTag |= 4;
@@ -7806,10 +7775,7 @@ bu = (e, t, n)=>{
                                 return Va(e, t, n);
                             }
                             so(Di, 1 & Di.current);
-                            if ((t = Ga(e, t, n)) !== null) {
-                                return t.sibling;
-                            }
-                            return null;
+                            return (t = Ga(e, t, n)) !== null ? t.sibling : null;
                         }
                         so(Di, 1 & Di.current);
                         break;

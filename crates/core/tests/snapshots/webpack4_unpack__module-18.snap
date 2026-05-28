@@ -2,7 +2,7 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-import * as r from "./module-50.js";
+import { Component } from "./module-50.js";
 import i from "./module-1.js";
 import u from "./module-16.js";
 import { a } from "./module-15.js";
@@ -19,7 +19,7 @@ export function routerReducer(e = s, { type, payload: location } = {}) {
     }
     return e;
 }
-export class ConnectedRouter extends r.Component {
+export class ConnectedRouter extends Component {
     constructor(...i){
         super(...i);
         this.handleLocationChange = (payload)=>{

@@ -27,10 +27,11 @@ r[FETCH_DATA + ERROR] = (e, error)=>({
         error
     });
 const l = r;
-export default ((e = u, t)=>{
+export default function(e = u, t) {
     const n = l[t.type];
     if (n) {
         return n(e, t.payload);
     }
     return e;
-});
+}
+;
