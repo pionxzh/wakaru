@@ -17,8 +17,9 @@ use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
     apply_rules, ArrowFunction, ArrowReturn, ImportDedup, RewriteLevel, RulePipelineOptions,
-    SimplifySequence, UnAssignmentMerging, UnConditionalsAssignmentOnly, UnEsm, UnExportRename,
-    UnIife, UnImportRename, UnObjectSpread, UnOptionalChaining,
+    SimplifySequence, UnAssignmentMerging, UnConditionalsAssignmentOnly,
+    UnConditionalsExprStmtOnly, UnEsm, UnExportRename, UnIife, UnImportRename, UnObjectSpread,
+    UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::{scope_hoist, try_unpack_bundle, UnpackResult};
@@ -306,6 +307,7 @@ fn unpack_multi_module(
                 recover_late_esm_from_factory_iifes(&mut module, unresolved_mark, options.level);
                 module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
                 module.visit_mut_with(&mut UnConditionalsAssignmentOnly);
+                module.visit_mut_with(&mut UnConditionalsExprStmtOnly);
 
                 // Source-map-enhanced passes
                 if let Some(sm) = sm_ref {

@@ -161,7 +161,9 @@ pub use un_bracket_notation::UnBracketNotation;
 pub use un_builtin_prototype::UnBuiltinPrototype;
 pub use un_class_call_check::UnClassCallCheck;
 pub use un_class_fields::UnClassFields;
-pub use un_conditionals::{UnConditionals, UnConditionalsAssignmentOnly};
+pub use un_conditionals::{
+    UnConditionals, UnConditionalsAssignmentOnly, UnConditionalsExprStmtOnly,
+};
 pub use un_curly_braces::UnCurlyBraces;
 pub use un_define_property::UnDefineProperty;
 pub use un_destructuring::UnDestructuring;

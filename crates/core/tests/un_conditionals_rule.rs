@@ -1,7 +1,9 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
-use wakaru_core::rules::{UnConditionals, UnConditionalsAssignmentOnly};
+use wakaru_core::rules::{
+    UnConditionals, UnConditionalsAssignmentOnly, UnConditionalsExprStmtOnly,
+};
 
 fn apply(input: &str) -> String {
     render_rule(input, |_| UnConditionals)
@@ -9,6 +11,10 @@ fn apply(input: &str) -> String {
 
 fn apply_assignment_only(input: &str) -> String {
     render_rule(input, |_| UnConditionalsAssignmentOnly)
+}
+
+fn apply_expr_stmt_only(input: &str) -> String {
+    render_rule(input, |_| UnConditionalsExprStmtOnly)
 }
 
 #[test]
@@ -112,6 +118,37 @@ if (x) {
 x && (call(), value = 3);
 "#;
     let output = apply_assignment_only(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn expr_stmt_only_converts_standalone_ternary_but_not_returns_or_logicals() {
+    let input = r#"
+condition ? (changed = true, notify()) : (changed = true, count++, count && (state = next));
+flag && call();
+function choose() {
+  return condition ? first() : second();
+}
+"#;
+    let expected = r#"
+if (condition) {
+  changed = true;
+  notify();
+} else {
+  changed = true;
+  count++;
+  if (count) {
+    state = next;
+  }
+}
+
+flag && call();
+
+function choose() {
+  return condition ? first() : second();
+}
+"#;
+    let output = apply_expr_stmt_only(input);
     assert_eq_normalized(&output, expected);
 }
 

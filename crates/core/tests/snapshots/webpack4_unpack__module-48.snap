@@ -2615,15 +2615,19 @@ function Qr(e, t) {
     if (Vr || Wr == null || Wr !== un(n)) {
         return null;
     }
-    "selectionStart" in (n = Wr) && fn(n) ? n = {
-        start: n.selectionStart,
-        end: n.selectionEnd
-    } : n = {
-        anchorNode: (n = (n.ownerDocument && n.ownerDocument.defaultView || window).getSelection()).anchorNode,
-        anchorOffset: n.anchorOffset,
-        focusNode: n.focusNode,
-        focusOffset: n.focusOffset
-    };
+    if ("selectionStart" in (n = Wr) && fn(n)) {
+        n = {
+            start: n.selectionStart,
+            end: n.selectionEnd
+        };
+    } else {
+        n = {
+            anchorNode: (n = (n.ownerDocument && n.ownerDocument.defaultView || window).getSelection()).anchorNode,
+            anchorOffset: n.anchorOffset,
+            focusNode: n.focusNode,
+            focusOffset: n.focusOffset
+        };
+    }
     return Br && qr(Br, n) ? null : (Br = n, (e = Bn.getPooled(Hr.select, $r, e, t)).type = "select", e.target = Wr, Fn(e), e);
 }
 const SelectEventPlugin = {
@@ -5659,7 +5663,14 @@ function Ja(e, t, n) {
             }
             n = t_pendingProps !== null;
             t_pendingProps = false;
-            e === null ? t.memoizedProps.fallback !== undefined && Pa(t) : (t_pendingProps = (i = e.memoizedState) !== null, n || i === null || (i = e.child.sibling) !== null && ((u = t.firstEffect) !== null ? (t.firstEffect = i, i.nextEffect = u) : (t.firstEffect = t.lastEffect = i, i.nextEffect = null), i.effectTag = 8));
+            if (e === null) {
+                if (t.memoizedProps.fallback !== undefined) {
+                    Pa(t);
+                }
+            } else {
+                t_pendingProps = (i = e.memoizedState) !== null;
+                n || i === null || (i = e.child.sibling) !== null && ((u = t.firstEffect) !== null ? (t.firstEffect = i, i.nextEffect = u) : (t.firstEffect = t.lastEffect = i, i.nextEffect = null), i.effectTag = 8);
+            }
             n && !t_pendingProps && (2 & t.mode) != 0 && (e === null && t.memoizedProps.unstable_avoidThisFallback !== true || (1 & Di.current) != 0 ? Iu === Ou && (Iu = _u) : (Iu !== Ou && Iu !== _u || (Iu = ju), Uu !== 0 && Mu !== null && (Fl(Mu, Lu), zl(Mu, Uu))));
             if (n || t_pendingProps) {
                 t.effectTag |= 4;

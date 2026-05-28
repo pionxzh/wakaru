@@ -201,7 +201,11 @@ fn rule_names_contains_key_rules() {
         names.contains(&"SmartRename2"),
         "missing SmartRename2 (second pass)"
     );
-    assert!(names.contains(&"UnReturn"), "missing UnReturn (last rule)");
+    assert!(
+        names.contains(&"UnConditionalsExprStmt"),
+        "missing UnConditionalsExprStmt (late narrow pass)"
+    );
+    assert!(names.contains(&"UnReturn"), "missing UnReturn");
     assert!(names.contains(&"UnIife2"), "missing UnIife2 (second pass)");
     assert!(
         names.contains(&"UnWebpackInterop2"),
@@ -225,8 +229,8 @@ fn rule_names_contains_key_rules() {
     );
     // First element should be SimplifySequence
     assert_eq!(names[0], "SimplifySequence");
-    // Last element should be UnReturn
-    assert_eq!(names[names.len() - 1], "UnReturn");
+    // Last element should be the narrow late conditional cleanup.
+    assert_eq!(names[names.len() - 1], "UnConditionalsExprStmt");
 }
 
 #[test]

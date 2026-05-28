@@ -66,6 +66,34 @@ impl VisitMut for UnConditionalsAssignmentOnly {
     }
 }
 
+pub struct UnConditionalsExprStmtOnly;
+
+impl VisitMut for UnConditionalsExprStmtOnly {
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        items.visit_mut_children_with(self);
+
+        let old = std::mem::take(items);
+        for item in old {
+            match item {
+                ModuleItem::Stmt(stmt) => {
+                    let converted = convert_cond_expr_stmt_only(stmt);
+                    items.extend(converted.into_iter().map(ModuleItem::Stmt));
+                }
+                other => items.push(other),
+            }
+        }
+    }
+
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        stmts.visit_mut_children_with(self);
+
+        let old = std::mem::take(stmts);
+        for stmt in old {
+            stmts.extend(convert_cond_expr_stmt_only(stmt));
+        }
+    }
+}
+
 /// Convert a single statement, returning one or more statements.
 fn convert_stmt(stmt: Stmt) -> Vec<Stmt> {
     match stmt {
@@ -83,6 +111,15 @@ fn convert_stmt(stmt: Stmt) -> Vec<Stmt> {
                     arg: Some(arg),
                 })]
             }
+        }
+        other => vec![other],
+    }
+}
+
+fn convert_cond_expr_stmt_only(stmt: Stmt) -> Vec<Stmt> {
+    match stmt {
+        Stmt::Expr(ExprStmt { expr, span }) if matches!(*expr, Expr::Cond(_)) => {
+            try_convert_expr_stmt_to_if(span, *expr)
         }
         other => vec![other],
     }

@@ -203,6 +203,10 @@ runner!(run_un_optional_chaining, |ctx| UnOptionalChaining::new(
 ));
 runner!(run_un_iife, |ctx| UnIife::new(ctx.rewrite_level));
 runner!(run_un_conditionals, UnConditionals);
+runner!(
+    run_un_conditionals_expr_stmt_only,
+    UnConditionalsExprStmtOnly
+);
 runner!(run_un_parameters, |ctx| UnParameters::new(
     ctx.unresolved_mark,
     ctx.rewrite_level
@@ -435,6 +439,11 @@ define_rule_registry! {
     // Last pass: no downstream rule needs tail return undefined, and earlier
     // restructuring rules can introduce new ones.
     ("UnReturn", Cleanup, run_un_return, always_enabled),
+    // Final narrow conditional cleanup for standalone ternary statements only.
+    // This avoids the broad churn of running the full UnConditionals pass late.
+    ("UnConditionalsExprStmt", Cleanup, run_un_conditionals_expr_stmt_only, always_enabled, requires: [
+        "UnReturn"
+    ]),
 }
 
 #[derive(Debug, Clone, Copy)]
