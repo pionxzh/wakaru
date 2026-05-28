@@ -5,7 +5,10 @@ use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
     Decl, Expr, Ident, ImportDecl, MemberProp, Module, ModuleItem, Pat, PropName, Stmt, VarDecl,
 };
-use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
+
+use super::binding_facts::collect_binding_facts;
+use super::decl_utils::{binding_id, BindingId};
 
 type BindingKey = (Atom, SyntaxContext);
 
@@ -30,6 +33,26 @@ impl VisitMut for DeadDecls {
         }
 
         remove_dead(module, &dead);
+    }
+}
+
+pub struct DeadUninitializedDecls;
+
+impl VisitMut for DeadUninitializedDecls {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        let facts = collect_binding_facts(module);
+        let unused_uninitialized = facts
+            .uninitialized
+            .into_iter()
+            .filter(|binding| facts.references.get(binding).copied().unwrap_or(0) <= 1)
+            .collect::<HashSet<_>>();
+        if unused_uninitialized.is_empty() {
+            return;
+        }
+
+        module.visit_mut_with(&mut UninitializedDeclStripper {
+            dead: &unused_uninitialized,
+        });
     }
 }
 
@@ -202,5 +225,45 @@ fn strip_dead_declarators(var_decl: &mut VarDecl, dead: &HashSet<BindingKey>) {
         }
         let key = (ident.sym.clone(), ident.ctxt);
         !dead.contains(&key)
+    });
+}
+
+struct UninitializedDeclStripper<'a> {
+    dead: &'a HashSet<BindingId>,
+}
+
+impl VisitMut for UninitializedDeclStripper<'_> {
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        items.visit_mut_children_with(self);
+        items.retain_mut(|item| match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                strip_unused_uninitialized_declarators(var, self.dead);
+                !var.decls.is_empty()
+            }
+            _ => true,
+        });
+    }
+
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        stmts.visit_mut_children_with(self);
+        stmts.retain_mut(|stmt| match stmt {
+            Stmt::Decl(Decl::Var(var)) => {
+                strip_unused_uninitialized_declarators(var, self.dead);
+                !var.decls.is_empty()
+            }
+            _ => true,
+        });
+    }
+}
+
+fn strip_unused_uninitialized_declarators(var_decl: &mut VarDecl, dead: &HashSet<BindingId>) {
+    var_decl.decls.retain(|decl| {
+        if decl.init.is_some() {
+            return true;
+        }
+        let Pat::Ident(ident) = &decl.name else {
+            return true;
+        };
+        !dead.contains(&binding_id(&ident.id))
     });
 }

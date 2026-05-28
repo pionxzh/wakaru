@@ -16,6 +16,18 @@ fn render_with_dce(source: &str) -> String {
     .code
 }
 
+fn render_default(source: &str) -> String {
+    decompile(
+        source,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code
+}
+
 // ── Unreferenced function declarations ──────────────────────────
 
 #[test]
@@ -63,7 +75,7 @@ export function helper() { return 1; }
     let expected = r#"
 export function helper() { return 1; }
 "#;
-    assert_eq_normalized(&render_with_dce(input), expected.trim());
+    assert_eq_normalized(&render_default(input), expected.trim());
 }
 
 // ── Unreferenced variable declarations (function/arrow init) ────
@@ -131,6 +143,47 @@ const _result = sideEffect();
 export const x = 2;
 "#;
     assert_eq_normalized(&render_with_dce(input), expected.trim());
+}
+
+#[test]
+fn unreferenced_empty_temp_decl_is_removed_after_nullish_rewrite() {
+    let input = r#"
+function read(options) {
+  var tmp;
+  var keep;
+  keep = options.other;
+  return (tmp = options.value) !== null && tmp !== undefined ? tmp : keep;
+}
+export const value = read({});
+"#;
+    let expected = r#"
+function read(options) {
+  let keep;
+  keep = options.other;
+  return options.value ?? keep;
+}
+export const value = read({});
+"#;
+    assert_eq_normalized(&render_default(input), expected.trim());
+}
+
+#[test]
+fn referenced_empty_decl_is_kept() {
+    let input = r#"
+function read(options) {
+  var keep;
+  return () => keep;
+}
+export const value = read({});
+"#;
+    let expected = r#"
+function read(options) {
+  let keep;
+  return ()=>keep;
+}
+export const value = read({});
+"#;
+    assert_eq_normalized(&render_default(input), expected.trim());
 }
 
 // ── Multi-declarator handling ───────────────────────────────────

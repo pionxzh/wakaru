@@ -268,6 +268,7 @@ runner!(run_smart_inline, |ctx| SmartInline::new(ctx.rewrite_level));
 runner!(run_smart_rename, |ctx| SmartRename::new(
     ctx.unresolved_mark
 ));
+runner!(run_dead_uninitialized_decls, DeadUninitializedDecls);
 runner!(run_dead_decls, DeadDecls);
 runner!(run_dead_imports, DeadImports);
 runner!(run_un_return, UnReturn);
@@ -429,6 +430,12 @@ define_rule_registry! {
     // UnJsx2 can expose component aliases and value-position hints in JSX.
     ("SmartRename2", Cleanup, run_smart_rename, always_enabled, requires: [
         "UnJsx2"
+    ]),
+    // Late structural rewrites can consume uninitialized temps used by lowered
+    // optional chaining / nullish coalescing. Keep this after name-recovery
+    // passes that can use empty declarations as hints.
+    ("DeadUninitializedDecls", Cleanup, run_dead_uninitialized_decls, always_enabled, requires: [
+        "SmartRename2"
     ]),
     // DeadDecls first: removing dead helpers can leave import specifiers
     // unreferenced, which DeadImports then cleans up.

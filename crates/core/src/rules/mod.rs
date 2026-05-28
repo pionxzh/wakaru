@@ -136,7 +136,7 @@ impl RewritePolicy {
 pub use arg_rest::ArgRest;
 pub use arrow_function::ArrowFunction;
 pub use arrow_return::ArrowReturn;
-pub use dead_decls::DeadDecls;
+pub use dead_decls::{DeadDecls, DeadUninitializedDecls};
 pub use dead_imports::DeadImports;
 pub use exponent::Exponent;
 pub use flip_comparisons::FlipComparisons;
