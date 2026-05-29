@@ -34,7 +34,7 @@
       "phase": "wakaru-parse",
       "when": {
         "pathIncludes": ["static-init-await"],
-        "errorIncludes": ["ExpectedIdent"]
+        "errorRegex": ["ExpectedIdent|Expected\\(\"\\(\", \"await\"\\)"]
       }
     },
     {

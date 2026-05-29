@@ -459,6 +459,14 @@ test("knownWakaruParseUnsupportedReason classifies SWC parser gaps", () => {
   );
   assert.equal(
     knownWakaruParseUnsupportedReason(
+      new Error('failed to parse input.js: Error { error: (26..31, Expected("(", "await")) }'),
+      [{ name: "sloppy", strict: false }],
+      "test/language/expressions/generators/static-init-await-binding.js",
+    ),
+    "swc-parse-static-init-await",
+  );
+  assert.equal(
+    knownWakaruParseUnsupportedReason(
       new Error("failed to parse input.js: Error { error: (39..44, TS1109) }"),
       [{ name: "sloppy", strict: false }],
       "test/language/expressions/object/method-definition/yield-as-identifier-in-nested-function.js",
