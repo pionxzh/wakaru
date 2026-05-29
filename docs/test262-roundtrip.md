@@ -129,8 +129,13 @@ record it as a `failed` baseline instead.
 
 ## Baselines
 
-Tracked baseline summaries live in `docs/test262-baselines/`. Regenerate them
-with:
+Tracked baseline summaries live in `docs/test262-baselines/`. Normal summaries
+are grouped by producer pipeline, and each producer runs the same slice set.
+Regenerate the full normal matrix with:
+
+```powershell
+node scripts\correctness\test262-baseline-matrix.mjs
+```
 
 Baseline paths encode two separate dimensions:
 
@@ -138,44 +143,25 @@ Baseline paths encode two separate dimensions:
 - the producer pipeline that transforms source before Wakaru runs
   (`terser-light`, `swc-minify`, `esbuild-minify`, and so on).
 
-Root-level summaries use the runner defaults: the `terser-light` producer and
-the `minimal` rewrite level. For example, `docs/test262-baselines/default.md`
-means "default Test262 slice through `terser-light`", not raw Test262 source.
-Use `--pipeline none` or `--transform none` for a no-producer run.
+For example, `docs/test262-baselines/terser-light/default.md` means "default
+Test262 slice through `terser-light`", not raw Test262 source. Use
+`--pipeline none` or `--transform none` for a no-producer run. `terser-light`
+uses Terser as a parser/printer with no compression or mangling.
+
+Use `--producer` and `--slice` to refresh a subset:
 
 ```powershell
-node scripts\correctness\test262-roundtrip.mjs --limit all --summary docs\test262-baselines\default.md
-node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --summary docs\test262-baselines\classes.md
-node scripts\correctness\test262-roundtrip.mjs --preset destructuring --limit all --summary docs\test262-baselines\destructuring.md
-node scripts\correctness\test262-roundtrip.mjs --preset async-generators --limit all --summary docs\test262-baselines\async-generators.md
-node scripts\correctness\test262-roundtrip.mjs --preset scope --limit all --summary docs\test262-baselines\scope.md
-node scripts\correctness\test262-roundtrip.mjs --preset control-flow --limit all --summary docs\test262-baselines\control-flow.md
-node scripts\correctness\test262-roundtrip.mjs --preset calls --limit all --summary docs\test262-baselines\calls.md
-node scripts\correctness\test262-roundtrip.mjs --preset operators --limit all --summary docs\test262-baselines\operators.md
-node scripts\correctness\test262-roundtrip.mjs --preset templates --limit all --summary docs\test262-baselines\templates.md
-node scripts\correctness\test262-roundtrip.mjs --preset modules --limit all --summary docs\test262-baselines\modules.md
+node scripts\correctness\test262-baseline-matrix.mjs --producer swc-minify --slice operators
 ```
 
-Producer-specific baselines live under `docs/test262-baselines/<pipeline>/`.
-Regenerate them by adding `--pipeline <name>` and writing into that directory.
+Add `--missing` to skip summaries that already exist and have `complete: true`.
+The matrix runner builds `wakaru-cli` once before running jobs unless `WAKARU`
+is already set.
+The lower-level roundtrip runner does not fall back to `cargo run`; build the
+CLI first or set `WAKARU` before calling it directly.
+
 `swc-minify` and `esbuild-minify` are standalone producer pipelines; they are
 not followed by Terser.
-
-```powershell
-node scripts\correctness\test262-roundtrip.mjs --limit all --pipeline swc-minify --summary docs\test262-baselines\swc-minify\default.md
-node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --pipeline swc-minify --summary docs\test262-baselines\swc-minify\classes.md
-node scripts\correctness\test262-roundtrip.mjs --preset destructuring --limit all --pipeline swc-minify --summary docs\test262-baselines\swc-minify\destructuring.md
-node scripts\correctness\test262-roundtrip.mjs --preset async-generators --limit all --pipeline swc-minify --summary docs\test262-baselines\swc-minify\async-generators.md
-node scripts\correctness\test262-roundtrip.mjs --preset templates --limit all --pipeline swc-minify --summary docs\test262-baselines\swc-minify\templates.md
-node scripts\correctness\test262-roundtrip.mjs --preset modules --limit all --pipeline swc-minify --summary docs\test262-baselines\swc-minify\modules.md
-
-node scripts\correctness\test262-roundtrip.mjs --limit all --pipeline esbuild-minify --summary docs\test262-baselines\esbuild-minify\default.md
-node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --pipeline esbuild-minify --summary docs\test262-baselines\esbuild-minify\classes.md
-node scripts\correctness\test262-roundtrip.mjs --preset destructuring --limit all --pipeline esbuild-minify --summary docs\test262-baselines\esbuild-minify\destructuring.md
-node scripts\correctness\test262-roundtrip.mjs --preset async-generators --limit all --pipeline esbuild-minify --summary docs\test262-baselines\esbuild-minify\async-generators.md
-node scripts\correctness\test262-roundtrip.mjs --preset templates --limit all --pipeline esbuild-minify --summary docs\test262-baselines\esbuild-minify\templates.md
-node scripts\correctness\test262-roundtrip.mjs --preset modules --limit all --pipeline esbuild-minify --summary docs\test262-baselines\esbuild-minify\modules.md
-```
 
 Module graph baselines live under `docs/test262-baselines/module-graph/`:
 these run the modules slice with recursive local dependency loading. In this

@@ -1110,10 +1110,9 @@ function runWakaru(source, { level, tmpRoot, basename, timeoutMs }) {
     return runChecked(debugBinary, ["--level", level, input], { timeoutMs }).stdout;
   }
 
-  return runChecked("cargo", ["run", "-q", "-p", "wakaru-cli", "--", "--level", level, input], {
-    cwd: repoRoot,
-    timeoutMs,
-  }).stdout;
+  throw new Error(
+    `missing wakaru binary: run "cargo build -p wakaru-cli" first, or set WAKARU to a wakaru executable`,
+  );
 }
 
 async function ensureTerser(toolRoot) {
