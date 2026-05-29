@@ -18,17 +18,24 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 755 | 157 | 598 | 141 | 1 | 15 | 0 |
+| 755 | 358 | 397 | 9 | 244 | 105 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
-| rejected | transform-reject | 1 |
-| skipped | flag:async | 2 |
-| skipped | flag:module | 391 |
+| rejected | transform-reject | 5 |
+| rejected | transform-reject-string-export-name | 6 |
+| rejected | transform-reject-top-level-await | 207 |
+| rejected | transform-runtime | 18 |
+| rejected | transform-runtime-module-default-name | 7 |
+| rejected | transform-runtime-module-this | 1 |
+| skipped | fixture | 156 |
+| skipped | flag:async | 33 |
+| skipped | host-api | 3 |
 | skipped | negative | 205 |
-| unsupported | node-vm-baseline | 141 |
+| unsupported | module-graph-baseline | 8 |
+| unsupported | node-module-baseline | 1 |
 
 ## Failures
 

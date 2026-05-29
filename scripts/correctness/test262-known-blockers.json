@@ -93,6 +93,72 @@
       }
     },
     {
+      "reason": "transform-reject-top-level-await",
+      "status": "rejected",
+      "phase": "transform",
+      "when": {
+        "errorIncludes": ["Top-level await is not available"]
+      },
+      "note": "The selected producer target rejects top-level await before Wakaru runs."
+    },
+    {
+      "reason": "transform-reject-string-export-name",
+      "status": "rejected",
+      "phase": "transform",
+      "when": {
+        "errorIncludes": ["Using the string", "as an export name is not supported"]
+      },
+      "note": "The selected producer target rejects arbitrary string export names before Wakaru runs."
+    },
+    {
+      "reason": "transform-runtime-arrow-this",
+      "status": "rejected",
+      "phase": "transformed-runtime",
+      "when": {
+        "pathIncludes": ["test/language/expressions/arrow-function/arrow/binding-tests-"],
+        "errorIncludes": ["arrow capturing this"]
+      },
+      "note": "The producer changed arrow-function this binding before Wakaru runs."
+    },
+    {
+      "reason": "transform-runtime-inferred-name",
+      "status": "rejected",
+      "phase": "transformed-runtime",
+      "when": {
+        "errorRegex": ["Expected SameValue\\(.*\\) to be false"]
+      },
+      "note": "The producer changed function or class inferred-name behavior before Wakaru runs."
+    },
+    {
+      "reason": "transform-runtime-module-default-name",
+      "status": "rejected",
+      "phase": "transformed-runtime",
+      "when": {
+        "pathIncludes": ["test/language/module-code/eval-export-dflt"],
+        "errorIncludes": ["correct name is assigned"]
+      },
+      "note": "The module producer changed default export function/class name inference before Wakaru runs."
+    },
+    {
+      "reason": "transform-runtime-module-this",
+      "status": "rejected",
+      "phase": "transformed-runtime",
+      "when": {
+        "pathIncludes": ["test/language/module-code/eval-this.js"],
+        "errorIncludes": ["Expected SameValue"]
+      },
+      "note": "The module producer changed top-level this behavior before Wakaru runs."
+    },
+    {
+      "reason": "transform-runtime-with-environment",
+      "status": "rejected",
+      "phase": "transformed-runtime",
+      "when": {
+        "pathStartsWith": ["test/language/statements/with/S12.10_"]
+      },
+      "note": "The producer changed legacy with-environment behavior before Wakaru runs."
+    },
+    {
       "reason": "swc-array-binding-elision",
       "status": "rejected",
       "phase": "swc-fidelity",

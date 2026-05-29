@@ -15,6 +15,8 @@ import {
   formatMarkdownSummary,
   isSloppyOnlyWakaruParseUnsupported,
   knownSwcFidelityIssueReason,
+  knownTransformedRuntimeRejectReason,
+  knownTransformRejectReason,
   knownWakaruParseUnsupportedReason,
   loadKnownBlockers,
   missingToolPackageSpecs,
@@ -603,6 +605,75 @@ test("knownSwcFidelityIssueReason classifies array binding elision printer gaps"
       decompiled: "export default function() {};",
     }),
     "swc-print-export-default-function-expression",
+  );
+});
+
+test("knownTransformRejectReason classifies producer transform rejects", () => {
+  assert.equal(
+    knownTransformRejectReason({
+      path: "test/language/module-code/top-level-await/syntax/await-expr.js",
+      error: new Error('ERROR: Top-level await is not available in the configured target environment ("es2020")'),
+    }),
+    "transform-reject-top-level-await",
+  );
+  assert.equal(
+    knownTransformRejectReason({
+      path: "test/language/module-code/export-expname-binding-string.js",
+      error: new Error('ERROR: Using the string "☿" as an export name is not supported'),
+    }),
+    "transform-reject-string-export-name",
+  );
+  assert.equal(
+    knownTransformRejectReason({
+      path: "test/language/module-code/other.js",
+      error: new Error("unexpected producer failure"),
+    }),
+    null,
+  );
+});
+
+test("knownTransformedRuntimeRejectReason classifies producer runtime drift", () => {
+  assert.equal(
+    knownTransformedRuntimeRejectReason({
+      path: "test/language/expressions/arrow-function/arrow/binding-tests-1.js",
+      error: new Error("This binding initialization was incorrect for arrow capturing this from closure"),
+    }),
+    "transform-runtime-arrow-this",
+  );
+  assert.equal(
+    knownTransformedRuntimeRejectReason({
+      path: "test/language/expressions/arrow-function/dstr/ary-ptrn-elem-id-init-fn-name-class.js",
+      error: new Error('Expected SameValue(«"xCls"», «"xCls"») to be false'),
+    }),
+    "transform-runtime-inferred-name",
+  );
+  assert.equal(
+    knownTransformedRuntimeRejectReason({
+      path: "test/language/module-code/eval-export-dflt-expr-fn-anon.js",
+      error: new Error('correct name is assigned Expected SameValue(«"stdin_default"», «"default"») to be true'),
+    }),
+    "transform-runtime-module-default-name",
+  );
+  assert.equal(
+    knownTransformedRuntimeRejectReason({
+      path: "test/language/module-code/eval-this.js",
+      error: new Error("Expected SameValue(«[object Object]», «undefined») to be true"),
+    }),
+    "transform-runtime-module-this",
+  );
+  assert.equal(
+    knownTransformedRuntimeRejectReason({
+      path: "test/language/statements/with/S12.10_A1.1_T1.js",
+      error: new Error("producer changed with environment behavior"),
+    }),
+    "transform-runtime-with-environment",
+  );
+  assert.equal(
+    knownTransformedRuntimeRejectReason({
+      path: "test/language/expressions/other.js",
+      error: new Error("unexpected producer runtime failure"),
+    }),
+    null,
   );
 });
 

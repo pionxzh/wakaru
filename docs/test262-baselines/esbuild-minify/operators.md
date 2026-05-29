@@ -26,7 +26,8 @@
 |---|---|---:|
 | rejected | swc-array-binding-elision | 9 |
 | rejected | transform-reject | 6 |
-| rejected | transform-runtime | 23 |
+| rejected | transform-runtime | 13 |
+| rejected | transform-runtime-inferred-name | 10 |
 | skipped | flag:async | 1 |
 | skipped | negative | 188 |
 | unsupported | node-vm-baseline | 93 |

@@ -25,7 +25,8 @@
 | Status | Reason | Count |
 |---|---|---:|
 | rejected | transform-reject | 1 |
-| rejected | transform-runtime | 32 |
+| rejected | transform-runtime | 22 |
+| rejected | transform-runtime-with-environment | 10 |
 | skipped | negative | 250 |
 | unsupported | node-vm-baseline | 10 |
 | unsupported | sloppy-only-strict-ident | 3 |

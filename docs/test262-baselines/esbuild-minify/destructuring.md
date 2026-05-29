@@ -26,7 +26,8 @@
 |---|---|---:|
 | rejected | swc-array-binding-elision | 18 |
 | rejected | transform-reject | 10 |
-| rejected | transform-runtime | 56 |
+| rejected | transform-runtime | 6 |
+| rejected | transform-runtime-inferred-name | 50 |
 | skipped | negative | 143 |
 
 ## Failures

@@ -27,7 +27,10 @@
 | rejected | swc-array-binding-elision | 6 |
 | rejected | swc-print-new-arrow-parens | 1 |
 | rejected | transform-reject | 1 |
-| rejected | transform-runtime | 182 |
+| rejected | transform-runtime | 18 |
+| rejected | transform-runtime-arrow-this | 3 |
+| rejected | transform-runtime-inferred-name | 57 |
+| rejected | transform-runtime-with-environment | 104 |
 | skipped | negative | 250 |
 | unsupported | node-vm-baseline | 10 |
 

@@ -18,16 +18,16 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8426 | 5063 | 3363 | 27 | 155 | 4881 | 0 |
+| 8426 | 5064 | 3362 | 27 | 156 | 4881 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
+| rejected | case-timeout | 1 |
 | rejected | transform-reject | 63 |
 | rejected | transform-runtime | 92 |
-| skipped | flag:async | 2078 |
-| skipped | flag:module | 9 |
+| skipped | flag:async | 2086 |
 | skipped | host-api | 10 |
 | skipped | negative | 1266 |
 | unsupported | node-vm-baseline | 24 |

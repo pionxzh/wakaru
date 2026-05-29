@@ -18,7 +18,7 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 2180 | 1646 | 534 | 4 | 110 | 1532 | 0 |
+| 2180 | 1647 | 533 | 4 | 111 | 1532 | 0 |
 
 ## Reasons
 
@@ -26,9 +26,10 @@
 |---|---|---:|
 | rejected | swc-array-binding-elision | 9 |
 | rejected | transform-reject | 9 |
-| rejected | transform-runtime | 92 |
-| skipped | flag:async | 230 |
-| skipped | flag:module | 2 |
+| rejected | transform-reject-top-level-await | 1 |
+| rejected | transform-runtime | 18 |
+| rejected | transform-runtime-inferred-name | 74 |
+| skipped | flag:async | 231 |
 | skipped | negative | 302 |
 | unsupported | node-vm-baseline | 3 |
 | unsupported | swc-parse-yield-ident | 1 |

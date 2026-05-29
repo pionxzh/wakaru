@@ -733,7 +733,13 @@ async function runOneTest({
   try {
     transformed = await transformSource(source, options);
   } catch (error) {
-    return rejected(relativePath, "transform", error, "transform-reject");
+    return rejected(
+      relativePath,
+      "transform",
+      error,
+      knownTransformRejectReason({ path: relativePath, error, variants, knownBlockers }) ??
+        "transform-reject",
+    );
   }
 
   try {
@@ -746,7 +752,13 @@ async function runOneTest({
       });
     }
   } catch (error) {
-    return rejected(relativePath, "transformed-runtime", error, "transform-runtime");
+    return rejected(
+      relativePath,
+      "transformed-runtime",
+      error,
+      knownTransformedRuntimeRejectReason({ path: relativePath, error, variants, knownBlockers }) ??
+        "transform-runtime",
+    );
   }
 
   let decompiled;
@@ -843,7 +855,17 @@ async function runOneModuleTest({
       transformedSources.set(path, await transformSource(moduleSource, options, { module: true }));
     }
   } catch (error) {
-    return rejected(relativePath, "transform", error, "transform-reject");
+    return rejected(
+      relativePath,
+      "transform",
+      error,
+      knownTransformRejectReason({
+        path: relativePath,
+        error,
+        variants: [{ name: "module", strict: true, module: true }],
+        knownBlockers,
+      }) ?? "transform-reject",
+    );
   }
 
   try {
@@ -856,7 +878,17 @@ async function runOneModuleTest({
       timeoutMs: options.caseTimeoutMs,
     });
   } catch (error) {
-    return rejected(relativePath, "transformed-runtime", error, "transform-runtime");
+    return rejected(
+      relativePath,
+      "transformed-runtime",
+      error,
+      knownTransformedRuntimeRejectReason({
+        path: relativePath,
+        error,
+        variants: [{ name: "module", strict: true, module: true }],
+        knownBlockers,
+      }) ?? "transform-runtime",
+    );
   }
 
   const decompiledSources = new Map();
@@ -991,6 +1023,38 @@ export function knownSwcFidelityIssueReason({
     path,
     error,
     decompiled,
+  });
+}
+
+export function knownTransformRejectReason({
+  path,
+  error,
+  variants = [],
+  knownBlockers = defaultKnownBlockers(),
+}) {
+  return classifyKnownBlocker({
+    knownBlockers,
+    status: "rejected",
+    phase: "transform",
+    path,
+    error,
+    variants,
+  });
+}
+
+export function knownTransformedRuntimeRejectReason({
+  path,
+  error,
+  variants = [],
+  knownBlockers = defaultKnownBlockers(),
+}) {
+  return classifyKnownBlocker({
+    knownBlockers,
+    status: "rejected",
+    phase: "transformed-runtime",
+    path,
+    error,
+    variants,
   });
 }
 

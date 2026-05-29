@@ -18,18 +18,18 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8426 | 5063 | 3363 | 34 | 680 | 4349 | 0 |
+| 8426 | 5064 | 3362 | 34 | 681 | 4349 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
+| rejected | case-timeout | 1 |
 | rejected | swc-print-class-extends-arrow-parens | 2 |
 | rejected | swc-print-static-constructor-method | 2 |
 | rejected | transform-reject | 74 |
 | rejected | transform-runtime | 602 |
-| skipped | flag:async | 2078 |
-| skipped | flag:module | 9 |
+| skipped | flag:async | 2086 |
 | skipped | host-api | 10 |
 | skipped | negative | 1266 |
 | unsupported | node-vm-baseline | 24 |

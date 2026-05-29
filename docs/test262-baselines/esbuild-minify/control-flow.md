@@ -25,7 +25,8 @@
 | Status | Reason | Count |
 |---|---|---:|
 | rejected | transform-reject | 2 |
-| rejected | transform-runtime | 42 |
+| rejected | transform-runtime | 10 |
+| rejected | transform-runtime-inferred-name | 32 |
 | skipped | negative | 335 |
 | unsupported | node-vm-baseline | 21 |
 

@@ -25,7 +25,8 @@
 | Status | Reason | Count |
 |---|---|---:|
 | rejected | transform-reject | 1 |
-| rejected | transform-runtime | 39 |
+| rejected | transform-runtime | 7 |
+| rejected | transform-runtime-inferred-name | 32 |
 | skipped | flag:async | 756 |
 | skipped | host-api | 2 |
 | skipped | negative | 283 |

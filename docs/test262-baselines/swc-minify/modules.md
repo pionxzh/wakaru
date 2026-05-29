@@ -18,17 +18,19 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 755 | 157 | 598 | 142 | 2 | 13 | 0 |
+| 755 | 358 | 397 | 10 | 1 | 347 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
-| rejected | transform-reject | 2 |
-| skipped | flag:async | 2 |
-| skipped | flag:module | 391 |
+| rejected | transform-runtime | 1 |
+| skipped | fixture | 156 |
+| skipped | flag:async | 33 |
+| skipped | host-api | 3 |
 | skipped | negative | 205 |
-| unsupported | node-vm-baseline | 141 |
+| unsupported | module-graph-baseline | 8 |
+| unsupported | node-module-baseline | 1 |
 | unsupported | swc-parse-async-ident | 1 |
 
 ## Failures
