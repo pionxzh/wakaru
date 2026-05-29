@@ -1960,24 +1960,116 @@ fn classify_item(item: ModuleItem, unresolved_mark: Mark) -> Classified {
 }
 
 fn remove_default_export_mirrors(classified: &mut [Classified], unresolved_mark: Mark) {
-    let mut saw_named_default = false;
-
+    let mut saw_safe_named_default = false;
     for item in classified {
-        let Classified::CjsExport { kind } = item else {
+        if let Classified::CjsExport {
+            kind: CjsExportKind::ModuleExportsDefault { expr },
+        } = item
+        {
+            if saw_safe_named_default && is_exports_default_expr(expr.as_ref(), unresolved_mark) {
+                *item = Classified::CjsExport {
+                    kind: CjsExportKind::DefaultMirror,
+                };
+            }
+            saw_safe_named_default = false;
             continue;
-        };
-
-        match kind {
-            CjsExportKind::NamedDefault { .. } => {
-                saw_named_default = true;
-            }
-            CjsExportKind::ModuleExportsDefault { expr }
-                if saw_named_default && is_exports_default_expr(expr.as_ref(), unresolved_mark) =>
-            {
-                *kind = CjsExportKind::DefaultMirror;
-            }
-            _ => {}
         }
+
+        if matches!(
+            item,
+            Classified::CjsExport {
+                kind: CjsExportKind::NamedDefault { .. }
+            }
+        ) {
+            saw_safe_named_default = true;
+            continue;
+        }
+
+        if saw_safe_named_default && is_safe_intervening_default_mirror_item(item, unresolved_mark)
+        {
+            continue;
+        }
+
+        saw_safe_named_default = false;
+    }
+}
+
+fn is_safe_intervening_default_mirror_item(item: &Classified, unresolved_mark: Mark) -> bool {
+    match item {
+        Classified::ExistingImport(_) | Classified::CjsRequire(_) => true,
+        Classified::Keep(item) => is_safe_intervening_module_item(item, unresolved_mark),
+        Classified::CjsExport { .. } => false,
+    }
+}
+
+fn is_safe_intervening_module_item(item: &ModuleItem, unresolved_mark: Mark) -> bool {
+    let mut finder = UnsafeDefaultMirrorInterveningFinder {
+        unresolved_mark,
+        found: false,
+    };
+    item.visit_with(&mut finder);
+    !finder.found
+}
+
+struct UnsafeDefaultMirrorInterveningFinder {
+    unresolved_mark: Mark,
+    found: bool,
+}
+
+impl Visit for UnsafeDefaultMirrorInterveningFinder {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if is_unresolved_ident(ident, "exports", self.unresolved_mark)
+            || is_unresolved_ident(ident, "module", self.unresolved_mark)
+        {
+            self.found = true;
+        }
+    }
+
+    fn visit_call_expr(&mut self, _: &CallExpr) {
+        self.found = true;
+    }
+
+    fn visit_new_expr(&mut self, _: &swc_core::ecma::ast::NewExpr) {
+        self.found = true;
+    }
+
+    fn visit_await_expr(&mut self, _: &swc_core::ecma::ast::AwaitExpr) {
+        self.found = true;
+    }
+
+    fn visit_yield_expr(&mut self, _: &swc_core::ecma::ast::YieldExpr) {
+        self.found = true;
+    }
+
+    fn visit_update_expr(&mut self, _: &swc_core::ecma::ast::UpdateExpr) {
+        self.found = true;
+    }
+
+    fn visit_unary_expr(&mut self, expr: &swc_core::ecma::ast::UnaryExpr) {
+        if expr.op == UnaryOp::Delete {
+            self.found = true;
+        } else {
+            expr.visit_children_with(self);
+        }
+    }
+
+    fn visit_assign_expr(&mut self, expr: &AssignExpr) {
+        if !matches!(
+            &expr.left,
+            AssignTarget::Simple(SimpleAssignTarget::Ident(_))
+        ) {
+            self.found = true;
+            return;
+        }
+        expr.right.visit_with(self);
+    }
+
+    fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+    fn visit_class(&mut self, _: &swc_core::ecma::ast::Class) {
+        self.found = true;
     }
 }
 

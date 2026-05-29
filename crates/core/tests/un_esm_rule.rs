@@ -210,6 +210,41 @@ module.exports = exports.default;
 }
 
 #[test]
+fn module_exports_default_mirror_blocks_unsafe_intervening_call() {
+    let input = r#"
+exports.default = value;
+mutate(exports);
+module.exports = exports.default;
+"#;
+    let expected = r#"
+value;
+mutate(exports);
+export default exports.default;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn module_exports_default_mirror_allows_safe_intervening_aliases() {
+    let input = r#"
+exports.default = value;
+var imported;
+imported = dependency;
+var alias = imported;
+module.exports = exports.default;
+"#;
+    let expected = r#"
+export default value;
+let imported;
+imported = dependency;
+const alias = imported;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn module_exports_default_mirror_keeps_alias_value() {
     let input = r#"
 const makeDefault = () => ({});

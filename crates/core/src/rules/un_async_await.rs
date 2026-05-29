@@ -749,6 +749,9 @@ fn apply_unused_param_hints(func: &mut Function, hints: HashMap<BindingId, Atom>
     let mut collector = UseCollector {
         uses: HashSet::new(),
     };
+    for param in &func.params {
+        collector.visit_pat(&param.pat);
+    }
     body.visit_with(&mut collector);
 
     let mut reserved_param_names: HashSet<Atom> = func
