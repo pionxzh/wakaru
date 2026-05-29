@@ -21,6 +21,13 @@ impl RemoveVoid {
 }
 
 impl VisitMut for RemoveVoid {
+    fn visit_mut_unary_expr(&mut self, expr: &mut UnaryExpr) {
+        if expr.op == UnaryOp::Delete {
+            return;
+        }
+        expr.visit_mut_children_with(self);
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 

@@ -4,8 +4,8 @@ use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignTarget, BinaryOp, BlockStmt, Decl, Expr, ExprStmt, ForHead, ForInStmt,
     ForOfStmt, ForStmt, IfStmt, ImportSpecifier, Invalid, Lit, MemberExpr, ModuleDecl, ModuleItem,
-    ParenExpr, Pat, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt, UnaryOp,
-    VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator, YieldExpr,
+    ParenExpr, Pat, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt,
+    UnaryExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -150,6 +150,9 @@ fn is_pure_no_op_stmt(
         return false;
     }
     if has_observable_binary_coercion(expr) {
+        return false;
+    }
+    if has_observable_unary_throw(expr) {
         return false;
     }
     if has_new_expr(expr) {
@@ -351,6 +354,7 @@ fn has_object_literal(expr: &Expr) -> bool {
 
 fn has_observable_binary_coercion(expr: &Expr) -> bool {
     match expr {
+        Expr::Bin(bin) if binary_op_can_throw_on_literals(bin.op, &bin.left, &bin.right) => true,
         Expr::Bin(bin)
             if binary_op_can_coerce_or_throw(bin.op)
                 && (!is_known_primitive_literal(&bin.left)
@@ -366,10 +370,53 @@ fn has_observable_binary_coercion(expr: &Expr) -> bool {
     }
 }
 
+fn has_observable_unary_throw(expr: &Expr) -> bool {
+    match expr {
+        Expr::Unary(unary) if unary_can_throw_on_literal(unary) => true,
+        Expr::Unary(unary) => has_observable_unary_throw(&unary.arg),
+        Expr::Paren(paren) => has_observable_unary_throw(&paren.expr),
+        _ => false,
+    }
+}
+
 fn has_new_expr(expr: &Expr) -> bool {
     match expr {
         Expr::New(_) => true,
         Expr::Paren(paren) => has_new_expr(&paren.expr),
+        _ => false,
+    }
+}
+
+fn binary_op_can_throw_on_literals(op: BinaryOp, left: &Expr, right: &Expr) -> bool {
+    match op {
+        BinaryOp::In | BinaryOp::InstanceOf => is_known_primitive_literal(right),
+        BinaryOp::ZeroFillRShift => has_bigint_literal(left) || has_bigint_literal(right),
+        BinaryOp::Add
+        | BinaryOp::Sub
+        | BinaryOp::Mul
+        | BinaryOp::Div
+        | BinaryOp::Mod
+        | BinaryOp::Exp
+        | BinaryOp::BitOr
+        | BinaryOp::BitXor
+        | BinaryOp::BitAnd
+        | BinaryOp::LShift
+        | BinaryOp::RShift => has_bigint_literal(left) || has_bigint_literal(right),
+        _ => false,
+    }
+}
+
+fn unary_can_throw_on_literal(unary: &UnaryExpr) -> bool {
+    unary.op == UnaryOp::Plus && has_bigint_literal(&unary.arg)
+}
+
+fn has_bigint_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(Lit::BigInt(_)) => true,
+        Expr::Paren(paren) => has_bigint_literal(&paren.expr),
+        Expr::Unary(unary) if matches!(unary.op, UnaryOp::Minus | UnaryOp::Plus) => {
+            has_bigint_literal(&unary.arg)
+        }
         _ => false,
     }
 }

@@ -1340,6 +1340,7 @@ fn keep_global_observed_vars(
     let mut observer = GlobalVarObserver {
         var_ids,
         observed: HashSet::new(),
+        function_depth: 0,
     };
     for item in items {
         item.visit_with(&mut observer);
@@ -1350,6 +1351,7 @@ fn keep_global_observed_vars(
 struct GlobalVarObserver<'a> {
     var_ids: &'a HashSet<BindingId>,
     observed: HashSet<BindingId>,
+    function_depth: usize,
 }
 
 impl GlobalVarObserver<'_> {
@@ -1366,7 +1368,7 @@ impl GlobalVarObserver<'_> {
 
 impl Visit for GlobalVarObserver<'_> {
     fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
-        if is_global_object_expr(member.obj.as_ref()) {
+        if self.is_global_object_expr(member.obj.as_ref()) {
             if let Some(name) = static_member_prop_name(&member.prop) {
                 self.mark_name(&name);
             }
@@ -1383,10 +1385,22 @@ impl Visit for GlobalVarObserver<'_> {
 
         stmt.body.visit_with(self);
     }
+
+    fn visit_function(&mut self, function: &Function) {
+        self.function_depth += 1;
+        function.visit_children_with(self);
+        self.function_depth -= 1;
+    }
 }
 
-fn is_global_object_expr(expr: &Expr) -> bool {
-    matches!(strip_parens(expr), Expr::Ident(id) if matches!(id.sym.as_ref(), "globalThis" | "window" | "self"))
+impl GlobalVarObserver<'_> {
+    fn is_global_object_expr(&self, expr: &Expr) -> bool {
+        match strip_parens(expr) {
+            Expr::Ident(id) if matches!(id.sym.as_ref(), "globalThis" | "window" | "self") => true,
+            Expr::This(_) if self.function_depth == 0 => true,
+            _ => false,
+        }
+    }
 }
 
 fn static_member_prop_name(prop: &MemberProp) -> Option<Atom> {

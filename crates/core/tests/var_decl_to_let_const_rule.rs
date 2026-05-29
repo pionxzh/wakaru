@@ -301,6 +301,16 @@ assert.sameValue(globalThis.v, 1);
 }
 
 #[test]
+fn module_var_observed_through_top_level_this_stays_var() {
+    let input = r#"
+var v = 1;
+delete this.v;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn module_var_observed_in_global_with_stays_var() {
     let input = r#"
 var v = 1;

@@ -77,6 +77,15 @@ var b = `${expr} has been deprecated`;
 }
 
 #[test]
+fn keeps_plus_empty_string_conversion() {
+    let input = r#"
+var actual = object + "";
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn plus_chain_groups_non_string_prefix() {
     // `a + b + "c"` must NOT become `${a}${b}c` (breaks arithmetic for numbers).
     // The non-string prefix `a + b` is kept as a single grouped expression.

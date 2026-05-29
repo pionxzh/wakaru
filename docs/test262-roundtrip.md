@@ -140,6 +140,7 @@ node scripts\correctness\test262-roundtrip.mjs --preset async-generators --limit
 node scripts\correctness\test262-roundtrip.mjs --preset scope --limit all --summary docs\test262-baselines\scope.md
 node scripts\correctness\test262-roundtrip.mjs --preset control-flow --limit all --summary docs\test262-baselines\control-flow.md
 node scripts\correctness\test262-roundtrip.mjs --preset calls --limit all --summary docs\test262-baselines\calls.md
+node scripts\correctness\test262-roundtrip.mjs --preset operators --limit all --summary docs\test262-baselines\operators.md
 node scripts\correctness\test262-roundtrip.mjs --preset templates --limit all --summary docs\test262-baselines\templates.md
 node scripts\correctness\test262-roundtrip.mjs --preset modules --limit all --summary docs\test262-baselines\modules.md
 ```
@@ -172,17 +173,18 @@ node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline esbui
 node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline babel-env-terser --limit all --case-timeout-ms 2000 --summary docs\test262-baselines\module-graph\babel-env-terser.md
 ```
 
-Recorded on 2026-05-25, with the scope, control-flow, and calls slices added on 2026-05-29:
+Recorded on 2026-05-25, with the scope, control-flow, calls, and operators slices added on 2026-05-29:
 
 | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | default | 2180 | 1647 | 533 | 34 | 128 | 1485 | 0 |
 | classes | 8426 | 5063 | 3363 | 34 | 680 | 4349 | 0 |
-| destructuring | 1034 | 891 | 143 | 28 | 45 | 809 | 9 |
-| async-generators | 1707 | 666 | 1041 | 13 | 6 | 642 | 5 |
+| destructuring | 1034 | 891 | 143 | 28 | 54 | 809 | 0 |
+| async-generators | 1707 | 666 | 1041 | 15 | 6 | 645 | 0 |
 | scope | 1396 | 1146 | 250 | 20 | 8 | 1118 | 0 |
 | control-flow | 1117 | 782 | 335 | 24 | 10 | 748 | 0 |
 | calls | 193 | 185 | 8 | 7 | 0 | 178 | 0 |
+| operators | 2200 | 2011 | 189 | 108 | 83 | 1820 | 0 |
 | templates | 84 | 67 | 17 | 2 | 1 | 64 | 0 |
 | modules | 755 | 157 | 598 | 142 | 6 | 9 | 0 |
 

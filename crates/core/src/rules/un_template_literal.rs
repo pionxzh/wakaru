@@ -372,6 +372,9 @@ fn rewrite_plus_chain(expr: &Expr) -> Option<Expr> {
         return None;
     }
     let first_str_idx = operands.iter().position(|e| is_str_lit(e))?;
+    if first_str_idx > 0 && is_empty_str_lit(operands[first_str_idx]) {
+        return None;
+    }
 
     // Determine the span for the resulting template
     let span = match expr {
@@ -425,6 +428,10 @@ fn collect_add_chain<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
 
 fn is_str_lit(expr: &Expr) -> bool {
     matches!(expr, Expr::Lit(Lit::Str(_)))
+}
+
+fn is_empty_str_lit(expr: &Expr) -> bool {
+    matches!(expr, Expr::Lit(Lit::Str(s)) if s.value.is_empty())
 }
 
 fn collect_template_factories(module: &Module) -> HashMap<BindingKey, TemplateData> {

@@ -502,6 +502,29 @@ function probe() {
 }
 
 #[test]
+fn preserves_bigint_operator_throw_statements() {
+    let input = r#"
+1n + 1;
+1n / 0n;
+1n % 0n;
+1n >>> 1n;
++1n;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_in_and_instanceof_throw_statements() {
+    let input = r#"
+"x" in true;
+true instanceof true;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn preserves_function_expression_statement() {
     // A function expression as a statement should not be removed even though
     // it's technically side-effect-free (issue #150: webcrack output wrapper)

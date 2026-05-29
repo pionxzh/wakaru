@@ -42,6 +42,15 @@ const c = undefined;
 }
 
 #[test]
+fn does_not_transform_void_under_delete() {
+    let input = r#"
+assert.sameValue(delete void 0, true);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn does_not_transform_void_function_call() {
     // Reused from packages/unminify/src/transformations/__tests__/un-undefined.spec.ts
     // ArrowFunction rule converts the function expression to an arrow function.
