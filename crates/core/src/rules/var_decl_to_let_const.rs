@@ -70,6 +70,7 @@ impl VisitMut for VarDeclToLetConst {
             assigned: &assigned,
             must_stay_var: &must_stay_var,
             in_block_context: true,
+            in_with_stmt: false,
         };
         module.visit_mut_with(&mut converter);
     }
@@ -112,6 +113,7 @@ impl VisitMut for VarDeclToLetConst {
             assigned: &assigned,
             must_stay_var: &must_stay_var,
             in_block_context: true,
+            in_with_stmt: false,
         };
         body.visit_mut_with(&mut converter);
     }
@@ -1368,12 +1370,13 @@ impl Visit for GlobalVarObserver<'_> {
     }
 
     fn visit_with_stmt(&mut self, stmt: &WithStmt) {
-        if is_global_object_expr(&stmt.obj) {
-            let mut refs = AllIdentRefCollector::default();
-            stmt.body.visit_with(&mut refs);
-            self.mark_refs(refs.refs);
-        }
-        stmt.visit_children_with(self);
+        stmt.obj.visit_with(self);
+
+        let mut refs = AllIdentRefCollector::default();
+        stmt.body.visit_with(&mut refs);
+        self.mark_refs(refs.refs);
+
+        stmt.body.visit_with(self);
     }
 }
 
@@ -1585,11 +1588,14 @@ struct VarConverter<'a> {
     /// true when we're inside a block or at module/function top level —
     /// i.e. `let`/`const` is syntactically valid here.
     in_block_context: bool,
+    /// true when visiting a `with` body. A `var` there may resolve through the
+    /// object environment record, while `let`/`const` would always be lexical.
+    in_with_stmt: bool,
 }
 
 impl VisitMut for VarConverter<'_> {
     fn visit_mut_var_decl(&mut self, var: &mut VarDecl) {
-        if self.in_block_context {
+        if self.in_block_context && !self.in_with_stmt {
             // Skip conversion if any declarator must remain as `var` due to block escape
             let any_must_stay = var.decls.iter().any(|d| {
                 let mut ids = HashSet::new();
@@ -1722,6 +1728,17 @@ impl VisitMut for VarConverter<'_> {
         self.in_block_context = matches!(*stmt.body, swc_core::ecma::ast::Stmt::Block(_));
         stmt.body.visit_mut_with(self);
         self.in_block_context = old;
+    }
+
+    fn visit_mut_with_stmt(&mut self, stmt: &mut WithStmt) {
+        stmt.obj.visit_mut_with(self);
+        let old_block = self.in_block_context;
+        let old_with = self.in_with_stmt;
+        self.in_with_stmt = true;
+        self.in_block_context = matches!(*stmt.body, swc_core::ecma::ast::Stmt::Block(_));
+        stmt.body.visit_mut_with(self);
+        self.in_block_context = old_block;
+        self.in_with_stmt = old_with;
     }
 
     // Stop at function boundaries (nested functions are handled by VarDeclToLetConst recursion)

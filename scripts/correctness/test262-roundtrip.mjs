@@ -74,6 +74,14 @@ const pathPresets = {
     "test/language/statements/async-generator",
     "test/language/statements/generators",
   ],
+  scope: [
+    "test/language/statements/block",
+    "test/language/statements/const",
+    "test/language/statements/function",
+    "test/language/expressions/function",
+    "test/language/expressions/arrow-function",
+    "test/language/statements/with",
+  ],
   templates: ["test/language/expressions/template-literal", "test/language/expressions/tagged-template"],
   modules: ["test/language/module-code"],
 };

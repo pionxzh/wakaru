@@ -319,6 +319,29 @@ with (globalThis) {
 }
 
 #[test]
+fn var_inside_with_body_stays_var() {
+    let input = r#"
+with (obj) {
+    var value = "set";
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn module_var_referenced_from_with_body_stays_var() {
+    let input = r#"
+var b;
+with (obj) {
+    b = true;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn exported_module_var_stays_var_in_minimal() {
     let input = r#"
 import { x as y } from './self.js';

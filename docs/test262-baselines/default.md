@@ -18,17 +18,16 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 2180 | 1646 | 534 | 34 | 127 | 1485 | 0 |
+| 2180 | 1647 | 533 | 34 | 128 | 1485 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
 | rejected | swc-array-binding-elision | 9 |
-| rejected | transform-reject | 115 |
+| rejected | transform-reject | 116 |
 | rejected | transform-runtime | 3 |
-| skipped | flag:async | 230 |
-| skipped | flag:module | 2 |
+| skipped | flag:async | 231 |
 | skipped | negative | 302 |
 | unsupported | node-vm-baseline | 3 |
 | unsupported | sloppy-only-strict-ident | 22 |

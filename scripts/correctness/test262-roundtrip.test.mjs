@@ -475,6 +475,14 @@ test("knownWakaruParseUnsupportedReason classifies SWC parser gaps", () => {
   );
   assert.equal(
     knownWakaruParseUnsupportedReason(
+      new Error("failed to parse input.js: Error { error: (8..13, TS1109) }"),
+      [{ name: "sloppy", strict: false }],
+      "test/language/expressions/arrow-function/syntax/arrowparameters-bindingidentifier-yield.js",
+    ),
+    "swc-parse-yield-arrow-parameter",
+  );
+  assert.equal(
+    knownWakaruParseUnsupportedReason(
       new Error('failed to parse input.js: Error { error: (36..41, Expected("(", "yield")) }'),
       [{ name: "sloppy", strict: false }],
       "test/language/expressions/object/method-definition/yield-as-function-expression-binding-identifier.js",
@@ -488,6 +496,14 @@ test("knownWakaruParseUnsupportedReason classifies SWC parser gaps", () => {
       "test/language/expressions/class/elements/syntax/valid/grammar-static-ctor-async-meth-valid.js",
     ),
     "swc-parse-static-async-constructor-method",
+  );
+  assert.equal(
+    knownWakaruParseUnsupportedReason(
+      new Error("thread 'main' has overflowed its stack"),
+      [{ name: "sloppy", strict: false }],
+      "test/language/statements/function/S13.2.1_A1_T1.js",
+    ),
+    "swc-parse-deep-iife-stack-overflow",
   );
   assert.equal(
     knownWakaruParseUnsupportedReason(
@@ -534,6 +550,14 @@ test("knownSwcFidelityIssueReason classifies array binding elision printer gaps"
   );
   assert.equal(
     knownSwcFidelityIssueReason({
+      path: "test/language/expressions/arrow-function/dstr/ary-ptrn-elision.js",
+      error: new Error("Test262Error"),
+      decompiled: "f = ([])=>{};",
+    }),
+    "swc-array-binding-elision",
+  );
+  assert.equal(
+    knownSwcFidelityIssueReason({
       path: "test/language/statements/for-of/dstr/obj-id.js",
       error: new Error("TypeError"),
       decompiled: "for ({ x } of values) {}",
@@ -555,6 +579,14 @@ test("knownSwcFidelityIssueReason classifies array binding elision printer gaps"
       decompiled: "var C = class extends ()=>{} {\n};",
     }),
     "swc-print-class-extends-arrow-parens",
+  );
+  assert.equal(
+    knownSwcFidelityIssueReason({
+      path: "test/language/expressions/arrow-function/throw-new.js",
+      error: new Error("SyntaxError: Malformed arrow function parameter list"),
+      decompiled: "new ()=>{};",
+    }),
+    "swc-print-new-arrow-parens",
   );
   assert.equal(
     knownSwcFidelityIssueReason({
