@@ -132,6 +132,17 @@ record it as a `failed` baseline instead.
 Tracked baseline summaries live in `docs/test262-baselines/`. Regenerate them
 with:
 
+Baseline paths encode two separate dimensions:
+
+- the Test262 slice (`default`, `classes`, `modules`, and so on);
+- the producer pipeline that transforms source before Wakaru runs
+  (`terser-light`, `swc-minify`, `esbuild-minify`, and so on).
+
+Root-level summaries use the runner defaults: the `terser-light` producer and
+the `minimal` rewrite level. For example, `docs/test262-baselines/default.md`
+means "default Test262 slice through `terser-light`", not raw Test262 source.
+Use `--pipeline none` or `--transform none` for a no-producer run.
+
 ```powershell
 node scripts\correctness\test262-roundtrip.mjs --limit all --summary docs\test262-baselines\default.md
 node scripts\correctness\test262-roundtrip.mjs --preset classes --limit all --summary docs\test262-baselines\classes.md
@@ -146,7 +157,9 @@ node scripts\correctness\test262-roundtrip.mjs --preset modules --limit all --su
 ```
 
 Producer-specific baselines live under `docs/test262-baselines/<pipeline>/`.
-Regenerate them by adding `--pipeline <name>` and writing into that directory:
+Regenerate them by adding `--pipeline <name>` and writing into that directory.
+`swc-minify` and `esbuild-minify` are standalone producer pipelines; they are
+not followed by Terser.
 
 ```powershell
 node scripts\correctness\test262-roundtrip.mjs --limit all --pipeline swc-minify --summary docs\test262-baselines\swc-minify\default.md
@@ -165,6 +178,8 @@ node scripts\correctness\test262-roundtrip.mjs --preset modules --limit all --pi
 ```
 
 Module graph baselines live under `docs/test262-baselines/module-graph/`:
+these run the modules slice with recursive local dependency loading. In this
+directory, the file name is the producer pipeline.
 
 ```powershell
 node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline none --limit all --case-timeout-ms 2000 --summary docs\test262-baselines\module-graph\none.md
