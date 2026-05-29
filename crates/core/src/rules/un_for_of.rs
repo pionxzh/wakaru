@@ -3,8 +3,8 @@ use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BindingIdent, BlockStmt,
     CallExpr, Callee, Decl, Expr, ExprOrSpread, ForHead, ForOfStmt, Ident, Lit, MemberExpr,
-    MemberProp, ModuleItem, Pat, SimpleAssignTarget, Stmt, TryStmt, UnaryExpr, UnaryOp, UpdateExpr,
-    UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
+    MemberProp, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, Stmt, TryStmt, UnaryExpr,
+    UnaryOp, UpdateExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -443,8 +443,14 @@ fn build_helper_for_of(
 ) -> Option<ForOfStmt> {
     let mut element = extract_iterator_value_element(&body.stmts, &item_ident);
     if element.is_none() {
+        element = extract_iterator_destructuring_decl_element(&body.stmts, &item_ident);
+    }
+    if element.is_none() {
         replace_iterator_value_refs(&mut body, &item_ident);
         element = extract_iterator_call_destructuring_element(&body.stmts, &item_ident);
+        if element.is_none() {
+            element = extract_iterator_destructuring_decl_element(&body.stmts, &item_ident);
+        }
     }
     let (pat, bindings, kind, consumed_stmts, temp_sym) = if let Some(element) = element {
         (
@@ -577,6 +583,38 @@ fn extract_iterator_call_destructuring_element(
     })
 }
 
+fn extract_iterator_destructuring_decl_element(
+    stmts: &[Stmt],
+    item_ident: &Ident,
+) -> Option<LoopElement> {
+    let first_decl = stmt_as_single_var_decl(stmts.first()?)?;
+    let first = &first_decl.decls[0];
+    if matches!(first.name, Pat::Ident(_)) {
+        return None;
+    }
+    let init = first.init.as_ref()?;
+    if !is_value_member(init, item_ident) && !is_ident_key(init, item_ident) {
+        return None;
+    }
+    if pat_uses_ident_key(&first.name, item_ident) {
+        return None;
+    }
+
+    let mut bindings = Vec::new();
+    collect_pat_bindings(&first.name, &mut bindings)?;
+    if bindings.is_empty() {
+        return None;
+    }
+
+    Some(LoopElement {
+        pat: first.name.clone(),
+        bindings,
+        kind: first_decl.kind,
+        temp_sym: None,
+        consumed_stmts: 1,
+    })
+}
+
 fn extract_iterator_value_element(stmts: &[Stmt], item_ident: &Ident) -> Option<LoopElement> {
     let first_decl = stmt_as_single_var_decl(stmts.first()?)?;
     let first = &first_decl.decls[0];
@@ -638,6 +676,40 @@ fn extract_iterator_value_element(stmts: &[Stmt], item_ident: &Ident) -> Option<
         temp_sym: None,
         consumed_stmts: 1,
     })
+}
+
+fn collect_pat_bindings(pat: &Pat, bindings: &mut Vec<Atom>) -> Option<()> {
+    match pat {
+        Pat::Ident(binding) => {
+            bindings.push(binding.id.sym.clone());
+            Some(())
+        }
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_bindings(elem, bindings)?;
+            }
+            Some(())
+        }
+        Pat::Rest(rest) => collect_pat_bindings(&rest.arg, bindings),
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    ObjectPatProp::KeyValue(key_value) => {
+                        collect_pat_bindings(&key_value.value, bindings)?;
+                    }
+                    ObjectPatProp::Assign(assign) => {
+                        bindings.push(assign.key.id.sym.clone());
+                    }
+                    ObjectPatProp::Rest(rest) => {
+                        collect_pat_bindings(&rest.arg, bindings)?;
+                    }
+                }
+            }
+            Some(())
+        }
+        Pat::Assign(assign) => collect_pat_bindings(&assign.left, bindings),
+        Pat::Expr(_) | Pat::Invalid(_) => None,
+    }
 }
 
 fn single_for_stmt(block: &BlockStmt) -> Option<&swc_core::ecma::ast::ForStmt> {
@@ -927,6 +999,30 @@ fn is_value_member(expr: &Expr, item_ident: &Ident) -> bool {
     };
     is_ident_key(obj, item_ident)
         && matches!(prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value")
+}
+
+fn pat_uses_ident_key(pat: &Pat, ident: &Ident) -> bool {
+    use swc_core::ecma::visit::Visit;
+
+    struct IdentFinder {
+        ident: Ident,
+        found: bool,
+    }
+
+    impl Visit for IdentFinder {
+        fn visit_ident(&mut self, ident: &Ident) {
+            if ident.sym == self.ident.sym && ident.ctxt == self.ident.ctxt {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = IdentFinder {
+        ident: ident.clone(),
+        found: false,
+    };
+    finder.visit_pat(pat);
+    finder.found
 }
 
 fn is_destructuring_helper_call(expr: &Expr, item_ident: &Ident) -> bool {

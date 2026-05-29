@@ -291,6 +291,54 @@ for (const [key, value] of entries) {
 }
 
 #[test]
+fn for_of_promotes_body_destructuring_from_iterator_value() {
+    let input = r#"
+const iterator = _createForOfIteratorHelper(entries);
+let step;
+try {
+  for (iterator.s(); !(step = iterator.n()).done;) {
+    const [key, value] = step.value;
+    use(key, value);
+  }
+} catch (err) {
+  iterator.e(err);
+} finally {
+  iterator.f();
+}
+"#;
+    let expected = r#"
+for (const [key, value] of entries) {
+  use(key, value);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn for_of_promotes_body_destructuring_from_rewritten_iterator_value() {
+    let input = r#"
+const iterator = _createForOfIteratorHelper(entries);
+let step;
+try {
+  for (iterator.s(); !(step = iterator.n()).done;) {
+    const [key, value] = step;
+    use(key, value);
+  }
+} catch (err) {
+  iterator.e(err);
+} finally {
+  iterator.f();
+}
+"#;
+    let expected = r#"
+for (const [key, value] of entries) {
+  use(key, value);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn for_of_from_ts_values_helper() {
     let input = r#"
 let errorState;
