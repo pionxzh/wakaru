@@ -2054,12 +2054,19 @@ impl Visit for UnsafeDefaultMirrorInterveningFinder {
     }
 
     fn visit_assign_expr(&mut self, expr: &AssignExpr) {
-        if !matches!(
-            &expr.left,
-            AssignTarget::Simple(SimpleAssignTarget::Ident(_))
-        ) {
-            self.found = true;
-            return;
+        match &expr.left {
+            AssignTarget::Simple(SimpleAssignTarget::Ident(binding))
+                if is_unresolved_ident(&binding.id, "exports", self.unresolved_mark)
+                    || is_unresolved_ident(&binding.id, "module", self.unresolved_mark) =>
+            {
+                self.found = true;
+                return;
+            }
+            AssignTarget::Simple(SimpleAssignTarget::Ident(_)) => {}
+            _ => {
+                self.found = true;
+                return;
+            }
         }
         expr.right.visit_with(self);
     }

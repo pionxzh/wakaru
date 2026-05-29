@@ -226,6 +226,22 @@ export default exports.default;
 }
 
 #[test]
+fn module_exports_default_mirror_blocks_rebinding_exports() {
+    let input = r#"
+exports.default = value;
+exports = other;
+module.exports = exports.default;
+"#;
+    let expected = r#"
+value;
+exports = other;
+export default exports.default;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn module_exports_default_mirror_allows_safe_intervening_aliases() {
     let input = r#"
 exports.default = value;
