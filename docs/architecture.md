@@ -50,7 +50,11 @@ Each unpacker detects a specific bundle format and extracts individual modules a
    namespace boundaries (`__export(ns, ...)`) and esbuild lazy-module helpers
    (`__commonJS` / `__esm`)
 
-Unpackers emit raw module code. They do NOT run transformation rules — that's the driver's job. Webpack4 is the exception: it applies webpack-specific normalization (param rename, `require()` rewriting, runtime helper removal) before emitting, because those transforms are tightly coupled to the webpack format.
+Unpackers emit module code strings. They do not run the normal decompile rule
+pipeline — that's the driver's job. Webpack4 is the exception only for
+webpack-specific normalization (param rename, `require()` rewriting, runtime
+helper removal), because those transforms are tightly coupled to the webpack
+format.
 
 ### Driver (`crates/core/src/driver.rs`, `crates/core/src/driver/`)
 
@@ -66,16 +70,19 @@ parse_js(source)
   → print_js(module)
 ```
 
-**`unpack(source, options)`** — bundle splitting + two-phase parallel decompilation
-(see "Multi-module pipeline" section below for the full two-phase design):
+**`unpack(source, options)`** — bundle splitting + two-phase parallel module
+decompilation (see "Multi-module pipeline" section below for the full design):
 ```
 unpack_bundle(source)
-  → Phase 1: par_iter → Stage 1+2 → collect facts → discard AST
-  → Phase 2: par_iter → Stage 1+2 → late pass → Stage 3+ → emit
+  → Phase 1: par_iter → parse → rules through UnEsm → ESM recovery → collect facts
+  → Phase 2: par_iter → parse → rules through UnEsm → cross-module late pass
+                    → rules from UnTemplateLiteral through UnReturn
+                    → targeted late cleanup → emit
 ```
 
-**`unpack_raw(source)`** — bundle splitting without the decompiler rule pipeline.
-Returns raw module code as produced by the unpacker.
+**`unpack_raw(source)`** — bundle splitting without the normal decompile rule
+pipeline. It still runs raw module normalization so extracted CommonJS/runtime
+shapes can become standalone modules.
 
 **`trace_rules(source, options, trace_options)`** — single-file rule tracing.
 Runs the pipeline with an observer that captures per-rule before/after snapshots.
@@ -191,12 +198,20 @@ This works even when the `names` array is empty (common in esbuild output).
 
 When unpacking bundles, the driver runs a two-phase pipeline:
 
-1. **Phase 1 (parallel):** Parse each module → run Stage 1+2 → extract import/export facts → discard AST
-2. **Phase 2 (parallel):** Parse each module again → run Stage 1+2 → cross-module late pass (re-export consolidation, namespace decomposition, fact-aware helper recovery) → run Stage 3+ → emit
+1. **Phase 1 (parallel):** Parse each module → run the rule registry through
+   `UnEsm` → recover webpack factory IIFE ESM shapes → extract import/export
+   facts → discard AST.
+2. **Phase 2 (parallel):** Parse each module again → run the same through-`UnEsm`
+   rule range → cross-module late pass (re-export consolidation, namespace
+   decomposition, fact-aware helper recovery) → run the `UnTemplateLiteral`
+   through `UnReturn` rule range → targeted late cleanup/recovery → emit.
 
 The late pass uses facts from Phase 1 to inform cross-module rewrites (e.g., converting `ns.foo` to `import { foo }` or recognizing a split helper module). Facts are extracted in `crates/core/src/facts.rs` and consumed by `crates/core/src/namespace_decomposition.rs`, `crates/core/src/reexport_consolidation.rs`, and fact-aware rules. See [fact-system.md](fact-system.md) for details.
 
-Stage 1+2 runs twice per module — once for fact collection, once for the real pipeline. This is necessary because SWC's `SyntaxContext` must remain continuous across the entire pipeline (re-parsing creates fresh contexts that break rename rules).
+The through-`UnEsm` range runs twice per module — once for fact collection, once
+for the real output pipeline. This is necessary because SWC's `SyntaxContext`
+must remain continuous within the emitted module pipeline; reusing the Phase 1
+AST after a separate parse would break downstream ctxt-sensitive rules.
 
 ## File structure
 
@@ -241,8 +256,8 @@ crates/
     tests/
       common/mod.rs                 — test helpers (see docs/testing.md)
       *_rule.rs                     — per-rule unit tests
-      webpack4_unpack.rs            — pipeline snapshot tests (post-rules)
-      webpack4_unpack_raw.rs        — pipeline snapshot tests (pre-rules)
+      webpack4_unpack.rs            — pipeline snapshot tests (decompiled output)
+      webpack4_unpack_raw.rs        — raw-unpack normalization snapshot tests
       esbuild_unpack.rs             — esbuild detection tests
       bundle_unpack.rs              — webpack5 + browserify tests
       noop_pipeline.rs              — stability tests

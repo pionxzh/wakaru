@@ -156,8 +156,8 @@ All test files live under `crates/core/tests/`.
 
 - `*_rule.rs` -- Per-rule unit tests. One file per rule (e.g., `un_iife_rule.rs`, `smart_inline_rule.rs`).
 - `noop_pipeline.rs` -- Stability tests: inputs that should pass through unchanged.
-- `webpack4_unpack.rs` -- Pipeline snapshot tests for webpack4 bundles (post-rules).
-- `webpack4_unpack_raw.rs` -- Pipeline snapshot tests for webpack4 (pre-rules, after unpacker normalization).
+- `webpack4_unpack.rs` -- Pipeline snapshot tests for final webpack4 decompile output.
+- `webpack4_unpack_raw.rs` -- Snapshot tests for webpack4 raw-unpack normalization, before the normal decompile pipeline.
 - `bundle_unpack.rs` -- Pipeline snapshot tests for webpack5 + browserify bundles.
 - `esbuild_unpack.rs` -- esbuild bundle detection and unpack tests.
 - `webpack5_chunk_unpack.rs` -- webpack5 chunk splitting tests.

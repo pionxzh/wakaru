@@ -27,22 +27,25 @@ them (`crates/core/src/driver/unpack.rs::unpack_multi_module`):
 
 ```
 Phase 1 (per module, parallel):
-    parse → resolver → Stage 1 + Stage 2 (UnEsm etc.)
+    parse → resolver → rule range through UnEsm
+    recover webpack factory IIFE ESM shapes
     collect_module_facts(&module)                    ← pure AST → facts
     AST discarded
 
 ──── barrier: ModuleFactsMap assembled from all modules ────
 
 Phase 2 (per module, parallel):
-    parse → resolver → Stage 1 + Stage 2
+    parse → resolver → rule range through UnEsm
     run_namespace_decomposition(&mut module, facts)  ← reads cross-module facts
-    Stage 3+
+    rule range from UnTemplateLiteral through UnReturn
+    targeted late cleanup/recovery
 ```
 
-Stage 1+2 runs twice per module — the first pass feeds fact extraction, the
-second runs the real pipeline. Re-parsing is required because SWC's
-`SyntaxContext` must remain continuous across the entire pipeline; reusing the
-Phase 1 AST would break downstream ctxt-sensitive rules.
+The through-`UnEsm` range runs twice per module — the first pass feeds fact
+extraction, the second runs the real output pipeline. Re-parsing is required
+because SWC's `SyntaxContext` must remain continuous within the emitted module
+pipeline; reusing the Phase 1 AST after a separate parse would break downstream
+ctxt-sensitive rules.
 
 ## Facts
 
@@ -87,8 +90,8 @@ For a cross-module late pass that naturally runs at the Stage 2 barrier:
 1. Put the pass in `crates/core/src/` as a free function taking
    `(&mut Module, &ModuleFactsMap)`.
 2. Call it from `unpack_multi_module` between
-   `apply_rules(..., RulePipelineOptions::until("UnEsm"))` and the Stage 3+
-   rule range.
+   `apply_rules(..., RulePipelineOptions::until("UnEsm"))` and the
+   `UnTemplateLiteral`-through-`UnReturn` rule range.
 3. Do all AST mutation locally to the module — never write back to
    `ModuleFactsMap`.
 4. Add unit tests following `crates/core/tests/namespace_decomposition_rule.rs` (use

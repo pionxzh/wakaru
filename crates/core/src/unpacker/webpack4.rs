@@ -411,9 +411,10 @@ pub(crate) fn rewrite_require_n_accesses(
 }
 
 /// Detects whether the parsed module is a webpack4 bundle and extracts modules,
-/// skipping `apply_default_rules`. Returns the intermediate state after webpack
-/// normalization (param renaming, require.d / require.r conversion, require(N)
-/// rewriting, require.n rewriting) but before SimplifySequence, UnEsm, etc.
+/// skipping the normal decompile pipeline. Returns the intermediate state after
+/// webpack normalization (param renaming, require.d / require.r conversion,
+/// require(N) rewriting, require.n rewriting) but before the driver applies raw
+/// ESM/runtime normalization.
 pub fn detect_and_extract_raw(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
@@ -452,7 +453,8 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     None
 }
 
-/// Try to extract from a top-level statement that might be a webpack4 IIFE (raw, no default rules).
+/// Try to extract from a top-level statement that might be a webpack4 IIFE
+/// (raw, no normal decompile pipeline).
 fn try_extract_from_stmt_raw(stmt: &Stmt, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
     let call = match stmt {
         Stmt::Expr(ExprStmt { expr, .. }) => match &**expr {
@@ -495,7 +497,7 @@ fn strip_parens(expr: &Expr) -> &Expr {
 }
 
 /// Given a CallExpr that should be `bootstrapFn([...])` or `bootstrapFn({...})`, extract modules.
-/// When `apply_rules` is false, `apply_default_rules` is skipped (raw output).
+/// When `apply_rules` is false, the normal decompile pipeline is skipped (raw output).
 fn extract_webpack4_modules(
     call: &CallExpr,
     cm: Lrc<SourceMap>,
@@ -1156,7 +1158,7 @@ fn build_module_from_stmts(stmts: Vec<Stmt>) -> Module {
 
 /// Strip webpack4's global-polyfill IIFE wrapper on matching top-level
 /// statements. Called once per extracted module, after the webpack runtime
-/// normalizer and before `apply_default_rules`.
+/// normalizer and before the driver decompile pipeline.
 fn unwrap_global_polyfill(module: &mut Module, unresolved_mark: Mark) {
     let mut new_body: Vec<ModuleItem> = Vec::with_capacity(module.body.len());
     for item in module.body.drain(..) {

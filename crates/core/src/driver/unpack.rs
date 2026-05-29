@@ -56,10 +56,9 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
 
 /// Unpack a bundle without running the decompiler rule pipeline.
 ///
-/// This returns the module code exactly as produced by the bundle detector.
-/// Some detectors still do minimal runtime normalization during extraction so
-/// their output can be parsed as standalone modules, but cross-module analysis
-/// and the normal rule pipeline are skipped.
+/// This returns raw module output after detector-specific extraction and raw
+/// ESM/runtime normalization. Cross-module analysis and the normal decompile
+/// rule pipeline are skipped.
 ///
 /// Like [`unpack_multi_module`], individual module parse failures fall back to
 /// raw code and are reported via `UnpackOutput::warnings`.
@@ -165,12 +164,13 @@ fn recover_late_esm_from_factory_iifes(
 
 /// Multi-module unpack with cross-module late pass.
 ///
-/// Phase 1: parse + Stage 1+2 + collect facts (facts only, code discarded)
-/// Phase 2: full pipeline from scratch with late pass injected at barrier
+/// Phase 1: parse + through-UnEsm range + ESM recovery + collect facts (code discarded)
+/// Phase 2: parse + through-UnEsm range + late pass + UnTemplateLiteral-through-UnReturn range
 ///
-/// Stage 1+2 runs twice per module — once for fact collection, once for the real pipeline.
-/// This is necessary because SWC's SyntaxContext must remain continuous across the entire
-/// pipeline (re-parsing creates fresh contexts that break rename rules).
+/// The through-UnEsm range runs twice per module — once for fact collection, once
+/// for the real output pipeline. This is necessary because SWC's SyntaxContext
+/// must remain continuous within the emitted module pipeline; reusing a Phase 1
+/// AST after a separate parse would break rename rules.
 ///
 /// # Best-effort semantics
 ///
@@ -199,8 +199,9 @@ fn unpack_multi_module(
         .map(parse_sourcemap)
         .transpose()?;
 
-    // Phase 1: collect facts. Run Stage 1+2 on each module and extract
-    // import/export facts. The AST is discarded — only facts survive the barrier.
+    // Phase 1: collect facts. Run the through-UnEsm normalization range on each
+    // module and extract import/export facts. The AST is discarded — only facts
+    // survive the barrier.
     let collect_facts =
         |unpacked: &crate::unpacker::UnpackedModule| -> (
             String,
@@ -255,9 +256,9 @@ fn unpack_multi_module(
         }
     }
 
-    // Phase 2: full pipeline with late pass. Each module runs the entire
-    // pipeline from scratch. Between Stage 2 and Stage 3, the late pass applies
-    // cross-module rewrites using the facts collected in Phase 1.
+    // Phase 2: output pipeline with late pass. Each module is parsed from
+    // scratch, runs the same through-UnEsm range, then crosses the facts barrier
+    // before the remaining rule range and targeted late cleanup.
     let facts_ref = &module_facts;
     let sm_ref = &parsed_sourcemap;
 
@@ -272,7 +273,7 @@ fn unpack_multi_module(
                 let top_level_mark = Mark::new();
                 module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
-                // Stage 1+2
+                // Through-UnEsm range.
                 apply_rules(
                     &mut module,
                     unresolved_mark,
@@ -284,7 +285,7 @@ fn unpack_multi_module(
                 run_namespace_decomposition(&mut module, facts_ref);
                 module.visit_mut_with(&mut UnObjectSpread::new_with_facts(facts_ref));
 
-                // Stage 3+
+                // UnTemplateLiteral-through-UnReturn range.
                 apply_rules(
                     &mut module,
                     unresolved_mark,

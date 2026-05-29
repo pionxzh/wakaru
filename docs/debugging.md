@@ -60,14 +60,15 @@ single-file reproduction.
 
 Webpack4 has two snapshot layers:
 
-- `webpack4_unpack__*.snap` — final decompiled output, after rules.
+- `webpack4_unpack__*.snap` — final decompiled output.
 - `webpack4_unpack_raw__*.snap` — raw module output after webpack
-  normalization, before rules.
+  normalization and raw ESM/runtime recovery, before the normal decompile
+  pipeline.
 
 When a snapshot changes unexpectedly, compare the raw and final snapshots for
 the same module. If the raw snapshot is unchanged but the final snapshot moved,
-the cause is in the rule pipeline. If raw output changed too, inspect the
-unpacker or webpack normalization first.
+the cause is in the decompile pipeline. If raw output changed too, inspect the
+unpacker or raw normalization first.
 
 ## Common Symptoms
 

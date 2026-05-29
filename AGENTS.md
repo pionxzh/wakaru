@@ -56,12 +56,12 @@ For bugfixes to existing rules: add a regression test that reproduces the exact 
 1. Create `crates/core/tests/my_rule_rule.rs` with test cases (they will fail)
 2. Create `crates/core/src/rules/my_rule.rs` implementing SWC's `VisitMut` trait
 3. Add `mod my_rule;` and `pub use my_rule::MyRule;` in `crates/core/src/rules/mod.rs`
-4. Add `module.visit_mut_with(&mut MyRule);` at the right position in `apply_default_rules()`
+4. Add a `RuleDescriptor` for the rule at the right position in `crates/core/src/rules/pipeline.rs`
 5. Run tests until all pass
 
 ### Where to place it in the pipeline
 
-Rules run in a fixed order. Check `apply_default_rules()` in `crates/core/src/rules/mod.rs` and place your rule where its dependencies are satisfied:
+Rules run in a fixed order. Check `crates/core/src/rules/pipeline.rs` and place your rule where its dependencies are satisfied:
 - Needs `["default"]` normalized to `.default`? Place after `UnBracketNotation`
 - Needs `require()` calls present? Place before `UnEsm`
 - Creates new IIFEs? Place before the second `UnIife` pass
