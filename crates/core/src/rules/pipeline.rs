@@ -353,7 +353,7 @@ define_rule_registry! {
         "UnParameters"
     ]),
     ("UnEnum", Complex, run_un_enum, always_enabled),
-    ("UnJsx", Complex, run_un_jsx, always_enabled),
+    ("UnJsx", Complex, run_un_jsx, standard_or_above),
     ("UnEs6Class", Complex, run_un_es6_class, always_enabled),
     // UnEs6Class can expose nested _assertThisInitialized(this) calls after
     // constructor recovery.
@@ -426,7 +426,7 @@ define_rule_registry! {
     ]),
     // SmartRename may capitalize component bindings that UnJsx intentionally
     // skipped earlier because lowercase JSX tags are HTML elements.
-    ("UnJsx2", Cleanup, run_un_jsx, always_enabled, requires: [
+    ("UnJsx2", Cleanup, run_un_jsx, standard_or_above, requires: [
         "SmartRename"
     ]),
     // UnJsx2 can expose component aliases and value-position hints in JSX.

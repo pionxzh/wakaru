@@ -486,14 +486,23 @@ impl UnJsx {
 
 impl VisitMut for UnJsx {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
         self.process_module_items(&mut module.body);
     }
 
     fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
         self.process_stmts(&mut block.stmts);
     }
 
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
         expr.visit_mut_children_with(self);
 
         let replacement = match expr {

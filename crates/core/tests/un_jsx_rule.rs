@@ -29,6 +29,20 @@ function fn() {
 }
 
 #[test]
+fn minimal_does_not_convert_create_element_to_jsx() {
+    let input = r#"
+function fn() {
+  return React.createElement("div", {
+    className: "flex flex-col",
+    children: "hello",
+  });
+}
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Minimal), input);
+}
+
+#[test]
 fn removes_unused_imported_create_element_after_classic_jsx_conversion() {
     let input = r#"
 import { Component, createElement } from "./react.js";

@@ -406,7 +406,7 @@ fn minimal_disables_iife_param_rewrites() {
     .expect("decompile should succeed")
     .code;
 
-    let expected = r#"((i, s, O) => s.createElement(O))(window, document, 'script');"#;
+    let expected = r#"((i, s, o) => s.createElement(o))(window, document, 'script');"#;
     assert_eq_normalized(&output, expected.trim());
 }
 
@@ -452,6 +452,32 @@ function fn() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert_eq_normalized(&output, input.trim());
+}
+
+#[test]
+fn minimal_preserves_executable_jsx_runtime_calls() {
+    let input = r#"
+function fn() {
+  return _jsx("div", {
+    className: "hero",
+    children: "Hello"
+  });
+}
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Minimal,
             dead_code_elimination: false,
             ..Default::default()
         },
