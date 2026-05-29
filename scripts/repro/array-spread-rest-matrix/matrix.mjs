@@ -177,9 +177,9 @@ try {
         failures.push(result.failure);
       }
       console.log(
-        `| ${snippet.name} | ${shape.label} | ${escapeCell(shape.tools.join(", "))} | ${
-          result.recovered ? "yes" : "no"
-        } | ${escapeCell(
+        `| ${snippet.name} | ${shape.label} | ${escapeCell(shape.tools.join(", "))} | ${escapeCell(
+          result.status,
+        )} | ${escapeCell(
           result.notes,
         )} |`,
       );
@@ -248,25 +248,26 @@ function collectShapes(snippet) {
 
 function runShape(snippet, shape) {
   if (shape.transformError) {
-    return { recovered: false, notes: `transform failed: ${shape.transformError.message}` };
+    return { status: "no", recovered: false, notes: `transform failed: ${shape.transformError.message}` };
   }
 
   let recovered;
   try {
     recovered = runWakaru(shape.lowered, `${snippet.name}-${shape.label.replaceAll(" ", "-")}.js`);
   } catch (error) {
-    return { recovered: false, notes: `wakaru failed: ${error.message}` };
+    return { status: "no", recovered: false, notes: `wakaru failed: ${error.message}` };
   }
 
   const missing = snippet.expected.filter((needle) => !recovered.includes(needle));
   const unexpected = (snippet.unexpected ?? []).filter((needle) => recovered.includes(needle));
   if (missing.length === 0 && unexpected.length === 0) {
-    return { recovered: true, notes: "expected syntax present" };
+    return { status: "yes", recovered: true, notes: "expected syntax present" };
   }
   if (isExpectedLevelGate(snippet, shape)) {
     return {
+      status: "gated",
       recovered: false,
-      notes: "direct index/slice array-rest recovery is aggressive-only",
+      notes: `gated at ${rewriteLevel}; direct index/slice array-rest recovery requires aggressive`,
     };
   }
 
@@ -277,6 +278,7 @@ function runShape(snippet, shape) {
     unexpected.length > 0 ? `unexpected ${unexpected.join(", ")}` : null,
   ].filter(Boolean);
   return {
+    status: "no",
     recovered: false,
     notes: `${problems.join("; ")}; lowered: ${loweredShape}; wakaru: ${recoveredShape}`,
     failure: {
@@ -292,7 +294,7 @@ function runShape(snippet, shape) {
 function isExpectedLevelGate(snippet, shape) {
   return rewriteLevel !== "aggressive"
     && ["array-rest-basic", "array-rest-default-hole"].includes(snippet.name)
-    && shape.tools.includes("tsc-es5");
+    && shape.tools.some((tool) => tool === "tsc-es5" || tool === "tsc-es5-terser");
 }
 
 function babelModeOptions(mode) {

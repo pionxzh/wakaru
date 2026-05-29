@@ -9,6 +9,10 @@ The matrix also includes standalone Terser rows and Babel/TypeScript/SWC/esbuild
 output minified through Terser, because some recoverable shapes only appear
 after compiler output is minified.
 
+TypeScript ES5 direct index/slice array-rest rows are marked `gated` below
+`aggressive`, because recovering `items[0]` plus `items.slice(n)` as array
+destructuring changes semantics for non-array or custom-slice values.
+
 Rows are grouped by distinct lowered output per snippet. The grouping key only
 normalizes CRLF to LF and trims leading/trailing whitespace, so exact helper
 shape is still preserved while duplicate tool outputs are collapsed.
