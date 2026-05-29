@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BinaryOp, BlockStmtOrExpr, Callee, Decl, Expr, ForHead, Function, Ident, IfStmt,
-    ImportSpecifier, Lit, MemberProp, Module, ModuleDecl, ModuleItem, Pat, ReturnStmt, Stmt,
-    UnaryOp, VarDeclarator,
+    BinaryOp, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ForHead, Function, Ident, IfStmt,
+    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem,
+    Pat, ReturnStmt, Stmt, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -131,6 +131,22 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
                     continue;
                 }
                 let path = import.src.value.as_str().unwrap_or("");
+                if is_tslib_path(path) {
+                    for specifier in &import.specifiers {
+                        let ImportSpecifier::Named(named) = specifier else {
+                            continue;
+                        };
+                        let imported = named
+                            .imported
+                            .as_ref()
+                            .map(export_name_to_atom)
+                            .unwrap_or_else(|| named.local.sym.clone());
+                        if let Some(kind) = tslib_helper_name_kind(imported.as_ref()) {
+                            helpers.insert(binding_key(&named.local), kind);
+                        }
+                    }
+                    continue;
+                }
                 let Some(kind) = detect_helper_from_path(path) else {
                     continue;
                 };
@@ -379,6 +395,9 @@ fn detect_helper_from_var_decl(
 
     // var _ird = require("@babel/runtime/helpers/interopRequireDefault").default
     if let Expr::Member(member) = init.as_ref() {
+        if let Some(kind) = detect_helper_from_tslib_require_member(member) {
+            return Some((key, kind));
+        }
         if is_member_prop_name(&member.prop, "default") {
             if let Some(kind) = detect_helper_from_require(&member.obj) {
                 return Some((key, kind));
@@ -404,6 +423,134 @@ fn detect_helper_from_var_decl(
     }
 
     None
+}
+
+pub(crate) fn tslib_helper_name_kind(name: &str) -> Option<BabelHelperKind> {
+    match name {
+        "__assign" => Some(BabelHelperKind::Extends),
+        "__rest" => Some(BabelHelperKind::ObjectWithoutProperties),
+        "__read" => Some(BabelHelperKind::SlicedToArray),
+        "__importDefault" => Some(BabelHelperKind::InteropRequireDefault),
+        "__importStar" => Some(BabelHelperKind::InteropRequireWildcard),
+        _ => None,
+    }
+}
+
+pub(crate) fn is_tslib_path(path: &str) -> bool {
+    matches!(path, "tslib" | "tslib/tslib.es6.js" | "tslib/tslib.js")
+}
+
+pub(crate) fn collect_tslib_namespace_bindings(module: &Module) -> HashSet<BindingKey> {
+    let mut bindings = HashSet::new();
+
+    for item in &module.body {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import))
+                if !import.type_only && is_tslib_path(import.src.value.as_str().unwrap_or("")) =>
+            {
+                for specifier in &import.specifiers {
+                    match specifier {
+                        ImportSpecifier::Default(default) => {
+                            bindings.insert(binding_key(&default.local));
+                        }
+                        ImportSpecifier::Namespace(namespace) => {
+                            bindings.insert(binding_key(&namespace.local));
+                        }
+                        ImportSpecifier::Named(_) => {}
+                    }
+                }
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    let Some(init) = decl.init.as_deref() else {
+                        continue;
+                    };
+                    if !is_tslib_require_call(init) {
+                        continue;
+                    }
+                    if let Some(key) = var_declarator_binding_key(decl) {
+                        bindings.insert(key);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    bindings
+}
+
+pub(crate) fn tslib_namespace_member_name<'a>(
+    expr: &'a Expr,
+    namespaces: &HashSet<BindingKey>,
+) -> Option<&'a str> {
+    let Expr::Member(member) = strip_paren_expr(expr) else {
+        return None;
+    };
+    let Expr::Ident(obj) = strip_paren_expr(&member.obj) else {
+        return None;
+    };
+    if !namespaces.contains(&binding_key(obj)) {
+        return None;
+    }
+    member_prop_name(&member.prop)
+}
+
+pub(crate) fn is_tslib_spread_array_member(expr: &Expr, namespaces: &HashSet<BindingKey>) -> bool {
+    tslib_namespace_member_name(expr, namespaces) == Some("__spreadArray")
+}
+
+pub(crate) fn tslib_member_helper_kind(
+    expr: &Expr,
+    namespaces: &HashSet<BindingKey>,
+) -> Option<BabelHelperKind> {
+    tslib_helper_name_kind(tslib_namespace_member_name(expr, namespaces)?)
+}
+
+pub(crate) fn tslib_require_member_name(expr: &Expr) -> Option<&str> {
+    let Expr::Member(member) = strip_paren_expr(expr) else {
+        return None;
+    };
+    if !is_tslib_require_call(&member.obj) {
+        return None;
+    }
+    member_prop_name(&member.prop)
+}
+
+pub(crate) fn module_has_tslib_require_member_call(module: &Module, kind: BabelHelperKind) -> bool {
+    struct Finder {
+        kind: BabelHelperKind,
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if self.found {
+                return;
+            }
+            if let Callee::Expr(callee) = &call.callee {
+                if tslib_require_member_name(callee.as_ref())
+                    .and_then(tslib_helper_name_kind)
+                    .is_some_and(|kind| kind == self.kind)
+                {
+                    self.found = true;
+                    return;
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder { kind, found: false };
+    module.visit_with(&mut finder);
+    finder.found
+}
+
+fn detect_helper_from_tslib_require_member(member: &MemberExpr) -> Option<BabelHelperKind> {
+    if !is_tslib_require_call(&member.obj) {
+        return None;
+    }
+    tslib_helper_name_kind(member_prop_name(&member.prop)?)
 }
 
 fn generated_helper_name_kind(name: &str, init: &Expr) -> Option<BabelHelperKind> {
@@ -506,6 +653,13 @@ fn export_name_is(name: &swc_core::ecma::ast::ModuleExportName, expected: &str) 
     match name {
         swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.as_ref() == expected,
         swc_core::ecma::ast::ModuleExportName::Str(s) => s.value.as_str() == Some(expected),
+    }
+}
+
+fn export_name_to_atom(name: &ModuleExportName) -> Atom {
+    match name {
+        ModuleExportName::Ident(id) => id.sym.clone(),
+        ModuleExportName::Str(s) => Atom::from(s.value.as_str().unwrap_or("")),
     }
 }
 
@@ -750,13 +904,44 @@ fn matches_default_object(expr: &Expr, ctx: &MatchContext) -> bool {
 }
 
 fn is_member_prop_name(prop: &MemberProp, name: &str) -> bool {
+    member_prop_name(prop) == Some(name)
+}
+
+fn member_prop_name(prop: &MemberProp) -> Option<&str> {
     match prop {
-        MemberProp::Ident(id) => id.sym.as_ref() == name,
-        MemberProp::Computed(c) => {
-            matches!(c.expr.as_ref(), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some(name))
-        }
-        _ => false,
+        MemberProp::Ident(id) => Some(id.sym.as_ref()),
+        MemberProp::Computed(c) => match c.expr.as_ref() {
+            Expr::Lit(Lit::Str(s)) => s.value.as_str(),
+            _ => None,
+        },
+        MemberProp::PrivateName(_) => None,
     }
+}
+
+fn strip_paren_expr(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_paren_expr(&paren.expr),
+        _ => expr,
+    }
+}
+
+fn is_tslib_require_call(expr: &Expr) -> bool {
+    let Expr::Call(call) = strip_paren_expr(expr) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Ident(id) = callee.as_ref() else {
+        return false;
+    };
+    if id.sym.as_ref() != "require" || call.args.len() != 1 || call.args[0].spread.is_some() {
+        return false;
+    }
+    let Expr::Lit(Lit::Str(s)) = call.args[0].expr.as_ref() else {
+        return false;
+    };
+    is_tslib_path(s.value.as_str().unwrap_or(""))
 }
 
 fn extract_single_return(stmt: &Stmt) -> Option<&Expr> {

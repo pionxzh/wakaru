@@ -64,6 +64,34 @@ const [key, value] = pair;
 }
 
 #[test]
+fn unwraps_tslib_namespace_read_require() {
+    let input = r#"
+var tslib_1 = require("tslib");
+var _pair = tslib_1.__read(pair, 2);
+var key = _pair[0];
+var value = _pair[1];
+"#;
+    let expected = r#"
+import tslib_1 from "tslib";
+const [key, value] = pair;
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_tslib_direct_read_require() {
+    let input = r#"
+var _pair = require("tslib").__read(pair, 2);
+var key = _pair[0];
+var value = _pair[1];
+"#;
+    let expected = r#"
+const [key, value] = pair;
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn skips_invalid_arg_counts() {
     let input = r#"
 var _slicedToArray = require("@babel/runtime/helpers/slicedToArray");

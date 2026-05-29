@@ -44,6 +44,37 @@ use(to, innerRef, rest);
 }
 
 #[test]
+fn handles_tslib_named_rest_import() {
+    let input = r#"
+import { __rest } from "tslib";
+const a = props.a;
+const rest = __rest(props, ["a"]);
+use(a, rest);
+"#;
+    let expected = r#"
+const { a, ...rest } = props;
+use(a, rest);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn handles_tslib_namespace_rest_require() {
+    let input = r#"
+var tslib_1 = require("tslib");
+const a = props.a;
+const rest = tslib_1.__rest(props, ["a"]);
+use(a, rest);
+"#;
+    let expected = r#"
+import tslib_1 from "tslib";
+const { a, ...rest } = props;
+use(a, rest);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn with_preceding_prop_access() {
     // const x = obj.prop before IIFE — absorbed into rest destructuring with alias
     let input = r#"

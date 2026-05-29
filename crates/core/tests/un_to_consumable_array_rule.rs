@@ -191,6 +191,31 @@ const out = [head, ...items, tail];
 }
 
 #[test]
+fn unwraps_tslib_named_spread_array_import() {
+    let input = r#"
+import { __spreadArray } from "tslib";
+var out = __spreadArray([head], items, true);
+"#;
+    let expected = r#"
+const out = [head, ...items];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_tslib_namespace_spread_array_require() {
+    let input = r#"
+var tslib_1 = require("tslib");
+var out = tslib_1.__spreadArray([head], items, true);
+"#;
+    let expected = r#"
+import tslib_1 from "tslib";
+const out = [head, ...items];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn unwraps_nested_typescript_spread_array_helper() {
     let input = r#"
 var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {

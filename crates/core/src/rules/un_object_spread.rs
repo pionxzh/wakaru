@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
@@ -11,8 +11,9 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::babel_helper_utils::{
-    collect_helper_dependencies, collect_helpers, helpers_with_remaining_refs,
-    remove_helper_declarations, BabelHelperKind, BindingKey,
+    collect_helper_dependencies, collect_helpers, collect_tslib_namespace_bindings,
+    helpers_with_remaining_refs, remove_helper_declarations, tslib_member_helper_kind,
+    BabelHelperKind, BindingKey,
 };
 
 /// Detects and replaces `_extends` and `_objectSpread2` helper calls with
@@ -63,10 +64,14 @@ impl VisitMut for UnObjectSpread<'_> {
                 module_facts,
             ));
         }
-        if helpers.is_empty() {
+        let tslib_namespaces = collect_tslib_namespace_bindings(module);
+        if helpers.is_empty() && tslib_namespaces.is_empty() {
             return;
         }
-        let mut replacer = SpreadReplacer { helpers: &helpers };
+        let mut replacer = SpreadReplacer {
+            helpers: &helpers,
+            tslib_namespaces: &tslib_namespaces,
+        };
         module.visit_mut_with(&mut replacer);
 
         // Only remove root helpers whose calls were fully transformed. Dependencies
@@ -204,6 +209,7 @@ fn helper_kind_to_babel(kind: HelperKind) -> Option<BabelHelperKind> {
 
 struct SpreadReplacer<'a> {
     helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &'a HashSet<BindingKey>,
 }
 
 impl VisitMut for SpreadReplacer<'_> {
@@ -214,7 +220,7 @@ impl VisitMut for SpreadReplacer<'_> {
         let Callee::Expr(callee) = &call.callee else {
             return;
         };
-        if !is_object_spread_callee(callee, self.helpers) {
+        if !is_object_spread_callee(callee, self.helpers, self.tslib_namespaces) {
             return;
         }
 
@@ -266,7 +272,11 @@ impl VisitMut for SpreadReplacer<'_> {
     }
 }
 
-fn is_object_spread_callee(callee: &Expr, helpers: &HashMap<BindingKey, BabelHelperKind>) -> bool {
+fn is_object_spread_callee(
+    callee: &Expr,
+    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
+) -> bool {
     match strip_parens(callee) {
         Expr::Ident(id) => {
             let key = (id.sym.clone(), id.ctxt);
@@ -275,6 +285,10 @@ fn is_object_spread_callee(callee: &Expr, helpers: &HashMap<BindingKey, BabelHel
                 Some(BabelHelperKind::Extends | BabelHelperKind::ObjectSpread)
             )
         }
+        Expr::Member(_) => matches!(
+            tslib_member_helper_kind(callee, tslib_namespaces),
+            Some(BabelHelperKind::Extends | BabelHelperKind::ObjectSpread)
+        ),
         expr => is_inline_object_spread_helper(expr),
     }
 }

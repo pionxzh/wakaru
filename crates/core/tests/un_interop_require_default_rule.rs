@@ -30,6 +30,34 @@ _b();
 }
 
 #[test]
+fn unwraps_tslib_namespace_import_default_require() {
+    let input = r#"
+var tslib_1 = require("tslib");
+var foo_1 = tslib_1.__importDefault(require("foo"));
+console.log(foo_1.default);
+"#;
+    let expected = r#"
+import tslib_1 from "tslib";
+import foo_1 from "foo";
+console.log(foo_1);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_tslib_direct_import_default_require() {
+    let input = r#"
+var foo_1 = require("tslib").__importDefault(require("foo"));
+console.log(foo_1.default);
+"#;
+    let expected = r#"
+import foo_1 from "foo";
+console.log(foo_1);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn detects_inlined_ternary_form() {
     let input = r#"
 function _interopRequireDefault(obj) {

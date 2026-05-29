@@ -30,6 +30,34 @@ console.log(_b);
 }
 
 #[test]
+fn unwraps_tslib_namespace_import_star_require() {
+    let input = r#"
+var tslib_1 = require("tslib");
+var foo = tslib_1.__importStar(require("foo"));
+console.log(foo);
+"#;
+    let expected = r#"
+import tslib_1 from "tslib";
+import * as foo from "foo";
+console.log(foo);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_tslib_direct_import_star_require() {
+    let input = r#"
+var foo = require("tslib").__importStar(require("foo"));
+console.log(foo);
+"#;
+    let expected = r#"
+import * as foo from "foo";
+console.log(foo);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn preserves_wildcard_for_non_require_args() {
     let input = r#"
 var _interopRequireWildcard = require("@babel/runtime/helpers/interopRequireWildcard");

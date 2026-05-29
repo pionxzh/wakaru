@@ -7,7 +7,9 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helpers, remove_helper_declarations, BabelHelperKind, BindingKey,
+    collect_helpers, collect_tslib_namespace_bindings, module_has_tslib_require_member_call,
+    remove_helper_declarations, tslib_helper_name_kind, tslib_member_helper_kind,
+    tslib_require_member_name, BabelHelperKind, BindingKey,
 };
 
 /// Detects and unwraps `interopRequireDefault` helper calls.
@@ -27,17 +29,24 @@ impl VisitMut for UnInteropRequireDefault {
             .into_iter()
             .filter(|(_, kind)| *kind == BabelHelperKind::InteropRequireDefault)
             .collect();
+        let tslib_namespaces = collect_tslib_namespace_bindings(module);
+        let has_direct_tslib_calls =
+            module_has_tslib_require_member_call(module, BabelHelperKind::InteropRequireDefault);
 
-        if !helpers.is_empty() {
+        if !helpers.is_empty() || !tslib_namespaces.is_empty() || has_direct_tslib_calls {
             // Phase 1: Collect which bindings receive helper-wrapped values
             let mut collector = AffectedBindingCollector {
                 helpers: &helpers,
+                tslib_namespaces: &tslib_namespaces,
                 affected: &mut affected_bindings,
             };
             collector.visit_module(module);
 
             // Phase 2a: Unwrap helper calls — replace `helper(arg)` with `arg`.
-            let mut call_unwrapper = CallUnwrapper { helpers: &helpers };
+            let mut call_unwrapper = CallUnwrapper {
+                helpers: &helpers,
+                tslib_namespaces: &tslib_namespaces,
+            };
             module.visit_mut_with(&mut call_unwrapper);
         }
 
@@ -79,6 +88,7 @@ impl VisitMut for UnInteropRequireDefault {
 
 struct AffectedBindingCollector<'a> {
     helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &'a HashSet<BindingKey>,
     affected: &'a mut HashSet<BindingKey>,
 }
 
@@ -88,21 +98,22 @@ impl Visit for AffectedBindingCollector<'_> {
         let Some(init) = &decl.init else { return };
 
         // var _a = helper(arg)
-        if is_helper_call(init, self.helpers) {
+        if is_helper_call(init, self.helpers, self.tslib_namespaces) {
             self.affected.insert((bi.id.sym.clone(), bi.id.ctxt));
         }
     }
 }
 
-fn is_helper_call(expr: &Expr, helpers: &HashMap<BindingKey, BabelHelperKind>) -> bool {
+fn is_helper_call(
+    expr: &Expr,
+    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
+) -> bool {
     let Expr::Call(call) = expr else { return false };
     let Callee::Expr(callee) = &call.callee else {
         return false;
     };
-    let Expr::Ident(id) = callee.as_ref() else {
-        return false;
-    };
-    helpers.contains_key(&(id.sym.clone(), id.ctxt))
+    is_interop_default_callee(callee, helpers, tslib_namespaces)
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +122,7 @@ fn is_helper_call(expr: &Expr, helpers: &HashMap<BindingKey, BabelHelperKind>) -
 
 struct CallUnwrapper<'a> {
     helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &'a HashSet<BindingKey>,
 }
 
 impl VisitMut for CallUnwrapper<'_> {
@@ -121,7 +133,9 @@ impl VisitMut for CallUnwrapper<'_> {
         if let Expr::Member(member) = expr {
             if is_default_prop(&member.prop) {
                 if let Expr::Call(call) = member.obj.as_ref() {
-                    if let Some(arg) = extract_helper_call_arg(call, self.helpers) {
+                    if let Some(arg) =
+                        extract_helper_call_arg(call, self.helpers, self.tslib_namespaces)
+                    {
                         *expr = arg;
                         return;
                     }
@@ -131,7 +145,7 @@ impl VisitMut for CallUnwrapper<'_> {
 
         // helper(arg) → arg
         if let Expr::Call(call) = expr {
-            if let Some(arg) = extract_helper_call_arg(call, self.helpers) {
+            if let Some(arg) = extract_helper_call_arg(call, self.helpers, self.tslib_namespaces) {
                 *expr = arg;
             }
         }
@@ -141,20 +155,34 @@ impl VisitMut for CallUnwrapper<'_> {
 fn extract_helper_call_arg(
     call: &swc_core::ecma::ast::CallExpr,
     helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
 ) -> Option<Expr> {
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
-    let Expr::Ident(id) = callee.as_ref() else {
-        return None;
-    };
-    if !helpers.contains_key(&(id.sym.clone(), id.ctxt)) {
+    if !is_interop_default_callee(callee, helpers, tslib_namespaces) {
         return None;
     }
     if call.args.len() != 1 {
         return None;
     }
     Some(*call.args[0].expr.clone())
+}
+
+fn is_interop_default_callee(
+    callee: &Expr,
+    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
+) -> bool {
+    if let Expr::Ident(id) = callee {
+        return helpers.contains_key(&(id.sym.clone(), id.ctxt));
+    }
+
+    matches!(
+        tslib_member_helper_kind(callee, tslib_namespaces)
+            .or_else(|| tslib_helper_name_kind(tslib_require_member_name(callee)?)),
+        Some(BabelHelperKind::InteropRequireDefault)
+    )
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::Mark;
@@ -12,8 +12,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helpers_of_kind, helpers_with_remaining_refs, remove_helper_declarations,
-    BabelHelperKind, BindingKey,
+    collect_helpers_of_kind, collect_tslib_namespace_bindings, helpers_with_remaining_refs,
+    remove_helper_declarations, tslib_member_helper_kind, BabelHelperKind, BindingKey,
 };
 
 /// Convert inline `_objectWithoutPropertiesLoose` IIFEs to object rest destructuring.
@@ -46,16 +46,19 @@ impl VisitMut for UnObjectRest {
         let helper_dependencies =
             collect_helpers_of_kind(module, BabelHelperKind::HelperDependency);
         let named_helpers = all_helpers;
+        let tslib_namespaces = collect_tslib_namespace_bindings(module);
 
         // Process inner scopes first (function bodies, etc.) with helpers available
         let mut processor = ObjectRestProcessor {
             named_helpers: &named_helpers,
+            tslib_namespaces: &tslib_namespaces,
             unresolved_mark: self.unresolved_mark,
         };
         module.visit_mut_children_with(&mut processor);
         reattach_elided_object_rest_in_module_items(
             &mut module.body,
             &named_helpers,
+            &tslib_namespaces,
             self.unresolved_mark,
         );
 
@@ -71,7 +74,7 @@ impl VisitMut for UnObjectRest {
             };
 
             let extraction = try_extract_owp_iife(stmt)
-                .or_else(|| try_extract_owp_named_call(stmt, &named_helpers));
+                .or_else(|| try_extract_owp_named_call(stmt, &named_helpers, &tslib_namespaces));
 
             if let Some((rest_binding, source, excluded_keys, before, after)) = extraction {
                 let mut inline_accesses = declarators_to_accesses(&before, &source, &excluded_keys);
@@ -132,19 +135,26 @@ impl VisitMut for UnObjectRest {
 
 struct ObjectRestProcessor<'a> {
     named_helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &'a HashSet<BindingKey>,
     unresolved_mark: Mark,
 }
 
 impl VisitMut for ObjectRestProcessor<'_> {
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-        reattach_elided_object_rest_in_stmts(stmts, self.named_helpers, self.unresolved_mark);
+        reattach_elided_object_rest_in_stmts(
+            stmts,
+            self.named_helpers,
+            self.tslib_namespaces,
+            self.unresolved_mark,
+        );
 
         let mut new_stmts = Vec::with_capacity(stmts.len());
 
         for stmt in stmts.iter() {
-            let extraction = try_extract_owp_iife(stmt)
-                .or_else(|| try_extract_owp_named_call(stmt, self.named_helpers));
+            let extraction = try_extract_owp_iife(stmt).or_else(|| {
+                try_extract_owp_named_call(stmt, self.named_helpers, self.tslib_namespaces)
+            });
 
             if let Some((rest_binding, source, excluded_keys, before, after)) = extraction {
                 let mut inline_accesses = declarators_to_accesses(&before, &source, &excluded_keys);
@@ -186,15 +196,21 @@ use swc_core::ecma::ast::ModuleItem;
 fn reattach_elided_object_rest_in_module_items(
     items: &mut [ModuleItem],
     named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) {
-    if !module_items_contain_owp_spread_candidate(items, named_helpers) {
+    if !module_items_contain_owp_spread_candidate(items, named_helpers, tslib_namespaces) {
         return;
     }
 
     for item in items.iter_mut() {
         if let ModuleItem::Stmt(stmt) = item {
-            reattach_elided_object_rest_in_stmt(stmt, named_helpers, unresolved_mark);
+            reattach_elided_object_rest_in_stmt(
+                stmt,
+                named_helpers,
+                tslib_namespaces,
+                unresolved_mark,
+            );
         }
     }
 
@@ -218,6 +234,7 @@ fn reattach_elided_object_rest_in_module_items(
             let mut replacer = ElidedRestSpreadReplacer {
                 rest_binding: &rest_binding,
                 named_helpers,
+                tslib_namespaces,
                 preceding: Some(&preceding),
                 unresolved_mark,
                 replacement_init: None,
@@ -238,14 +255,15 @@ fn reattach_elided_object_rest_in_module_items(
 fn reattach_elided_object_rest_in_stmts(
     stmts: &mut [Stmt],
     named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) {
-    if !stmts_contain_owp_spread_candidate(stmts, named_helpers) {
+    if !stmts_contain_owp_spread_candidate(stmts, named_helpers, tslib_namespaces) {
         return;
     }
 
     for stmt in stmts.iter_mut() {
-        reattach_elided_object_rest_in_stmt(stmt, named_helpers, unresolved_mark);
+        reattach_elided_object_rest_in_stmt(stmt, named_helpers, tslib_namespaces, unresolved_mark);
     }
 
     for rest_idx in 0..stmts.len() {
@@ -259,6 +277,7 @@ fn reattach_elided_object_rest_in_stmts(
             let mut replacer = ElidedRestSpreadReplacer {
                 rest_binding: &rest_binding,
                 named_helpers,
+                tslib_namespaces,
                 preceding: Some(&preceding),
                 unresolved_mark,
                 replacement_init: None,
@@ -279,9 +298,11 @@ fn reattach_elided_object_rest_in_stmts(
 fn module_items_contain_owp_spread_candidate(
     items: &[ModuleItem],
     named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
 ) -> bool {
     let mut visitor = ObjectRestSpreadCandidateVisitor {
         named_helpers,
+        tslib_namespaces,
         found: false,
     };
     for item in items {
@@ -296,9 +317,11 @@ fn module_items_contain_owp_spread_candidate(
 fn stmts_contain_owp_spread_candidate(
     stmts: &[Stmt],
     named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
 ) -> bool {
     let mut visitor = ObjectRestSpreadCandidateVisitor {
         named_helpers,
+        tslib_namespaces,
         found: false,
     };
     for stmt in stmts {
@@ -312,6 +335,7 @@ fn stmts_contain_owp_spread_candidate(
 
 struct ObjectRestSpreadCandidateVisitor<'a> {
     named_helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &'a HashSet<BindingKey>,
     found: bool,
 }
 
@@ -326,7 +350,7 @@ impl Visit for ObjectRestSpreadCandidateVisitor<'_> {
             return;
         };
 
-        if extract_named_owp_args(&spread.expr, self.named_helpers)
+        if extract_named_owp_args(&spread.expr, self.named_helpers, self.tslib_namespaces)
             .or_else(|| try_extract_owp_call(&spread.expr))
             .is_some()
         {
@@ -341,6 +365,7 @@ impl Visit for ObjectRestSpreadCandidateVisitor<'_> {
 fn reattach_elided_object_rest_in_stmt(
     stmt: &mut Stmt,
     named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
@@ -357,6 +382,7 @@ fn reattach_elided_object_rest_in_stmt(
             let mut replacer = ElidedRestSpreadReplacer {
                 rest_binding: &rest_binding,
                 named_helpers,
+                tslib_namespaces,
                 preceding: None,
                 unresolved_mark,
                 replacement_init: None,
@@ -378,6 +404,7 @@ fn reattach_elided_object_rest_in_stmt(
 struct ElidedRestSpreadReplacer<'a> {
     rest_binding: &'a BindingIdent,
     named_helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &'a HashSet<BindingKey>,
     preceding: Option<&'a [Stmt]>,
     unresolved_mark: Mark,
     replacement_init: Option<Box<Expr>>,
@@ -394,8 +421,9 @@ impl VisitMut for ElidedRestSpreadReplacer<'_> {
             return;
         };
 
-        let extraction = extract_named_owp_args(&spread.expr, self.named_helpers)
-            .or_else(|| try_extract_owp_call(&spread.expr));
+        let extraction =
+            extract_named_owp_args(&spread.expr, self.named_helpers, self.tslib_namespaces)
+                .or_else(|| try_extract_owp_call(&spread.expr));
         let Some((source, excluded_keys)) = extraction else {
             spread.visit_mut_children_with(self);
             return;
@@ -528,6 +556,7 @@ fn try_extract_owp_iife(
 fn try_extract_owp_named_call(
     stmt: &Stmt,
     helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
 ) -> Option<(
     BindingIdent,
     Box<Expr>,
@@ -535,7 +564,7 @@ fn try_extract_owp_named_call(
     Vec<VarDeclarator>,
     Vec<VarDeclarator>,
 )> {
-    if helpers.is_empty() {
+    if helpers.is_empty() && tslib_namespaces.is_empty() {
         return None;
     }
     let Stmt::Decl(Decl::Var(var)) = stmt else {
@@ -549,7 +578,7 @@ fn try_extract_owp_named_call(
         let Some(init) = &decl.init else {
             return false;
         };
-        extract_named_owp_args(init, helpers).is_some()
+        extract_named_owp_args(init, helpers, tslib_namespaces).is_some()
     })?;
 
     let decl = &var.decls[owp_idx];
@@ -557,7 +586,7 @@ fn try_extract_owp_named_call(
         return None;
     };
     let init = decl.init.as_ref()?;
-    let (source, excluded_keys) = extract_named_owp_args(init, helpers)?;
+    let (source, excluded_keys) = extract_named_owp_args(init, helpers, tslib_namespaces)?;
 
     let before = var.decls[..owp_idx].to_vec();
     let after = var.decls[owp_idx + 1..].to_vec();
@@ -568,6 +597,7 @@ fn try_extract_owp_named_call(
 fn extract_named_owp_args(
     expr: &Expr,
     helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
 ) -> Option<(Box<Expr>, Vec<Atom>)> {
     let Expr::Call(CallExpr {
         callee: Callee::Expr(callee),
@@ -577,11 +607,15 @@ fn extract_named_owp_args(
     else {
         return None;
     };
-    let Expr::Ident(id) = callee.as_ref() else {
-        return None;
+    let is_helper = match callee.as_ref() {
+        Expr::Ident(id) => helpers.contains_key(&(id.sym.clone(), id.ctxt)),
+        Expr::Member(_) => matches!(
+            tslib_member_helper_kind(callee, tslib_namespaces),
+            Some(BabelHelperKind::ObjectWithoutProperties)
+        ),
+        _ => false,
     };
-    let key = (id.sym.clone(), id.ctxt);
-    if !helpers.contains_key(&key) {
+    if !is_helper {
         return None;
     }
     if args.len() != 2 || args[0].spread.is_some() || args[1].spread.is_some() {

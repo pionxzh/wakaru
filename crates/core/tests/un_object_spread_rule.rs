@@ -52,6 +52,31 @@ const x = { ...app_info, ...base_info };
 }
 
 #[test]
+fn handles_tslib_named_assign_import() {
+    let input = r#"
+import { __assign } from "tslib";
+var x = __assign({ id: app_id }, app_info, { name: value });
+"#;
+    let expected = r#"
+const x = { id: app_id, ...app_info, name: value };
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn handles_tslib_namespace_assign_require() {
+    let input = r#"
+var tslib_1 = require("tslib");
+var x = tslib_1.__assign({ id: app_id }, app_info, { name: value });
+"#;
+    let expected = r#"
+import tslib_1 from "tslib";
+const x = { id: app_id, ...app_info, name: value };
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn handles_babel_runtime_esm_import_object_spread() {
     let input = r#"
 import _objectSpread2 from "@babel/runtime/helpers/objectSpread2";

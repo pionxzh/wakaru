@@ -8,8 +8,10 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helper_dependencies, collect_helpers, helpers_with_remaining_refs,
-    remove_helper_declarations, BabelHelperKind, BindingKey,
+    collect_helper_dependencies, collect_helpers, collect_tslib_namespace_bindings,
+    helpers_with_remaining_refs, module_has_tslib_require_member_call, remove_helper_declarations,
+    tslib_helper_name_kind, tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind,
+    BindingKey,
 };
 use super::helper_matcher::{
     binding_key, import_specifier_binding_key, var_declarator_binding_key,
@@ -33,7 +35,10 @@ impl VisitMut for UnInteropRequireWildcard {
             .into_iter()
             .filter(|(_, kind)| *kind == BabelHelperKind::InteropRequireWildcard)
             .collect();
-        if helpers.is_empty() {
+        let tslib_namespaces = collect_tslib_namespace_bindings(module);
+        let has_direct_tslib_calls =
+            module_has_tslib_require_member_call(module, BabelHelperKind::InteropRequireWildcard);
+        if helpers.is_empty() && tslib_namespaces.is_empty() && !has_direct_tslib_calls {
             return;
         }
 
@@ -41,7 +46,9 @@ impl VisitMut for UnInteropRequireWildcard {
         // and unwrap non-require calls in expressions.
         let mut new_body = Vec::with_capacity(module.body.len());
         for item in module.body.drain(..) {
-            if let Some(imports) = try_convert_to_namespace_import(&item, &helpers) {
+            if let Some(imports) =
+                try_convert_to_namespace_import(&item, &helpers, &tslib_namespaces)
+            {
                 new_body.extend(imports);
             } else {
                 new_body.push(item);
@@ -50,8 +57,15 @@ impl VisitMut for UnInteropRequireWildcard {
         module.body = new_body;
 
         // Phase 2: Unwrap remaining call sites in expressions (non-var-decl contexts)
-        let mut unwrapper = WildcardCallUnwrapper { helpers: &helpers };
+        let mut unwrapper = WildcardCallUnwrapper {
+            helpers: &helpers,
+            tslib_namespaces: &tslib_namespaces,
+        };
         module.visit_mut_with(&mut unwrapper);
+
+        if helpers.is_empty() {
+            return;
+        }
 
         // Phase 3: Remove helper declarations only if no untransformed calls
         // remain. When the helper is removed, also clean helper-owned local and
@@ -116,6 +130,7 @@ impl VisitMut for UnInteropRequireWildcard {
 fn try_convert_to_namespace_import(
     item: &ModuleItem,
     helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
 ) -> Option<Vec<ModuleItem>> {
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
         return None;
@@ -135,7 +150,7 @@ fn try_convert_to_namespace_import(
             continue;
         };
 
-        if let Some(source) = extract_wildcard_require(init, helpers) {
+        if let Some(source) = extract_wildcard_require(init, helpers, tslib_namespaces) {
             // Convert to: import * as _x from "source"
             let import = ImportDecl {
                 span: DUMMY_SP,
@@ -175,16 +190,14 @@ fn try_convert_to_namespace_import(
 fn extract_wildcard_require(
     expr: &Expr,
     helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
 ) -> Option<swc_core::ecma::ast::Str> {
     let Expr::Call(call) = expr else { return None };
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
-    let Expr::Ident(id) = callee.as_ref() else {
-        return None;
-    };
 
-    if !helpers.contains_key(&(id.sym.clone(), id.ctxt)) {
+    if !is_interop_wildcard_callee(callee, helpers, tslib_namespaces) {
         return None;
     }
 
@@ -218,6 +231,7 @@ fn extract_wildcard_require(
 /// a namespace object that may differ from the raw expression value.
 struct WildcardCallUnwrapper<'a> {
     helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &'a HashSet<BindingKey>,
 }
 
 impl VisitMut for WildcardCallUnwrapper<'_> {
@@ -228,11 +242,8 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
         let Callee::Expr(callee) = &call.callee else {
             return;
         };
-        let Expr::Ident(id) = callee.as_ref() else {
-            return;
-        };
 
-        if !self.helpers.contains_key(&(id.sym.clone(), id.ctxt)) {
+        if !is_interop_wildcard_callee(callee, self.helpers, self.tslib_namespaces) {
             return;
         }
 
@@ -245,6 +256,22 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
             *expr = *call.args[0].expr.clone();
         }
     }
+}
+
+fn is_interop_wildcard_callee(
+    callee: &Expr,
+    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
+) -> bool {
+    if let Expr::Ident(id) = callee {
+        return helpers.contains_key(&(id.sym.clone(), id.ctxt));
+    }
+
+    matches!(
+        tslib_member_helper_kind(callee, tslib_namespaces)
+            .or_else(|| tslib_helper_name_kind(tslib_require_member_name(callee)?)),
+        Some(BabelHelperKind::InteropRequireWildcard)
+    )
 }
 
 fn is_require_call(expr: &Expr) -> bool {
