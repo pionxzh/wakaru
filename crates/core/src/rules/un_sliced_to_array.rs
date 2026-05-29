@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, BindingIdent, Callee, Decl, Expr, Lit, MemberProp, Module, ModuleItem, Pat, Stmt,
-    VarDeclarator,
+    ArrayPat, BinaryOp, BindingIdent, Callee, Decl, Expr, Lit, MemberProp, Module, ModuleItem, Pat,
+    Stmt, VarDeclarator,
 };
-use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
     collect_helper_dependencies, collect_helpers, helpers_with_remaining_refs,
@@ -33,15 +33,7 @@ impl VisitMut for UnSlicedToArray {
         if helpers.is_empty() {
             return;
         }
-        fold_sliced_to_array_stmt_groups(&mut module.body, &helpers);
-
-        // Walk all var declarators and unwrap slicedToArray calls
-        for item in &mut module.body {
-            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
-                continue;
-            };
-            rewrite_sliced_to_array_decls(&mut var.decls, &helpers);
-        }
+        module.visit_mut_children_with(&mut SlicedToArrayRewriter { helpers: &helpers });
 
         // Only remove root helpers whose calls were fully transformed. Dependencies
         // referenced by retained helpers must stay with those helpers.
@@ -67,23 +59,52 @@ impl VisitMut for UnSlicedToArray {
     }
 }
 
-fn fold_sliced_to_array_stmt_groups(
+struct SlicedToArrayRewriter<'a> {
+    helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+}
+
+impl VisitMut for SlicedToArrayRewriter<'_> {
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        items.visit_mut_children_with(self);
+        fold_sliced_to_array_module_item_groups(items, self.helpers);
+        for item in items {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+                continue;
+            };
+            rewrite_sliced_to_array_decls(&mut var.decls, self.helpers);
+        }
+    }
+
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        stmts.visit_mut_children_with(self);
+        fold_sliced_to_array_stmt_groups(stmts, self.helpers);
+        for stmt in stmts {
+            let Stmt::Decl(Decl::Var(var)) = stmt else {
+                continue;
+            };
+            rewrite_sliced_to_array_decls(&mut var.decls, self.helpers);
+        }
+    }
+}
+
+fn fold_sliced_to_array_module_item_groups(
     body: &mut Vec<ModuleItem>,
     helpers: &HashMap<BindingKey, BabelHelperKind>,
 ) {
     let mut i = 0;
     while i < body.len() {
-        try_fold_sliced_to_array_stmt_group(body, i, helpers);
+        try_fold_sliced_to_array_module_item_group(body, i, helpers);
         i += 1;
     }
 }
 
-fn try_fold_sliced_to_array_stmt_group(
+fn try_fold_sliced_to_array_module_item_group(
     body: &mut Vec<ModuleItem>,
     start: usize,
     helpers: &HashMap<BindingKey, BabelHelperKind>,
 ) -> bool {
-    let Some((ref_binding, source, length)) = extract_sliced_to_array_item(&body[start], helpers)
+    let Some((ref_binding, source, length)) =
+        extract_sliced_to_array_module_item(&body[start], helpers)
     else {
         return false;
     };
@@ -96,9 +117,15 @@ fn try_fold_sliced_to_array_stmt_group(
         let Some(item) = body.get(start + 1 + index) else {
             return false;
         };
-        let Some(binding) = extract_ref_index_item(item, &ref_binding.id, index) else {
+        let Some(binding) = extract_ref_index_module_item(item, &ref_binding.id, index) else {
             return false;
         };
+        if body
+            .get(start + 2 + index)
+            .is_some_and(|item| module_item_is_default_from_temp(item, &binding.id))
+        {
+            return false;
+        }
         elems.push(Some(Pat::Ident(binding)));
     }
     if ident_used_in_items(&body[start + 1 + length..], &ref_binding.id) {
@@ -122,7 +149,68 @@ fn try_fold_sliced_to_array_stmt_group(
     true
 }
 
-fn extract_sliced_to_array_item(
+fn fold_sliced_to_array_stmt_groups(
+    stmts: &mut Vec<Stmt>,
+    helpers: &HashMap<BindingKey, BabelHelperKind>,
+) {
+    let mut i = 0;
+    while i < stmts.len() {
+        try_fold_sliced_to_array_stmt_group(stmts, i, helpers);
+        i += 1;
+    }
+}
+
+fn try_fold_sliced_to_array_stmt_group(
+    stmts: &mut Vec<Stmt>,
+    start: usize,
+    helpers: &HashMap<BindingKey, BabelHelperKind>,
+) -> bool {
+    let Some((ref_binding, source, length)) = extract_sliced_to_array_stmt(&stmts[start], helpers)
+    else {
+        return false;
+    };
+    if length == 0 {
+        return false;
+    }
+
+    let mut elems = Vec::with_capacity(length);
+    for index in 0..length {
+        let Some(stmt) = stmts.get(start + 1 + index) else {
+            return false;
+        };
+        let Some(binding) = extract_ref_index_stmt(stmt, &ref_binding.id, index) else {
+            return false;
+        };
+        if stmts
+            .get(start + 2 + index)
+            .is_some_and(|stmt| stmt_is_default_from_temp(stmt, &binding.id))
+        {
+            return false;
+        }
+        elems.push(Some(Pat::Ident(binding)));
+    }
+    if ident_used_in_stmts(&stmts[start + 1 + length..], &ref_binding.id) {
+        return false;
+    }
+
+    let Stmt::Decl(Decl::Var(var)) = &mut stmts[start] else {
+        return false;
+    };
+    let Some(decl) = var.decls.first_mut() else {
+        return false;
+    };
+    decl.name = Pat::Array(ArrayPat {
+        span: DUMMY_SP,
+        elems,
+        optional: false,
+        type_ann: None,
+    });
+    decl.init = Some(source);
+    stmts.drain(start + 1..start + 1 + length);
+    true
+}
+
+fn extract_sliced_to_array_module_item(
     item: &ModuleItem,
     helpers: &HashMap<BindingKey, BabelHelperKind>,
 ) -> Option<(BindingIdent, Box<Expr>, usize)> {
@@ -135,7 +223,20 @@ fn extract_sliced_to_array_item(
     extract_sliced_to_array_decl(&var.decls[0], helpers)
 }
 
-fn extract_ref_index_item(
+fn extract_sliced_to_array_stmt(
+    stmt: &Stmt,
+    helpers: &HashMap<BindingKey, BabelHelperKind>,
+) -> Option<(BindingIdent, Box<Expr>, usize)> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    extract_sliced_to_array_decl(&var.decls[0], helpers)
+}
+
+fn extract_ref_index_module_item(
     item: &ModuleItem,
     ref_ident: &swc_core::ecma::ast::Ident,
     index: usize,
@@ -147,6 +248,64 @@ fn extract_ref_index_item(
         return None;
     }
     extract_ref_index_binding(&var.decls[0], ref_ident, index)
+}
+
+fn extract_ref_index_stmt(
+    stmt: &Stmt,
+    ref_ident: &swc_core::ecma::ast::Ident,
+    index: usize,
+) -> Option<BindingIdent> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    extract_ref_index_binding(&var.decls[0], ref_ident, index)
+}
+
+fn module_item_is_default_from_temp(item: &ModuleItem, temp: &swc_core::ecma::ast::Ident) -> bool {
+    let ModuleItem::Stmt(stmt) = item else {
+        return false;
+    };
+    stmt_is_default_from_temp(stmt, temp)
+}
+
+fn stmt_is_default_from_temp(stmt: &Stmt, temp: &swc_core::ecma::ast::Ident) -> bool {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return false;
+    };
+    if var.decls.len() != 1 {
+        return false;
+    }
+    let Some(init) = &var.decls[0].init else {
+        return false;
+    };
+    expr_is_default_from_temp(init, temp)
+}
+
+fn expr_is_default_from_temp(expr: &Expr, temp: &swc_core::ecma::ast::Ident) -> bool {
+    let Expr::Cond(cond) = expr else {
+        return false;
+    };
+    if !expr_is_equality_check_for_temp(cond.test.as_ref(), temp) {
+        return false;
+    }
+    expr_is_temp(cond.alt.as_ref(), temp)
+}
+
+fn expr_is_equality_check_for_temp(expr: &Expr, temp: &swc_core::ecma::ast::Ident) -> bool {
+    let Expr::Bin(bin) = expr else {
+        return false;
+    };
+    if !matches!(bin.op, BinaryOp::EqEqEq | BinaryOp::EqEq) {
+        return false;
+    }
+    expr_is_temp(bin.left.as_ref(), temp) || expr_is_temp(bin.right.as_ref(), temp)
+}
+
+fn expr_is_temp(expr: &Expr, temp: &swc_core::ecma::ast::Ident) -> bool {
+    matches!(expr, Expr::Ident(id) if same_sliced_ref_ident(id, temp))
 }
 
 fn rewrite_sliced_to_array_decls(
@@ -287,6 +446,20 @@ fn ident_used_in_items(items: &[ModuleItem], target: &swc_core::ecma::ast::Ident
     };
     for item in items {
         item.visit_with(&mut finder);
+        if finder.found {
+            return true;
+        }
+    }
+    false
+}
+
+fn ident_used_in_stmts(stmts: &[Stmt], target: &swc_core::ecma::ast::Ident) -> bool {
+    let mut finder = IdentUseFinder {
+        target,
+        found: false,
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
         if finder.found {
             return true;
         }

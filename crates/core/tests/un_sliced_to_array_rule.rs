@@ -1,5 +1,5 @@
 mod common;
-use common::{assert_eq_normalized, render};
+use common::{assert_eq_normalized, render, render_pipeline_until};
 
 #[test]
 fn unwraps_sliced_to_array() {
@@ -200,6 +200,57 @@ use(current, setCurrent);
     let expected = r#"
 const [current, setCurrent] = useState(value);
 use(current, setCurrent);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn folds_nested_sliced_to_array_statement_group() {
+    let input = r#"
+function _arrayWithHoles(arr) {
+    if (Array.isArray(arr)) return arr;
+}
+function _slicedToArray(arr, i) {
+    return _arrayWithHoles(arr) || _iterableToArrayLimit(arr, i) || _unsupportedIterableToArray(arr, i) || _nonIterableRest();
+}
+function read(pair) {
+    var _ref = _slicedToArray(pair, 2);
+    var key = _ref[0];
+    var value = _ref[1];
+    return use(key, value);
+}
+"#;
+    let expected = r#"
+function read(pair) {
+    var [key, value] = pair;
+    return use(key, value);
+}
+"#;
+    assert_eq_normalized(&render_pipeline_until(input, "UnSlicedToArray"), expected);
+}
+
+#[test]
+fn recovers_array_destructured_default_parameter_from_nested_helper() {
+    let input = r#"
+function _arrayWithHoles(arr) {
+    if (Array.isArray(arr)) return arr;
+}
+function _slicedToArray(arr, i) {
+    return _arrayWithHoles(arr) || _iterableToArrayLimit(arr, i) || _unsupportedIterableToArray(arr, i) || _nonIterableRest();
+}
+function first() {
+    let _ref = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : [],
+        _ref2 = _slicedToArray(_ref, 2),
+        head = _ref2[0],
+        _ref2$ = _ref2[1],
+        second = _ref2$ === void 0 ? fallback : _ref2$;
+    return use(head, second);
+}
+"#;
+    let expected = r#"
+function first([head, second = fallback] = []) {
+    return use(head, second);
+}
 "#;
     assert_eq_normalized(&render(input), expected);
 }
