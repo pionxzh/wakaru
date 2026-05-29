@@ -483,6 +483,14 @@ test("knownWakaruParseUnsupportedReason classifies SWC parser gaps", () => {
   );
   assert.equal(
     knownWakaruParseUnsupportedReason(
+      new Error("failed to parse input.js: Error { error: (1..6, TS1109) }"),
+      [{ name: "sloppy", strict: false }],
+      "test/language/statements/labeled/value-yield-non-strict.js",
+    ),
+    "swc-parse-yield-label",
+  );
+  assert.equal(
+    knownWakaruParseUnsupportedReason(
       new Error('failed to parse input.js: Error { error: (36..41, Expected("(", "yield")) }'),
       [{ name: "sloppy", strict: false }],
       "test/language/expressions/object/method-definition/yield-as-function-expression-binding-identifier.js",

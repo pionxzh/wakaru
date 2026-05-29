@@ -75,6 +75,15 @@
       }
     },
     {
+      "reason": "swc-parse-yield-label",
+      "status": "unsupported",
+      "phase": "wakaru-parse",
+      "when": {
+        "pathStartsWith": ["test/language/statements/labeled/value-yield-non-strict"],
+        "errorIncludes": ["TS1109"]
+      }
+    },
+    {
       "reason": "swc-parse-yield-function-name",
       "status": "unsupported",
       "phase": "wakaru-parse",
