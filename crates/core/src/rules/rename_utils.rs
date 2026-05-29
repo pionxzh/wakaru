@@ -704,7 +704,11 @@ impl VisitMut for BindingRenamer {
         prop.visit_mut_children_with(self);
     }
 
-    fn visit_mut_prop_name(&mut self, _: &mut PropName) {}
+    fn visit_mut_prop_name(&mut self, name: &mut PropName) {
+        if let PropName::Computed(computed) = name {
+            computed.visit_mut_with(self);
+        }
+    }
 
     fn visit_mut_member_prop(&mut self, prop: &mut MemberProp) {
         if let MemberProp::Computed(computed) = prop {

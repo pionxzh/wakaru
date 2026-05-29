@@ -135,6 +135,24 @@ const foo2 = ({
 }
 
 #[test]
+fn object_destructuring_param_rename_updates_computed_pattern_keys() {
+    let input = r#"
+const getSignal = ({ name: q }) => {
+  let { signals: { [q]: A } } = constants;
+  return A;
+};
+"#;
+    let expected = r#"
+const getSignal = ({ name }) => {
+  let { signals: { [name]: A } } = constants;
+  return A;
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn react_rename_createcontext() {
     let input = r#"
 const d = createContext(null);
