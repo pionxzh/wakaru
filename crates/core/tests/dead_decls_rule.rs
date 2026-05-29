@@ -186,6 +186,146 @@ export const value = read({});
     assert_eq_normalized(&render_default(input), expected.trim());
 }
 
+#[test]
+fn uninitialized_decl_is_kept_when_direct_eval_can_observe_scope() {
+    let input = r#"
+const o = {
+  m() {
+    let x;
+    eval("var x;");
+  }
+};
+"#;
+    let expected = r#"
+const o = {
+  m() {
+    let x;
+    eval("var x;");
+  }
+};
+"#;
+    assert_eq_normalized(&render_default(input), expected.trim());
+}
+
+#[test]
+fn uninitialized_decl_is_kept_when_parenthesized_direct_eval_can_observe_scope() {
+    let input = r#"
+const o = {
+  m() {
+    let x;
+    (eval)("var x;");
+  }
+};
+"#;
+    let expected = r#"
+const o = {
+  m() {
+    let x;
+    eval("var x;");
+  }
+};
+"#;
+    assert_eq_normalized(&render_default(input), expected.trim());
+}
+
+#[test]
+fn direct_eval_does_not_keep_unrelated_function_temps() {
+    let input = r#"
+function read(options) {
+  var tmp;
+  return (tmp = options.value) !== null && tmp !== undefined ? tmp : "fallback";
+}
+function run(source) {
+  var keep;
+  eval(source);
+  return keep;
+}
+export const value = read({}) + run("keep = 1");
+"#;
+    let expected = r#"
+function read(options) {
+  return options.value ?? "fallback";
+}
+function run(source) {
+  var keep;
+  eval(source);
+  return keep;
+}
+export const value = read({}) + run("keep = 1");
+"#;
+    assert_eq_normalized(&render_default(input), expected.trim());
+}
+
+#[test]
+fn static_direct_eval_keeps_only_mentioned_uninitialized_decl() {
+    let input = r#"
+function read() {
+  var keep;
+  var drop;
+  eval("keep = 1");
+  return keep;
+}
+export const value = read();
+"#;
+    let expected = r#"
+function read() {
+  var keep;
+  eval("keep = 1");
+  return keep;
+}
+export const value = read();
+"#;
+    assert_eq_normalized(&render_default(input), expected.trim());
+}
+
+#[test]
+fn nested_direct_eval_argument_keeps_observable_uninitialized_decl() {
+    let input = r#"
+function read(source) {
+  var keep;
+  eval("0", eval(source));
+  return 1;
+}
+export const value = read("keep = 1");
+"#;
+    let expected = r#"
+function read(source) {
+  var keep;
+  eval("0", eval(source));
+  return 1;
+}
+export const value = read("keep = 1");
+"#;
+    assert_eq_normalized(&render_default(input), expected.trim());
+}
+
+#[test]
+fn unknown_direct_eval_in_nested_function_keeps_outer_uninitialized_decl() {
+    let input = r#"
+function outer(source) {
+  var keep;
+  function inner() {
+    eval(source);
+  }
+  inner();
+  return keep;
+}
+export const value = outer("keep = 1");
+"#;
+    let expected = r#"
+function outer(source) {
+  var keep;
+  function inner() {
+    eval(source);
+  }
+  inner();
+  return keep;
+}
+export const value = outer("keep = 1");
+"#;
+    assert_eq_normalized(&render_default(input), expected.trim());
+}
+
 // ── Multi-declarator handling ───────────────────────────────────
 
 #[test]

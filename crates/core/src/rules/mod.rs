@@ -6,6 +6,7 @@ pub(crate) mod binding_facts;
 mod dead_decls;
 mod dead_imports;
 pub(crate) mod decl_utils;
+pub(crate) mod eval_utils;
 mod exponent;
 pub(crate) mod expr_utils;
 mod flip_comparisons;

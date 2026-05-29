@@ -3,12 +3,14 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
 use swc_core::ecma::ast::{
-    Decl, Expr, Ident, ImportDecl, MemberProp, Module, ModuleItem, Pat, PropName, Stmt, VarDecl,
+    ArrowExpr, BlockStmt, BlockStmtOrExpr, Class, Decl, Expr, Function, Ident, ImportDecl,
+    MemberProp, Module, ModuleItem, Pat, PropName, Stmt, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::binding_facts::collect_binding_facts;
 use super::decl_utils::{binding_id, BindingId};
+use super::eval_utils::{direct_eval_call_source, js_source_mentions_binding, EvalCallSource};
 
 type BindingKey = (Atom, SyntaxContext);
 
@@ -41,9 +43,11 @@ pub struct DeadUninitializedDecls;
 impl VisitMut for DeadUninitializedDecls {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let facts = collect_binding_facts(module);
+        let eval_protected = collect_eval_protected_uninitialized(module);
         let unused_uninitialized = facts
             .uninitialized
             .into_iter()
+            .filter(|binding| !eval_protected.contains(binding))
             .filter(|binding| facts.references.get(binding).copied().unwrap_or(0) <= 1)
             .collect::<HashSet<_>>();
         if unused_uninitialized.is_empty() {
@@ -53,6 +57,148 @@ impl VisitMut for DeadUninitializedDecls {
         module.visit_mut_with(&mut UninitializedDeclStripper {
             dead: &unused_uninitialized,
         });
+    }
+}
+
+fn collect_eval_protected_uninitialized(module: &Module) -> HashSet<BindingId> {
+    let mut collector = EvalProtectedUninitializedCollector::default();
+    collector.visit_module_scope(module);
+    collector.protected
+}
+
+#[derive(Default)]
+struct EvalProtectedUninitializedCollector {
+    scope_stack: Vec<HashSet<BindingId>>,
+    protected: HashSet<BindingId>,
+}
+
+impl EvalProtectedUninitializedCollector {
+    fn visit_module_scope(&mut self, module: &Module) {
+        self.with_scope(
+            collect_current_scope_uninitialized_from_module(module),
+            |this| {
+                module.visit_children_with(this);
+            },
+        );
+    }
+
+    fn with_scope(&mut self, uninitialized: HashSet<BindingId>, visit: impl FnOnce(&mut Self)) {
+        self.scope_stack.push(uninitialized);
+        visit(self);
+        self.scope_stack.pop();
+    }
+
+    fn protect_unknown_eval(&mut self) {
+        for scope in &self.scope_stack {
+            self.protected.extend(scope.iter().cloned());
+        }
+    }
+
+    fn protect_known_eval_source(&mut self, source: &str) {
+        for scope in &self.scope_stack {
+            self.protected.extend(
+                scope
+                    .iter()
+                    .filter(|binding| js_source_mentions_binding(source, &binding.0))
+                    .cloned(),
+            );
+        }
+    }
+}
+
+impl Visit for EvalProtectedUninitializedCollector {
+    fn visit_function(&mut self, function: &Function) {
+        self.with_scope(
+            collect_current_scope_uninitialized_from_function(function),
+            |this| {
+                function.visit_children_with(this);
+            },
+        );
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.with_scope(
+            collect_current_scope_uninitialized_from_arrow(arrow),
+            |this| {
+                arrow.visit_children_with(this);
+            },
+        );
+    }
+
+    fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+        if let Some(source) = direct_eval_call_source(call) {
+            match source {
+                EvalCallSource::NoSource => {}
+                EvalCallSource::Known(source) => self.protect_known_eval_source(&source),
+                EvalCallSource::Unknown => self.protect_unknown_eval(),
+            }
+            for arg in &call.args {
+                arg.expr.visit_with(self);
+            }
+            return;
+        }
+
+        call.visit_children_with(self);
+    }
+}
+
+#[derive(Default)]
+struct CurrentScopeUninitializedCollector {
+    uninitialized: HashSet<BindingId>,
+}
+
+impl Visit for CurrentScopeUninitializedCollector {
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if declarator.init.is_none() {
+            if let Pat::Ident(binding) = &declarator.name {
+                self.uninitialized.insert(binding_id(&binding.id));
+            }
+        }
+        declarator.visit_children_with(self);
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+    fn visit_class(&mut self, _: &Class) {}
+}
+
+fn collect_current_scope_uninitialized_from_module(module: &Module) -> HashSet<BindingId> {
+    let mut collector = CurrentScopeUninitializedCollector::default();
+    for item in &module.body {
+        item.visit_with(&mut collector);
+    }
+    collector.uninitialized
+}
+
+fn collect_current_scope_uninitialized_from_function(function: &Function) -> HashSet<BindingId> {
+    let mut collector = CurrentScopeUninitializedCollector::default();
+    if let Some(body) = &function.body {
+        collect_current_scope_uninitialized_from_block(body, &mut collector);
+    }
+    collector.uninitialized
+}
+
+fn collect_current_scope_uninitialized_from_arrow(arrow: &ArrowExpr) -> HashSet<BindingId> {
+    let mut collector = CurrentScopeUninitializedCollector::default();
+    match arrow.body.as_ref() {
+        BlockStmtOrExpr::BlockStmt(body) => {
+            collect_current_scope_uninitialized_from_block(body, &mut collector);
+        }
+        BlockStmtOrExpr::Expr(expr) => {
+            expr.visit_with(&mut collector);
+        }
+    }
+    collector.uninitialized
+}
+
+fn collect_current_scope_uninitialized_from_block(
+    block: &BlockStmt,
+    collector: &mut CurrentScopeUninitializedCollector,
+) {
+    for stmt in &block.stmts {
+        stmt.visit_with(collector);
     }
 }
 

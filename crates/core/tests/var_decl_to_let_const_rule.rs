@@ -1206,6 +1206,26 @@ function f() {
 }
 
 #[test]
+fn parenthesized_direct_eval_keeps_scope_vars_as_var() {
+    let input = r#"
+function f() {
+    var x = 1;
+    (eval)("x = 2");
+    return x;
+}
+"#;
+    let expected = r#"
+function f() {
+    var x = 1;
+    eval("x = 2");
+    return x;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn direct_eval_with_spread_keeps_scope_vars_as_var() {
     let input = r#"
 function f(iter) {
@@ -1229,6 +1249,39 @@ function f(source) {
 "#;
     let output = apply_rule(input);
     assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn nested_direct_eval_argument_keeps_scope_vars_as_var() {
+    let input = r#"
+function f(source) {
+    var x = 1;
+    eval("0", eval(source));
+    return x;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn dynamic_parenthesized_direct_eval_keeps_scope_vars_as_var() {
+    let input = r#"
+function f(source) {
+    var x = 1;
+    (eval)(source);
+    return x;
+}
+"#;
+    let expected = r#"
+function f(source) {
+    var x = 1;
+    eval(source);
+    return x;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]
