@@ -118,12 +118,36 @@ fn react_rename_module(module: &mut Module) {
 
 fn react_rename_function_body(func: &mut Function) {
     let Some(body) = &mut func.body else { return };
+    if !has_react_candidates_in_stmts(&body.stmts) {
+        return;
+    }
     let all_names = collect_names_in_stmts(&body.stmts);
     let renames = collect_react_renames_from_stmts(&body.stmts, &all_names);
     if renames.is_empty() {
         return;
     }
     rename_bindings(&mut body.stmts, &renames);
+}
+
+fn has_react_candidates_in_stmts(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|stmt| {
+        let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
+            return false;
+        };
+        var_decl.decls.iter().any(|decl| {
+            let Some(init) = &decl.init else { return false };
+            if get_single_react_hook_call(init).is_none() {
+                return false;
+            }
+            match &decl.name {
+                Pat::Ident(bi) => bi.id.sym.chars().count() <= REACT_MINIFIED_THRESHOLD,
+                Pat::Array(arr) => arr.elems.iter().flatten().any(|elem| {
+                    matches!(elem, Pat::Ident(bi) if bi.id.sym.chars().count() <= REACT_MINIFIED_THRESHOLD)
+                }),
+                _ => false,
+            }
+        })
+    })
 }
 
 fn collect_react_renames_from_module_items(
@@ -417,8 +441,35 @@ fn lower_first(input: &str) -> String {
 // Destructuring shorthand renames
 // ============================================================
 
+fn has_short_obj_pat_alias(pat: &Pat) -> bool {
+    let Pat::Object(obj_pat) = pat else { return false };
+    obj_pat.props.iter().any(|prop| match prop {
+        ObjectPatProp::KeyValue(kv) => extract_binding_from_pat(&kv.value)
+            .is_some_and(|(sym, _)| sym.chars().count() <= REACT_MINIFIED_THRESHOLD),
+        ObjectPatProp::Rest(rest) => extract_binding_from_pat(&rest.arg)
+            .is_some_and(|(sym, _)| sym.chars().count() <= REACT_MINIFIED_THRESHOLD),
+        _ => false,
+    })
+}
+
+fn has_destructuring_candidates_in_params(params: &[Param]) -> bool {
+    params.iter().any(|p| has_short_obj_pat_alias(&p.pat))
+}
+
+fn has_destructuring_candidates_in_stmts(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|stmt| {
+        let Stmt::Decl(Decl::Var(var)) = stmt else { return false };
+        var.decls.iter().any(|decl| has_short_obj_pat_alias(&decl.name))
+    })
+}
+
 fn destructuring_rename_function(func: &mut Function) {
     let Some(body) = &func.body else { return };
+    if !has_destructuring_candidates_in_params(&func.params)
+        && !has_destructuring_candidates_in_stmts(&body.stmts)
+    {
+        return;
+    }
     let mut all_names = collect_names_in_stmts(&body.stmts);
     for p in &func.params {
         collect_names_in_pat(&p.pat, &mut all_names);
@@ -462,6 +513,14 @@ fn destructuring_rename_module(module: &mut Module) {
 }
 
 fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
+    let has_param_candidates = arrow.params.iter().any(has_short_obj_pat_alias);
+    let has_body_candidates = match arrow.body.as_ref() {
+        BlockStmtOrExpr::BlockStmt(b) => has_destructuring_candidates_in_stmts(&b.stmts),
+        _ => false,
+    };
+    if !has_param_candidates && !has_body_candidates {
+        return;
+    }
     let mut all_names = match arrow.body.as_ref() {
         BlockStmtOrExpr::BlockStmt(b) => collect_names_in_stmts(&b.stmts),
         BlockStmtOrExpr::Expr(e) => {
@@ -791,8 +850,27 @@ impl VisitMut for ObjectPatShorthandConverter {
 // Member-init renames: var x = obj.prop → rename x to obj_prop
 // ============================================================
 
+fn has_member_init_candidates_in_stmts(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|stmt| {
+        let Stmt::Decl(Decl::Var(var)) = stmt else { return false };
+        var.decls.iter().any(|decl| {
+            let Pat::Ident(bi) = &decl.name else { return false };
+            if bi.id.sym.chars().count() > REACT_MINIFIED_THRESHOLD {
+                return false;
+            }
+            matches!(
+                decl.init.as_deref(),
+                Some(Expr::Member(m)) if matches!(&m.prop, MemberProp::Ident(_))
+            )
+        })
+    })
+}
+
 fn member_init_rename_function(func: &mut Function) {
     let Some(body) = &mut func.body else { return };
+    if !has_member_init_candidates_in_stmts(&body.stmts) {
+        return;
+    }
     let mut all_names = collect_names_in_stmts(&body.stmts);
     for p in &func.params {
         collect_names_in_pat(&p.pat, &mut all_names);
@@ -808,6 +886,9 @@ fn member_init_rename_arrow(arrow: &mut ArrowExpr) {
     let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_mut() else {
         return;
     };
+    if !has_member_init_candidates_in_stmts(&block.stmts) {
+        return;
+    }
     let mut all_names = collect_names_in_stmts(&block.stmts);
     for p in &arrow.params {
         collect_names_in_pat(p, &mut all_names);
@@ -917,8 +998,26 @@ fn collect_member_init_var_renames(
 // Symbol.for("key") renames: var x = Symbol.for("react.element") → symbol_react_element
 // ============================================================
 
+fn has_symbol_for_candidates_in_stmts(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|stmt| {
+        let Stmt::Decl(Decl::Var(var)) = stmt else { return false };
+        var.decls.iter().any(|decl| {
+            let Pat::Ident(bi) = &decl.name else { return false };
+            if bi.id.sym.chars().count() > REACT_MINIFIED_THRESHOLD {
+                return false;
+            }
+            let Some(Expr::Call(call)) = decl.init.as_deref() else { return false };
+            let Callee::Expr(callee) = &call.callee else { return false };
+            matches!(callee.as_ref(), Expr::Member(MemberExpr { prop: MemberProp::Ident(prop), .. }) if prop.sym.as_ref() == "for")
+        })
+    })
+}
+
 fn symbol_for_rename_function(func: &mut Function, unresolved_mark: Mark) {
     let Some(body) = &mut func.body else { return };
+    if !has_symbol_for_candidates_in_stmts(&body.stmts) {
+        return;
+    }
     let mut all_names = collect_names_in_stmts(&body.stmts);
     for p in &func.params {
         collect_names_in_pat(&p.pat, &mut all_names);
@@ -943,6 +1042,9 @@ fn symbol_for_rename_arrow(arrow: &mut ArrowExpr, unresolved_mark: Mark) {
     let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_mut() else {
         return;
     };
+    if !has_symbol_for_candidates_in_stmts(&block.stmts) {
+        return;
+    }
     let mut all_names = collect_names_in_stmts(&block.stmts);
     for p in &arrow.params {
         collect_names_in_pat(p, &mut all_names);
