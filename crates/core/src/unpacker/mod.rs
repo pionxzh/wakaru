@@ -46,6 +46,15 @@ pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
         }
 
         let result = {
+            let span = tracing::info_span!("detect_webpack5_runtime_entry");
+            let _enter = span.enter();
+            webpack5::detect_runtime_entry_from_module(&module, source)
+        };
+        if result.is_some() {
+            return Ok(result);
+        }
+
+        let result = {
             let span = tracing::info_span!("detect_webpack4");
             let _enter = span.enter();
             webpack4::detect_from_module(&module, cm.clone())

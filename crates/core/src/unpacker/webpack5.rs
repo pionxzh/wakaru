@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::anyhow;
 use swc_core::atoms::Atom;
@@ -13,7 +13,7 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 
 use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::utils::replace_ident;
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::rules::{apply_rules as run_rules, RulePipelineOptions};
 use crate::unpacker::webpack4::{rewrite_require_n_accesses, RequireIdRewriter};
@@ -272,6 +272,31 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     None
 }
 
+pub(super) fn detect_runtime_entry_from_module(
+    module: &Module,
+    source: &str,
+) -> Option<UnpackResult> {
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+            continue;
+        };
+        let Some(bootstrap_body) = extract_iife_body(expr) else {
+            continue;
+        };
+        if is_webpack5_runtime_entry_body(bootstrap_body) {
+            return Some(UnpackResult {
+                modules: vec![UnpackedModule {
+                    id: "entry".to_string(),
+                    is_entry: true,
+                    code: source.to_string(),
+                    filename: "entry.js".to_string(),
+                }],
+            });
+        }
+    }
+    None
+}
+
 /// Detect and extract modules from a webpack5 JSONP chunk format:
 /// `(self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([[chunkIds], {modules}])`
 pub fn detect_and_extract_chunk(source: &str) -> Option<UnpackResult> {
@@ -280,6 +305,30 @@ pub fn detect_and_extract_chunk(source: &str) -> Option<UnpackResult> {
         let module = super::parse_es_module(source, "webpack5.js", cm.clone()).ok()?;
         detect_chunk_from_module(&module, cm)
     })
+}
+
+pub(crate) fn detect_chunk_ids(source: &str) -> HashSet<usize> {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let Ok(module) = super::parse_es_module(source, "webpack5.js", cm) else {
+            return HashSet::new();
+        };
+        detect_chunk_ids_from_module(&module)
+    })
+}
+
+fn detect_chunk_ids_from_module(module: &Module) -> HashSet<usize> {
+    let mut ids = HashSet::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+            continue;
+        };
+        if let Some((chunk_ids, _)) = extract_chunk_push_parts(expr) {
+            ids.extend(numeric_ids_from_array(chunk_ids));
+        }
+        ids.extend(extract_commonjs_chunk_ids(expr));
+    }
+    ids
 }
 
 pub(super) fn detect_chunk_from_module(
@@ -297,6 +346,9 @@ pub(super) fn detect_chunk_from_module(
         if let Some(modules_object) = extract_chunk_push_modules(expr) {
             let extracted = extract_modules_from_object(modules_object, cm.clone())?;
             all_modules.extend(extracted);
+        } else if let Some(modules_object) = extract_commonjs_chunk_modules(expr) {
+            let extracted = extract_modules_from_object(modules_object, cm.clone())?;
+            all_modules.extend(extracted);
         }
     }
 
@@ -312,6 +364,10 @@ pub(super) fn detect_chunk_from_module(
 /// Match the pattern: `(self.X = self.X || []).push([[ids], {modules}])`
 /// or `(window["X"] = window["X"] || []).push([[ids], {modules}])`
 fn extract_chunk_push_modules(expr: &Expr) -> Option<&ObjectLit> {
+    extract_chunk_push_parts(expr).map(|(_, modules)| modules)
+}
+
+fn extract_chunk_push_parts(expr: &Expr) -> Option<(&ArrayLit, &ObjectLit)> {
     let Expr::Call(call) = expr else {
         return None;
     };
@@ -376,9 +432,9 @@ fn extract_chunk_push_modules(expr: &Expr) -> Option<&ObjectLit> {
     let Some(Some(first)) = push_elems.first() else {
         return None;
     };
-    if !matches!(&*first.expr, Expr::Array(_)) {
+    let Expr::Array(chunk_ids) = &*first.expr else {
         return None;
-    }
+    };
     // Second element: modules object
     let Some(Some(second)) = push_elems.get(1) else {
         return None;
@@ -395,7 +451,124 @@ fn extract_chunk_push_modules(expr: &Expr) -> Option<&ObjectLit> {
         extract_module_from_prop(prop)?;
     }
 
+    Some((chunk_ids, modules_object))
+}
+
+/// Match CommonJS async chunk modules:
+/// `exports.modules = { ... }`
+/// or minified sequence forms like `exports.id=1,exports.modules={...}`.
+fn extract_commonjs_chunk_modules(expr: &Expr) -> Option<&ObjectLit> {
+    match strip_parens(expr) {
+        Expr::Assign(assign) => extract_commonjs_chunk_modules_from_assign(assign),
+        Expr::Seq(seq) => seq
+            .exprs
+            .iter()
+            .find_map(|expr| extract_commonjs_chunk_modules(expr)),
+        _ => None,
+    }
+}
+
+fn extract_commonjs_chunk_modules_from_assign(assign: &AssignExpr) -> Option<&ObjectLit> {
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return None;
+    };
+    let Expr::Ident(obj) = &*member.obj else {
+        return None;
+    };
+    if obj.sym.as_ref() != "exports" {
+        return None;
+    }
+    if !member_prop_name_is(&member.prop, "modules") {
+        return None;
+    }
+    let Expr::Object(modules_object) = &*assign.right else {
+        return None;
+    };
+    if modules_object.props.is_empty() {
+        return None;
+    }
+    for prop in &modules_object.props {
+        extract_module_from_prop(prop)?;
+    }
     Some(modules_object)
+}
+
+fn extract_commonjs_chunk_ids(expr: &Expr) -> HashSet<usize> {
+    let mut ids = HashSet::new();
+    match strip_parens(expr) {
+        Expr::Assign(assign) => {
+            collect_commonjs_chunk_ids_from_assign(assign, &mut ids);
+        }
+        Expr::Seq(seq) => {
+            for expr in &seq.exprs {
+                ids.extend(extract_commonjs_chunk_ids(expr));
+            }
+        }
+        _ => {}
+    }
+    ids
+}
+
+fn collect_commonjs_chunk_ids_from_assign(assign: &AssignExpr, out: &mut HashSet<usize>) {
+    if assign.op != AssignOp::Assign {
+        return;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return;
+    };
+    let Expr::Ident(obj) = &*member.obj else {
+        return;
+    };
+    if obj.sym.as_ref() != "exports" {
+        return;
+    }
+
+    if member_prop_name_is(&member.prop, "id") {
+        if let Some(id) = numeric_id_from_expr(&assign.right) {
+            out.insert(id);
+        }
+    } else if member_prop_name_is(&member.prop, "ids") {
+        let Expr::Array(ids) = strip_parens(&assign.right) else {
+            return;
+        };
+        out.extend(numeric_ids_from_array(ids));
+    }
+}
+
+fn numeric_ids_from_array(array: &ArrayLit) -> HashSet<usize> {
+    array
+        .elems
+        .iter()
+        .filter_map(|elem| elem.as_ref())
+        .filter_map(|elem| numeric_id_from_expr(&elem.expr))
+        .collect()
+}
+
+fn numeric_id_from_expr(expr: &Expr) -> Option<usize> {
+    let Expr::Lit(Lit::Num(number)) = strip_parens(expr) else {
+        return None;
+    };
+    let value = number.value;
+    if value < 0.0 || value.fract() != 0.0 {
+        return None;
+    }
+    Some(value as usize)
+}
+
+fn member_prop_name_is(prop: &MemberProp, expected: &str) -> bool {
+    match prop {
+        MemberProp::Ident(ident) => ident.sym.as_ref() == expected,
+        MemberProp::Computed(computed) => {
+            let Expr::Lit(Lit::Str(value)) = strip_parens(&computed.expr) else {
+                return false;
+            };
+            value.value.as_str() == Some(expected)
+        }
+        _ => false,
+    }
 }
 
 /// Extract modules from an ObjectLit where keys are module IDs and values are factory functions.
@@ -599,6 +772,166 @@ fn extract_trailing_entry_body(
         .find(|stmt| !matches!(stmt, Stmt::Return(_)))
         .and_then(extract_iife_stmt_body)
         .map(|body| body.stmts.clone())
+}
+
+fn is_webpack5_runtime_entry_body(body: &swc_core::ecma::ast::BlockStmt) -> bool {
+    let mut collector = RuntimePropCollector::default();
+    body.visit_with(&mut collector);
+    collector.props_by_object.iter().any(|(object, props)| {
+        collector.function_names.contains(object)
+            && collector.async_chunk_load_objects.contains(object)
+            && props.contains("e")
+            && props.contains("u")
+            && props.contains("t")
+            && (props.contains("m") || props.contains("f"))
+    })
+}
+
+#[derive(Default)]
+struct RuntimePropCollector {
+    props_by_object: HashMap<String, HashSet<String>>,
+    function_names: HashSet<String>,
+    async_chunk_load_objects: HashSet<String>,
+}
+
+impl Visit for RuntimePropCollector {
+    fn visit_fn_decl(&mut self, decl: &swc_core::ecma::ast::FnDecl) {
+        self.function_names.insert(decl.ident.sym.to_string());
+        decl.visit_children_with(self);
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if let Pat::Ident(binding) = &declarator.name {
+            if matches!(
+                declarator.init.as_deref().map(strip_parens),
+                Some(Expr::Fn(_) | Expr::Arrow(_))
+            ) {
+                self.function_names.insert(binding.id.sym.to_string());
+            }
+        }
+
+        declarator.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
+            self.collect_member_prop(member);
+        }
+
+        assign.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Some(object) = self.extract_async_chunk_load_object(call) {
+            self.async_chunk_load_objects.insert(object);
+        }
+
+        call.visit_children_with(self);
+    }
+}
+
+impl RuntimePropCollector {
+    fn collect_member_prop(&mut self, member: &MemberExpr) {
+        let Expr::Ident(obj) = &*member.obj else {
+            return;
+        };
+        let MemberProp::Ident(prop) = &member.prop else {
+            return;
+        };
+        self.props_by_object
+            .entry(obj.sym.to_string())
+            .or_default()
+            .insert(prop.sym.to_string());
+    }
+
+    fn extract_async_chunk_load_object(&self, call: &CallExpr) -> Option<String> {
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let Expr::Member(MemberExpr {
+            obj: then_obj,
+            prop: then_prop,
+            ..
+        }) = strip_parens(callee)
+        else {
+            return None;
+        };
+        if !member_prop_name_is(then_prop, "then") {
+            return None;
+        }
+
+        let Expr::Call(load_call) = strip_parens(then_obj) else {
+            return None;
+        };
+        let load_object = callee_object_for_member_call(load_call, "e")?;
+        let then_arg = call.args.first()?;
+        if then_arg.spread.is_some() {
+            return None;
+        }
+        let Expr::Call(bind_call) = strip_parens(&then_arg.expr) else {
+            return None;
+        };
+        let bind_object = self.extract_runtime_t_bind_object(bind_call)?;
+
+        (load_object == bind_object).then_some(load_object)
+    }
+
+    fn extract_runtime_t_bind_object(&self, call: &CallExpr) -> Option<String> {
+        let Callee::Expr(callee) = &call.callee else {
+            return None;
+        };
+        let Expr::Member(MemberExpr {
+            obj: bind_obj,
+            prop: bind_prop,
+            ..
+        }) = strip_parens(callee)
+        else {
+            return None;
+        };
+        if !member_prop_name_is(bind_prop, "bind") {
+            return None;
+        }
+
+        let Expr::Member(MemberExpr {
+            obj: t_obj,
+            prop: t_prop,
+            ..
+        }) = strip_parens(bind_obj)
+        else {
+            return None;
+        };
+        if !member_prop_name_is(t_prop, "t") {
+            return None;
+        }
+        let Expr::Ident(runtime_ident) = strip_parens(t_obj) else {
+            return None;
+        };
+
+        let this_arg = call.args.first()?;
+        if this_arg.spread.is_some() {
+            return None;
+        }
+        let Expr::Ident(this_ident) = strip_parens(&this_arg.expr) else {
+            return None;
+        };
+        (runtime_ident.sym == this_ident.sym).then(|| runtime_ident.sym.to_string())
+    }
+}
+
+fn callee_object_for_member_call(call: &CallExpr, expected_prop: &str) -> Option<String> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens(callee) else {
+        return None;
+    };
+    if !member_prop_name_is(prop, expected_prop) {
+        return None;
+    }
+    let Expr::Ident(object) = strip_parens(obj) else {
+        return None;
+    };
+    Some(object.sym.to_string())
 }
 
 /// Extract a string module ID from any `PropName` variant.

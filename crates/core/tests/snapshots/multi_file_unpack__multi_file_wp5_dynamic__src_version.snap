@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/multi_file_unpack.rs
+expression: code
+---
+export const version = '1.0.0';
+export const name = 'test';

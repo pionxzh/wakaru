@@ -19,6 +19,7 @@ Fast JavaScript decompiler and bundle splitter for modern frontend.
 ```bash
 npx @wakaru/cli input.js -o output.js               # decompile a file
 npx @wakaru/cli bundle.js --unpack -o out/          # unpack and decompile a bundle
+npx @wakaru/cli dist/ --unpack -o out/              # scan a bundle output directory
 ```
 
 
@@ -64,12 +65,20 @@ Without `-o`, output goes to stdout. Stdin is also supported:
 cat input.js | wakaru > output.js
 ```
 
-### Unpack a bundle
+### Unpack bundles and chunks
 
 ```bash
 wakaru bundle.js --unpack -o out/
 wakaru bundle.js --unpack --raw -o out/    # raw split, no readability transforms
+wakaru entry.js chunk.js --unpack -o out/  # unpack multiple explicit files
+wakaru dist/ --unpack -o out/              # recursively scan a directory
 ```
+
+Directory inputs are supported only with `--unpack`. Wakaru recursively scans
+`.js`, `.mjs`, and `.cjs` files, skips hidden files/directories and
+`node_modules`, and includes only files detected as bundles or chunks. Skipped
+files are not copied or decompiled. Explicit file inputs keep the normal
+fallback behavior when no bundle format is detected.
 
 ### Source maps
 
@@ -77,7 +86,8 @@ wakaru bundle.js --unpack --raw -o out/    # raw split, no readability transform
 wakaru input.js --source-map input.js.map -o output.js
 ```
 
-Source maps enable identifier recovery and import deduplication.
+Source maps enable identifier recovery and import deduplication. They are
+currently supported only with a single input file.
 
 ### Extract original sources
 

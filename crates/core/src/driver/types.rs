@@ -36,6 +36,13 @@ impl Default for DecompileOptions {
     }
 }
 
+/// One physical JavaScript input to a multi-file unpack operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnpackInput {
+    pub filename: String,
+    pub source: String,
+}
+
 /// Result of an unpack operation: the extracted modules plus any non-fatal
 /// warnings (e.g. per-module parse failures that fell back to raw code).
 #[derive(Debug, Clone, Default)]

@@ -162,6 +162,7 @@ All test files live under `crates/core/tests/`.
 - `esbuild_unpack.rs` -- esbuild bundle detection and unpack tests.
 - `systemjs_unpack.rs` -- SystemJS unpack tests using generated compiler and bundler fixtures.
 - `webpack5_chunk_unpack.rs` -- webpack5 chunk splitting tests.
+- `multi_file_unpack.rs` -- Multi-input unpack tests for entry + chunk workflows.
 - `facts_rule.rs` -- Cross-module fact extraction tests.
 - `pipeline_helpers_rule.rs` -- Transpiler helper detection + restoration pipeline tests.
 - `decompile_options_rule.rs` -- Tests for `DecompileOptions` configuration.

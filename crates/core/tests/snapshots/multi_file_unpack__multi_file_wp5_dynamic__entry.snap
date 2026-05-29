@@ -1,0 +1,11 @@
+---
+source: crates/core/tests/multi_file_unpack.rs
+expression: code
+---
+import { version } from "./src/version.js";
+console.log(version);
+async function loadGreet() {
+    const mod = await require.e("src_greet_js").then(require.t.bind(require, "./src/greet.js", 19));
+    return mod.greet('dynamic');
+}
+loadGreet().then(console.log);

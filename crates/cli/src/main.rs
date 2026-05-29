@@ -9,7 +9,8 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
 use wakaru_core::{
     decompile, extract_source_entries, format_trace_events, parse_sourcemap, trace_rules, unpack,
-    unpack_raw, DecompileOptions, RewriteLevel, RuleTraceOptions,
+    unpack_files, unpack_files_raw, unpack_raw, DecompileOptions, RewriteLevel, RuleTraceOptions,
+    UnpackInput,
 };
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -48,11 +49,12 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// Input JavaScript/TypeScript file.
+    /// Input JavaScript/TypeScript file(s). With --unpack, directories are
+    /// scanned recursively for bundle/chunk files.
     ///
     /// Use `-` to read from stdin. If omitted and stdin is piped, stdin is read
     /// automatically.
-    input: Option<PathBuf>,
+    inputs: Vec<PathBuf>,
 
     /// Output file, or output directory when --unpack is set. Prints to stdout when omitted.
     #[arg(short, long)]
@@ -185,28 +187,43 @@ fn run_default(cli: Cli) -> Result<()> {
         bail!("--unpack requires -o/--output to choose an output directory");
     }
 
-    let (input, filename) = read_input(cli.input.as_ref())?;
-
-    let sourcemap_bytes = read_sourcemap(cli.sourcemap.as_ref())?;
-
     let heuristic_split = !matches!(cli.unpack, Some(UnpackMode::Strict));
-    let options = DecompileOptions {
-        filename,
-        sourcemap: sourcemap_bytes,
-        level: cli.level.into(),
-        heuristic_split,
-        diagnostics: cli.diagnostics,
-        ..Default::default()
-    };
 
     if cli.unpack.is_some() {
+        let input_set = read_unpack_inputs(&cli.inputs, heuristic_split)?;
+        let scan_stats = input_set.scan_stats;
+        let inputs = input_set.inputs;
+        if inputs.len() > 1 && cli.sourcemap.is_some() {
+            bail!("--source-map is only supported with a single input file");
+        }
+        let sourcemap_bytes = read_sourcemap(cli.sourcemap.as_ref())?;
+        let filename = inputs
+            .first()
+            .map(|input| input.filename.clone())
+            .unwrap_or_default();
+        let options = DecompileOptions {
+            filename,
+            sourcemap: sourcemap_bytes,
+            level: cli.level.into(),
+            heuristic_split,
+            diagnostics: cli.diagnostics,
+            ..Default::default()
+        };
+
         let out_dir = cli.output.expect("checked above");
         ensure_output_dir(&out_dir, cli.force)?;
 
-        let output = if cli.raw {
-            unpack_raw(&input, &options)?
+        let output = if inputs.len() == 1 {
+            let input = inputs.into_iter().next().expect("checked input length");
+            if cli.raw {
+                unpack_raw(&input.source, &options)?
+            } else {
+                unpack(&input.source, options)?
+            }
+        } else if cli.raw {
+            unpack_files_raw(inputs, &options)?
         } else {
-            unpack(&input, options)?
+            unpack_files(inputs, options)?
         };
 
         print_warnings(&output.warnings);
@@ -242,6 +259,12 @@ fn run_default(cli: Cli) -> Result<()> {
         })?;
 
         if io::stderr().is_terminal() {
+            if let Some(stats) = scan_stats {
+                eprintln!(
+                    "scanned: {} file(s), detected: {} bundle/chunk file(s), skipped: {} file(s)",
+                    stats.scanned, stats.detected, stats.skipped
+                );
+            }
             eprintln!("total: {} module(s)", resolved.len());
         }
 
@@ -249,6 +272,24 @@ fn run_default(cli: Cli) -> Result<()> {
             bail!("diagnostics reported errors");
         }
     } else {
+        if cli.inputs.len() > 1 {
+            bail!("multiple input files require --unpack");
+        }
+        if let Some(input) = cli.inputs.first() {
+            if input.is_dir() {
+                bail!("cannot decompile a directory. Pass a JavaScript file or use --unpack");
+            }
+        }
+        let (input, filename) = read_input(cli.inputs.first())?;
+        let sourcemap_bytes = read_sourcemap(cli.sourcemap.as_ref())?;
+        let options = DecompileOptions {
+            filename,
+            sourcemap: sourcemap_bytes,
+            level: cli.level.into(),
+            heuristic_split,
+            diagnostics: cli.diagnostics,
+            ..Default::default()
+        };
         let output = decompile(&input, options)?;
 
         print_warnings(&output.warnings);
@@ -388,6 +429,126 @@ fn read_input(input: Option<&PathBuf>) -> Result<(String, String)> {
             bail!("no input specified; pass a file path or pipe code on stdin")
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct UnpackInputSet {
+    inputs: Vec<UnpackInput>,
+    scan_stats: Option<DirectoryScanStats>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct DirectoryScanStats {
+    scanned: usize,
+    detected: usize,
+    skipped: usize,
+}
+
+fn read_unpack_inputs(inputs: &[PathBuf], heuristic_split: bool) -> Result<UnpackInputSet> {
+    if inputs.is_empty() {
+        let (source, filename) = read_input(None)?;
+        return Ok(UnpackInputSet {
+            inputs: vec![UnpackInput { filename, source }],
+            scan_stats: None,
+        });
+    }
+
+    let mut out = Vec::new();
+    let mut saw_directory = false;
+    let mut scan_stats = DirectoryScanStats::default();
+
+    for input in inputs {
+        if input == &PathBuf::from("-") || !input.is_dir() {
+            let (source, filename) = read_input(Some(input))?;
+            out.push(UnpackInput { filename, source });
+            continue;
+        }
+
+        saw_directory = true;
+        for path in collect_directory_js_inputs(input)? {
+            scan_stats.scanned += 1;
+            let source = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            if is_detected_unpack_input(&source, heuristic_split) {
+                scan_stats.detected += 1;
+                out.push(UnpackInput {
+                    filename: path.to_string_lossy().to_string(),
+                    source,
+                });
+            } else {
+                scan_stats.skipped += 1;
+            }
+        }
+    }
+
+    let scan_stats = if scan_stats.scanned > 0 {
+        Some(scan_stats)
+    } else {
+        None
+    };
+
+    if saw_directory && out.is_empty() {
+        bail!("no bundle or chunk files detected in directory input");
+    }
+
+    Ok(UnpackInputSet {
+        inputs: out,
+        scan_stats,
+    })
+}
+
+fn collect_directory_js_inputs(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    collect_directory_js_inputs_inner(root, &mut paths)?;
+    paths.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
+    Ok(paths)
+}
+
+fn collect_directory_js_inputs_inner(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+    let mut entries = fs::read_dir(dir)
+        .with_context(|| format!("failed to read input directory {}", dir.display()))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| format!("failed to read input directory {}", dir.display()))?;
+    entries.sort_by_key(|entry| entry.path());
+
+    for entry in entries {
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("failed to inspect {}", path.display()))?;
+
+        if file_type.is_dir() {
+            if is_hidden_name(&file_name) || file_name == "node_modules" {
+                continue;
+            }
+            collect_directory_js_inputs_inner(&path, paths)?;
+        } else if file_type.is_file() && !is_hidden_name(&file_name) && is_js_like_input(&path) {
+            paths.push(path);
+        }
+    }
+
+    Ok(())
+}
+
+fn is_detected_unpack_input(source: &str, heuristic_split: bool) -> bool {
+    matches!(
+        wakaru_core::unpacker::try_unpack_bundle(source),
+        Ok(Some(_))
+    ) || (heuristic_split
+        && wakaru_core::scope_hoist::split_scope_hoisted(source)
+            .is_some_and(|result| result.modules.len() > 1))
+}
+
+fn is_hidden_name(name: &str) -> bool {
+    name.starts_with('.')
+}
+
+fn is_js_like_input(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "js" | "mjs" | "cjs"))
 }
 
 fn ensure_output_file(path: &Path, force: bool) -> Result<()> {
@@ -543,6 +704,28 @@ mod tests {
     }
 
     #[test]
+    fn parses_multiple_unpack_inputs() {
+        let cli = Cli::try_parse_from([
+            "wakaru",
+            "--unpack",
+            "-o",
+            "out",
+            "bundle.js",
+            "src_greet_js.bundle.js",
+        ])
+        .expect("multi-file unpack should parse");
+
+        assert!(cli.unpack.is_some());
+        assert_eq!(
+            cli.inputs,
+            vec![
+                PathBuf::from("bundle.js"),
+                PathBuf::from("src_greet_js.bundle.js")
+            ]
+        );
+    }
+
+    #[test]
     fn parses_profile_flag() {
         let cli = Cli::try_parse_from(["wakaru", "input.js", "--profile", "profile.json"])
             .expect("--profile should parse");
@@ -580,6 +763,97 @@ mod tests {
     }
 
     #[test]
+    fn decompile_rejects_directory_input() {
+        let dir = temp_test_dir("decompile-dir");
+        fs::create_dir_all(&dir).expect("create temp dir");
+
+        let cli = Cli::try_parse_from(["wakaru", dir.to_str().expect("temp path should be utf8")])
+            .expect("directory input should parse");
+        let err = run_default(cli).expect_err("decompile should reject directory input");
+        assert!(
+            err.to_string()
+                .contains("cannot decompile a directory. Pass a JavaScript file or use --unpack"),
+            "unexpected error: {err}"
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn unpack_directory_inputs_are_recursive_detected_js_files_only() {
+        let dir = temp_test_dir("unpack-dir");
+        let nested = dir.join("nested");
+        let hidden = dir.join(".hidden");
+        let node_modules = dir.join("node_modules");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        fs::create_dir_all(&hidden).expect("create hidden dir");
+        fs::create_dir_all(&node_modules).expect("create node_modules dir");
+
+        fs::write(dir.join("plain.js"), "const value = 1;").expect("write plain file");
+        fs::write(dir.join("runtime-like.js"), runtime_like_plain_source())
+            .expect("write runtime-like plain file");
+        fs::write(nested.join("chunk.js"), webpack5_chunk_source()).expect("write chunk");
+        fs::write(dir.join("runtime.js"), webpack5_runtime_entry_source())
+            .expect("write runtime entry");
+        fs::write(hidden.join("hidden.js"), webpack5_chunk_source()).expect("write hidden chunk");
+        fs::write(node_modules.join("vendor.js"), webpack5_chunk_source())
+            .expect("write node_modules chunk");
+        fs::write(dir.join("chunk.js.map"), webpack5_chunk_source()).expect("write sourcemap");
+
+        let input_set =
+            read_unpack_inputs(std::slice::from_ref(&dir), false).expect("read directory inputs");
+        assert_eq!(
+            input_set.scan_stats,
+            Some(DirectoryScanStats {
+                scanned: 4,
+                detected: 2,
+                skipped: 2,
+            })
+        );
+        assert_eq!(
+            input_set.inputs.len(),
+            2,
+            "expected visible chunk and runtime entry"
+        );
+        assert!(
+            input_set
+                .inputs
+                .iter()
+                .any(|input| input.filename.ends_with("nested\\chunk.js")
+                    || input.filename.ends_with("nested/chunk.js")),
+            "missing detected chunk input: {:?}",
+            input_set.inputs
+        );
+        assert!(
+            input_set
+                .inputs
+                .iter()
+                .any(|input| input.filename.ends_with("runtime.js")),
+            "missing detected runtime input: {:?}",
+            input_set.inputs
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn unpack_directory_without_detected_files_errors() {
+        let dir = temp_test_dir("unpack-dir-empty");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        fs::write(dir.join("plain.js"), "const value = 1;").expect("write plain file");
+
+        let err = read_unpack_inputs(std::slice::from_ref(&dir), false)
+            .expect_err("directory with no detected bundles should error");
+        assert!(
+            err.to_string()
+                .contains("no bundle or chunk files detected in directory input"),
+            "unexpected error: {err}"
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
     fn output_file_requires_force_to_overwrite() {
         let dir = temp_test_dir("output-file");
         fs::create_dir_all(&dir).expect("create temp dir");
@@ -610,5 +884,47 @@ mod tests {
             .expect("system time should be after epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("wakaru-cli-test-{name}-{nanos}"))
+    }
+
+    fn webpack5_chunk_source() -> &'static str {
+        r#"
+(self.webpackChunk = self.webpackChunk || []).push([
+  [1],
+  {
+    100: function(module, exports, require) {
+      "use strict";
+      require.r(exports);
+      exports.default = 1;
+    }
+  }
+]);
+"#
+    }
+
+    fn webpack5_runtime_entry_source() -> &'static str {
+        r#"
+(() => {
+  var modules = {};
+  function require(id) { return {}; }
+  require.m = modules;
+  require.f = {};
+  require.e = function(id) { return Promise.resolve(id); };
+  require.u = function(id) { return id + ".bundle.js"; };
+  require.t = function(value) { return value; };
+  require.e(529).then(require.t.bind(require, 529, 19));
+})();
+"#
+    }
+
+    fn runtime_like_plain_source() -> &'static str {
+        r#"
+(() => {
+  const api = {};
+  api.e = 1;
+  api.u = 2;
+  api.t = 3;
+  api.m = 4;
+})();
+"#
     }
 }

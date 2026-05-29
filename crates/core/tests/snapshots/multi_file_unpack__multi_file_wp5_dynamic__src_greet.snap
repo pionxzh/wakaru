@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/multi_file_unpack.rs
+expression: code
+---
+function greet(name) {
+    return `Hello, ${name}!`;
+}
+export { greet };

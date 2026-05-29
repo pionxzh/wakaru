@@ -6,7 +6,8 @@ Takes minified or bundled JavaScript and produces readable, modern JavaScript.
 
 Two main operations:
 1. **Decompile** — apply transformation rules to a single JS file
-2. **Unpack + decompile** — split a bundle into modules, then decompile each
+2. **Unpack + decompile** — split one or more bundle/chunk inputs into modules,
+   then decompile each
 
 ## High-level flow
 
@@ -72,8 +73,9 @@ parse_js(source)
   → print_js(module)
 ```
 
-**`unpack(source, options)`** — bundle splitting + two-phase parallel module
-decompilation (see "Multi-module pipeline" section below for the full design):
+**`unpack(source, options)`** — single-source bundle splitting + two-phase
+parallel module decompilation (see "Multi-module pipeline" section below for
+the full design):
 ```
 unpack_bundle(source)
   → Phase 1: par_iter → parse → rules through UnEsm → ESM recovery → collect facts
@@ -82,9 +84,31 @@ unpack_bundle(source)
                     → targeted late cleanup → emit
 ```
 
+**`unpack_files(inputs, options)`** — multi-source unpack for an entry plus
+chunk files. Each input is detected independently, detected module sets are
+merged, and the same two-phase pipeline runs once over the combined module set
+so cross-module facts can see modules from every input file.
+
+Before the two-phase pipeline starts, multi-source unpack stabilizes the merged
+module set: filenames are made unique before fact collection, and unambiguous
+numeric webpack module IDs are mapped to those final filenames so entry/chunk
+references can be rewritten across physical input files. Duplicate numeric IDs
+are treated as ambiguous and are not rewritten globally, which avoids merging
+unrelated webpack runtimes from the same scanned directory.
+
 **`unpack_raw(source)`** — bundle splitting without the normal decompile rule
 pipeline. It still runs raw module normalization so extracted CommonJS/runtime
 shapes can become standalone modules.
+
+**`unpack_files_raw(inputs)`** — multi-source raw unpack. It merges raw
+detector output from all inputs and skips the normal decompile pipeline.
+
+The CLI also accepts directory inputs with `--unpack`. Directory inputs are
+expanded recursively to `.js`, `.mjs`, and `.cjs` candidates while skipping
+hidden files/directories and `node_modules`. Directory-discovered files are
+detect-only: files that do not match a bundle/chunk shape are skipped rather
+than copied or decompiled. Explicit file inputs keep the normal single-file
+fallback behavior.
 
 **`trace_rules(source, options, trace_options)`** — single-file rule tracing.
 Runs the pipeline with an observer that captures per-rule before/after snapshots.
