@@ -47,37 +47,74 @@ impl UnObjectRest {
     }
 }
 
-impl VisitMut for UnObjectRest {
-    fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
-        let local_helpers = LocalHelperContext::collect(module);
-        run_un_object_rest(module, self.unresolved_mark, &local_helpers);
+impl UnObjectRest {
+    fn has_owp_iife_candidate(module: &swc_core::ecma::ast::Module) -> bool {
+        struct Scan {
+            found: bool,
+        }
+        impl Visit for Scan {
+            fn visit_call_expr(&mut self, call: &CallExpr) {
+                if self.found {
+                    return;
+                }
+                if call.args.len() == 2
+                    && call.args.iter().all(|a| a.spread.is_none())
+                    && matches!(call.args[1].expr.as_ref(), Expr::Array(_))
+                {
+                    let callee_is_fn = if let Callee::Expr(e) = &call.callee {
+                        match strip_parens(e) {
+                            Expr::Arrow(a) => a.params.len() == 2,
+                            Expr::Fn(f) => f.function.params.len() == 2,
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    };
+                    if callee_is_fn {
+                        self.found = true;
+                        return;
+                    }
+                }
+                call.visit_children_with(self);
+            }
+        }
+        let mut scan = Scan { found: false };
+        module.visit_with(&mut scan);
+        scan.found
     }
 }
 
-fn run_un_object_rest(
-    module: &mut swc_core::ecma::ast::Module,
-    unresolved_mark: Mark,
-    local_helpers: &LocalHelperContext,
-) {
-    // Collect named OWP helpers (function declarations detected by babel_helper_utils)
-    let named_helpers = local_helpers.helpers_of_kind(BabelHelperKind::ObjectWithoutProperties);
-    let mut helper_dependencies = local_helpers.helpers_of_kind(BabelHelperKind::HelperDependency);
-    helper_dependencies.extend(local_helpers.helpers_of_kind(BabelHelperKind::DefineProperty));
-    let tslib_namespaces = collect_tslib_namespace_bindings(module);
+impl VisitMut for UnObjectRest {
+    fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
+        let local_helpers = LocalHelperContext::collect(module);
+        let named_helpers = local_helpers.helpers_of_kind(BabelHelperKind::ObjectWithoutProperties);
+        let tslib_namespaces = collect_tslib_namespace_bindings(module);
 
-    // Process inner scopes first (function bodies, etc.) with helpers available
-    let mut processor = ObjectRestProcessor {
-        named_helpers: &named_helpers,
-        tslib_namespaces: &tslib_namespaces,
-        unresolved_mark,
-    };
-    module.visit_mut_children_with(&mut processor);
-    reattach_elided_object_rest_in_module_items(
-        &mut module.body,
-        &named_helpers,
-        &tslib_namespaces,
-        unresolved_mark,
-    );
+        if named_helpers.is_empty()
+            && tslib_namespaces.is_empty()
+            && !Self::has_owp_iife_candidate(module)
+        {
+            return;
+        }
+
+        let mut helper_dependencies =
+            local_helpers.helpers_of_kind(BabelHelperKind::HelperDependency);
+        helper_dependencies.extend(local_helpers.helpers_of_kind(BabelHelperKind::DefineProperty));
+        let unresolved_mark = self.unresolved_mark;
+
+        // Process inner scopes first (function bodies, etc.) with helpers available
+        let mut processor = ObjectRestProcessor {
+            named_helpers: &named_helpers,
+            tslib_namespaces: &tslib_namespaces,
+            unresolved_mark,
+        };
+        module.visit_mut_children_with(&mut processor);
+        reattach_elided_object_rest_in_module_items(
+            &mut module.body,
+            &named_helpers,
+            &tslib_namespaces,
+            unresolved_mark,
+        );
 
     // Process module-level statements
     let mut new_body = Vec::with_capacity(module.body.len());
