@@ -152,6 +152,9 @@ fn is_pure_no_op_stmt(
     if has_observable_binary_coercion(expr) {
         return false;
     }
+    if has_new_expr(expr) {
+        return false;
+    }
     let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
     let ctx = ExprCtx {
         unresolved_ctxt,
@@ -359,6 +362,14 @@ fn has_observable_binary_coercion(expr: &Expr) -> bool {
             has_observable_binary_coercion(&bin.left) || has_observable_binary_coercion(&bin.right)
         }
         Expr::Paren(paren) => has_observable_binary_coercion(&paren.expr),
+        _ => false,
+    }
+}
+
+fn has_new_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::New(_) => true,
+        Expr::Paren(paren) => has_new_expr(&paren.expr),
         _ => false,
     }
 }

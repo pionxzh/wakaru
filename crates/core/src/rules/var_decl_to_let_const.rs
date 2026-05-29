@@ -1310,6 +1310,11 @@ fn keep_eval_affected_vars<T>(
     let mut analyzer = DirectEvalAnalyzer::default();
     items.visit_direct_eval_with(&mut analyzer);
 
+    if analyzer.unknown_direct_eval || (include_indirect_eval && analyzer.unknown_indirect_eval) {
+        must_stay_var.extend(var_ids.iter().cloned());
+        return;
+    }
+
     let sources = analyzer.known_direct_eval_sources.iter().chain(
         include_indirect_eval
             .then_some(&analyzer.known_indirect_eval_sources)
@@ -1399,23 +1404,48 @@ fn static_member_prop_name(prop: &MemberProp) -> Option<Atom> {
 struct DirectEvalAnalyzer {
     known_direct_eval_sources: Vec<String>,
     known_indirect_eval_sources: Vec<String>,
+    unknown_direct_eval: bool,
+    unknown_indirect_eval: bool,
 }
 
 impl Visit for DirectEvalAnalyzer {
     fn visit_call_expr(&mut self, expr: &swc_core::ecma::ast::CallExpr) {
-        if let Some(source) = expr
-            .args
-            .first()
-            .and_then(|arg| eval_static_string(arg.expr.as_ref()))
-        {
-            if is_direct_eval_call(expr) {
+        let is_direct_eval = is_direct_eval_call(expr);
+        let is_indirect_eval = is_indirect_eval_call(expr);
+
+        if is_direct_eval || is_indirect_eval {
+            if expr.args.is_empty() {
+                return;
+            }
+
+            if expr.args.iter().any(|arg| arg.spread.is_some()) {
+                if is_direct_eval {
+                    self.unknown_direct_eval = true;
+                } else {
+                    self.unknown_indirect_eval = true;
+                }
+                return;
+            }
+
+            let Some(source) = expr
+                .args
+                .first()
+                .and_then(|arg| eval_static_string(arg.expr.as_ref()))
+            else {
+                if is_direct_eval {
+                    self.unknown_direct_eval = true;
+                } else {
+                    self.unknown_indirect_eval = true;
+                }
+                return;
+            };
+
+            if is_direct_eval {
                 self.known_direct_eval_sources.push(source);
                 return;
             }
-            if is_indirect_eval_call(expr) {
-                self.known_indirect_eval_sources.push(source);
-                return;
-            }
+            self.known_indirect_eval_sources.push(source);
+            return;
         }
         expr.visit_children_with(self);
     }

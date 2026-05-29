@@ -1196,6 +1196,32 @@ function f() {
 }
 
 #[test]
+fn direct_eval_with_spread_keeps_scope_vars_as_var() {
+    let input = r#"
+function f(iter) {
+    var x = 1;
+    eval(...iter, "x = 2");
+    return x;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn dynamic_direct_eval_keeps_scope_vars_as_var() {
+    let input = r#"
+function f(source) {
+    var x = 1;
+    eval(source);
+    return x;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn top_level_indirect_eval_keeps_referenced_var() {
     let input = r#"
 var count = 0;

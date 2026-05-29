@@ -455,6 +455,18 @@ export const x = 23;
 }
 
 #[test]
+fn preserves_new_expression_statement_with_spread_argument() {
+    let input = r#"
+var iter = {};
+assert.throws(Test262Error, function() {
+  new function() {}(...iter);
+});
+"#;
+    let output = apply_minimal(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn preserves_object_literal_computed_key_coercion() {
     let input = r#"
 ({

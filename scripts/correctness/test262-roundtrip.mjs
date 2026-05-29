@@ -100,6 +100,14 @@ const pathPresets = {
     "test/language/expressions/logical-or",
     "test/language/expressions/comma",
   ],
+  calls: [
+    "test/language/expressions/call",
+    "test/language/expressions/new",
+    "test/language/expressions/member-expression",
+    "test/language/expressions/property-accessors",
+    "test/language/expressions/this",
+    "test/language/expressions/new.target",
+  ],
   templates: ["test/language/expressions/template-literal", "test/language/expressions/tagged-template"],
   modules: ["test/language/module-code"],
 };

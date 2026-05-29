@@ -139,6 +139,7 @@ node scripts\correctness\test262-roundtrip.mjs --preset destructuring --limit al
 node scripts\correctness\test262-roundtrip.mjs --preset async-generators --limit all --summary docs\test262-baselines\async-generators.md
 node scripts\correctness\test262-roundtrip.mjs --preset scope --limit all --summary docs\test262-baselines\scope.md
 node scripts\correctness\test262-roundtrip.mjs --preset control-flow --limit all --summary docs\test262-baselines\control-flow.md
+node scripts\correctness\test262-roundtrip.mjs --preset calls --limit all --summary docs\test262-baselines\calls.md
 node scripts\correctness\test262-roundtrip.mjs --preset templates --limit all --summary docs\test262-baselines\templates.md
 node scripts\correctness\test262-roundtrip.mjs --preset modules --limit all --summary docs\test262-baselines\modules.md
 ```
@@ -171,7 +172,7 @@ node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline esbui
 node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline babel-env-terser --limit all --case-timeout-ms 2000 --summary docs\test262-baselines\module-graph\babel-env-terser.md
 ```
 
-Recorded on 2026-05-25, with the scope and control-flow slices added on 2026-05-29:
+Recorded on 2026-05-25, with the scope, control-flow, and calls slices added on 2026-05-29:
 
 | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -181,6 +182,7 @@ Recorded on 2026-05-25, with the scope and control-flow slices added on 2026-05-
 | async-generators | 1707 | 666 | 1041 | 13 | 6 | 642 | 5 |
 | scope | 1396 | 1146 | 250 | 20 | 8 | 1118 | 0 |
 | control-flow | 1117 | 782 | 335 | 24 | 10 | 748 | 0 |
+| calls | 193 | 185 | 8 | 7 | 0 | 178 | 0 |
 | templates | 84 | 67 | 17 | 2 | 1 | 64 | 0 |
 | modules | 755 | 157 | 598 | 142 | 6 | 9 | 0 |
 
