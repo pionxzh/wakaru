@@ -324,6 +324,9 @@ runner!(run_smart_inline, |ctx| SmartInline::new(ctx.rewrite_level));
 runner!(run_smart_rename, |ctx| SmartRename::new(
     ctx.unresolved_mark
 ));
+runner!(run_smart_rename_second_pass, |ctx| {
+    SmartRenameSecondPass::new(ctx.unresolved_mark)
+});
 runner!(run_dead_uninitialized_decls, DeadUninitializedDecls);
 runner!(run_dead_decls, DeadDecls);
 runner!(run_dead_imports, DeadImports);
@@ -486,7 +489,9 @@ define_rule_registry! {
         "SmartRename"
     ]),
     // UnJsx2 can expose component aliases and value-position hints in JSX.
-    ("SmartRename2", Cleanup, run_smart_rename, always_enabled, requires: [
+    // Only the JSX-aware sub-rules need to re-run; the non-JSX sub-rules
+    // and recursive function/arrow descent were fully handled by SmartRename.
+    ("SmartRename2", Cleanup, run_smart_rename_second_pass, always_enabled, requires: [
         "UnJsx2"
     ]),
     // Late structural rewrites can consume uninitialized temps used by lowered

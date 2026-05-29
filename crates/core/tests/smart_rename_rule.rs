@@ -1,7 +1,7 @@
 mod common;
 
 use common::{assert_eq_normalized, normalize, render_pipeline_between, render_rule};
-use wakaru_core::rules::SmartRename;
+use wakaru_core::rules::{SmartRename, SmartRenameSecondPass};
 
 fn apply(input: &str) -> String {
     render_rule(input, SmartRename::new)
@@ -1069,5 +1069,101 @@ async function rhY({ signal: A }) {
     assert!(
         !output.contains("let { signal, cleanup }"),
         "body destructuring should not shadow renamed param: {output}"
+    );
+}
+
+// ============================================================
+// SmartRenameSecondPass tests
+// ============================================================
+
+fn apply_second_pass(input: &str) -> String {
+    render_rule(input, SmartRenameSecondPass::new)
+}
+
+#[test]
+fn jsx_only_renames_component_alias() {
+    let input = r#"
+const Xx = sideCar;
+export default function() {
+  return <Xx />;
+}
+"#;
+    let expected = r#"
+const SideCar = sideCar;
+export default function() {
+  return <SideCar />;
+}
+"#;
+    assert_eq_normalized(&apply_second_pass(input), expected);
+}
+
+#[test]
+fn jsx_only_renames_value_position_from_jsx_attr() {
+    let input = r#"
+function render(e) {
+  return <Foo error={e} />;
+}
+"#;
+    let expected = r#"
+function render(error) {
+  return <Foo error={error} />;
+}
+"#;
+    assert_eq_normalized(&apply_second_pass(input), expected);
+}
+
+#[test]
+fn second_pass_skips_module_level_destructuring() {
+    // Module-level destructuring renames are skipped (handled by first pass),
+    // but function-level destructuring still works.
+    let input = r#"
+const { error: e } = obj;
+console.log(e);
+"#;
+    let output = apply_second_pass(input);
+    assert!(
+        output.contains("error: e"),
+        "SmartRenameSecondPass should not apply module-level destructuring renames: {output}"
+    );
+}
+
+#[test]
+fn second_pass_skips_module_level_react_renames() {
+    // Module-level React hook renames are skipped (handled by first pass).
+    let input = r#"
+const [x, s] = useState(0);
+"#;
+    let output = apply_second_pass(input);
+    assert!(
+        !output.contains("setX"),
+        "SmartRenameSecondPass should not apply module-level React hook renames: {output}"
+    );
+}
+
+#[test]
+fn second_pass_applies_function_level_react_renames() {
+    let input = r#"
+function App() {
+    const [x, s] = useState(0);
+    return s(x + 1);
+}
+"#;
+    let output = apply_second_pass(input);
+    assert!(
+        output.contains("setX"),
+        "SmartRenameSecondPass should apply function-level React hook renames: {output}"
+    );
+}
+
+#[test]
+fn second_pass_skips_module_level_member_init() {
+    let input = r#"
+var x = obj.longPropertyName;
+console.log(x);
+"#;
+    let output = apply_second_pass(input);
+    assert!(
+        !output.contains("obj_longPropertyName"),
+        "SmartRenameSecondPass should not apply module-level member-init renames: {output}"
     );
 }

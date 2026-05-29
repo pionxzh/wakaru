@@ -36,10 +36,50 @@ impl VisitMut for SmartRename {
         destructuring_rename_module(module);
         member_init_rename_module(module);
         symbol_for_rename_module(module, self.unresolved_mark);
+
         sentry_component_rename_module(module);
         module.visit_mut_children_with(self);
         // Runs once at the module level; uses (sym, ctxt) matching so nested
         // bindings are classified correctly without per-scope recursion.
+        value_position_rename_module(module);
+        jsx_component_alias_rename_module(module);
+    }
+
+    fn visit_mut_function(&mut self, func: &mut Function) {
+        react_rename_function_body(func);
+        destructuring_rename_function(func);
+        member_init_rename_function(func);
+        symbol_for_rename_function(func, self.unresolved_mark);
+        func.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        destructuring_rename_arrow(arrow);
+        member_init_rename_arrow(arrow);
+        symbol_for_rename_arrow(arrow, self.unresolved_mark);
+        arrow.visit_mut_children_with(self);
+    }
+}
+
+/// Second pass of SmartRename that skips module-level non-JSX sub-rules
+/// (react hooks, destructuring, member-init, Symbol.for) which were fully
+/// handled by the first pass, but keeps the recursive descent for function-
+/// level sub-rules that can benefit from intermediate pipeline rules
+/// (e.g. UnIife2 exposing new React hook patterns).
+pub struct SmartRenameSecondPass {
+    unresolved_mark: Mark,
+}
+
+impl SmartRenameSecondPass {
+    pub fn new(unresolved_mark: Mark) -> Self {
+        Self { unresolved_mark }
+    }
+}
+
+impl VisitMut for SmartRenameSecondPass {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        sentry_component_rename_module(module);
+        module.visit_mut_children_with(self);
         value_position_rename_module(module);
         jsx_component_alias_rename_module(module);
     }
@@ -377,17 +417,6 @@ fn lower_first(input: &str) -> String {
 // Destructuring shorthand renames
 // ============================================================
 
-fn destructuring_rename_module(module: &mut Module) {
-    let all_names = collect_names_in_module(&module.body);
-    let renames = collect_obj_pat_renames_from_module(&module.body, &all_names);
-    if renames.is_empty() {
-        return;
-    }
-    rename_bindings_in_module(module, &renames);
-    let mut shorthand = ObjectPatShorthandConverter;
-    module.visit_mut_with(&mut shorthand);
-}
-
 fn destructuring_rename_function(func: &mut Function) {
     let Some(body) = &func.body else { return };
     let mut all_names = collect_names_in_stmts(&body.stmts);
@@ -419,6 +448,17 @@ fn destructuring_rename_function(func: &mut Function) {
     if let Some(body) = &mut func.body {
         body.visit_mut_with(&mut shorthand);
     }
+}
+
+fn destructuring_rename_module(module: &mut Module) {
+    let all_names = collect_names_in_module(&module.body);
+    let renames = collect_obj_pat_renames_from_module(&module.body, &all_names);
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings_in_module(module, &renames);
+    let mut shorthand = ObjectPatShorthandConverter;
+    module.visit_mut_with(&mut shorthand);
 }
 
 fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
@@ -751,15 +791,6 @@ impl VisitMut for ObjectPatShorthandConverter {
 // Member-init renames: var x = obj.prop → rename x to obj_prop
 // ============================================================
 
-fn member_init_rename_module(module: &mut Module) {
-    let all_names = collect_names_in_module(&module.body);
-    let renames = collect_member_init_renames_from_module(&module.body, &all_names);
-    if renames.is_empty() {
-        return;
-    }
-    rename_bindings_in_module(module, &renames);
-}
-
 fn member_init_rename_function(func: &mut Function) {
     let Some(body) = &mut func.body else { return };
     let mut all_names = collect_names_in_stmts(&body.stmts);
@@ -787,6 +818,15 @@ fn member_init_rename_arrow(arrow: &mut ArrowExpr) {
         return;
     }
     rename_bindings(&mut block.stmts, &renames);
+}
+
+fn member_init_rename_module(module: &mut Module) {
+    let all_names = collect_names_in_module(&module.body);
+    let renames = collect_member_init_renames_from_module(&module.body, &all_names);
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings_in_module(module, &renames);
 }
 
 fn collect_member_init_renames_from_module(
@@ -877,15 +917,6 @@ fn collect_member_init_var_renames(
 // Symbol.for("key") renames: var x = Symbol.for("react.element") → symbol_react_element
 // ============================================================
 
-fn symbol_for_rename_module(module: &mut Module, unresolved_mark: Mark) {
-    let all_names = collect_names_in_module(&module.body);
-    let renames = collect_symbol_for_renames_from_module(&module.body, &all_names, unresolved_mark);
-    if renames.is_empty() {
-        return;
-    }
-    rename_bindings_in_module(module, &renames);
-}
-
 fn symbol_for_rename_function(func: &mut Function, unresolved_mark: Mark) {
     let Some(body) = &mut func.body else { return };
     let mut all_names = collect_names_in_stmts(&body.stmts);
@@ -897,6 +928,15 @@ fn symbol_for_rename_function(func: &mut Function, unresolved_mark: Mark) {
         return;
     }
     rename_bindings(&mut body.stmts, &renames);
+}
+
+fn symbol_for_rename_module(module: &mut Module, unresolved_mark: Mark) {
+    let all_names = collect_names_in_module(&module.body);
+    let renames = collect_symbol_for_renames_from_module(&module.body, &all_names, unresolved_mark);
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings_in_module(module, &renames);
 }
 
 fn symbol_for_rename_arrow(arrow: &mut ArrowExpr, unresolved_mark: Mark) {
