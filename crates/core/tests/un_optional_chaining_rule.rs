@@ -208,8 +208,6 @@ var _r$foo$bar, _r;
 const a = (_r$foo$bar = (_r = r) === null || _r === void 0 || (_r = _r.foo) === null || _r === void 0 || (_r = _r.bar) === null || _r === void 0 ? void 0 : _r.baz) !== null && _r$foo$bar !== void 0 ? _r$foo$bar : "fallback";
 "#;
     let expected = r#"
-let _r$foo$bar;
-let _r;
 const a = r?.foo?.bar?.baz ?? "fallback";
 "#;
     let output = render(input);
@@ -223,9 +221,6 @@ var _a, _b, _c;
 var x = (_c = (_b = (_a = value == null ? void 0 : value.foo) == null ? void 0 : _a.bar) == null ? void 0 : _b.baz) != null ? _c : "fallback";
 "#;
     let expected = r#"
-let _a;
-let _b;
-let _c;
 const x = value?.foo?.bar?.baz ?? "fallback";
 "#;
     let output = render(input);
@@ -239,7 +234,6 @@ var _obj$method, _obj;
 const out = (_obj$method = (_obj = obj) == null ? void 0 : _obj.method == null ? void 0 : _obj.method(arg)) != null ? _obj$method : fallback;
 "#;
     let expected = r#"
-let _obj$method;
 let _obj;
 const out = ((_obj = obj) == null ? undefined : _obj.method == null ? undefined : _obj.method(arg)) ?? fallback;
 "#;
@@ -287,9 +281,6 @@ fn pipeline_transforms_issue_142_swc_terser_mixed_loose_root_chain() {
 var _ref, _r_app_info_base_info, _r_app_info, a = null !== (_ref = null == r || null === (_r_app_info = r.app_info) || void 0 === _r_app_info || null === (_r_app_info_base_info = _r_app_info.base_info) || void 0 === _r_app_info_base_info ? void 0 : _r_app_info_base_info.app_name) && void 0 !== _ref ? _ref : "game";
 "#;
     let expected = r#"
-let _ref;
-let _r_app_info_base_info;
-let _r_app_info;
 const a = r?.app_info?.base_info?.app_name ?? "game";
 "#;
     let output = render(input);
@@ -574,9 +565,6 @@ var _obj_key_value, _obj, _obj_key;
 const out = (_obj_key_value = (_obj = obj) == null ? void 0 : (_obj_key = _obj[key]) == null ? void 0 : _obj_key.value) != null ? _obj_key_value : fallback;
 "#;
     let expected = r#"
-let _obj_key_value;
-let _obj;
-let _obj_key;
 const out = obj?.[key]?.value ?? fallback;
 "#;
     let output = render(input);

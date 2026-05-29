@@ -79,7 +79,6 @@ function flush() {
     let expected = r#"
 function flush() {
     let item;
-    let unused;
     while (!locked && (item = queue.shift()) !== undefined) {
         run(item);
     }
