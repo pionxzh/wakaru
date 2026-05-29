@@ -1,10 +1,16 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
-use wakaru_core::rules::UnTemplateLiteral;
+use wakaru_core::rules::{RewriteLevel, UnTemplateLiteral};
 
 fn apply(input: &str) -> String {
-    render_rule(input, |_| UnTemplateLiteral)
+    render_rule(input, |_| UnTemplateLiteral::new())
+}
+
+fn apply_minimal(input: &str) -> String {
+    render_rule(input, |_| {
+        UnTemplateLiteral::new_with_level(RewriteLevel::Minimal)
+    })
 }
 
 #[test]
@@ -80,9 +86,24 @@ var b = `${expr} has been deprecated`;
 fn keeps_plus_empty_string_conversion() {
     let input = r#"
 var actual = object + "";
+var other = "" + object;
+"#;
+    let output = apply_minimal(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_rewrites_empty_string_conversion() {
+    let input = r#"
+var actual = object + "";
+var other = "" + object;
+"#;
+    let expected = r#"
+var actual = `${object}`;
+var other = `${object}`;
 "#;
     let output = apply(input);
-    assert_eq_normalized(&output, input);
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]

@@ -13,8 +13,27 @@ use super::helper_matcher::{
     binding_key, expr_binding_key, remaining_refs_outside_declarations, remove_fn_decls_by_binding,
     remove_var_declarators_by_binding, var_declarator_binding_key, BindingKey,
 };
+use super::RewriteLevel;
 
-pub struct UnTemplateLiteral;
+pub struct UnTemplateLiteral {
+    level: RewriteLevel,
+}
+
+impl UnTemplateLiteral {
+    pub fn new() -> Self {
+        Self::new_with_level(RewriteLevel::Standard)
+    }
+
+    pub fn new_with_level(level: RewriteLevel) -> Self {
+        Self { level }
+    }
+}
+
+impl Default for UnTemplateLiteral {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 enum Part {
     Text(String),
@@ -60,7 +79,7 @@ impl VisitMut for UnTemplateLiteral {
             expr.visit_mut_children_with(self);
             return;
         }
-        if let Some(next) = rewrite_plus_chain(expr) {
+        if let Some(next) = rewrite_plus_chain(expr, self.level) {
             *expr = next;
             expr.visit_mut_children_with(self);
             return;
@@ -362,7 +381,7 @@ fn is_inline_template_helper(expr: &Expr) -> bool {
 /// literal. All non-string elements that appear **before** the first string
 /// literal are grouped into a single sub-expression to preserve arithmetic
 /// semantics (e.g. `a + b + "c"` → `` `${a + b}c` `` not `` `${a}${b}c` ``).
-fn rewrite_plus_chain(expr: &Expr) -> Option<Expr> {
+fn rewrite_plus_chain(expr: &Expr, level: RewriteLevel) -> Option<Expr> {
     // Collect the flat left-associative operand list
     let mut operands: Vec<&Expr> = Vec::new();
     collect_add_chain(expr, &mut operands);
@@ -372,7 +391,7 @@ fn rewrite_plus_chain(expr: &Expr) -> Option<Expr> {
         return None;
     }
     let first_str_idx = operands.iter().position(|e| is_str_lit(e))?;
-    if first_str_idx > 0 && is_empty_str_lit(operands[first_str_idx]) {
+    if level == RewriteLevel::Minimal && is_empty_str_lit(operands[first_str_idx]) {
         return None;
     }
 

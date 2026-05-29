@@ -177,7 +177,9 @@ runner!(run_un_esm, |ctx| UnEsm::new(
     ctx.unresolved_mark,
     ctx.rewrite_level
 ));
-runner!(run_un_template_literal, UnTemplateLiteral);
+runner!(run_un_template_literal, |ctx| {
+    UnTemplateLiteral::new_with_level(ctx.rewrite_level)
+});
 runner!(run_un_while_loop, UnWhileLoop);
 runner!(run_un_type_constructor, |ctx| UnTypeConstructor::new(
     ctx.rewrite_level
