@@ -26,6 +26,13 @@ fn is_automatic_pragma(name: &str) -> bool {
     )
 }
 
+fn is_jsx_pragma_name(name: &str) -> bool {
+    matches!(
+        name,
+        "createElement" | "jsx" | "jsxs" | "_jsx" | "_jsxs" | "jsxDEV" | "jsxsDEV"
+    )
+}
+
 #[derive(Clone)]
 struct ScopedRename {
     old: BindingId,
@@ -57,6 +64,69 @@ impl UnJsx {
             import_pragmas: HashMap::new(),
             converted_classic_pragma: false,
         }
+    }
+
+    fn should_run(module: &Module) -> bool {
+        struct Scan {
+            found: bool,
+        }
+        impl Visit for Scan {
+            fn visit_import_decl(&mut self, import: &ImportDecl) {
+                if self.found {
+                    return;
+                }
+                if let Some(src) = import.src.value.as_str() {
+                    if matches!(src, "react/jsx-runtime" | "react/jsx-dev-runtime") {
+                        self.found = true;
+                    }
+                }
+            }
+            fn visit_call_expr(&mut self, call: &CallExpr) {
+                if self.found {
+                    return;
+                }
+                if let Callee::Expr(expr) = &call.callee {
+                    let is_pragma = match expr.as_ref() {
+                        Expr::Ident(id) => is_jsx_pragma_name(id.sym.as_ref()),
+                        Expr::Member(m) => {
+                            if let MemberProp::Ident(prop) = &m.prop {
+                                is_jsx_pragma_name(prop.sym.as_ref())
+                                    && !(prop.sym.as_ref() == CLASSIC_PRAGMA
+                                        && matches!(m.obj.as_ref(), Expr::Ident(obj) if obj.sym.as_ref() == "document"))
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    };
+                    if is_pragma {
+                        self.found = true;
+                        return;
+                    }
+                }
+                call.visit_children_with(self);
+            }
+            fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+                if self.found {
+                    return;
+                }
+                if let swc_core::ecma::ast::AssignTarget::Simple(
+                    swc_core::ecma::ast::SimpleAssignTarget::Member(member),
+                ) = &assign.left
+                {
+                    if let MemberProp::Ident(prop) = &member.prop {
+                        if prop.sym.as_ref() == "displayName" {
+                            self.found = true;
+                            return;
+                        }
+                    }
+                }
+                assign.visit_children_with(self);
+            }
+        }
+        let mut scan = Scan { found: false };
+        module.visit_with(&mut scan);
+        scan.found
     }
 
     fn process_module_items(&mut self, items: &mut Vec<ModuleItem>) {
@@ -486,7 +556,7 @@ impl UnJsx {
 
 impl VisitMut for UnJsx {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        if self.level < RewriteLevel::Standard {
+        if self.level < RewriteLevel::Standard || !Self::should_run(module) {
             return;
         }
         self.process_module_items(&mut module.body);
