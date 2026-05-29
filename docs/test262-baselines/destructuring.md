@@ -18,13 +18,13 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1034 | 891 | 143 | 28 | 45 | 809 | 9 |
+| 1034 | 891 | 143 | 28 | 54 | 809 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
-| rejected | swc-array-binding-elision | 9 |
+| rejected | swc-array-binding-elision | 18 |
 | rejected | transform-reject | 36 |
 | skipped | negative | 143 |
 | unsupported | sloppy-only-strict-ident | 26 |
@@ -32,12 +32,4 @@
 
 ## Failures
 
-- test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-abpt.js (decompiled-runtime)
-- test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close-err.js (decompiled-runtime)
-- test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close-skip.js (decompiled-runtime)
-- test/language/expressions/assignment/dstr/array-elem-trlg-iter-elision-iter-nrml-close.js (decompiled-runtime)
-- test/language/expressions/assignment/dstr/array-elision-iter-abpt.js (decompiled-runtime)
-- test/language/expressions/assignment/dstr/array-elision-iter-nrml-close-err.js (decompiled-runtime)
-- test/language/expressions/assignment/dstr/array-elision-iter-nrml-close-skip.js (decompiled-runtime)
-- test/language/expressions/assignment/dstr/array-elision-iter-nrml-close.js (decompiled-runtime)
-- test/language/expressions/assignment/dstr/array-iteration.js (decompiled-runtime)
+No Wakaru correctness failures.
