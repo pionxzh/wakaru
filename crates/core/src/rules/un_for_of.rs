@@ -6,7 +6,7 @@ use swc_core::ecma::ast::{
     MemberProp, ModuleItem, ObjectPatProp, Pat, SimpleAssignTarget, Stmt, TryStmt, UnaryExpr,
     UnaryOp, UpdateExpr, UpdateOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::RewriteLevel;
 
@@ -38,13 +38,39 @@ impl Default for UnForOf {
     }
 }
 
-impl VisitMut for UnForOf {
-    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
-        items.visit_mut_children_with(self);
+impl UnForOf {
+    fn should_run(module: &swc_core::ecma::ast::Module) -> bool {
+        struct Scan {
+            found: bool,
+        }
+        impl Visit for Scan {
+            fn visit_stmt(&mut self, stmt: &Stmt) {
+                if self.found {
+                    return;
+                }
+                if matches!(stmt, Stmt::For(_) | Stmt::Try(_)) {
+                    self.found = true;
+                    return;
+                }
+                stmt.visit_children_with(self);
+            }
+        }
+        let mut scan = Scan { found: false };
+        module.visit_with(&mut scan);
+        scan.found
+    }
+}
 
-        if self.level < RewriteLevel::Standard {
+impl VisitMut for UnForOf {
+    fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
+        if self.level < RewriteLevel::Standard || !Self::should_run(module) {
             return;
         }
+        module.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        items.visit_mut_children_with(self);
 
         let old = std::mem::take(items);
         let mut stmt_run = Vec::new();
@@ -63,18 +89,10 @@ impl VisitMut for UnForOf {
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-
-        if self.level < RewriteLevel::Standard {
-            return;
-        }
-
         process_stmt_vec(stmts);
     }
 
     fn visit_mut_stmt(&mut self, stmt: &mut Stmt) {
-        if self.level < RewriteLevel::Standard {
-            return;
-        }
         stmt.visit_mut_children_with(self);
 
         if let Some(for_of) = try_convert_for_of(stmt) {
@@ -91,7 +109,16 @@ fn flush_stmt_run(items: &mut Vec<ModuleItem>, stmts: &mut Vec<Stmt>) {
     items.extend(std::mem::take(stmts).into_iter().map(ModuleItem::Stmt));
 }
 
+fn has_for_of_sequence_candidates(stmts: &[Stmt]) -> bool {
+    stmts
+        .iter()
+        .any(|stmt| matches!(stmt, Stmt::For(_) | Stmt::Try(_)))
+}
+
 fn process_stmt_vec(stmts: &mut Vec<Stmt>) {
+    if !has_for_of_sequence_candidates(stmts) {
+        return;
+    }
     let old = std::mem::take(stmts);
     let mut i = 0;
     while i < old.len() {
