@@ -15,8 +15,8 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 use super::expr_utils::is_unresolved_ident;
 use super::helper_matcher::{binding_key, BindingKey};
 use super::transpiler_helper_utils::{
-    is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn, is_tslib_path,
-    tslib_require_member_name, LocalHelperContext, TsHelperKind,
+    is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn, is_tslib_path, is_tslib_require_expr,
+    tslib_member_ts_helper_kind, tslib_require_ts_helper_kind, LocalHelperContext, TsHelperKind,
 };
 use super::RewriteLevel;
 use crate::utils::paren::strip_parens;
@@ -311,7 +311,7 @@ fn collect_tslib_namespaces_from_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
             let Some(init) = decl.init.as_deref() else {
                 continue;
             };
-            if is_tslib_require_call(init) {
+            if is_tslib_require_expr(init) {
                 namespaces.insert(binding_key(&binding.id));
             }
         }
@@ -416,37 +416,9 @@ fn module_export_name_as_str(name: &ModuleExportName) -> &str {
     }
 }
 
-fn is_tslib_require_call(expr: &Expr) -> bool {
-    let Expr::Call(call) = strip_parens(expr) else {
-        return false;
-    };
-    let Callee::Expr(callee) = &call.callee else {
-        return false;
-    };
-    if !matches!(strip_parens(callee), Expr::Ident(id) if id.sym.as_ref() == "require") {
-        return false;
-    }
-    let [arg] = call.args.as_slice() else {
-        return false;
-    };
-    matches!(
-        strip_parens(&arg.expr),
-        Expr::Lit(Lit::Str(path)) if is_tslib_path(path.value.as_str().unwrap_or(""))
-    )
-}
-
 fn is_tslib_extends_member(expr: &Expr, namespaces: &HashSet<BindingKey>) -> bool {
-    if tslib_require_member_name(expr) == Some("__extends") {
-        return true;
-    }
-    let Expr::Member(member) = strip_parens(expr) else {
-        return false;
-    };
-    let Expr::Ident(obj) = strip_parens(&member.obj) else {
-        return false;
-    };
-    namespaces.contains(&binding_key(obj))
-        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "__extends")
+    tslib_require_ts_helper_kind(expr) == Some(TsHelperKind::Extends)
+        || tslib_member_ts_helper_kind(expr, namespaces) == Some(TsHelperKind::Extends)
 }
 
 fn is_ts_extends_helper_init(expr: &Expr) -> bool {

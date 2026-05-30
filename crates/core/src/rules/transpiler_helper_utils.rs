@@ -801,6 +801,13 @@ pub(crate) fn tslib_member_helper_kind(
     tslib_helper_name_kind(tslib_namespace_member_name(expr, namespaces)?)
 }
 
+pub(crate) fn tslib_member_ts_helper_kind(
+    expr: &Expr,
+    namespaces: &HashSet<BindingKey>,
+) -> Option<TsHelperKind> {
+    ts_helper_name_kind(tslib_namespace_member_name(expr, namespaces)?)
+}
+
 pub(crate) fn tslib_require_member_name(expr: &Expr) -> Option<&str> {
     let Expr::Member(member) = strip_parens(expr) else {
         return None;
@@ -809,6 +816,14 @@ pub(crate) fn tslib_require_member_name(expr: &Expr) -> Option<&str> {
         return None;
     }
     member_prop_name(&member.prop)
+}
+
+pub(crate) fn tslib_require_ts_helper_kind(expr: &Expr) -> Option<TsHelperKind> {
+    tslib_require_member_name(expr).and_then(ts_helper_name_kind)
+}
+
+pub(crate) fn is_tslib_require_expr(expr: &Expr) -> bool {
+    is_tslib_require_call(expr)
 }
 
 fn collect_tslib_require_member_calls(module: &Module) -> HashSet<TranspilerHelperKind> {
