@@ -216,6 +216,20 @@ const out = [head, ...items];
 }
 
 #[test]
+fn unwraps_tslib_namespace_spread_array_alias() {
+    let input = r#"
+var tslib_1 = require("tslib");
+var spread = tslib_1.__spreadArray;
+var out = spread([head], items, true);
+"#;
+    let expected = r#"
+import tslib_1 from "tslib";
+const out = [head, ...items];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn unwraps_nested_typescript_spread_array_helper() {
     let input = r#"
 var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {

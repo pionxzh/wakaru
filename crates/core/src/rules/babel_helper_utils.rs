@@ -93,6 +93,7 @@ enum TsHelperSource {
     Inline,
     TslibImport,
     TslibRequire,
+    TslibNamespace,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -304,12 +305,15 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
 
 fn collect_ts_helpers(module: &Module) -> HashMap<BindingKey, TsHelperInfo> {
     let mut helpers = HashMap::new();
+    let tslib_namespaces = collect_tslib_namespace_bindings(module);
 
     for item in &module.body {
         match item {
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
                 for decl in &var.decls {
-                    if let Some((key, helper)) = collect_ts_helper_from_var_decl(decl) {
+                    if let Some((key, helper)) =
+                        collect_ts_helper_from_var_decl(decl, &tslib_namespaces)
+                    {
                         helpers.insert(key, helper);
                     }
                 }
@@ -344,7 +348,10 @@ fn collect_ts_helpers(module: &Module) -> HashMap<BindingKey, TsHelperInfo> {
     helpers
 }
 
-fn collect_ts_helper_from_var_decl(decl: &VarDeclarator) -> Option<(BindingKey, TsHelperInfo)> {
+fn collect_ts_helper_from_var_decl(
+    decl: &VarDeclarator,
+    tslib_namespaces: &HashSet<BindingKey>,
+) -> Option<(BindingKey, TsHelperInfo)> {
     let init = decl.init.as_deref()?;
     let key = var_declarator_binding_key(decl)?;
     if let Some(kind) = ts_inline_helper_name(init).and_then(ts_helper_name_kind) {
@@ -357,12 +364,22 @@ fn collect_ts_helper_from_var_decl(decl: &VarDeclarator) -> Option<(BindingKey, 
         ));
     }
 
-    let kind = tslib_require_member_name(init).and_then(ts_helper_name_kind)?;
+    if let Some(kind) = tslib_require_member_name(init).and_then(ts_helper_name_kind) {
+        return Some((
+            key,
+            TsHelperInfo {
+                kind,
+                source: TsHelperSource::TslibRequire,
+            },
+        ));
+    }
+
+    let kind = tslib_namespace_member_name(init, tslib_namespaces).and_then(ts_helper_name_kind)?;
     Some((
         key,
         TsHelperInfo {
             kind,
-            source: TsHelperSource::TslibRequire,
+            source: TsHelperSource::TslibNamespace,
         },
     ))
 }
@@ -3280,15 +3297,18 @@ mod tests {
                 var inlineSpread = (this && this.__spreadArray) || function(to, from, pack) {
                     return to.concat(from);
                 };
+                var tslib_1 = require("tslib");
                 var requiredSpread = require("tslib").__spreadArray;
                 var requiredAwaiter = require("tslib").__awaiter;
+                var namespaceSpread = tslib_1.__spreadArray;
+                var namespaceAwaiter = tslib_1.__awaiter;
                 var notSpread = customSpreadArray;
                 "#,
             );
             let helpers =
                 LocalHelperContext::collect(&module).ts_helpers_of_kind(TsHelperKind::SpreadArray);
 
-            assert_eq!(helpers.len(), 3);
+            assert_eq!(helpers.len(), 4);
             assert!(helpers
                 .iter()
                 .any(|(sym, _)| sym.as_ref() == "importedSpread"));
@@ -3319,10 +3339,14 @@ mod tests {
                 inline_helpers.get(&(Atom::from("requiredAwaiter"), SyntaxContext::empty())),
                 None
             );
+            assert_eq!(
+                inline_helpers.get(&(Atom::from("namespaceAwaiter"), SyntaxContext::empty())),
+                None
+            );
 
             let awaiter_helpers =
                 LocalHelperContext::collect(&module).ts_helpers_of_kind(TsHelperKind::Awaiter);
-            assert_eq!(awaiter_helpers.len(), 3);
+            assert_eq!(awaiter_helpers.len(), 4);
         });
     }
 
