@@ -25,6 +25,7 @@ pub struct UnEs6Class {
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
     module_ts_extends_helpers: Option<HashSet<BindingKey>>,
+    module_tslib_namespaces: Option<HashSet<BindingKey>>,
 }
 
 impl UnEs6Class {
@@ -37,6 +38,7 @@ impl UnEs6Class {
             unresolved_mark,
             rewrite_level,
             module_ts_extends_helpers: None,
+            module_tslib_namespaces: None,
         }
     }
 
@@ -49,6 +51,7 @@ impl UnEs6Class {
         let mut rule = Self::new_with_level(unresolved_mark, rewrite_level);
         rule.module_ts_extends_helpers =
             Some(local_helpers.ts_helpers_of_kind(TsHelperKind::Extends));
+        rule.module_tslib_namespaces = Some(local_helpers.tslib_namespaces().clone());
         module.visit_mut_with(&mut rule);
     }
 }
@@ -57,7 +60,10 @@ impl VisitMut for UnEs6Class {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         // Pre-scan for helpers at module level BEFORE visiting children,
         // so nested scopes (function bodies) can also detect custom helper calls.
-        let tslib_namespaces = collect_tslib_namespaces_from_items(items);
+        let tslib_namespaces = self
+            .module_tslib_namespaces
+            .take()
+            .unwrap_or_else(|| collect_tslib_namespaces_from_items(items));
         let ts_extends_helpers = self.module_ts_extends_helpers.take().unwrap_or_else(|| {
             let mut helpers = collect_ts_extends_helpers_from_items(items);
             helpers.extend(collect_tslib_extends_helpers_from_items(
