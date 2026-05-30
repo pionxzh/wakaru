@@ -14,7 +14,7 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
     is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn, is_tslib_path,
-    tslib_require_member_name,
+    tslib_require_member_name, LocalHelperContext, TsHelperKind,
 };
 use super::expr_utils::is_unresolved_ident;
 use super::helper_matcher::{binding_key, BindingKey};
@@ -24,6 +24,7 @@ use crate::utils::paren::strip_parens;
 pub struct UnEs6Class {
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
+    module_ts_extends_helpers: Option<HashSet<BindingKey>>,
 }
 
 impl UnEs6Class {
@@ -35,7 +36,20 @@ impl UnEs6Class {
         Self {
             unresolved_mark,
             rewrite_level,
+            module_ts_extends_helpers: None,
         }
+    }
+
+    pub(crate) fn run_with_helpers(
+        module: &mut swc_core::ecma::ast::Module,
+        unresolved_mark: Mark,
+        rewrite_level: RewriteLevel,
+        local_helpers: &LocalHelperContext,
+    ) {
+        let mut rule = Self::new_with_level(unresolved_mark, rewrite_level);
+        rule.module_ts_extends_helpers =
+            Some(local_helpers.ts_helpers_of_kind(TsHelperKind::Extends));
+        module.visit_mut_with(&mut rule);
     }
 }
 
@@ -43,7 +57,10 @@ impl VisitMut for UnEs6Class {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         // Pre-scan for helpers at module level BEFORE visiting children,
         // so nested scopes (function bodies) can also detect custom helper calls.
-        let ts_extends_helpers = collect_ts_extends_helpers_from_items(items);
+        let ts_extends_helpers = self
+            .module_ts_extends_helpers
+            .take()
+            .unwrap_or_else(|| collect_ts_extends_helpers_from_items(items));
         let tslib_namespaces = collect_tslib_namespaces_from_items(items);
         let mut inherits_helpers = collect_inherits_helpers_from_items(items);
         inherits_helpers.extend(ts_extends_helpers.iter().cloned());

@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render_rule};
+use common::{assert_eq_normalized, render_pipeline_between, render_rule};
 use wakaru_core::rules::UnEs6Class;
 use wakaru_core::RewriteLevel;
 
@@ -121,6 +121,36 @@ class Admin extends User {
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn pipeline_uses_cached_typescript_extends_helper_identity() {
+    let input = r#"
+var E = (this && this.__extends) || function (d, b) {
+    for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p];
+    function __() { this.constructor = d; }
+    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+};
+var Admin = (function (_super) {
+    E(Admin, _super);
+    function Admin(name) {
+        var _this = _super.call(this, name) || this;
+        return _this;
+    }
+    return Admin;
+}(User));
+"#;
+    let expected = r#"
+class Admin extends User {
+    constructor(name) {
+        super(name);
+    }
+}
+"#;
+    assert_eq_normalized(
+        &render_pipeline_between(input, "UnEs6Class", "UnEs6Class"),
+        expected,
+    );
 }
 
 #[test]

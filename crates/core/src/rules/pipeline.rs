@@ -266,10 +266,15 @@ runner!(run_un_jsx, |ctx| UnJsx::new_with_level(
     ctx.unresolved_mark,
     ctx.rewrite_level
 ));
-runner!(run_un_es6_class, |ctx| UnEs6Class::new_with_level(
-    ctx.unresolved_mark,
-    ctx.rewrite_level
-));
+fn run_un_es6_class(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    UnEs6Class::run_with_helpers(
+        module,
+        ctx.unresolved_mark,
+        ctx.rewrite_level,
+        local_helpers.as_ref(),
+    );
+}
 fn run_un_class_fields(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
     UnClassFields::new_with_mark(ctx.unresolved_mark, ctx.rewrite_level)
