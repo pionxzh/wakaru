@@ -43,7 +43,7 @@ pub struct UnJsx {
     unresolved_mark: Mark,
     level: RewriteLevel,
     pending_stmts: Vec<Vec<Stmt>>,
-    used_names: Vec<HashSet<String>>,
+    used_names: Vec<HashSet<Atom>>,
     string_consts: Vec<HashMap<BindingId, Str>>,
     import_pragmas: HashMap<BindingId, &'static str>,
     converted_classic_pragma: bool,
@@ -132,7 +132,8 @@ impl UnJsx {
     fn process_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         self.converted_classic_pragma = false;
         self.import_pragmas = collect_import_pragmas(items);
-        let renames = collect_module_renames(items, self.unresolved_mark, &self.import_pragmas);
+        let (renames, name_registry) =
+            collect_module_renames(items, self.unresolved_mark, &self.import_pragmas);
         if !renames.is_empty() {
             let mut renamer = ScopedRenamer::new(renames);
             for item in items.iter_mut() {
@@ -140,7 +141,7 @@ impl UnJsx {
             }
         }
 
-        self.used_names.push(collect_names_in_module_items(items));
+        self.used_names.push(name_registry);
         self.string_consts
             .push(collect_string_consts_from_module_items(items));
 
@@ -164,7 +165,8 @@ impl UnJsx {
     }
 
     fn process_stmts(&mut self, stmts: &mut Vec<Stmt>) {
-        let renames = collect_stmt_renames(stmts, self.unresolved_mark, &self.import_pragmas);
+        let (renames, name_registry) =
+            collect_stmt_renames(stmts, self.unresolved_mark, &self.import_pragmas);
         if !renames.is_empty() {
             let mut renamer = ScopedRenamer::new(renames);
             for stmt in stmts.iter_mut() {
@@ -172,7 +174,7 @@ impl UnJsx {
             }
         }
 
-        self.used_names.push(collect_names_in_stmts(stmts));
+        self.used_names.push(name_registry);
         self.string_consts
             .push(collect_string_consts_from_stmts(stmts));
 
@@ -331,16 +333,18 @@ impl UnJsx {
 
     fn generate_name(&mut self, base: String) -> String {
         let names = self.used_names.last_mut().expect("body scope should exist");
-        if !names.contains(&base) {
-            names.insert(base.clone());
+        let base_atom = Atom::from(base.as_str());
+        if !names.contains(&base_atom) {
+            names.insert(base_atom);
             return base;
         }
 
         let mut idx = 1usize;
         loop {
             let candidate = format!("{base}_{idx}");
-            if !names.contains(&candidate) {
-                names.insert(candidate.clone());
+            let candidate_atom = Atom::from(candidate.as_str());
+            if !names.contains(&candidate_atom) {
+                names.insert(candidate_atom);
                 return candidate;
             }
             idx += 1;
@@ -574,7 +578,11 @@ impl VisitMut for UnJsx {
         if self.level < RewriteLevel::Standard {
             return;
         }
-        self.process_stmts(&mut block.stmts);
+        if stmts_have_jsx_content(&block.stmts, &self.import_pragmas) {
+            self.process_stmts(&mut block.stmts);
+        } else {
+            block.visit_mut_children_with(self);
+        }
     }
 
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
@@ -600,18 +608,81 @@ impl Rule for UnJsx {
     }
 }
 
+fn stmts_have_jsx_content(
+    stmts: &[Stmt],
+    import_pragmas: &HashMap<BindingId, &'static str>,
+) -> bool {
+    struct BlockScan<'a> {
+        found: bool,
+        import_pragmas: &'a HashMap<BindingId, &'static str>,
+    }
+    impl Visit for BlockScan<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if self.found {
+                return;
+            }
+            if let Callee::Expr(expr) = &call.callee {
+                let is_pragma = match expr.as_ref() {
+                    Expr::Ident(id) => {
+                        is_jsx_pragma_name(id.sym.as_ref())
+                            || self.import_pragmas.contains_key(&(id.sym.clone(), id.ctxt))
+                    }
+                    Expr::Member(m) => {
+                        matches!(&m.prop, MemberProp::Ident(p) if is_jsx_pragma_name(p.sym.as_ref())
+                            && !(p.sym.as_ref() == CLASSIC_PRAGMA
+                                && matches!(m.obj.as_ref(), Expr::Ident(obj) if obj.sym.as_ref() == "document")))
+                    }
+                    _ => false,
+                };
+                if is_pragma {
+                    self.found = true;
+                    return;
+                }
+            }
+            call.visit_children_with(self);
+        }
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if self.found {
+                return;
+            }
+            if let swc_core::ecma::ast::AssignTarget::Simple(
+                swc_core::ecma::ast::SimpleAssignTarget::Member(member),
+            ) = &assign.left
+            {
+                if let MemberProp::Ident(prop) = &member.prop {
+                    if prop.sym.as_ref() == "displayName" {
+                        if let Expr::Ident(obj) = member.obj.as_ref() {
+                            if obj.sym.len() <= 2 {
+                                self.found = true;
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            assign.visit_children_with(self);
+        }
+    }
+    let mut scan = BlockScan {
+        found: false,
+        import_pragmas,
+    };
+    stmts.visit_with(&mut scan);
+    scan.found
+}
+
 #[derive(Default)]
 struct NameCollector {
-    names: HashSet<String>,
+    names: HashSet<Atom>,
 }
 
 impl Visit for NameCollector {
     fn visit_ident(&mut self, ident: &Ident) {
-        self.names.insert(ident.sym.to_string());
+        self.names.insert(ident.sym.clone());
     }
 
     fn visit_binding_ident(&mut self, ident: &BindingIdent) {
-        self.names.insert(ident.id.sym.to_string());
+        self.names.insert(ident.id.sym.clone());
     }
 }
 
@@ -677,13 +748,13 @@ impl Visit for ConstStringCollector {
     }
 }
 
-fn collect_names_in_module_items(items: &[ModuleItem]) -> HashSet<String> {
+fn collect_names_in_module_items(items: &[ModuleItem]) -> HashSet<Atom> {
     let mut collector = NameCollector::default();
     items.visit_with(&mut collector);
     collector.names
 }
 
-fn collect_names_in_stmts(stmts: &[Stmt]) -> HashSet<String> {
+fn collect_names_in_stmts(stmts: &[Stmt]) -> HashSet<Atom> {
     let mut collector = NameCollector::default();
     stmts.visit_with(&mut collector);
     collector.names
@@ -739,9 +810,8 @@ fn collect_module_renames(
     items: &[ModuleItem],
     unresolved_mark: Mark,
     import_pragmas: &HashMap<BindingId, &'static str>,
-) -> Vec<ScopedRename> {
-    let used_names = collect_names_in_module_items(items);
-    let mut name_registry = used_names;
+) -> (Vec<ScopedRename>, HashSet<Atom>) {
+    let mut name_registry = collect_names_in_module_items(items);
     let mut renames = collect_display_name_renames_from_module_items(items, &mut name_registry);
     renames.extend(collect_lowercase_component_renames_from_module_items(
         items,
@@ -749,16 +819,15 @@ fn collect_module_renames(
         &mut name_registry,
         import_pragmas,
     ));
-    renames
+    (renames, name_registry)
 }
 
 fn collect_stmt_renames(
     stmts: &[Stmt],
     unresolved_mark: Mark,
     import_pragmas: &HashMap<BindingId, &'static str>,
-) -> Vec<ScopedRename> {
-    let used_names = collect_names_in_stmts(stmts);
-    let mut name_registry = used_names;
+) -> (Vec<ScopedRename>, HashSet<Atom>) {
+    let mut name_registry = collect_names_in_stmts(stmts);
     let mut renames = collect_display_name_renames_from_stmts(stmts, &mut name_registry);
     renames.extend(collect_lowercase_component_renames_from_stmts(
         stmts,
@@ -766,12 +835,12 @@ fn collect_stmt_renames(
         &mut name_registry,
         import_pragmas,
     ));
-    renames
+    (renames, name_registry)
 }
 
 fn collect_display_name_renames_from_module_items(
     items: &[ModuleItem],
-    used_names: &mut HashSet<String>,
+    used_names: &mut HashSet<Atom>,
 ) -> Vec<ScopedRename> {
     let mut renames = Vec::new();
     for item in items {
@@ -785,7 +854,7 @@ fn collect_display_name_renames_from_module_items(
 
 fn collect_display_name_renames_from_stmts(
     stmts: &[Stmt],
-    used_names: &mut HashSet<String>,
+    used_names: &mut HashSet<Atom>,
 ) -> Vec<ScopedRename> {
     let mut renames = Vec::new();
     for stmt in stmts {
@@ -796,7 +865,7 @@ fn collect_display_name_renames_from_stmts(
 
 fn collect_display_name_renames_from_stmt(
     stmt: &Stmt,
-    used_names: &mut HashSet<String>,
+    used_names: &mut HashSet<Atom>,
     renames: &mut Vec<ScopedRename>,
 ) {
     let Stmt::Expr(expr_stmt) = stmt else {
@@ -840,7 +909,7 @@ fn collect_display_name_renames_from_stmt(
 fn collect_lowercase_component_renames_from_module_items(
     items: &[ModuleItem],
     unresolved_mark: Mark,
-    used_names: &mut HashSet<String>,
+    used_names: &mut HashSet<Atom>,
     import_pragmas: &HashMap<BindingId, &'static str>,
 ) -> Vec<ScopedRename> {
     let eligible_bindings = collect_eligible_component_bindings_from_module_items(items);
@@ -858,7 +927,7 @@ fn collect_lowercase_component_renames_from_module_items(
 fn collect_lowercase_component_renames_from_stmts(
     stmts: &[Stmt],
     unresolved_mark: Mark,
-    used_names: &mut HashSet<String>,
+    used_names: &mut HashSet<Atom>,
     import_pragmas: &HashMap<BindingId, &'static str>,
 ) -> Vec<ScopedRename> {
     let eligible_bindings = collect_eligible_component_bindings_from_stmts(stmts);
@@ -875,7 +944,7 @@ fn collect_lowercase_component_renames_from_stmts(
 
 struct LowercaseComponentRenameCollector<'a> {
     unresolved_mark: Mark,
-    used_names: &'a mut HashSet<String>,
+    used_names: &'a mut HashSet<Atom>,
     eligible_bindings: HashMap<BindingId, ComponentBindingEligibility>,
     import_pragmas: &'a HashMap<BindingId, &'static str>,
     renames: Vec<ScopedRename>,
@@ -1432,16 +1501,18 @@ fn pascalize(input: &str) -> String {
     }
 }
 
-fn generate_unique_name(used_names: &mut HashSet<String>, base: String) -> String {
-    if !used_names.contains(&base) {
-        used_names.insert(base.clone());
+fn generate_unique_name(used_names: &mut HashSet<Atom>, base: String) -> String {
+    let base_atom = Atom::from(base.as_str());
+    if !used_names.contains(&base_atom) {
+        used_names.insert(base_atom);
         return base;
     }
     let mut idx = 1usize;
     loop {
         let candidate = format!("{base}{idx}");
-        if !used_names.contains(&candidate) {
-            used_names.insert(candidate.clone());
+        let candidate_atom = Atom::from(candidate.as_str());
+        if !used_names.contains(&candidate_atom) {
+            used_names.insert(candidate_atom);
             return candidate;
         }
         idx += 1;
