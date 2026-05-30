@@ -5,10 +5,10 @@ use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, BlockStmtOrExpr,
     CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod, ClassProp, ComputedPropName,
-    Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, Ident, IdentName,
-    ImportSpecifier, Lit, MemberExpr, MemberProp, MethodKind, ModuleDecl, ModuleExportName,
-    ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr, SimpleAssignTarget, Stmt,
-    VarDecl,
+    Constructor, Decl, ExportDecl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, Ident,
+    IdentName, ImportSpecifier, Lit, MemberExpr, MemberProp, MethodKind, ModuleDecl,
+    ModuleExportName, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr,
+    SimpleAssignTarget, Stmt, VarDecl,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
@@ -242,6 +242,28 @@ impl VisitMut for UnEs6ClassInner {
                         self.rewrite_level,
                     ) {
                         items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
+                        converted_any = true;
+                    } else {
+                        items.push(item);
+                    }
+                }
+                ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                    decl: Decl::Var(ref var_decl),
+                    ..
+                })) => {
+                    if let Some(class_decl) = try_iife_to_class(
+                        var_decl,
+                        &self.helpers.inherits_helpers,
+                        &self.helpers.tslib_namespaces,
+                        &self.helpers.create_class_helpers,
+                        &self.helpers.call_super_helpers,
+                        self.unresolved_mark,
+                        self.rewrite_level,
+                    ) {
+                        items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                            span: DUMMY_SP,
+                            decl: Decl::Class(class_decl),
+                        })));
                         converted_any = true;
                     } else {
                         items.push(item);
@@ -1363,6 +1385,7 @@ fn parse_class_body(
                 };
                 let ctor = build_constructor(
                     &fn_decl.function,
+                    inner_ctor_name,
                     ctor_super_param,
                     call_super_helpers,
                     unresolved_mark,
@@ -2397,6 +2420,7 @@ fn is_not_null_check(expr: &Expr, name: &str) -> bool {
 
 fn build_constructor(
     function: &Function,
+    inner_ctor_name: &str,
     super_param: Option<&str>,
     call_super_helpers: &HashSet<BindingKey>,
     unresolved_mark: Mark,
@@ -2442,6 +2466,7 @@ fn build_constructor(
         // Clean up super() aliases: in `n = r = super()`, both n and r are `this`.
         // Replace references with `this`, remove var decls and trailing `return alias`.
         cleanup_super_aliases(&mut body);
+        remove_constructor_set_prototype_of_this(&mut body, inner_ctor_name, unresolved_mark);
         // Strip `return super(...)` → `super(...)` (constructors return implicitly)
         strip_return_super(&mut body);
     }
@@ -3106,6 +3131,69 @@ fn cleanup_super_aliases(body: &mut BlockStmt) {
         }
     }
     body.stmts = new_stmts;
+}
+
+fn remove_constructor_set_prototype_of_this(
+    body: &mut BlockStmt,
+    inner_ctor_name: &str,
+    unresolved_mark: Mark,
+) {
+    body.stmts.retain(|stmt| {
+        !matches!(
+            stmt,
+            Stmt::Expr(ExprStmt { expr, .. })
+                if is_set_prototype_of_this_to_ctor_prototype(
+                    expr,
+                    inner_ctor_name,
+                    unresolved_mark,
+                )
+        )
+    });
+}
+
+fn is_set_prototype_of_this_to_ctor_prototype(
+    expr: &Expr,
+    inner_ctor_name: &str,
+    unresolved_mark: Mark,
+) -> bool {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    if !is_object_set_prototype_of(callee, unresolved_mark) {
+        return false;
+    }
+    if call.args.len() != 2 || call.args.iter().any(|arg| arg.spread.is_some()) {
+        return false;
+    }
+    if !matches!(strip_parens(&call.args[0].expr), Expr::This(..)) {
+        return false;
+    }
+    is_ctor_prototype_expr(&call.args[1].expr, inner_ctor_name)
+}
+
+fn is_object_set_prototype_of(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return false;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    is_unresolved_ident(obj, "Object", unresolved_mark)
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "setPrototypeOf")
+}
+
+fn is_ctor_prototype_expr(expr: &Expr, inner_ctor_name: &str) -> bool {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return false;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    obj.sym.as_ref() == inner_ctor_name
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "prototype")
 }
 
 fn is_super_call(expr: &Expr) -> bool {

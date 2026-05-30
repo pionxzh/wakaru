@@ -124,6 +124,34 @@ class Admin extends User {
 }
 
 #[test]
+fn exported_typescript_extends_iife_is_recovered() {
+    let input = r#"
+var E = (this && this.__extends) || function (d, b) {
+    for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p];
+    function __() { this.constructor = d; }
+    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+};
+export var Admin = (function (_super) {
+    E(Admin, _super);
+    function Admin(name) {
+        var _this = _super.call(this, name) || this;
+        Object.setPrototypeOf(_this, Admin.prototype);
+        return _this;
+    }
+    return Admin;
+}(User));
+"#;
+    let expected = r#"
+export class Admin extends User {
+    constructor(name) {
+        super(name);
+    }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn pipeline_uses_cached_typescript_extends_helper_identity() {
     let input = r#"
 var E = (this && this.__extends) || function (d, b) {

@@ -12,7 +12,7 @@ use super::helper_matcher::{
 };
 use super::transpiler_helper_utils::{
     helpers_with_remaining_refs, remove_helper_declarations, BindingKey, LocalHelperContext,
-    TranspilerHelperKind,
+    TranspilerHelperKind, TsHelperKind,
 };
 
 /// Detects and unwraps `interopRequireWildcard` helper calls.
@@ -44,6 +44,10 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let has_direct_tslib_calls =
         local_helpers.has_tslib_require_member_call(TranspilerHelperKind::InteropRequireWildcard);
+    local_helpers.remove_unused_inline_ts_helpers(
+        module,
+        &[TsHelperKind::CreateBinding, TsHelperKind::SetModuleDefault],
+    );
     if helpers.is_empty() && tslib_namespaces.is_empty() && !has_direct_tslib_calls {
         return;
     }

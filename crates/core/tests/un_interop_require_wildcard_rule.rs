@@ -87,6 +87,24 @@ var _a = _interopRequireWildcard(require("a"));
 }
 
 #[test]
+fn removes_unused_inline_import_star_dependencies() {
+    let input = r#"
+var __createBinding = (this && this.__createBinding) || function (o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+};
+var __setModuleDefault = (this && this.__setModuleDefault) || function (o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+};
+console.log("ready");
+"#;
+    let expected = r#"
+console.log("ready");
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn removes_wildcard_helper_import_dependencies_as_side_effect_imports() {
     let input = r#"
 import _typeof from "./typeof.js";
