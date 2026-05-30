@@ -16,7 +16,9 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use crate::rules::transpiler_helper_utils::{collect_transpiler_helpers, TranspilerHelperKind};
+use crate::rules::transpiler_helper_utils::{
+    collect_transpiler_helpers, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
+};
 
 /// How a binding was imported.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +84,23 @@ pub enum HelperKind {
     RegeneratorRuntime,
 }
 
+/// Raw TypeScript/tslib helper identity proven from a module's exported AST shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeScriptHelperKind {
+    Awaiter,
+    Generator,
+    Assign,
+    Rest,
+    Extends,
+    ImportDefault,
+    ImportStar,
+    CreateBinding,
+    SetModuleDefault,
+    SpreadArray,
+    ClassPrivateFieldGet,
+    ClassPrivateFieldSet,
+}
+
 /// One helper export extracted from the post-Stage-2 AST.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HelperExportFact {
@@ -94,12 +113,25 @@ pub struct HelperExportFact {
     pub kind: HelperKind,
 }
 
+/// One raw TypeScript/tslib helper export extracted from the post-Stage-2 AST.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeScriptHelperExportFact {
+    /// The exported name that consumers import/access.
+    /// `"default"` for default exports.
+    pub exported: Atom,
+    /// The local binding name, if any.
+    pub local: Option<Atom>,
+    /// The proven TypeScript/tslib helper identity.
+    pub kind: TypeScriptHelperKind,
+}
+
 /// Facts extracted from one module after Stage 2.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModuleFacts {
     pub imports: Vec<ImportFact>,
     pub exports: Vec<ExportFact>,
     pub helper_exports: Vec<HelperExportFact>,
+    pub ts_helper_exports: Vec<TypeScriptHelperExportFact>,
     /// If this module is a passthrough re-export (`export default require("./X.js")`),
     /// this is the target module specifier. Importers can be redirected to the target.
     pub passthrough_target: Option<Atom>,
@@ -240,6 +272,25 @@ impl fmt::Display for HelperKind {
     }
 }
 
+impl fmt::Display for TypeScriptHelperKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeScriptHelperKind::Awaiter => write!(f, "ts:awaiter"),
+            TypeScriptHelperKind::Generator => write!(f, "ts:generator"),
+            TypeScriptHelperKind::Assign => write!(f, "ts:assign"),
+            TypeScriptHelperKind::Rest => write!(f, "ts:rest"),
+            TypeScriptHelperKind::Extends => write!(f, "ts:extends"),
+            TypeScriptHelperKind::ImportDefault => write!(f, "ts:importDefault"),
+            TypeScriptHelperKind::ImportStar => write!(f, "ts:importStar"),
+            TypeScriptHelperKind::CreateBinding => write!(f, "ts:createBinding"),
+            TypeScriptHelperKind::SetModuleDefault => write!(f, "ts:setModuleDefault"),
+            TypeScriptHelperKind::SpreadArray => write!(f, "ts:spreadArray"),
+            TypeScriptHelperKind::ClassPrivateFieldGet => write!(f, "ts:classPrivateFieldGet"),
+            TypeScriptHelperKind::ClassPrivateFieldSet => write!(f, "ts:classPrivateFieldSet"),
+        }
+    }
+}
+
 impl fmt::Display for ImportFact {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -276,9 +327,28 @@ impl fmt::Display for HelperExportFact {
     }
 }
 
+impl fmt::Display for TypeScriptHelperExportFact {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.local {
+            Some(local) if local.as_ref() != self.exported.as_ref() => {
+                write!(
+                    f,
+                    "ts helper export {} as {} [{}]",
+                    local, self.exported, self.kind
+                )
+            }
+            _ => write!(f, "ts helper export {} [{}]", self.exported, self.kind),
+        }
+    }
+}
+
 impl fmt::Display for ModuleFacts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.imports.is_empty() && self.exports.is_empty() && self.helper_exports.is_empty() {
+        if self.imports.is_empty()
+            && self.exports.is_empty()
+            && self.helper_exports.is_empty()
+            && self.ts_helper_exports.is_empty()
+        {
             return write!(f, "(no imports or exports)");
         }
         for (i, import) in self.imports.iter().enumerate() {
@@ -301,6 +371,17 @@ impl fmt::Display for ModuleFacts {
             writeln!(f)?;
         }
         for (i, helper) in self.helper_exports.iter().enumerate() {
+            if i > 0 {
+                writeln!(f)?;
+            }
+            write!(f, "{helper}")?;
+        }
+        if (!self.imports.is_empty() || !self.exports.is_empty() || !self.helper_exports.is_empty())
+            && !self.ts_helper_exports.is_empty()
+        {
+            writeln!(f)?;
+        }
+        for (i, helper) in self.ts_helper_exports.iter().enumerate() {
             if i > 0 {
                 writeln!(f)?;
             }
@@ -448,6 +529,7 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
 
     facts.passthrough_target = detect_passthrough(module);
     facts.helper_exports = collect_helper_exports(module, &facts.exports);
+    facts.ts_helper_exports = collect_ts_helper_exports(module, &facts.exports);
     facts
 }
 
@@ -484,6 +566,33 @@ fn collect_helper_exports(module: &Module, exports: &[ExportFact]) -> Vec<Helper
     helper_exports
 }
 
+fn collect_ts_helper_exports(
+    module: &Module,
+    exports: &[ExportFact],
+) -> Vec<TypeScriptHelperExportFact> {
+    let local_helpers = LocalHelperContext::collect(module);
+    let mut helper_exports = Vec::new();
+
+    for export in exports {
+        let Some(local) = &export.local else {
+            continue;
+        };
+        let Some(kind) = local_helpers
+            .ts_helper_kind_by_symbol(local)
+            .map(helper_kind_from_ts)
+        else {
+            continue;
+        };
+        helper_exports.push(TypeScriptHelperExportFact {
+            exported: export.exported.clone(),
+            local: Some(local.clone()),
+            kind,
+        });
+    }
+
+    helper_exports
+}
+
 fn helper_kind_from_transpiler(kind: TranspilerHelperKind) -> Option<HelperKind> {
     match kind {
         TranspilerHelperKind::InteropRequireDefault => Some(HelperKind::InteropRequireDefault),
@@ -504,6 +613,23 @@ fn helper_kind_from_transpiler(kind: TranspilerHelperKind) -> Option<HelperKind>
         TranspilerHelperKind::Typeof => None,
         TranspilerHelperKind::DefineProperty => None,
         TranspilerHelperKind::HelperDependency => None,
+    }
+}
+
+fn helper_kind_from_ts(kind: TsHelperKind) -> TypeScriptHelperKind {
+    match kind {
+        TsHelperKind::Awaiter => TypeScriptHelperKind::Awaiter,
+        TsHelperKind::Generator => TypeScriptHelperKind::Generator,
+        TsHelperKind::Assign => TypeScriptHelperKind::Assign,
+        TsHelperKind::Rest => TypeScriptHelperKind::Rest,
+        TsHelperKind::Extends => TypeScriptHelperKind::Extends,
+        TsHelperKind::ImportDefault => TypeScriptHelperKind::ImportDefault,
+        TsHelperKind::ImportStar => TypeScriptHelperKind::ImportStar,
+        TsHelperKind::CreateBinding => TypeScriptHelperKind::CreateBinding,
+        TsHelperKind::SetModuleDefault => TypeScriptHelperKind::SetModuleDefault,
+        TsHelperKind::SpreadArray => TypeScriptHelperKind::SpreadArray,
+        TsHelperKind::ClassPrivateFieldGet => TypeScriptHelperKind::ClassPrivateFieldGet,
+        TsHelperKind::ClassPrivateFieldSet => TypeScriptHelperKind::ClassPrivateFieldSet,
     }
 }
 

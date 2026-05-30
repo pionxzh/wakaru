@@ -134,6 +134,12 @@ impl LocalHelperContext {
             .collect()
     }
 
+    pub(crate) fn ts_helper_kind_by_symbol(&self, local: &Atom) -> Option<TsHelperKind> {
+        self.ts_helpers
+            .iter()
+            .find_map(|((sym, _), helper)| (sym == local).then_some(helper.kind))
+    }
+
     pub(crate) fn remove_unused_inline_ts_helpers(
         &self,
         module: &mut Module,
@@ -455,6 +461,31 @@ fn collect_ts_helpers(
                     }
                 }
             }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => match &export.decl {
+                Decl::Fn(fn_decl) => {
+                    if let Some(kind) =
+                        ts_private_helper_name_kind(fn_decl.ident.sym.as_ref(), &fn_decl.function)
+                    {
+                        helpers.insert(
+                            binding_key(&fn_decl.ident),
+                            TsHelperInfo {
+                                kind,
+                                source: TsHelperSource::Inline,
+                            },
+                        );
+                    }
+                }
+                Decl::Var(var) => {
+                    for decl in &var.decls {
+                        if let Some((key, helper)) =
+                            collect_ts_helper_from_var_decl(decl, tslib_namespaces)
+                        {
+                            helpers.insert(key, helper);
+                        }
+                    }
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -478,7 +509,7 @@ fn collect_ts_helper_from_var_decl(
         ));
     }
 
-    if let Some(kind) = ts_inline_helper_name(init).and_then(ts_helper_name_kind) {
+    if let Some(kind) = ts_inline_helper_kind(init) {
         return Some((
             key,
             TsHelperInfo {
@@ -1467,11 +1498,18 @@ fn member_prop_name(prop: &MemberProp) -> Option<&str> {
     }
 }
 
-fn ts_inline_helper_name(expr: &Expr) -> Option<&str> {
+fn ts_inline_helper_kind(expr: &Expr) -> Option<TsHelperKind> {
+    let (name, fallback) = ts_inline_helper_parts(expr)?;
+    let kind = ts_helper_name_kind(name)?;
+    ts_inline_helper_fallback_matches(fallback, kind).then_some(kind)
+}
+
+fn ts_inline_helper_parts(expr: &Expr) -> Option<(&str, &Expr)> {
     let expr = strip_parens(expr);
     let Expr::Bin(BinExpr {
         op: BinaryOp::LogicalOr,
         left,
+        right,
         ..
     }) = expr
     else {
@@ -1501,7 +1539,222 @@ fn ts_inline_helper_name(expr: &Expr) -> Option<&str> {
     else {
         return None;
     };
-    matches!(obj.as_ref(), Expr::This(_)).then_some(prop.sym.as_ref())
+    matches!(obj.as_ref(), Expr::This(_)).then_some((prop.sym.as_ref(), strip_parens(right)))
+}
+
+fn ts_inline_helper_fallback_matches(expr: &Expr, kind: TsHelperKind) -> bool {
+    let Some((param_len, body)) = ts_helper_callable_body(expr) else {
+        return false;
+    };
+    let signals = collect_ts_helper_body_signals(body);
+    match kind {
+        TsHelperKind::Awaiter => {
+            param_len >= 4 && (signals.promise || signals.generator_apply || signals.next_call)
+        }
+        TsHelperKind::Generator => {
+            param_len >= 2 && (signals.label_prop || signals.trys_prop || signals.ops_prop)
+        }
+        TsHelperKind::Assign => {
+            signals.object_assign || (signals.arguments_ref && signals.has_own_property)
+        }
+        TsHelperKind::Rest => signals.has_own_property || signals.object_get_own_property_symbols,
+        TsHelperKind::Extends => {
+            signals.object_set_prototype_of || signals.proto_prop || signals.prototype_prop
+        }
+        TsHelperKind::ImportDefault => signals.es_module_prop && signals.default_prop,
+        TsHelperKind::ImportStar => {
+            signals.own_keys_loop
+                || signals.create_binding_call
+                || signals.set_module_default_call
+                || (signals.default_prop && signals.has_own_property)
+        }
+        TsHelperKind::CreateBinding => {
+            signals.object_define_property && (signals.get_prop || signals.enumerable_prop)
+        }
+        TsHelperKind::SetModuleDefault => signals.object_define_property && signals.default_prop,
+        TsHelperKind::SpreadArray => signals.concat_call,
+        TsHelperKind::ClassPrivateFieldGet | TsHelperKind::ClassPrivateFieldSet => false,
+    }
+}
+
+fn ts_helper_callable_body(expr: &Expr) -> Option<(usize, &[Stmt])> {
+    match expr {
+        Expr::Fn(fn_expr) => {
+            let body = fn_expr.function.body.as_ref()?;
+            Some((fn_expr.function.params.len(), body.stmts.as_slice()))
+        }
+        Expr::Arrow(arrow) => {
+            let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_ref() else {
+                return None;
+            };
+            Some((arrow.params.len(), body.stmts.as_slice()))
+        }
+        Expr::Call(call) => {
+            let Callee::Expr(callee) = &call.callee else {
+                return None;
+            };
+            ts_helper_callable_body(strip_parens(callee))
+        }
+        _ => None,
+    }
+}
+
+#[derive(Default)]
+struct TsHelperBodySignals {
+    arguments_ref: bool,
+    concat_call: bool,
+    create_binding_call: bool,
+    default_prop: bool,
+    enumerable_prop: bool,
+    es_module_prop: bool,
+    generator_apply: bool,
+    get_prop: bool,
+    has_own_property: bool,
+    label_prop: bool,
+    next_call: bool,
+    object_assign: bool,
+    object_define_property: bool,
+    object_get_own_property_symbols: bool,
+    object_set_prototype_of: bool,
+    ops_prop: bool,
+    own_keys_loop: bool,
+    promise: bool,
+    proto_prop: bool,
+    prototype_prop: bool,
+    set_module_default_call: bool,
+    trys_prop: bool,
+}
+
+fn collect_ts_helper_body_signals(stmts: &[Stmt]) -> TsHelperBodySignals {
+    struct SignalVisitor {
+        signals: TsHelperBodySignals,
+    }
+
+    impl Visit for SignalVisitor {
+        fn visit_ident(&mut self, ident: &Ident) {
+            match ident.sym.as_ref() {
+                "arguments" => self.signals.arguments_ref = true,
+                "__createBinding" => self.signals.create_binding_call = true,
+                "__setModuleDefault" => self.signals.set_module_default_call = true,
+                _ => {}
+            }
+        }
+
+        fn visit_member_expr(&mut self, member: &MemberExpr) {
+            if is_object_member(member, "assign") {
+                self.signals.object_assign = true;
+            }
+            if is_object_member(member, "defineProperty") {
+                self.signals.object_define_property = true;
+            }
+            if is_object_member(member, "getOwnPropertySymbols") {
+                self.signals.object_get_own_property_symbols = true;
+            }
+            if is_object_member(member, "setPrototypeOf") {
+                self.signals.object_set_prototype_of = true;
+            }
+            match member_prop_name(&member.prop) {
+                Some("__esModule") => self.signals.es_module_prop = true,
+                Some("__proto__") => self.signals.proto_prop = true,
+                Some("concat") => self.signals.concat_call = true,
+                Some("default") => self.signals.default_prop = true,
+                Some("enumerable") => self.signals.enumerable_prop = true,
+                Some("get") => self.signals.get_prop = true,
+                Some("hasOwnProperty") => self.signals.has_own_property = true,
+                Some("label") => self.signals.label_prop = true,
+                Some("next") => self.signals.next_call = true,
+                Some("ops") => self.signals.ops_prop = true,
+                Some("prototype") => self.signals.prototype_prop = true,
+                Some("trys") => self.signals.trys_prop = true,
+                _ => {}
+            }
+            member.visit_children_with(self);
+        }
+
+        fn visit_lit(&mut self, lit: &Lit) {
+            if let Lit::Str(s) = lit {
+                match s.value.as_str() {
+                    Some("__esModule") => self.signals.es_module_prop = true,
+                    Some("default") => self.signals.default_prop = true,
+                    Some("enumerable") => self.signals.enumerable_prop = true,
+                    Some("get") => self.signals.get_prop = true,
+                    _ => {}
+                }
+            }
+        }
+
+        fn visit_prop_name(&mut self, name: &PropName) {
+            match prop_name_as_str(name) {
+                Some("__esModule") => self.signals.es_module_prop = true,
+                Some("__proto__") => self.signals.proto_prop = true,
+                Some("default") => self.signals.default_prop = true,
+                Some("enumerable") => self.signals.enumerable_prop = true,
+                Some("get") => self.signals.get_prop = true,
+                Some("label") => self.signals.label_prop = true,
+                Some("ops") => self.signals.ops_prop = true,
+                Some("trys") => self.signals.trys_prop = true,
+                _ => {}
+            }
+            name.visit_children_with(self);
+        }
+
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if matches!(strip_parens(callee), Expr::Ident(id) if id.sym.as_ref() == "Promise") {
+                    self.signals.promise = true;
+                }
+                if is_member_call(callee, "apply") {
+                    self.signals.generator_apply = true;
+                }
+            }
+            call.visit_children_with(self);
+        }
+
+        fn visit_new_expr(&mut self, new_expr: &swc_core::ecma::ast::NewExpr) {
+            if matches!(strip_parens(&new_expr.callee), Expr::Ident(id) if id.sym.as_ref() == "Promise")
+            {
+                self.signals.promise = true;
+            }
+            new_expr.visit_children_with(self);
+        }
+
+        fn visit_for_in_stmt(&mut self, for_in: &swc_core::ecma::ast::ForInStmt) {
+            self.signals.own_keys_loop = true;
+            for_in.visit_children_with(self);
+        }
+    }
+
+    let mut visitor = SignalVisitor {
+        signals: TsHelperBodySignals::default(),
+    };
+    stmts.visit_with(&mut visitor);
+    visitor.signals
+}
+
+fn is_object_member(member: &MemberExpr, prop: &str) -> bool {
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    obj.sym.as_ref() == "Object" && member_prop_name(&member.prop) == Some(prop)
+}
+
+fn is_member_call(expr: &Expr, prop: &str) -> bool {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return false;
+    };
+    member_prop_name(&member.prop) == Some(prop)
+}
+
+fn prop_name_as_str(name: &PropName) -> Option<&str> {
+    match name {
+        PropName::Ident(id) => Some(id.sym.as_ref()),
+        PropName::Str(s) => s.value.as_str(),
+        PropName::Computed(ComputedPropName { expr, .. }) => match expr.as_ref() {
+            Expr::Lit(Lit::Str(s)) => s.value.as_str(),
+            _ => None,
+        },
+        PropName::Num(_) | PropName::BigInt(_) => None,
+    }
 }
 
 fn is_tslib_require_call(expr: &Expr) -> bool {
@@ -3687,8 +3940,14 @@ mod tests {
                 import { __spreadArray as importedSpread } from "tslib";
                 import * as tslibNs from "tslib";
                 import { __awaiter as importedAwaiter } from "tslib";
-                var aliasedAwaiter = (this && this.__awaiter) || function(thisArg, _arguments, P, generator) {};
-                var aliasedGenerator = (this && this.__generator) || function(thisArg, body) {};
+                var aliasedAwaiter = (this && this.__awaiter) || function(thisArg, _arguments, P, generator) {
+                    return new (P || (P = Promise))(function(resolve) {
+                        resolve(generator.apply(thisArg, _arguments || []).next());
+                    });
+                };
+                var aliasedGenerator = (this && this.__generator) || function(thisArg, body) {
+                    return body.call(thisArg, { label: 0, sent: function() {}, trys: [], ops: [] });
+                };
                 var inlineSpread = (this && this.__spreadArray) || function(to, from, pack) {
                     return to.concat(from);
                 };
@@ -3698,6 +3957,7 @@ mod tests {
                 var namespaceSpread = tslib_1.__spreadArray;
                 var namespaceAwaiter = tslib_1.__awaiter;
                 var notSpread = customSpreadArray;
+                var fakeAssign = (this && this.__assign) || customAssign;
                 "#,
             );
             let helpers =
@@ -3747,6 +4007,14 @@ mod tests {
 
             let awaiter_helpers = context.ts_helpers_of_kind(TsHelperKind::Awaiter);
             assert_eq!(awaiter_helpers.len(), 4);
+
+            let assign_helpers = context.ts_helpers_of_kind(TsHelperKind::Assign);
+            assert!(
+                !assign_helpers
+                    .iter()
+                    .any(|(sym, _)| sym.as_ref() == "fakeAssign"),
+                "name-only inline helper candidates should not be collected"
+            );
 
             assert!(
                 context
@@ -3875,8 +4143,14 @@ mod tests {
         GLOBALS.set(&Globals::new(), || {
             let mut module = parse_module(
                 r#"
-                var __awaiter = (this && this.__awaiter) || function () {};
-                var __generator = (this && this.__generator) || function () {};
+                var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+                    return new (P || (P = Promise))(function(resolve) {
+                        resolve(generator.apply(thisArg, _arguments || []).next());
+                    });
+                };
+                var __generator = (this && this.__generator) || function (thisArg, body) {
+                    return body.call(thisArg, { label: 0, sent: function() {}, trys: [], ops: [] });
+                };
                 import { __awaiter as importedAwaiter } from "tslib";
                 "#,
             );

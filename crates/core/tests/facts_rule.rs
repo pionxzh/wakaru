@@ -6,7 +6,7 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
 use wakaru_core::facts::{
     collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,
-    ImportKind, ModuleFacts,
+    ImportKind, ModuleFacts, TypeScriptHelperExportFact, TypeScriptHelperKind,
 };
 use wakaru_core::{apply_rules, RulePipelineOptions};
 
@@ -65,6 +65,18 @@ fn export(exported: &str, local: Option<&str>, kind: ExportKind) -> ExportFact {
 
 fn helper_export(exported: &str, local: Option<&str>, kind: HelperKind) -> HelperExportFact {
     HelperExportFact {
+        exported: exported.into(),
+        local: local.map(|s| s.into()),
+        kind,
+    }
+}
+
+fn ts_helper_export(
+    exported: &str,
+    local: Option<&str>,
+    kind: TypeScriptHelperKind,
+) -> TypeScriptHelperExportFact {
+    TypeScriptHelperExportFact {
         exported: exported.into(),
         local: local.map(|s| s.into()),
         kind,
@@ -366,6 +378,61 @@ try {
             "default",
             Some("runtime"),
             HelperKind::RegeneratorRuntime
+        )]
+    );
+}
+
+#[test]
+fn exported_typescript_awaiter_helper_fact() {
+    let facts = collect_facts(
+        r#"
+export var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    return new (P || (P = Promise))(function(resolve) {
+        resolve(generator.apply(thisArg, _arguments || []).next());
+    });
+};
+"#,
+    );
+    assert_eq!(
+        facts.ts_helper_exports,
+        vec![ts_helper_export(
+            "__awaiter",
+            Some("__awaiter"),
+            TypeScriptHelperKind::Awaiter
+        )]
+    );
+}
+
+#[test]
+fn exported_typescript_helper_fact_requires_inline_shape() {
+    let facts = collect_facts(
+        r#"
+var __assign = (this && this.__assign) || customAssign;
+export { __assign };
+"#,
+    );
+    assert!(
+        facts.ts_helper_exports.is_empty(),
+        "name-only inline helper candidates must not become proven facts: {facts}"
+    );
+}
+
+#[test]
+fn exported_typescript_spread_array_alias_helper_fact() {
+    let facts = collect_facts(
+        r#"
+var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
+    return to.concat(from);
+};
+export { __spreadArray as spreadArray };
+"#,
+    );
+    assert_eq!(
+        facts.ts_helper_exports,
+        vec![ts_helper_export(
+            "spreadArray",
+            Some("__spreadArray"),
+            TypeScriptHelperKind::SpreadArray
         )]
     );
 }

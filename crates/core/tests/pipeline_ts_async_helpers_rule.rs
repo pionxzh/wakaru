@@ -20,7 +20,9 @@ export function foo() {
 #[test]
 fn recovers_generator_alias_and_removes_decl() {
     let input = r#"
-const Z = this && this.__generator || ((a, b) => { });
+const Z = this && this.__generator || ((a, b) => {
+    return b.call(a, { label: 0, sent: function() {}, trys: [], ops: [] });
+});
 function foo() {
     return Z(this, function(state) {
         switch(state.label) {
