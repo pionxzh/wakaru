@@ -4,8 +4,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
-    collect_class_call_check_helpers, helpers_with_remaining_refs, remove_helper_declarations,
-    BindingKey,
+    helpers_with_remaining_refs, remove_helper_declarations, BabelHelperKind, BindingKey,
+    LocalHelperContext,
 };
 
 /// Removes `_classCallCheck(this, Foo)` calls and equivalent inline IIFEs.
@@ -20,30 +20,41 @@ use super::babel_helper_utils::{
 /// 2. Inline IIFE: `!((e, t) => { if (!(e instanceof t)) throw TypeError(...) })(this, Foo)`
 pub struct UnClassCallCheck;
 
+impl UnClassCallCheck {
+    pub(crate) fn run_with_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
+        run_un_class_call_check(module, local_helpers);
+    }
+}
+
 impl VisitMut for UnClassCallCheck {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        // Phase 1: detect and remove module-level classCallCheck helpers
-        let helpers = collect_class_call_check_helpers(module);
-        if !helpers.is_empty() {
-            let mut remover = CallRemover { helpers: &helpers };
-            module.visit_mut_with(&mut remover);
-
-            let remaining = helpers_with_remaining_refs(module, &helpers);
-            let safe: std::collections::HashMap<
-                BindingKey,
-                super::babel_helper_utils::BabelHelperKind,
-            > = helpers
-                .into_iter()
-                .filter(|(key, _)| !remaining.contains(key))
-                .collect();
-            if !safe.is_empty() {
-                remove_helper_declarations(&mut module.body, &safe);
-            }
-        }
-
-        // Phase 2: remove inline IIFE classCallCheck patterns
-        module.visit_mut_with(&mut InlineIifeRemover);
+        let local_helpers = LocalHelperContext::collect(module);
+        run_un_class_call_check(module, &local_helpers);
     }
+}
+
+fn run_un_class_call_check(module: &mut Module, local_helpers: &LocalHelperContext) {
+    // Phase 1: detect and remove module-level classCallCheck helpers
+    let helpers = local_helpers.helpers_of_kind(BabelHelperKind::ClassCallCheck);
+    if !helpers.is_empty() {
+        let mut remover = CallRemover { helpers: &helpers };
+        module.visit_mut_with(&mut remover);
+
+        let remaining = helpers_with_remaining_refs(module, &helpers);
+        let safe: std::collections::HashMap<
+            BindingKey,
+            super::babel_helper_utils::BabelHelperKind,
+        > = helpers
+            .into_iter()
+            .filter(|(key, _)| !remaining.contains(key))
+            .collect();
+        if !safe.is_empty() {
+            remove_helper_declarations(&mut module.body, &safe);
+        }
+    }
+
+    // Phase 2: remove inline IIFE classCallCheck patterns
+    module.visit_mut_with(&mut InlineIifeRemover);
 }
 
 // ---------------------------------------------------------------------------

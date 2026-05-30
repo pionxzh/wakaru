@@ -20,6 +20,7 @@ use super::types::{DecompileOptions, UnpackInput, UnpackOutput, UnpackWarning, U
 use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
+use crate::rules::babel_helper_utils::LocalHelperContext;
 use crate::rules::{
     apply_rules, ArrowFunction, ArrowReturn, ImportDedup, RewriteLevel, RulePipelineOptions,
     SimplifySequence, UnAssignmentMerging, UnConditionalsAssignmentOnly,
@@ -792,7 +793,8 @@ fn unpack_multi_module(
                 // Late pass at the barrier
                 run_reexport_consolidation(&mut module, facts_ref);
                 run_namespace_decomposition(&mut module, facts_ref);
-                module.visit_mut_with(&mut UnObjectSpread::new_with_facts(facts_ref));
+                let local_helpers = LocalHelperContext::collect(&module);
+                UnObjectSpread::run_with_helpers(&mut module, &local_helpers, Some(facts_ref));
 
                 // UnTemplateLiteral-through-UnReturn range.
                 apply_rules(

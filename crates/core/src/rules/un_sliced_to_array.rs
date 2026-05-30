@@ -8,10 +8,10 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helper_dependencies, collect_helpers, collect_tslib_namespace_bindings,
-    helpers_with_remaining_refs, module_has_tslib_require_member_call, remove_helper_declarations,
-    tslib_helper_name_kind, tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind,
-    BindingKey,
+    collect_helper_dependencies, collect_tslib_namespace_bindings, helpers_with_remaining_refs,
+    module_has_tslib_require_member_call, remove_helper_declarations, tslib_helper_name_kind,
+    tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind, BindingKey,
+    LocalHelperContext,
 };
 
 /// Detects and unwraps `_slicedToArray(expr, N)` helper calls.
@@ -24,50 +24,56 @@ use super::babel_helper_utils::{
 /// `var a = _ref[0]; var b = _ref[1]` → `const [a, b] = expr`.
 pub struct UnSlicedToArray;
 
+impl UnSlicedToArray {
+    pub(crate) fn run_with_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
+        run_un_sliced_to_array(module, local_helpers);
+    }
+}
+
 impl VisitMut for UnSlicedToArray {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let all_helpers = collect_helpers(module);
-        let helpers: HashMap<BindingKey, BabelHelperKind> = all_helpers
-            .iter()
-            .filter(|(_, kind)| **kind == BabelHelperKind::SlicedToArray)
-            .map(|(key, kind)| (key.clone(), *kind))
-            .collect();
-        let tslib_namespaces = collect_tslib_namespace_bindings(module);
-        let has_direct_tslib_calls =
-            module_has_tslib_require_member_call(module, BabelHelperKind::SlicedToArray);
-        if helpers.is_empty() && tslib_namespaces.is_empty() && !has_direct_tslib_calls {
-            return;
-        }
-        module.visit_mut_children_with(&mut SlicedToArrayRewriter {
-            helpers: &helpers,
-            tslib_namespaces: &tslib_namespaces,
-        });
+        let local_helpers = LocalHelperContext::collect(module);
+        run_un_sliced_to_array(module, &local_helpers);
+    }
+}
 
-        if helpers.is_empty() {
-            return;
-        }
+fn run_un_sliced_to_array(module: &mut Module, local_helpers: &LocalHelperContext) {
+    let helpers = local_helpers.helpers_of_kind(BabelHelperKind::SlicedToArray);
+    let tslib_namespaces = collect_tslib_namespace_bindings(module);
+    let has_direct_tslib_calls =
+        module_has_tslib_require_member_call(module, BabelHelperKind::SlicedToArray);
+    if helpers.is_empty() && tslib_namespaces.is_empty() && !has_direct_tslib_calls {
+        return;
+    }
+    module.visit_mut_children_with(&mut SlicedToArrayRewriter {
+        helpers: &helpers,
+        tslib_namespaces: &tslib_namespaces,
+    });
 
-        // Only remove root helpers whose calls were fully transformed. Dependencies
-        // referenced by retained helpers must stay with those helpers.
-        let remaining_roots = helpers_with_remaining_refs(module, &helpers);
-        let removable_roots = helpers
-            .iter()
-            .filter(|(key, _)| !remaining_roots.contains(*key))
-            .map(|(key, kind)| (key.clone(), *kind))
-            .collect::<HashMap<_, _>>();
-        let helper_dependencies = collect_helper_dependencies(module, &removable_roots);
-        let removable_helpers = removable_roots
-            .into_iter()
-            .chain(helper_dependencies)
-            .collect::<HashMap<_, _>>();
-        let remaining = helpers_with_remaining_refs(module, &removable_helpers);
-        let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = removable_helpers
-            .into_iter()
-            .filter(|(key, _)| !remaining.contains(key))
-            .collect();
-        if !safe_to_remove.is_empty() {
-            remove_helper_declarations(&mut module.body, &safe_to_remove);
-        }
+    if helpers.is_empty() {
+        return;
+    }
+
+    // Only remove root helpers whose calls were fully transformed. Dependencies
+    // referenced by retained helpers must stay with those helpers.
+    let remaining_roots = helpers_with_remaining_refs(module, &helpers);
+    let removable_roots = helpers
+        .iter()
+        .filter(|(key, _)| !remaining_roots.contains(*key))
+        .map(|(key, kind)| (key.clone(), *kind))
+        .collect::<HashMap<_, _>>();
+    let helper_dependencies = collect_helper_dependencies(module, &removable_roots);
+    let removable_helpers = removable_roots
+        .into_iter()
+        .chain(helper_dependencies)
+        .collect::<HashMap<_, _>>();
+    let remaining = helpers_with_remaining_refs(module, &removable_helpers);
+    let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = removable_helpers
+        .into_iter()
+        .filter(|(key, _)| !remaining.contains(key))
+        .collect();
+    if !safe_to_remove.is_empty() {
+        remove_helper_declarations(&mut module.body, &safe_to_remove);
     }
 }
 

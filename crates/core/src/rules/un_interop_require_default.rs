@@ -7,9 +7,9 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helpers, collect_tslib_namespace_bindings, module_has_tslib_require_member_call,
+    collect_tslib_namespace_bindings, module_has_tslib_require_member_call,
     remove_helper_declarations, tslib_helper_name_kind, tslib_member_helper_kind,
-    tslib_require_member_name, BabelHelperKind, BindingKey,
+    tslib_require_member_name, BabelHelperKind, BindingKey, LocalHelperContext,
 };
 
 /// Detects and unwraps `interopRequireDefault` helper calls.
@@ -19,66 +19,73 @@ use super::babel_helper_utils::{
 ///   → `var _a = require("a"); _a`
 pub struct UnInteropRequireDefault;
 
+impl UnInteropRequireDefault {
+    pub(crate) fn run_with_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
+        run_un_interop_require_default(module, local_helpers);
+    }
+}
+
 impl VisitMut for UnInteropRequireDefault {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let mut affected_bindings: HashSet<BindingKey> = HashSet::new();
+        let local_helpers = LocalHelperContext::collect(module);
+        run_un_interop_require_default(module, &local_helpers);
+    }
+}
 
-        // --- Named helper path ---
-        let all_helpers = collect_helpers(module);
-        let helpers: HashMap<BindingKey, BabelHelperKind> = all_helpers
-            .into_iter()
-            .filter(|(_, kind)| *kind == BabelHelperKind::InteropRequireDefault)
-            .collect();
-        let tslib_namespaces = collect_tslib_namespace_bindings(module);
-        let has_direct_tslib_calls =
-            module_has_tslib_require_member_call(module, BabelHelperKind::InteropRequireDefault);
+fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelperContext) {
+    let mut affected_bindings: HashSet<BindingKey> = HashSet::new();
 
-        if !helpers.is_empty() || !tslib_namespaces.is_empty() || has_direct_tslib_calls {
-            // Phase 1: Collect which bindings receive helper-wrapped values
-            let mut collector = AffectedBindingCollector {
-                helpers: &helpers,
-                tslib_namespaces: &tslib_namespaces,
-                affected: &mut affected_bindings,
-            };
-            collector.visit_module(module);
+    // --- Named helper path ---
+    let helpers = local_helpers.helpers_of_kind(BabelHelperKind::InteropRequireDefault);
+    let tslib_namespaces = collect_tslib_namespace_bindings(module);
+    let has_direct_tslib_calls =
+        module_has_tslib_require_member_call(module, BabelHelperKind::InteropRequireDefault);
 
-            // Phase 2a: Unwrap helper calls — replace `helper(arg)` with `arg`.
-            let mut call_unwrapper = CallUnwrapper {
-                helpers: &helpers,
-                tslib_namespaces: &tslib_namespaces,
-            };
-            module.visit_mut_with(&mut call_unwrapper);
+    if !helpers.is_empty() || !tslib_namespaces.is_empty() || has_direct_tslib_calls {
+        // Phase 1: Collect which bindings receive helper-wrapped values
+        let mut collector = AffectedBindingCollector {
+            helpers: &helpers,
+            tslib_namespaces: &tslib_namespaces,
+            affected: &mut affected_bindings,
+        };
+        collector.visit_module(module);
+
+        // Phase 2a: Unwrap helper calls — replace `helper(arg)` with `arg`.
+        let mut call_unwrapper = CallUnwrapper {
+            helpers: &helpers,
+            tslib_namespaces: &tslib_namespaces,
+        };
+        module.visit_mut_with(&mut call_unwrapper);
+    }
+
+    // --- Inline IIFE interop path ---
+    // Detect: `const x = ((e) => { if (e && e.__esModule) return e; return {default: e} })(require(...))`
+    // Replace with: `const x = require(...)`  and record `x` as affected
+    unwrap_inline_interop_iifes(module, &mut affected_bindings);
+
+    // Phase 2b: Rewrite `.default` member access on affected bindings,
+    //           but only if the binding is never reassigned.
+    if !affected_bindings.is_empty() {
+        let mut reassigned = HashSet::new();
+        let mut checker = ReassignmentChecker {
+            candidates: &affected_bindings,
+            reassigned: &mut reassigned,
+        };
+        module.visit_with(&mut checker);
+        for key in &reassigned {
+            affected_bindings.remove(key);
         }
+    }
+    if !affected_bindings.is_empty() {
+        let mut ref_rewriter = DefaultRefRewriter {
+            affected: &affected_bindings,
+        };
+        module.visit_mut_with(&mut ref_rewriter);
+    }
 
-        // --- Inline IIFE interop path ---
-        // Detect: `const x = ((e) => { if (e && e.__esModule) return e; return {default: e} })(require(...))`
-        // Replace with: `const x = require(...)`  and record `x` as affected
-        unwrap_inline_interop_iifes(module, &mut affected_bindings);
-
-        // Phase 2b: Rewrite `.default` member access on affected bindings,
-        //           but only if the binding is never reassigned.
-        if !affected_bindings.is_empty() {
-            let mut reassigned = HashSet::new();
-            let mut checker = ReassignmentChecker {
-                candidates: &affected_bindings,
-                reassigned: &mut reassigned,
-            };
-            module.visit_with(&mut checker);
-            for key in &reassigned {
-                affected_bindings.remove(key);
-            }
-        }
-        if !affected_bindings.is_empty() {
-            let mut ref_rewriter = DefaultRefRewriter {
-                affected: &affected_bindings,
-            };
-            module.visit_mut_with(&mut ref_rewriter);
-        }
-
-        // Phase 3: Remove helper declarations.
-        if !helpers.is_empty() {
-            remove_helper_declarations(&mut module.body, &helpers);
-        }
+    // Phase 3: Remove helper declarations.
+    if !helpers.is_empty() {
+        remove_helper_declarations(&mut module.body, &helpers);
     }
 }
 

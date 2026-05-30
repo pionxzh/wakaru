@@ -4,8 +4,8 @@ use swc_core::ecma::ast::{Callee, Expr, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
-    collect_helpers_of_kind, helpers_with_remaining_refs, remove_helper_declarations,
-    BabelHelperKind, BindingKey,
+    helpers_with_remaining_refs, remove_helper_declarations, BabelHelperKind, BindingKey,
+    LocalHelperContext,
 };
 
 /// Detects and simplifies `_assertThisInitialized(self)` helper calls.
@@ -27,24 +27,35 @@ use super::babel_helper_utils::{
 /// `this` before `super()` already throws before the helper call can run.
 pub struct UnAssertThisInitialized;
 
+impl UnAssertThisInitialized {
+    pub(crate) fn run_with_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
+        run_un_assert_this_initialized(module, local_helpers);
+    }
+}
+
 impl VisitMut for UnAssertThisInitialized {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let helpers = collect_helpers_of_kind(module, BabelHelperKind::AssertThisInitialized);
-        if helpers.is_empty() {
-            return;
-        }
+        let local_helpers = LocalHelperContext::collect(module);
+        run_un_assert_this_initialized(module, &local_helpers);
+    }
+}
 
-        let mut replacer = AtiReplacer { helpers: &helpers };
-        module.visit_mut_with(&mut replacer);
+fn run_un_assert_this_initialized(module: &mut Module, local_helpers: &LocalHelperContext) {
+    let helpers = local_helpers.helpers_of_kind(BabelHelperKind::AssertThisInitialized);
+    if helpers.is_empty() {
+        return;
+    }
 
-        let remaining = helpers_with_remaining_refs(module, &helpers);
-        let safe: HashMap<BindingKey, BabelHelperKind> = helpers
-            .into_iter()
-            .filter(|(key, _)| !remaining.contains(key))
-            .collect();
-        if !safe.is_empty() {
-            remove_helper_declarations(&mut module.body, &safe);
-        }
+    let mut replacer = AtiReplacer { helpers: &helpers };
+    module.visit_mut_with(&mut replacer);
+
+    let remaining = helpers_with_remaining_refs(module, &helpers);
+    let safe: HashMap<BindingKey, BabelHelperKind> = helpers
+        .into_iter()
+        .filter(|(key, _)| !remaining.contains(key))
+        .collect();
+    if !safe.is_empty() {
+        remove_helper_declarations(&mut module.body, &safe);
     }
 }
 

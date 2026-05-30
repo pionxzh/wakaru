@@ -8,10 +8,10 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helper_dependencies, collect_helpers, collect_tslib_namespace_bindings,
-    helpers_with_remaining_refs, module_has_tslib_require_member_call, remove_helper_declarations,
-    tslib_helper_name_kind, tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind,
-    BindingKey,
+    collect_helper_dependencies, collect_tslib_namespace_bindings, helpers_with_remaining_refs,
+    module_has_tslib_require_member_call, remove_helper_declarations, tslib_helper_name_kind,
+    tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind, BindingKey,
+    LocalHelperContext,
 };
 use super::helper_matcher::{
     binding_key, import_specifier_binding_key, var_declarator_binding_key,
@@ -28,101 +28,106 @@ use super::helper_matcher::{
 /// For non-require arguments, just unwraps: `_irw(expr)` → `expr`
 pub struct UnInteropRequireWildcard;
 
+impl UnInteropRequireWildcard {
+    pub(crate) fn run_with_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
+        run_un_interop_require_wildcard(module, local_helpers);
+    }
+}
+
 impl VisitMut for UnInteropRequireWildcard {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let all_helpers = collect_helpers(module);
-        let helpers: HashMap<BindingKey, BabelHelperKind> = all_helpers
-            .into_iter()
-            .filter(|(_, kind)| *kind == BabelHelperKind::InteropRequireWildcard)
-            .collect();
-        let tslib_namespaces = collect_tslib_namespace_bindings(module);
-        let has_direct_tslib_calls =
-            module_has_tslib_require_member_call(module, BabelHelperKind::InteropRequireWildcard);
-        if helpers.is_empty() && tslib_namespaces.is_empty() && !has_direct_tslib_calls {
-            return;
-        }
-
-        // Phase 1: Convert `var _a = _irw(require("path"))` → `import * as _a from "path"`
-        // and unwrap non-require calls in expressions.
-        let mut new_body = Vec::with_capacity(module.body.len());
-        for item in module.body.drain(..) {
-            if let Some(imports) =
-                try_convert_to_namespace_import(&item, &helpers, &tslib_namespaces)
-            {
-                new_body.extend(imports);
-            } else {
-                new_body.push(item);
-            }
-        }
-        module.body = new_body;
-
-        // Phase 2: Unwrap remaining call sites in expressions (non-var-decl contexts)
-        let mut unwrapper = WildcardCallUnwrapper {
-            helpers: &helpers,
-            tslib_namespaces: &tslib_namespaces,
-        };
-        module.visit_mut_with(&mut unwrapper);
-
-        if helpers.is_empty() {
-            return;
-        }
-
-        // Phase 3: Remove helper declarations only if no untransformed calls
-        // remain. When the helper is removed, also clean helper-owned local and
-        // import dependencies.
-        let remaining_roots = helpers_with_remaining_refs(module, &helpers);
-        let removable_roots: HashMap<BindingKey, BabelHelperKind> = helpers
-            .into_iter()
-            .filter(|(key, _)| !remaining_roots.contains(key))
-            .collect();
-        if removable_roots.is_empty() {
-            return;
-        }
-
-        let helper_dependencies = collect_helper_dependencies(module, &removable_roots);
-        let dependency_roots: HashMap<BindingKey, BabelHelperKind> = removable_roots
-            .iter()
-            .chain(helper_dependencies.iter())
-            .map(|(key, kind)| (key.clone(), *kind))
-            .collect();
-        let import_dependencies = collect_import_dependencies(module, &dependency_roots);
-        let var_require_dependencies = collect_var_require_dependencies(module, &dependency_roots);
-        let removable_helpers: HashMap<BindingKey, BabelHelperKind> = dependency_roots
-            .into_iter()
-            .chain(
-                import_dependencies
-                    .iter()
-                    .map(|key| (key.clone(), BabelHelperKind::HelperDependency)),
-            )
-            .chain(
-                var_require_dependencies
-                    .iter()
-                    .map(|key| (key.clone(), BabelHelperKind::HelperDependency)),
-            )
-            .collect();
-        let remaining = helpers_with_remaining_refs(module, &removable_helpers);
-        let safe_declarations: HashMap<BindingKey, BabelHelperKind> = removable_helpers
-            .iter()
-            .filter(|(key, _)| {
-                !remaining.contains(*key)
-                    && !import_dependencies.contains(*key)
-                    && !var_require_dependencies.contains(*key)
-            })
-            .map(|(key, kind)| (key.clone(), *kind))
-            .collect();
-        let safe_imports: HashSet<BindingKey> = import_dependencies
-            .into_iter()
-            .filter(|key| !remaining.contains(key))
-            .collect();
-        let safe_var_requires: HashSet<BindingKey> = var_require_dependencies
-            .into_iter()
-            .filter(|key| !remaining.contains(key))
-            .collect();
-
-        remove_helper_declarations(&mut module.body, &safe_declarations);
-        remove_var_require_bindings_preserve_side_effects(&mut module.body, &safe_var_requires);
-        remove_import_bindings_preserve_side_effects(&mut module.body, &safe_imports);
+        let local_helpers = LocalHelperContext::collect(module);
+        run_un_interop_require_wildcard(module, &local_helpers);
     }
+}
+
+fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHelperContext) {
+    let helpers = local_helpers.helpers_of_kind(BabelHelperKind::InteropRequireWildcard);
+    let tslib_namespaces = collect_tslib_namespace_bindings(module);
+    let has_direct_tslib_calls =
+        module_has_tslib_require_member_call(module, BabelHelperKind::InteropRequireWildcard);
+    if helpers.is_empty() && tslib_namespaces.is_empty() && !has_direct_tslib_calls {
+        return;
+    }
+
+    // Phase 1: Convert `var _a = _irw(require("path"))` → `import * as _a from "path"`
+    // and unwrap non-require calls in expressions.
+    let mut new_body = Vec::with_capacity(module.body.len());
+    for item in module.body.drain(..) {
+        if let Some(imports) = try_convert_to_namespace_import(&item, &helpers, &tslib_namespaces) {
+            new_body.extend(imports);
+        } else {
+            new_body.push(item);
+        }
+    }
+    module.body = new_body;
+
+    // Phase 2: Unwrap remaining call sites in expressions (non-var-decl contexts)
+    let mut unwrapper = WildcardCallUnwrapper {
+        helpers: &helpers,
+        tslib_namespaces: &tslib_namespaces,
+    };
+    module.visit_mut_with(&mut unwrapper);
+
+    if helpers.is_empty() {
+        return;
+    }
+
+    // Phase 3: Remove helper declarations only if no untransformed calls
+    // remain. When the helper is removed, also clean helper-owned local and
+    // import dependencies.
+    let remaining_roots = helpers_with_remaining_refs(module, &helpers);
+    let removable_roots: HashMap<BindingKey, BabelHelperKind> = helpers
+        .into_iter()
+        .filter(|(key, _)| !remaining_roots.contains(key))
+        .collect();
+    if removable_roots.is_empty() {
+        return;
+    }
+
+    let helper_dependencies = collect_helper_dependencies(module, &removable_roots);
+    let dependency_roots: HashMap<BindingKey, BabelHelperKind> = removable_roots
+        .iter()
+        .chain(helper_dependencies.iter())
+        .map(|(key, kind)| (key.clone(), *kind))
+        .collect();
+    let import_dependencies = collect_import_dependencies(module, &dependency_roots);
+    let var_require_dependencies = collect_var_require_dependencies(module, &dependency_roots);
+    let removable_helpers: HashMap<BindingKey, BabelHelperKind> = dependency_roots
+        .into_iter()
+        .chain(
+            import_dependencies
+                .iter()
+                .map(|key| (key.clone(), BabelHelperKind::HelperDependency)),
+        )
+        .chain(
+            var_require_dependencies
+                .iter()
+                .map(|key| (key.clone(), BabelHelperKind::HelperDependency)),
+        )
+        .collect();
+    let remaining = helpers_with_remaining_refs(module, &removable_helpers);
+    let safe_declarations: HashMap<BindingKey, BabelHelperKind> = removable_helpers
+        .iter()
+        .filter(|(key, _)| {
+            !remaining.contains(*key)
+                && !import_dependencies.contains(*key)
+                && !var_require_dependencies.contains(*key)
+        })
+        .map(|(key, kind)| (key.clone(), *kind))
+        .collect();
+    let safe_imports: HashSet<BindingKey> = import_dependencies
+        .into_iter()
+        .filter(|key| !remaining.contains(key))
+        .collect();
+    let safe_var_requires: HashSet<BindingKey> = var_require_dependencies
+        .into_iter()
+        .filter(|key| !remaining.contains(key))
+        .collect();
+
+    remove_helper_declarations(&mut module.body, &safe_declarations);
+    remove_var_require_bindings_preserve_side_effects(&mut module.body, &safe_var_requires);
+    remove_import_bindings_preserve_side_effects(&mut module.body, &safe_imports);
 }
 
 /// Try to convert a `var _x = _irw(require("path"))` into `import * as _x from "path"`.

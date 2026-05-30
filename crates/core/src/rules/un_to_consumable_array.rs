@@ -8,9 +8,9 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
-    collect_helpers, collect_tslib_namespace_bindings, helpers_with_remaining_refs, is_tslib_path,
+    collect_tslib_namespace_bindings, helpers_with_remaining_refs, is_tslib_path,
     is_tslib_spread_array_member, remove_helper_declarations, tslib_require_member_name,
-    BabelHelperKind, BindingKey,
+    BabelHelperKind, BindingKey, LocalHelperContext,
 };
 use super::helper_matcher::{
     binding_key, remaining_refs_outside_var_declarators, remove_import_specifiers_by_binding,
@@ -20,32 +20,27 @@ use super::helper_matcher::{
 /// Detects and replaces `_toConsumableArray(arr)` with `[...arr]`.
 pub struct UnToConsumableArray;
 
+impl UnToConsumableArray {
+    pub(crate) fn run_with_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
+        run_un_to_consumable_array(module, local_helpers);
+    }
+}
+
 impl VisitMut for UnToConsumableArray {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let all_helpers = collect_helpers(module);
-        let helpers: HashMap<BindingKey, BabelHelperKind> = all_helpers
-            .into_iter()
-            .filter(|(_, kind)| *kind == BabelHelperKind::ToConsumableArray)
-            .collect();
-        let tslib_namespaces = collect_tslib_namespace_bindings(module);
-        if helpers.is_empty() {
-            let ts_helpers = collect_ts_spread_array_helpers(module);
-            if ts_helpers.is_empty() && tslib_namespaces.is_empty() {
-                return;
-            }
+        let local_helpers = LocalHelperContext::collect(module);
+        run_un_to_consumable_array(module, &local_helpers);
+    }
+}
 
-            let mut replacer = ToConsumableArrayReplacer {
-                helpers: &helpers,
-                ts_spread_array_helpers: &ts_helpers,
-                tslib_namespaces: &tslib_namespaces,
-            };
-            module.visit_mut_with(&mut replacer);
-
-            remove_unused_ts_spread_array_helpers(module, &ts_helpers);
+fn run_un_to_consumable_array(module: &mut Module, local_helpers: &LocalHelperContext) {
+    let helpers = local_helpers.helpers_of_kind(BabelHelperKind::ToConsumableArray);
+    let tslib_namespaces = collect_tslib_namespace_bindings(module);
+    if helpers.is_empty() {
+        let ts_helpers = collect_ts_spread_array_helpers(module);
+        if ts_helpers.is_empty() && tslib_namespaces.is_empty() {
             return;
         }
-
-        let ts_helpers = collect_ts_spread_array_helpers(module);
 
         let mut replacer = ToConsumableArrayReplacer {
             helpers: &helpers,
@@ -54,17 +49,29 @@ impl VisitMut for UnToConsumableArray {
         };
         module.visit_mut_with(&mut replacer);
 
-        // Only remove declaration if no untransformed calls remain
-        let remaining = helpers_with_remaining_refs(module, &helpers);
-        let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = helpers
-            .into_iter()
-            .filter(|(key, _)| !remaining.contains(key))
-            .collect();
-        if !safe_to_remove.is_empty() {
-            remove_helper_declarations(&mut module.body, &safe_to_remove);
-        }
         remove_unused_ts_spread_array_helpers(module, &ts_helpers);
+        return;
     }
+
+    let ts_helpers = collect_ts_spread_array_helpers(module);
+
+    let mut replacer = ToConsumableArrayReplacer {
+        helpers: &helpers,
+        ts_spread_array_helpers: &ts_helpers,
+        tslib_namespaces: &tslib_namespaces,
+    };
+    module.visit_mut_with(&mut replacer);
+
+    // Only remove declaration if no untransformed calls remain
+    let remaining = helpers_with_remaining_refs(module, &helpers);
+    let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = helpers
+        .into_iter()
+        .filter(|(key, _)| !remaining.contains(key))
+        .collect();
+    if !safe_to_remove.is_empty() {
+        remove_helper_declarations(&mut module.body, &safe_to_remove);
+    }
+    remove_unused_ts_spread_array_helpers(module, &ts_helpers);
 }
 
 struct ToConsumableArrayReplacer<'a> {

@@ -12,8 +12,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helpers_of_kind, collect_tslib_namespace_bindings, helpers_with_remaining_refs,
-    remove_helper_declarations, tslib_member_helper_kind, BabelHelperKind, BindingKey,
+    collect_tslib_namespace_bindings, helpers_with_remaining_refs, remove_helper_declarations,
+    tslib_member_helper_kind, BabelHelperKind, BindingKey, LocalHelperContext,
 };
 
 /// Convert inline `_objectWithoutPropertiesLoose` IIFEs to object rest destructuring.
@@ -37,102 +37,114 @@ impl UnObjectRest {
     pub fn new(unresolved_mark: Mark) -> Self {
         Self { unresolved_mark }
     }
+
+    pub(crate) fn run_with_helpers(
+        module: &mut swc_core::ecma::ast::Module,
+        unresolved_mark: Mark,
+        local_helpers: &LocalHelperContext,
+    ) {
+        run_un_object_rest(module, unresolved_mark, local_helpers);
+    }
 }
 
 impl VisitMut for UnObjectRest {
     fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
-        // Collect named OWP helpers (function declarations detected by babel_helper_utils)
-        let all_helpers = collect_helpers_of_kind(module, BabelHelperKind::ObjectWithoutProperties);
-        let mut helper_dependencies =
-            collect_helpers_of_kind(module, BabelHelperKind::HelperDependency);
-        helper_dependencies.extend(collect_helpers_of_kind(
-            module,
-            BabelHelperKind::DefineProperty,
-        ));
-        let named_helpers = all_helpers;
-        let tslib_namespaces = collect_tslib_namespace_bindings(module);
+        let local_helpers = LocalHelperContext::collect(module);
+        run_un_object_rest(module, self.unresolved_mark, &local_helpers);
+    }
+}
 
-        // Process inner scopes first (function bodies, etc.) with helpers available
-        let mut processor = ObjectRestProcessor {
-            named_helpers: &named_helpers,
-            tslib_namespaces: &tslib_namespaces,
-            unresolved_mark: self.unresolved_mark,
-        };
-        module.visit_mut_children_with(&mut processor);
-        reattach_elided_object_rest_in_module_items(
-            &mut module.body,
-            &named_helpers,
-            &tslib_namespaces,
-            self.unresolved_mark,
-        );
+fn run_un_object_rest(
+    module: &mut swc_core::ecma::ast::Module,
+    unresolved_mark: Mark,
+    local_helpers: &LocalHelperContext,
+) {
+    // Collect named OWP helpers (function declarations detected by babel_helper_utils)
+    let named_helpers = local_helpers.helpers_of_kind(BabelHelperKind::ObjectWithoutProperties);
+    let mut helper_dependencies = local_helpers.helpers_of_kind(BabelHelperKind::HelperDependency);
+    helper_dependencies.extend(local_helpers.helpers_of_kind(BabelHelperKind::DefineProperty));
+    let tslib_namespaces = collect_tslib_namespace_bindings(module);
 
-        // Process module-level statements
-        let mut new_body = Vec::with_capacity(module.body.len());
-        let mut recent_stmts: Vec<Stmt> = Vec::new();
+    // Process inner scopes first (function bodies, etc.) with helpers available
+    let mut processor = ObjectRestProcessor {
+        named_helpers: &named_helpers,
+        tslib_namespaces: &tslib_namespaces,
+        unresolved_mark,
+    };
+    module.visit_mut_children_with(&mut processor);
+    reattach_elided_object_rest_in_module_items(
+        &mut module.body,
+        &named_helpers,
+        &tslib_namespaces,
+        unresolved_mark,
+    );
 
-        for item in std::mem::take(&mut module.body) {
-            let ModuleItem::Stmt(ref stmt) = item else {
-                recent_stmts.clear();
-                new_body.push(item);
-                continue;
-            };
+    // Process module-level statements
+    let mut new_body = Vec::with_capacity(module.body.len());
+    let mut recent_stmts: Vec<Stmt> = Vec::new();
 
-            let extraction = try_extract_owp_iife(stmt)
-                .or_else(|| try_extract_owp_named_call(stmt, &named_helpers, &tslib_namespaces));
-
-            if let Some((rest_binding, source, excluded_keys, before, after)) = extraction {
-                let mut inline_accesses = declarators_to_accesses(&before, &source, &excluded_keys);
-                let (absorbed, mut preceding_accesses) =
-                    scan_preceding(&recent_stmts, &source, &excluded_keys, self.unresolved_mark);
-                for _ in 0..absorbed {
-                    recent_stmts.pop();
-                    new_body.pop();
-                }
-                preceding_accesses.append(&mut inline_accesses);
-                let scope_names = collect_scope_names_module(&new_body);
-                let new_stmt = build_rest_destructuring(
-                    &rest_binding,
-                    &source,
-                    &excluded_keys,
-                    &preceding_accesses,
-                    &scope_names,
-                );
-                recent_stmts.push(new_stmt.clone());
-                new_body.push(ModuleItem::Stmt(new_stmt));
-                if !after.is_empty() {
-                    let after_stmt = Stmt::Decl(Decl::Var(Box::new(VarDecl {
-                        span: DUMMY_SP,
-                        ctxt: Default::default(),
-                        kind: VarDeclKind::Var,
-                        declare: false,
-                        decls: after,
-                    })));
-                    recent_stmts.push(after_stmt.clone());
-                    new_body.push(ModuleItem::Stmt(after_stmt));
-                }
-                continue;
-            }
-
-            recent_stmts.push(stmt.clone());
+    for item in std::mem::take(&mut module.body) {
+        let ModuleItem::Stmt(ref stmt) = item else {
+            recent_stmts.clear();
             new_body.push(item);
-        }
-        module.body = new_body;
+            continue;
+        };
 
-        // Remove named helper declarations if all call sites were replaced
-        if !named_helpers.is_empty() {
-            let removable_helpers = named_helpers
-                .iter()
-                .chain(helper_dependencies.iter())
-                .map(|(key, kind)| (key.clone(), *kind))
-                .collect::<HashMap<_, _>>();
-            let remaining = helpers_with_remaining_refs(module, &removable_helpers);
-            let safe: HashMap<BindingKey, BabelHelperKind> = removable_helpers
-                .into_iter()
-                .filter(|(key, _)| !remaining.contains(key))
-                .collect();
-            if !safe.is_empty() {
-                remove_helper_declarations(&mut module.body, &safe);
+        let extraction = try_extract_owp_iife(stmt)
+            .or_else(|| try_extract_owp_named_call(stmt, &named_helpers, &tslib_namespaces));
+
+        if let Some((rest_binding, source, excluded_keys, before, after)) = extraction {
+            let mut inline_accesses = declarators_to_accesses(&before, &source, &excluded_keys);
+            let (absorbed, mut preceding_accesses) =
+                scan_preceding(&recent_stmts, &source, &excluded_keys, unresolved_mark);
+            for _ in 0..absorbed {
+                recent_stmts.pop();
+                new_body.pop();
             }
+            preceding_accesses.append(&mut inline_accesses);
+            let scope_names = collect_scope_names_module(&new_body);
+            let new_stmt = build_rest_destructuring(
+                &rest_binding,
+                &source,
+                &excluded_keys,
+                &preceding_accesses,
+                &scope_names,
+            );
+            recent_stmts.push(new_stmt.clone());
+            new_body.push(ModuleItem::Stmt(new_stmt));
+            if !after.is_empty() {
+                let after_stmt = Stmt::Decl(Decl::Var(Box::new(VarDecl {
+                    span: DUMMY_SP,
+                    ctxt: Default::default(),
+                    kind: VarDeclKind::Var,
+                    declare: false,
+                    decls: after,
+                })));
+                recent_stmts.push(after_stmt.clone());
+                new_body.push(ModuleItem::Stmt(after_stmt));
+            }
+            continue;
+        }
+
+        recent_stmts.push(stmt.clone());
+        new_body.push(item);
+    }
+    module.body = new_body;
+
+    // Remove named helper declarations if all call sites were replaced
+    if !named_helpers.is_empty() {
+        let removable_helpers = named_helpers
+            .iter()
+            .chain(helper_dependencies.iter())
+            .map(|(key, kind)| (key.clone(), *kind))
+            .collect::<HashMap<_, _>>();
+        let remaining = helpers_with_remaining_refs(module, &removable_helpers);
+        let safe: HashMap<BindingKey, BabelHelperKind> = removable_helpers
+            .into_iter()
+            .filter(|(key, _)| !remaining.contains(key))
+            .collect();
+        if !safe.is_empty() {
+            remove_helper_declarations(&mut module.body, &safe);
         }
     }
 }

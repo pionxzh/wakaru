@@ -1,9 +1,13 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use swc_core::common::Mark;
 use swc_core::ecma::ast::Module;
 use swc_core::ecma::visit::VisitMutWith;
 
 use crate::facts::ModuleFactsMap;
 
+use super::babel_helper_utils::LocalHelperContext;
 use super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,12 +58,29 @@ impl RuleDescriptor {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct RuleRunContext<'a> {
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
     dead_code_elimination: bool,
     module_facts: Option<&'a ModuleFactsMap>,
+    local_helpers: Rc<RefCell<Option<Rc<LocalHelperContext>>>>,
+}
+
+impl RuleRunContext<'_> {
+    fn local_helpers(&self, module: &Module) -> Rc<LocalHelperContext> {
+        if let Some(local_helpers) = self.local_helpers.borrow().as_ref() {
+            return Rc::clone(local_helpers);
+        }
+
+        let local_helpers = Rc::new(LocalHelperContext::collect(module));
+        *self.local_helpers.borrow_mut() = Some(Rc::clone(&local_helpers));
+        local_helpers
+    }
+
+    fn invalidate_local_helpers(&self) {
+        *self.local_helpers.borrow_mut() = None;
+    }
 }
 
 fn always_enabled(_: RuleRunContext<'_>) -> bool {
@@ -140,29 +161,51 @@ runner!(run_un_indirect_call, |ctx| UnIndirectCall::new(
 runner!(run_un_typeof, UnTypeof);
 runner!(run_un_numeric_literal, UnNumericLiteral);
 runner!(run_un_bracket_notation, UnBracketNotation);
-runner!(run_un_interop_require_default, UnInteropRequireDefault);
-runner!(run_un_interop_require_wildcard, UnInteropRequireWildcard);
-runner!(run_un_to_consumable_array, UnToConsumableArray);
-
-fn run_un_object_spread(module: &mut Module, ctx: RuleRunContext<'_>) {
-    if let Some(facts) = ctx.module_facts {
-        module.visit_mut_with(&mut UnObjectSpread::new_with_facts(facts));
-    } else {
-        module.visit_mut_with(&mut UnObjectSpread::new());
-    }
+fn run_un_interop_require_default(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    UnInteropRequireDefault::run_with_helpers(module, local_helpers.as_ref());
+    ctx.invalidate_local_helpers();
 }
 
-runner!(run_un_object_rest, |ctx| UnObjectRest::new(
-    ctx.unresolved_mark
-));
-runner!(run_un_sliced_to_array, UnSlicedToArray);
+fn run_un_interop_require_wildcard(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    UnInteropRequireWildcard::run_with_helpers(module, local_helpers.as_ref());
+}
+
+fn run_un_to_consumable_array(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    UnToConsumableArray::run_with_helpers(module, local_helpers.as_ref());
+}
+
+fn run_un_object_spread(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    UnObjectSpread::run_with_helpers(module, local_helpers.as_ref(), ctx.module_facts);
+}
+
+fn run_un_object_rest(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    UnObjectRest::run_with_helpers(module, ctx.unresolved_mark, local_helpers.as_ref());
+}
+
+fn run_un_sliced_to_array(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    UnSlicedToArray::run_with_helpers(module, local_helpers.as_ref());
+}
+
 runner!(run_un_define_property, UnDefineProperty);
-runner!(run_un_class_call_check, UnClassCallCheck);
-runner!(
-    run_un_possible_constructor_return,
-    UnPossibleConstructorReturn
-);
-runner!(run_un_assert_this_initialized, UnAssertThisInitialized);
+fn run_un_class_call_check(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    UnClassCallCheck::run_with_helpers(module, local_helpers.as_ref());
+}
+
+fn run_un_possible_constructor_return(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    UnPossibleConstructorReturn::run_with_helpers(module, local_helpers.as_ref());
+}
+fn run_un_assert_this_initialized(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    UnAssertThisInitialized::run_with_helpers(module, local_helpers.as_ref());
+}
 runner!(run_un_typeof_polyfill, UnTypeofPolyfill);
 runner!(run_un_curly_braces, UnCurlyBraces);
 runner!(run_un_esmodule_flag, |ctx| UnEsmoduleFlag::new(
@@ -206,7 +249,10 @@ runner!(run_un_optional_chaining, |ctx| UnOptionalChaining::new(
     ctx.rewrite_level
 ));
 runner!(run_un_iife, |ctx| UnIife::new(ctx.rewrite_level));
-runner!(run_un_conditionals, UnConditionals);
+fn run_un_conditionals(module: &mut Module, ctx: RuleRunContext<'_>) {
+    module.visit_mut_with(&mut UnConditionals);
+    ctx.invalidate_local_helpers();
+}
 runner!(
     run_un_conditionals_expr_stmt_only,
     UnConditionalsExprStmtOnly
@@ -224,21 +270,21 @@ runner!(run_un_es6_class, |ctx| UnEs6Class::new_with_level(
     ctx.unresolved_mark,
     ctx.rewrite_level
 ));
-runner!(run_un_class_fields, |ctx| UnClassFields::new_with_mark(
-    ctx.unresolved_mark,
-    ctx.rewrite_level
-));
+fn run_un_class_fields(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    UnClassFields::new_with_mark(ctx.unresolved_mark, ctx.rewrite_level)
+        .run_with_helpers(module, local_helpers.as_ref());
+}
 runner!(run_un_ts_helpers, UnTsHelpers);
 
 fn run_un_regenerator(module: &mut Module, ctx: RuleRunContext<'_>) {
-    if let Some(facts) = ctx.module_facts {
-        module.visit_mut_with(&mut UnRegenerator::new_with_facts(
-            ctx.unresolved_mark,
-            facts,
-        ));
-    } else {
-        module.visit_mut_with(&mut UnRegenerator::new(ctx.unresolved_mark));
-    }
+    let local_helpers = ctx.local_helpers(module);
+    UnRegenerator::run_with_helpers(
+        module,
+        ctx.unresolved_mark,
+        ctx.module_facts,
+        local_helpers.as_ref(),
+    );
 }
 
 runner!(run_un_async_await, UnAsyncAwait);
@@ -552,11 +598,12 @@ fn apply_rules_impl(
         rewrite_level: options.rewrite_level,
         dead_code_elimination: options.dead_code_elimination,
         module_facts: options.module_facts,
+        local_helpers: Rc::new(RefCell::new(None)),
     };
     let mut started = options.start_from.is_none();
 
     for descriptor in RULE_DESCRIPTORS {
-        if !descriptor.is_enabled(ctx) {
+        if !descriptor.is_enabled(ctx.clone()) {
             continue;
         }
         if !started && options.start_from == Some(descriptor.id) {
@@ -569,7 +616,7 @@ fn apply_rules_impl(
         let span = tracing::debug_span!("rule", name = descriptor.id);
         {
             let _enter = span.enter();
-            descriptor.run(module, ctx);
+            descriptor.run(module, ctx.clone());
         }
         if let Some(observer) = observer.as_deref_mut() {
             observer(descriptor.id, module);
@@ -577,5 +624,36 @@ fn apply_rules_impl(
         if options.stop_after == Some(descriptor.id) {
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use swc_core::common::{DUMMY_SP, GLOBALS};
+
+    use super::super::babel_helper_utils::{
+        collect_helpers_call_count, reset_collect_helpers_call_count,
+    };
+    use super::*;
+
+    #[test]
+    fn reuses_local_helper_context_within_stable_rule_spans() {
+        GLOBALS.set(&Default::default(), || {
+            let mut module = Module {
+                span: DUMMY_SP,
+                body: Vec::new(),
+                shebang: None,
+            };
+            let unresolved_mark = Mark::new();
+
+            reset_collect_helpers_call_count();
+            apply_rules(
+                &mut module,
+                unresolved_mark,
+                RulePipelineOptions::between("UnInteropRequireDefault", "UnRegenerator"),
+            );
+
+            assert_eq!(collect_helpers_call_count(), 3);
+        });
     }
 }

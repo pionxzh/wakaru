@@ -11,8 +11,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helper_dependencies, collect_helpers_of_kind, helpers_with_remaining_refs,
-    remove_helper_declarations, BabelHelperKind, BindingKey,
+    collect_helper_dependencies, helpers_with_remaining_refs, remove_helper_declarations,
+    BabelHelperKind, BindingKey, LocalHelperContext,
 };
 use super::helper_matcher::binding_key;
 use super::RewriteLevel;
@@ -67,17 +67,13 @@ impl UnClassFields {
             consumed_private_maps: HashSet::new(),
         }
     }
-}
 
-impl Default for UnClassFields {
-    fn default() -> Self {
-        Self::new(RewriteLevel::Standard)
-    }
-}
-
-impl VisitMut for UnClassFields {
-    fn visit_mut_module(&mut self, module: &mut Module) {
-        let helpers = collect_helpers_of_kind(module, BabelHelperKind::DefineProperty);
+    pub(crate) fn run_with_helpers(
+        &mut self,
+        module: &mut Module,
+        local_helpers: &LocalHelperContext,
+    ) {
+        let helpers = local_helpers.helpers_of_kind(BabelHelperKind::DefineProperty);
         let previous_helpers = std::mem::replace(
             &mut self.define_property_helpers,
             helpers.keys().cloned().collect(),
@@ -159,6 +155,19 @@ impl VisitMut for UnClassFields {
         self.private_set_helpers = previous_private_set_helpers;
         self.private_single_owner_maps = previous_private_single_owner_maps;
         self.consumed_private_maps = previous_consumed_private_maps;
+    }
+}
+
+impl Default for UnClassFields {
+    fn default() -> Self {
+        Self::new(RewriteLevel::Standard)
+    }
+}
+
+impl VisitMut for UnClassFields {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        let local_helpers = LocalHelperContext::collect(module);
+        self.run_with_helpers(module, &local_helpers);
     }
 
     fn visit_mut_class(&mut self, class: &mut Class) {

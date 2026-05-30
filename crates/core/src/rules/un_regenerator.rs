@@ -11,7 +11,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::babel_helper_utils::{
-    collect_helpers, helpers_with_remaining_refs, BabelHelperKind, BindingKey,
+    helpers_with_remaining_refs, BabelHelperKind, BindingKey, LocalHelperContext,
 };
 
 pub struct UnRegenerator<'a> {
@@ -35,56 +35,80 @@ impl<'a> UnRegenerator<'a> {
             module_facts: Some(module_facts),
         }
     }
+
+    pub(crate) fn run_with_helpers(
+        module: &mut Module,
+        unresolved_mark: Mark,
+        module_facts: Option<&ModuleFactsMap>,
+        local_helpers: &LocalHelperContext,
+    ) {
+        run_un_regenerator(module, unresolved_mark, module_facts, local_helpers);
+    }
 }
 
 impl VisitMut for UnRegenerator<'_> {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        // Phase 1: Detect _asyncToGenerator helper bindings (scope-aware)
-        let helpers = collect_helpers(module);
-        let mut async_to_gen_bindings: Vec<BindingKey> = helpers
+        let local_helpers = LocalHelperContext::collect(module);
+        run_un_regenerator(
+            module,
+            self.unresolved_mark,
+            self.module_facts,
+            &local_helpers,
+        );
+    }
+}
+
+fn run_un_regenerator(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    module_facts: Option<&ModuleFactsMap>,
+    local_helpers: &LocalHelperContext,
+) {
+    // Phase 1: Detect _asyncToGenerator helper bindings (scope-aware)
+    let helpers = local_helpers.helpers();
+    let mut async_to_gen_bindings: Vec<BindingKey> = helpers
+        .iter()
+        .filter(|(_, kind)| **kind == BabelHelperKind::AsyncToGenerator)
+        .map(|((sym, ctxt), _)| (sym.clone(), *ctxt))
+        .collect();
+    let mut async_to_gen_default_members = Vec::new();
+    if let Some(module_facts) = module_facts {
+        let imported_helpers = collect_cross_module_async_helpers(module, module_facts);
+        async_to_gen_bindings.extend(imported_helpers.direct);
+        async_to_gen_default_members.extend(imported_helpers.default_members);
+    }
+    let async_to_gen_callees = AsyncToGenCallees {
+        direct: &async_to_gen_bindings,
+        default_members: &async_to_gen_default_members,
+    };
+
+    // Phase 2: Transform functions containing regeneratorRuntime.wrap()
+    // and _asyncToGenerator() calls. Track consumed mark bindings.
+    let mut consumed_marks: Vec<BindingKey> = Vec::new();
+
+    transform_babel_async_trampolines(module, &async_to_gen_callees, &mut consumed_marks);
+
+    let mut transformer = FunctionTransformer {
+        unresolved_mark,
+        async_to_gen_callees: &async_to_gen_callees,
+        consumed_marks: &mut consumed_marks,
+    };
+    module.visit_mut_with(&mut transformer);
+
+    // Phase 3: Remove only the mark declarations that were consumed
+    remove_consumed_mark_declarations(module, &consumed_marks);
+
+    // Phase 4: Remove _asyncToGenerator helper if no longer referenced
+    if !async_to_gen_bindings.is_empty() {
+        let remaining = helpers_with_remaining_refs(module, helpers);
+        let to_remove: Vec<_> = helpers
             .iter()
-            .filter(|(_, kind)| **kind == BabelHelperKind::AsyncToGenerator)
+            .filter(|(key, kind)| {
+                **kind == BabelHelperKind::AsyncToGenerator && !remaining.contains(key)
+            })
             .map(|((sym, ctxt), _)| (sym.clone(), *ctxt))
             .collect();
-        let mut async_to_gen_default_members = Vec::new();
-        if let Some(module_facts) = self.module_facts {
-            let imported_helpers = collect_cross_module_async_helpers(module, module_facts);
-            async_to_gen_bindings.extend(imported_helpers.direct);
-            async_to_gen_default_members.extend(imported_helpers.default_members);
-        }
-        let async_to_gen_callees = AsyncToGenCallees {
-            direct: &async_to_gen_bindings,
-            default_members: &async_to_gen_default_members,
-        };
-
-        // Phase 2: Transform functions containing regeneratorRuntime.wrap()
-        // and _asyncToGenerator() calls. Track consumed mark bindings.
-        let mut consumed_marks: Vec<BindingKey> = Vec::new();
-
-        transform_babel_async_trampolines(module, &async_to_gen_callees, &mut consumed_marks);
-
-        let mut transformer = FunctionTransformer {
-            unresolved_mark: self.unresolved_mark,
-            async_to_gen_callees: &async_to_gen_callees,
-            consumed_marks: &mut consumed_marks,
-        };
-        module.visit_mut_with(&mut transformer);
-
-        // Phase 3: Remove only the mark declarations that were consumed
-        remove_consumed_mark_declarations(module, &consumed_marks);
-
-        // Phase 4: Remove _asyncToGenerator helper if no longer referenced
-        if !async_to_gen_bindings.is_empty() {
-            let remaining = helpers_with_remaining_refs(module, &helpers);
-            let to_remove: Vec<_> = helpers
-                .iter()
-                .filter(|(key, kind)| {
-                    **kind == BabelHelperKind::AsyncToGenerator && !remaining.contains(key)
-                })
-                .map(|((sym, ctxt), _)| (sym.clone(), *ctxt))
-                .collect();
-            remove_helper_decls(module, &to_remove);
-        }
+        remove_helper_decls(module, &to_remove);
     }
 }
 

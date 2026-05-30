@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
@@ -20,6 +22,21 @@ use super::match_context::MatchContext;
 
 pub(crate) use super::helper_matcher::BindingKey;
 
+#[cfg(test)]
+thread_local! {
+    static COLLECT_HELPERS_CALLS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_collect_helpers_call_count() {
+    COLLECT_HELPERS_CALLS.with(|calls| calls.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn collect_helpers_call_count() -> usize {
+    COLLECT_HELPERS_CALLS.with(Cell::get)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BabelHelperKind {
     InteropRequireDefault,
@@ -37,6 +54,34 @@ pub(crate) enum BabelHelperKind {
     AsyncToGenerator,
     DefineProperty,
     HelperDependency,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct LocalHelperContext {
+    helpers: HashMap<BindingKey, BabelHelperKind>,
+}
+
+impl LocalHelperContext {
+    pub(crate) fn collect(module: &Module) -> Self {
+        Self {
+            helpers: collect_helpers(module),
+        }
+    }
+
+    pub(crate) fn helpers(&self) -> &HashMap<BindingKey, BabelHelperKind> {
+        &self.helpers
+    }
+
+    pub(crate) fn helpers_of_kind(
+        &self,
+        kind: BabelHelperKind,
+    ) -> HashMap<BindingKey, BabelHelperKind> {
+        self.helpers
+            .iter()
+            .filter(|(_, helper_kind)| **helper_kind == kind)
+            .map(|(key, helper_kind)| (key.clone(), *helper_kind))
+            .collect()
+    }
 }
 
 /// Known import paths for Babel runtime helpers.
@@ -102,6 +147,9 @@ const DEFINE_PROPERTY_PATHS: &[&str] = &[
 /// Scan module-level declarations for helper functions.
 /// Detects by function body shape and by import path.
 pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelperKind> {
+    #[cfg(test)]
+    COLLECT_HELPERS_CALLS.with(|calls| calls.set(calls.get() + 1));
+
     // Phase 1: scan all module-level function bodies for Babel sub-helper markers.
     // The Babel 7+ pattern uses a thin dispatcher (`return f(x) || g(x) || h(x) || k()`)
     // that delegates to sub-helpers defined in the same module. We only accept OR-chain
@@ -189,25 +237,6 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
         }
     }
     helpers
-}
-
-/// Collect helpers of a specific kind from module-level declarations.
-pub(crate) fn collect_helpers_of_kind(
-    module: &Module,
-    kind: BabelHelperKind,
-) -> HashMap<BindingKey, BabelHelperKind> {
-    let all = collect_helpers(module);
-    all.into_iter().filter(|(_, k)| *k == kind).collect()
-}
-
-/// Collect only ClassCallCheck helpers from module-level declarations.
-pub(crate) fn collect_class_call_check_helpers(
-    module: &Module,
-) -> HashMap<BindingKey, BabelHelperKind> {
-    let all = collect_helpers(module);
-    all.into_iter()
-        .filter(|(_, kind)| *kind == BabelHelperKind::ClassCallCheck)
-        .collect()
 }
 
 /// Check if the module contains functions with Babel sub-helper body signals.

@@ -11,9 +11,9 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::babel_helper_utils::{
-    collect_helper_dependencies, collect_helpers, collect_tslib_namespace_bindings,
-    helpers_with_remaining_refs, remove_helper_declarations, tslib_member_helper_kind,
-    BabelHelperKind, BindingKey,
+    collect_helper_dependencies, collect_tslib_namespace_bindings, helpers_with_remaining_refs,
+    remove_helper_declarations, tslib_member_helper_kind, BabelHelperKind, BindingKey,
+    LocalHelperContext,
 };
 
 /// Detects and replaces `_extends` and `_objectSpread2` helper calls with
@@ -43,75 +43,93 @@ impl<'a> UnObjectSpread<'a> {
             module_facts: Some(module_facts),
         }
     }
+
+    pub(crate) fn run_with_helpers(
+        module: &mut Module,
+        local_helpers: &LocalHelperContext,
+        module_facts: Option<&ModuleFactsMap>,
+    ) {
+        run_un_object_spread(module, local_helpers, module_facts);
+    }
 }
 
 impl VisitMut for UnObjectSpread<'_> {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let all_helpers = collect_helpers(module);
-        let mut local_helpers: HashMap<BindingKey, BabelHelperKind> = all_helpers
-            .into_iter()
-            .filter(|(_, kind)| {
-                *kind == BabelHelperKind::Extends
-                    || *kind == BabelHelperKind::ObjectSpread
-                    || *kind == BabelHelperKind::DefineProperty
-                    || *kind == BabelHelperKind::HelperDependency
-            })
-            .collect();
-        local_helpers.extend(collect_uninitialized_object_spread_stubs(module));
-        let mut helpers = local_helpers.clone();
-        if let Some(module_facts) = self.module_facts {
-            helpers.extend(collect_cross_module_object_spread_helpers(
-                module,
-                module_facts,
-            ));
-        }
-        let tslib_namespaces = collect_tslib_namespace_bindings(module);
-        if helpers.is_empty() && tslib_namespaces.is_empty() {
-            return;
-        }
-        let mut replacer = SpreadReplacer {
-            helpers: &helpers,
-            tslib_namespaces: &tslib_namespaces,
-        };
-        module.visit_mut_with(&mut replacer);
+        let local_helpers = LocalHelperContext::collect(module);
+        run_un_object_spread(module, &local_helpers, self.module_facts);
+    }
+}
 
-        // Only remove root helpers whose calls were fully transformed. Dependencies
-        // referenced by retained helpers must stay with those helpers.
-        let local_root_helpers: HashMap<BindingKey, BabelHelperKind> = local_helpers
-            .iter()
-            .filter(|(_, kind)| {
-                matches!(
-                    kind,
-                    BabelHelperKind::Extends | BabelHelperKind::ObjectSpread
-                )
-            })
-            .map(|(key, kind)| (key.clone(), *kind))
-            .collect();
-        let remaining_roots = helpers_with_remaining_refs(module, &local_root_helpers);
-        let removable_roots: HashMap<BindingKey, BabelHelperKind> = local_root_helpers
-            .into_iter()
-            .filter(|(key, _)| !remaining_roots.contains(key))
-            .collect();
-        let helper_dependencies = collect_helper_dependencies(module, &removable_roots);
-        let standalone_dependencies = local_helpers.into_iter().filter(|(_, kind)| {
+fn run_un_object_spread(
+    module: &mut Module,
+    local_helper_context: &LocalHelperContext,
+    module_facts: Option<&ModuleFactsMap>,
+) {
+    let mut local_helpers: HashMap<BindingKey, BabelHelperKind> = local_helper_context
+        .helpers()
+        .iter()
+        .filter(|(_, kind)| {
+            **kind == BabelHelperKind::Extends
+                || **kind == BabelHelperKind::ObjectSpread
+                || **kind == BabelHelperKind::DefineProperty
+                || **kind == BabelHelperKind::HelperDependency
+        })
+        .map(|(key, kind)| (key.clone(), *kind))
+        .collect();
+    local_helpers.extend(collect_uninitialized_object_spread_stubs(module));
+    let mut helpers = local_helpers.clone();
+    if let Some(module_facts) = module_facts {
+        helpers.extend(collect_cross_module_object_spread_helpers(
+            module,
+            module_facts,
+        ));
+    }
+    let tslib_namespaces = collect_tslib_namespace_bindings(module);
+    if helpers.is_empty() && tslib_namespaces.is_empty() {
+        return;
+    }
+    let mut replacer = SpreadReplacer {
+        helpers: &helpers,
+        tslib_namespaces: &tslib_namespaces,
+    };
+    module.visit_mut_with(&mut replacer);
+
+    // Only remove root helpers whose calls were fully transformed. Dependencies
+    // referenced by retained helpers must stay with those helpers.
+    let local_root_helpers: HashMap<BindingKey, BabelHelperKind> = local_helpers
+        .iter()
+        .filter(|(_, kind)| {
             matches!(
                 kind,
-                BabelHelperKind::DefineProperty | BabelHelperKind::HelperDependency
+                BabelHelperKind::Extends | BabelHelperKind::ObjectSpread
             )
-        });
-        let removable_helpers: HashMap<BindingKey, BabelHelperKind> = removable_roots
-            .into_iter()
-            .chain(helper_dependencies)
-            .chain(standalone_dependencies)
-            .collect();
-        let remaining = helpers_with_remaining_refs(module, &removable_helpers);
-        let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = removable_helpers
-            .into_iter()
-            .filter(|(key, _)| !remaining.contains(key))
-            .collect();
-        if !safe_to_remove.is_empty() {
-            remove_helper_declarations(&mut module.body, &safe_to_remove);
-        }
+        })
+        .map(|(key, kind)| (key.clone(), *kind))
+        .collect();
+    let remaining_roots = helpers_with_remaining_refs(module, &local_root_helpers);
+    let removable_roots: HashMap<BindingKey, BabelHelperKind> = local_root_helpers
+        .into_iter()
+        .filter(|(key, _)| !remaining_roots.contains(key))
+        .collect();
+    let helper_dependencies = collect_helper_dependencies(module, &removable_roots);
+    let standalone_dependencies = local_helpers.into_iter().filter(|(_, kind)| {
+        matches!(
+            kind,
+            BabelHelperKind::DefineProperty | BabelHelperKind::HelperDependency
+        )
+    });
+    let removable_helpers: HashMap<BindingKey, BabelHelperKind> = removable_roots
+        .into_iter()
+        .chain(helper_dependencies)
+        .chain(standalone_dependencies)
+        .collect();
+    let remaining = helpers_with_remaining_refs(module, &removable_helpers);
+    let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = removable_helpers
+        .into_iter()
+        .filter(|(key, _)| !remaining.contains(key))
+        .collect();
+    if !safe_to_remove.is_empty() {
+        remove_helper_declarations(&mut module.body, &safe_to_remove);
     }
 }
 

@@ -184,6 +184,21 @@ function render(U) {
     assert_eq_normalized(&result, expected);
 }
 
+#[test]
+fn default_interop_exposes_runtime_helper_for_later_helper_rule() {
+    let input = r#"
+var _interopRequireDefault = require("@babel/runtime/helpers/interopRequireDefault");
+var _interopRequireWildcard = _interopRequireDefault(require("@babel/runtime/helpers/interopRequireWildcard"));
+var foo = (0, _interopRequireWildcard.default)(require("foo"));
+"#;
+    let expected = r#"
+import * as foo from "foo";
+"#;
+
+    let result = render_pipeline_until(input, "UnInteropRequireWildcard");
+    assert_eq_normalized(&result, expected);
+}
+
 // ============================================================
 // rule_names test
 // ============================================================

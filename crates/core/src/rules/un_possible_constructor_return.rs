@@ -4,8 +4,8 @@ use swc_core::ecma::ast::{Callee, Expr, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
-    collect_helpers_of_kind, helpers_with_remaining_refs, remove_helper_declarations,
-    BabelHelperKind, BindingKey,
+    helpers_with_remaining_refs, remove_helper_declarations, BabelHelperKind, BindingKey,
+    LocalHelperContext,
 };
 
 /// Detects and simplifies `_possibleConstructorReturn(self, call)` helper calls.
@@ -24,24 +24,35 @@ use super::babel_helper_utils::{
 /// when wrapping a super() constructor call in ES6 class semantics.
 pub struct UnPossibleConstructorReturn;
 
+impl UnPossibleConstructorReturn {
+    pub(crate) fn run_with_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
+        run_un_possible_constructor_return(module, local_helpers);
+    }
+}
+
 impl VisitMut for UnPossibleConstructorReturn {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let helpers = collect_helpers_of_kind(module, BabelHelperKind::PossibleConstructorReturn);
-        if helpers.is_empty() {
-            return;
-        }
+        let local_helpers = LocalHelperContext::collect(module);
+        run_un_possible_constructor_return(module, &local_helpers);
+    }
+}
 
-        let mut replacer = PcrReplacer { helpers: &helpers };
-        module.visit_mut_with(&mut replacer);
+fn run_un_possible_constructor_return(module: &mut Module, local_helpers: &LocalHelperContext) {
+    let helpers = local_helpers.helpers_of_kind(BabelHelperKind::PossibleConstructorReturn);
+    if helpers.is_empty() {
+        return;
+    }
 
-        let remaining = helpers_with_remaining_refs(module, &helpers);
-        let safe: HashMap<BindingKey, BabelHelperKind> = helpers
-            .into_iter()
-            .filter(|(key, _)| !remaining.contains(key))
-            .collect();
-        if !safe.is_empty() {
-            remove_helper_declarations(&mut module.body, &safe);
-        }
+    let mut replacer = PcrReplacer { helpers: &helpers };
+    module.visit_mut_with(&mut replacer);
+
+    let remaining = helpers_with_remaining_refs(module, &helpers);
+    let safe: HashMap<BindingKey, BabelHelperKind> = helpers
+        .into_iter()
+        .filter(|(key, _)| !remaining.contains(key))
+        .collect();
+    if !safe.is_empty() {
+        remove_helper_declarations(&mut module.body, &safe);
     }
 }
 
