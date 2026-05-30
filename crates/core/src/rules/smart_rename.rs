@@ -153,7 +153,9 @@ fn collect_react_var_decl_renames(
             Pat::Array(array_pat) => {
                 if let Some(init) = &decl.init {
                     if let Some(hook_name) = get_single_react_hook_call(init) {
-                        collect_array_pat_react_renames(array_pat, &hook_name, renames, used_names);
+                        collect_array_pat_react_renames(
+                            array_pat, init, &hook_name, renames, used_names,
+                        );
                     }
                 }
             }
@@ -164,6 +166,7 @@ fn collect_react_var_decl_renames(
 
 fn collect_array_pat_react_renames(
     array_pat: &ArrayPat,
+    init: &Expr,
     hook_name: &str,
     renames: &mut Vec<BindingRename>,
     used_names: &mut HashSet<String>,
@@ -205,6 +208,19 @@ fn collect_array_pat_react_renames(
                 }
             }
         }
+        "useTransition" => {
+            rename_array_elem_if_short(array_pat, 0, "isPending", renames, used_names);
+            rename_array_elem_if_short(array_pat, 1, "startTransition", renames, used_names);
+        }
+        "useOptimistic" => {
+            let Some(base) = optimistic_state_base_name(init, array_pat) else {
+                return;
+            };
+            let optimistic_name = format!("optimistic{}", pascal_case_first(&base));
+            rename_array_elem_if_short(array_pat, 0, &optimistic_name, renames, used_names);
+            let setter_name = format!("set{}", pascal_case_first(&optimistic_name));
+            rename_array_elem_if_short(array_pat, 1, &setter_name, renames, used_names);
+        }
         _ => {}
     }
 }
@@ -233,6 +249,8 @@ fn get_single_react_hook_call(expr: &Expr) -> Option<String> {
         "useRef" | "createContext" => args.len() <= 1,
         "useState" => args.len() <= 1,
         "useReducer" => !args.is_empty() && args.len() <= 3,
+        "useTransition" => args.is_empty(),
+        "useOptimistic" => !args.is_empty() && args.len() <= 2,
         "forwardRef" => args.len() == 1,
         _ => false,
     };
@@ -261,6 +279,98 @@ fn get_array_elem_if_short(array_pat: &ArrayPat, idx: usize) -> Option<(String, 
     } else {
         None
     }
+}
+
+fn rename_array_elem_if_short(
+    array_pat: &ArrayPat,
+    idx: usize,
+    new_name: &str,
+    renames: &mut Vec<BindingRename>,
+    used_names: &mut HashSet<String>,
+) {
+    let Some((old_name, old_id)) = get_array_elem_if_short(array_pat, idx) else {
+        return;
+    };
+    let new_name = find_non_conflicting_name(new_name, used_names);
+    if new_name == old_name {
+        return;
+    }
+    used_names.insert(new_name.clone());
+    renames.push(BindingRename {
+        old: old_id,
+        new: new_name.as_str().into(),
+    });
+}
+
+fn optimistic_state_base_name(init: &Expr, array_pat: &ArrayPat) -> Option<String> {
+    let Expr::Call(call) = init else {
+        return None;
+    };
+    if let Some(first_arg) = call.args.first() {
+        if let Some(name) = optimistic_source_name(first_arg.expr.as_ref()) {
+            return Some(strip_current_prefix(&name));
+        }
+    }
+
+    let first_name = get_array_elem_name(array_pat, 0)?;
+    if first_name.chars().count() <= REACT_MINIFIED_THRESHOLD {
+        return None;
+    }
+    Some(strip_optimistic_prefix(&first_name))
+}
+
+fn optimistic_source_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident(id) => Some(id.sym.to_string()),
+        Expr::Member(member) => match &member.prop {
+            MemberProp::Ident(prop) => Some(prop.sym.to_string()),
+            MemberProp::Computed(computed) => {
+                let Expr::Lit(Lit::Str(value)) = computed.expr.as_ref() else {
+                    return None;
+                };
+                value.value.as_str().map(|s| s.to_string())
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn strip_current_prefix(name: &str) -> String {
+    if let Some(rest) = name.strip_prefix("current") {
+        if rest
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+        {
+            return lower_first(rest);
+        }
+    }
+    name.to_string()
+}
+
+fn strip_optimistic_prefix(name: &str) -> String {
+    if let Some(rest) = name.strip_prefix("optimistic") {
+        if rest
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+        {
+            return lower_first(rest);
+        }
+    }
+    name.to_string()
+}
+
+fn lower_first(input: &str) -> String {
+    let mut chars = input.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let mut result = String::new();
+    result.extend(first.to_lowercase());
+    result.extend(chars);
+    result
 }
 
 // ============================================================

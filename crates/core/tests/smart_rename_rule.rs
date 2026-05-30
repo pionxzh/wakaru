@@ -197,6 +197,36 @@ const [gState, hDispatch] = o.useReducer(r, i, init);
 }
 
 #[test]
+fn react_rename_usetransition() {
+    let input = r#"
+const [e, f] = useTransition();
+const [g, h] = o.useTransition();
+"#;
+    let expected = r#"
+const [isPending, startTransition] = useTransition();
+const [isPending_1, startTransition_1] = o.useTransition();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn react_rename_useoptimistic() {
+    let input = r#"
+const [e, f] = useOptimistic(currentName);
+const [g, h] = o.useOptimistic(messages, reducer);
+const [optimisticCount, i] = useOptimistic(count);
+"#;
+    let expected = r#"
+const [optimisticName, setOptimisticName] = useOptimistic(currentName);
+const [optimisticMessages, setOptimisticMessages] = o.useOptimistic(messages, reducer);
+const [optimisticCount, setOptimisticCount] = useOptimistic(count);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn react_rename_useref() {
     let input = r#"
 const d = useRef();
