@@ -10,7 +10,9 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::decl_utils::BindingId;
-use super::eval_utils::{js_source_mentions_binding, strip_parens, DirectEvalAnalyzer};
+use crate::utils::paren::strip_parens;
+
+use super::eval_utils::{js_source_mentions_binding, DirectEvalAnalyzer};
 use super::RewriteLevel;
 
 pub struct VarDeclToLetConst {

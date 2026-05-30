@@ -2,6 +2,8 @@ use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{Callee, Expr, Lit};
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+use crate::utils::paren::strip_parens;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EvalCallSource {
     NoSource,
@@ -113,13 +115,6 @@ fn is_object_wrapped_eval_call(call: &swc_core::ecma::ast::CallExpr) -> bool {
     };
     arg.spread.is_none()
         && matches!(strip_parens(arg.expr.as_ref()), Expr::Ident(id) if id.sym == "eval")
-}
-
-pub(crate) fn strip_parens(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_parens(&paren.expr),
-        _ => expr,
-    }
 }
 
 fn eval_static_string(expr: &Expr) -> Option<String> {

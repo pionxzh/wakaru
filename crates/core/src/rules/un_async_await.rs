@@ -10,6 +10,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::rename_utils::BindingId;
+use crate::utils::paren::strip_parens;
 
 pub struct UnAsyncAwait;
 
@@ -305,7 +306,7 @@ fn split_yield_arg_sent_assignment(
     let Expr::Member(member) = callee.as_ref() else {
         return None;
     };
-    let Expr::Assign(assign) = strip_paren_expr(&member.obj) else {
+    let Expr::Assign(assign) = strip_parens(&member.obj) else {
         return None;
     };
     if assign.op != AssignOp::Assign || !is_sent_call(state_name, &assign.right) {
@@ -363,13 +364,6 @@ fn is_sent_call(state_name: &Atom, expr: &Expr) -> bool {
     };
     matches!(mem.obj.as_ref(), Expr::Ident(id) if id.sym == *state_name)
         && is_ident_prop(&mem.prop, "sent")
-}
-
-fn strip_paren_expr(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_paren_expr(&paren.expr),
-        other => other,
-    }
 }
 
 fn is_standalone_sent(state_name: &Atom, stmt: &Stmt) -> bool {

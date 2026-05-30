@@ -16,6 +16,7 @@ use super::helper_matcher::{
     binding_key, remaining_refs_outside_var_declarators, remove_import_specifiers_by_binding,
     remove_var_declarators_by_binding, var_declarator_binding_key,
 };
+use crate::utils::paren::strip_parens;
 
 /// Detects and replaces `_toConsumableArray(arr)` with `[...arr]`.
 pub struct UnToConsumableArray;
@@ -210,7 +211,7 @@ fn collect_ts_spread_array_helpers(module: &Module) -> HashSet<BindingKey> {
 }
 
 fn is_ts_spread_array_helper_init(expr: &Expr) -> bool {
-    let expr = strip_paren_expr(expr);
+    let expr = strip_parens(expr);
     let Expr::Bin(BinExpr {
         op: BinaryOp::LogicalOr,
         left,
@@ -220,7 +221,7 @@ fn is_ts_spread_array_helper_init(expr: &Expr) -> bool {
         return false;
     };
 
-    let left = strip_paren_expr(left);
+    let left = strip_parens(left);
     let Expr::Bin(and_bin) = left else {
         return false;
     };
@@ -228,8 +229,8 @@ fn is_ts_spread_array_helper_init(expr: &Expr) -> bool {
         return false;
     }
 
-    let and_left = strip_paren_expr(and_bin.left.as_ref());
-    let and_right = strip_paren_expr(and_bin.right.as_ref());
+    let and_left = strip_parens(and_bin.left.as_ref());
+    let and_right = strip_parens(and_bin.right.as_ref());
 
     matches!(and_left, Expr::This(_))
         && matches!(
@@ -240,13 +241,6 @@ fn is_ts_spread_array_helper_init(expr: &Expr) -> bool {
                 ..
             }) if matches!(obj.as_ref(), Expr::This(_)) && prop.sym.as_ref() == "__spreadArray"
         )
-}
-
-fn strip_paren_expr(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_paren_expr(&paren.expr),
-        _ => expr,
-    }
 }
 
 fn remove_unused_ts_spread_array_helpers(module: &mut Module, helpers: &HashSet<BindingKey>) {

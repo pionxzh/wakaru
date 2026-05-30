@@ -14,6 +14,7 @@ use super::helper_matcher::{
     remove_var_declarators_by_binding, var_declarator_binding_key, BindingKey,
 };
 use super::RewriteLevel;
+use crate::utils::paren::strip_parens;
 
 pub struct UnTemplateLiteral {
     level: RewriteLevel,
@@ -213,7 +214,7 @@ fn extract_template_match(
     expr: &Expr,
     factories: &HashMap<BindingKey, TemplateData>,
 ) -> Option<TemplateMatch> {
-    let expr = strip_paren_expr(expr);
+    let expr = strip_parens(expr);
 
     if let Some((data, helper)) = extract_direct_template_helper_call(expr) {
         return Some(TemplateMatch {
@@ -240,8 +241,8 @@ fn extract_template_match(
     else {
         return None;
     };
-    let cache = expr_binding_key(strip_paren_expr(left))?;
-    let Expr::Assign(assign) = strip_paren_expr(right) else {
+    let cache = expr_binding_key(strip_parens(left))?;
+    let Expr::Assign(assign) = strip_parens(right) else {
         return None;
     };
     if assign.op != AssignOp::Assign {
@@ -254,7 +255,7 @@ fn extract_template_match(
     if target_key != cache {
         return None;
     }
-    let (data, helper) = extract_direct_template_helper_call(strip_paren_expr(&assign.right))?;
+    let (data, helper) = extract_direct_template_helper_call(strip_parens(&assign.right))?;
 
     Some(TemplateMatch {
         data: TemplateData { helper, ..data },
@@ -276,7 +277,7 @@ fn extract_template_factory_call<'a>(
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
-    let key = expr_binding_key(strip_paren_expr(callee))?;
+    let key = expr_binding_key(strip_parens(callee))?;
     factories
         .get_key_value(&key)
         .map(|(key, data)| (key.clone(), data))
@@ -295,7 +296,7 @@ fn extract_direct_template_helper_call(expr: &Expr) -> Option<(TemplateData, Opt
 
     let helper = match &call.callee {
         Callee::Expr(callee) => {
-            let callee = strip_paren_expr(callee);
+            let callee = strip_parens(callee);
             if let Some(helper) = expr_binding_key(callee) {
                 if !is_template_helper_name(helper.0.as_ref()) {
                     return None;
@@ -337,7 +338,7 @@ fn extract_direct_template_helper_call(expr: &Expr) -> Option<(TemplateData, Opt
 }
 
 fn is_inline_template_helper(expr: &Expr) -> bool {
-    match strip_paren_expr(expr) {
+    match strip_parens(expr) {
         Expr::Fn(fn_expr) => {
             if fn_expr.function.params.len() != 2 {
                 return false;
@@ -488,7 +489,7 @@ fn extract_template_from_factory_body(stmts: &[Stmt]) -> Option<TemplateData> {
             }
             Stmt::Return(ret) => {
                 let arg = ret.arg.as_deref()?;
-                if let Some(key) = expr_binding_key(strip_paren_expr(arg)) {
+                if let Some(key) = expr_binding_key(strip_parens(arg)) {
                     if let Some(data) = locals.get(&key) {
                         return Some(data.clone());
                     }
@@ -505,7 +506,7 @@ fn extract_template_from_factory_body(stmts: &[Stmt]) -> Option<TemplateData> {
 }
 
 fn collect_template_array(expr: &Expr) -> Option<Vec<Option<String>>> {
-    let Expr::Array(array) = strip_paren_expr(expr) else {
+    let Expr::Array(array) = strip_parens(expr) else {
         return None;
     };
     array
@@ -626,13 +627,6 @@ fn escape_template_raw_cooked_copy(input: &str) -> String {
         .replace('\\', "\\\\")
         .replace('`', "\\`")
         .replace("${", "\\${")
-}
-
-fn strip_paren_expr(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_paren_expr(&paren.expr),
-        _ => expr,
-    }
 }
 
 fn remove_unused_template_bindings(module: &mut Module, candidates: &HashSet<BindingKey>) {

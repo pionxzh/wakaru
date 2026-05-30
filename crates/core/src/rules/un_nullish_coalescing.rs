@@ -13,6 +13,8 @@ use super::decl_utils::BindingId;
 pub(crate) use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::{RewriteLevel, RewritePolicy};
 
+use crate::utils::paren::strip_parens;
+
 pub struct UnNullishCoalescing {
     unresolved_mark: Mark,
     policy: RewritePolicy,
@@ -543,14 +545,6 @@ fn extract_undefined_single(expr: &Expr, unresolved_mark: Mark) -> Option<Box<Ex
         return Some(right.clone());
     }
     None
-}
-
-/// Strip parentheses from an expression.
-fn strip_parens(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(p) => strip_parens(&p.expr),
-        _ => expr,
-    }
 }
 
 /// If `expr` is `(tmp = real_expr)` (parens allowed), return `(tmp_sym, tmp_ctxt, &real_expr)`.

@@ -14,6 +14,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
+use crate::utils::paren::strip_parens;
+
 use super::decl_utils::{collect_decl_names, collect_pat_names, same_ident};
 use super::rename_utils::{rename_bindings, BindingRename};
 use super::RewriteLevel;
@@ -748,7 +750,7 @@ fn extract_unused_iife_webpack_export_getter_body(
     let Callee::Expr(callee_expr) = &call.callee else {
         return None;
     };
-    let Expr::Arrow(arrow) = strip_expr_parens(callee_expr.as_ref()) else {
+    let Expr::Arrow(arrow) = strip_parens(callee_expr.as_ref()) else {
         return None;
     };
     let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
@@ -911,7 +913,7 @@ fn extract_webpack_export_getter_iife(
     let Callee::Expr(callee_expr) = &call.callee else {
         return None;
     };
-    let Expr::Arrow(arrow) = strip_expr_parens(callee_expr.as_ref()) else {
+    let Expr::Arrow(arrow) = strip_parens(callee_expr.as_ref()) else {
         return None;
     };
     let (target_param, map_param) = extract_two_ident_params(arrow)?;
@@ -1173,7 +1175,7 @@ fn is_exports_default_compat_block(item: &ModuleItem, unresolved_mark: Mark) -> 
 }
 
 fn is_exports_default_compat_test(expr: &Expr, unresolved_mark: Mark) -> bool {
-    let Expr::Bin(bin) = strip_expr_parens(expr) else {
+    let Expr::Bin(bin) = strip_parens(expr) else {
         return false;
     };
     bin.op == BinaryOp::LogicalAnd
@@ -1182,13 +1184,13 @@ fn is_exports_default_compat_test(expr: &Expr, unresolved_mark: Mark) -> bool {
 }
 
 fn is_exports_default_type_guard(expr: &Expr, unresolved_mark: Mark) -> bool {
-    let Expr::Bin(bin) = strip_expr_parens(expr) else {
+    let Expr::Bin(bin) = strip_parens(expr) else {
         return false;
     };
     if bin.op != BinaryOp::LogicalOr {
         return false;
     }
-    let Expr::Bin(object_and_not_null) = strip_expr_parens(bin.right.as_ref()) else {
+    let Expr::Bin(object_and_not_null) = strip_parens(bin.right.as_ref()) else {
         return false;
     };
 
@@ -1203,41 +1205,38 @@ fn is_exports_default_type_guard(expr: &Expr, unresolved_mark: Mark) -> bool {
 }
 
 fn is_typeof_exports_default_eq(expr: &Expr, expected: &str, unresolved_mark: Mark) -> bool {
-    let Expr::Bin(bin) = strip_expr_parens(expr) else {
+    let Expr::Bin(bin) = strip_parens(expr) else {
         return false;
     };
     if bin.op != BinaryOp::EqEqEq {
         return false;
     }
-    matches!(strip_expr_parens(bin.left.as_ref()), Expr::Unary(unary)
+    matches!(strip_parens(bin.left.as_ref()), Expr::Unary(unary)
         if unary.op == UnaryOp::TypeOf && is_exports_default_expr(unary.arg.as_ref(), unresolved_mark))
-        && matches!(strip_expr_parens(bin.right.as_ref()), Expr::Lit(Lit::Str(s))
+        && matches!(strip_parens(bin.right.as_ref()), Expr::Lit(Lit::Str(s))
             if s.value.as_str() == Some(expected))
 }
 
 fn is_exports_default_not_null(expr: &Expr, unresolved_mark: Mark) -> bool {
-    let Expr::Bin(bin) = strip_expr_parens(expr) else {
+    let Expr::Bin(bin) = strip_parens(expr) else {
         return false;
     };
     bin.op == BinaryOp::NotEqEq
         && is_exports_default_expr(bin.left.as_ref(), unresolved_mark)
-        && matches!(
-            strip_expr_parens(bin.right.as_ref()),
-            Expr::Lit(Lit::Null(_))
-        )
+        && matches!(strip_parens(bin.right.as_ref()), Expr::Lit(Lit::Null(_)))
 }
 
 fn is_exports_default_esmodule_undefined(expr: &Expr, unresolved_mark: Mark) -> bool {
-    let Expr::Bin(bin) = strip_expr_parens(expr) else {
+    let Expr::Bin(bin) = strip_parens(expr) else {
         return false;
     };
     bin.op == BinaryOp::EqEqEq
         && is_exports_default_esmodule_expr(bin.left.as_ref(), unresolved_mark)
-        && matches!(strip_expr_parens(bin.right.as_ref()), Expr::Ident(id) if is_undefined_ident(id, unresolved_mark))
+        && matches!(strip_parens(bin.right.as_ref()), Expr::Ident(id) if is_undefined_ident(id, unresolved_mark))
 }
 
 fn is_exports_default_esmodule_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
-    let Expr::Member(member) = strip_expr_parens(expr) else {
+    let Expr::Member(member) = strip_parens(expr) else {
         return false;
     };
     matches!(&member.prop, MemberProp::Ident(prop) if prop.sym == "__esModule")
@@ -1321,7 +1320,7 @@ fn expr_stmt_call(stmt: &Stmt) -> Option<&CallExpr> {
 }
 
 fn is_exports_default_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
-    let Expr::Member(member) = strip_expr_parens(expr) else {
+    let Expr::Member(member) = strip_parens(expr) else {
         return false;
     };
     matches!(member.obj.as_ref(), Expr::Ident(id) if is_unresolved_ident(id, "exports", unresolved_mark))
@@ -1339,7 +1338,7 @@ fn is_unresolved_member_expr(
     property: &str,
     unresolved_mark: Mark,
 ) -> bool {
-    let Expr::Member(member) = strip_expr_parens(expr) else {
+    let Expr::Member(member) = strip_parens(expr) else {
         return false;
     };
     matches!(member.obj.as_ref(), Expr::Ident(id) if is_unresolved_ident(id, object, unresolved_mark))
@@ -1347,7 +1346,7 @@ fn is_unresolved_member_expr(
 }
 
 fn is_member_expr(expr: &Expr, object: &str, property: &str) -> bool {
-    let Expr::Member(member) = strip_expr_parens(expr) else {
+    let Expr::Member(member) = strip_parens(expr) else {
         return false;
     };
     matches!(member.obj.as_ref(), Expr::Ident(id) if id.sym.as_ref() == object)
@@ -1355,7 +1354,7 @@ fn is_member_expr(expr: &Expr, object: &str, property: &str) -> bool {
 }
 
 fn is_map_lookup(expr: &Expr, map_param: &Ident, loop_ident: &Ident) -> bool {
-    let Expr::Member(member) = strip_expr_parens(expr) else {
+    let Expr::Member(member) = strip_parens(expr) else {
         return false;
     };
     if !matches!(member.obj.as_ref(), Expr::Ident(id) if same_ident(id, map_param)) {
@@ -1380,13 +1379,6 @@ fn prop_name_as_atom(name: &PropName) -> Option<Atom> {
         }
         _ => None,
     }
-}
-
-fn strip_expr_parens(mut expr: &Expr) -> &Expr {
-    while let Expr::Paren(paren) = expr {
-        expr = paren.expr.as_ref();
-    }
-    expr
 }
 
 fn build_import_decls(src: &str, entry: &SourceEntry, out: &mut Vec<ModuleItem>) {
@@ -1579,7 +1571,7 @@ fn build_dropped_export_side_effect_items(kind: CjsExportKind) -> Vec<ModuleItem
 fn has_hoistable_require(items: &[ModuleItem], unresolved_mark: Mark) -> bool {
     items.iter().any(|item| match item {
         ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export_default)) => {
-            let expr = strip_parens_ref(&export_default.expr);
+            let expr = strip_parens(&export_default.expr);
             if let Expr::Seq(seq) = expr {
                 if seq_has_require_call(&seq.exprs, unresolved_mark) {
                     return true;
@@ -1587,7 +1579,7 @@ fn has_hoistable_require(items: &[ModuleItem], unresolved_mark: Mark) -> bool {
             }
             if let Expr::Call(outer_call) = expr {
                 if let Callee::Expr(callee) = &outer_call.callee {
-                    if let Expr::Call(inner_call) = strip_parens_ref(callee) {
+                    if let Expr::Call(inner_call) = strip_parens(callee) {
                         return is_require_call(inner_call, unresolved_mark).is_some();
                     }
                 }
@@ -1595,12 +1587,9 @@ fn has_hoistable_require(items: &[ModuleItem], unresolved_mark: Mark) -> bool {
             false
         }
         ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) if var_decl.decls.len() == 1 => {
-            var_decl.decls[0]
-                .init
-                .as_ref()
-                .is_some_and(|init| {
-                    try_extract_inline_conditional_interop(init, unresolved_mark).is_some()
-                })
+            var_decl.decls[0].init.as_ref().is_some_and(|init| {
+                try_extract_inline_conditional_interop(init, unresolved_mark).is_some()
+            })
         }
         _ => false,
     })
@@ -1618,7 +1607,7 @@ fn hoist_embedded_requires(module: &mut Module, unresolved_mark: Mark) {
             // Pattern 1: export default (seq_expr with require calls)
             ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export_default)) => {
                 // Unwrap parens
-                let expr = strip_parens_ref(&export_default.expr);
+                let expr = strip_parens(&export_default.expr);
                 if let Expr::Seq(seq) = expr {
                     if seq_has_require_call(&seq.exprs, unresolved_mark) {
                         let (hoisted, final_expr) =
@@ -1638,7 +1627,7 @@ fn hoist_embedded_requires(module: &mut Module, unresolved_mark: Mark) {
                 // re-export that namespace_decomposition can see through.)
                 if let Expr::Call(outer_call) = expr {
                     if let Callee::Expr(callee) = &outer_call.callee {
-                        if let Expr::Call(inner_call) = strip_parens_ref(callee) {
+                        if let Expr::Call(inner_call) = strip_parens(callee) {
                             if is_require_call(inner_call, unresolved_mark).is_some() {
                                 let local = make_ident(fresh_prefixed_name(
                                     &Atom::from("default"),
@@ -1744,7 +1733,7 @@ fn hoist_requires_from_seq(
     let mut remaining = Vec::new();
 
     for expr in exprs {
-        let expr_ref = strip_parens_ref(expr);
+        let expr_ref = strip_parens(expr);
 
         // require("...") → bare import side-effect
         if let Expr::Call(call) = expr_ref {
@@ -1761,7 +1750,7 @@ fn hoist_requires_from_seq(
         if let Expr::Assign(assign) = expr_ref {
             if assign.op == AssignOp::Assign {
                 if let Some(target_ident) = simple_assign_target_ident(&assign.left) {
-                    let right = strip_parens_ref(&assign.right);
+                    let right = strip_parens(&assign.right);
                     if let Expr::Call(call) = right {
                         if is_require_call(call, unresolved_mark).is_some() {
                             let (import_local, assign_after_require) =
@@ -1819,7 +1808,7 @@ fn try_extract_inline_conditional_interop(
     expr: &Expr,
     unresolved_mark: Mark,
 ) -> Option<(Ident, Box<Expr>)> {
-    let expr = strip_parens_ref(expr);
+    let expr = strip_parens(expr);
 
     // Must be: <test> ? <cons> : <alt>
     let Expr::Cond(CondExpr {
@@ -1831,7 +1820,7 @@ fn try_extract_inline_conditional_interop(
 
     // test must be: (i = require("...")) && i.__esModule
     // or: i && i.__esModule (where i was assigned in an outer sequence)
-    let test = strip_parens_ref(test);
+    let test = strip_parens(test);
     let Expr::Bin(bin) = test else {
         return None;
     };
@@ -1840,11 +1829,11 @@ fn try_extract_inline_conditional_interop(
     }
 
     // Right side must be: X.__esModule
-    let right = strip_parens_ref(&bin.right);
+    let right = strip_parens(&bin.right);
     let Expr::Member(member) = right else {
         return None;
     };
-    let Expr::Ident(member_obj) = strip_parens_ref(&member.obj) else {
+    let Expr::Ident(member_obj) = strip_parens(&member.obj) else {
         return None;
     };
     let MemberProp::Ident(IdentName { sym, .. }) = &member.prop else {
@@ -1855,13 +1844,13 @@ fn try_extract_inline_conditional_interop(
     }
 
     // Left side of && must contain the require assignment
-    let left = strip_parens_ref(&bin.left);
+    let left = strip_parens(&bin.left);
 
     // Pattern: (i = require("..."))
     if let Expr::Assign(assign) = left {
         if assign.op == AssignOp::Assign {
             if let Some(target) = simple_assign_target_ident(&assign.left) {
-                let right_inner = strip_parens_ref(&assign.right);
+                let right_inner = strip_parens(&assign.right);
                 if let Expr::Call(call) = right_inner {
                     if is_require_call(call, unresolved_mark).is_some() {
                         // Verify every interop branch refers to the same assigned binding.
@@ -1889,15 +1878,8 @@ fn simple_assign_target_ident(target: &AssignTarget) -> Option<Ident> {
     }
 }
 
-fn strip_parens_ref(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_parens_ref(&paren.expr),
-        _ => expr,
-    }
-}
-
 fn is_same_ident_ref(expr: &Expr, ident: &Ident) -> bool {
-    let expr = strip_parens_ref(expr);
+    let expr = strip_parens(expr);
     if let Expr::Ident(id) = expr {
         id.sym == ident.sym && id.ctxt == ident.ctxt
     } else {
@@ -1906,7 +1888,7 @@ fn is_same_ident_ref(expr: &Expr, ident: &Ident) -> bool {
 }
 
 fn matches_default_object_for_ident(expr: &Expr, ident: &Ident) -> bool {
-    let Expr::Object(obj) = strip_parens_ref(expr) else {
+    let Expr::Object(obj) = strip_parens(expr) else {
         return false;
     };
     if obj.props.len() != 1 {

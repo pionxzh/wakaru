@@ -10,9 +10,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::binding_facts::collect_binding_facts;
 use super::decl_utils::{binding_id, BindingId};
-use super::eval_utils::{
-    direct_eval_call_source, js_source_mentions_binding, strip_parens, EvalCallSource,
-};
+use super::eval_utils::{direct_eval_call_source, js_source_mentions_binding, EvalCallSource};
+use crate::utils::paren::strip_parens;
 
 type BindingKey = (Atom, SyntaxContext);
 

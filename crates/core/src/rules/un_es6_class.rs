@@ -19,6 +19,7 @@ use super::babel_helper_utils::{
 use super::expr_utils::is_unresolved_ident;
 use super::helper_matcher::{binding_key, BindingKey};
 use super::RewriteLevel;
+use crate::utils::paren::strip_parens;
 
 pub struct UnEs6Class {
     unresolved_mark: Mark,
@@ -1192,13 +1193,6 @@ fn extract_iife_call(expr: &Expr) -> Option<&CallExpr> {
             }
         }
         _ => None,
-    }
-}
-
-fn strip_parens(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_parens(&paren.expr),
-        _ => expr,
     }
 }
 

@@ -5,6 +5,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use crate::utils::paren::strip_parens;
+
 pub struct UnBuiltinPrototype;
 
 impl VisitMut for UnBuiltinPrototype {
@@ -66,7 +68,7 @@ fn try_replace_builtin(call: CallExpr) -> Result<Expr, CallExpr> {
     };
 
     // inner_member.obj is the instance literal (may be wrapped in parens)
-    let builtin_name = match detect_builtin(strip_paren(inner_member.obj.as_ref())) {
+    let builtin_name = match detect_builtin(strip_parens(inner_member.obj.as_ref())) {
         Some(name) => name,
         None => return Err(call),
     };
@@ -116,13 +118,6 @@ fn try_replace_builtin(call: CallExpr) -> Result<Expr, CallExpr> {
         args: call.args,
         type_args: call.type_args,
     }))
-}
-
-fn strip_paren(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(p) => strip_paren(&p.expr),
-        _ => expr,
-    }
 }
 
 fn detect_builtin(obj: &Expr) -> Option<&'static str> {

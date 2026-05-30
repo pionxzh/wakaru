@@ -19,6 +19,7 @@ use super::helper_matcher::{
     var_declarator_binding_key,
 };
 use super::match_context::MatchContext;
+use crate::utils::paren::strip_parens;
 
 pub(crate) use super::helper_matcher::BindingKey;
 
@@ -516,10 +517,10 @@ pub(crate) fn tslib_namespace_member_name<'a>(
     expr: &'a Expr,
     namespaces: &HashSet<BindingKey>,
 ) -> Option<&'a str> {
-    let Expr::Member(member) = strip_paren_expr(expr) else {
+    let Expr::Member(member) = strip_parens(expr) else {
         return None;
     };
-    let Expr::Ident(obj) = strip_paren_expr(&member.obj) else {
+    let Expr::Ident(obj) = strip_parens(&member.obj) else {
         return None;
     };
     if !namespaces.contains(&binding_key(obj)) {
@@ -540,7 +541,7 @@ pub(crate) fn tslib_member_helper_kind(
 }
 
 pub(crate) fn tslib_require_member_name(expr: &Expr) -> Option<&str> {
-    let Expr::Member(member) = strip_paren_expr(expr) else {
+    let Expr::Member(member) = strip_parens(expr) else {
         return None;
     };
     if !is_tslib_require_call(&member.obj) {
@@ -807,7 +808,7 @@ fn is_in_check(expr: &Expr, ctx: &MatchContext) -> bool {
 }
 
 fn is_key_or_key_normalization(expr: &Expr, ctx: &MatchContext) -> bool {
-    let expr = strip_parens_expr(expr);
+    let expr = strip_parens(expr);
     if ctx.is_binding(expr, "key") {
         return true;
     }
@@ -832,13 +833,6 @@ fn is_key_or_key_normalization(expr: &Expr, ctx: &MatchContext) -> bool {
         return false;
     };
     args.len() == 1 && args[0].spread.is_none() && ctx.is_binding(&args[0].expr, "key")
-}
-
-fn strip_parens_expr(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_parens_expr(&paren.expr),
-        _ => expr,
-    }
 }
 
 fn if_consequent_matches_define_property(stmt: &Stmt, ctx: &MatchContext) -> bool {
@@ -1160,15 +1154,8 @@ fn member_prop_name(prop: &MemberProp) -> Option<&str> {
     }
 }
 
-fn strip_paren_expr(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_paren_expr(&paren.expr),
-        _ => expr,
-    }
-}
-
 fn is_tslib_require_call(expr: &Expr) -> bool {
-    let Expr::Call(call) = strip_paren_expr(expr) else {
+    let Expr::Call(call) = strip_parens(expr) else {
         return false;
     };
     let Callee::Expr(callee) = &call.callee else {

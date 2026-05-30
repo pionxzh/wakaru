@@ -12,6 +12,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use super::decl_utils::same_ident;
 use super::rename_utils::{rename_bindings, BindingRename};
 use super::RewriteLevel;
+use crate::utils::paren::strip_parens;
 
 type BindingId = (Atom, SyntaxContext);
 
@@ -2134,14 +2135,6 @@ fn make_ident_param(name: Atom) -> Param {
             type_ann: None,
         }),
     }
-}
-
-fn strip_parens(expr: &Expr) -> &Expr {
-    let mut current = expr;
-    while let Expr::Paren(paren) = current {
-        current = paren.expr.as_ref();
-    }
-    current
 }
 
 fn rewrite_inline_arguments_defaults(

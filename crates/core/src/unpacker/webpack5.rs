@@ -18,6 +18,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::rules::{apply_rules as run_rules, RulePipelineOptions};
 use crate::unpacker::webpack4::{rewrite_require_n_accesses, RequireIdRewriter};
 use crate::unpacker::{UnpackResult, UnpackedModule};
+use crate::utils::paren::strip_parens;
 
 struct Webpack5RuntimeNormalizer {
     require_sym: Atom,
@@ -1027,13 +1028,6 @@ fn extract_factory(expr: &Expr) -> Option<(Function, Vec<Stmt>)> {
             ))
         }
         _ => None,
-    }
-}
-
-fn strip_parens(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_parens(&paren.expr),
-        _ => expr,
     }
 }
 

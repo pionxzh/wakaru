@@ -10,6 +10,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::utils::paren::strip_parens;
+
 pub struct UnPrototypeClass;
 
 impl VisitMut for UnPrototypeClass {
@@ -968,13 +970,6 @@ fn prop_name_atom(prop: &PropName) -> Option<Atom> {
 
 fn is_bool_literal(expr: &Expr, value: bool) -> bool {
     matches!(strip_parens(expr), Expr::Lit(Lit::Bool(bool_lit)) if bool_lit.value == value)
-}
-
-fn strip_parens(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_parens(&paren.expr),
-        _ => expr,
-    }
 }
 
 // ============================================================

@@ -14,6 +14,8 @@ use super::babel_helper_utils::{
     helpers_with_remaining_refs, BabelHelperKind, BindingKey, LocalHelperContext,
 };
 
+use crate::utils::paren::strip_parens;
+
 pub struct UnRegenerator<'a> {
     unresolved_mark: Mark,
     module_facts: Option<&'a ModuleFactsMap>,
@@ -2381,13 +2383,6 @@ fn remove_helper_decls(module: &mut Module, to_remove: &[(Atom, swc_core::common
 
 fn is_ident_with_name(expr: &Expr, name: &Atom) -> bool {
     matches!(expr, Expr::Ident(id) if id.sym == *name)
-}
-
-fn strip_parens(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_parens(&paren.expr),
-        _ => expr,
-    }
 }
 
 fn is_member_prop(prop: &MemberProp, name: &str) -> bool {

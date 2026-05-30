@@ -3,6 +3,8 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::RewriteLevel;
 
+use crate::utils::paren::strip_parens;
+
 pub struct UnIndirectCall {
     level: RewriteLevel,
     with_depth: usize,
@@ -92,7 +94,7 @@ impl VisitMut for UnIndirectCall {
 
 /// If `expr` is `Object(inner)` where inner is a member or ident expr, return `inner`.
 fn as_object_wrap_call(expr: &Expr, with_depth: usize) -> Option<Box<Expr>> {
-    let Expr::Call(call) = strip_paren(expr) else {
+    let Expr::Call(call) = strip_parens(expr) else {
         return None;
     };
     if !call.args.is_empty() && call.args.len() != 1 {
@@ -102,7 +104,7 @@ fn as_object_wrap_call(expr: &Expr, with_depth: usize) -> Option<Box<Expr>> {
         return None;
     };
     // Must be exactly `Object`
-    let Expr::Ident(Ident { sym, .. }) = strip_paren(callee_expr) else {
+    let Expr::Ident(Ident { sym, .. }) = strip_parens(callee_expr) else {
         return None;
     };
     if sym.as_str() != "Object" {
@@ -115,30 +117,23 @@ fn as_object_wrap_call(expr: &Expr, with_depth: usize) -> Option<Box<Expr>> {
     as_member_or_safe_ident(&arg.expr, with_depth)
 }
 
-fn strip_paren(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_paren(&paren.expr),
-        _ => expr,
-    }
-}
-
 fn as_seq_expr(expr: &Expr) -> Option<&SeqExpr> {
-    match strip_paren(expr) {
+    match strip_parens(expr) {
         Expr::Seq(seq) => Some(seq),
         _ => None,
     }
 }
 
 fn as_member_or_safe_ident(expr: &Expr, with_depth: usize) -> Option<Box<Expr>> {
-    match strip_paren(expr) {
-        Expr::Member(_) => Some(Box::new(strip_paren(expr).clone())),
+    match strip_parens(expr) {
+        Expr::Member(_) => Some(Box::new(strip_parens(expr).clone())),
         Expr::Ident(_) => as_safe_ident(expr, with_depth),
         _ => None,
     }
 }
 
 fn as_safe_ident(expr: &Expr, with_depth: usize) -> Option<Box<Expr>> {
-    let Expr::Ident(id) = strip_paren(expr) else {
+    let Expr::Ident(id) = strip_parens(expr) else {
         return None;
     };
     if with_depth > 0 || id.sym.as_str() == "eval" {

@@ -16,6 +16,8 @@ use super::babel_helper_utils::{
     LocalHelperContext,
 };
 
+use crate::utils::paren::strip_parens;
+
 /// Detects and replaces `_extends` and `_objectSpread2` helper calls with
 /// object spread syntax.
 ///
@@ -447,13 +449,6 @@ fn is_binding_ref(expr: &Expr, binding: &Ident) -> bool {
 
 fn ident_matches(left: &Ident, right: &Ident) -> bool {
     left.sym == right.sym && left.ctxt == right.ctxt
-}
-
-fn strip_parens(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_parens(&paren.expr),
-        _ => expr,
-    }
 }
 
 fn is_safe_to_inline_props(props: &[PropOrSpread]) -> bool {

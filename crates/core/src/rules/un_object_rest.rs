@@ -16,6 +16,8 @@ use super::babel_helper_utils::{
     tslib_member_helper_kind, BabelHelperKind, BindingKey, LocalHelperContext,
 };
 
+use crate::utils::paren::strip_parens;
+
 /// Convert inline `_objectWithoutPropertiesLoose` IIFEs to object rest destructuring.
 ///
 /// ```js
@@ -87,34 +89,41 @@ impl UnObjectRest {
 impl VisitMut for UnObjectRest {
     fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
         let local_helpers = LocalHelperContext::collect(module);
-        let named_helpers = local_helpers.helpers_of_kind(BabelHelperKind::ObjectWithoutProperties);
-        let tslib_namespaces = collect_tslib_namespace_bindings(module);
+        run_un_object_rest(module, self.unresolved_mark, &local_helpers);
+    }
+}
 
-        if named_helpers.is_empty()
-            && tslib_namespaces.is_empty()
-            && !Self::has_owp_iife_candidate(module)
-        {
-            return;
-        }
+fn run_un_object_rest(
+    module: &mut swc_core::ecma::ast::Module,
+    unresolved_mark: Mark,
+    local_helpers: &LocalHelperContext,
+) {
+    let named_helpers = local_helpers.helpers_of_kind(BabelHelperKind::ObjectWithoutProperties);
+    let tslib_namespaces = collect_tslib_namespace_bindings(module);
 
-        let mut helper_dependencies =
-            local_helpers.helpers_of_kind(BabelHelperKind::HelperDependency);
-        helper_dependencies.extend(local_helpers.helpers_of_kind(BabelHelperKind::DefineProperty));
-        let unresolved_mark = self.unresolved_mark;
+    if named_helpers.is_empty()
+        && tslib_namespaces.is_empty()
+        && !UnObjectRest::has_owp_iife_candidate(module)
+    {
+        return;
+    }
 
-        // Process inner scopes first (function bodies, etc.) with helpers available
-        let mut processor = ObjectRestProcessor {
-            named_helpers: &named_helpers,
-            tslib_namespaces: &tslib_namespaces,
-            unresolved_mark,
-        };
-        module.visit_mut_children_with(&mut processor);
-        reattach_elided_object_rest_in_module_items(
-            &mut module.body,
-            &named_helpers,
-            &tslib_namespaces,
-            unresolved_mark,
-        );
+    let mut helper_dependencies = local_helpers.helpers_of_kind(BabelHelperKind::HelperDependency);
+    helper_dependencies.extend(local_helpers.helpers_of_kind(BabelHelperKind::DefineProperty));
+
+    // Process inner scopes first (function bodies, etc.) with helpers available
+    let mut processor = ObjectRestProcessor {
+        named_helpers: &named_helpers,
+        tslib_namespaces: &tslib_namespaces,
+        unresolved_mark,
+    };
+    module.visit_mut_children_with(&mut processor);
+    reattach_elided_object_rest_in_module_items(
+        &mut module.body,
+        &named_helpers,
+        &tslib_namespaces,
+        unresolved_mark,
+    );
 
     // Process module-level statements
     let mut new_body = Vec::with_capacity(module.body.len());
@@ -1327,13 +1336,6 @@ fn prop_name_atom(key: &PropName) -> Option<Atom> {
         PropName::Ident(id) => Some(id.sym.clone()),
         PropName::Str(s) => s.value.as_str().map(Atom::from),
         _ => None,
-    }
-}
-
-fn strip_parens(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(p) => strip_parens(&p.expr),
-        _ => expr,
     }
 }
 

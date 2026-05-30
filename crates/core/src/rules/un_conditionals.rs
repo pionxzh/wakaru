@@ -9,6 +9,7 @@ use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::decl_utils::same_ident;
+use crate::utils::paren::strip_parens_owned;
 
 pub struct UnConditionals;
 
@@ -415,7 +416,7 @@ fn switch_cases_from_expr_chain(chain: SwitchChain) -> Vec<SwitchCase> {
 }
 
 fn expr_to_case_stmts(expr: Expr, append_break: bool) -> Vec<Stmt> {
-    let inner = strip_paren_expr(expr);
+    let inner = strip_parens_owned(expr);
     let mut stmts = match inner {
         Expr::Seq(seq) => seq
             .exprs
@@ -461,13 +462,6 @@ fn literal_case_key(expr: &Expr) -> Option<String> {
 fn unparen_expr(expr: &Expr) -> &Expr {
     match expr {
         Expr::Paren(paren) => unparen_expr(&paren.expr),
-        other => other,
-    }
-}
-
-fn strip_paren_expr(expr: Expr) -> Expr {
-    match expr {
-        Expr::Paren(paren) => strip_paren_expr(*paren.expr),
         other => other,
     }
 }

@@ -29,6 +29,7 @@ use crate::rules::{
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::{scope_hoist, try_unpack_bundle, webpack5, UnpackResult, UnpackedModule};
+use crate::utils::paren::{strip_parens, strip_parens_mut};
 
 pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
     let span = tracing::info_span!("unpack");
@@ -443,7 +444,7 @@ impl WebpackNumericReferenceRewriter<'_> {
         if arg.spread.is_some() {
             return;
         }
-        let Expr::Call(bind_call) = strip_parens_expr_mut(&mut arg.expr) else {
+        let Expr::Call(bind_call) = strip_parens_mut(&mut arg.expr) else {
             return;
         };
         self.rewrite_t_bind_module_arg(bind_call, &runtime, chunk_id);
@@ -453,14 +454,14 @@ impl WebpackNumericReferenceRewriter<'_> {
         let Callee::Expr(callee_expr) = callee else {
             return None;
         };
-        let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens_expr(callee_expr) else {
+        let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens(callee_expr) else {
             return None;
         };
         if !member_prop_is(prop, "then") {
             return None;
         }
 
-        let Expr::Call(load_call) = strip_parens_expr(obj) else {
+        let Expr::Call(load_call) = strip_parens(obj) else {
             return None;
         };
         self.extract_runtime_member_numeric_arg(load_call, "e", 0)
@@ -475,7 +476,7 @@ impl WebpackNumericReferenceRewriter<'_> {
         let Callee::Expr(callee_expr) = &call.callee else {
             return;
         };
-        let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens_expr(callee_expr) else {
+        let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens(callee_expr) else {
             return;
         };
         if !member_prop_is(prop, "bind") {
@@ -494,7 +495,7 @@ impl WebpackNumericReferenceRewriter<'_> {
         if this_arg.spread.is_some() {
             return;
         }
-        let Expr::Ident(this_ident) = strip_parens_expr(&this_arg.expr) else {
+        let Expr::Ident(this_ident) = strip_parens(&this_arg.expr) else {
             return;
         };
         if runtime != RuntimeIdent::from_ident(this_ident) {
@@ -513,13 +514,13 @@ impl WebpackNumericReferenceRewriter<'_> {
         let Callee::Expr(callee_expr) = &call.callee else {
             return None;
         };
-        let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens_expr(callee_expr) else {
+        let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens(callee_expr) else {
             return None;
         };
         if !member_prop_is(prop, expected_prop) {
             return None;
         }
-        let Expr::Ident(runtime) = strip_parens_expr(obj) else {
+        let Expr::Ident(runtime) = strip_parens(obj) else {
             return None;
         };
         let arg = call.args.get(arg_index)?;
@@ -531,13 +532,13 @@ impl WebpackNumericReferenceRewriter<'_> {
     }
 
     fn extract_runtime_t_member(&self, expr: &Expr) -> Option<RuntimeIdent> {
-        let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens_expr(expr) else {
+        let Expr::Member(MemberExpr { obj, prop, .. }) = strip_parens(expr) else {
             return None;
         };
         if !member_prop_is(prop, "t") {
             return None;
         }
-        let Expr::Ident(runtime) = strip_parens_expr(obj) else {
+        let Expr::Ident(runtime) = strip_parens(obj) else {
             return None;
         };
         Some(RuntimeIdent::from_ident(runtime))
@@ -584,7 +585,7 @@ impl RuntimeIdent {
 }
 
 fn numeric_arg_id(expr: &Expr) -> Option<usize> {
-    let Expr::Lit(Lit::Num(number)) = strip_parens_expr(expr) else {
+    let Expr::Lit(Lit::Num(number)) = strip_parens(expr) else {
         return None;
     };
     let value = number.value;
@@ -596,23 +597,6 @@ fn numeric_arg_id(expr: &Expr) -> Option<usize> {
 
 fn member_prop_is(prop: &MemberProp, expected: &str) -> bool {
     matches!(prop, MemberProp::Ident(ident) if ident.sym.as_ref() == expected)
-}
-
-fn strip_parens_expr(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_parens_expr(&paren.expr),
-        _ => expr,
-    }
-}
-
-fn strip_parens_expr_mut(expr: &mut Box<Expr>) -> &mut Expr {
-    let mut current = expr.as_mut();
-    loop {
-        match current {
-            Expr::Paren(paren) => current = paren.expr.as_mut(),
-            _ => return current,
-        }
-    }
 }
 
 pub(super) fn detect_bundle(source: &str, filename: &str) -> Result<Option<UnpackResult>> {

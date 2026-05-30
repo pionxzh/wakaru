@@ -2,6 +2,8 @@ use swc_core::common::{Mark, SyntaxContext};
 use swc_core::ecma::ast::{BindingIdent, Expr, Ident, Lit, Module, UnaryExpr, UnaryOp};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::utils::paren::strip_parens;
+
 pub struct RemoveVoid {
     unresolved_ctxt: SyntaxContext,
 }
@@ -36,13 +38,6 @@ impl VisitMut for RemoveVoid {
                 *expr = Expr::Ident(Ident::new("undefined".into(), *span, self.unresolved_ctxt));
             }
         }
-    }
-}
-
-fn strip_parens(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_parens(&paren.expr),
-        _ => expr,
     }
 }
 

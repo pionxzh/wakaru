@@ -13,6 +13,8 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 use super::decl_utils::BindingId;
 use super::RewriteLevel;
 
+use crate::utils::paren::strip_parens;
+
 pub struct SimplifySequence {
     unresolved_mark: Mark,
     level: RewriteLevel,
@@ -549,7 +551,7 @@ fn try_split_assign_member(expr: &Expr, span: swc_core::common::Span) -> Option<
         return None;
     };
     // member.obj should be a (possibly paren-wrapped) assignment expr
-    let obj = strip_paren(&member.obj);
+    let obj = strip_parens(&member.obj);
     let Expr::Assign(inner) = obj else {
         return None;
     };
@@ -584,13 +586,6 @@ fn try_split_assign_member(expr: &Expr, span: swc_core::common::Span) -> Option<
     });
 
     Some(vec![inner_stmt, outer_stmt])
-}
-
-fn strip_paren(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_paren(&paren.expr),
-        _ => expr,
-    }
 }
 
 // ---------------------------------------------------------------------------

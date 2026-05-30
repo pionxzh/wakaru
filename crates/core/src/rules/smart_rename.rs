@@ -442,7 +442,9 @@ fn lower_first(input: &str) -> String {
 // ============================================================
 
 fn has_short_obj_pat_alias(pat: &Pat) -> bool {
-    let Pat::Object(obj_pat) = pat else { return false };
+    let Pat::Object(obj_pat) = pat else {
+        return false;
+    };
     obj_pat.props.iter().any(|prop| match prop {
         ObjectPatProp::KeyValue(kv) => extract_binding_from_pat(&kv.value)
             .is_some_and(|(sym, _)| sym.chars().count() <= REACT_MINIFIED_THRESHOLD),
@@ -458,8 +460,12 @@ fn has_destructuring_candidates_in_params(params: &[Param]) -> bool {
 
 fn has_destructuring_candidates_in_stmts(stmts: &[Stmt]) -> bool {
     stmts.iter().any(|stmt| {
-        let Stmt::Decl(Decl::Var(var)) = stmt else { return false };
-        var.decls.iter().any(|decl| has_short_obj_pat_alias(&decl.name))
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            return false;
+        };
+        var.decls
+            .iter()
+            .any(|decl| has_short_obj_pat_alias(&decl.name))
     })
 }
 
@@ -852,9 +858,13 @@ impl VisitMut for ObjectPatShorthandConverter {
 
 fn has_member_init_candidates_in_stmts(stmts: &[Stmt]) -> bool {
     stmts.iter().any(|stmt| {
-        let Stmt::Decl(Decl::Var(var)) = stmt else { return false };
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            return false;
+        };
         var.decls.iter().any(|decl| {
-            let Pat::Ident(bi) = &decl.name else { return false };
+            let Pat::Ident(bi) = &decl.name else {
+                return false;
+            };
             if bi.id.sym.chars().count() > REACT_MINIFIED_THRESHOLD {
                 return false;
             }

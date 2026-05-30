@@ -10,6 +10,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::RewriteLevel;
 
+use crate::utils::paren::strip_parens;
+
 /// Convert TypeScript/Babel array-index downlevel `for` loops back to `for...of`:
 ///
 /// ```js
@@ -841,7 +843,7 @@ fn is_swc_iterator_test(
     else {
         return false;
     };
-    let Expr::Assign(normal_assign) = strip_paren(arg) else {
+    let Expr::Assign(normal_assign) = strip_parens(arg) else {
         return false;
     };
     if !is_assign_ident(normal_assign, normal_ident) {
@@ -900,7 +902,7 @@ fn extract_done_obj(expr: &Expr) -> Option<&Expr> {
     if prop.sym.as_ref() != "done" {
         return None;
     }
-    Some(strip_paren(obj))
+    Some(strip_parens(obj))
 }
 
 fn is_assign_ident(assign: &AssignExpr, ident: &Ident) -> bool {
@@ -1115,13 +1117,6 @@ fn replace_iterator_value_refs(block: &mut BlockStmt, item_ident: &Ident) {
     block.visit_mut_with(&mut Replacer {
         ident: item_ident.clone(),
     });
-}
-
-fn strip_paren(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_paren(&paren.expr),
-        _ => expr,
-    }
 }
 
 fn callee_is_prop(callee: &Callee, prop_name: &str) -> bool {

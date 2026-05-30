@@ -13,6 +13,8 @@ use super::decl_utils::{binding_id, BindingId};
 use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::{RewriteLevel, RewritePolicy};
 
+use crate::utils::paren::strip_parens;
+
 pub struct UnOptionalChaining {
     unresolved_mark: Mark,
     policy: RewritePolicy,
@@ -2038,13 +2040,6 @@ fn recover_babel_call_context(member_obj: &Expr, context: &Expr) -> Option<Expr>
     }
 
     None
-}
-
-fn strip_parens(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(p) => strip_parens(&p.expr),
-        _ => expr,
-    }
 }
 
 fn extract_assign_parts(expr: &Expr) -> Option<(Ident, &Box<Expr>)> {

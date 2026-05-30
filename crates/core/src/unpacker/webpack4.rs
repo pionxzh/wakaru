@@ -17,6 +17,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::rules::{apply_rules as run_rules, RulePipelineOptions};
 use crate::unpacker::{UnpackResult, UnpackedModule};
+use crate::utils::paren::strip_parens;
 
 /// Identifies a webpack module by either its numeric index (array-form) or
 /// its string path (object-form, e.g. `"./src/index.js"`).
@@ -485,14 +486,6 @@ fn extract_call_from_expr(expr: &Expr) -> Option<&CallExpr> {
     match expr {
         Expr::Call(call) => Some(call),
         _ => None,
-    }
-}
-
-/// Strip parentheses wrappers from an expression.
-fn strip_parens(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(p) => strip_parens(&p.expr),
-        _ => expr,
     }
 }
 

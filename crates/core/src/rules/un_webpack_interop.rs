@@ -17,6 +17,7 @@ use super::rename_utils::{
     binding_replacement_would_be_shadowed, collect_module_names, rename_bindings_in_module,
     BindingRename,
 };
+use crate::utils::paren::strip_parens;
 
 /// Removes webpack's interop getter wrappers and replaces their usage with the
 /// underlying require binding.
@@ -299,13 +300,6 @@ fn match_require_t_namespace(
         }
         _ => None,
     }
-}
-
-fn strip_parens(mut expr: &Expr) -> &Expr {
-    while let Expr::Paren(paren) = expr {
-        expr = paren.expr.as_ref();
-    }
-    expr
 }
 
 fn match_require_t_call(

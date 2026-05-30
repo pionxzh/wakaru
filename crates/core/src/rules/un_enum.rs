@@ -8,6 +8,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use crate::utils::paren::strip_parens;
+
 pub struct UnEnum;
 
 impl VisitMut for UnEnum {
@@ -386,13 +388,6 @@ fn is_assign_empty_obj(expr: &Expr, name: &Atom) -> bool {
         return false;
     }
     matches!(right.as_ref(), Expr::Object(o) if o.props.is_empty())
-}
-
-fn strip_parens(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_parens(&paren.expr),
-        _ => expr,
-    }
 }
 
 // ============================================================

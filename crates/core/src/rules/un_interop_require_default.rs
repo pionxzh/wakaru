@@ -11,6 +11,7 @@ use super::babel_helper_utils::{
     remove_helper_declarations, tslib_helper_name_kind, tslib_member_helper_kind,
     tslib_require_member_name, BabelHelperKind, BindingKey, LocalHelperContext,
 };
+use crate::utils::paren::strip_parens;
 
 /// Detects and unwraps `interopRequireDefault` helper calls.
 ///
@@ -289,7 +290,7 @@ fn extract_inline_interop_arg_with_kind(expr: &Expr) -> Option<(Box<Expr>, Inter
     }
 
     // Unwrap parens around the callee
-    let callee = strip_parens_expr(callee);
+    let callee = strip_parens(callee);
 
     match callee {
         Expr::Arrow(ArrowExpr { body, params, .. }) if params.len() == 1 => match &**body {
@@ -423,13 +424,6 @@ fn is_esmodule_check(expr: &Expr) -> bool {
         return false;
     };
     prop.sym.as_ref() == "__esModule"
-}
-
-fn strip_parens_expr(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(p) => strip_parens_expr(&p.expr),
-        _ => expr,
-    }
 }
 
 /// Check if a statement is `X.default = Y` (the wildcard interop's namespace default assignment).

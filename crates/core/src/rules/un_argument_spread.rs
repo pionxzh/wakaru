@@ -8,6 +8,8 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::RewriteLevel;
 
+use crate::utils::paren::strip_parens;
+
 pub struct UnArgumentSpread {
     unresolved_mark: Mark,
     level: RewriteLevel,
@@ -160,7 +162,7 @@ fn make_spread_call(call: CallExpr) -> Expr {
 }
 
 fn memoized_receiver_source(receiver_expr: &Expr, first_arg: &Expr) -> Option<Box<Expr>> {
-    let receiver_expr = strip_paren(receiver_expr);
+    let receiver_expr = strip_parens(receiver_expr);
     let Expr::Assign(assign) = receiver_expr else {
         return None;
     };
@@ -175,13 +177,6 @@ fn memoized_receiver_source(receiver_expr: &Expr, first_arg: &Expr) -> Option<Bo
         return None;
     }
     Some(assign.right.clone())
-}
-
-fn strip_paren(expr: &Expr) -> &Expr {
-    match expr {
-        Expr::Paren(paren) => strip_paren(&paren.expr),
-        _ => expr,
-    }
 }
 
 fn make_spread_call_with_member_receiver(mut call: CallExpr, receiver: Box<Expr>) -> Expr {
