@@ -148,6 +148,7 @@ const pathPresets = {
     "test/language/expressions/logical-assignment",
   ],
   templates: ["test/language/expressions/template-literal", "test/language/expressions/tagged-template"],
+  literals: ["test/language/literals"],
   modules: ["test/language/module-code"],
 };
 

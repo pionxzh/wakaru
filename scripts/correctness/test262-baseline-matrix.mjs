@@ -20,6 +20,7 @@ export const baselineSlices = [
   "calls",
   "operators",
   "templates",
+  "literals",
   "modules",
 ];
 

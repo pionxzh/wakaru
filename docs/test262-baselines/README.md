@@ -30,6 +30,7 @@ control-flow
 calls
 operators
 templates
+literals
 modules
 ```
 

@@ -174,12 +174,13 @@ node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline esbui
 node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline babel-env-terser --limit all --case-timeout-ms 2000 --summary docs\test262-baselines\module-graph\babel-env-terser.md
 ```
 
-Recorded on 2026-05-25, with the scope, control-flow, calls, and operators slices added on 2026-05-29:
+Recorded on 2026-05-25, with the scope, control-flow, calls, and operators
+slices added on 2026-05-29, and literals added on 2026-05-30:
 
 | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | default | 2180 | 1647 | 533 | 34 | 128 | 1485 | 0 |
-| classes | 8426 | 5063 | 3363 | 34 | 680 | 4349 | 0 |
+| classes | 8426 | 5064 | 3362 | 34 | 681 | 4349 | 0 |
 | destructuring | 1034 | 891 | 143 | 28 | 54 | 809 | 0 |
 | async-generators | 1707 | 666 | 1041 | 15 | 6 | 645 | 0 |
 | scope | 1396 | 1146 | 250 | 20 | 8 | 1118 | 0 |
@@ -187,24 +188,35 @@ Recorded on 2026-05-25, with the scope, control-flow, calls, and operators slice
 | calls | 193 | 185 | 8 | 7 | 0 | 178 | 0 |
 | operators | 2200 | 2011 | 189 | 108 | 83 | 1820 | 0 |
 | templates | 84 | 67 | 17 | 2 | 1 | 64 | 0 |
-| modules | 755 | 157 | 598 | 142 | 6 | 9 | 0 |
+| literals | 534 | 215 | 319 | 0 | 4 | 211 | 0 |
+| modules | 755 | 358 | 397 | 10 | 22 | 326 | 0 |
 
 Additional producer baselines recorded on 2026-05-25:
 
 | Pipeline | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| swc-minify | default | 2180 | 1646 | 534 | 30 | 99 | 1517 | 0 |
-| swc-minify | classes | 8426 | 5063 | 3363 | 27 | 155 | 4881 | 0 |
+| swc-minify | default | 2180 | 1647 | 533 | 30 | 100 | 1517 | 0 |
+| swc-minify | classes | 8426 | 5064 | 3362 | 27 | 156 | 4881 | 0 |
 | swc-minify | destructuring | 1034 | 891 | 143 | 27 | 49 | 815 | 0 |
 | swc-minify | async-generators | 1707 | 666 | 1041 | 17 | 19 | 630 | 0 |
+| swc-minify | scope | 1396 | 1146 | 250 | 19 | 33 | 1094 | 0 |
+| swc-minify | control-flow | 1117 | 782 | 335 | 24 | 14 | 744 | 0 |
+| swc-minify | calls | 193 | 185 | 8 | 7 | 0 | 178 | 0 |
+| swc-minify | operators | 2200 | 2011 | 189 | 107 | 49 | 1855 | 0 |
 | swc-minify | templates | 84 | 67 | 17 | 2 | 0 | 65 | 0 |
-| swc-minify | modules | 755 | 157 | 598 | 142 | 2 | 13 | 0 |
-| esbuild-minify | default | 2180 | 1646 | 534 | 4 | 110 | 1532 | 0 |
-| esbuild-minify | classes | 8426 | 5063 | 3363 | 28 | 387 | 4648 | 0 |
+| swc-minify | literals | 534 | 215 | 319 | 0 | 1 | 214 | 0 |
+| swc-minify | modules | 755 | 358 | 397 | 10 | 1 | 347 | 0 |
+| esbuild-minify | default | 2180 | 1647 | 533 | 4 | 111 | 1532 | 0 |
+| esbuild-minify | classes | 8426 | 5064 | 3362 | 28 | 389 | 4647 | 0 |
 | esbuild-minify | destructuring | 1034 | 891 | 143 | 0 | 84 | 807 | 0 |
 | esbuild-minify | async-generators | 1707 | 666 | 1041 | 7 | 40 | 619 | 0 |
+| esbuild-minify | scope | 1396 | 1146 | 250 | 10 | 190 | 946 | 0 |
+| esbuild-minify | control-flow | 1117 | 782 | 335 | 21 | 44 | 717 | 0 |
+| esbuild-minify | calls | 193 | 185 | 8 | 7 | 3 | 175 | 0 |
+| esbuild-minify | operators | 2200 | 2011 | 189 | 93 | 38 | 1880 | 0 |
 | esbuild-minify | templates | 84 | 67 | 17 | 2 | 1 | 64 | 0 |
-| esbuild-minify | modules | 755 | 157 | 598 | 141 | 1 | 15 | 0 |
+| esbuild-minify | literals | 534 | 215 | 319 | 0 | 0 | 215 | 0 |
+| esbuild-minify | modules | 755 | 358 | 397 | 9 | 244 | 105 | 0 |
 
 Module graph baselines recorded on 2026-05-25:
 
