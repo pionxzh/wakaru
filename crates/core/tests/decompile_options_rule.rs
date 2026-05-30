@@ -818,6 +818,66 @@ fn standard_keeps_type_constructor_recovery() {
 }
 
 #[test]
+fn minimal_disables_static_class_field_recovery() {
+    let input = r#"
+var User = (function () {
+    function User() {}
+    User.role = "admin";
+    return User;
+}());
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Minimal,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("User.role = \"admin\""),
+        "minimal mode should preserve assignment semantics: {output}"
+    );
+    assert!(
+        !output.contains("static role = \"admin\""),
+        "static field recovery requires standard+: {output}"
+    );
+}
+
+#[test]
+fn standard_keeps_static_class_field_recovery() {
+    let input = r#"
+var User = (function () {
+    function User() {}
+    User.role = "admin";
+    return User;
+}());
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Standard,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("static role = \"admin\""),
+        "standard mode should recover static fields: {output}"
+    );
+}
+
+#[test]
 fn minimal_disables_arg_rest_recovery() {
     let input = r#"
 function foo() {

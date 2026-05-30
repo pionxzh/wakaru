@@ -2,9 +2,16 @@ mod common;
 
 use common::{assert_eq_normalized, render_rule};
 use wakaru_core::rules::UnEs6Class;
+use wakaru_core::RewriteLevel;
 
 fn apply(input: &str) -> String {
     render_rule(input, UnEs6Class::new)
+}
+
+fn apply_minimal(input: &str) -> String {
+    render_rule(input, |unresolved_mark| {
+        UnEs6Class::new_with_level(unresolved_mark, RewriteLevel::Minimal)
+    })
 }
 
 // ============================================================
@@ -73,6 +80,165 @@ class Child extends Animal {
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn typescript_extends_helper_var_is_recovered() {
+    let input = r#"
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = function (d, b) {
+        extendStatics = Object.setPrototypeOf ||
+            ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+            function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+        return extendStatics(d, b);
+    };
+    return function (d, b) {
+        if (typeof b !== "function" && b !== null)
+            throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
+var Admin = (function (_super) {
+    __extends(Admin, _super);
+    function Admin(name, role) {
+        var _this = _super.call(this, name) || this;
+        _this.role = role;
+        return _this;
+    }
+    Admin.prototype.label = function () { return this.name + ":" + this.role; };
+    return Admin;
+}(User));
+"#;
+    let expected = r#"
+class Admin extends User {
+    constructor(name, role) {
+        super(name);
+        this.role = role;
+    }
+    label() { return this.name + ":" + this.role; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn tslib_named_extends_import_is_recovered() {
+    let input = r#"
+import { __extends } from "tslib";
+var Admin = (function (_super) {
+    __extends(Admin, _super);
+    function Admin(name, role) {
+        var _this = _super.call(this, name) || this;
+        _this.role = role;
+        return _this;
+    }
+    Admin.prototype.label = function () { return this.name + ":" + this.role; };
+    return Admin;
+}(User));
+"#;
+    let expected = r#"
+import { __extends } from "tslib";
+class Admin extends User {
+    constructor(name, role) {
+        super(name);
+        this.role = role;
+    }
+    label() { return this.name + ":" + this.role; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn tslib_namespace_extends_require_is_recovered() {
+    let input = r#"
+var tslib_1 = require("tslib");
+var Admin = (function (_super) {
+    tslib_1.__extends(Admin, _super);
+    function Admin(name, role) {
+        var _this = _super.call(this, name) || this;
+        _this.role = role;
+        return _this;
+    }
+    Admin.prototype.label = function () { return this.name + ":" + this.role; };
+    return Admin;
+}(User));
+"#;
+    let expected = r#"
+var tslib_1 = require("tslib");
+class Admin extends User {
+    constructor(name, role) {
+        super(name);
+        this.role = role;
+    }
+    label() { return this.name + ":" + this.role; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn static_field_assignment_in_iife_is_recovered() {
+    let input = r#"
+var User = (function () {
+    function User() {}
+    User.getRole = function () { return User.role; };
+    User.role = "admin";
+    return User;
+}());
+"#;
+    let expected = r#"
+class User {
+    static getRole() { return User.role; }
+    static role = "admin";
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn derived_static_field_assignment_is_preserved() {
+    let input = r#"
+var User = (function (_super) {
+    __extends(User, _super);
+    function User() { return _super.call(this) || this; }
+    User.role = "admin";
+    return User;
+}(Base));
+"#;
+    let output = apply(input);
+
+    assert!(
+        output.contains("User.role = \"admin\""),
+        "derived static assignment should keep assignment semantics"
+    );
+    assert!(
+        !output.contains("static role = \"admin\""),
+        "derived static assignment must not become a static field"
+    );
+}
+
+#[test]
+fn minimal_preserves_static_field_assignment_in_iife() {
+    let input = r#"
+var User = (function () {
+    function User() {}
+    User.role = "admin";
+    return User;
+}());
+"#;
+    let output = apply_minimal(input);
+
+    assert!(
+        output.contains("User.role = \"admin\""),
+        "minimal mode should keep assignment semantics"
+    );
+    assert!(
+        !output.contains("static role = \"admin\""),
+        "static field recovery requires standard+"
+    );
 }
 
 #[test]
@@ -1100,6 +1266,65 @@ var Foo = function() {
 "#;
     let result = render(input);
     insta::assert_snapshot!(result);
+}
+
+#[test]
+fn swc_create_class_function_helper_is_recovered() {
+    // SWC emits `_create_class` as a function declaration instead of Babel's
+    // `_createClass` var-IIFE helper.
+    let input = r#"
+function _class_call_check(instance, Constructor) {
+    if (!(instance instanceof Constructor)) {
+        throw new TypeError("Cannot call a class as a function");
+    }
+}
+function _defineProperties(target, props) {
+    for(var i = 0; i < props.length; i++){
+        var descriptor = props[i];
+        descriptor.enumerable = descriptor.enumerable || false;
+        descriptor.configurable = true;
+        if ("value" in descriptor) descriptor.writable = true;
+        Object.defineProperty(target, descriptor.key, descriptor);
+    }
+}
+function _create_class(Constructor, protoProps, staticProps) {
+    if (protoProps) _defineProperties(Constructor.prototype, protoProps);
+    if (staticProps) _defineProperties(Constructor, staticProps);
+    return Constructor;
+}
+var User = function() {
+    "use strict";
+    function User(name) {
+        _class_call_check(this, User);
+        this.name = name;
+    }
+    _create_class(User, [
+        {
+            key: "greet",
+            value: function greet() {
+                return "hi " + this.name;
+            }
+        }
+    ], [
+        {
+            key: "create",
+            value: function create(name) {
+                return new User(name);
+            }
+        }
+    ]);
+    return User;
+}();
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("class User"),
+        "expected class recovery, got:\n{output}"
+    );
+    assert!(output.contains("constructor(name)"), "{output}");
+    assert!(output.contains("greet()"), "{output}");
+    assert!(output.contains("static create(name)"), "{output}");
+    assert!(!output.contains("_create_class"), "{output}");
 }
 
 // ============================================================

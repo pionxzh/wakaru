@@ -218,7 +218,10 @@ runner!(run_un_jsx, |ctx| UnJsx::new_with_level(
     ctx.unresolved_mark,
     ctx.rewrite_level
 ));
-runner!(run_un_es6_class, |ctx| UnEs6Class::new(ctx.unresolved_mark));
+runner!(run_un_es6_class, |ctx| UnEs6Class::new_with_level(
+    ctx.unresolved_mark,
+    ctx.rewrite_level
+));
 runner!(run_un_class_fields, UnClassFields);
 runner!(run_un_ts_helpers, UnTsHelpers);
 

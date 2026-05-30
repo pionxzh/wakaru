@@ -4,24 +4,37 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmt, BlockStmtOrExpr,
-    CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod, ComputedPropName, Constructor,
-    Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, Ident, IdentName, MemberExpr, MemberProp,
-    MethodKind, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr, SimpleAssignTarget,
-    Stmt, VarDecl,
+    CallExpr, Callee, Class, ClassDecl, ClassMember, ClassMethod, ClassProp, ComputedPropName,
+    Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, Ident, IdentName,
+    ImportSpecifier, Lit, MemberExpr, MemberProp, MethodKind, ModuleDecl, ModuleExportName,
+    ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr, SimpleAssignTarget, Stmt,
+    VarDecl,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::babel_helper_utils::{is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn};
+use super::babel_helper_utils::{
+    is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn, is_tslib_path,
+    tslib_require_member_name,
+};
 use super::expr_utils::is_unresolved_ident;
 use super::helper_matcher::{binding_key, BindingKey};
+use super::RewriteLevel;
 
 pub struct UnEs6Class {
     unresolved_mark: Mark,
+    rewrite_level: RewriteLevel,
 }
 
 impl UnEs6Class {
     pub fn new(unresolved_mark: Mark) -> Self {
-        Self { unresolved_mark }
+        Self::new_with_level(unresolved_mark, RewriteLevel::Standard)
+    }
+
+    pub fn new_with_level(unresolved_mark: Mark, rewrite_level: RewriteLevel) -> Self {
+        Self {
+            unresolved_mark,
+            rewrite_level,
+        }
     }
 }
 
@@ -29,7 +42,14 @@ impl VisitMut for UnEs6Class {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         // Pre-scan for helpers at module level BEFORE visiting children,
         // so nested scopes (function bodies) can also detect custom helper calls.
-        let inherits_helpers = collect_inherits_helpers_from_items(items);
+        let ts_extends_helpers = collect_ts_extends_helpers_from_items(items);
+        let tslib_namespaces = collect_tslib_namespaces_from_items(items);
+        let mut inherits_helpers = collect_inherits_helpers_from_items(items);
+        inherits_helpers.extend(ts_extends_helpers.iter().cloned());
+        inherits_helpers.extend(collect_tslib_extends_helpers_from_items(
+            items,
+            &tslib_namespaces,
+        ));
         let set_prototype_of_helpers = collect_set_prototype_of_helpers_from_items(items);
         let create_class_helpers =
             collect_create_class_helpers_from_items(items, self.unresolved_mark);
@@ -37,17 +57,27 @@ impl VisitMut for UnEs6Class {
 
         let mut inner = UnEs6ClassInner {
             inherits_helpers,
+            ts_extends_helpers,
+            tslib_namespaces,
             set_prototype_of_helpers,
             create_class_helpers,
             call_super_helpers,
             unresolved_mark: self.unresolved_mark,
+            rewrite_level: self.rewrite_level,
         };
         items.visit_mut_with(&mut inner);
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         // Non-module context: scan local scope for helpers
-        let inherits_helpers = collect_inherits_helpers_from_stmts(stmts);
+        let ts_extends_helpers = collect_ts_extends_helpers_from_stmts(stmts);
+        let tslib_namespaces = collect_tslib_namespaces_from_stmts(stmts);
+        let mut inherits_helpers = collect_inherits_helpers_from_stmts(stmts);
+        inherits_helpers.extend(ts_extends_helpers.iter().cloned());
+        inherits_helpers.extend(collect_tslib_extends_helpers_from_stmts(
+            stmts,
+            &tslib_namespaces,
+        ));
         let set_prototype_of_helpers = collect_set_prototype_of_helpers_from_stmts(stmts);
         let create_class_helpers =
             collect_create_class_helpers_from_stmts(stmts, self.unresolved_mark);
@@ -55,10 +85,13 @@ impl VisitMut for UnEs6Class {
 
         let mut inner = UnEs6ClassInner {
             inherits_helpers,
+            ts_extends_helpers,
+            tslib_namespaces,
             set_prototype_of_helpers,
             create_class_helpers,
             call_super_helpers,
             unresolved_mark: self.unresolved_mark,
+            rewrite_level: self.rewrite_level,
         };
         stmts.visit_mut_with(&mut inner);
     }
@@ -67,10 +100,13 @@ impl VisitMut for UnEs6Class {
 /// Inner visitor that carries helper name sets through all scopes.
 struct UnEs6ClassInner {
     inherits_helpers: HashSet<BindingKey>,
+    ts_extends_helpers: HashSet<BindingKey>,
+    tslib_namespaces: HashSet<BindingKey>,
     set_prototype_of_helpers: HashSet<BindingKey>,
     create_class_helpers: HashSet<Atom>,
     call_super_helpers: HashSet<BindingKey>,
     unresolved_mark: Mark,
+    rewrite_level: RewriteLevel,
 }
 
 impl VisitMut for UnEs6ClassInner {
@@ -85,9 +121,11 @@ impl VisitMut for UnEs6ClassInner {
                     if let Some(class_decl) = try_iife_to_class(
                         var_decl,
                         &self.inherits_helpers,
+                        &self.tslib_namespaces,
                         &self.create_class_helpers,
                         &self.call_super_helpers,
                         self.unresolved_mark,
+                        self.rewrite_level,
                     ) {
                         stmts.push(Stmt::Decl(Decl::Class(class_decl)));
                         converted_any = true;
@@ -104,6 +142,7 @@ impl VisitMut for UnEs6ClassInner {
                 &self.create_class_helpers,
                 self.unresolved_mark,
             );
+            remove_orphaned_ts_extends_helpers_stmts(stmts, &self.ts_extends_helpers);
             remove_orphaned_fn_helpers_stmts(stmts, &self.inherits_helpers);
             remove_orphaned_fn_helpers_stmts(stmts, &self.set_prototype_of_helpers);
             remove_orphaned_fn_helpers_stmts(stmts, &self.call_super_helpers);
@@ -121,9 +160,11 @@ impl VisitMut for UnEs6ClassInner {
                     if let Some(class_decl) = try_iife_to_class(
                         var_decl,
                         &self.inherits_helpers,
+                        &self.tslib_namespaces,
                         &self.create_class_helpers,
                         &self.call_super_helpers,
                         self.unresolved_mark,
+                        self.rewrite_level,
                     ) {
                         items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))));
                         converted_any = true;
@@ -140,11 +181,228 @@ impl VisitMut for UnEs6ClassInner {
                 &self.create_class_helpers,
                 self.unresolved_mark,
             );
+            remove_orphaned_ts_extends_helpers_module(items, &self.ts_extends_helpers);
             remove_orphaned_fn_helpers_module(items, &self.inherits_helpers);
             remove_orphaned_fn_helpers_module(items, &self.set_prototype_of_helpers);
             remove_orphaned_fn_helpers_module(items, &self.call_super_helpers);
         }
     }
+}
+
+fn collect_ts_extends_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
+    let mut helpers = HashSet::new();
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
+            continue;
+        };
+        for decl in &var_decl.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            let Some(init) = &decl.init else {
+                continue;
+            };
+            if is_ts_extends_helper_init(init) {
+                helpers.insert(binding_key(&binding.id));
+            }
+        }
+    }
+    helpers
+}
+
+fn collect_ts_extends_helpers_from_items(items: &[ModuleItem]) -> HashSet<BindingKey> {
+    let mut helpers = HashSet::new();
+    for item in items {
+        let ModuleItem::Stmt(stmt) = item else {
+            continue;
+        };
+        helpers.extend(collect_ts_extends_helpers_from_stmts(std::slice::from_ref(
+            stmt,
+        )));
+    }
+    helpers
+}
+
+fn collect_tslib_namespaces_from_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
+    let mut namespaces = HashSet::new();
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
+            continue;
+        };
+        for decl in &var_decl.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            if is_tslib_require_call(init) {
+                namespaces.insert(binding_key(&binding.id));
+            }
+        }
+    }
+    namespaces
+}
+
+fn collect_tslib_namespaces_from_items(items: &[ModuleItem]) -> HashSet<BindingKey> {
+    let mut namespaces = HashSet::new();
+    for item in items {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import))
+                if !import.type_only && is_tslib_path(import.src.value.as_str().unwrap_or("")) =>
+            {
+                for specifier in &import.specifiers {
+                    match specifier {
+                        ImportSpecifier::Default(default) => {
+                            namespaces.insert(binding_key(&default.local));
+                        }
+                        ImportSpecifier::Namespace(namespace) => {
+                            namespaces.insert(binding_key(&namespace.local));
+                        }
+                        ImportSpecifier::Named(_) => {}
+                    }
+                }
+            }
+            ModuleItem::Stmt(stmt) => {
+                namespaces.extend(collect_tslib_namespaces_from_stmts(std::slice::from_ref(
+                    stmt,
+                )));
+            }
+            _ => {}
+        }
+    }
+    namespaces
+}
+
+fn collect_tslib_extends_helpers_from_stmts(
+    stmts: &[Stmt],
+    namespaces: &HashSet<BindingKey>,
+) -> HashSet<BindingKey> {
+    let mut helpers = HashSet::new();
+    for stmt in stmts {
+        let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
+            continue;
+        };
+        for decl in &var_decl.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            if is_tslib_extends_member(init, namespaces) {
+                helpers.insert(binding_key(&binding.id));
+            }
+        }
+    }
+    helpers
+}
+
+fn collect_tslib_extends_helpers_from_items(
+    items: &[ModuleItem],
+    namespaces: &HashSet<BindingKey>,
+) -> HashSet<BindingKey> {
+    let mut helpers = HashSet::new();
+    for item in items {
+        match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import))
+                if !import.type_only && is_tslib_path(import.src.value.as_str().unwrap_or("")) =>
+            {
+                for specifier in &import.specifiers {
+                    let ImportSpecifier::Named(named) = specifier else {
+                        continue;
+                    };
+                    let imported = named
+                        .imported
+                        .as_ref()
+                        .map(module_export_name_as_str)
+                        .unwrap_or(named.local.sym.as_ref());
+                    if imported == "__extends" {
+                        helpers.insert(binding_key(&named.local));
+                    }
+                }
+            }
+            ModuleItem::Stmt(stmt) => {
+                helpers.extend(collect_tslib_extends_helpers_from_stmts(
+                    std::slice::from_ref(stmt),
+                    namespaces,
+                ));
+            }
+            _ => {}
+        }
+    }
+    helpers
+}
+
+fn module_export_name_as_str(name: &ModuleExportName) -> &str {
+    match name {
+        ModuleExportName::Ident(ident) => ident.sym.as_ref(),
+        ModuleExportName::Str(str_) => str_.value.as_str().unwrap_or(""),
+    }
+}
+
+fn is_tslib_require_call(expr: &Expr) -> bool {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    if !matches!(strip_parens(callee), Expr::Ident(id) if id.sym.as_ref() == "require") {
+        return false;
+    }
+    let [arg] = call.args.as_slice() else {
+        return false;
+    };
+    matches!(
+        strip_parens(&arg.expr),
+        Expr::Lit(Lit::Str(path)) if is_tslib_path(path.value.as_str().unwrap_or(""))
+    )
+}
+
+fn is_tslib_extends_member(expr: &Expr, namespaces: &HashSet<BindingKey>) -> bool {
+    if tslib_require_member_name(expr) == Some("__extends") {
+        return true;
+    }
+    let Expr::Member(member) = strip_parens(expr) else {
+        return false;
+    };
+    let Expr::Ident(obj) = strip_parens(&member.obj) else {
+        return false;
+    };
+    namespaces.contains(&binding_key(obj))
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "__extends")
+}
+
+fn is_ts_extends_helper_init(expr: &Expr) -> bool {
+    let Expr::Bin(or_expr) = strip_parens(expr) else {
+        return false;
+    };
+    if or_expr.op != swc_core::ecma::ast::BinaryOp::LogicalOr {
+        return false;
+    }
+    if !is_this_helper_member(&or_expr.left, "__extends") {
+        return false;
+    }
+    let rhs = strip_parens(&or_expr.right);
+    extract_iife_call(rhs).is_some() || matches!(rhs, Expr::Fn(_) | Expr::Arrow(_))
+}
+
+fn is_this_helper_member(expr: &Expr, helper_name: &str) -> bool {
+    let Expr::Bin(and_expr) = strip_parens(expr) else {
+        return false;
+    };
+    if and_expr.op != swc_core::ecma::ast::BinaryOp::LogicalAnd {
+        return false;
+    }
+    if !matches!(strip_parens(&and_expr.left), Expr::This(_)) {
+        return false;
+    }
+    let Expr::Member(member) = strip_parens(&and_expr.right) else {
+        return false;
+    };
+    matches!(member.obj.as_ref(), Expr::This(_))
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == helper_name)
 }
 
 fn collect_set_prototype_of_helpers_from_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
@@ -231,29 +489,110 @@ fn collect_call_super_helpers_from_items(items: &[ModuleItem]) -> HashSet<Bindin
 fn collect_create_class_helpers_from_stmts(stmts: &[Stmt], unresolved_mark: Mark) -> HashSet<Atom> {
     let mut helpers = HashSet::new();
     for stmt in stmts {
-        if let Stmt::Decl(Decl::Var(var_decl)) = stmt {
-            if let Some(name) = detect_create_class_var(var_decl, unresolved_mark) {
-                helpers.insert(name);
+        match stmt {
+            Stmt::Decl(Decl::Fn(fn_decl)) => {
+                if let Some(name) = detect_create_class_fn(&fn_decl.ident, &fn_decl.function) {
+                    helpers.insert(name);
+                }
             }
+            Stmt::Decl(Decl::Var(var_decl)) => {
+                if let Some(name) = detect_create_class_var(var_decl, unresolved_mark) {
+                    helpers.insert(name);
+                }
+            }
+            _ => {}
         }
     }
     helpers
 }
 
-/// Collect names of variables whose init is a _createClass IIFE from module items.
+/// Collect names of _createClass helpers from module items.
 fn collect_create_class_helpers_from_items(
     items: &[ModuleItem],
     unresolved_mark: Mark,
 ) -> HashSet<Atom> {
     let mut helpers = HashSet::new();
     for item in items {
-        if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item {
-            if let Some(name) = detect_create_class_var(var_decl, unresolved_mark) {
-                helpers.insert(name);
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
+                if let Some(name) = detect_create_class_fn(&fn_decl.ident, &fn_decl.function) {
+                    helpers.insert(name);
+                }
             }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
+                if let Some(name) = detect_create_class_var(var_decl, unresolved_mark) {
+                    helpers.insert(name);
+                }
+            }
+            _ => {}
         }
     }
     helpers
+}
+
+fn detect_create_class_fn(ident: &Ident, function: &Function) -> Option<Atom> {
+    if is_create_class_function(function) {
+        Some(ident.sym.clone())
+    } else {
+        None
+    }
+}
+
+fn is_create_class_function(function: &Function) -> bool {
+    use swc_core::ecma::visit::{Visit, VisitWith};
+
+    let Some(first_param) = function.params.first() else {
+        return false;
+    };
+    let Pat::Ident(constructor) = &first_param.pat else {
+        return false;
+    };
+    let Some(body) = &function.body else {
+        return false;
+    };
+    if !body.stmts.iter().any(|stmt| {
+        matches!(stmt, Stmt::Return(ret) if ret.arg.as_ref().is_some_and(|arg| {
+            matches!(arg.as_ref(), Expr::Ident(id) if id.sym == constructor.id.sym && id.ctxt == constructor.id.ctxt)
+        }))
+    }) {
+        return false;
+    }
+
+    struct PrototypeDefineCallFinder {
+        constructor: Ident,
+        found: bool,
+    }
+
+    impl Visit for PrototypeDefineCallFinder {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if self.found {
+                return;
+            }
+            let Some(first_arg) = call.args.first() else {
+                call.visit_children_with(self);
+                return;
+            };
+            if let Expr::Member(member) = strip_parens(&first_arg.expr) {
+                if let Expr::Ident(obj) = member.obj.as_ref() {
+                    if obj.sym == self.constructor.sym
+                        && obj.ctxt == self.constructor.ctxt
+                        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "prototype")
+                    {
+                        self.found = true;
+                        return;
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = PrototypeDefineCallFinder {
+        constructor: constructor.id.clone(),
+        found: false,
+    };
+    body.visit_with(&mut finder);
+    finder.found
 }
 
 /// If a VarDecl is `var r = (function() { ... createClass body ... })()`, return the name `r`.
@@ -354,8 +693,8 @@ fn get_fn_or_arrow_body(expr: &Expr) -> Option<&[Stmt]> {
 // Orphaned helper removal
 // ============================================================
 
-/// Remove var declarations of _createClass helpers that are no longer referenced
-/// after class IIFE conversion. Only removes when there are no remaining references.
+/// Remove _createClass helpers that are no longer referenced after class IIFE
+/// conversion. Only removes when there are no remaining references.
 fn remove_orphaned_create_class_helpers(
     stmts: &mut Vec<Stmt>,
     helpers: &HashSet<Atom>,
@@ -367,10 +706,8 @@ fn remove_orphaned_create_class_helpers(
     // Count remaining references to each helper (excluding the declaration itself)
     let refs = count_helper_references_stmts(stmts, helpers, unresolved_mark);
     stmts.retain(|stmt| {
-        if let Stmt::Decl(Decl::Var(var_decl)) = stmt {
-            if let Some(name) = detect_create_class_var(var_decl, unresolved_mark) {
-                return refs.get(name.as_ref()).copied().unwrap_or(0) > 0;
-            }
+        if let Some(name) = detect_create_class_stmt_name(stmt, unresolved_mark) {
+            return refs.get(name.as_ref()).copied().unwrap_or(0) > 0;
         }
         true
     });
@@ -386,16 +723,29 @@ fn remove_orphaned_create_class_helpers_module(
     }
     let refs = count_helper_references_module(items, helpers, unresolved_mark);
     items.retain(|item| {
-        if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item {
-            if let Some(name) = detect_create_class_var(var_decl, unresolved_mark) {
-                return refs.get(name.as_ref()).copied().unwrap_or(0) > 0;
-            }
+        if let Some(name) = detect_create_class_item_name(item, unresolved_mark) {
+            return refs.get(name.as_ref()).copied().unwrap_or(0) > 0;
         }
         true
     });
 }
 
-/// Count references to helper names in statements, excluding VarDecl inits.
+fn detect_create_class_stmt_name(stmt: &Stmt, unresolved_mark: Mark) -> Option<Atom> {
+    match stmt {
+        Stmt::Decl(Decl::Fn(fn_decl)) => detect_create_class_fn(&fn_decl.ident, &fn_decl.function),
+        Stmt::Decl(Decl::Var(var_decl)) => detect_create_class_var(var_decl, unresolved_mark),
+        _ => None,
+    }
+}
+
+fn detect_create_class_item_name(item: &ModuleItem, unresolved_mark: Mark) -> Option<Atom> {
+    match item {
+        ModuleItem::Stmt(stmt) => detect_create_class_stmt_name(stmt, unresolved_mark),
+        _ => None,
+    }
+}
+
+/// Count references to helper names in statements, excluding helper definitions.
 fn count_helper_references_stmts(
     stmts: &[Stmt],
     helpers: &HashSet<Atom>,
@@ -406,10 +756,8 @@ fn count_helper_references_stmts(
     let mut counter = HelperRefCounter::new(helpers);
     for stmt in stmts {
         // Skip the helper definition itself
-        if let Stmt::Decl(Decl::Var(var_decl)) = stmt {
-            if detect_create_class_var(var_decl, unresolved_mark).is_some() {
-                continue;
-            }
+        if detect_create_class_stmt_name(stmt, unresolved_mark).is_some() {
+            continue;
         }
         stmt.visit_with(&mut counter);
     }
@@ -425,14 +773,100 @@ fn count_helper_references_module(
 
     let mut counter = HelperRefCounter::new(helpers);
     for item in items {
-        if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item {
-            if detect_create_class_var(var_decl, unresolved_mark).is_some() {
+        if detect_create_class_item_name(item, unresolved_mark).is_some() {
+            continue;
+        }
+        item.visit_with(&mut counter);
+    }
+    counter.counts
+}
+
+fn remove_orphaned_ts_extends_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<BindingKey>) {
+    use swc_core::ecma::visit::VisitWith;
+
+    if helpers.is_empty() {
+        return;
+    }
+
+    let mut counter = BindingHelperRefCounter::new(helpers);
+    for stmt in stmts.iter() {
+        if var_declares_any_helper(stmt_as_var_decl(stmt), helpers) {
+            continue;
+        }
+        stmt.visit_with(&mut counter);
+    }
+
+    stmts.retain(|stmt| {
+        let Some(var_decl) = stmt_as_var_decl(stmt) else {
+            return true;
+        };
+        let Some(helper_key) = ts_extends_helper_decl_key(var_decl) else {
+            return true;
+        };
+        counter.counts.get(&helper_key).copied().unwrap_or(0) > 0
+    });
+}
+
+fn remove_orphaned_ts_extends_helpers_module(
+    items: &mut Vec<ModuleItem>,
+    helpers: &HashSet<BindingKey>,
+) {
+    use swc_core::ecma::visit::VisitWith;
+
+    if helpers.is_empty() {
+        return;
+    }
+
+    let mut counter = BindingHelperRefCounter::new(helpers);
+    for item in items.iter() {
+        if let ModuleItem::Stmt(stmt) = item {
+            if var_declares_any_helper(stmt_as_var_decl(stmt), helpers) {
                 continue;
             }
         }
         item.visit_with(&mut counter);
     }
-    counter.counts
+
+    items.retain(|item| {
+        let ModuleItem::Stmt(stmt) = item else {
+            return true;
+        };
+        let Some(var_decl) = stmt_as_var_decl(stmt) else {
+            return true;
+        };
+        let Some(helper_key) = ts_extends_helper_decl_key(var_decl) else {
+            return true;
+        };
+        counter.counts.get(&helper_key).copied().unwrap_or(0) > 0
+    });
+}
+
+fn stmt_as_var_decl(stmt: &Stmt) -> Option<&VarDecl> {
+    let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
+        return None;
+    };
+    Some(var_decl)
+}
+
+fn var_declares_any_helper(var_decl: Option<&VarDecl>, helpers: &HashSet<BindingKey>) -> bool {
+    let Some(var_decl) = var_decl else {
+        return false;
+    };
+    ts_extends_helper_decl_key(var_decl).is_some_and(|key| helpers.contains(&key))
+}
+
+fn ts_extends_helper_decl_key(var_decl: &VarDecl) -> Option<BindingKey> {
+    if var_decl.decls.len() != 1 {
+        return None;
+    }
+    let decl = &var_decl.decls[0];
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    if !decl.init.as_deref().is_some_and(is_ts_extends_helper_init) {
+        return None;
+    }
+    Some(binding_key(&binding.id))
 }
 
 struct HelperRefCounter {
@@ -544,9 +978,11 @@ fn remove_orphaned_fn_helpers_module(items: &mut Vec<ModuleItem>, helpers: &Hash
 fn try_iife_to_class(
     var: &VarDecl,
     inherits_helpers: &HashSet<BindingKey>,
+    tslib_namespaces: &HashSet<BindingKey>,
     create_class_helpers: &HashSet<Atom>,
     call_super_helpers: &HashSet<BindingKey>,
     unresolved_mark: Mark,
+    rewrite_level: RewriteLevel,
 ) -> Option<ClassDecl> {
     // Must be a single declarator
     if var.decls.len() != 1 {
@@ -628,9 +1064,11 @@ fn try_iife_to_class(
         &class_name.sym,
         inner_param.as_deref(),
         inherits_helpers,
+        tslib_namespaces,
         create_class_helpers,
         call_super_helpers,
         super_class.is_some(),
+        rewrite_level >= RewriteLevel::Standard,
         unresolved_mark,
     )?;
     if class_name.sym.as_ref() != inner_ctor_name
@@ -795,9 +1233,11 @@ fn parse_class_body(
     class_name: &str,
     super_param: Option<&str>,
     inherits_helpers: &HashSet<BindingKey>,
+    tslib_namespaces: &HashSet<BindingKey>,
     create_class_helpers: &HashSet<Atom>,
     call_super_helpers: &HashSet<BindingKey>,
     has_super: bool,
+    allow_static_fields: bool,
     unresolved_mark: Mark,
 ) -> Option<Vec<ClassMember>> {
     // The first real statement should define the constructor function.
@@ -854,8 +1294,15 @@ fn parse_class_body(
         // `__extends(t, _super)` or `_inherits(t, _super)` or `customInherits(t, _super)`,
         // or inline IIFE: `((e, t) => { Object.create... })(t, _super)`
         if let Some(sp) = super_param {
-            if try_parse_extends_call(stmt, inner_ctor_name, sp, inherits_helpers, unresolved_mark)
-                .is_some()
+            if try_parse_extends_call(
+                stmt,
+                inner_ctor_name,
+                sp,
+                inherits_helpers,
+                tslib_namespaces,
+                unresolved_mark,
+            )
+            .is_some()
                 || is_inline_inherits_iife(stmt, inner_ctor_name, sp, unresolved_mark)
             {
                 extends_handled = true;
@@ -910,6 +1357,17 @@ fn parse_class_body(
             // `t.prototype = Object.create(_super.prototype)` (inheritance setup — skip)
             // `Object.defineProperty(t.prototype, "prop", { get: fn, set: fn })`
             if try_parse_method_assignment(expr, inner_ctor_name, &proto_alias, &mut members) {
+                continue;
+            }
+
+            // `t.staticField = value`
+            //
+            // In derived classes this is observably different from a static
+            // field if the superclass has a setter for that property.
+            if allow_static_fields
+                && !has_super
+                && try_parse_static_field_assignment(expr, inner_ctor_name, &mut members)
+            {
                 continue;
             }
 
@@ -1033,6 +1491,7 @@ fn try_parse_extends_call(
     ctor_name: &str,
     super_param: &str,
     inherits_helpers: &HashSet<BindingKey>,
+    tslib_namespaces: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) -> Option<()> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
@@ -1045,15 +1504,19 @@ fn try_parse_extends_call(
         return None;
     };
     let callee = strip_parens(callee);
-    let Expr::Ident(fn_name) = callee else {
-        return None;
+    let is_helper = match callee {
+        Expr::Ident(fn_name) => {
+            // Accept collected helper bindings, or unresolved built-in helper names.
+            // A local IIFE param named `_inherits` / `__extends` must not be treated as
+            // a helper purely by symbol.
+            let is_unresolved_builtin = matches!(fn_name.sym.as_ref(), "__extends" | "_inherits")
+                && fn_name.ctxt.outer() == unresolved_mark;
+            is_unresolved_builtin || inherits_helpers.contains(&binding_key(fn_name))
+        }
+        Expr::Member(_) => is_tslib_extends_member(callee, tslib_namespaces),
+        _ => false,
     };
-    // Accept collected helper bindings, or unresolved built-in helper names.
-    // A local IIFE param named `_inherits` / `__extends` must not be treated as
-    // a helper purely by symbol.
-    let is_unresolved_builtin = matches!(fn_name.sym.as_ref(), "__extends" | "_inherits")
-        && fn_name.ctxt.outer() == unresolved_mark;
-    if !is_unresolved_builtin && !inherits_helpers.contains(&binding_key(fn_name)) {
+    if !is_helper {
         return None;
     }
     if call.args.len() != 2 {
@@ -1140,6 +1603,48 @@ fn try_parse_method_assignment(
 
     let method = build_class_method(method_name, fn_expr, is_static, MethodKind::Method);
     members.push(ClassMember::Method(method));
+    true
+}
+
+fn try_parse_static_field_assignment(
+    expr: &Expr,
+    ctor_name: &str,
+    members: &mut Vec<ClassMember>,
+) -> bool {
+    let Expr::Assign(assign) = expr else {
+        return false;
+    };
+    if assign.op != AssignOp::Assign {
+        return false;
+    }
+
+    let AssignTarget::Simple(SimpleAssignTarget::Member(lhs_member)) = &assign.left else {
+        return false;
+    };
+
+    let Some(key) = extract_static_method_name(&lhs_member.obj, &lhs_member.prop, ctor_name) else {
+        return false;
+    };
+    let rhs = strip_parens(&assign.right);
+    if matches!(rhs, Expr::Fn(_)) {
+        return false;
+    }
+
+    members.push(ClassMember::ClassProp(ClassProp {
+        span: DUMMY_SP,
+        key,
+        value: Some(assign.right.clone()),
+        type_ann: None,
+        is_static: true,
+        decorators: Vec::new(),
+        accessibility: None,
+        is_abstract: false,
+        is_optional: false,
+        is_override: false,
+        readonly: false,
+        declare: false,
+        definite: false,
+    }));
     true
 }
 

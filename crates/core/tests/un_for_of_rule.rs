@@ -315,7 +315,7 @@ for (const [key, value] of entries) {
 }
 
 #[test]
-fn for_of_promotes_body_destructuring_from_rewritten_iterator_value() {
+fn for_of_preserves_destructuring_from_iterator_result() {
     let input = r#"
 const iterator = _createForOfIteratorHelper(entries);
 let step;
@@ -330,12 +330,28 @@ try {
   iterator.f();
 }
 "#;
-    let expected = r#"
-for (const [key, value] of entries) {
-  use(key, value);
+    assert_eq_normalized(&render(input), input);
+}
+
+#[test]
+fn for_of_preserves_destructuring_helper_from_iterator_result() {
+    let input = r#"
+const iterator = _createForOfIteratorHelper(entries);
+let step;
+try {
+  for (iterator.s(); !(step = iterator.n()).done;) {
+    const pair = _slicedToArray(step, 2);
+    const key = pair[0];
+    const value = pair[1];
+    use(key, value);
+  }
+} catch (err) {
+  iterator.e(err);
+} finally {
+  iterator.f();
 }
 "#;
-    assert_eq_normalized(&render(input), expected);
+    assert_eq_normalized(&render(input), input);
 }
 
 #[test]

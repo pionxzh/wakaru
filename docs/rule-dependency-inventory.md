@@ -657,11 +657,12 @@ These rules restore structural patterns and clean up minification artifacts.
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
 | Suspected prerequisites | UnClassCallCheck (`suspected`), UnPossibleConstructorReturn (`suspected`), UnIife (`suspected` — class IIFE wrappers) |
-| Shape prerequisites | IIFE-wrapped class patterns with `_inherits`, `_createClass` helpers |
+| Shape prerequisites | IIFE-wrapped class patterns with `_inherits` / `__extends` / `_createClass` helpers |
 | Produces | ES6 `class` declarations |
 | Downstream dependents | UnClassFields (needs class syntax to detect `__init` methods) |
 | Fact behavior | Neither |
 | Safety | Heuristic (complex multi-pattern detection) |
+| Notes | Level-gated by subpattern: static method assignment recovery is part of class restoration, but static data field assignment recovery (`Ctor.x = value` -> `static x = value`) requires `standard+` and is skipped for derived classes because inherited static setters make assignment semantics observably different from class field definition. |
 
 ### 42. UnClassFields
 

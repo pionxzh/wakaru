@@ -137,3 +137,39 @@ class Keep {
 "#;
     assert_eq_normalized(&render(input), input.trim());
 }
+
+#[test]
+fn static_function_assignment_after_class_is_preserved() {
+    let input = r#"
+class User {}
+User.create = function(name) {
+    return new User(name);
+};
+"#;
+    let output = render(input);
+    assert!(output.contains("User.create ="), "{output}");
+    assert!(!output.contains("static create"), "{output}");
+}
+
+#[test]
+fn react_metadata_assignments_after_class_are_preserved() {
+    let input = r#"
+class Link extends Component {}
+Link.propTypes = {
+    to: PropTypes.string.isRequired
+};
+Link.defaultProps = {
+    replace: false
+};
+Link.contextTypes = {
+    router: PropTypes.object
+};
+"#;
+    let output = render(input);
+    assert!(output.contains("Link.propTypes ="), "{output}");
+    assert!(output.contains("Link.defaultProps ="), "{output}");
+    assert!(output.contains("Link.contextTypes ="), "{output}");
+    assert!(!output.contains("static propTypes"), "{output}");
+    assert!(!output.contains("static defaultProps"), "{output}");
+    assert!(!output.contains("static contextTypes"), "{output}");
+}

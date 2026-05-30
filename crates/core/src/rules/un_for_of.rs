@@ -443,14 +443,20 @@ fn build_helper_for_of(
 ) -> Option<ForOfStmt> {
     let mut element = extract_iterator_value_element(&body.stmts, &item_ident);
     if element.is_none() {
+        element = extract_iterator_call_destructuring_element(&body.stmts, &item_ident);
+    }
+    if element.is_none() {
         element = extract_iterator_destructuring_decl_element(&body.stmts, &item_ident);
     }
     if element.is_none() {
-        replace_iterator_value_refs(&mut body, &item_ident);
-        element = extract_iterator_call_destructuring_element(&body.stmts, &item_ident);
-        if element.is_none() {
-            element = extract_iterator_destructuring_decl_element(&body.stmts, &item_ident);
+        if body
+            .stmts
+            .iter()
+            .any(|stmt| stmt_uses_ident_key_outside_value_member(stmt, &item_ident))
+        {
+            return None;
         }
+        replace_iterator_value_refs(&mut body, &item_ident);
     }
     let (pat, bindings, kind, consumed_stmts, temp_sym) = if let Some(element) = element {
         (
@@ -593,7 +599,7 @@ fn extract_iterator_destructuring_decl_element(
         return None;
     }
     let init = first.init.as_ref()?;
-    if !is_value_member(init, item_ident) && !is_ident_key(init, item_ident) {
+    if !is_value_member(init, item_ident) {
         return None;
     }
     if pat_uses_ident_key(&first.name, item_ident) {
@@ -1032,7 +1038,7 @@ fn is_destructuring_helper_call(expr: &Expr, item_ident: &Ident) -> bool {
     let Some(ExprOrSpread { spread: None, expr }) = args.first() else {
         return false;
     };
-    is_ident_key(expr, item_ident)
+    is_value_member(expr, item_ident)
 }
 
 fn extract_symbol_iterator_call_obj(expr: &Expr) -> Option<Box<Expr>> {
@@ -1500,6 +1506,46 @@ fn stmt_uses_ident_key(stmt: &Stmt, ident: &Ident) -> bool {
             if ident.sym == self.sym && ident.ctxt == self.ctxt {
                 self.found = true;
             }
+        }
+    }
+
+    let mut finder = IdentFinder {
+        sym: ident.sym.clone(),
+        ctxt: ident.ctxt,
+        found: false,
+    };
+    finder.visit_stmt(stmt);
+    finder.found
+}
+
+/// Check if a statement references the iterator result binding anywhere except
+/// as the object in `result.value`.
+fn stmt_uses_ident_key_outside_value_member(stmt: &Stmt, ident: &Ident) -> bool {
+    use swc_core::ecma::visit::{Visit, VisitWith};
+
+    struct IdentFinder {
+        sym: Atom,
+        ctxt: SyntaxContext,
+        found: bool,
+    }
+
+    impl Visit for IdentFinder {
+        fn visit_ident(&mut self, ident: &Ident) {
+            if ident.sym == self.sym && ident.ctxt == self.ctxt {
+                self.found = true;
+            }
+        }
+
+        fn visit_member_expr(&mut self, member: &MemberExpr) {
+            if let Expr::Ident(obj) = &*member.obj {
+                if obj.sym == self.sym
+                    && obj.ctxt == self.ctxt
+                    && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "value")
+                {
+                    return;
+                }
+            }
+            member.visit_children_with(self);
         }
     }
 
