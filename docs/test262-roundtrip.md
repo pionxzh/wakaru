@@ -175,8 +175,8 @@ node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline babel
 ```
 
 Recorded on 2026-05-25, with the scope, control-flow, calls, and operators
-slices added on 2026-05-29, and literals, block-scope-syntax, variables, and
-assignment-target-type added on 2026-05-30:
+slices added on 2026-05-29, and literals, block-scope-syntax, variables,
+assignment-target-type, and arguments-object added on 2026-05-30:
 
 | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -193,6 +193,7 @@ assignment-target-type added on 2026-05-30:
 | block-scope-syntax | 113 | 11 | 102 | 0 | 0 | 11 | 0 |
 | variables | 178 | 130 | 48 | 4 | 0 | 126 | 0 |
 | assignment-target-type | 324 | 8 | 316 | 2 | 0 | 6 | 0 |
+| arguments-object | 263 | 202 | 61 | 0 | 0 | 202 | 0 |
 | modules | 755 | 358 | 397 | 10 | 22 | 326 | 0 |
 
 Additional producer baselines recorded on 2026-05-25:
@@ -212,6 +213,7 @@ Additional producer baselines recorded on 2026-05-25:
 | swc-minify | block-scope-syntax | 113 | 11 | 102 | 0 | 0 | 11 | 0 |
 | swc-minify | variables | 178 | 130 | 48 | 3 | 3 | 124 | 0 |
 | swc-minify | assignment-target-type | 324 | 8 | 316 | 1 | 1 | 6 | 0 |
+| swc-minify | arguments-object | 263 | 202 | 61 | 0 | 0 | 202 | 0 |
 | swc-minify | modules | 755 | 358 | 397 | 10 | 1 | 347 | 0 |
 | esbuild-minify | default | 2180 | 1647 | 533 | 4 | 111 | 1532 | 0 |
 | esbuild-minify | classes | 8426 | 5064 | 3362 | 28 | 389 | 4647 | 0 |
@@ -226,6 +228,7 @@ Additional producer baselines recorded on 2026-05-25:
 | esbuild-minify | block-scope-syntax | 113 | 11 | 102 | 0 | 0 | 11 | 0 |
 | esbuild-minify | variables | 178 | 130 | 48 | 1 | 17 | 112 | 0 |
 | esbuild-minify | assignment-target-type | 324 | 8 | 316 | 1 | 1 | 6 | 0 |
+| esbuild-minify | arguments-object | 263 | 202 | 61 | 0 | 0 | 202 | 0 |
 | esbuild-minify | modules | 755 | 358 | 397 | 9 | 244 | 105 | 0 |
 
 Module graph baselines recorded on 2026-05-25:

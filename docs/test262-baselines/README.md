@@ -34,6 +34,7 @@ literals
 block-scope-syntax
 variables
 assignment-target-type
+arguments-object
 modules
 ```
 
