@@ -16,8 +16,9 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 
 use super::helper_matcher::{
     binding_key, expr_matches_binding, remaining_refs_outside_declarations,
-    remove_fn_decls_from_body_by_binding, remove_import_specifiers_by_binding,
-    remove_var_declarators_by_binding, var_declarator_binding_key,
+    remaining_refs_outside_var_declarators, remove_fn_decls_from_body_by_binding,
+    remove_import_specifiers_by_binding, remove_var_declarators_by_binding,
+    var_declarator_binding_key,
 };
 use super::match_context::MatchContext;
 use crate::utils::paren::strip_parens;
@@ -133,12 +134,49 @@ impl LocalHelperContext {
             .collect()
     }
 
-    pub(crate) fn inline_ts_helpers(&self) -> HashMap<BindingKey, TsHelperKind> {
-        self.ts_helpers
+    pub(crate) fn remove_unused_inline_ts_helpers(
+        &self,
+        module: &mut Module,
+        kinds: &[TsHelperKind],
+    ) {
+        let helper_keys: HashSet<_> = self
+            .ts_helpers
             .iter()
             .filter(|(_, helper)| helper.source == TsHelperSource::Inline)
-            .map(|(key, helper)| (key.clone(), helper.kind))
-            .collect()
+            .filter(|(_, helper)| kinds.contains(&helper.kind))
+            .map(|(key, _)| key.clone())
+            .collect();
+        if helper_keys.is_empty() {
+            return;
+        }
+
+        let remaining = remaining_refs_outside_var_declarators(module, &helper_keys, &helper_keys);
+        let removable: HashSet<BindingKey> = helper_keys
+            .into_iter()
+            .filter(|key| !remaining.contains(key))
+            .collect();
+        if !removable.is_empty() {
+            remove_var_declarators_by_binding(&mut module.body, &removable);
+        }
+    }
+
+    pub(crate) fn remove_unused_ts_helper_bindings(&self, module: &mut Module, kind: TsHelperKind) {
+        let helper_keys = self.ts_helpers_of_kind(kind);
+        if helper_keys.is_empty() {
+            return;
+        }
+
+        let remaining = remaining_refs_outside_var_declarators(module, &helper_keys, &helper_keys);
+        let removable: HashSet<BindingKey> = helper_keys
+            .into_iter()
+            .filter(|key| !remaining.contains(key))
+            .collect();
+        if removable.is_empty() {
+            return;
+        }
+
+        remove_var_declarators_by_binding(&mut module.body, &removable);
+        remove_import_specifiers_by_binding(&mut module.body, &removable);
     }
 
     pub(crate) fn tslib_namespaces(&self) -> &HashSet<BindingKey> {
@@ -3615,6 +3653,30 @@ mod tests {
         })
     }
 
+    fn module_has_var(module: &Module, name: &str) -> bool {
+        module.body.iter().any(|item| {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+                return false;
+            };
+            var.decls.iter().any(
+                |decl| matches!(&decl.name, Pat::Ident(binding) if binding.id.sym.as_ref() == name),
+            )
+        })
+    }
+
+    fn module_has_import_local(module: &Module, name: &str) -> bool {
+        module.body.iter().any(|item| {
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+                return false;
+            };
+            import.specifiers.iter().any(|specifier| match specifier {
+                ImportSpecifier::Default(default) => default.local.sym.as_ref() == name,
+                ImportSpecifier::Named(named) => named.local.sym.as_ref() == name,
+                ImportSpecifier::Namespace(namespace) => namespace.local.sym.as_ref() == name,
+            })
+        })
+    }
+
     #[test]
     fn local_helper_context_collects_ts_helpers() {
         GLOBALS.set(&Globals::new(), || {
@@ -3651,7 +3713,13 @@ mod tests {
                 .any(|(sym, _)| sym.as_ref() == "requiredSpread"));
             assert!(!helpers.iter().any(|(sym, _)| sym.as_ref() == "notSpread"));
 
-            let inline_helpers = LocalHelperContext::collect(&module).inline_ts_helpers();
+            let context = LocalHelperContext::collect(&module);
+            let inline_helpers: HashMap<_, _> = context
+                .ts_helpers
+                .iter()
+                .filter(|(_, helper)| helper.source == TsHelperSource::Inline)
+                .map(|(key, helper)| (key.clone(), helper.kind))
+                .collect();
             assert_eq!(
                 inline_helpers
                     .get(&(Atom::from("aliasedAwaiter"), SyntaxContext::empty())),
@@ -3675,11 +3743,9 @@ mod tests {
                 None
             );
 
-            let awaiter_helpers =
-                LocalHelperContext::collect(&module).ts_helpers_of_kind(TsHelperKind::Awaiter);
+            let awaiter_helpers = context.ts_helpers_of_kind(TsHelperKind::Awaiter);
             assert_eq!(awaiter_helpers.len(), 4);
 
-            let context = LocalHelperContext::collect(&module);
             assert!(
                 context
                     .tslib_namespaces()
@@ -3799,6 +3865,50 @@ mod tests {
             assert!(!module_has_function(&module, "root"));
             assert!(!module_has_function(&module, "dep"));
             assert!(module_has_function(&module, "unrelated"));
+        });
+    }
+
+    #[test]
+    fn removes_unused_inline_ts_helpers_by_kind() {
+        GLOBALS.set(&Globals::new(), || {
+            let mut module = parse_module(
+                r#"
+                var __awaiter = (this && this.__awaiter) || function () {};
+                var __generator = (this && this.__generator) || function () {};
+                import { __awaiter as importedAwaiter } from "tslib";
+                "#,
+            );
+            let context = LocalHelperContext::collect(&module);
+
+            context.remove_unused_inline_ts_helpers(
+                &mut module,
+                &[TsHelperKind::Awaiter, TsHelperKind::Generator],
+            );
+
+            assert!(!module_has_var(&module, "__awaiter"));
+            assert!(!module_has_var(&module, "__generator"));
+            assert!(module_has_import_local(&module, "importedAwaiter"));
+        });
+    }
+
+    #[test]
+    fn removes_unused_ts_helper_bindings_by_kind() {
+        GLOBALS.set(&Globals::new(), || {
+            let mut module = parse_module(
+                r#"
+                import { __spreadArray } from "tslib";
+                var spread = require("tslib").__spreadArray;
+                var kept = require("tslib").__spreadArray;
+                kept([], [], true);
+                "#,
+            );
+            let context = LocalHelperContext::collect(&module);
+
+            context.remove_unused_ts_helper_bindings(&mut module, TsHelperKind::SpreadArray);
+
+            assert!(!module_has_import_local(&module, "__spreadArray"));
+            assert!(!module_has_var(&module, "spread"));
+            assert!(module_has_var(&module, "kept"));
         });
     }
 

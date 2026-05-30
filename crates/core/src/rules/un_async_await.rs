@@ -9,9 +9,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::helper_matcher::{
-    binding_key, remaining_refs_outside_var_declarators, remove_var_declarators_by_binding,
-};
+use super::helper_matcher::binding_key;
 use super::rename_utils::BindingId;
 use super::transpiler_helper_utils::{BindingKey, LocalHelperContext, TsHelperKind};
 use crate::utils::paren::strip_parens;
@@ -827,25 +825,8 @@ fn remove_unused_inline_async_helpers(
     module: &mut swc_core::ecma::ast::Module,
     local_helpers: &LocalHelperContext,
 ) {
-    let inline_helpers = local_helpers.inline_ts_helpers();
-    let helper_keys: HashSet<BindingKey> = inline_helpers
-        .into_iter()
-        .filter_map(|(key, kind)| {
-            matches!(kind, TsHelperKind::Awaiter | TsHelperKind::Generator).then_some(key)
-        })
-        .collect();
-    if helper_keys.is_empty() {
-        return;
-    }
-
-    let remaining = remaining_refs_outside_var_declarators(module, &helper_keys, &helper_keys);
-    let removable: HashSet<BindingKey> = helper_keys
-        .into_iter()
-        .filter(|key| !remaining.contains(key))
-        .collect();
-    if !removable.is_empty() {
-        remove_var_declarators_by_binding(&mut module.body, &removable);
-    }
+    local_helpers
+        .remove_unused_inline_ts_helpers(module, &[TsHelperKind::Awaiter, TsHelperKind::Generator]);
 }
 
 fn collect_awaiter_param_hints(

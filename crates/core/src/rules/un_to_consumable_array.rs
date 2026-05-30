@@ -4,10 +4,7 @@ use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{ArrayLit, Callee, Expr, ExprOrSpread, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::helper_matcher::{
-    binding_key, remaining_refs_outside_var_declarators, remove_import_specifiers_by_binding,
-    remove_var_declarators_by_binding,
-};
+use super::helper_matcher::binding_key;
 use super::transpiler_helper_utils::{
     is_tslib_spread_array_member, remove_helpers_without_remaining_refs, BindingKey,
     LocalHelperContext, TranspilerHelperKind, TsHelperKind,
@@ -45,7 +42,7 @@ fn run_un_to_consumable_array(module: &mut Module, local_helpers: &LocalHelperCo
         };
         module.visit_mut_with(&mut replacer);
 
-        remove_unused_ts_spread_array_helpers(module, &ts_helpers);
+        local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::SpreadArray);
         return;
     }
 
@@ -57,7 +54,7 @@ fn run_un_to_consumable_array(module: &mut Module, local_helpers: &LocalHelperCo
     module.visit_mut_with(&mut replacer);
 
     remove_helpers_without_remaining_refs(module, helpers);
-    remove_unused_ts_spread_array_helpers(module, &ts_helpers);
+    local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::SpreadArray);
 }
 
 struct ToConsumableArrayReplacer<'a> {
@@ -144,15 +141,4 @@ fn append_array_source(
         }
         _ => None,
     }
-}
-
-fn remove_unused_ts_spread_array_helpers(module: &mut Module, helpers: &HashSet<BindingKey>) {
-    let remaining = remaining_refs_outside_var_declarators(module, helpers, helpers);
-    let unused: HashSet<_> = helpers.difference(&remaining).cloned().collect();
-    if unused.is_empty() {
-        return;
-    }
-
-    remove_var_declarators_by_binding(&mut module.body, &unused);
-    remove_import_specifiers_by_binding(&mut module.body, &unused);
 }
