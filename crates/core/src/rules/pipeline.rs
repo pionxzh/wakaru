@@ -275,7 +275,12 @@ fn run_un_class_fields(module: &mut Module, ctx: RuleRunContext<'_>) {
     UnClassFields::new_with_mark(ctx.unresolved_mark, ctx.rewrite_level)
         .run_with_helpers(module, local_helpers.as_ref());
 }
-runner!(run_un_ts_helpers, UnTsHelpers);
+fn run_un_ts_helpers(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    if UnTsHelpers::run_with_helpers(module, local_helpers.as_ref()) {
+        ctx.invalidate_local_helpers();
+    }
+}
 
 fn run_un_regenerator(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);

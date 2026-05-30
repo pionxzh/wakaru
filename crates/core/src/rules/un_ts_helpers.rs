@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::ecma::ast::{
-    BinExpr, BinaryOp, Decl, Expr, MemberExpr, MemberProp, Module, ModuleItem, Pat, Stmt,
-};
+use swc_core::ecma::ast::{Decl, Module, ModuleItem, Pat, Stmt};
 use swc_core::ecma::visit::VisitMut;
 
+use super::babel_helper_utils::{BindingKey, LocalHelperContext};
+use super::helper_matcher::{remove_var_declarators_by_binding, var_declarator_binding_key};
 use super::rename_utils::{rename_bindings_in_module, BindingRename};
 
 /// Detect TypeScript helper declarations like:
@@ -17,107 +17,65 @@ use super::rename_utils::{rename_bindings_in_module, BindingRename};
 /// can match them, then remove the helper declarations.
 pub struct UnTsHelpers;
 
-impl VisitMut for UnTsHelpers {
-    fn visit_mut_module(&mut self, module: &mut Module) {
-        let mut renames: Vec<BindingRename> = Vec::new();
-        let mut helper_names: HashSet<Atom> = HashSet::new();
-
-        for item in &module.body {
-            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
-                continue;
-            };
-            for decl in &var_decl.decls {
-                let Pat::Ident(binding) = &decl.name else {
-                    continue;
-                };
-                let Some(init) = &decl.init else {
-                    continue;
-                };
-                if let Some(helper_name) = extract_ts_helper_name(init) {
-                    let local_name = &binding.id.sym;
-                    helper_names.insert(helper_name.clone());
-                    if *local_name != helper_name {
-                        renames.push(BindingRename {
-                            old: (local_name.clone(), binding.id.ctxt),
-                            new: helper_name,
-                        });
-                    }
-                }
-            }
-        }
-
-        if helper_names.is_empty() {
-            return;
-        }
-
-        // Scope-aware rename using shared BindingRenamer
-        if !renames.is_empty() {
-            rename_bindings_in_module(module, &renames);
-        }
-
-        // Remove the helper declarations (now renamed to canonical names)
-        module.body.retain_mut(|item| {
-            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
-                return true;
-            };
-            var_decl.decls.retain(|decl| {
-                let Pat::Ident(binding) = &decl.name else {
-                    return true;
-                };
-                if !helper_names.contains(&binding.id.sym) {
-                    return true;
-                }
-                decl.init
-                    .as_deref()
-                    .and_then(extract_ts_helper_name)
-                    .is_none_or(|helper_name| helper_name != binding.id.sym)
-            });
-            !var_decl.decls.is_empty()
-        });
+impl UnTsHelpers {
+    pub(crate) fn run_with_helpers(
+        module: &mut Module,
+        local_helpers: &LocalHelperContext,
+    ) -> bool {
+        run_un_ts_helpers(module, local_helpers)
     }
 }
 
-/// Extract the canonical helper name from `this && this.__helperName || (...)`.
-fn extract_ts_helper_name(expr: &Expr) -> Option<Atom> {
-    let Expr::Bin(BinExpr {
-        op: BinaryOp::LogicalOr,
-        left,
-        ..
-    }) = expr
-    else {
-        return None;
-    };
+impl VisitMut for UnTsHelpers {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        let local_helpers = LocalHelperContext::collect(module);
+        run_un_ts_helpers(module, &local_helpers);
+    }
+}
 
-    let Expr::Bin(BinExpr {
-        op: BinaryOp::LogicalAnd,
-        left: and_left,
-        right: and_right,
-        ..
-    }) = &**left
-    else {
-        return None;
-    };
-
-    if !matches!(&**and_left, Expr::This(_)) {
-        return None;
+fn run_un_ts_helpers(module: &mut Module, local_helpers: &LocalHelperContext) -> bool {
+    let inline_helpers = local_helpers.inline_ts_helpers();
+    if inline_helpers.is_empty() {
+        return false;
     }
 
-    let Expr::Member(MemberExpr {
-        obj,
-        prop: MemberProp::Ident(prop_name),
-        ..
-    }) = &**and_right
-    else {
-        return None;
-    };
-    if !matches!(&**obj, Expr::This(_)) {
-        return None;
+    let mut renames: Vec<BindingRename> = Vec::new();
+    let mut removable_helpers: HashSet<BindingKey> = HashSet::new();
+
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
+            continue;
+        };
+        for decl in &var_decl.decls {
+            let Some(key) = var_declarator_binding_key(decl) else {
+                continue;
+            };
+            let Some(kind) = inline_helpers.get(&key) else {
+                continue;
+            };
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+
+            let canonical_name = Atom::from(kind.canonical_name());
+            if binding.id.sym != canonical_name {
+                renames.push(BindingRename {
+                    old: (binding.id.sym.clone(), binding.id.ctxt),
+                    new: canonical_name.clone(),
+                });
+            }
+            removable_helpers.insert((canonical_name, binding.id.ctxt));
+        }
     }
 
-    let name = &prop_name.sym;
-    match name.as_ref() {
-        "__awaiter" | "__generator" | "__assign" | "__rest" | "__extends" | "__importDefault"
-        | "__importStar" | "__createBinding" | "__setModuleDefault" => Some(name.clone()),
-        _ => None,
+    if removable_helpers.is_empty() {
+        return false;
     }
+
+    if !renames.is_empty() {
+        rename_bindings_in_module(module, &renames);
+    }
+
+    remove_var_declarators_by_binding(&mut module.body, &removable_helpers);
+    true
 }
