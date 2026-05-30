@@ -393,6 +393,189 @@ class Foo {
 }
 
 #[test]
+fn promotes_tsc_weakmap_private_field_and_accesses() {
+    let input = r#"
+var __classPrivateFieldSet = function(receiver, state, value, kind, f) {
+    return state.set(receiver, value), value;
+};
+var __classPrivateFieldGet = function(receiver, state, kind, f) {
+    return state.get(receiver);
+};
+var _Foo_x;
+class Foo {
+    constructor() {
+        _Foo_x.set(this, 1);
+    }
+    getX() {
+        return __classPrivateFieldGet(this, _Foo_x, "f");
+    }
+    setX(value) {
+        __classPrivateFieldSet(this, _Foo_x, value, "f");
+    }
+}
+_Foo_x = new WeakMap();
+"#;
+    let expected = r#"
+class Foo {
+    #x = 1;
+    getX() {
+        return this.#x;
+    }
+    setX(value) {
+        this.#x = value;
+    }
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn constructor_param_private_init_is_not_promoted_or_rewritten() {
+    let input = r#"
+var __classPrivateFieldGet = function(receiver, state, kind, f) {
+    return state.get(receiver);
+};
+var _Foo_x;
+class Foo {
+    constructor(seed) {
+        _Foo_x.set(this, seed);
+    }
+    getX() {
+        return __classPrivateFieldGet(this, _Foo_x, "f");
+    }
+}
+_Foo_x = new WeakMap();
+"#;
+    let output = render(input);
+    assert!(!output.contains("#x"), "{output}");
+    assert!(output.contains("_Foo_x.set(this, seed)"), "{output}");
+    assert!(
+        output.contains("__classPrivateFieldGet(this, _Foo_x, \"f\")"),
+        "{output}"
+    );
+}
+
+#[test]
+fn shadowed_weakmap_private_init_is_not_promoted() {
+    let input = r#"
+const WeakMap = makeWeakMap();
+var __classPrivateFieldGet = function(receiver, state, kind, f) {
+    return state.get(receiver);
+};
+var _Foo_x = new WeakMap();
+class Foo {
+    constructor() {
+        _Foo_x.set(this, 1);
+    }
+    getX() {
+        return __classPrivateFieldGet(this, _Foo_x, "f");
+    }
+}
+"#;
+    let output = render(input);
+    assert!(!output.contains("#x"), "{output}");
+    assert!(output.contains("_Foo_x.set(this, 1)"), "{output}");
+    assert!(
+        output.contains("__classPrivateFieldGet(this, _Foo_x, \"f\")"),
+        "{output}"
+    );
+}
+
+#[test]
+fn unsupported_private_map_ref_blocks_promotion() {
+    let input = r#"
+var A4 = function(receiver, state, value, kind) {
+    return state.set(receiver, value), value;
+};
+var KE = new WeakMap();
+class Foo {
+    constructor() {
+        KE.set(this, undefined);
+        A4(this, KE, new Uint8Array(), "f");
+    }
+}
+"#;
+    let output = render(input);
+    assert!(!output.contains("#KE"), "{output}");
+    assert!(output.contains("KE.set(this, undefined)"), "{output}");
+    assert!(output.contains("A4(this, KE"), "{output}");
+}
+
+#[test]
+fn shared_weakmap_private_field_is_not_promoted() {
+    let input = r#"
+var __classPrivateFieldGet = function(receiver, state, kind, f) {
+    return state.get(receiver);
+};
+var _shared = new WeakMap();
+class A {
+    constructor() {
+        _shared.set(this, 1);
+    }
+    get() {
+        return __classPrivateFieldGet(this, _shared, "f");
+    }
+}
+class B {
+    constructor() {
+        _shared.set(this, 2);
+    }
+    get() {
+        return __classPrivateFieldGet(this, _shared, "f");
+    }
+}
+"#;
+    let output = render(input);
+    assert!(!output.contains("#shared"), "{output}");
+    assert!(output.contains("_shared.set(this, 1)"), "{output}");
+    assert!(output.contains("_shared.set(this, 2)"), "{output}");
+    assert!(
+        output.contains("__classPrivateFieldGet(this, _shared, \"f\")"),
+        "{output}"
+    );
+}
+
+#[test]
+fn nested_weakmap_reassignment_blocks_private_field_promotion() {
+    let input = r#"
+var _Foo_x;
+function reset() {
+    _Foo_x = new WeakMap();
+}
+class Foo {
+    constructor() {
+        _Foo_x.set(this, 1);
+    }
+}
+_Foo_x = new WeakMap();
+"#;
+    let output = render(input);
+    assert!(!output.contains("#x"), "{output}");
+    assert!(output.contains("function reset()"), "{output}");
+    assert!(output.contains("_Foo_x = new WeakMap()"), "{output}");
+    assert!(output.contains("_Foo_x.set(this, 1)"), "{output}");
+}
+
+#[test]
+fn weakmap_initializer_with_args_blocks_private_field_promotion() {
+    let input = r#"
+var _Foo_x = new WeakMap();
+var _other;
+_other = new WeakMap(_Foo_x);
+class Foo {
+    constructor() {
+        _Foo_x.set(this, 1);
+    }
+}
+"#;
+    let output = render(input);
+    assert!(!output.contains("#x"), "{output}");
+    assert!(output.contains("_Foo_x = new WeakMap()"), "{output}");
+    assert!(output.contains("_other = new WeakMap(_Foo_x)"), "{output}");
+    assert!(output.contains("_Foo_x.set(this, 1)"), "{output}");
+}
+
+#[test]
 fn constructor_param_assignments_are_not_instance_fields() {
     let input = r#"
 class Foo {

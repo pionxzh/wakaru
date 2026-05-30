@@ -1066,6 +1066,78 @@ class Foo {
 }
 
 #[test]
+fn minimal_disables_tsc_private_class_field_recovery() {
+    let input = r#"
+var __classPrivateFieldGet = function(receiver, state, kind, f) {
+    return state.get(receiver);
+};
+var _Foo_x;
+class Foo {
+    constructor() {
+        _Foo_x.set(this, 1);
+    }
+    getX() {
+        return __classPrivateFieldGet(this, _Foo_x, "f");
+    }
+}
+_Foo_x = new WeakMap();
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Minimal,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(!output.contains("#x"), "{output}");
+    assert!(output.contains("_Foo_x.set(this, 1)"), "{output}");
+    assert!(
+        output.contains("__classPrivateFieldGet(this, _Foo_x, \"f\")"),
+        "{output}"
+    );
+}
+
+#[test]
+fn standard_keeps_tsc_private_class_field_recovery() {
+    let input = r#"
+var __classPrivateFieldGet = function(receiver, state, kind, f) {
+    return state.get(receiver);
+};
+var _Foo_x;
+class Foo {
+    constructor() {
+        _Foo_x.set(this, 1);
+    }
+    getX() {
+        return __classPrivateFieldGet(this, _Foo_x, "f");
+    }
+}
+_Foo_x = new WeakMap();
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Standard,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(output.contains("#x = 1"), "{output}");
+    assert!(output.contains("return this.#x"), "{output}");
+}
+
+#[test]
 fn minimal_disables_arg_rest_recovery() {
     let input = r#"
 function foo() {
