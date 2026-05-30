@@ -153,6 +153,7 @@ const pathPresets = {
   variables: ["test/language/statements/variable"],
   "assignment-target-type": ["test/language/expressions/assignmenttargettype"],
   "arguments-object": ["test/language/arguments-object"],
+  identifiers: ["test/language/identifiers"],
   modules: ["test/language/module-code"],
 };
 

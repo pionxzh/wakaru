@@ -25,6 +25,7 @@ export const baselineSlices = [
   "variables",
   "assignment-target-type",
   "arguments-object",
+  "identifiers",
   "modules",
 ];
 
