@@ -36,10 +36,11 @@ impl SmartRename {
 
 impl VisitMut for SmartRename {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        react_rename_module(module);
-        destructuring_rename_module(module);
-        member_init_rename_module(module);
-        symbol_for_rename_module(module, self.unresolved_mark);
+        let mut cached_names = collect_names_in_module(&module.body);
+        react_rename_module_with(module, &cached_names);
+        destructuring_rename_module_with(module, &mut cached_names);
+        member_init_rename_module_with(module, &cached_names);
+        symbol_for_rename_module_with(module, &cached_names, self.unresolved_mark);
 
         sentry_component_rename_module(module);
         module.visit_mut_children_with(self);
@@ -112,9 +113,8 @@ impl VisitMut for SmartRenameSecondPass {
 
 const MAX_SYNTHETIC_NAME_ATTEMPTS: usize = 10_000;
 
-fn react_rename_module(module: &mut Module) {
-    let all_names = collect_names_in_module(&module.body);
-    let renames = collect_react_renames_from_module_items(&module.body, &all_names);
+fn react_rename_module_with(module: &mut Module, all_names: &HashSet<Atom>) {
+    let renames = collect_react_renames_from_module_items(&module.body, all_names);
     if renames.is_empty() {
         return;
     }
@@ -172,7 +172,7 @@ fn has_react_candidates_in_stmts(stmts: &[Stmt]) -> bool {
 
 fn collect_react_renames_from_module_items(
     body: &[ModuleItem],
-    all_names: &HashSet<String>,
+    all_names: &HashSet<Atom>,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -188,7 +188,7 @@ fn collect_react_renames_from_module_items(
 
 fn collect_react_renames_from_stmts(
     stmts: &[Stmt],
-    all_names: &HashSet<String>,
+    all_names: &HashSet<Atom>,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -206,7 +206,7 @@ fn collect_react_renames_from_stmts(
 fn collect_react_var_decl_renames(
     var_decl: &VarDecl,
     renames: &mut Vec<BindingRename>,
-    used_names: &mut HashSet<String>,
+    used_names: &mut HashSet<Atom>,
 ) {
     for decl in &var_decl.decls {
         match &decl.name {
@@ -224,8 +224,9 @@ fn collect_react_var_decl_renames(
                             _ => continue,
                         };
 
-                        if !used_names.contains(&new_name) || new_name == old_name {
-                            used_names.insert(new_name.clone());
+                        let new_atom = Atom::from(new_name.as_str());
+                        if !used_names.contains(&new_atom) || new_name == old_name {
+                            used_names.insert(new_atom);
                             renames.push(BindingRename {
                                 old: (binding.id.sym.clone(), binding.id.ctxt),
                                 new: new_name.as_str().into(),
@@ -253,7 +254,7 @@ fn collect_array_pat_react_renames(
     init: &Expr,
     hook_name: &str,
     renames: &mut Vec<BindingRename>,
-    used_names: &mut HashSet<String>,
+    used_names: &mut HashSet<Atom>,
 ) {
     match hook_name {
         "useState" => {
@@ -261,8 +262,9 @@ fn collect_array_pat_react_renames(
             if let Some((setter_name, setter_id)) = get_array_elem_if_short(array_pat, 1) {
                 let base = state_name.unwrap_or_else(|| setter_name.clone());
                 let new_setter = format!("set{}", pascal_case_first(&base));
-                if !used_names.contains(&new_setter) || new_setter == setter_name {
-                    used_names.insert(new_setter.clone());
+                let setter_atom = Atom::from(new_setter.as_str());
+                if !used_names.contains(&setter_atom) || new_setter == setter_name {
+                    used_names.insert(setter_atom);
                     renames.push(BindingRename {
                         old: setter_id,
                         new: new_setter.as_str().into(),
@@ -273,8 +275,9 @@ fn collect_array_pat_react_renames(
         "useReducer" => {
             if let Some((state_name, state_id)) = get_array_elem_if_short(array_pat, 0) {
                 let new_state = format!("{}State", state_name);
-                if !used_names.contains(&new_state) || new_state == state_name {
-                    used_names.insert(new_state.clone());
+                let state_atom = Atom::from(new_state.as_str());
+                if !used_names.contains(&state_atom) || new_state == state_name {
+                    used_names.insert(state_atom);
                     renames.push(BindingRename {
                         old: state_id,
                         new: new_state.as_str().into(),
@@ -283,8 +286,9 @@ fn collect_array_pat_react_renames(
             }
             if let Some((dispatch_name, dispatch_id)) = get_array_elem_if_short(array_pat, 1) {
                 let new_dispatch = format!("{}Dispatch", dispatch_name);
-                if !used_names.contains(&new_dispatch) || new_dispatch == dispatch_name {
-                    used_names.insert(new_dispatch.clone());
+                let dispatch_atom = Atom::from(new_dispatch.as_str());
+                if !used_names.contains(&dispatch_atom) || new_dispatch == dispatch_name {
+                    used_names.insert(dispatch_atom);
                     renames.push(BindingRename {
                         old: dispatch_id,
                         new: new_dispatch.as_str().into(),
@@ -370,7 +374,7 @@ fn rename_array_elem_if_short(
     idx: usize,
     new_name: &str,
     renames: &mut Vec<BindingRename>,
-    used_names: &mut HashSet<String>,
+    used_names: &mut HashSet<Atom>,
 ) {
     let Some((old_name, old_id)) = get_array_elem_if_short(array_pat, idx) else {
         return;
@@ -379,7 +383,7 @@ fn rename_array_elem_if_short(
     if new_name == old_name {
         return;
     }
-    used_names.insert(new_name.clone());
+    used_names.insert(Atom::from(new_name.as_str()));
     renames.push(BindingRename {
         old: old_id,
         new: new_name.as_str().into(),
@@ -506,7 +510,7 @@ fn destructuring_rename_function(func: &mut Function) {
     // pick names that would shadow a just-renamed parameter.
     let mut renames = collect_obj_pat_renames_from_params(&func.params, &all_names);
     for r in &renames {
-        all_names.insert(r.new.to_string());
+        all_names.insert(r.new.clone());
     }
     let body_renames = collect_obj_pat_renames_from_stmts(&body.stmts, &all_names);
     renames.extend(body_renames);
@@ -527,11 +531,13 @@ fn destructuring_rename_function(func: &mut Function) {
     }
 }
 
-fn destructuring_rename_module(module: &mut Module) {
-    let all_names = collect_names_in_module(&module.body);
-    let renames = collect_obj_pat_renames_from_module(&module.body, &all_names);
+fn destructuring_rename_module_with(module: &mut Module, all_names: &mut HashSet<Atom>) {
+    let renames = collect_obj_pat_renames_from_module(&module.body, all_names);
     if renames.is_empty() {
         return;
+    }
+    for r in &renames {
+        all_names.insert(r.new.clone());
     }
     rename_bindings_in_module(module, &renames);
     let mut shorthand = ObjectPatShorthandConverter;
@@ -561,7 +567,7 @@ fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
     }
     let mut renames = collect_obj_pat_renames_from_pats(&arrow.params, &all_names);
     for r in &renames {
-        all_names.insert(r.new.to_string());
+        all_names.insert(r.new.clone());
     }
     if let BlockStmtOrExpr::BlockStmt(b) = arrow.body.as_ref() {
         renames.extend(collect_obj_pat_renames_from_stmts(&b.stmts, &all_names));
@@ -586,7 +592,7 @@ fn destructuring_rename_arrow(arrow: &mut ArrowExpr) {
 
 fn collect_obj_pat_renames_from_module(
     body: &[ModuleItem],
-    all_names: &HashSet<String>,
+    all_names: &HashSet<Atom>,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -614,7 +620,7 @@ fn collect_obj_pat_renames_from_module(
 
 fn collect_obj_pat_renames_from_params(
     params: &[Param],
-    all_names: &HashSet<String>,
+    all_names: &HashSet<Atom>,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -626,7 +632,7 @@ fn collect_obj_pat_renames_from_params(
 
 fn collect_obj_pat_renames_from_stmts(
     stmts: &[Stmt],
-    all_names: &HashSet<String>,
+    all_names: &HashSet<Atom>,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -643,7 +649,7 @@ fn collect_obj_pat_renames_from_stmts(
 
 fn collect_obj_pat_renames_from_pats(
     params: &[Pat],
-    all_names: &HashSet<String>,
+    all_names: &HashSet<Atom>,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -656,7 +662,7 @@ fn collect_obj_pat_renames_from_pats(
 fn collect_obj_pat_renames_from_pat(
     pat: &Pat,
     renames: &mut Vec<BindingRename>,
-    used_names: &mut HashSet<String>,
+    used_names: &mut HashSet<Atom>,
 ) {
     let Pat::Object(obj_pat) = pat else { return };
     for prop in &obj_pat.props {
@@ -691,7 +697,7 @@ fn collect_obj_pat_renames_from_pat(
                     continue;
                 }
                 let new_name = find_non_conflicting_name(&target_name, used_names);
-                used_names.insert(new_name.clone());
+                used_names.insert(Atom::from(new_name.as_str()));
                 renames.push(BindingRename {
                     old: alias,
                     new: new_name.as_str().into(),
@@ -709,7 +715,7 @@ fn collect_obj_pat_renames_from_pat(
                 if new_name == alias.0.as_ref() {
                     continue;
                 }
-                used_names.insert(new_name.clone());
+                used_names.insert(Atom::from(new_name.as_str()));
                 renames.push(BindingRename {
                     old: alias,
                     new: new_name.as_str().into(),
@@ -728,15 +734,17 @@ fn extract_binding_from_pat(pat: &Pat) -> Option<BindingId> {
     }
 }
 
-fn find_non_conflicting_name(base: &str, used_names: &HashSet<String>) -> String {
+fn find_non_conflicting_name(base: &str, used_names: &HashSet<Atom>) -> String {
     let base = to_valid_identifier_name(base);
 
-    if !used_names.contains(&base) {
+    let base_atom = Atom::from(base.as_str());
+    if !used_names.contains(&base_atom) {
         return base;
     }
     for i in 1..=MAX_SYNTHETIC_NAME_ATTEMPTS {
         let candidate = format!("{}_{}", base, i);
-        if !used_names.contains(&candidate) {
+        let candidate_atom = Atom::from(candidate.as_str());
+        if !used_names.contains(&candidate_atom) {
             return candidate;
         }
     }
@@ -876,9 +884,8 @@ fn member_init_rename_arrow(arrow: &mut ArrowExpr) {
     rename_bindings(&mut block.stmts, &renames);
 }
 
-fn member_init_rename_module(module: &mut Module) {
-    let all_names = collect_names_in_module(&module.body);
-    let renames = collect_member_init_renames_from_module(&module.body, &all_names);
+fn member_init_rename_module_with(module: &mut Module, all_names: &HashSet<Atom>) {
+    let renames = collect_member_init_renames_from_module(&module.body, all_names);
     if renames.is_empty() {
         return;
     }
@@ -887,7 +894,7 @@ fn member_init_rename_module(module: &mut Module) {
 
 fn collect_member_init_renames_from_module(
     body: &[ModuleItem],
-    all_names: &HashSet<String>,
+    all_names: &HashSet<Atom>,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -902,7 +909,7 @@ fn collect_member_init_renames_from_module(
 
 fn collect_member_init_renames_from_stmts(
     stmts: &[Stmt],
-    all_names: &HashSet<String>,
+    all_names: &HashSet<Atom>,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -918,7 +925,7 @@ fn collect_member_init_renames_from_stmts(
 fn collect_member_init_var_renames(
     var: &VarDecl,
     renames: &mut Vec<BindingRename>,
-    used_names: &mut HashSet<String>,
+    used_names: &mut HashSet<Atom>,
 ) {
     for decl in &var.decls {
         let Pat::Ident(bi) = &decl.name else { continue };
@@ -962,7 +969,7 @@ fn collect_member_init_var_renames(
         if new_name == old_name {
             continue;
         }
-        used_names.insert(new_name.clone());
+        used_names.insert(Atom::from(new_name.as_str()));
         renames.push(BindingRename {
             old: (bi.id.sym.clone(), bi.id.ctxt),
             new: new_name.as_str().into(),
@@ -1005,9 +1012,12 @@ fn symbol_for_rename_function(func: &mut Function, unresolved_mark: Mark) {
     rename_bindings(&mut body.stmts, &renames);
 }
 
-fn symbol_for_rename_module(module: &mut Module, unresolved_mark: Mark) {
-    let all_names = collect_names_in_module(&module.body);
-    let renames = collect_symbol_for_renames_from_module(&module.body, &all_names, unresolved_mark);
+fn symbol_for_rename_module_with(
+    module: &mut Module,
+    all_names: &HashSet<Atom>,
+    unresolved_mark: Mark,
+) {
+    let renames = collect_symbol_for_renames_from_module(&module.body, all_names, unresolved_mark);
     if renames.is_empty() {
         return;
     }
@@ -1035,7 +1045,7 @@ fn symbol_for_rename_arrow(arrow: &mut ArrowExpr, unresolved_mark: Mark) {
 
 fn collect_symbol_for_renames_from_module(
     body: &[ModuleItem],
-    all_names: &HashSet<String>,
+    all_names: &HashSet<Atom>,
     unresolved_mark: Mark,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
@@ -1063,7 +1073,7 @@ fn collect_symbol_for_renames_from_module(
 
 fn collect_symbol_for_renames_from_stmts(
     stmts: &[Stmt],
-    all_names: &HashSet<String>,
+    all_names: &HashSet<Atom>,
     unresolved_mark: Mark,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
@@ -1080,7 +1090,7 @@ fn collect_symbol_for_renames_from_stmts(
 fn collect_symbol_for_var_renames(
     var: &VarDecl,
     renames: &mut Vec<BindingRename>,
-    used_names: &mut HashSet<String>,
+    used_names: &mut HashSet<Atom>,
     unresolved_mark: Mark,
 ) {
     for decl in &var.decls {
@@ -1111,7 +1121,7 @@ fn collect_symbol_for_var_renames(
         if new_name == old_name {
             continue;
         }
-        used_names.insert(new_name.clone());
+        used_names.insert(Atom::from(new_name.as_str()));
         renames.push(BindingRename {
             old: (bi.id.sym.clone(), bi.id.ctxt),
             new: new_name.as_str().into(),
@@ -1155,25 +1165,25 @@ fn extract_symbol_for_key(expr: &Expr, unresolved_mark: Mark) -> Option<String> 
 // Name collection helpers
 // ============================================================
 
-fn collect_names_in_module(body: &[ModuleItem]) -> HashSet<String> {
+fn collect_names_in_module(body: &[ModuleItem]) -> HashSet<Atom> {
     let mut collector = NameCollector::default();
     body.visit_with(&mut collector);
     collector.names
 }
 
-fn collect_names_in_stmts(stmts: &[Stmt]) -> HashSet<String> {
+fn collect_names_in_stmts(stmts: &[Stmt]) -> HashSet<Atom> {
     let mut collector = NameCollector::default();
     stmts.visit_with(&mut collector);
     collector.names
 }
 
-fn collect_names_in_expr(expr: &Expr, names: &mut HashSet<String>) {
+fn collect_names_in_expr(expr: &Expr, names: &mut HashSet<Atom>) {
     let mut collector = NameCollector::default();
     expr.visit_with(&mut collector);
     names.extend(collector.names);
 }
 
-fn collect_names_in_pat(pat: &Pat, names: &mut HashSet<String>) {
+fn collect_names_in_pat(pat: &Pat, names: &mut HashSet<Atom>) {
     let mut collector = NameCollector::default();
     pat.visit_with(&mut collector);
     names.extend(collector.names);
@@ -1181,12 +1191,24 @@ fn collect_names_in_pat(pat: &Pat, names: &mut HashSet<String>) {
 
 #[derive(Default)]
 struct NameCollector {
-    names: HashSet<String>,
+    names: HashSet<Atom>,
 }
 
 impl Visit for NameCollector {
     fn visit_ident(&mut self, id: &Ident) {
-        self.names.insert(id.sym.to_string());
+        self.names.insert(id.sym.clone());
+    }
+
+    fn visit_function(&mut self, f: &Function) {
+        for param in &f.params {
+            param.visit_with(self);
+        }
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        for param in &arrow.params {
+            param.visit_with(self);
+        }
     }
 }
 
@@ -1335,7 +1357,7 @@ fn value_position_rename_module(module: &mut Module) {
     // Two-pass assignment: first reserve direct (unsuffixed) target names so
     // a later suffix fallback never steals another binding's natural target.
     let mut renames: Vec<BindingRename> = Vec::new();
-    let mut committed_names: HashSet<String> = HashSet::new();
+    let mut committed_names: HashSet<Atom> = HashSet::new();
     let mut needs_suffix: Vec<(String, BindingId)> = Vec::new();
 
     for (target, bid) in candidates {
@@ -1344,7 +1366,7 @@ fn value_position_rename_module(module: &mut Module) {
         }
         let atom: Atom = target.as_str().into();
         if !top_level_names.contains(&atom) && !shadow_index.rename_causes_shadowing(&bid, &atom) {
-            committed_names.insert(target.clone());
+            committed_names.insert(atom.clone());
             renames.push(BindingRename {
                 old: bid,
                 new: atom,
@@ -1357,13 +1379,13 @@ fn value_position_rename_module(module: &mut Module) {
     for (target, bid) in needs_suffix {
         let final_name = (1..=10).map(|i| format!("{target}_{i}")).find(|candidate| {
             let atom: Atom = candidate.as_str().into();
-            !committed_names.contains(candidate.as_str())
+            !committed_names.contains(&atom)
                 && !top_level_names.contains(&atom)
                 && !shadow_index.rename_causes_shadowing(&bid, &atom)
         });
 
         if let Some(name) = final_name {
-            committed_names.insert(name.clone());
+            committed_names.insert(Atom::from(name.as_str()));
             renames.push(BindingRename {
                 old: bid,
                 new: name.as_str().into(),
@@ -1842,7 +1864,10 @@ fn jsx_component_alias_rename_module(module: &mut Module) {
         if state.other_uses > 0 || state.jsx_uses == 0 {
             continue;
         }
-        if collector.all_binding_names.contains(state.target.as_str()) {
+        if collector
+            .all_binding_names
+            .contains(&Atom::from(state.target.as_str()))
+        {
             continue;
         }
         renames.push(BindingRename {
@@ -1857,12 +1882,12 @@ fn jsx_component_alias_rename_module(module: &mut Module) {
 #[derive(Default)]
 struct JsxComponentAliasCollector {
     aliases: HashMap<BindingId, String>,
-    all_binding_names: HashSet<String>,
+    all_binding_names: HashSet<Atom>,
 }
 
 impl JsxComponentAliasCollector {
     fn record_binding_name(&mut self, id: &Ident) {
-        self.all_binding_names.insert(id.sym.to_string());
+        self.all_binding_names.insert(id.sym.clone());
     }
 
     fn collect_pat_names(&mut self, pat: &Pat) {
@@ -2104,9 +2129,9 @@ mod tests {
     #[test]
     fn find_non_conflicting_name_uses_next_available_suffix() {
         let used_names = HashSet::from([
-            "rest".to_string(),
-            "rest_1".to_string(),
-            "rest_2".to_string(),
+            Atom::from("rest"),
+            Atom::from("rest_1"),
+            Atom::from("rest_2"),
         ]);
 
         assert_eq!(find_non_conflicting_name("rest", &used_names), "rest_3");
