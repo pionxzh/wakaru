@@ -806,19 +806,140 @@ fn collect_import_pragmas(items: &[ModuleItem]) -> HashMap<BindingId, &'static s
     map
 }
 
+fn has_display_name_candidates<'a>(stmts: impl Iterator<Item = &'a Stmt>) -> bool {
+    stmts.into_iter().any(|stmt| {
+        let Stmt::Expr(expr_stmt) = stmt else {
+            return false;
+        };
+        let Expr::Assign(assign) = expr_stmt.expr.as_ref() else {
+            return false;
+        };
+        if assign.op != AssignOp::Assign {
+            return false;
+        }
+        let swc_core::ecma::ast::AssignTarget::Simple(
+            swc_core::ecma::ast::SimpleAssignTarget::Member(member),
+        ) = &assign.left
+        else {
+            return false;
+        };
+        matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "displayName")
+            && matches!(member.obj.as_ref(), Expr::Ident(obj) if obj.sym.len() <= 2)
+    })
+}
+
+fn has_lowercase_jsx_component_calls(
+    items: &[ModuleItem],
+    import_pragmas: &HashMap<BindingId, &'static str>,
+    unresolved_mark: Mark,
+) -> bool {
+    struct Scan<'a> {
+        found: bool,
+        import_pragmas: &'a HashMap<BindingId, &'static str>,
+        unresolved_mark: Mark,
+    }
+    impl Visit for Scan<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if self.found {
+                return;
+            }
+            if get_pragma(&call.callee, self.import_pragmas).is_some() {
+                if let Some(first) = call.args.first() {
+                    if first.spread.is_none() {
+                        if let Expr::Ident(id) = first.expr.as_ref() {
+                            if starts_with_lowercase(id.sym.as_ref())
+                                && id.ctxt.outer() != self.unresolved_mark
+                            {
+                                self.found = true;
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+    let mut scan = Scan {
+        found: false,
+        import_pragmas,
+        unresolved_mark,
+    };
+    items.visit_with(&mut scan);
+    scan.found
+}
+
+fn has_lowercase_jsx_component_calls_stmts(
+    stmts: &[Stmt],
+    import_pragmas: &HashMap<BindingId, &'static str>,
+    unresolved_mark: Mark,
+) -> bool {
+    struct Scan<'a> {
+        found: bool,
+        import_pragmas: &'a HashMap<BindingId, &'static str>,
+        unresolved_mark: Mark,
+    }
+    impl Visit for Scan<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if self.found {
+                return;
+            }
+            if get_pragma(&call.callee, self.import_pragmas).is_some() {
+                if let Some(first) = call.args.first() {
+                    if first.spread.is_none() {
+                        if let Expr::Ident(id) = first.expr.as_ref() {
+                            if starts_with_lowercase(id.sym.as_ref())
+                                && id.ctxt.outer() != self.unresolved_mark
+                            {
+                                self.found = true;
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+    let mut scan = Scan {
+        found: false,
+        import_pragmas,
+        unresolved_mark,
+    };
+    stmts.visit_with(&mut scan);
+    scan.found
+}
+
 fn collect_module_renames(
     items: &[ModuleItem],
     unresolved_mark: Mark,
     import_pragmas: &HashMap<BindingId, &'static str>,
 ) -> (Vec<ScopedRename>, HashSet<Atom>) {
+    let has_display = has_display_name_candidates(items.iter().filter_map(|i| {
+        if let ModuleItem::Stmt(s) = i {
+            Some(s)
+        } else {
+            None
+        }
+    }));
+    let has_lc = has_lowercase_jsx_component_calls(items, import_pragmas, unresolved_mark);
+    if !has_display && !has_lc {
+        return (Vec::new(), collect_names_in_module_items(items));
+    }
     let mut name_registry = collect_names_in_module_items(items);
-    let mut renames = collect_display_name_renames_from_module_items(items, &mut name_registry);
-    renames.extend(collect_lowercase_component_renames_from_module_items(
-        items,
-        unresolved_mark,
-        &mut name_registry,
-        import_pragmas,
-    ));
+    let mut renames = if has_display {
+        collect_display_name_renames_from_module_items(items, &mut name_registry)
+    } else {
+        Vec::new()
+    };
+    if has_lc {
+        renames.extend(collect_lowercase_component_renames_from_module_items(
+            items,
+            unresolved_mark,
+            &mut name_registry,
+            import_pragmas,
+        ));
+    }
     (renames, name_registry)
 }
 
@@ -827,14 +948,25 @@ fn collect_stmt_renames(
     unresolved_mark: Mark,
     import_pragmas: &HashMap<BindingId, &'static str>,
 ) -> (Vec<ScopedRename>, HashSet<Atom>) {
+    let has_display = has_display_name_candidates(stmts.iter());
+    let has_lc = has_lowercase_jsx_component_calls_stmts(stmts, import_pragmas, unresolved_mark);
+    if !has_display && !has_lc {
+        return (Vec::new(), collect_names_in_stmts(stmts));
+    }
     let mut name_registry = collect_names_in_stmts(stmts);
-    let mut renames = collect_display_name_renames_from_stmts(stmts, &mut name_registry);
-    renames.extend(collect_lowercase_component_renames_from_stmts(
-        stmts,
-        unresolved_mark,
-        &mut name_registry,
-        import_pragmas,
-    ));
+    let mut renames = if has_display {
+        collect_display_name_renames_from_stmts(stmts, &mut name_registry)
+    } else {
+        Vec::new()
+    };
+    if has_lc {
+        renames.extend(collect_lowercase_component_renames_from_stmts(
+            stmts,
+            unresolved_mark,
+            &mut name_registry,
+            import_pragmas,
+        ));
+    }
     (renames, name_registry)
 }
 
