@@ -7,9 +7,9 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_tslib_namespace_bindings, module_has_tslib_require_member_call,
-    remove_helper_declarations, tslib_helper_name_kind, tslib_member_helper_kind,
-    tslib_require_member_name, BabelHelperKind, BindingKey, LocalHelperContext,
+    collect_tslib_namespace_bindings, remove_helper_declarations, tslib_helper_name_kind,
+    tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind, BindingKey,
+    LocalHelperContext,
 };
 use crate::utils::paren::strip_parens;
 
@@ -40,7 +40,7 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
     let helpers = local_helpers.helpers_of_kind(BabelHelperKind::InteropRequireDefault);
     let tslib_namespaces = collect_tslib_namespace_bindings(module);
     let has_direct_tslib_calls =
-        module_has_tslib_require_member_call(module, BabelHelperKind::InteropRequireDefault);
+        local_helpers.has_tslib_require_member_call(BabelHelperKind::InteropRequireDefault);
 
     if !helpers.is_empty() || !tslib_namespaces.is_empty() || has_direct_tslib_calls {
         // Phase 1: Collect which bindings receive helper-wrapped values

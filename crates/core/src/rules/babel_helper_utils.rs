@@ -38,7 +38,7 @@ pub(crate) fn collect_helpers_call_count() -> usize {
     COLLECT_HELPERS_CALLS.with(Cell::get)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum BabelHelperKind {
     InteropRequireDefault,
     InteropRequireWildcard,
@@ -106,6 +106,7 @@ struct TsHelperInfo {
 pub(crate) struct LocalHelperContext {
     helpers: HashMap<BindingKey, BabelHelperKind>,
     ts_helpers: HashMap<BindingKey, TsHelperInfo>,
+    tslib_require_member_calls: HashSet<BabelHelperKind>,
 }
 
 impl LocalHelperContext {
@@ -113,6 +114,7 @@ impl LocalHelperContext {
         Self {
             helpers: collect_helpers(module),
             ts_helpers: collect_ts_helpers(module),
+            tslib_require_member_calls: collect_tslib_require_member_calls(module),
         }
     }
 
@@ -145,6 +147,10 @@ impl LocalHelperContext {
             .filter(|(_, helper)| helper.source == TsHelperSource::Inline)
             .map(|(key, helper)| (key.clone(), helper.kind))
             .collect()
+    }
+
+    pub(crate) fn has_tslib_require_member_call(&self, kind: BabelHelperKind) -> bool {
+        self.tslib_require_member_calls.contains(&kind)
     }
 }
 
@@ -710,33 +716,29 @@ pub(crate) fn tslib_require_member_name(expr: &Expr) -> Option<&str> {
     member_prop_name(&member.prop)
 }
 
-pub(crate) fn module_has_tslib_require_member_call(module: &Module, kind: BabelHelperKind) -> bool {
+fn collect_tslib_require_member_calls(module: &Module) -> HashSet<BabelHelperKind> {
     struct Finder {
-        kind: BabelHelperKind,
-        found: bool,
+        kinds: HashSet<BabelHelperKind>,
     }
 
     impl Visit for Finder {
         fn visit_call_expr(&mut self, call: &CallExpr) {
-            if self.found {
-                return;
-            }
             if let Callee::Expr(callee) = &call.callee {
-                if tslib_require_member_name(callee.as_ref())
-                    .and_then(tslib_helper_name_kind)
-                    .is_some_and(|kind| kind == self.kind)
+                if let Some(kind) =
+                    tslib_require_member_name(callee.as_ref()).and_then(tslib_helper_name_kind)
                 {
-                    self.found = true;
-                    return;
+                    self.kinds.insert(kind);
                 }
             }
             call.visit_children_with(self);
         }
     }
 
-    let mut finder = Finder { kind, found: false };
+    let mut finder = Finder {
+        kinds: HashSet::new(),
+    };
     module.visit_with(&mut finder);
-    finder.found
+    finder.kinds
 }
 
 fn detect_helper_from_tslib_require_member(member: &MemberExpr) -> Option<BabelHelperKind> {
@@ -3347,6 +3349,26 @@ mod tests {
             let awaiter_helpers =
                 LocalHelperContext::collect(&module).ts_helpers_of_kind(TsHelperKind::Awaiter);
             assert_eq!(awaiter_helpers.len(), 4);
+        });
+    }
+
+    #[test]
+    fn local_helper_context_records_direct_tslib_require_member_calls() {
+        GLOBALS.set(&Globals::new(), || {
+            let module = parse_module(
+                r#"
+                var a = require("tslib").__importDefault(require("a"));
+                var b = require("tslib").__importStar(require("b"));
+                var c = require("tslib").__read(values, 2);
+                var d = require("not-tslib").__read(values, 2);
+                "#,
+            );
+            let context = LocalHelperContext::collect(&module);
+
+            assert!(context.has_tslib_require_member_call(BabelHelperKind::InteropRequireDefault));
+            assert!(context.has_tslib_require_member_call(BabelHelperKind::InteropRequireWildcard));
+            assert!(context.has_tslib_require_member_call(BabelHelperKind::SlicedToArray));
+            assert!(!context.has_tslib_require_member_call(BabelHelperKind::ObjectSpread));
         });
     }
 
