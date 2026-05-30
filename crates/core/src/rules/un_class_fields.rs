@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     BindingIdent, CallExpr, Callee, Class, ClassMember, ClassProp, Expr, ExprOrSpread, ExprStmt,
-    IdentName, MemberExpr, MemberProp, Module, Pat, PropName, Stmt,
+    IdentName, KeyValueProp, Lit, MemberExpr, MemberProp, Module, Pat, Prop, PropName,
+    PropOrSpread, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith};
 
@@ -39,13 +40,19 @@ use super::RewriteLevel;
 /// ```
 pub struct UnClassFields {
     level: RewriteLevel,
+    unresolved_mark: Mark,
     define_property_helpers: HashSet<BindingKey>,
 }
 
 impl UnClassFields {
     pub fn new(level: RewriteLevel) -> Self {
+        Self::new_with_mark(Mark::new(), level)
+    }
+
+    pub fn new_with_mark(unresolved_mark: Mark, level: RewriteLevel) -> Self {
         Self {
             level,
+            unresolved_mark,
             define_property_helpers: HashSet::new(),
         }
     }
@@ -170,9 +177,12 @@ impl VisitMut for UnClassFields {
         if inlined_names.is_empty()
             && self.level >= RewriteLevel::Standard
             && class.super_class.is_none()
-            && !self.define_property_helpers.is_empty()
         {
-            promote_constructor_field_assignments(class, &self.define_property_helpers);
+            promote_constructor_field_assignments(
+                class,
+                &self.define_property_helpers,
+                self.unresolved_mark,
+            );
         }
     }
 }
@@ -196,6 +206,7 @@ fn prop_name_str(key: &swc_core::ecma::ast::PropName) -> Option<String> {
 fn promote_constructor_field_assignments(
     class: &mut Class,
     define_property_helpers: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
 ) {
     let Some(ctor_index) = class
         .body
@@ -218,7 +229,7 @@ fn promote_constructor_field_assignments(
 
         for stmt in &body.stmts {
             let Some((key, value)) =
-                extract_babel_instance_field_initializer(stmt, define_property_helpers)
+                extract_instance_field_initializer(stmt, define_property_helpers, unresolved_mark)
             else {
                 break;
             };
@@ -258,6 +269,16 @@ fn promote_constructor_field_assignments(
     for (offset, prop) in class_props.into_iter().enumerate() {
         class.body.insert(ctor_index + offset, prop);
     }
+}
+
+fn extract_instance_field_initializer(
+    stmt: &Stmt,
+    define_property_helpers: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> Option<(PropName, Box<Expr>)> {
+    extract_babel_instance_field_initializer(stmt, define_property_helpers).or_else(|| {
+        extract_object_define_property_instance_field_initializer(stmt, unresolved_mark)
+    })
 }
 
 fn constructor_blocked_bindings(
@@ -333,6 +354,107 @@ fn extract_babel_instance_field_initializer(
     }
     let key = field_key_from_expr(key)?;
     Some((key, value.clone()))
+}
+
+fn extract_object_define_property_instance_field_initializer(
+    stmt: &Stmt,
+    unresolved_mark: Mark,
+) -> Option<(PropName, Box<Expr>)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = &**expr else {
+        return None;
+    };
+    if call.args.len() != 3 || call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+    if !is_object_define_property_callee(&call.callee, unresolved_mark) {
+        return None;
+    }
+    let [ExprOrSpread { expr: obj, .. }, ExprOrSpread { expr: key, .. }, ExprOrSpread {
+        expr: descriptor, ..
+    }] = call.args.as_slice()
+    else {
+        return None;
+    };
+    if !matches!(obj.as_ref(), Expr::This(_)) {
+        return None;
+    }
+    let key = field_key_from_expr(key)?;
+    let value = extract_class_field_descriptor_value(descriptor)?;
+    Some((key, value))
+}
+
+fn is_object_define_property_callee(callee: &Callee, unresolved_mark: Mark) -> bool {
+    let Callee::Expr(callee) = callee else {
+        return false;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return false;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    obj.sym.as_ref() == "Object"
+        && obj.ctxt.outer() == unresolved_mark
+        && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "defineProperty")
+}
+
+fn extract_class_field_descriptor_value(descriptor: &Expr) -> Option<Box<Expr>> {
+    let Expr::Object(object) = descriptor else {
+        return None;
+    };
+    let mut value = None;
+    let mut has_enumerable = false;
+    let mut has_configurable = false;
+    let mut has_writable = false;
+
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let Prop::KeyValue(KeyValueProp {
+            key,
+            value: prop_value,
+        }) = prop.as_ref()
+        else {
+            return None;
+        };
+        let name = prop_name_str(key)?;
+        match name.as_str() {
+            "value" => value = Some(prop_value.clone()),
+            "enumerable" => {
+                if !is_true_literal(prop_value) {
+                    return None;
+                }
+                has_enumerable = true;
+            }
+            "configurable" => {
+                if !is_true_literal(prop_value) {
+                    return None;
+                }
+                has_configurable = true;
+            }
+            "writable" => {
+                if !is_true_literal(prop_value) {
+                    return None;
+                }
+                has_writable = true;
+            }
+            _ => return None,
+        }
+    }
+
+    if has_enumerable && has_configurable && has_writable {
+        value
+    } else {
+        None
+    }
+}
+
+fn is_true_literal(expr: &Expr) -> bool {
+    matches!(expr, Expr::Lit(Lit::Bool(bool_lit)) if bool_lit.value)
 }
 
 fn field_key_from_expr(expr: &Expr) -> Option<PropName> {

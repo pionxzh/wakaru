@@ -992,6 +992,80 @@ class Foo {
 }
 
 #[test]
+fn minimal_disables_define_property_instance_class_field_recovery() {
+    let input = r#"
+class Foo {
+    constructor() {
+        Object.defineProperty(this, "value", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: 1
+        });
+    }
+}
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Minimal,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("Object.defineProperty(this, \"value\""),
+        "minimal mode should preserve descriptor assignment semantics: {output}"
+    );
+    assert!(
+        !output.contains("\n    value = 1"),
+        "defineProperty instance field recovery requires standard+: {output}"
+    );
+}
+
+#[test]
+fn standard_keeps_define_property_instance_class_field_recovery() {
+    let input = r#"
+class Foo {
+    constructor() {
+        Object.defineProperty(this, "value", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: 1
+        });
+    }
+}
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Standard,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("\n    value = 1"),
+        "standard mode should recover descriptor instance field: {output}"
+    );
+    assert!(
+        !output.contains("Object.defineProperty(this, \"value\""),
+        "descriptor call should be promoted in standard mode: {output}"
+    );
+}
+
+#[test]
 fn minimal_disables_arg_rest_recovery() {
     let input = r#"
 function foo() {

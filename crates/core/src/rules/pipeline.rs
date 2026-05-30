@@ -224,7 +224,8 @@ runner!(run_un_es6_class, |ctx| UnEs6Class::new_with_level(
     ctx.unresolved_mark,
     ctx.rewrite_level
 ));
-runner!(run_un_class_fields, |ctx| UnClassFields::new(
+runner!(run_un_class_fields, |ctx| UnClassFields::new_with_mark(
+    ctx.unresolved_mark,
     ctx.rewrite_level
 ));
 runner!(run_un_ts_helpers, UnTsHelpers);

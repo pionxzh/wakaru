@@ -319,6 +319,80 @@ class Foo {
 }
 
 #[test]
+fn promotes_object_define_property_descriptor_to_instance_field() {
+    let input = r#"
+class Foo {
+    constructor() {
+        Object.defineProperty(this, "value", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: 1
+        });
+        Object.defineProperty(this, "other", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: this.value + 1
+        });
+    }
+}
+"#;
+    let expected = r#"
+class Foo {
+    value = 1;
+    other = this.value + 1;
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn shadowed_object_define_property_descriptor_is_not_instance_field() {
+    let input = r#"
+function wrap(Object) {
+    class Foo {
+        constructor() {
+            Object.defineProperty(this, "value", {
+                enumerable: true,
+                configurable: true,
+                writable: true,
+                value: 1
+            });
+        }
+    }
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("Object.defineProperty(this, \"value\""),
+        "{output}"
+    );
+    assert!(!output.contains("\n        value = 1"), "{output}");
+}
+
+#[test]
+fn descriptor_missing_writable_is_not_instance_field() {
+    let input = r#"
+class Foo {
+    constructor() {
+        Object.defineProperty(this, "value", {
+            enumerable: true,
+            configurable: true,
+            value: 1
+        });
+    }
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("Object.defineProperty(this, \"value\""),
+        "{output}"
+    );
+    assert!(!output.contains("\n    value = 1"), "{output}");
+}
+
+#[test]
 fn constructor_param_assignments_are_not_instance_fields() {
     let input = r#"
 class Foo {
