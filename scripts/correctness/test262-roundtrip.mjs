@@ -155,6 +155,7 @@ const pathPresets = {
   "arguments-object": ["test/language/arguments-object"],
   identifiers: ["test/language/identifiers"],
   "function-code": ["test/language/function-code"],
+  asi: ["test/language/asi"],
   modules: ["test/language/module-code"],
 };
 

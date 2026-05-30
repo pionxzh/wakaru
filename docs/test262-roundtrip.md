@@ -176,8 +176,8 @@ node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline babel
 
 Recorded on 2026-05-25, with the scope, control-flow, calls, and operators
 slices added on 2026-05-29, and literals, block-scope-syntax, variables,
-assignment-target-type, arguments-object, identifiers, and function-code added
-on 2026-05-30:
+assignment-target-type, arguments-object, identifiers, function-code, and asi
+added on 2026-05-30:
 
 | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -197,6 +197,7 @@ on 2026-05-30:
 | arguments-object | 263 | 202 | 61 | 0 | 0 | 202 | 0 |
 | identifiers | 268 | 152 | 116 | 8 | 112 | 32 | 0 |
 | function-code | 217 | 217 | 0 | 0 | 0 | 217 | 0 |
+| asi | 102 | 66 | 36 | 0 | 3 | 63 | 0 |
 | modules | 755 | 358 | 397 | 10 | 22 | 326 | 0 |
 
 Additional producer baselines recorded on 2026-05-25:
@@ -219,6 +220,7 @@ Additional producer baselines recorded on 2026-05-25:
 | swc-minify | arguments-object | 263 | 202 | 61 | 0 | 0 | 202 | 0 |
 | swc-minify | identifiers | 268 | 152 | 116 | 8 | 112 | 32 | 0 |
 | swc-minify | function-code | 217 | 217 | 0 | 0 | 0 | 217 | 0 |
+| swc-minify | asi | 102 | 66 | 36 | 0 | 0 | 66 | 0 |
 | swc-minify | modules | 755 | 358 | 397 | 10 | 1 | 347 | 0 |
 | esbuild-minify | default | 2180 | 1647 | 533 | 4 | 111 | 1532 | 0 |
 | esbuild-minify | classes | 8426 | 5064 | 3362 | 28 | 389 | 4647 | 0 |
@@ -236,6 +238,7 @@ Additional producer baselines recorded on 2026-05-25:
 | esbuild-minify | arguments-object | 263 | 202 | 61 | 0 | 0 | 202 | 0 |
 | esbuild-minify | identifiers | 268 | 152 | 116 | 8 | 8 | 136 | 0 |
 | esbuild-minify | function-code | 217 | 217 | 0 | 0 | 52 | 165 | 0 |
+| esbuild-minify | asi | 102 | 66 | 36 | 0 | 0 | 66 | 0 |
 | esbuild-minify | modules | 755 | 358 | 397 | 9 | 244 | 105 | 0 |
 
 Module graph baselines recorded on 2026-05-25:

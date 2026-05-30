@@ -27,6 +27,7 @@ export const baselineSlices = [
   "arguments-object",
   "identifiers",
   "function-code",
+  "asi",
   "modules",
 ];
 
