@@ -362,6 +362,40 @@ bar(t);
 }
 
 #[test]
+fn minimal_keeps_var_decl_to_let_const_recovery_safe() {
+    let input = r#"
+function readBeforeInit() {
+    var value = read();
+    var limit = 1;
+    function read() { return limit; }
+    return value;
+}
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Minimal,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    let expected = r#"
+function readBeforeInit() {
+    const value = read();
+    var limit = 1;
+    function read() { return limit; }
+    return value;
+}
+"#;
+    assert_eq_normalized(&output, expected.trim());
+}
+
+#[test]
 fn standard_keeps_smart_inline_temp_var_inlining() {
     let input = r#"
 const t = foo;
@@ -628,7 +662,7 @@ fn standard_keeps_array_concat_spread_recovery() {
 }
 
 #[test]
-fn minimal_disables_arguments_default_param_recovery() {
+fn minimal_keeps_var_decl_recovery_without_default_param_recovery() {
     let input = r#"
 function foo(a) {
   var b = !(arguments.length > 1 && arguments[1] !== undefined) || arguments[1];

@@ -1,5 +1,10 @@
 mod common;
-use common::{assert_eq_normalized, render};
+use common::{assert_eq_normalized, render, render_rule};
+use wakaru_core::{rules::UnArrayConcatSpread, RewriteLevel};
+
+fn apply_rule_with_level(input: &str, level: RewriteLevel) -> String {
+    render_rule(input, |_| UnArrayConcatSpread::new_with_level(level))
+}
 
 #[test]
 fn simplifies_literal_array_concat_single_element() {
@@ -77,4 +82,25 @@ const x = arr.concat(other);
 "#;
     let output = render(input);
     insta::assert_snapshot!(output);
+}
+
+#[test]
+fn minimal_preserves_concat_with_unknown_argument() {
+    let input = r#"
+const x = [this].concat(args);
+"#;
+    let output = apply_rule_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn minimal_flattens_concat_with_array_literal_argument() {
+    let input = r#"
+const x = [a].concat([b, c]);
+"#;
+    let expected = r#"
+const x = [a, b, c];
+"#;
+    let output = apply_rule_with_level(input, RewriteLevel::Minimal);
+    assert_eq_normalized(&output, expected);
 }

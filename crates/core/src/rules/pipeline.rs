@@ -189,7 +189,9 @@ runner!(run_un_argument_spread, |ctx| UnArgumentSpread::new(
     ctx.unresolved_mark,
     ctx.rewrite_level
 ));
-runner!(run_un_array_concat_spread, UnArrayConcatSpread);
+runner!(run_un_array_concat_spread, |ctx| {
+    UnArrayConcatSpread::new_with_level(ctx.rewrite_level)
+});
 runner!(run_un_spread_array_literal, UnSpreadArrayLiteral);
 runner!(run_object_assign_spread, |ctx| ObjectAssignSpread::new(
     ctx.unresolved_mark
@@ -334,7 +336,7 @@ define_rule_registry! {
     ("UnTypeConstructor", Structural, run_un_type_constructor, always_enabled),
     ("UnBuiltinPrototype", Structural, run_un_builtin_prototype, always_enabled),
     ("UnArgumentSpread", Structural, run_un_argument_spread, always_enabled),
-    ("UnArrayConcatSpread", Structural, run_un_array_concat_spread, standard_or_above),
+    ("UnArrayConcatSpread", Structural, run_un_array_concat_spread, always_enabled),
     ("UnSpreadArrayLiteral", Structural, run_un_spread_array_literal, always_enabled),
     ("ObjectAssignSpread", Structural, run_object_assign_spread, always_enabled),
     ("UnVariableMerging", Structural, run_un_variable_merging, always_enabled),

@@ -163,6 +163,130 @@ function eventChannel(subscribe) {
 }
 
 #[test]
+fn var_read_by_hoisted_function_called_before_initializer_stays_var() {
+    let input = r#"
+function readBeforeInit() {
+    var value = read();
+    var limit = 1;
+    function read() { return limit; }
+    return value;
+}
+"#;
+    let expected = r#"
+function readBeforeInit() {
+    const value = read();
+    var limit = 1;
+    function read() { return limit; }
+    return value;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn var_read_by_hoisted_function_called_before_later_decl_stays_var() {
+    let input = r#"
+function readBeforeInit() {
+    read();
+    var limit = 1;
+    function read() { return limit; }
+    return limit;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn var_read_by_parenthesized_hoisted_function_called_before_initializer_stays_var() {
+    let input = r#"
+function readBeforeInit() {
+    var value = (read)();
+    var limit = 1;
+    function read() { return limit; }
+    return value;
+}
+"#;
+    let expected = r#"
+function readBeforeInit() {
+    const value = read();
+    var limit = 1;
+    function read() { return limit; }
+    return value;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn var_read_by_hoisted_constructor_called_before_initializer_stays_var() {
+    let input = r#"
+function readBeforeInit() {
+    var value = new Read();
+    var limit = 1;
+    function Read() { this.value = limit; }
+    return value;
+}
+"#;
+    let expected = r#"
+function readBeforeInit() {
+    const value = new Read();
+    var limit = 1;
+    function Read() { this.value = limit; }
+    return value;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn var_read_by_parenthesized_hoisted_constructor_called_before_initializer_stays_var() {
+    let input = r#"
+function readBeforeInit() {
+    var value = new (Read)();
+    var limit = 1;
+    function Read() { this.value = limit; }
+    return value;
+}
+"#;
+    let expected = r#"
+function readBeforeInit() {
+    const value = new Read();
+    var limit = 1;
+    function Read() { this.value = limit; }
+    return value;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn earlier_hoisted_function_call_allows_already_initialized_var_to_be_const() {
+    let input = r#"
+function readAfterInit() {
+    var limit = 1;
+    var value = read();
+    function read() { return limit; }
+    return value;
+}
+"#;
+    let expected = r#"
+function readAfterInit() {
+    const limit = 1;
+    const value = read();
+    function read() { return limit; }
+    return value;
+}
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn earlier_function_initializer_reference_to_later_var_stays_var() {
     let input = r#"
 var read = function() {

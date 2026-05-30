@@ -2,6 +2,8 @@ use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{ArrayLit, CallExpr, Callee, Expr, ExprOrSpread, MemberProp};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::RewriteLevel;
+
 /// Converts `[x].concat(arr)` → `[x, ...arr]`.
 ///
 /// Handles:
@@ -15,10 +17,29 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 /// receivers like `arr.concat(other)` are left as-is since `concat` may
 /// be overridden or the receiver may not be a plain array.
 ///
-/// This is a generated-code heuristic gated to `standard` and above. For
-/// arbitrary runtime values, `concat` and spread differ for scalars, strings,
-/// patched `Array.prototype.concat`, and `Symbol.isConcatSpreadable`.
-pub struct UnArrayConcatSpread;
+/// This is a generated-code heuristic. In `minimal`, only array literal
+/// arguments are flattened; for arbitrary runtime values, `concat` and spread
+/// differ for scalars, strings, patched `Array.prototype.concat`, and
+/// `Symbol.isConcatSpreadable`.
+pub struct UnArrayConcatSpread {
+    level: RewriteLevel,
+}
+
+impl UnArrayConcatSpread {
+    pub fn new() -> Self {
+        Self::new_with_level(RewriteLevel::Standard)
+    }
+
+    pub fn new_with_level(level: RewriteLevel) -> Self {
+        Self { level }
+    }
+}
+
+impl Default for UnArrayConcatSpread {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl VisitMut for UnArrayConcatSpread {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
@@ -26,14 +47,14 @@ impl VisitMut for UnArrayConcatSpread {
 
         let Expr::Call(call) = expr else { return };
 
-        if let Some(new_arr) = try_simplify_array_concat(call) {
+        if let Some(new_arr) = try_simplify_array_concat(call, self.level) {
             *expr = Expr::Array(new_arr);
         }
     }
 }
 
 /// Try to convert `[elems].concat(args...)` into a single array literal.
-fn try_simplify_array_concat(call: &CallExpr) -> Option<ArrayLit> {
+fn try_simplify_array_concat(call: &CallExpr, level: RewriteLevel) -> Option<ArrayLit> {
     // Callee must be member expression: something.concat
     let Callee::Expr(callee) = &call.callee else {
         return None;
@@ -79,6 +100,9 @@ fn try_simplify_array_concat(call: &CallExpr) -> Option<ArrayLit> {
             }
             // Non-array arg: add as spread
             _ => {
+                if level == RewriteLevel::Minimal {
+                    return None;
+                }
                 elems.push(Some(ExprOrSpread {
                     spread: Some(DUMMY_SP),
                     expr: arg.expr.clone(),
