@@ -4,15 +4,15 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, BindingIdent, CallExpr, Callee, Class, ClassMember,
-    ClassProp, Decl, Expr, ExprOrSpread, ExprStmt, Function, Ident, IdentName, KeyValueProp, Lit,
-    MemberExpr, MemberProp, Module, ModuleItem, Pat, PrivateName, PrivateProp, Prop, PropName,
-    PropOrSpread, SimpleAssignTarget, Stmt,
+    ClassProp, Decl, Expr, ExprOrSpread, ExprStmt, Ident, IdentName, KeyValueProp, Lit, MemberExpr,
+    MemberProp, Module, ModuleItem, Pat, PrivateName, PrivateProp, Prop, PropName, PropOrSpread,
+    SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
     collect_helper_dependencies, helpers_with_remaining_refs, remove_helper_declarations,
-    BabelHelperKind, BindingKey, LocalHelperContext,
+    BabelHelperKind, BindingKey, LocalHelperContext, TsHelperKind,
 };
 use super::helper_matcher::binding_key;
 use super::RewriteLevel;
@@ -82,11 +82,11 @@ impl UnClassFields {
         let previous_private_maps = std::mem::replace(&mut self.private_maps, private_maps);
         let previous_private_get_helpers = std::mem::replace(
             &mut self.private_get_helpers,
-            collect_private_helpers(module, "__classPrivateFieldGet", PrivateHelperKind::Get),
+            local_helpers.ts_helpers_of_kind(TsHelperKind::ClassPrivateFieldGet),
         );
         let previous_private_set_helpers = std::mem::replace(
             &mut self.private_set_helpers,
-            collect_private_helpers(module, "__classPrivateFieldSet", PrivateHelperKind::Set),
+            local_helpers.ts_helpers_of_kind(TsHelperKind::ClassPrivateFieldSet),
         );
         let previous_private_single_owner_maps = std::mem::replace(
             &mut self.private_single_owner_maps,
@@ -475,115 +475,6 @@ fn collect_private_weak_map_assignments(
         }
         _ => {}
     }
-}
-
-#[derive(Clone, Copy)]
-enum PrivateHelperKind {
-    Get,
-    Set,
-}
-
-fn collect_private_helpers(
-    module: &Module,
-    name: &str,
-    kind: PrivateHelperKind,
-) -> HashSet<BindingKey> {
-    let mut helpers = HashSet::new();
-    for item in &module.body {
-        match item {
-            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl)))
-                if fn_decl.ident.sym.as_ref() == name
-                    && is_tsc_private_helper_fn(&fn_decl.function, kind) =>
-            {
-                helpers.insert(binding_key(&fn_decl.ident));
-            }
-            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
-                for decl in &var_decl.decls {
-                    let Pat::Ident(BindingIdent { id, .. }) = &decl.name else {
-                        continue;
-                    };
-                    if id.sym.as_ref() == name
-                        && decl
-                            .init
-                            .as_deref()
-                            .is_some_and(|init| expr_contains_tsc_private_helper_fn(init, kind))
-                    {
-                        helpers.insert(binding_key(id));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    helpers
-}
-
-fn expr_contains_tsc_private_helper_fn(expr: &Expr, kind: PrivateHelperKind) -> bool {
-    struct Finder {
-        kind: PrivateHelperKind,
-        found: bool,
-    }
-
-    impl Visit for Finder {
-        fn visit_function(&mut self, function: &Function) {
-            if is_tsc_private_helper_fn(function, self.kind) {
-                self.found = true;
-            }
-        }
-    }
-
-    let mut finder = Finder { kind, found: false };
-    expr.visit_with(&mut finder);
-    finder.found
-}
-
-fn is_tsc_private_helper_fn(function: &Function, kind: PrivateHelperKind) -> bool {
-    let Some(state_key) = function.params.get(1).and_then(|param| match &param.pat {
-        Pat::Ident(BindingIdent { id, .. }) => Some(binding_key(id)),
-        _ => None,
-    }) else {
-        return false;
-    };
-
-    struct AccessFinder {
-        state_key: BindingKey,
-        kind: PrivateHelperKind,
-        found: bool,
-    }
-
-    impl Visit for AccessFinder {
-        fn visit_call_expr(&mut self, call: &CallExpr) {
-            if let Callee::Expr(callee) = &call.callee {
-                if let Expr::Member(member) = callee.as_ref() {
-                    if let Expr::Ident(obj) = member.obj.as_ref() {
-                        let prop_matches = match self.kind {
-                            PrivateHelperKind::Get => {
-                                matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "get")
-                            }
-                            PrivateHelperKind::Set => {
-                                matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "set")
-                            }
-                        };
-                        if prop_matches && binding_key(obj) == self.state_key {
-                            self.found = true;
-                            return;
-                        }
-                    }
-                }
-            }
-            call.visit_children_with(self);
-        }
-    }
-
-    let mut finder = AccessFinder {
-        state_key,
-        kind,
-        found: false,
-    };
-    if let Some(body) = &function.body {
-        body.visit_with(&mut finder);
-    }
-    finder.found
 }
 
 fn private_name_from_backing_ident(sym: &Atom) -> Option<Atom> {

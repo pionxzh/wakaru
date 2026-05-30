@@ -70,6 +70,8 @@ pub(crate) enum TsHelperKind {
     CreateBinding,
     SetModuleDefault,
     SpreadArray,
+    ClassPrivateFieldGet,
+    ClassPrivateFieldSet,
 }
 
 impl TsHelperKind {
@@ -85,6 +87,8 @@ impl TsHelperKind {
             TsHelperKind::CreateBinding => "__createBinding",
             TsHelperKind::SetModuleDefault => "__setModuleDefault",
             TsHelperKind::SpreadArray => "__spreadArray",
+            TsHelperKind::ClassPrivateFieldGet => "__classPrivateFieldGet",
+            TsHelperKind::ClassPrivateFieldSet => "__classPrivateFieldSet",
         }
     }
 }
@@ -316,6 +320,19 @@ fn collect_ts_helpers(module: &Module) -> HashMap<BindingKey, TsHelperInfo> {
 
     for item in &module.body {
         match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
+                if let Some(kind) =
+                    ts_private_helper_name_kind(fn_decl.ident.sym.as_ref(), &fn_decl.function)
+                {
+                    helpers.insert(
+                        binding_key(&fn_decl.ident),
+                        TsHelperInfo {
+                            kind,
+                            source: TsHelperSource::Inline,
+                        },
+                    );
+                }
+            }
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
                 for decl in &var.decls {
                     if let Some((key, helper)) =
@@ -361,6 +378,16 @@ fn collect_ts_helper_from_var_decl(
 ) -> Option<(BindingKey, TsHelperInfo)> {
     let init = decl.init.as_deref()?;
     let key = var_declarator_binding_key(decl)?;
+    if let Some(kind) = ts_private_helper_decl_kind(key.0.as_ref(), init) {
+        return Some((
+            key,
+            TsHelperInfo {
+                kind,
+                source: TsHelperSource::Inline,
+            },
+        ));
+    }
+
     if let Some(kind) = ts_inline_helper_name(init).and_then(ts_helper_name_kind) {
         return Some((
             key,
@@ -1726,6 +1753,93 @@ fn is_typeof_of_binding(expr: &Expr, binding: &BindingKey) -> bool {
         return false;
     };
     unary.op == UnaryOp::TypeOf && expr_matches_binding(&unary.arg, binding)
+}
+
+fn ts_private_helper_decl_kind(name: &str, init: &Expr) -> Option<TsHelperKind> {
+    let kind = match name {
+        "__classPrivateFieldGet" => TsHelperKind::ClassPrivateFieldGet,
+        "__classPrivateFieldSet" => TsHelperKind::ClassPrivateFieldSet,
+        _ => return None,
+    };
+    expr_contains_tsc_private_helper_fn(init, kind).then_some(kind)
+}
+
+fn ts_private_helper_name_kind(name: &str, function: &Function) -> Option<TsHelperKind> {
+    let kind = match name {
+        "__classPrivateFieldGet" => TsHelperKind::ClassPrivateFieldGet,
+        "__classPrivateFieldSet" => TsHelperKind::ClassPrivateFieldSet,
+        _ => return None,
+    };
+    is_tsc_private_helper_fn(function, kind).then_some(kind)
+}
+
+fn expr_contains_tsc_private_helper_fn(expr: &Expr, kind: TsHelperKind) -> bool {
+    struct Finder {
+        kind: TsHelperKind,
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_function(&mut self, function: &Function) {
+            if is_tsc_private_helper_fn(function, self.kind) {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = Finder { kind, found: false };
+    expr.visit_with(&mut finder);
+    finder.found
+}
+
+fn is_tsc_private_helper_fn(function: &Function, kind: TsHelperKind) -> bool {
+    let Some(state_key) = function.params.get(1).and_then(|param| match &param.pat {
+        Pat::Ident(binding) => Some(binding_key(&binding.id)),
+        _ => None,
+    }) else {
+        return false;
+    };
+
+    struct AccessFinder {
+        state_key: BindingKey,
+        kind: TsHelperKind,
+        found: bool,
+    }
+
+    impl Visit for AccessFinder {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Expr::Member(member) = callee.as_ref() {
+                    if let Expr::Ident(obj) = member.obj.as_ref() {
+                        let prop_matches = match self.kind {
+                            TsHelperKind::ClassPrivateFieldGet => {
+                                matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "get")
+                            }
+                            TsHelperKind::ClassPrivateFieldSet => {
+                                matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "set")
+                            }
+                            _ => false,
+                        };
+                        if prop_matches && binding_key(obj) == self.state_key {
+                            self.found = true;
+                            return;
+                        }
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = AccessFinder {
+        state_key,
+        kind,
+        found: false,
+    };
+    if let Some(body) = &function.body {
+        body.visit_with(&mut finder);
+    }
+    finder.found
 }
 
 // ---------------------------------------------------------------------------
@@ -3513,6 +3627,36 @@ mod tests {
             assert_eq!(helpers.len(), 1);
             assert!(helpers.contains_key(&(Atom::from("_typeof"), SyntaxContext::empty())));
             assert!(!helpers.contains_key(&(Atom::from("notTypeof"), SyntaxContext::empty())));
+        });
+    }
+
+    #[test]
+    fn local_helper_context_collects_tsc_private_field_helpers() {
+        GLOBALS.set(&Globals::new(), || {
+            let module = parse_module(
+                r#"
+                function __classPrivateFieldGet(receiver, state, kind, f) {
+                    return state.get(receiver);
+                }
+                var __classPrivateFieldSet = function(receiver, state, value, kind, f) {
+                    return state.set(receiver, value), value;
+                };
+                var A4 = function(receiver, state, value, kind) {
+                    return state.set(receiver, value), value;
+                };
+                "#,
+            );
+            let context = LocalHelperContext::collect(&module);
+            let getters = context.ts_helpers_of_kind(TsHelperKind::ClassPrivateFieldGet);
+            let setters = context.ts_helpers_of_kind(TsHelperKind::ClassPrivateFieldSet);
+
+            assert!(
+                getters.contains(&(Atom::from("__classPrivateFieldGet"), SyntaxContext::empty()))
+            );
+            assert!(
+                setters.contains(&(Atom::from("__classPrivateFieldSet"), SyntaxContext::empty()))
+            );
+            assert!(!setters.contains(&(Atom::from("A4"), SyntaxContext::empty())));
         });
     }
 
