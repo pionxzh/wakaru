@@ -38,6 +38,8 @@ arguments-object
 identifiers
 function-code
 asi
+keywords
+reserved-words
 modules
 ```
 

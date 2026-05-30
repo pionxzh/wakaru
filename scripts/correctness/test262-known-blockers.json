@@ -168,6 +168,17 @@
       "note": "The producer changed legacy with-environment behavior before Wakaru runs."
     },
     {
+      "reason": "script-global-var-lexical-redeclaration",
+      "status": "rejected",
+      "phase": "decompiled-runtime",
+      "when": {
+        "pathStartsWith": ["test/language/reserved-words/unreserved-words.js"],
+        "errorIncludes": ["Identifier 'assert' has already been declared"],
+        "decompiledRegex": ["\\bconst\\s+assert\\s*="]
+      },
+      "note": "Test262 script execution preloads a global harness binding named assert. Top-level script `var assert` can coexist with that environment, but decompiled top-level `const assert` is a lexical redeclaration."
+    },
+    {
       "reason": "swc-array-binding-elision",
       "status": "rejected",
       "phase": "swc-fidelity",

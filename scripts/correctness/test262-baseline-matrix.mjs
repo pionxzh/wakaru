@@ -28,6 +28,8 @@ export const baselineSlices = [
   "identifiers",
   "function-code",
   "asi",
+  "keywords",
+  "reserved-words",
   "modules",
 ];
 

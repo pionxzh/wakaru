@@ -156,6 +156,8 @@ const pathPresets = {
   identifiers: ["test/language/identifiers"],
   "function-code": ["test/language/function-code"],
   asi: ["test/language/asi"],
+  keywords: ["test/language/keywords"],
+  "reserved-words": ["test/language/reserved-words"],
   modules: ["test/language/module-code"],
 };
 
@@ -803,6 +805,18 @@ async function runOneTest({
       });
     }
   } catch (error) {
+    const decompiledRuntimeReason = knownDecompiledRuntimeRejectReason({
+      path: relativePath,
+      error,
+      decompiled,
+      knownBlockers,
+    });
+    if (decompiledRuntimeReason) {
+      return rejected(relativePath, "decompiled-runtime", error, decompiledRuntimeReason, {
+        transformed,
+        decompiled,
+      });
+    }
     const fidelityReason = knownSwcFidelityIssueReason({
       path: relativePath,
       error,
@@ -941,6 +955,18 @@ async function runOneModuleTest({
     });
   } catch (error) {
     const decompiled = decompiledSources.get(relativePath) ?? "";
+    const decompiledRuntimeReason = knownDecompiledRuntimeRejectReason({
+      path: relativePath,
+      error,
+      decompiled,
+      knownBlockers,
+    });
+    if (decompiledRuntimeReason) {
+      return rejected(relativePath, "decompiled-runtime", error, decompiledRuntimeReason, {
+        transformed: Object.fromEntries(transformedSources),
+        decompiled: Object.fromEntries(decompiledSources),
+      });
+    }
     const fidelityReason = knownSwcFidelityIssueReason({
       path: relativePath,
       error,
@@ -1028,6 +1054,22 @@ export function knownSwcFidelityIssueReason({
     knownBlockers,
     status: "rejected",
     phase: "swc-fidelity",
+    path,
+    error,
+    decompiled,
+  });
+}
+
+export function knownDecompiledRuntimeRejectReason({
+  path,
+  error,
+  decompiled,
+  knownBlockers = defaultKnownBlockers(),
+}) {
+  return classifyKnownBlocker({
+    knownBlockers,
+    status: "rejected",
+    phase: "decompiled-runtime",
     path,
     error,
     decompiled,

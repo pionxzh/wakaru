@@ -14,6 +14,7 @@ import {
   discoverTestsFromReport,
   formatMarkdownSummary,
   isSloppyOnlyWakaruParseUnsupported,
+  knownDecompiledRuntimeRejectReason,
   knownSwcFidelityIssueReason,
   knownTransformedRuntimeRejectReason,
   knownTransformRejectReason,
@@ -682,6 +683,17 @@ test("knownTransformedRuntimeRejectReason classifies producer runtime drift", ()
       error: new Error("unexpected producer runtime failure"),
     }),
     null,
+  );
+});
+
+test("knownDecompiledRuntimeRejectReason classifies script global lexical redeclaration", () => {
+  assert.equal(
+    knownDecompiledRuntimeRejectReason({
+      path: "test/language/reserved-words/unreserved-words.js",
+      error: new Error("SyntaxError: Identifier 'assert' has already been declared"),
+      decompiled: "const assert = 1;",
+    }),
+    "script-global-var-lexical-redeclaration",
   );
 });
 
