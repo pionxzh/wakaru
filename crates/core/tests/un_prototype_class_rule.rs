@@ -305,6 +305,41 @@ class Foo {
     assert_eq_normalized(&apply(input), expected);
 }
 
+#[test]
+fn test_define_property_value_function_method() {
+    let input = r#"
+function Foo(val) { this._val = val; }
+Object.defineProperty(Foo.prototype, "value", {
+    enumerable: false,
+    configurable: true,
+    writable: true,
+    value: function value() { return this._val; }
+});
+"#;
+    let expected = r#"
+class Foo {
+    constructor(val) { this._val = val; }
+    value() { return this._val; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_define_property_value_function_enumerable_true_not_method() {
+    let input = r#"
+function Foo() {}
+Object.defineProperty(Foo.prototype, "value", {
+    enumerable: true,
+    configurable: true,
+    writable: true,
+    value: function value() { return 1; }
+});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
 // ============================================================
 // Pre-reference relocation (contiguous prelude only)
 // ============================================================

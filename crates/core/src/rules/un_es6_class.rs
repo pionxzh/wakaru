@@ -1640,7 +1640,8 @@ fn try_parse_static_field_assignment(
     true
 }
 
-/// Try to parse `Object.defineProperty(t.prototype, "name", { get: fn, set: fn })`.
+/// Try to parse `Object.defineProperty(t.prototype, "name", { get: fn, set: fn })`
+/// or `Object.defineProperty(t.prototype, "name", { value: fn, writable: true, ... })`.
 fn try_parse_object_define_property(
     expr: &Expr,
     ctor_name: &str,
@@ -1682,6 +1683,9 @@ fn try_parse_object_define_property(
         return false;
     };
 
+    let original_len = members.len();
+    let value_fn = descriptor_value_method_fn(obj);
+
     for prop in &obj.props {
         let swc_core::ecma::ast::PropOrSpread::Prop(p) = prop else {
             continue;
@@ -1708,7 +1712,71 @@ fn try_parse_object_define_property(
         members.push(ClassMember::Method(method));
     }
 
-    true
+    if let Some(fn_expr) = value_fn {
+        let method_key = PropName::Ident(IdentName::new(sym, DUMMY_SP));
+        let method = build_class_method(method_key, fn_expr, false, MethodKind::Method);
+        members.push(ClassMember::Method(method));
+    }
+
+    members.len() > original_len
+}
+
+fn descriptor_value_method_fn(obj: &swc_core::ecma::ast::ObjectLit) -> Option<&FnExpr> {
+    let mut value_fn = None;
+    let mut writable = false;
+    let mut configurable = false;
+
+    for prop in &obj.props {
+        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let swc_core::ecma::ast::Prop::KeyValue(kv) = prop.as_ref() else {
+            return None;
+        };
+        let key_name = prop_name_atom(&kv.key)?;
+        match key_name.as_ref() {
+            "value" => match strip_parens(&kv.value) {
+                Expr::Fn(fn_expr) => value_fn = Some(fn_expr),
+                _ => return None,
+            },
+            "writable" => {
+                if !is_bool_literal(&kv.value, true) {
+                    return None;
+                }
+                writable = true;
+            }
+            "configurable" => {
+                if !is_bool_literal(&kv.value, true) {
+                    return None;
+                }
+                configurable = true;
+            }
+            "enumerable" => {
+                if !is_bool_literal(&kv.value, false) {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+
+    if writable && configurable {
+        value_fn
+    } else {
+        None
+    }
+}
+
+fn prop_name_atom(prop: &PropName) -> Option<Atom> {
+    match prop {
+        PropName::Ident(ident) => Some(ident.sym.clone()),
+        PropName::Str(str_lit) => Some(str_lit.value.as_str()?.into()),
+        _ => None,
+    }
+}
+
+fn is_bool_literal(expr: &Expr, value: bool) -> bool {
+    matches!(strip_parens(expr), Expr::Lit(Lit::Bool(bool_lit)) if bool_lit.value == value)
 }
 
 /// Parse a sequence expression in a return statement:

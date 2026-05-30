@@ -4,7 +4,7 @@ use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     AssignOp, AssignTarget, BlockStmt, CallExpr, Callee, Class, ClassDecl, ClassMember,
-    ClassMethod, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, IdentName,
+    ClassMethod, Constructor, Decl, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, IdentName, Lit,
     MemberProp, MethodKind, ModuleItem, Param, ParamOrTsParamProp, PropName, SimpleAssignTarget,
     Stmt,
 };
@@ -814,7 +814,7 @@ fn extract_util_inherits(stmt: &Stmt, ctor_name: &Atom) -> Option<Box<Expr>> {
     Some(call.args[1].expr.clone())
 }
 
-/// Extract getters/setters from `Object.defineProperty(Foo.prototype, "name", { get/set })`.
+/// Extract methods/accessors from `Object.defineProperty(Foo.prototype, "name", descriptor)`.
 fn extract_define_property(stmt: &Stmt, ctor_name: &Atom) -> Option<Vec<ClassMethod>> {
     let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
         return None;
@@ -870,6 +870,8 @@ fn extract_define_property(stmt: &Stmt, ctor_name: &Atom) -> Option<Vec<ClassMet
     };
 
     let mut methods = Vec::new();
+    let value_fn = descriptor_value_method_fn(obj);
+
     for prop in &obj.props {
         let swc_core::ecma::ast::PropOrSpread::Prop(p) = prop else {
             continue;
@@ -898,10 +900,80 @@ fn extract_define_property(stmt: &Stmt, ctor_name: &Atom) -> Option<Vec<ClassMet
         }
     }
 
+    if let Some(fn_expr) = value_fn {
+        let method_key = PropName::Ident(IdentName::new(sym, DUMMY_SP));
+        methods.push(build_class_method_from_fn(method_key, fn_expr, false));
+    }
+
     if methods.is_empty() {
         None
     } else {
         Some(methods)
+    }
+}
+
+fn descriptor_value_method_fn(obj: &swc_core::ecma::ast::ObjectLit) -> Option<&FnExpr> {
+    let mut value_fn = None;
+    let mut writable = false;
+    let mut configurable = false;
+
+    for prop in &obj.props {
+        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        let swc_core::ecma::ast::Prop::KeyValue(kv) = prop.as_ref() else {
+            return None;
+        };
+        let key_name = prop_name_atom(&kv.key)?;
+        match key_name.as_ref() {
+            "value" => match strip_parens(&kv.value) {
+                Expr::Fn(fn_expr) => value_fn = Some(fn_expr),
+                _ => return None,
+            },
+            "writable" => {
+                if !is_bool_literal(&kv.value, true) {
+                    return None;
+                }
+                writable = true;
+            }
+            "configurable" => {
+                if !is_bool_literal(&kv.value, true) {
+                    return None;
+                }
+                configurable = true;
+            }
+            "enumerable" => {
+                if !is_bool_literal(&kv.value, false) {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+
+    if writable && configurable {
+        value_fn
+    } else {
+        None
+    }
+}
+
+fn prop_name_atom(prop: &PropName) -> Option<Atom> {
+    match prop {
+        PropName::Ident(ident) => Some(ident.sym.clone()),
+        PropName::Str(str_lit) => Some(str_lit.value.as_str()?.into()),
+        _ => None,
+    }
+}
+
+fn is_bool_literal(expr: &Expr, value: bool) -> bool {
+    matches!(strip_parens(expr), Expr::Lit(Lit::Bool(bool_lit)) if bool_lit.value == value)
+}
+
+fn strip_parens(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_parens(&paren.expr),
+        _ => expr,
     }
 }
 

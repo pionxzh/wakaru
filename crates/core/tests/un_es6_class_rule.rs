@@ -455,6 +455,51 @@ class MyClass {
     assert_eq_normalized(&apply(input), expected);
 }
 
+#[test]
+fn test_define_property_value_function_method() {
+    let input = r#"
+var MyClass = (function() {
+    function t(val) { this._val = val; }
+    Object.defineProperty(t.prototype, "value", {
+        enumerable: false,
+        configurable: true,
+        writable: true,
+        value: function value() { return this._val; }
+    });
+    return t;
+}());
+"#;
+    let expected = r#"
+class MyClass {
+    constructor(val) { this._val = val; }
+    value() { return this._val; }
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn test_define_property_value_function_enumerable_true_not_method() {
+    let input = r#"
+var MyClass = (function() {
+    function t() {}
+    Object.defineProperty(t.prototype, "value", {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+        value: function value() { return 1; }
+    });
+    return t;
+}());
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("Object.defineProperty(t.prototype, \"value\""),
+        "{output}"
+    );
+    assert!(!output.contains("\n    value()"), "{output}");
+}
+
 // ============================================================
 // Babel loose mode: proto alias
 // ============================================================
