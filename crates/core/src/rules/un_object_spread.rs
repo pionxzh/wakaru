@@ -11,9 +11,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::babel_helper_utils::{
-    collect_helper_dependencies, collect_tslib_namespace_bindings, helpers_with_remaining_refs,
-    remove_helper_declarations, tslib_member_helper_kind, BabelHelperKind, BindingKey,
-    LocalHelperContext,
+    collect_helper_dependencies, helpers_with_remaining_refs, remove_helper_declarations,
+    tslib_member_helper_kind, BabelHelperKind, BindingKey, LocalHelperContext,
 };
 
 use crate::utils::paren::strip_parens;
@@ -86,13 +85,13 @@ fn run_un_object_spread(
             module_facts,
         ));
     }
-    let tslib_namespaces = collect_tslib_namespace_bindings(module);
+    let tslib_namespaces = local_helper_context.tslib_namespaces();
     if helpers.is_empty() && tslib_namespaces.is_empty() {
         return;
     }
     let mut replacer = SpreadReplacer {
         helpers: &helpers,
-        tslib_namespaces: &tslib_namespaces,
+        tslib_namespaces,
     };
     module.visit_mut_with(&mut replacer);
 

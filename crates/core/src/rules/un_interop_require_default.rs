@@ -7,9 +7,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_tslib_namespace_bindings, remove_helper_declarations, tslib_helper_name_kind,
-    tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind, BindingKey,
-    LocalHelperContext,
+    remove_helper_declarations, tslib_helper_name_kind, tslib_member_helper_kind,
+    tslib_require_member_name, BabelHelperKind, BindingKey, LocalHelperContext,
 };
 use crate::utils::paren::strip_parens;
 
@@ -38,7 +37,7 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
 
     // --- Named helper path ---
     let helpers = local_helpers.helpers_of_kind(BabelHelperKind::InteropRequireDefault);
-    let tslib_namespaces = collect_tslib_namespace_bindings(module);
+    let tslib_namespaces = local_helpers.tslib_namespaces();
     let has_direct_tslib_calls =
         local_helpers.has_tslib_require_member_call(BabelHelperKind::InteropRequireDefault);
 
@@ -46,7 +45,7 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
         // Phase 1: Collect which bindings receive helper-wrapped values
         let mut collector = AffectedBindingCollector {
             helpers: &helpers,
-            tslib_namespaces: &tslib_namespaces,
+            tslib_namespaces,
             affected: &mut affected_bindings,
         };
         collector.visit_module(module);
@@ -54,7 +53,7 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
         // Phase 2a: Unwrap helper calls — replace `helper(arg)` with `arg`.
         let mut call_unwrapper = CallUnwrapper {
             helpers: &helpers,
-            tslib_namespaces: &tslib_namespaces,
+            tslib_namespaces,
         };
         module.visit_mut_with(&mut call_unwrapper);
     }

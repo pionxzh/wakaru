@@ -8,9 +8,9 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helper_dependencies, collect_tslib_namespace_bindings, helpers_with_remaining_refs,
-    remove_helper_declarations, tslib_helper_name_kind, tslib_member_helper_kind,
-    tslib_require_member_name, BabelHelperKind, BindingKey, LocalHelperContext,
+    collect_helper_dependencies, helpers_with_remaining_refs, remove_helper_declarations,
+    tslib_helper_name_kind, tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind,
+    BindingKey, LocalHelperContext,
 };
 
 /// Detects and unwraps `_slicedToArray(expr, N)` helper calls.
@@ -38,7 +38,7 @@ impl VisitMut for UnSlicedToArray {
 
 fn run_un_sliced_to_array(module: &mut Module, local_helpers: &LocalHelperContext) {
     let helpers = local_helpers.helpers_of_kind(BabelHelperKind::SlicedToArray);
-    let tslib_namespaces = collect_tslib_namespace_bindings(module);
+    let tslib_namespaces = local_helpers.tslib_namespaces();
     let has_direct_tslib_calls =
         local_helpers.has_tslib_require_member_call(BabelHelperKind::SlicedToArray);
     if helpers.is_empty() && tslib_namespaces.is_empty() && !has_direct_tslib_calls {
@@ -46,7 +46,7 @@ fn run_un_sliced_to_array(module: &mut Module, local_helpers: &LocalHelperContex
     }
     module.visit_mut_children_with(&mut SlicedToArrayRewriter {
         helpers: &helpers,
-        tslib_namespaces: &tslib_namespaces,
+        tslib_namespaces,
     });
 
     if helpers.is_empty() {

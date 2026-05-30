@@ -5,8 +5,8 @@ use swc_core::ecma::ast::{ArrayLit, Callee, Expr, ExprOrSpread, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
-    collect_tslib_namespace_bindings, helpers_with_remaining_refs, is_tslib_spread_array_member,
-    remove_helper_declarations, BabelHelperKind, BindingKey, LocalHelperContext, TsHelperKind,
+    helpers_with_remaining_refs, is_tslib_spread_array_member, remove_helper_declarations,
+    BabelHelperKind, BindingKey, LocalHelperContext, TsHelperKind,
 };
 use super::helper_matcher::{
     binding_key, remaining_refs_outside_var_declarators, remove_import_specifiers_by_binding,
@@ -32,7 +32,7 @@ impl VisitMut for UnToConsumableArray {
 fn run_un_to_consumable_array(module: &mut Module, local_helpers: &LocalHelperContext) {
     let helpers = local_helpers.helpers_of_kind(BabelHelperKind::ToConsumableArray);
     let ts_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::SpreadArray);
-    let tslib_namespaces = collect_tslib_namespace_bindings(module);
+    let tslib_namespaces = local_helpers.tslib_namespaces();
     if helpers.is_empty() {
         if ts_helpers.is_empty() && tslib_namespaces.is_empty() {
             return;
@@ -41,7 +41,7 @@ fn run_un_to_consumable_array(module: &mut Module, local_helpers: &LocalHelperCo
         let mut replacer = ToConsumableArrayReplacer {
             helpers: &helpers,
             ts_spread_array_helpers: &ts_helpers,
-            tslib_namespaces: &tslib_namespaces,
+            tslib_namespaces,
         };
         module.visit_mut_with(&mut replacer);
 
@@ -52,7 +52,7 @@ fn run_un_to_consumable_array(module: &mut Module, local_helpers: &LocalHelperCo
     let mut replacer = ToConsumableArrayReplacer {
         helpers: &helpers,
         ts_spread_array_helpers: &ts_helpers,
-        tslib_namespaces: &tslib_namespaces,
+        tslib_namespaces,
     };
     module.visit_mut_with(&mut replacer);
 

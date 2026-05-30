@@ -111,14 +111,17 @@ struct TsHelperInfo {
 pub(crate) struct LocalHelperContext {
     helpers: HashMap<BindingKey, BabelHelperKind>,
     ts_helpers: HashMap<BindingKey, TsHelperInfo>,
+    tslib_namespaces: HashSet<BindingKey>,
     tslib_require_member_calls: HashSet<BabelHelperKind>,
 }
 
 impl LocalHelperContext {
     pub(crate) fn collect(module: &Module) -> Self {
+        let tslib_namespaces = collect_tslib_namespace_bindings(module);
         Self {
             helpers: collect_helpers(module),
-            ts_helpers: collect_ts_helpers(module),
+            ts_helpers: collect_ts_helpers(module, &tslib_namespaces),
+            tslib_namespaces,
             tslib_require_member_calls: collect_tslib_require_member_calls(module),
         }
     }
@@ -152,6 +155,10 @@ impl LocalHelperContext {
             .filter(|(_, helper)| helper.source == TsHelperSource::Inline)
             .map(|(key, helper)| (key.clone(), helper.kind))
             .collect()
+    }
+
+    pub(crate) fn tslib_namespaces(&self) -> &HashSet<BindingKey> {
+        &self.tslib_namespaces
     }
 
     pub(crate) fn has_tslib_require_member_call(&self, kind: BabelHelperKind) -> bool {
@@ -314,9 +321,11 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
     helpers
 }
 
-fn collect_ts_helpers(module: &Module) -> HashMap<BindingKey, TsHelperInfo> {
+fn collect_ts_helpers(
+    module: &Module,
+    tslib_namespaces: &HashSet<BindingKey>,
+) -> HashMap<BindingKey, TsHelperInfo> {
     let mut helpers = HashMap::new();
-    let tslib_namespaces = collect_tslib_namespace_bindings(module);
 
     for item in &module.body {
         match item {
@@ -336,7 +345,7 @@ fn collect_ts_helpers(module: &Module) -> HashMap<BindingKey, TsHelperInfo> {
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
                 for decl in &var.decls {
                     if let Some((key, helper)) =
-                        collect_ts_helper_from_var_decl(decl, &tslib_namespaces)
+                        collect_ts_helper_from_var_decl(decl, tslib_namespaces)
                     {
                         helpers.insert(key, helper);
                     }
@@ -3532,6 +3541,7 @@ mod tests {
             let module = parse_module(
                 r#"
                 import { __spreadArray as importedSpread } from "tslib";
+                import * as tslibNs from "tslib";
                 import { __awaiter as importedAwaiter } from "tslib";
                 var aliasedAwaiter = (this && this.__awaiter) || function(thisArg, _arguments, P, generator) {};
                 var aliasedGenerator = (this && this.__generator) || function(thisArg, body) {};
@@ -3588,6 +3598,18 @@ mod tests {
             let awaiter_helpers =
                 LocalHelperContext::collect(&module).ts_helpers_of_kind(TsHelperKind::Awaiter);
             assert_eq!(awaiter_helpers.len(), 4);
+
+            let context = LocalHelperContext::collect(&module);
+            assert!(
+                context
+                    .tslib_namespaces()
+                    .contains(&(Atom::from("tslibNs"), SyntaxContext::empty()))
+            );
+            assert!(
+                context
+                    .tslib_namespaces()
+                    .contains(&(Atom::from("tslib_1"), SyntaxContext::empty()))
+            );
         });
     }
 

@@ -12,8 +12,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_tslib_namespace_bindings, helpers_with_remaining_refs, remove_helper_declarations,
-    tslib_member_helper_kind, BabelHelperKind, BindingKey, LocalHelperContext,
+    helpers_with_remaining_refs, remove_helper_declarations, tslib_member_helper_kind,
+    BabelHelperKind, BindingKey, LocalHelperContext,
 };
 
 use crate::utils::paren::strip_parens;
@@ -99,7 +99,7 @@ fn run_un_object_rest(
     local_helpers: &LocalHelperContext,
 ) {
     let named_helpers = local_helpers.helpers_of_kind(BabelHelperKind::ObjectWithoutProperties);
-    let tslib_namespaces = collect_tslib_namespace_bindings(module);
+    let tslib_namespaces = local_helpers.tslib_namespaces();
 
     if named_helpers.is_empty()
         && tslib_namespaces.is_empty()
@@ -114,14 +114,14 @@ fn run_un_object_rest(
     // Process inner scopes first (function bodies, etc.) with helpers available
     let mut processor = ObjectRestProcessor {
         named_helpers: &named_helpers,
-        tslib_namespaces: &tslib_namespaces,
+        tslib_namespaces,
         unresolved_mark,
     };
     module.visit_mut_children_with(&mut processor);
     reattach_elided_object_rest_in_module_items(
         &mut module.body,
         &named_helpers,
-        &tslib_namespaces,
+        tslib_namespaces,
         unresolved_mark,
     );
 
@@ -137,7 +137,7 @@ fn run_un_object_rest(
         };
 
         let extraction = try_extract_owp_iife(stmt)
-            .or_else(|| try_extract_owp_named_call(stmt, &named_helpers, &tslib_namespaces));
+            .or_else(|| try_extract_owp_named_call(stmt, &named_helpers, tslib_namespaces));
 
         if let Some((rest_binding, source, excluded_keys, before, after)) = extraction {
             let mut inline_accesses = declarators_to_accesses(&before, &source, &excluded_keys);

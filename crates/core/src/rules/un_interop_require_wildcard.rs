@@ -8,9 +8,9 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helper_dependencies, collect_tslib_namespace_bindings, helpers_with_remaining_refs,
-    remove_helper_declarations, tslib_helper_name_kind, tslib_member_helper_kind,
-    tslib_require_member_name, BabelHelperKind, BindingKey, LocalHelperContext,
+    collect_helper_dependencies, helpers_with_remaining_refs, remove_helper_declarations,
+    tslib_helper_name_kind, tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind,
+    BindingKey, LocalHelperContext,
 };
 use super::helper_matcher::{
     binding_key, import_specifier_binding_key, var_declarator_binding_key,
@@ -42,7 +42,7 @@ impl VisitMut for UnInteropRequireWildcard {
 
 fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHelperContext) {
     let helpers = local_helpers.helpers_of_kind(BabelHelperKind::InteropRequireWildcard);
-    let tslib_namespaces = collect_tslib_namespace_bindings(module);
+    let tslib_namespaces = local_helpers.tslib_namespaces();
     let has_direct_tslib_calls =
         local_helpers.has_tslib_require_member_call(BabelHelperKind::InteropRequireWildcard);
     if helpers.is_empty() && tslib_namespaces.is_empty() && !has_direct_tslib_calls {
@@ -53,7 +53,7 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
     // and unwrap non-require calls in expressions.
     let mut new_body = Vec::with_capacity(module.body.len());
     for item in module.body.drain(..) {
-        if let Some(imports) = try_convert_to_namespace_import(&item, &helpers, &tslib_namespaces) {
+        if let Some(imports) = try_convert_to_namespace_import(&item, &helpers, tslib_namespaces) {
             new_body.extend(imports);
         } else {
             new_body.push(item);
@@ -64,7 +64,7 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
     // Phase 2: Unwrap remaining call sites in expressions (non-var-decl contexts)
     let mut unwrapper = WildcardCallUnwrapper {
         helpers: &helpers,
-        tslib_namespaces: &tslib_namespaces,
+        tslib_namespaces,
     };
     module.visit_mut_with(&mut unwrapper);
 
