@@ -273,6 +273,39 @@ async function func() {
 }
 
 #[test]
+fn async_with_yield_arg_consuming_previous_sent() {
+    // Terser can fold TypeScript output so one yield argument consumes the
+    // previous _a.sent() value: return [4, (response = _a.sent()).json()].
+    let input = r#"
+function load_user(app_id) {
+  return __awaiter(this, void 0, void 0, function () {
+    var response, data;
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          return [4, fetch_user(app_id)];
+        case 1:
+          return [4, (response = _a.sent()).json()];
+        case 2:
+          return [2, data = _a.sent()];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+async function load_user(app_id) {
+  var response, data;
+  response = await fetch_user(app_id);
+  data = await response.json();
+  return data;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn async_with_advanced_intermediate_awaits() {
     // Ported from the JS suite's advanced async/await fixture.
     let input = r#"

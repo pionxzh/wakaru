@@ -3,8 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    AwaitExpr, BlockStmt, CatchClause, Expr, ExprStmt, Function, Ident, Pat, Prop, PropName, Stmt,
-    SwitchCase, TryStmt, YieldExpr,
+    AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, CatchClause, Expr, ExprStmt,
+    Function, Ident, MemberExpr, Pat, Prop, PropName, SimpleAssignTarget, Stmt, SwitchCase,
+    TryStmt, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -171,6 +172,13 @@ fn decode_state_machine(state_name: Atom, cases: Vec<SwitchCase>) -> Vec<Stmt> {
                 output.push((idx, s));
                 continue;
             }
+            if let Some((_, prev)) = output.last() {
+                if let Some(split) = split_sent_consuming_stmt(&state_name, &stmt, prev) {
+                    output.pop();
+                    output.extend(split.into_iter().map(|stmt| (idx, stmt)));
+                    continue;
+                }
+            }
             // Pop the previous yield and embed it into this assignment/expression.
             let merged = if let Some((_, prev)) = output.last() {
                 extract_yield_from_stmt(prev).map(|(arg, delegate)| {
@@ -239,6 +247,129 @@ fn extract_yield_from_stmt(stmt: &Stmt) -> Option<(Box<Expr>, bool)> {
         }
     }
     None
+}
+
+fn split_sent_consuming_stmt(state_name: &Atom, stmt: &Stmt, prev: &Stmt) -> Option<Vec<Stmt>> {
+    let (arg, delegate) = extract_yield_from_stmt(prev)?;
+    let yielded = Box::new(Expr::Yield(YieldExpr {
+        span: DUMMY_SP,
+        delegate,
+        arg: Some(arg),
+    }));
+
+    if let Some((left, followup)) = split_yield_arg_sent_assignment(state_name, stmt) {
+        return Some(vec![
+            assign_stmt(left, yielded),
+            Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Yield(YieldExpr {
+                    span: DUMMY_SP,
+                    delegate: false,
+                    arg: Some(followup),
+                })),
+            }),
+        ]);
+    }
+
+    if let Some((left, returned)) = split_return_sent_assignment(state_name, stmt) {
+        return Some(vec![
+            assign_stmt(left, yielded),
+            Stmt::Return(swc_core::ecma::ast::ReturnStmt {
+                span: DUMMY_SP,
+                arg: Some(returned),
+            }),
+        ]);
+    }
+
+    None
+}
+
+fn split_yield_arg_sent_assignment(
+    state_name: &Atom,
+    stmt: &Stmt,
+) -> Option<(AssignTarget, Box<Expr>)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Yield(yield_expr) = expr.as_ref() else {
+        return None;
+    };
+    if yield_expr.delegate {
+        return None;
+    }
+    let arg = yield_expr.arg.as_deref()?;
+    let Expr::Call(call) = arg else {
+        return None;
+    };
+    let callee = call.callee.as_expr()?;
+    let Expr::Member(member) = callee.as_ref() else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_paren_expr(&member.obj) else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign || !is_sent_call(state_name, &assign.right) {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(left)) = &assign.left else {
+        return None;
+    };
+
+    let mut next_member: MemberExpr = member.clone();
+    next_member.obj = Box::new(Expr::Ident(left.id.clone()));
+    let mut next_call = call.clone();
+    next_call.callee = swc_core::ecma::ast::Callee::Expr(Box::new(Expr::Member(next_member)));
+
+    Some((assign.left.clone(), Box::new(Expr::Call(next_call))))
+}
+
+fn split_return_sent_assignment(
+    state_name: &Atom,
+    stmt: &Stmt,
+) -> Option<(AssignTarget, Box<Expr>)> {
+    let Stmt::Return(ret) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = ret.arg.as_deref()? else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign || !is_sent_call(state_name, &assign.right) {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(left)) = &assign.left else {
+        return None;
+    };
+    Some((assign.left.clone(), Box::new(Expr::Ident(left.id.clone()))))
+}
+
+fn assign_stmt(left: AssignTarget, right: Box<Expr>) -> Stmt {
+    Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left,
+            right,
+        })),
+    })
+}
+
+fn is_sent_call(state_name: &Atom, expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    let Some(mem) = call.callee.as_expr().and_then(|e| e.as_member()) else {
+        return false;
+    };
+    matches!(mem.obj.as_ref(), Expr::Ident(id) if id.sym == *state_name)
+        && is_ident_prop(&mem.prop, "sent")
+}
+
+fn strip_paren_expr(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_paren_expr(&paren.expr),
+        other => other,
+    }
 }
 
 fn is_standalone_sent(state_name: &Atom, stmt: &Stmt) -> bool {

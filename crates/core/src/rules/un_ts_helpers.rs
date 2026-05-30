@@ -1,6 +1,8 @@
+use std::collections::HashSet;
+
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
-    BinExpr, BinaryOp, Decl, Expr, MemberExpr, MemberProp, Module, ModuleItem, Pat, Stmt, VarDecl,
+    BinExpr, BinaryOp, Decl, Expr, MemberExpr, MemberProp, Module, ModuleItem, Pat, Stmt,
 };
 use swc_core::ecma::visit::VisitMut;
 
@@ -18,6 +20,7 @@ pub struct UnTsHelpers;
 impl VisitMut for UnTsHelpers {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let mut renames: Vec<BindingRename> = Vec::new();
+        let mut helper_names: HashSet<Atom> = HashSet::new();
 
         for item in &module.body {
             let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
@@ -32,6 +35,7 @@ impl VisitMut for UnTsHelpers {
                 };
                 if let Some(helper_name) = extract_ts_helper_name(init) {
                     let local_name = &binding.id.sym;
+                    helper_names.insert(helper_name.clone());
                     if *local_name != helper_name {
                         renames.push(BindingRename {
                             old: (local_name.clone(), binding.id.ctxt),
@@ -42,22 +46,33 @@ impl VisitMut for UnTsHelpers {
             }
         }
 
-        if renames.is_empty() {
+        if helper_names.is_empty() {
             return;
         }
 
         // Scope-aware rename using shared BindingRenamer
-        rename_bindings_in_module(module, &renames);
-
-        // Collect canonical names for removal
-        let canonical_names: Vec<Atom> = renames.iter().map(|r| r.new.clone()).collect();
+        if !renames.is_empty() {
+            rename_bindings_in_module(module, &renames);
+        }
 
         // Remove the helper declarations (now renamed to canonical names)
-        module.body.retain(|item| {
+        module.body.retain_mut(|item| {
             let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
                 return true;
             };
-            !is_ts_helper_decl(var_decl, &canonical_names)
+            var_decl.decls.retain(|decl| {
+                let Pat::Ident(binding) = &decl.name else {
+                    return true;
+                };
+                if !helper_names.contains(&binding.id.sym) {
+                    return true;
+                }
+                decl.init
+                    .as_deref()
+                    .and_then(extract_ts_helper_name)
+                    .is_none_or(|helper_name| helper_name != binding.id.sym)
+            });
+            !var_decl.decls.is_empty()
         });
     }
 }
@@ -105,15 +120,4 @@ fn extract_ts_helper_name(expr: &Expr) -> Option<Atom> {
         | "__importStar" | "__createBinding" | "__setModuleDefault" => Some(name.clone()),
         _ => None,
     }
-}
-
-/// Check if a var declaration is a TS helper that should be removed.
-fn is_ts_helper_decl(var_decl: &VarDecl, canonical_names: &[Atom]) -> bool {
-    var_decl.decls.len() == 1
-        && var_decl.decls.iter().all(|decl| {
-            let Pat::Ident(binding) = &decl.name else {
-                return false;
-            };
-            canonical_names.contains(&binding.id.sym)
-        })
 }

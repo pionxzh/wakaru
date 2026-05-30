@@ -76,3 +76,39 @@ const x = Y({}, { a: 1 });
     let output = render(input);
     insta::assert_snapshot!(output);
 }
+
+#[test]
+fn removes_canonical_helpers_from_multi_declarator_decl() {
+    let input = r#"
+var __awaiter = this && this.__awaiter || function(thisArg, _arguments, P, generator) {
+  return new (P || (P = Promise))(function(resolve) {
+    resolve(generator.apply(thisArg, _arguments || []).next());
+  });
+}, __generator = this && this.__generator || function(thisArg, body) {
+  return body.call(thisArg, { label: 0, sent: function() {}, trys: [], ops: [] });
+};
+function load_user(app_id) {
+  return __awaiter(this, void 0, void 0, function() {
+    var response;
+    return __generator(this, function(_a) {
+      switch (_a.label) {
+        case 0:
+          return [4, fetch_user(app_id)];
+        case 1:
+          response = _a.sent();
+          return [2, response];
+      }
+    });
+  });
+}
+"#;
+    let output = render(input);
+    assert!(
+        !output.contains("this && this.__awaiter") && !output.contains("this && this.__generator"),
+        "canonical helpers in a shared var declaration should be removed: {output}"
+    );
+    assert!(
+        output.contains("async function load_user"),
+        "async function should still be recovered after helper cleanup: {output}"
+    );
+}
