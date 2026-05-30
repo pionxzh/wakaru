@@ -27,17 +27,17 @@ pub(crate) use super::helper_matcher::BindingKey;
 
 #[cfg(test)]
 thread_local! {
-    static COLLECT_HELPERS_CALLS: Cell<usize> = const { Cell::new(0) };
+    static COLLECT_TRANSPILER_HELPERS_CALLS: Cell<usize> = const { Cell::new(0) };
 }
 
 #[cfg(test)]
-pub(crate) fn reset_collect_helpers_call_count() {
-    COLLECT_HELPERS_CALLS.with(|calls| calls.set(0));
+pub(crate) fn reset_collect_transpiler_helpers_call_count() {
+    COLLECT_TRANSPILER_HELPERS_CALLS.with(|calls| calls.set(0));
 }
 
 #[cfg(test)]
-pub(crate) fn collect_helpers_call_count() -> usize {
-    COLLECT_HELPERS_CALLS.with(Cell::get)
+pub(crate) fn collect_transpiler_helpers_call_count() -> usize {
+    COLLECT_TRANSPILER_HELPERS_CALLS.with(Cell::get)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -103,7 +103,7 @@ impl LocalHelperContext {
     pub(crate) fn collect(module: &Module) -> Self {
         let tslib_namespaces = collect_tslib_namespace_bindings(module);
         Self {
-            helpers: collect_helpers(module),
+            helpers: collect_transpiler_helpers(module),
             ts_helpers: collect_ts_helpers(module, &tslib_namespaces),
             tslib_namespaces,
             tslib_require_member_calls: collect_tslib_require_member_calls(module),
@@ -307,9 +307,11 @@ const DEFINE_PROPERTY_PATHS: &[&str] = &[
 
 /// Scan module-level declarations for helper functions.
 /// Detects by function body shape and by import path.
-pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, TranspilerHelperKind> {
+pub(crate) fn collect_transpiler_helpers(
+    module: &Module,
+) -> HashMap<BindingKey, TranspilerHelperKind> {
     #[cfg(test)]
-    COLLECT_HELPERS_CALLS.with(|calls| calls.set(calls.get() + 1));
+    COLLECT_TRANSPILER_HELPERS_CALLS.with(|calls| calls.set(calls.get() + 1));
 
     // Phase 1: scan all module-level function bodies for Babel sub-helper markers.
     // The Babel 7+ pattern uses a thin dispatcher (`return f(x) || g(x) || h(x) || k()`)

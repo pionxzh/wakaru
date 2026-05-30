@@ -646,7 +646,7 @@ mod tests {
     use swc_core::common::{DUMMY_SP, GLOBALS};
 
     use super::super::transpiler_helper_utils::{
-        collect_helpers_call_count, reset_collect_helpers_call_count,
+        collect_transpiler_helpers_call_count, reset_collect_transpiler_helpers_call_count,
     };
     use super::*;
 
@@ -660,14 +660,14 @@ mod tests {
             };
             let unresolved_mark = Mark::new();
 
-            reset_collect_helpers_call_count();
+            reset_collect_transpiler_helpers_call_count();
             apply_rules(
                 &mut module,
                 unresolved_mark,
                 RulePipelineOptions::between("UnInteropRequireDefault", "UnRegenerator"),
             );
 
-            assert_eq!(collect_helpers_call_count(), 3);
+            assert_eq!(collect_transpiler_helpers_call_count(), 3);
         });
     }
 }

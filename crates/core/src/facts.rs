@@ -16,7 +16,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use crate::rules::transpiler_helper_utils::{collect_helpers, TranspilerHelperKind};
+use crate::rules::transpiler_helper_utils::{collect_transpiler_helpers, TranspilerHelperKind};
 
 /// How a binding was imported.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -452,7 +452,7 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
 }
 
 fn collect_helper_exports(module: &Module, exports: &[ExportFact]) -> Vec<HelperExportFact> {
-    let local_helpers = collect_helpers(module);
+    let local_helpers = collect_transpiler_helpers(module);
     let mut helper_exports = Vec::new();
 
     for export in exports {

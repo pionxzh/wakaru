@@ -76,7 +76,7 @@ The source text is `&unpacked.code` — the code of the **current split module**
 - Esbuild factories: raw extracted factory body
 - Esbuild scope-hoisted modules: re-emitted code (`emit_items()`)
 
-Helper detection (`collect_helpers`) only scans the current module. A helper
+Helper detection (`collect_transpiler_helpers`) only scans the current module. A helper
 defined in module A and called in module B would not be detected in module B,
 so skip_unless correctly skips the rule there too (it would be a no-op anyway).
 

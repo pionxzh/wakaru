@@ -104,9 +104,9 @@ identity and declaration lifecycle mechanics.
 
 ### Detection (`transpiler_helper_utils.rs`)
 
-The `collect_helpers()` function scans module-level declarations (function declarations, function-assigned variables, TypeScript helper imports, and Babel runtime imports) and returns helper identities by running each candidate through a set of shape matchers or matching known runtime package paths.
+The `collect_transpiler_helpers()` function scans module-level declarations (function declarations, function-assigned variables, TypeScript helper imports, and Babel runtime imports) and returns helper identities by running each candidate through a set of shape matchers or matching known runtime package paths.
 
-Pipeline consumers do not call `collect_helpers()` directly. `apply_rules()` lazily builds a `LocalHelperContext` the first time a helper rule needs local helper bindings, after earlier syntax normalization rules have run. Later helper rules in the same pipeline range reuse that context instead of rescanning the module. Direct rule tests can still run individual `VisitMut` rules; those rules build a local context for themselves.
+Pipeline consumers do not call `collect_transpiler_helpers()` directly. `apply_rules()` lazily builds a `LocalHelperContext` the first time a helper rule needs local helper bindings, after earlier syntax normalization rules have run. Later helper rules in the same pipeline range reuse that context instead of rescanning the module. Direct rule tests can still run individual `VisitMut` rules; those rules build a local context for themselves.
 
 ```
 scan module-level declarations
