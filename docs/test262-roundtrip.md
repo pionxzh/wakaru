@@ -175,7 +175,8 @@ node scripts\correctness\test262-roundtrip.mjs --preset modules --pipeline babel
 ```
 
 Recorded on 2026-05-25, with the scope, control-flow, calls, and operators
-slices added on 2026-05-29, and literals added on 2026-05-30:
+slices added on 2026-05-29, and literals, block-scope-syntax, and variables
+added on 2026-05-30:
 
 | Slice | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -189,6 +190,8 @@ slices added on 2026-05-29, and literals added on 2026-05-30:
 | operators | 2200 | 2011 | 189 | 108 | 83 | 1820 | 0 |
 | templates | 84 | 67 | 17 | 2 | 1 | 64 | 0 |
 | literals | 534 | 215 | 319 | 0 | 4 | 211 | 0 |
+| block-scope-syntax | 113 | 11 | 102 | 0 | 0 | 11 | 0 |
+| variables | 178 | 130 | 48 | 4 | 0 | 126 | 0 |
 | modules | 755 | 358 | 397 | 10 | 22 | 326 | 0 |
 
 Additional producer baselines recorded on 2026-05-25:
@@ -205,6 +208,8 @@ Additional producer baselines recorded on 2026-05-25:
 | swc-minify | operators | 2200 | 2011 | 189 | 107 | 49 | 1855 | 0 |
 | swc-minify | templates | 84 | 67 | 17 | 2 | 0 | 65 | 0 |
 | swc-minify | literals | 534 | 215 | 319 | 0 | 1 | 214 | 0 |
+| swc-minify | block-scope-syntax | 113 | 11 | 102 | 0 | 0 | 11 | 0 |
+| swc-minify | variables | 178 | 130 | 48 | 3 | 3 | 124 | 0 |
 | swc-minify | modules | 755 | 358 | 397 | 10 | 1 | 347 | 0 |
 | esbuild-minify | default | 2180 | 1647 | 533 | 4 | 111 | 1532 | 0 |
 | esbuild-minify | classes | 8426 | 5064 | 3362 | 28 | 389 | 4647 | 0 |
@@ -216,6 +221,8 @@ Additional producer baselines recorded on 2026-05-25:
 | esbuild-minify | operators | 2200 | 2011 | 189 | 93 | 38 | 1880 | 0 |
 | esbuild-minify | templates | 84 | 67 | 17 | 2 | 1 | 64 | 0 |
 | esbuild-minify | literals | 534 | 215 | 319 | 0 | 0 | 215 | 0 |
+| esbuild-minify | block-scope-syntax | 113 | 11 | 102 | 0 | 0 | 11 | 0 |
+| esbuild-minify | variables | 178 | 130 | 48 | 1 | 17 | 112 | 0 |
 | esbuild-minify | modules | 755 | 358 | 397 | 9 | 244 | 105 | 0 |
 
 Module graph baselines recorded on 2026-05-25:

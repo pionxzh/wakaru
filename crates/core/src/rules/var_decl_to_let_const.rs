@@ -1589,6 +1589,15 @@ impl GlobalVarObserver<'_> {
 }
 
 impl Visit for GlobalVarObserver<'_> {
+    fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        stmt.left.visit_with(self);
+        stmt.right.visit_with(self);
+        if self.is_global_object_expr(&stmt.right) {
+            self.observed.extend(self.var_ids.iter().cloned());
+        }
+        stmt.body.visit_with(self);
+    }
+
     fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
         if self.is_global_object_expr(member.obj.as_ref()) {
             if let Some(name) = static_member_prop_name(&member.prop) {

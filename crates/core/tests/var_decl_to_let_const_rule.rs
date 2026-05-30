@@ -435,6 +435,30 @@ delete this.v;
 }
 
 #[test]
+fn module_var_observed_by_top_level_global_for_in_stays_var() {
+    let input = r#"
+var enumed;
+for (var key in this) {
+    if (key === "__declared__var") {
+        enumed = true;
+    }
+}
+var __declared__var;
+"#;
+    let expected = r#"
+var enumed;
+for (var key in this) {
+    if (key === "__declared__var") {
+        enumed = true;
+    }
+}
+var __declared__var;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn module_var_observed_in_global_with_stays_var() {
     let input = r#"
 var v = 1;

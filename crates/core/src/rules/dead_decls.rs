@@ -10,7 +10,9 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::binding_facts::collect_binding_facts;
 use super::decl_utils::{binding_id, BindingId};
-use super::eval_utils::{direct_eval_call_source, js_source_mentions_binding, EvalCallSource};
+use super::eval_utils::{
+    direct_eval_call_source, js_source_mentions_binding, strip_parens, EvalCallSource,
+};
 
 type BindingKey = (Atom, SyntaxContext);
 
@@ -63,7 +65,58 @@ impl VisitMut for DeadUninitializedDecls {
 fn collect_eval_protected_uninitialized(module: &Module) -> HashSet<BindingId> {
     let mut collector = EvalProtectedUninitializedCollector::default();
     collector.visit_module_scope(module);
+    collector
+        .protected
+        .extend(collect_global_enumerated_uninitialized(module));
     collector.protected
+}
+
+fn collect_global_enumerated_uninitialized(module: &Module) -> HashSet<BindingId> {
+    let uninitialized = collect_current_scope_uninitialized_from_module(module);
+    if uninitialized.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut observer = GlobalForInObserver::default();
+    module.visit_with(&mut observer);
+    if observer.found {
+        uninitialized
+    } else {
+        HashSet::new()
+    }
+}
+
+#[derive(Default)]
+struct GlobalForInObserver {
+    found: bool,
+    function_depth: usize,
+}
+
+impl GlobalForInObserver {
+    fn is_global_object_expr(&self, expr: &Expr) -> bool {
+        match strip_parens(expr) {
+            Expr::Ident(id) if matches!(id.sym.as_ref(), "globalThis" | "window" | "self") => true,
+            Expr::This(_) if self.function_depth == 0 => true,
+            _ => false,
+        }
+    }
+}
+
+impl Visit for GlobalForInObserver {
+    fn visit_for_in_stmt(&mut self, stmt: &swc_core::ecma::ast::ForInStmt) {
+        stmt.left.visit_with(self);
+        stmt.right.visit_with(self);
+        if self.is_global_object_expr(&stmt.right) {
+            self.found = true;
+        }
+        stmt.body.visit_with(self);
+    }
+
+    fn visit_function(&mut self, function: &Function) {
+        self.function_depth += 1;
+        function.visit_children_with(self);
+        self.function_depth -= 1;
+    }
 }
 
 #[derive(Default)]

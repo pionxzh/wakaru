@@ -31,6 +31,8 @@ calls
 operators
 templates
 literals
+block-scope-syntax
+variables
 modules
 ```
 

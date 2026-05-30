@@ -21,6 +21,8 @@ export const baselineSlices = [
   "operators",
   "templates",
   "literals",
+  "block-scope-syntax",
+  "variables",
   "modules",
 ];
 

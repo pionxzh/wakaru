@@ -229,6 +229,29 @@ const o = {
 }
 
 #[test]
+fn top_level_uninitialized_var_is_kept_when_global_for_in_can_observe_it() {
+    let input = r#"
+var enumed;
+for (var key in this) {
+    if (key === "__declared__var") {
+        enumed = true;
+    }
+}
+var __declared__var;
+"#;
+    let expected = r#"
+var enumed;
+for (var key in this) {
+    if (key === "__declared__var") {
+        enumed = true;
+    }
+}
+var __declared__var;
+"#;
+    assert_eq_normalized(&render_default(input), expected.trim());
+}
+
+#[test]
 fn direct_eval_does_not_keep_unrelated_function_temps() {
     let input = r#"
 function read(options) {

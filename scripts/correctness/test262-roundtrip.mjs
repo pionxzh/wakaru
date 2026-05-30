@@ -149,6 +149,8 @@ const pathPresets = {
   ],
   templates: ["test/language/expressions/template-literal", "test/language/expressions/tagged-template"],
   literals: ["test/language/literals"],
+  "block-scope-syntax": ["test/language/block-scope/syntax"],
+  variables: ["test/language/statements/variable"],
   modules: ["test/language/module-code"],
 };
 
