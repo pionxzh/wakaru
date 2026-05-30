@@ -33,8 +33,8 @@ impl VisitMut for UnWebpackObjectGetters {
 }
 
 fn rewrite_module_items(items: &mut Vec<ModuleItem>, unresolved_mark: Mark) {
-    let original = std::mem::take(items);
-    let (replacements, removed) = plan_webpack_namespace_rewrites(&original, unresolved_mark);
+    let mut original = std::mem::take(items);
+    let (mut replacements, removed) = plan_webpack_namespace_rewrites(&original, unresolved_mark);
     let mut rewritten = Vec::with_capacity(original.len());
     let mut i = 0;
 
@@ -43,8 +43,8 @@ fn rewrite_module_items(items: &mut Vec<ModuleItem>, unresolved_mark: Mark) {
             i += 1;
             continue;
         }
-        if let Some(item) = replacements.get(&i) {
-            rewritten.push(item.clone());
+        if let Some(item) = replacements.remove(&i) {
+            rewritten.push(item);
             i += 1;
             continue;
         }
@@ -57,7 +57,12 @@ fn rewrite_module_items(items: &mut Vec<ModuleItem>, unresolved_mark: Mark) {
             }
         }
 
-        rewritten.push(original[i].clone());
+        rewritten.push(std::mem::replace(
+            &mut original[i],
+            ModuleItem::Stmt(Stmt::Empty(swc_core::ecma::ast::EmptyStmt {
+                span: DUMMY_SP,
+            })),
+        ));
         i += 1;
     }
 
@@ -129,7 +134,7 @@ fn maybe_rewrite_webpack_namespace(
 }
 
 fn rewrite_stmts(stmts: &mut Vec<Stmt>) {
-    let original = std::mem::take(stmts);
+    let mut original = std::mem::take(stmts);
     let mut rewritten = Vec::with_capacity(original.len());
     let mut i = 0;
 
@@ -142,7 +147,10 @@ fn rewrite_stmts(stmts: &mut Vec<Stmt>) {
             }
         }
 
-        rewritten.push(original[i].clone());
+        rewritten.push(std::mem::replace(
+            &mut original[i],
+            Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span: DUMMY_SP }),
+        ));
         i += 1;
     }
 

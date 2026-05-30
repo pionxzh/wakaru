@@ -32,8 +32,24 @@ impl VisitMut for UnWebpackDefineGetters {
     }
 }
 
+fn take_item(items: &mut [ModuleItem], i: usize) -> ModuleItem {
+    std::mem::replace(
+        &mut items[i],
+        ModuleItem::Stmt(Stmt::Empty(swc_core::ecma::ast::EmptyStmt {
+            span: DUMMY_SP,
+        })),
+    )
+}
+
+fn take_stmt(stmts: &mut [Stmt], i: usize) -> Stmt {
+    std::mem::replace(
+        &mut stmts[i],
+        Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span: DUMMY_SP }),
+    )
+}
+
 fn rewrite_module_items(items: &mut Vec<ModuleItem>, unresolved_mark: Mark) {
-    let original = std::mem::take(items);
+    let mut original = std::mem::take(items);
     let mut rewritten = Vec::with_capacity(original.len());
     let mut i = 0;
 
@@ -42,14 +58,14 @@ fn rewrite_module_items(items: &mut Vec<ModuleItem>, unresolved_mark: Mark) {
             let (replacement, next_index) =
                 maybe_build_define_properties_item(&original, i + 1, &binding, unresolved_mark);
             if let Some(item) = replacement {
-                rewritten.push(original[i].clone());
+                rewritten.push(take_item(&mut original, i));
                 rewritten.push(item);
                 i = next_index;
                 continue;
             }
         }
 
-        rewritten.push(original[i].clone());
+        rewritten.push(take_item(&mut original, i));
         i += 1;
     }
 
@@ -57,7 +73,7 @@ fn rewrite_module_items(items: &mut Vec<ModuleItem>, unresolved_mark: Mark) {
 }
 
 fn rewrite_stmts(stmts: &mut Vec<Stmt>, unresolved_mark: Mark) {
-    let original = std::mem::take(stmts);
+    let mut original = std::mem::take(stmts);
     let mut rewritten = Vec::with_capacity(original.len());
     let mut i = 0;
 
@@ -66,14 +82,14 @@ fn rewrite_stmts(stmts: &mut Vec<Stmt>, unresolved_mark: Mark) {
             let (replacement, next_index) =
                 maybe_build_define_properties_stmt(&original, i + 1, &binding, unresolved_mark);
             if let Some(stmt) = replacement {
-                rewritten.push(original[i].clone());
+                rewritten.push(take_stmt(&mut original, i));
                 rewritten.push(stmt);
                 i = next_index;
                 continue;
             }
         }
 
-        rewritten.push(original[i].clone());
+        rewritten.push(take_stmt(&mut original, i));
         i += 1;
     }
 

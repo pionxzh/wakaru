@@ -116,6 +116,7 @@ fn process_module_items(
 }
 
 fn process_stmts(stmts: Vec<Stmt>, unresolved_mark: Mark, level: RewriteLevel) -> Vec<Stmt> {
+    let mut stmts = stmts;
     let mut result = Vec::with_capacity(stmts.len());
     let mut i = 0;
 
@@ -124,7 +125,12 @@ fn process_stmts(stmts: Vec<Stmt>, unresolved_mark: Mark, level: RewriteLevel) -
             result.push(stmt);
             i += consumed;
         } else {
-            result.push(stmts[i].clone());
+            result.push(std::mem::replace(
+                &mut stmts[i],
+                Stmt::Empty(swc_core::ecma::ast::EmptyStmt {
+                    span: swc_core::common::DUMMY_SP,
+                }),
+            ));
             i += 1;
         }
     }
