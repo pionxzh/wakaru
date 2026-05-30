@@ -60,11 +60,46 @@ impl VisitMut for UnEs6Class {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         // Pre-scan for helpers at module level BEFORE visiting children,
         // so nested scopes (function bodies) can also detect custom helper calls.
-        let tslib_namespaces = self
-            .module_tslib_namespaces
-            .take()
-            .unwrap_or_else(|| collect_tslib_namespaces_from_items(items));
-        let ts_extends_helpers = self.module_ts_extends_helpers.take().unwrap_or_else(|| {
+        let helper_context = Es6ClassHelperContext::from_module_items(
+            items,
+            self.unresolved_mark,
+            self.module_ts_extends_helpers.take(),
+            self.module_tslib_namespaces.take(),
+        );
+        let mut inner =
+            UnEs6ClassInner::new(helper_context, self.unresolved_mark, self.rewrite_level);
+        items.visit_mut_with(&mut inner);
+    }
+
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        // Non-module context: scan local scope for helpers
+        let helper_context = Es6ClassHelperContext::from_stmts(stmts, self.unresolved_mark);
+        let mut inner =
+            UnEs6ClassInner::new(helper_context, self.unresolved_mark, self.rewrite_level);
+        stmts.visit_mut_with(&mut inner);
+    }
+}
+
+#[derive(Clone)]
+struct Es6ClassHelperContext {
+    inherits_helpers: HashSet<BindingKey>,
+    ts_extends_helpers: HashSet<BindingKey>,
+    tslib_namespaces: HashSet<BindingKey>,
+    set_prototype_of_helpers: HashSet<BindingKey>,
+    create_class_helpers: HashSet<BindingKey>,
+    call_super_helpers: HashSet<BindingKey>,
+}
+
+impl Es6ClassHelperContext {
+    fn from_module_items(
+        items: &[ModuleItem],
+        unresolved_mark: Mark,
+        cached_ts_extends_helpers: Option<HashSet<BindingKey>>,
+        cached_tslib_namespaces: Option<HashSet<BindingKey>>,
+    ) -> Self {
+        let tslib_namespaces =
+            cached_tslib_namespaces.unwrap_or_else(|| collect_tslib_namespaces_from_items(items));
+        let ts_extends_helpers = cached_ts_extends_helpers.unwrap_or_else(|| {
             let mut helpers = collect_ts_extends_helpers_from_items(items);
             helpers.extend(collect_tslib_extends_helpers_from_items(
                 items,
@@ -74,26 +109,18 @@ impl VisitMut for UnEs6Class {
         });
         let mut inherits_helpers = collect_inherits_helpers_from_items(items);
         inherits_helpers.extend(ts_extends_helpers.iter().cloned());
-        let set_prototype_of_helpers = collect_set_prototype_of_helpers_from_items(items);
-        let create_class_helpers =
-            collect_create_class_helpers_from_items(items, self.unresolved_mark);
-        let call_super_helpers = collect_call_super_helpers_from_items(items);
 
-        let mut inner = UnEs6ClassInner {
+        Self {
             inherits_helpers,
             ts_extends_helpers,
             tslib_namespaces,
-            set_prototype_of_helpers,
-            create_class_helpers,
-            call_super_helpers,
-            unresolved_mark: self.unresolved_mark,
-            rewrite_level: self.rewrite_level,
-        };
-        items.visit_mut_with(&mut inner);
+            set_prototype_of_helpers: collect_set_prototype_of_helpers_from_items(items),
+            create_class_helpers: collect_create_class_helpers_from_items(items, unresolved_mark),
+            call_super_helpers: collect_call_super_helpers_from_items(items),
+        }
     }
 
-    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
-        // Non-module context: scan local scope for helpers
+    fn from_stmts(stmts: &[Stmt], unresolved_mark: Mark) -> Self {
         let ts_extends_helpers = collect_ts_extends_helpers_from_stmts(stmts);
         let tslib_namespaces = collect_tslib_namespaces_from_stmts(stmts);
         let mut inherits_helpers = collect_inherits_helpers_from_stmts(stmts);
@@ -102,40 +129,61 @@ impl VisitMut for UnEs6Class {
             stmts,
             &tslib_namespaces,
         ));
-        let set_prototype_of_helpers = collect_set_prototype_of_helpers_from_stmts(stmts);
-        let create_class_helpers =
-            collect_create_class_helpers_from_stmts(stmts, self.unresolved_mark);
-        let call_super_helpers = collect_call_super_helpers_from_stmts(stmts);
 
-        let mut inner = UnEs6ClassInner {
+        Self {
             inherits_helpers,
             ts_extends_helpers,
             tslib_namespaces,
-            set_prototype_of_helpers,
-            create_class_helpers,
-            call_super_helpers,
-            unresolved_mark: self.unresolved_mark,
-            rewrite_level: self.rewrite_level,
-        };
-        stmts.visit_mut_with(&mut inner);
+            set_prototype_of_helpers: collect_set_prototype_of_helpers_from_stmts(stmts),
+            create_class_helpers: collect_create_class_helpers_from_stmts(stmts, unresolved_mark),
+            call_super_helpers: collect_call_super_helpers_from_stmts(stmts),
+        }
+    }
+
+    fn extend(&mut self, other: &Self) {
+        self.inherits_helpers
+            .extend(other.inherits_helpers.iter().cloned());
+        self.ts_extends_helpers
+            .extend(other.ts_extends_helpers.iter().cloned());
+        self.tslib_namespaces
+            .extend(other.tslib_namespaces.iter().cloned());
+        self.set_prototype_of_helpers
+            .extend(other.set_prototype_of_helpers.iter().cloned());
+        self.create_class_helpers
+            .extend(other.create_class_helpers.iter().cloned());
+        self.call_super_helpers
+            .extend(other.call_super_helpers.iter().cloned());
     }
 }
 
 /// Inner visitor that carries helper name sets through all scopes.
 struct UnEs6ClassInner {
-    inherits_helpers: HashSet<BindingKey>,
-    ts_extends_helpers: HashSet<BindingKey>,
-    tslib_namespaces: HashSet<BindingKey>,
-    set_prototype_of_helpers: HashSet<BindingKey>,
-    create_class_helpers: HashSet<BindingKey>,
-    call_super_helpers: HashSet<BindingKey>,
+    helpers: Es6ClassHelperContext,
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
 }
 
+impl UnEs6ClassInner {
+    fn new(
+        helper_context: Es6ClassHelperContext,
+        unresolved_mark: Mark,
+        rewrite_level: RewriteLevel,
+    ) -> Self {
+        Self {
+            helpers: helper_context,
+            unresolved_mark,
+            rewrite_level,
+        }
+    }
+}
+
 impl VisitMut for UnEs6ClassInner {
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
-        stmts.visit_mut_children_with(self);
+        let mut scope_helpers = Es6ClassHelperContext::from_stmts(stmts, self.unresolved_mark);
+        scope_helpers.extend(&self.helpers);
+        let mut scoped_inner =
+            UnEs6ClassInner::new(scope_helpers, self.unresolved_mark, self.rewrite_level);
+        stmts.visit_mut_children_with(&mut scoped_inner);
 
         let mut converted_any = false;
         let old = std::mem::take(stmts);
@@ -144,10 +192,10 @@ impl VisitMut for UnEs6ClassInner {
                 Stmt::Decl(Decl::Var(ref var_decl)) => {
                     if let Some(class_decl) = try_iife_to_class(
                         var_decl,
-                        &self.inherits_helpers,
-                        &self.tslib_namespaces,
-                        &self.create_class_helpers,
-                        &self.call_super_helpers,
+                        &scoped_inner.helpers.inherits_helpers,
+                        &scoped_inner.helpers.tslib_namespaces,
+                        &scoped_inner.helpers.create_class_helpers,
+                        &scoped_inner.helpers.call_super_helpers,
                         self.unresolved_mark,
                         self.rewrite_level,
                     ) {
@@ -163,13 +211,16 @@ impl VisitMut for UnEs6ClassInner {
         if converted_any {
             remove_orphaned_create_class_helpers(
                 stmts,
-                &self.create_class_helpers,
+                &scoped_inner.helpers.create_class_helpers,
                 self.unresolved_mark,
             );
-            remove_orphaned_ts_extends_helpers_stmts(stmts, &self.ts_extends_helpers);
-            remove_orphaned_fn_helpers_stmts(stmts, &self.inherits_helpers);
-            remove_orphaned_fn_helpers_stmts(stmts, &self.set_prototype_of_helpers);
-            remove_orphaned_fn_helpers_stmts(stmts, &self.call_super_helpers);
+            remove_orphaned_ts_extends_helpers_stmts(
+                stmts,
+                &scoped_inner.helpers.ts_extends_helpers,
+            );
+            remove_orphaned_fn_helpers_stmts(stmts, &scoped_inner.helpers.inherits_helpers);
+            remove_orphaned_fn_helpers_stmts(stmts, &scoped_inner.helpers.set_prototype_of_helpers);
+            remove_orphaned_fn_helpers_stmts(stmts, &scoped_inner.helpers.call_super_helpers);
         }
     }
 
@@ -183,10 +234,10 @@ impl VisitMut for UnEs6ClassInner {
                 ModuleItem::Stmt(Stmt::Decl(Decl::Var(ref var_decl))) => {
                     if let Some(class_decl) = try_iife_to_class(
                         var_decl,
-                        &self.inherits_helpers,
-                        &self.tslib_namespaces,
-                        &self.create_class_helpers,
-                        &self.call_super_helpers,
+                        &self.helpers.inherits_helpers,
+                        &self.helpers.tslib_namespaces,
+                        &self.helpers.create_class_helpers,
+                        &self.helpers.call_super_helpers,
                         self.unresolved_mark,
                         self.rewrite_level,
                     ) {
@@ -202,13 +253,13 @@ impl VisitMut for UnEs6ClassInner {
         if converted_any {
             remove_orphaned_create_class_helpers_module(
                 items,
-                &self.create_class_helpers,
+                &self.helpers.create_class_helpers,
                 self.unresolved_mark,
             );
-            remove_orphaned_ts_extends_helpers_module(items, &self.ts_extends_helpers);
-            remove_orphaned_fn_helpers_module(items, &self.inherits_helpers);
-            remove_orphaned_fn_helpers_module(items, &self.set_prototype_of_helpers);
-            remove_orphaned_fn_helpers_module(items, &self.call_super_helpers);
+            remove_orphaned_ts_extends_helpers_module(items, &self.helpers.ts_extends_helpers);
+            remove_orphaned_fn_helpers_module(items, &self.helpers.inherits_helpers);
+            remove_orphaned_fn_helpers_module(items, &self.helpers.set_prototype_of_helpers);
+            remove_orphaned_fn_helpers_module(items, &self.helpers.call_super_helpers);
         }
     }
 }

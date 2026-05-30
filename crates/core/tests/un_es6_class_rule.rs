@@ -266,6 +266,36 @@ class Admin extends User {
 }
 
 #[test]
+fn nested_tslib_namespace_extends_require_is_recovered() {
+    let input = r#"
+function createAdmin() {
+    var tslib_1 = require("tslib");
+    var Admin = (function (_super) {
+        tslib_1.__extends(Admin, _super);
+        function Admin(name) {
+            var _this = _super.call(this, name) || this;
+            return _this;
+        }
+        return Admin;
+    }(User));
+    return Admin;
+}
+"#;
+    let expected = r#"
+function createAdmin() {
+    var tslib_1 = require("tslib");
+    class Admin extends User {
+        constructor(name) {
+            super(name);
+        }
+    }
+    return Admin;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn static_field_assignment_in_iife_is_recovered() {
     let input = r#"
 var User = (function () {
