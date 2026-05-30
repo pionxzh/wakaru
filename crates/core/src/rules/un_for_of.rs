@@ -458,13 +458,13 @@ fn build_helper_for_of(
         }
         replace_iterator_value_refs(&mut body, &item_ident);
     }
-    let (pat, bindings, kind, consumed_stmts, temp_sym) = if let Some(element) = element {
+    let (pat, bindings, kind, consumed_stmts, temp_ident) = if let Some(element) = element {
         (
             element.pat,
             element.bindings,
             element.kind,
             element.consumed_stmts,
-            element.temp_sym,
+            element.temp_ident,
         )
     } else {
         (
@@ -472,7 +472,7 @@ fn build_helper_for_of(
                 id: item_ident.clone(),
                 type_ann: None,
             }),
-            vec![item_ident.sym.clone()],
+            vec![item_ident.clone()],
             VarDeclKind::Const,
             0,
             None,
@@ -487,16 +487,16 @@ fn build_helper_for_of(
     {
         return None;
     }
-    if temp_sym
+    if temp_ident
         .as_ref()
-        .is_some_and(|sym| remaining_body.iter().any(|stmt| stmt_uses_ident(stmt, sym)))
+        .is_some_and(|id| remaining_body.iter().any(|stmt| stmt_uses_ident(stmt, id)))
     {
         return None;
     }
 
     let is_reassigned = remaining_body
         .iter()
-        .any(|stmt| bindings.iter().any(|sym| stmt_assigns_ident(stmt, sym)));
+        .any(|stmt| bindings.iter().any(|id| stmt_assigns_ident(stmt, id)));
     let kind = if kind == VarDeclKind::Var {
         VarDeclKind::Var
     } else if is_reassigned {
@@ -542,7 +542,7 @@ fn extract_iterator_call_destructuring_element(
         return None;
     }
 
-    let temp_sym = &temp_binding.id.sym;
+    let temp_ident = &temp_binding.id;
     let mut elems = Vec::new();
     let mut bindings = Vec::new();
     let mut consumed_stmts = 1;
@@ -559,7 +559,7 @@ fn extract_iterator_call_destructuring_element(
         let Some(init) = declarator.init.as_ref() else {
             break;
         };
-        if !is_numeric_index_access(init, temp_sym, expected_index) {
+        if !is_numeric_index_access(init, &temp_ident.sym, expected_index) {
             break;
         }
 
@@ -567,7 +567,7 @@ fn extract_iterator_call_destructuring_element(
             id: binding.id.clone(),
             type_ann: binding.type_ann.clone(),
         })));
-        bindings.push(binding.id.sym.clone());
+        bindings.push(binding.id.clone());
         consumed_stmts += 1;
     }
 
@@ -584,7 +584,7 @@ fn extract_iterator_call_destructuring_element(
         }),
         bindings,
         kind: first_decl.kind,
-        temp_sym: Some(temp_sym.clone()),
+        temp_ident: Some(temp_ident.clone()),
         consumed_stmts,
     })
 }
@@ -616,7 +616,7 @@ fn extract_iterator_destructuring_decl_element(
         pat: first.name.clone(),
         bindings,
         kind: first_decl.kind,
-        temp_sym: None,
+        temp_ident: None,
         consumed_stmts: 1,
     })
 }
@@ -631,7 +631,7 @@ fn extract_iterator_value_element(stmts: &[Stmt], item_ident: &Ident) -> Option<
         return None;
     }
 
-    let temp_sym = &binding.id.sym;
+    let temp_ident = &binding.id;
     let mut elems = Vec::new();
     let mut bindings = Vec::new();
     let mut consumed_stmts = 1;
@@ -648,7 +648,7 @@ fn extract_iterator_value_element(stmts: &[Stmt], item_ident: &Ident) -> Option<
         let Some(init) = declarator.init.as_ref() else {
             break;
         };
-        if !is_numeric_index_access(init, temp_sym, expected_index) {
+        if !is_numeric_index_access(init, &temp_ident.sym, expected_index) {
             break;
         }
 
@@ -656,7 +656,7 @@ fn extract_iterator_value_element(stmts: &[Stmt], item_ident: &Ident) -> Option<
             id: binding.id.clone(),
             type_ann: binding.type_ann.clone(),
         })));
-        bindings.push(binding.id.sym.clone());
+        bindings.push(binding.id.clone());
         consumed_stmts += 1;
     }
 
@@ -670,24 +670,24 @@ fn extract_iterator_value_element(stmts: &[Stmt], item_ident: &Ident) -> Option<
             }),
             bindings,
             kind: first_decl.kind,
-            temp_sym: Some(temp_sym.clone()),
+            temp_ident: Some(temp_ident.clone()),
             consumed_stmts,
         });
     }
 
     Some(LoopElement {
         pat: Pat::Ident(binding.clone()),
-        bindings: vec![binding.id.sym.clone()],
+        bindings: vec![binding.id.clone()],
         kind: first_decl.kind,
-        temp_sym: None,
+        temp_ident: None,
         consumed_stmts: 1,
     })
 }
 
-fn collect_pat_bindings(pat: &Pat, bindings: &mut Vec<Atom>) -> Option<()> {
+fn collect_pat_bindings(pat: &Pat, bindings: &mut Vec<Ident>) -> Option<()> {
     match pat {
         Pat::Ident(binding) => {
-            bindings.push(binding.id.sym.clone());
+            bindings.push(binding.id.clone());
             Some(())
         }
         Pat::Array(array) => {
@@ -704,7 +704,7 @@ fn collect_pat_bindings(pat: &Pat, bindings: &mut Vec<Atom>) -> Option<()> {
                         collect_pat_bindings(&key_value.value, bindings)?;
                     }
                     ObjectPatProp::Assign(assign) => {
-                        bindings.push(assign.key.id.sym.clone());
+                        bindings.push(assign.key.id.clone());
                     }
                     ObjectPatProp::Rest(rest) => {
                         collect_pat_bindings(&rest.arg, bindings)?;
@@ -1132,7 +1132,7 @@ fn try_convert_for_of(stmt: &Stmt) -> Option<ForOfStmt> {
     let Pat::Ident(idx_binding) = &idx_decl.name else {
         return None;
     };
-    let idx_sym = &idx_binding.id.sym;
+    let idx_ident = &idx_binding.id;
     let Some(idx_init) = &idx_decl.init else {
         return None;
     };
@@ -1153,14 +1153,14 @@ fn try_convert_for_of(stmt: &Stmt) -> Option<ForOfStmt> {
     else {
         return None;
     };
-    if !is_ident(left, idx_sym) {
+    if !is_ident(left, &idx_ident.sym) {
         return None;
     }
 
     let IndexedIterable {
         access_obj,
         iterable,
-        temp_sym,
+        temp_ident,
     } = extract_indexed_iterable(init_decl, right)?;
 
     // --- Update: `i++` ---
@@ -1175,7 +1175,7 @@ fn try_convert_for_of(stmt: &Stmt) -> Option<ForOfStmt> {
     else {
         return None;
     };
-    if !is_ident(arg, idx_sym) {
+    if !is_ident(arg, &idx_ident.sym) {
         return None;
     }
 
@@ -1186,24 +1186,24 @@ fn try_convert_for_of(stmt: &Stmt) -> Option<ForOfStmt> {
     if block.stmts.is_empty() {
         return None;
     }
-    let element = extract_loop_element(&block.stmts, &access_obj, idx_sym)?;
+    let element = extract_loop_element(&block.stmts, &access_obj, &idx_ident.sym)?;
 
     // --- Safety: generated index/temp bindings must not be used in remaining body statements ---
     let remaining_body = &block.stmts[element.consumed_stmts..];
     for body_stmt in remaining_body {
-        if stmt_uses_ident(body_stmt, idx_sym) {
+        if stmt_uses_ident(body_stmt, idx_ident) {
             return None;
         }
-        if temp_sym
+        if temp_ident
             .as_ref()
-            .is_some_and(|sym| stmt_uses_ident(body_stmt, sym))
+            .is_some_and(|id| stmt_uses_ident(body_stmt, id))
         {
             return None;
         }
         if element
-            .temp_sym
+            .temp_ident
             .as_ref()
-            .is_some_and(|sym| stmt_uses_ident(body_stmt, sym))
+            .is_some_and(|id| stmt_uses_ident(body_stmt, id))
         {
             return None;
         }
@@ -1214,7 +1214,7 @@ fn try_convert_for_of(stmt: &Stmt) -> Option<ForOfStmt> {
         element
             .bindings
             .iter()
-            .any(|sym| stmt_assigns_ident(stmt, sym))
+            .any(|id| stmt_assigns_ident(stmt, id))
     });
     let elem_kind = if element.kind == VarDeclKind::Var {
         VarDeclKind::Var
@@ -1256,14 +1256,14 @@ fn try_convert_for_of(stmt: &Stmt) -> Option<ForOfStmt> {
 struct IndexedIterable {
     access_obj: Box<Expr>,
     iterable: Box<Expr>,
-    temp_sym: Option<Atom>,
+    temp_ident: Option<Ident>,
 }
 
 struct LoopElement {
     pat: Pat,
-    bindings: Vec<Atom>,
+    bindings: Vec<Ident>,
     kind: VarDeclKind,
-    temp_sym: Option<Atom>,
+    temp_ident: Option<Ident>,
     consumed_stmts: usize,
 }
 
@@ -1276,15 +1276,14 @@ fn extract_indexed_iterable(init_decl: &VarDecl, length_expr: &Expr) -> Option<I
             let Pat::Ident(arr_binding) = &arr_decl.name else {
                 return None;
             };
-            let arr_sym = &arr_binding.id.sym;
-            if !is_ident(&length_obj, arr_sym) {
+            if !is_ident(&length_obj, &arr_binding.id.sym) {
                 return None;
             }
             let iterable = arr_decl.init.clone()?;
             Some(IndexedIterable {
                 access_obj: Box::new(length_obj),
                 iterable,
-                temp_sym: Some(arr_sym.clone()),
+                temp_ident: Some(arr_binding.id.clone()),
             })
         }
         // Babel `iterableIsArray`: `let i = 0; i < items.length; i++`
@@ -1294,7 +1293,7 @@ fn extract_indexed_iterable(init_decl: &VarDecl, length_expr: &Expr) -> Option<I
             Some(IndexedIterable {
                 access_obj: Box::new(length_obj.clone()),
                 iterable: Box::new(length_obj),
-                temp_sym: None,
+                temp_ident: None,
             })
         }
         _ => None,
@@ -1320,7 +1319,7 @@ fn extract_loop_element(stmts: &[Stmt], access_obj: &Expr, idx_sym: &Atom) -> Op
     let Pat::Ident(temp_binding) = &first.name else {
         return None;
     };
-    let temp_sym = &temp_binding.id.sym;
+    let temp_ident = &temp_binding.id;
     let first_init = first.init.as_ref()?;
     if !is_index_access(first_init, access_obj, idx_sym) {
         return None;
@@ -1342,7 +1341,7 @@ fn extract_loop_element(stmts: &[Stmt], access_obj: &Expr, idx_sym: &Atom) -> Op
         let Some(init) = declarator.init.as_ref() else {
             break;
         };
-        if !is_numeric_index_access(init, temp_sym, expected_index) {
+        if !is_numeric_index_access(init, &temp_ident.sym, expected_index) {
             break;
         }
 
@@ -1350,16 +1349,16 @@ fn extract_loop_element(stmts: &[Stmt], access_obj: &Expr, idx_sym: &Atom) -> Op
             id: binding.id.clone(),
             type_ann: binding.type_ann.clone(),
         })));
-        bindings.push(binding.id.sym.clone());
+        bindings.push(binding.id.clone());
         consumed_stmts += 1;
     }
 
     if elems.is_empty() {
         return Some(LoopElement {
             pat: Pat::Ident(temp_binding.clone()),
-            bindings: vec![temp_binding.id.sym.clone()],
+            bindings: vec![temp_binding.id.clone()],
             kind: first_decl.kind,
-            temp_sym: None,
+            temp_ident: None,
             consumed_stmts,
         });
     }
@@ -1373,7 +1372,7 @@ fn extract_loop_element(stmts: &[Stmt], access_obj: &Expr, idx_sym: &Atom) -> Op
         }),
         bindings,
         kind: first_decl.kind,
-        temp_sym: Some(temp_sym.clone()),
+        temp_ident: Some(temp_ident.clone()),
         consumed_stmts,
     })
 }
@@ -1430,20 +1429,21 @@ fn same_ident_expr(left: &Expr, right: &Expr) -> bool {
     }
 }
 
-/// Check if a statement assigns to an identifier by name (e.g. `elem = ...`).
-fn stmt_assigns_ident(stmt: &Stmt, sym: &Atom) -> bool {
+/// Check if a statement assigns to a specific binding (by sym + ctxt).
+fn stmt_assigns_ident(stmt: &Stmt, target: &Ident) -> bool {
     use swc_core::ecma::ast::{AssignTarget, SimpleAssignTarget};
     use swc_core::ecma::visit::Visit;
 
     struct AssignFinder {
         sym: Atom,
+        ctxt: SyntaxContext,
         found: bool,
     }
 
     impl Visit for AssignFinder {
         fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
             if let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = &assign.left {
-                if id.sym == self.sym {
+                if id.sym == self.sym && id.ctxt == self.ctxt {
                     self.found = true;
                 }
             }
@@ -1451,7 +1451,7 @@ fn stmt_assigns_ident(stmt: &Stmt, sym: &Atom) -> bool {
 
         fn visit_update_expr(&mut self, update: &UpdateExpr) {
             if let Expr::Ident(id) = &*update.arg {
-                if id.sym == self.sym {
+                if id.sym == self.sym && id.ctxt == self.ctxt {
                     self.found = true;
                 }
             }
@@ -1459,32 +1459,35 @@ fn stmt_assigns_ident(stmt: &Stmt, sym: &Atom) -> bool {
     }
 
     let mut finder = AssignFinder {
-        sym: sym.clone(),
+        sym: target.sym.clone(),
+        ctxt: target.ctxt,
         found: false,
     };
     finder.visit_stmt(stmt);
     finder.found
 }
 
-/// Check if a statement references an identifier by name.
-fn stmt_uses_ident(stmt: &Stmt, sym: &Atom) -> bool {
+/// Check if a statement references a specific binding (by sym + ctxt).
+fn stmt_uses_ident(stmt: &Stmt, target: &Ident) -> bool {
     use swc_core::ecma::visit::Visit;
 
     struct IdentFinder {
         sym: Atom,
+        ctxt: SyntaxContext,
         found: bool,
     }
 
     impl Visit for IdentFinder {
         fn visit_ident(&mut self, ident: &Ident) {
-            if ident.sym == self.sym {
+            if ident.sym == self.sym && ident.ctxt == self.ctxt {
                 self.found = true;
             }
         }
     }
 
     let mut finder = IdentFinder {
-        sym: sym.clone(),
+        sym: target.sym.clone(),
+        ctxt: target.ctxt,
         found: false,
     };
     finder.visit_stmt(stmt);

@@ -420,3 +420,27 @@ for (const item of items) {
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn shadowed_binding_does_not_force_let() {
+    let input = r#"
+for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    console.log(item);
+    {
+        let item = transform();
+        item = item + 1;
+    }
+}
+"#;
+    let expected = r#"
+for (const item of items) {
+  console.log(item);
+  {
+    let item = transform();
+    item = item + 1;
+  }
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
