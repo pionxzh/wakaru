@@ -477,6 +477,14 @@ test("knownWakaruParseUnsupportedReason classifies SWC parser gaps", () => {
   );
   assert.equal(
     knownWakaruParseUnsupportedReason(
+      new Error("failed to parse input.js: Error { error: (1..6, TS1109) }"),
+      [{ name: "sloppy", strict: false }],
+      "test/language/expressions/assignmenttargettype/simple-basic-identifierreference-yield.js",
+    ),
+    "swc-parse-yield-ident",
+  );
+  assert.equal(
+    knownWakaruParseUnsupportedReason(
       new Error("failed to parse input.js: Error { error: (8..13, TS1109) }"),
       [{ name: "sloppy", strict: false }],
       "test/language/expressions/arrow-function/syntax/arrowparameters-bindingidentifier-yield.js",

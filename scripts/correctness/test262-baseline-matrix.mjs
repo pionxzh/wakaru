@@ -23,6 +23,7 @@ export const baselineSlices = [
   "literals",
   "block-scope-syntax",
   "variables",
+  "assignment-target-type",
   "modules",
 ];
 

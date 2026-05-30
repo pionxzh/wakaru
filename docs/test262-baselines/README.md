@@ -33,6 +33,7 @@ templates
 literals
 block-scope-syntax
 variables
+assignment-target-type
 modules
 ```
 

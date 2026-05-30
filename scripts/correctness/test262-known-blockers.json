@@ -66,6 +66,15 @@
       }
     },
     {
+      "reason": "swc-parse-yield-ident",
+      "status": "unsupported",
+      "phase": "wakaru-parse",
+      "when": {
+        "pathIncludes": ["assignmenttargettype/", "identifierreference-yield"],
+        "errorIncludes": ["TS1109"]
+      }
+    },
+    {
       "reason": "swc-parse-yield-arrow-parameter",
       "status": "unsupported",
       "phase": "wakaru-parse",

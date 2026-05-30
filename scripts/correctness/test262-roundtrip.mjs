@@ -151,6 +151,7 @@ const pathPresets = {
   literals: ["test/language/literals"],
   "block-scope-syntax": ["test/language/block-scope/syntax"],
   variables: ["test/language/statements/variable"],
+  "assignment-target-type": ["test/language/expressions/assignmenttargettype"],
   modules: ["test/language/module-code"],
 };
 
