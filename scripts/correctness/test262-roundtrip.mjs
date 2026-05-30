@@ -154,6 +154,7 @@ const pathPresets = {
   "assignment-target-type": ["test/language/expressions/assignmenttargettype"],
   "arguments-object": ["test/language/arguments-object"],
   identifiers: ["test/language/identifiers"],
+  "function-code": ["test/language/function-code"],
   modules: ["test/language/module-code"],
 };
 

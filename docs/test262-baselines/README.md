@@ -36,6 +36,7 @@ variables
 assignment-target-type
 arguments-object
 identifiers
+function-code
 modules
 ```
 
