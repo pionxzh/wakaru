@@ -1576,7 +1576,40 @@ fn build_dropped_export_side_effect_items(kind: CjsExportKind) -> Vec<ModuleItem
 /// 2. `const a = (i = require("./a.js")) && i.__esModule ? i : { default: i }`
 ///    → `const i = require("./a.js"); const a = i;`
 ///    (inline conditional interop)
+fn has_hoistable_require(items: &[ModuleItem], unresolved_mark: Mark) -> bool {
+    items.iter().any(|item| match item {
+        ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export_default)) => {
+            let expr = strip_parens_ref(&export_default.expr);
+            if let Expr::Seq(seq) = expr {
+                if seq_has_require_call(&seq.exprs, unresolved_mark) {
+                    return true;
+                }
+            }
+            if let Expr::Call(outer_call) = expr {
+                if let Callee::Expr(callee) = &outer_call.callee {
+                    if let Expr::Call(inner_call) = strip_parens_ref(callee) {
+                        return is_require_call(inner_call, unresolved_mark).is_some();
+                    }
+                }
+            }
+            false
+        }
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) if var_decl.decls.len() == 1 => {
+            var_decl.decls[0]
+                .init
+                .as_ref()
+                .is_some_and(|init| {
+                    try_extract_inline_conditional_interop(init, unresolved_mark).is_some()
+                })
+        }
+        _ => false,
+    })
+}
+
 fn hoist_embedded_requires(module: &mut Module, unresolved_mark: Mark) {
+    if !has_hoistable_require(&module.body, unresolved_mark) {
+        return;
+    }
     let mut new_body = Vec::with_capacity(module.body.len());
     let mut used_names = collect_all_declared_names(module);
 
