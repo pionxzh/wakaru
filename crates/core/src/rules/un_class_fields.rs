@@ -10,10 +10,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::babel_helper_utils::{
-    helpers_with_remaining_refs, remove_helper_declarations, BabelHelperKind, BindingKey,
-    LocalHelperContext, TsHelperKind,
-};
+use super::babel_helper_utils::{BabelHelperKind, BindingKey, LocalHelperContext, TsHelperKind};
 use super::helper_matcher::binding_key;
 use super::RewriteLevel;
 
@@ -130,25 +127,7 @@ impl UnClassFields {
         }
 
         if !helpers.is_empty() {
-            let remaining = helpers_with_remaining_refs(module, &helpers);
-            let removable_roots: HashMap<BindingKey, BabelHelperKind> = helpers
-                .into_iter()
-                .filter(|(key, _)| !remaining.contains(key))
-                .collect();
-            let removable_dependencies =
-                local_helpers.helper_dependencies(module, &removable_roots);
-            let removable_helpers: HashMap<BindingKey, BabelHelperKind> = removable_roots
-                .into_iter()
-                .chain(removable_dependencies)
-                .collect();
-            let remaining = helpers_with_remaining_refs(module, &removable_helpers);
-            let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = removable_helpers
-                .into_iter()
-                .filter(|(key, _)| !remaining.contains(key))
-                .collect();
-            if !safe_to_remove.is_empty() {
-                remove_helper_declarations(&mut module.body, &safe_to_remove);
-            }
+            local_helpers.remove_helpers_with_dependencies(module, helpers);
         }
         self.define_property_helpers = previous_helpers;
         self.private_maps = previous_private_maps;

@@ -75,21 +75,12 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
     // Phase 3: Remove helper declarations only if no untransformed calls
     // remain. When the helper is removed, also clean helper-owned local and
     // import dependencies.
-    let remaining_roots = helpers_with_remaining_refs(module, &helpers);
-    let removable_roots: HashMap<BindingKey, BabelHelperKind> = helpers
-        .into_iter()
-        .filter(|(key, _)| !remaining_roots.contains(key))
-        .collect();
-    if removable_roots.is_empty() {
+    let dependency_roots =
+        local_helpers.helper_cleanup_candidates_with_dependencies(module, helpers);
+    if dependency_roots.is_empty() {
         return;
     }
 
-    let helper_dependencies = local_helpers.helper_dependencies(module, &removable_roots);
-    let dependency_roots: HashMap<BindingKey, BabelHelperKind> = removable_roots
-        .iter()
-        .chain(helper_dependencies.iter())
-        .map(|(key, kind)| (key.clone(), *kind))
-        .collect();
     let import_dependencies = collect_import_dependencies(module, &dependency_roots);
     let var_require_dependencies = collect_var_require_dependencies(module, &dependency_roots);
     let removable_helpers: HashMap<BindingKey, BabelHelperKind> = dependency_roots

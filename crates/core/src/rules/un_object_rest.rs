@@ -12,8 +12,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    helpers_with_remaining_refs, remove_helper_declarations, tslib_member_helper_kind,
-    BabelHelperKind, BindingKey, LocalHelperContext,
+    remove_helpers_without_remaining_refs, tslib_member_helper_kind, BabelHelperKind, BindingKey,
+    LocalHelperContext,
 };
 
 use crate::utils::paren::strip_parens;
@@ -184,14 +184,7 @@ fn run_un_object_rest(
             .chain(helper_dependencies.iter())
             .map(|(key, kind)| (key.clone(), *kind))
             .collect::<HashMap<_, _>>();
-        let remaining = helpers_with_remaining_refs(module, &removable_helpers);
-        let safe: HashMap<BindingKey, BabelHelperKind> = removable_helpers
-            .into_iter()
-            .filter(|(key, _)| !remaining.contains(key))
-            .collect();
-        if !safe.is_empty() {
-            remove_helper_declarations(&mut module.body, &safe);
-        }
+        remove_helpers_without_remaining_refs(module, removable_helpers);
     }
 }
 

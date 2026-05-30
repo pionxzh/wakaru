@@ -11,8 +11,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::babel_helper_utils::{
-    helpers_with_remaining_refs, remove_helper_declarations, tslib_member_helper_kind,
-    BabelHelperKind, BindingKey, LocalHelperContext,
+    remove_helpers_without_remaining_refs, tslib_member_helper_kind, BabelHelperKind, BindingKey,
+    LocalHelperContext,
 };
 
 use crate::utils::paren::strip_parens;
@@ -107,12 +107,8 @@ fn run_un_object_spread(
         })
         .map(|(key, kind)| (key.clone(), *kind))
         .collect();
-    let remaining_roots = helpers_with_remaining_refs(module, &local_root_helpers);
-    let removable_roots: HashMap<BindingKey, BabelHelperKind> = local_root_helpers
-        .into_iter()
-        .filter(|(key, _)| !remaining_roots.contains(key))
-        .collect();
-    let helper_dependencies = local_helper_context.helper_dependencies(module, &removable_roots);
+    let removable_roots = local_helper_context
+        .helper_cleanup_candidates_with_dependencies(module, local_root_helpers);
     let standalone_dependencies = local_helpers.into_iter().filter(|(_, kind)| {
         matches!(
             kind,
@@ -121,17 +117,9 @@ fn run_un_object_spread(
     });
     let removable_helpers: HashMap<BindingKey, BabelHelperKind> = removable_roots
         .into_iter()
-        .chain(helper_dependencies)
         .chain(standalone_dependencies)
         .collect();
-    let remaining = helpers_with_remaining_refs(module, &removable_helpers);
-    let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = removable_helpers
-        .into_iter()
-        .filter(|(key, _)| !remaining.contains(key))
-        .collect();
-    if !safe_to_remove.is_empty() {
-        remove_helper_declarations(&mut module.body, &safe_to_remove);
-    }
+    remove_helpers_without_remaining_refs(module, removable_helpers);
 }
 
 impl Default for UnObjectSpread<'_> {

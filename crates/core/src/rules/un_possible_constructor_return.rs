@@ -4,8 +4,7 @@ use swc_core::ecma::ast::{Callee, Expr, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
-    helpers_with_remaining_refs, remove_helper_declarations, BabelHelperKind, BindingKey,
-    LocalHelperContext,
+    remove_helpers_without_remaining_refs, BabelHelperKind, BindingKey, LocalHelperContext,
 };
 
 /// Detects and simplifies `_possibleConstructorReturn(self, call)` helper calls.
@@ -46,14 +45,7 @@ fn run_un_possible_constructor_return(module: &mut Module, local_helpers: &Local
     let mut replacer = PcrReplacer { helpers: &helpers };
     module.visit_mut_with(&mut replacer);
 
-    let remaining = helpers_with_remaining_refs(module, &helpers);
-    let safe: HashMap<BindingKey, BabelHelperKind> = helpers
-        .into_iter()
-        .filter(|(key, _)| !remaining.contains(key))
-        .collect();
-    if !safe.is_empty() {
-        remove_helper_declarations(&mut module.body, &safe);
-    }
+    remove_helpers_without_remaining_refs(module, helpers);
 }
 
 struct PcrReplacer<'a> {

@@ -5,8 +5,8 @@ use swc_core::ecma::ast::{ArrayLit, Callee, Expr, ExprOrSpread, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
-    helpers_with_remaining_refs, is_tslib_spread_array_member, remove_helper_declarations,
-    BabelHelperKind, BindingKey, LocalHelperContext, TsHelperKind,
+    is_tslib_spread_array_member, remove_helpers_without_remaining_refs, BabelHelperKind,
+    BindingKey, LocalHelperContext, TsHelperKind,
 };
 use super::helper_matcher::{
     binding_key, remaining_refs_outside_var_declarators, remove_import_specifiers_by_binding,
@@ -56,15 +56,7 @@ fn run_un_to_consumable_array(module: &mut Module, local_helpers: &LocalHelperCo
     };
     module.visit_mut_with(&mut replacer);
 
-    // Only remove declaration if no untransformed calls remain
-    let remaining = helpers_with_remaining_refs(module, &helpers);
-    let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = helpers
-        .into_iter()
-        .filter(|(key, _)| !remaining.contains(key))
-        .collect();
-    if !safe_to_remove.is_empty() {
-        remove_helper_declarations(&mut module.body, &safe_to_remove);
-    }
+    remove_helpers_without_remaining_refs(module, helpers);
     remove_unused_ts_spread_array_helpers(module, &ts_helpers);
 }
 

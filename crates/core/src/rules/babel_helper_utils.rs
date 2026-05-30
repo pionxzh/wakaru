@@ -178,6 +178,37 @@ impl LocalHelperContext {
             .get_or_init(|| collect_top_level_callable_ref_graph(module));
         helper_dependencies_from_ref_graph(ref_graph, helpers)
     }
+
+    pub(crate) fn helper_cleanup_candidates_with_dependencies(
+        &self,
+        module: &Module,
+        root_helpers: HashMap<BindingKey, BabelHelperKind>,
+    ) -> HashMap<BindingKey, BabelHelperKind> {
+        let remaining_roots = helpers_with_remaining_refs(module, &root_helpers);
+        let removable_roots: HashMap<BindingKey, BabelHelperKind> = root_helpers
+            .into_iter()
+            .filter(|(key, _)| !remaining_roots.contains(key))
+            .collect();
+        if removable_roots.is_empty() {
+            return HashMap::new();
+        }
+
+        let helper_dependencies = self.helper_dependencies(module, &removable_roots);
+        removable_roots
+            .into_iter()
+            .chain(helper_dependencies)
+            .collect()
+    }
+
+    pub(crate) fn remove_helpers_with_dependencies(
+        &self,
+        module: &mut Module,
+        root_helpers: HashMap<BindingKey, BabelHelperKind>,
+    ) {
+        let removable_helpers =
+            self.helper_cleanup_candidates_with_dependencies(module, root_helpers);
+        remove_helpers_without_remaining_refs(module, removable_helpers);
+    }
 }
 
 /// Known import paths for Babel runtime helpers.
@@ -481,6 +512,20 @@ pub(crate) fn helpers_with_remaining_refs(
 ) -> HashSet<BindingKey> {
     let helper_keys: HashSet<_> = helpers.keys().cloned().collect();
     remaining_refs_outside_declarations(module, &helper_keys, &helper_keys)
+}
+
+pub(crate) fn remove_helpers_without_remaining_refs(
+    module: &mut Module,
+    helpers: HashMap<BindingKey, BabelHelperKind>,
+) {
+    let remaining = helpers_with_remaining_refs(module, &helpers);
+    let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = helpers
+        .into_iter()
+        .filter(|(key, _)| !remaining.contains(key))
+        .collect();
+    if !safe_to_remove.is_empty() {
+        remove_helper_declarations(&mut module.body, &safe_to_remove);
+    }
 }
 
 fn helper_dependencies_from_ref_graph(
@@ -3548,6 +3593,16 @@ mod tests {
         panic!("no function declaration found in source");
     }
 
+    fn module_has_function(module: &Module, name: &str) -> bool {
+        module.body.iter().any(|item| {
+            matches!(
+                item,
+                ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl)))
+                    if fn_decl.ident.sym.as_ref() == name
+            )
+        })
+    }
+
     #[test]
     fn local_helper_context_collects_ts_helpers() {
         GLOBALS.set(&Globals::new(), || {
@@ -3663,6 +3718,75 @@ mod tests {
             );
             assert!(!dependencies.contains_key(&(Atom::from("root"), SyntaxContext::empty())));
             assert!(!dependencies.contains_key(&(Atom::from("unrelated"), SyntaxContext::empty())));
+        });
+    }
+
+    #[test]
+    fn removes_helpers_without_remaining_refs_only_when_unused() {
+        GLOBALS.set(&Globals::new(), || {
+            let mut unused = parse_module(
+                r#"
+                function helper(value) {
+                    return value;
+                }
+                const value = 1;
+                "#,
+            );
+            let helpers = HashMap::from([(
+                (Atom::from("helper"), SyntaxContext::empty()),
+                BabelHelperKind::ClassCallCheck,
+            )]);
+
+            remove_helpers_without_remaining_refs(&mut unused, helpers);
+
+            assert!(!module_has_function(&unused, "helper"));
+
+            let mut referenced = parse_module(
+                r#"
+                function helper(value) {
+                    return value;
+                }
+                helper(1);
+                "#,
+            );
+            let helpers = HashMap::from([(
+                (Atom::from("helper"), SyntaxContext::empty()),
+                BabelHelperKind::ClassCallCheck,
+            )]);
+
+            remove_helpers_without_remaining_refs(&mut referenced, helpers);
+
+            assert!(module_has_function(&referenced, "helper"));
+        });
+    }
+
+    #[test]
+    fn removes_helper_dependencies_with_consumed_root() {
+        GLOBALS.set(&Globals::new(), || {
+            let mut module = parse_module(
+                r#"
+                function root(value) {
+                    return dep(value);
+                }
+                function dep(value) {
+                    return value;
+                }
+                function unrelated(value) {
+                    return value;
+                }
+                "#,
+            );
+            let context = LocalHelperContext::collect(&module);
+            let roots = HashMap::from([(
+                (Atom::from("root"), SyntaxContext::empty()),
+                BabelHelperKind::SlicedToArray,
+            )]);
+
+            context.remove_helpers_with_dependencies(&mut module, roots);
+
+            assert!(!module_has_function(&module, "root"));
+            assert!(!module_has_function(&module, "dep"));
+            assert!(module_has_function(&module, "unrelated"));
         });
     }
 

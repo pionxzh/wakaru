@@ -4,8 +4,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
-    helpers_with_remaining_refs, remove_helper_declarations, BabelHelperKind, BindingKey,
-    LocalHelperContext,
+    remove_helpers_without_remaining_refs, BabelHelperKind, BindingKey, LocalHelperContext,
 };
 
 /// Removes `_classCallCheck(this, Foo)` calls and equivalent inline IIFEs.
@@ -40,17 +39,7 @@ fn run_un_class_call_check(module: &mut Module, local_helpers: &LocalHelperConte
         let mut remover = CallRemover { helpers: &helpers };
         module.visit_mut_with(&mut remover);
 
-        let remaining = helpers_with_remaining_refs(module, &helpers);
-        let safe: std::collections::HashMap<
-            BindingKey,
-            super::babel_helper_utils::BabelHelperKind,
-        > = helpers
-            .into_iter()
-            .filter(|(key, _)| !remaining.contains(key))
-            .collect();
-        if !safe.is_empty() {
-            remove_helper_declarations(&mut module.body, &safe);
-        }
+        remove_helpers_without_remaining_refs(module, helpers);
     }
 
     // Phase 2: remove inline IIFE classCallCheck patterns

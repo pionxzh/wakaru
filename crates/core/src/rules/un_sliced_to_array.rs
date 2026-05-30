@@ -8,9 +8,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    helpers_with_remaining_refs, remove_helper_declarations, tslib_helper_name_kind,
-    tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind, BindingKey,
-    LocalHelperContext,
+    tslib_helper_name_kind, tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind,
+    BindingKey, LocalHelperContext,
 };
 
 /// Detects and unwraps `_slicedToArray(expr, N)` helper calls.
@@ -53,27 +52,7 @@ fn run_un_sliced_to_array(module: &mut Module, local_helpers: &LocalHelperContex
         return;
     }
 
-    // Only remove root helpers whose calls were fully transformed. Dependencies
-    // referenced by retained helpers must stay with those helpers.
-    let remaining_roots = helpers_with_remaining_refs(module, &helpers);
-    let removable_roots = helpers
-        .iter()
-        .filter(|(key, _)| !remaining_roots.contains(*key))
-        .map(|(key, kind)| (key.clone(), *kind))
-        .collect::<HashMap<_, _>>();
-    let helper_dependencies = local_helpers.helper_dependencies(module, &removable_roots);
-    let removable_helpers = removable_roots
-        .into_iter()
-        .chain(helper_dependencies)
-        .collect::<HashMap<_, _>>();
-    let remaining = helpers_with_remaining_refs(module, &removable_helpers);
-    let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = removable_helpers
-        .into_iter()
-        .filter(|(key, _)| !remaining.contains(key))
-        .collect();
-    if !safe_to_remove.is_empty() {
-        remove_helper_declarations(&mut module.body, &safe_to_remove);
-    }
+    local_helpers.remove_helpers_with_dependencies(module, helpers);
 }
 
 struct SlicedToArrayRewriter<'a> {
