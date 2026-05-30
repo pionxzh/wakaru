@@ -206,7 +206,10 @@ fn run_un_assert_this_initialized(module: &mut Module, ctx: RuleRunContext<'_>) 
     let local_helpers = ctx.local_helpers(module);
     UnAssertThisInitialized::run_with_helpers(module, local_helpers.as_ref());
 }
-runner!(run_un_typeof_polyfill, UnTypeofPolyfill);
+fn run_un_typeof_polyfill(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    UnTypeofPolyfill::run_with_helpers(module, local_helpers.as_ref());
+}
 runner!(run_un_curly_braces, UnCurlyBraces);
 runner!(run_un_esmodule_flag, |ctx| UnEsmoduleFlag::new(
     ctx.unresolved_mark

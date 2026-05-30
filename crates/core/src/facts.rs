@@ -499,6 +499,7 @@ fn helper_kind_from_babel(kind: BabelHelperKind) -> Option<HelperKind> {
         BabelHelperKind::Inherits => Some(HelperKind::Inherits),
         BabelHelperKind::CallSuper => Some(HelperKind::CallSuper),
         BabelHelperKind::AsyncToGenerator => Some(HelperKind::AsyncToGenerator),
+        BabelHelperKind::Typeof => None,
         BabelHelperKind::DefineProperty => None,
         BabelHelperKind::HelperDependency => None,
     }

@@ -14,9 +14,9 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use super::helper_matcher::{
-    binding_key, remaining_refs_outside_declarations, remove_fn_decls_from_body_by_binding,
-    remove_import_specifiers_by_binding, remove_var_declarators_by_binding,
-    var_declarator_binding_key,
+    binding_key, expr_matches_binding, remaining_refs_outside_declarations,
+    remove_fn_decls_from_body_by_binding, remove_import_specifiers_by_binding,
+    remove_var_declarators_by_binding, var_declarator_binding_key,
 };
 use super::match_context::MatchContext;
 use crate::utils::paren::strip_parens;
@@ -54,6 +54,7 @@ pub(crate) enum BabelHelperKind {
     CallSuper,
     AsyncToGenerator,
     DefineProperty,
+    Typeof,
     HelperDependency,
 }
 
@@ -599,6 +600,10 @@ fn detect_helper_from_var_decl(
                 return Some((key, kind));
             }
         }
+    }
+
+    if is_typeof_polyfill_init(init) {
+        return Some((key, BabelHelperKind::Typeof));
     }
 
     if let Some(kind) = generated_helper_name_kind(key.0.as_ref(), init) {
@@ -1601,6 +1606,126 @@ fn is_new_type_error(expr: &Expr) -> bool {
         return false;
     };
     matches!(new_expr.callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "TypeError")
+}
+
+fn is_typeof_polyfill_init(expr: &Expr) -> bool {
+    let Expr::Cond(cond) = expr else {
+        return false;
+    };
+
+    is_typeof_symbol_test(&cond.test) && is_typeof_identity_fn(&cond.cons)
+}
+
+fn is_typeof_symbol_test(expr: &Expr) -> bool {
+    let Expr::Bin(bin) = expr else { return false };
+    if bin.op != BinaryOp::LogicalAnd {
+        return false;
+    }
+    is_typeof_symbol_eq_function(&bin.left) && is_typeof_symbol_iterator_eq_symbol(&bin.right)
+}
+
+fn is_typeof_symbol_eq_function(expr: &Expr) -> bool {
+    let Expr::Bin(bin) = expr else { return false };
+    if !matches!(bin.op, BinaryOp::EqEq | BinaryOp::EqEqEq) {
+        return false;
+    }
+    is_typeof_of_ident(&bin.left, "Symbol") && is_string_lit(&bin.right, "function")
+}
+
+fn is_typeof_symbol_iterator_eq_symbol(expr: &Expr) -> bool {
+    let Expr::Bin(bin) = expr else { return false };
+    if !matches!(bin.op, BinaryOp::EqEq | BinaryOp::EqEqEq) {
+        return false;
+    }
+    is_typeof_of_symbol_iterator(&bin.left) && is_string_lit(&bin.right, "symbol")
+}
+
+fn is_typeof_of_ident(expr: &Expr, name: &str) -> bool {
+    let Expr::Unary(unary) = expr else {
+        return false;
+    };
+    unary.op == UnaryOp::TypeOf
+        && matches!(unary.arg.as_ref(), Expr::Ident(id) if id.sym.as_ref() == name)
+}
+
+fn is_typeof_of_symbol_iterator(expr: &Expr) -> bool {
+    let Expr::Unary(unary) = expr else {
+        return false;
+    };
+    if unary.op != UnaryOp::TypeOf {
+        return false;
+    }
+    let Expr::Member(member) = unary.arg.as_ref() else {
+        return false;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    obj.sym.as_ref() == "Symbol"
+        && matches!(&member.prop, MemberProp::Ident(id) if id.sym.as_ref() == "iterator")
+}
+
+fn is_string_lit(expr: &Expr, value: &str) -> bool {
+    matches!(expr, Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some(value))
+}
+
+fn is_typeof_identity_fn(expr: &Expr) -> bool {
+    match expr {
+        Expr::Arrow(arrow) => {
+            if arrow.params.len() != 1 {
+                return false;
+            }
+            let Pat::Ident(param) = &arrow.params[0] else {
+                return false;
+            };
+            let param_key = binding_key(&param.id);
+            match &*arrow.body {
+                BlockStmtOrExpr::Expr(body_expr) => is_typeof_of_binding(body_expr, &param_key),
+                BlockStmtOrExpr::BlockStmt(block) => {
+                    if block.stmts.len() != 1 {
+                        return false;
+                    }
+                    let Stmt::Return(ret) = &block.stmts[0] else {
+                        return false;
+                    };
+                    let Some(arg) = &ret.arg else {
+                        return false;
+                    };
+                    is_typeof_of_binding(arg, &param_key)
+                }
+            }
+        }
+        Expr::Fn(fn_expr) => {
+            if fn_expr.function.params.len() != 1 {
+                return false;
+            }
+            let Pat::Ident(param) = &fn_expr.function.params[0].pat else {
+                return false;
+            };
+            let param_key = binding_key(&param.id);
+            let Some(body) = &fn_expr.function.body else {
+                return false;
+            };
+            if body.stmts.len() != 1 {
+                return false;
+            }
+            let Stmt::Return(ret) = &body.stmts[0] else {
+                return false;
+            };
+            let Some(arg) = &ret.arg else {
+                return false;
+            };
+            is_typeof_of_binding(arg, &param_key)
+        }
+        _ => false,
+    }
+}
+
+fn is_typeof_of_binding(expr: &Expr, binding: &BindingKey) -> bool {
+    let Expr::Unary(unary) = expr else {
+        return false;
+    };
+    unary.op == UnaryOp::TypeOf && expr_matches_binding(&unary.arg, binding)
 }
 
 // ---------------------------------------------------------------------------
@@ -3369,6 +3494,25 @@ mod tests {
             assert!(context.has_tslib_require_member_call(BabelHelperKind::InteropRequireWildcard));
             assert!(context.has_tslib_require_member_call(BabelHelperKind::SlicedToArray));
             assert!(!context.has_tslib_require_member_call(BabelHelperKind::ObjectSpread));
+        });
+    }
+
+    #[test]
+    fn local_helper_context_collects_typeof_polyfill_helper() {
+        GLOBALS.set(&Globals::new(), || {
+            let module = parse_module(
+                r#"
+                var _typeof = typeof Symbol == "function" && typeof Symbol.iterator == "symbol"
+                    ? function(e) { return typeof e; }
+                    : function(e) { return e && typeof Symbol == "function" ? "symbol" : typeof e; };
+                var notTypeof = typeof window != "undefined" ? function(e) { return typeof e; } : function(e) { return e; };
+                "#,
+            );
+            let helpers = LocalHelperContext::collect(&module).helpers_of_kind(BabelHelperKind::Typeof);
+
+            assert_eq!(helpers.len(), 1);
+            assert!(helpers.contains_key(&(Atom::from("_typeof"), SyntaxContext::empty())));
+            assert!(!helpers.contains_key(&(Atom::from("notTypeof"), SyntaxContext::empty())));
         });
     }
 
