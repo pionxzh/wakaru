@@ -512,6 +512,28 @@ var MyClass = function() {
 }
 
 #[test]
+fn same_name_non_helper_create_class_call_is_not_class_method() {
+    let input = r#"
+function _createClass(target, methods) {
+    record(target, methods);
+    return target;
+}
+var Foo = (function() {
+    function t() {}
+    _createClass(t, [{
+        key: "value",
+        value: function value() { return 1; }
+    }]);
+    return t;
+}());
+"#;
+    let output = apply(input);
+    assert!(output.contains("_createClass(t"), "{output}");
+    assert!(!output.contains("class Foo"), "{output}");
+    assert!(output.contains("function value()"), "{output}");
+}
+
+#[test]
 fn test_static_method_referencing_inner_constructor_name_stays_iife_when_outer_name_differs() {
     let input = r#"
 var G = (function() {

@@ -1,10 +1,19 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
+use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    CallExpr, Callee, Class, ClassMember, Expr, ExprStmt, MemberExpr, MemberProp, Stmt,
+    BindingIdent, CallExpr, Callee, Class, ClassMember, ClassProp, Expr, ExprOrSpread, ExprStmt,
+    IdentName, MemberExpr, MemberProp, Module, Pat, PropName, Stmt,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith};
+
+use super::babel_helper_utils::{
+    collect_helper_dependencies, collect_helpers_of_kind, helpers_with_remaining_refs,
+    remove_helper_declarations, BabelHelperKind, BindingKey,
+};
+use super::helper_matcher::binding_key;
+use super::RewriteLevel;
 
 /// Inline `__init*()` method bodies into the constructor.
 ///
@@ -28,9 +37,57 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 ///     }
 /// }
 /// ```
-pub struct UnClassFields;
+pub struct UnClassFields {
+    level: RewriteLevel,
+    define_property_helpers: HashSet<BindingKey>,
+}
+
+impl UnClassFields {
+    pub fn new(level: RewriteLevel) -> Self {
+        Self {
+            level,
+            define_property_helpers: HashSet::new(),
+        }
+    }
+}
+
+impl Default for UnClassFields {
+    fn default() -> Self {
+        Self::new(RewriteLevel::Standard)
+    }
+}
 
 impl VisitMut for UnClassFields {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        let helpers = collect_helpers_of_kind(module, BabelHelperKind::DefineProperty);
+        let previous_helpers = std::mem::replace(
+            &mut self.define_property_helpers,
+            helpers.keys().cloned().collect(),
+        );
+        module.visit_mut_children_with(self);
+        if !helpers.is_empty() {
+            let remaining = helpers_with_remaining_refs(module, &helpers);
+            let removable_roots: HashMap<BindingKey, BabelHelperKind> = helpers
+                .into_iter()
+                .filter(|(key, _)| !remaining.contains(key))
+                .collect();
+            let removable_dependencies = collect_helper_dependencies(module, &removable_roots);
+            let removable_helpers: HashMap<BindingKey, BabelHelperKind> = removable_roots
+                .into_iter()
+                .chain(removable_dependencies)
+                .collect();
+            let remaining = helpers_with_remaining_refs(module, &removable_helpers);
+            let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = removable_helpers
+                .into_iter()
+                .filter(|(key, _)| !remaining.contains(key))
+                .collect();
+            if !safe_to_remove.is_empty() {
+                remove_helper_declarations(&mut module.body, &safe_to_remove);
+            }
+        }
+        self.define_property_helpers = previous_helpers;
+    }
+
     fn visit_mut_class(&mut self, class: &mut Class) {
         class.visit_mut_children_with(self);
 
@@ -63,56 +120,60 @@ impl VisitMut for UnClassFields {
             init_bodies.insert(Atom::from(name), body.stmts.clone());
         }
 
-        if init_bodies.is_empty() {
-            return;
-        }
-
         // Find constructor and inline the __init calls
         let class_name = self.find_class_name(class);
         let mut inlined_names: std::collections::HashSet<Atom> = std::collections::HashSet::new();
 
-        for member in &mut class.body {
-            let ClassMember::Constructor(ctor) = member else {
-                continue;
-            };
-            let Some(body) = &mut ctor.body else {
-                continue;
-            };
+        if !init_bodies.is_empty() {
+            for member in &mut class.body {
+                let ClassMember::Constructor(ctor) = member else {
+                    continue;
+                };
+                let Some(body) = &mut ctor.body else {
+                    continue;
+                };
 
-            let mut new_stmts = Vec::with_capacity(body.stmts.len());
-            for stmt in body.stmts.drain(..) {
-                if let Some(init_name) = extract_prototype_init_call(&stmt, &class_name) {
-                    if let Some(init_stmts) = init_bodies.get(&init_name) {
-                        new_stmts.extend(init_stmts.iter().cloned());
-                        inlined_names.insert(init_name);
-                        continue;
+                let mut new_stmts = Vec::with_capacity(body.stmts.len());
+                for stmt in body.stmts.drain(..) {
+                    if let Some(init_name) = extract_prototype_init_call(&stmt, &class_name) {
+                        if let Some(init_stmts) = init_bodies.get(&init_name) {
+                            new_stmts.extend(init_stmts.iter().cloned());
+                            inlined_names.insert(init_name);
+                            continue;
+                        }
                     }
+                    new_stmts.push(stmt);
                 }
-                new_stmts.push(stmt);
+                body.stmts = new_stmts;
             }
-            body.stmts = new_stmts;
         }
 
-        if inlined_names.is_empty() {
-            return;
+        if !inlined_names.is_empty() {
+            // Remove only the __init* methods that were actually inlined
+            class.body.retain(|member| {
+                let ClassMember::Method(method) = member else {
+                    return true;
+                };
+                if method.is_static {
+                    return true;
+                }
+                let Some(name) = prop_name_str(&method.key) else {
+                    return true;
+                };
+                if inlined_names.contains(&Atom::from(name.as_str())) {
+                    return false; // remove
+                }
+                true
+            });
         }
 
-        // Remove only the __init* methods that were actually inlined
-        class.body.retain(|member| {
-            let ClassMember::Method(method) = member else {
-                return true;
-            };
-            if method.is_static {
-                return true;
-            }
-            let Some(name) = prop_name_str(&method.key) else {
-                return true;
-            };
-            if inlined_names.contains(&Atom::from(name.as_str())) {
-                return false; // remove
-            }
-            true
-        });
+        if inlined_names.is_empty()
+            && self.level >= RewriteLevel::Standard
+            && class.super_class.is_none()
+            && !self.define_property_helpers.is_empty()
+        {
+            promote_constructor_field_assignments(class, &self.define_property_helpers);
+        }
     }
 }
 
@@ -130,6 +191,202 @@ fn prop_name_str(key: &swc_core::ecma::ast::PropName) -> Option<String> {
         swc_core::ecma::ast::PropName::Str(s) => s.value.as_str().map(|s| s.to_string()),
         _ => None,
     }
+}
+
+fn promote_constructor_field_assignments(
+    class: &mut Class,
+    define_property_helpers: &HashSet<BindingKey>,
+) {
+    let Some(ctor_index) = class
+        .body
+        .iter()
+        .position(|member| matches!(member, ClassMember::Constructor(_)))
+    else {
+        return;
+    };
+
+    let (class_props, remove_empty_ctor) = {
+        let ClassMember::Constructor(ctor) = &mut class.body[ctor_index] else {
+            return;
+        };
+        let Some(body) = &mut ctor.body else {
+            return;
+        };
+        let blocked_bindings = constructor_blocked_bindings(&ctor.params);
+        let mut class_props = Vec::new();
+        let mut consumed = 0;
+
+        for stmt in &body.stmts {
+            let Some((key, value)) =
+                extract_babel_instance_field_initializer(stmt, define_property_helpers)
+            else {
+                break;
+            };
+            if expr_uses_blocked_binding(&value, &blocked_bindings) {
+                break;
+            }
+            class_props.push(ClassMember::ClassProp(ClassProp {
+                span: DUMMY_SP,
+                key,
+                value: Some(value),
+                type_ann: None,
+                is_static: false,
+                decorators: Vec::new(),
+                accessibility: None,
+                is_abstract: false,
+                is_optional: false,
+                is_override: false,
+                readonly: false,
+                declare: false,
+                definite: false,
+            }));
+            consumed += 1;
+        }
+
+        if class_props.is_empty() {
+            return;
+        }
+
+        body.stmts.drain(0..consumed);
+        let remove_empty_ctor = body.stmts.is_empty() && ctor.params.is_empty();
+        (class_props, remove_empty_ctor)
+    };
+
+    if remove_empty_ctor {
+        class.body.remove(ctor_index);
+    }
+    for (offset, prop) in class_props.into_iter().enumerate() {
+        class.body.insert(ctor_index + offset, prop);
+    }
+}
+
+fn constructor_blocked_bindings(
+    params: &[swc_core::ecma::ast::ParamOrTsParamProp],
+) -> Vec<(Atom, SyntaxContext)> {
+    let mut bindings = Vec::new();
+    for param in params {
+        if let swc_core::ecma::ast::ParamOrTsParamProp::Param(param) = param {
+            collect_pat_binding_keys(&param.pat, &mut bindings);
+        }
+    }
+    bindings
+}
+
+fn collect_pat_binding_keys(pat: &Pat, bindings: &mut Vec<(Atom, SyntaxContext)>) {
+    match pat {
+        Pat::Ident(BindingIdent { id, .. }) => bindings.push((id.sym.clone(), id.ctxt)),
+        Pat::Array(array) => {
+            for elem in array.elems.iter().flatten() {
+                collect_pat_binding_keys(elem, bindings);
+            }
+        }
+        Pat::Object(object) => {
+            for prop in &object.props {
+                match prop {
+                    swc_core::ecma::ast::ObjectPatProp::KeyValue(kv) => {
+                        collect_pat_binding_keys(&kv.value, bindings);
+                    }
+                    swc_core::ecma::ast::ObjectPatProp::Assign(assign) => {
+                        bindings.push((assign.key.sym.clone(), assign.key.ctxt));
+                    }
+                    swc_core::ecma::ast::ObjectPatProp::Rest(rest) => {
+                        collect_pat_binding_keys(&rest.arg, bindings);
+                    }
+                }
+            }
+        }
+        Pat::Rest(rest) => collect_pat_binding_keys(&rest.arg, bindings),
+        Pat::Assign(assign) => collect_pat_binding_keys(&assign.left, bindings),
+        _ => {}
+    }
+}
+
+fn extract_babel_instance_field_initializer(
+    stmt: &Stmt,
+    define_property_helpers: &HashSet<BindingKey>,
+) -> Option<(PropName, Box<Expr>)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = &**expr else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(callee_ident) = callee.as_ref() else {
+        return None;
+    };
+    if !define_property_helpers.contains(&binding_key(callee_ident)) {
+        return None;
+    }
+    if call.args.len() != 3 || call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+    let [ExprOrSpread { expr: obj, .. }, ExprOrSpread { expr: key, .. }, ExprOrSpread { expr: value, .. }] =
+        call.args.as_slice()
+    else {
+        return None;
+    };
+    if !matches!(obj.as_ref(), Expr::This(_)) {
+        return None;
+    }
+    let key = field_key_from_expr(key)?;
+    Some((key, value.clone()))
+}
+
+fn field_key_from_expr(expr: &Expr) -> Option<PropName> {
+    match expr {
+        Expr::Lit(swc_core::ecma::ast::Lit::Str(s)) => {
+            let value = s.value.as_str()?;
+            if is_identifier_name(value) {
+                Some(PropName::Ident(IdentName::new(value.into(), DUMMY_SP)))
+            } else {
+                Some(PropName::Str(swc_core::ecma::ast::Str {
+                    span: DUMMY_SP,
+                    value: value.into(),
+                    raw: None,
+                }))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn is_identifier_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first == '$' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+}
+
+fn expr_uses_blocked_binding(expr: &Expr, blocked_bindings: &[(Atom, SyntaxContext)]) -> bool {
+    struct BlockedBindingFinder<'a> {
+        blocked_bindings: &'a [(Atom, SyntaxContext)],
+        found: bool,
+    }
+
+    impl Visit for BlockedBindingFinder<'_> {
+        fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
+            if ident.sym.as_ref() == "arguments"
+                || self
+                    .blocked_bindings
+                    .iter()
+                    .any(|(sym, ctxt)| ident.sym == *sym && ident.ctxt == *ctxt)
+            {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = BlockedBindingFinder {
+        blocked_bindings,
+        found: false,
+    };
+    finder.visit_expr(expr);
+    finder.found
 }
 
 /// Check if statement is `this.X = expr`

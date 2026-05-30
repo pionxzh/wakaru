@@ -129,8 +129,8 @@ Stage 1: Syntax normalization
 
 Stage 2: Transpiler helper unwrapping + module-system reconstruction
   UnInteropRequireDefault, UnInteropRequireWildcard, UnToConsumableArray,
-  UnObjectSpread, UnObjectRest, UnSlicedToArray, UnDefineProperty,
-  UnClassCallCheck, UnPossibleConstructorReturn, UnAssertThisInitialized,
+  UnObjectSpread, UnObjectRest, UnSlicedToArray,
+  UnClassCallCheck, UnPossibleConstructorReturn,
   UnTypeofPolyfill, UnCurlyBraces, UnEsmoduleFlag, UnUseStrict,
   UnAssignmentMerging, UnWebpackInterop, UnEsm
 
@@ -144,8 +144,8 @@ Stage 3: Structural restoration
 
 Stage 4: Complex pattern restoration
   UnIife, UnConditionals, UnParameters, UnEnum, UnJsx, UnEs6Class,
-  UnClassFields, UnTsHelpers, UnRegenerator, UnAsyncAwait,
-  UnWebpackInterop (2nd pass)
+  UnAssertThisInitialized, UnClassFields, UnDefineProperty, UnTsHelpers,
+  UnRegenerator, UnAsyncAwait, UnWebpackInterop (2nd pass)
 
 Stage 5: Modernization
   UnThenCatch, UnUndefinedInit, VarDeclToLetConst, ObjShorthand,

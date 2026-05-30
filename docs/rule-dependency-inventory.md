@@ -677,6 +677,7 @@ These rules restore structural patterns and clean up minification artifacts.
 | Downstream dependents | None known |
 | Fact behavior | Neither |
 | Safety | Heuristic |
+| Notes | Level-gated by subpattern: Babel constructor field helper recovery (`_defineProperty(this, "x", value)` -> `x = value`) requires `standard+`, runs only for base classes, and skips initializers that reference constructor params or `arguments`. Direct constructor assignments are preserved unless another pattern proves they came from class fields. |
 
 ### 43. UnTsHelpers
 

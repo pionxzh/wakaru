@@ -173,3 +173,172 @@ Link.contextTypes = {
     assert!(!output.contains("static defaultProps"), "{output}");
     assert!(!output.contains("static contextTypes"), "{output}");
 }
+
+#[test]
+fn constructor_this_assignments_are_not_instance_fields_without_helper_evidence() {
+    let input = r#"
+class Foo {
+    constructor() {
+        this["value"] = 1;
+        this.other = this.value + 1;
+    }
+    method() {
+        return this.other;
+    }
+}
+"#;
+    let output = render(input);
+    assert!(output.contains("this.value = 1"), "{output}");
+    assert!(output.contains("this.other = this.value + 1"), "{output}");
+    assert!(!output.contains("\n    value = 1"), "{output}");
+    assert!(!output.contains("\n    other = this.value + 1"), "{output}");
+}
+
+#[test]
+fn promotes_babel_define_property_calls_to_instance_fields() {
+    let input = r#"
+function _defineProperty(e, r, t) {
+    if (r in e) {
+        Object.defineProperty(e, r, { value: t, enumerable: true, configurable: true, writable: true });
+    } else {
+        e[r] = t;
+    }
+    return e;
+}
+class Foo {
+    constructor() {
+        _defineProperty(this, "value", 1);
+        _defineProperty(this, "other", this.value + 1);
+    }
+    method() {
+        return this.other;
+    }
+}
+"#;
+    let expected = r#"
+class Foo {
+    value = 1;
+    other = this.value + 1;
+    method() {
+        return this.other;
+    }
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn promotes_minified_define_property_helper_calls_to_instance_fields() {
+    let input = r#"
+function r(e, n, t) {
+    if (n in e) {
+        Object.defineProperty(e, n, { value: t, enumerable: true, configurable: true, writable: true });
+    } else {
+        e[n] = t;
+    }
+    return e;
+}
+class Foo {
+    constructor() {
+        r(this, "value", 1);
+    }
+}
+"#;
+    let expected = r#"
+class Foo {
+    value = 1;
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn promotes_key_normalizing_define_property_helper_calls_to_instance_fields() {
+    let input = r#"
+function _toPropertyKey(arg) {
+    return arg;
+}
+function _defineProperty(e, r, t) {
+    return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, {
+        value: t,
+        enumerable: true,
+        configurable: true,
+        writable: true
+    }) : e[r] = t, e;
+}
+class Foo {
+    constructor() {
+        _defineProperty(this, "value", 1);
+    }
+}
+"#;
+    let expected = r#"
+class Foo {
+    value = 1;
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn promotes_imported_define_property_helper_calls_to_instance_fields() {
+    let input = r#"
+import _defineProperty from "@babel/runtime/helpers/defineProperty";
+class Foo {
+    constructor() {
+        _defineProperty(this, "value", 1);
+    }
+}
+"#;
+    let expected = r#"
+class Foo {
+    value = 1;
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
+fn same_name_non_helper_define_property_call_is_not_instance_field() {
+    let input = r#"
+function _defineProperty(target, key, value) {
+    record(target, key, value);
+}
+class Foo {
+    constructor() {
+        _defineProperty(this, "value", 1);
+    }
+}
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("_defineProperty(this, \"value\", 1)"),
+        "{output}"
+    );
+    assert!(!output.contains("\n    value = 1"), "{output}");
+}
+
+#[test]
+fn constructor_param_assignments_are_not_instance_fields() {
+    let input = r#"
+class Foo {
+    constructor(value) {
+        this.value = value;
+    }
+}
+"#;
+    assert_eq_normalized(&render(input), input.trim());
+}
+
+#[test]
+fn derived_constructor_assignments_are_not_instance_fields() {
+    let input = r#"
+class Foo extends Base {
+    constructor() {
+        super();
+        this.value = 1;
+    }
+}
+"#;
+    assert_eq_normalized(&render(input), input.trim());
+}

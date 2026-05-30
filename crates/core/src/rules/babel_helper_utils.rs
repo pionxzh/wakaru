@@ -3,9 +3,11 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BinaryOp, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ForHead, Function, Ident, IfStmt,
-    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem,
-    Pat, ReturnStmt, Stmt, UnaryOp, VarDeclarator,
+    AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmt, BlockStmtOrExpr, CallExpr,
+    Callee, ComputedPropName, Decl, Expr, ForHead, Function, Ident, IdentName, IfStmt,
+    ImportSpecifier, KeyValueProp, Lit, MemberExpr, MemberProp, Module, ModuleDecl,
+    ModuleExportName, ModuleItem, Pat, Prop, PropName, PropOrSpread, ReturnStmt,
+    SimpleAssignTarget, Stmt, UnaryOp, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -33,6 +35,7 @@ pub(crate) enum BabelHelperKind {
     Inherits,
     CallSuper,
     AsyncToGenerator,
+    DefineProperty,
     HelperDependency,
 }
 
@@ -644,7 +647,7 @@ pub(crate) fn detect_helper_from_path(path: &str) -> Option<BabelHelperKind> {
         return Some(BabelHelperKind::AsyncToGenerator);
     }
     if DEFINE_PROPERTY_PATHS.contains(&path) {
-        return Some(BabelHelperKind::HelperDependency);
+        return Some(BabelHelperKind::DefineProperty);
     }
     None
 }
@@ -721,7 +724,217 @@ fn detect_helper_from_fn(func: &Function, has_sub_helpers: bool) -> Option<Babel
     if is_async_to_generator_fn(func) {
         return Some(BabelHelperKind::AsyncToGenerator);
     }
+    if is_define_property_fn(func) {
+        return Some(BabelHelperKind::DefineProperty);
+    }
     None
+}
+
+fn is_define_property_fn(func: &Function) -> bool {
+    let Some(ctx) = MatchContext::from_params(func, &["target", "key", "value"]) else {
+        return false;
+    };
+
+    let Some(body) = &func.body else {
+        return false;
+    };
+    if body.stmts.len() != 2 {
+        return false;
+    }
+
+    let Stmt::If(if_stmt) = &body.stmts[0] else {
+        return false;
+    };
+    if !is_in_check(&if_stmt.test, &ctx) {
+        return false;
+    }
+    if !if_consequent_matches_define_property(&if_stmt.cons, &ctx) {
+        return false;
+    }
+    let Some(alt) = &if_stmt.alt else {
+        return false;
+    };
+    if !if_alternate_matches_direct_assign(alt, &ctx) {
+        return false;
+    }
+
+    let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = &body.stmts[1] else {
+        return false;
+    };
+    ctx.is_binding(arg, "target")
+}
+
+fn is_in_check(expr: &Expr, ctx: &MatchContext) -> bool {
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::In,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
+        return false;
+    };
+    is_key_or_key_normalization(left, ctx) && ctx.is_binding(right, "target")
+}
+
+fn is_key_or_key_normalization(expr: &Expr, ctx: &MatchContext) -> bool {
+    let expr = strip_parens_expr(expr);
+    if ctx.is_binding(expr, "key") {
+        return true;
+    }
+
+    let Expr::Assign(AssignExpr {
+        op: AssignOp::Assign,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
+        return false;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(ident)) = left else {
+        return false;
+    };
+    if !ctx.is_ident(&ident.id, "key") {
+        return false;
+    }
+
+    let Expr::Call(CallExpr { args, .. }) = right.as_ref() else {
+        return false;
+    };
+    args.len() == 1 && args[0].spread.is_none() && ctx.is_binding(&args[0].expr, "key")
+}
+
+fn strip_parens_expr(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_parens_expr(&paren.expr),
+        _ => expr,
+    }
+}
+
+fn if_consequent_matches_define_property(stmt: &Stmt, ctx: &MatchContext) -> bool {
+    let expr = match stmt {
+        Stmt::Expr(expr_stmt) => expr_stmt.expr.as_ref(),
+        Stmt::Block(BlockStmt { stmts, .. }) if stmts.len() == 1 => {
+            let Stmt::Expr(expr_stmt) = &stmts[0] else {
+                return false;
+            };
+            expr_stmt.expr.as_ref()
+        }
+        _ => return false,
+    };
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return false;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    if obj.sym.as_ref() != "Object" {
+        return false;
+    }
+    if !matches!(&member.prop, MemberProp::Ident(id) if id.sym.as_ref() == "defineProperty") {
+        return false;
+    }
+    if call.args.len() != 3 {
+        return false;
+    }
+    if !ctx.is_binding(&call.args[0].expr, "target") {
+        return false;
+    }
+    if !ctx.is_binding(&call.args[1].expr, "key") {
+        return false;
+    }
+
+    let Expr::Object(obj_lit) = call.args[2].expr.as_ref() else {
+        return false;
+    };
+    let mut has_value = false;
+    let mut has_enumerable = false;
+    let mut has_configurable = false;
+    let mut has_writable = false;
+    for prop in &obj_lit.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return false;
+        };
+        let Prop::KeyValue(KeyValueProp { key, value }) = prop.as_ref() else {
+            return false;
+        };
+        let Some(name) = prop_name_ident(key) else {
+            return false;
+        };
+        match name.as_ref() {
+            "value" => has_value = ctx.is_binding(value, "value"),
+            "enumerable" => {
+                if !matches!(value.as_ref(), Expr::Lit(Lit::Bool(bool_lit)) if bool_lit.value) {
+                    return false;
+                }
+                has_enumerable = true;
+            }
+            "configurable" => {
+                if !matches!(value.as_ref(), Expr::Lit(Lit::Bool(bool_lit)) if bool_lit.value) {
+                    return false;
+                }
+                has_configurable = true;
+            }
+            "writable" => {
+                if !matches!(value.as_ref(), Expr::Lit(Lit::Bool(bool_lit)) if bool_lit.value) {
+                    return false;
+                }
+                has_writable = true;
+            }
+            _ => return false,
+        }
+    }
+    has_value && has_enumerable && has_configurable && has_writable
+}
+
+fn if_alternate_matches_direct_assign(stmt: &Stmt, ctx: &MatchContext) -> bool {
+    let expr = match stmt {
+        Stmt::Expr(expr_stmt) => expr_stmt.expr.as_ref(),
+        Stmt::Block(BlockStmt { stmts, .. }) if stmts.len() == 1 => {
+            let Stmt::Expr(expr_stmt) = &stmts[0] else {
+                return false;
+            };
+            expr_stmt.expr.as_ref()
+        }
+        _ => return false,
+    };
+    let Expr::Assign(AssignExpr {
+        op: AssignOp::Assign,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
+        return false;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = left else {
+        return false;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    if !ctx.is_ident(obj, "target") {
+        return false;
+    }
+    let MemberProp::Computed(ComputedPropName { expr: key, .. }) = &member.prop else {
+        return false;
+    };
+    ctx.is_binding(key, "key") && ctx.is_binding(right, "value")
+}
+
+fn prop_name_ident(key: &PropName) -> Option<Atom> {
+    match key {
+        PropName::Ident(IdentName { sym, .. }) => Some(sym.clone()),
+        PropName::Str(s) => Some(s.value.as_str()?.into()),
+        _ => None,
+    }
 }
 
 fn detect_helper_from_arrow(

@@ -224,7 +224,9 @@ runner!(run_un_es6_class, |ctx| UnEs6Class::new_with_level(
     ctx.unresolved_mark,
     ctx.rewrite_level
 ));
-runner!(run_un_class_fields, UnClassFields);
+runner!(run_un_class_fields, |ctx| UnClassFields::new(
+    ctx.rewrite_level
+));
 runner!(run_un_ts_helpers, UnTsHelpers);
 
 fn run_un_regenerator(module: &mut Module, ctx: RuleRunContext<'_>) {
@@ -344,11 +346,6 @@ define_rule_registry! {
     ("UnOptionalChaining", Structural, run_un_optional_chaining, always_enabled),
     ("UnIife", Complex, run_un_iife, always_enabled),
     ("UnConditionals", Complex, run_un_conditionals, always_enabled),
-    // UnConditionals expands compact Babel _defineProperty helpers into the
-    // if/else shape recognized by UnDefineProperty.
-    ("UnDefineProperty", Complex, run_un_define_property, always_enabled, requires: [
-        "UnConditionals"
-    ]),
     ("UnParameters", Complex, run_un_parameters, always_enabled, requires: [
         "FlipComparisons",
         "RemoveVoid"
@@ -366,6 +363,13 @@ define_rule_registry! {
         "UnEs6Class"
     ]),
     ("UnClassFields", Complex, run_un_class_fields, always_enabled),
+    // UnConditionals expands compact Babel _defineProperty helpers into the
+    // if/else shape recognized by UnDefineProperty. Run after UnClassFields so
+    // Babel class-field helper calls can still prove class field provenance.
+    ("UnDefineProperty", Complex, run_un_define_property, always_enabled, requires: [
+        "UnConditionals",
+        "UnClassFields"
+    ]),
     ("UnTsHelpers", Complex, run_un_ts_helpers, always_enabled),
     ("UnRegenerator", Complex, run_un_regenerator, always_enabled),
     ("UnAsyncAwait", Complex, run_un_async_await, always_enabled),

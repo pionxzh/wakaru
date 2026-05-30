@@ -53,6 +53,7 @@ impl VisitMut for UnObjectSpread<'_> {
             .filter(|(_, kind)| {
                 *kind == BabelHelperKind::Extends
                     || *kind == BabelHelperKind::ObjectSpread
+                    || *kind == BabelHelperKind::DefineProperty
                     || *kind == BabelHelperKind::HelperDependency
             })
             .collect();
@@ -92,9 +93,12 @@ impl VisitMut for UnObjectSpread<'_> {
             .filter(|(key, _)| !remaining_roots.contains(key))
             .collect();
         let helper_dependencies = collect_helper_dependencies(module, &removable_roots);
-        let standalone_dependencies = local_helpers
-            .into_iter()
-            .filter(|(_, kind)| matches!(kind, BabelHelperKind::HelperDependency));
+        let standalone_dependencies = local_helpers.into_iter().filter(|(_, kind)| {
+            matches!(
+                kind,
+                BabelHelperKind::DefineProperty | BabelHelperKind::HelperDependency
+            )
+        });
         let removable_helpers: HashMap<BindingKey, BabelHelperKind> = removable_roots
             .into_iter()
             .chain(helper_dependencies)

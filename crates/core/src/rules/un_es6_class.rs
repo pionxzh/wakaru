@@ -103,7 +103,7 @@ struct UnEs6ClassInner {
     ts_extends_helpers: HashSet<BindingKey>,
     tslib_namespaces: HashSet<BindingKey>,
     set_prototype_of_helpers: HashSet<BindingKey>,
-    create_class_helpers: HashSet<Atom>,
+    create_class_helpers: HashSet<BindingKey>,
     call_super_helpers: HashSet<BindingKey>,
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
@@ -486,7 +486,10 @@ fn collect_call_super_helpers_from_items(items: &[ModuleItem]) -> HashSet<Bindin
 // ============================================================
 
 /// Collect names of variables whose init is a _createClass IIFE from statements.
-fn collect_create_class_helpers_from_stmts(stmts: &[Stmt], unresolved_mark: Mark) -> HashSet<Atom> {
+fn collect_create_class_helpers_from_stmts(
+    stmts: &[Stmt],
+    unresolved_mark: Mark,
+) -> HashSet<BindingKey> {
     let mut helpers = HashSet::new();
     for stmt in stmts {
         match stmt {
@@ -510,7 +513,7 @@ fn collect_create_class_helpers_from_stmts(stmts: &[Stmt], unresolved_mark: Mark
 fn collect_create_class_helpers_from_items(
     items: &[ModuleItem],
     unresolved_mark: Mark,
-) -> HashSet<Atom> {
+) -> HashSet<BindingKey> {
     let mut helpers = HashSet::new();
     for item in items {
         match item {
@@ -530,9 +533,9 @@ fn collect_create_class_helpers_from_items(
     helpers
 }
 
-fn detect_create_class_fn(ident: &Ident, function: &Function) -> Option<Atom> {
+fn detect_create_class_fn(ident: &Ident, function: &Function) -> Option<BindingKey> {
     if is_create_class_function(function) {
-        Some(ident.sym.clone())
+        Some(binding_key(ident))
     } else {
         None
     }
@@ -596,7 +599,7 @@ fn is_create_class_function(function: &Function) -> bool {
 }
 
 /// If a VarDecl is `var r = (function() { ... createClass body ... })()`, return the name `r`.
-fn detect_create_class_var(var_decl: &VarDecl, unresolved_mark: Mark) -> Option<Atom> {
+fn detect_create_class_var(var_decl: &VarDecl, unresolved_mark: Mark) -> Option<BindingKey> {
     if var_decl.decls.len() != 1 {
         return None;
     }
@@ -617,7 +620,7 @@ fn detect_create_class_var(var_decl: &VarDecl, unresolved_mark: Mark) -> Option<
     let body_stmts = get_fn_or_arrow_body(strip_parens(callee))?;
 
     if is_create_class_body(body_stmts, unresolved_mark) {
-        Some(bi.id.sym.clone())
+        Some(binding_key(&bi.id))
     } else {
         None
     }
@@ -697,7 +700,7 @@ fn get_fn_or_arrow_body(expr: &Expr) -> Option<&[Stmt]> {
 /// conversion. Only removes when there are no remaining references.
 fn remove_orphaned_create_class_helpers(
     stmts: &mut Vec<Stmt>,
-    helpers: &HashSet<Atom>,
+    helpers: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) {
     if helpers.is_empty() {
@@ -706,8 +709,8 @@ fn remove_orphaned_create_class_helpers(
     // Count remaining references to each helper (excluding the declaration itself)
     let refs = count_helper_references_stmts(stmts, helpers, unresolved_mark);
     stmts.retain(|stmt| {
-        if let Some(name) = detect_create_class_stmt_name(stmt, unresolved_mark) {
-            return refs.get(name.as_ref()).copied().unwrap_or(0) > 0;
+        if let Some(key) = detect_create_class_stmt_key(stmt, unresolved_mark) {
+            return refs.get(&key).copied().unwrap_or(0) > 0;
         }
         true
     });
@@ -715,7 +718,7 @@ fn remove_orphaned_create_class_helpers(
 
 fn remove_orphaned_create_class_helpers_module(
     items: &mut Vec<ModuleItem>,
-    helpers: &HashSet<Atom>,
+    helpers: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) {
     if helpers.is_empty() {
@@ -723,14 +726,14 @@ fn remove_orphaned_create_class_helpers_module(
     }
     let refs = count_helper_references_module(items, helpers, unresolved_mark);
     items.retain(|item| {
-        if let Some(name) = detect_create_class_item_name(item, unresolved_mark) {
-            return refs.get(name.as_ref()).copied().unwrap_or(0) > 0;
+        if let Some(key) = detect_create_class_item_key(item, unresolved_mark) {
+            return refs.get(&key).copied().unwrap_or(0) > 0;
         }
         true
     });
 }
 
-fn detect_create_class_stmt_name(stmt: &Stmt, unresolved_mark: Mark) -> Option<Atom> {
+fn detect_create_class_stmt_key(stmt: &Stmt, unresolved_mark: Mark) -> Option<BindingKey> {
     match stmt {
         Stmt::Decl(Decl::Fn(fn_decl)) => detect_create_class_fn(&fn_decl.ident, &fn_decl.function),
         Stmt::Decl(Decl::Var(var_decl)) => detect_create_class_var(var_decl, unresolved_mark),
@@ -738,9 +741,9 @@ fn detect_create_class_stmt_name(stmt: &Stmt, unresolved_mark: Mark) -> Option<A
     }
 }
 
-fn detect_create_class_item_name(item: &ModuleItem, unresolved_mark: Mark) -> Option<Atom> {
+fn detect_create_class_item_key(item: &ModuleItem, unresolved_mark: Mark) -> Option<BindingKey> {
     match item {
-        ModuleItem::Stmt(stmt) => detect_create_class_stmt_name(stmt, unresolved_mark),
+        ModuleItem::Stmt(stmt) => detect_create_class_stmt_key(stmt, unresolved_mark),
         _ => None,
     }
 }
@@ -748,15 +751,18 @@ fn detect_create_class_item_name(item: &ModuleItem, unresolved_mark: Mark) -> Op
 /// Count references to helper names in statements, excluding helper definitions.
 fn count_helper_references_stmts(
     stmts: &[Stmt],
-    helpers: &HashSet<Atom>,
+    helpers: &HashSet<BindingKey>,
     unresolved_mark: Mark,
-) -> std::collections::HashMap<String, usize> {
+) -> std::collections::HashMap<BindingKey, usize> {
     use swc_core::ecma::visit::VisitWith;
 
-    let mut counter = HelperRefCounter::new(helpers);
+    let mut counter = BindingHelperRefCounter::new(helpers);
     for stmt in stmts {
         // Skip the helper definition itself
-        if detect_create_class_stmt_name(stmt, unresolved_mark).is_some() {
+        if detect_create_class_stmt_key(stmt, unresolved_mark)
+            .as_ref()
+            .is_some_and(|key| helpers.contains(key))
+        {
             continue;
         }
         stmt.visit_with(&mut counter);
@@ -766,14 +772,17 @@ fn count_helper_references_stmts(
 
 fn count_helper_references_module(
     items: &[ModuleItem],
-    helpers: &HashSet<Atom>,
+    helpers: &HashSet<BindingKey>,
     unresolved_mark: Mark,
-) -> std::collections::HashMap<String, usize> {
+) -> std::collections::HashMap<BindingKey, usize> {
     use swc_core::ecma::visit::VisitWith;
 
-    let mut counter = HelperRefCounter::new(helpers);
+    let mut counter = BindingHelperRefCounter::new(helpers);
     for item in items {
-        if detect_create_class_item_name(item, unresolved_mark).is_some() {
+        if detect_create_class_item_key(item, unresolved_mark)
+            .as_ref()
+            .is_some_and(|key| helpers.contains(key))
+        {
             continue;
         }
         item.visit_with(&mut counter);
@@ -869,29 +878,6 @@ fn ts_extends_helper_decl_key(var_decl: &VarDecl) -> Option<BindingKey> {
     Some(binding_key(&binding.id))
 }
 
-struct HelperRefCounter {
-    names: HashSet<String>,
-    counts: std::collections::HashMap<String, usize>,
-}
-
-impl HelperRefCounter {
-    fn new(helpers: &HashSet<Atom>) -> Self {
-        Self {
-            names: helpers.iter().map(|a| a.to_string()).collect(),
-            counts: std::collections::HashMap::new(),
-        }
-    }
-}
-
-impl swc_core::ecma::visit::Visit for HelperRefCounter {
-    fn visit_ident(&mut self, id: &Ident) {
-        let name = id.sym.to_string();
-        if self.names.contains(&name) {
-            *self.counts.entry(name).or_insert(0) += 1;
-        }
-    }
-}
-
 struct BindingHelperRefCounter {
     helpers: HashSet<BindingKey>,
     counts: std::collections::HashMap<BindingKey, usize>,
@@ -979,7 +965,7 @@ fn try_iife_to_class(
     var: &VarDecl,
     inherits_helpers: &HashSet<BindingKey>,
     tslib_namespaces: &HashSet<BindingKey>,
-    create_class_helpers: &HashSet<Atom>,
+    create_class_helpers: &HashSet<BindingKey>,
     call_super_helpers: &HashSet<BindingKey>,
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
@@ -1234,7 +1220,7 @@ fn parse_class_body(
     super_param: Option<&str>,
     inherits_helpers: &HashSet<BindingKey>,
     tslib_namespaces: &HashSet<BindingKey>,
-    create_class_helpers: &HashSet<Atom>,
+    create_class_helpers: &HashSet<BindingKey>,
     call_super_helpers: &HashSet<BindingKey>,
     has_super: bool,
     allow_static_fields: bool,
@@ -1274,6 +1260,7 @@ fn parse_class_body(
                             inner_ctor_name,
                             &mut members,
                             create_class_helpers,
+                            unresolved_mark,
                         ) {
                             return None;
                         }
@@ -1405,8 +1392,13 @@ fn parse_class_body(
 
             // `_createClass(t, [...], [...])` or `r(t, [...])` as a statement (Babel non-loose)
             if let Expr::Call(call) = expr.as_ref() {
-                if try_parse_create_class(call, inner_ctor_name, &mut members, create_class_helpers)
-                {
+                if try_parse_create_class(
+                    call,
+                    inner_ctor_name,
+                    &mut members,
+                    create_class_helpers,
+                    unresolved_mark,
+                ) {
                     continue;
                 }
             }
@@ -1752,20 +1744,23 @@ fn try_parse_seq_return(
 
 /// Parse `_createClass(t, instanceMethods, staticMethods)` where each methods array
 /// contains `{ key: "name", value: function() {} }` objects.
-/// Matches both the literal name `_createClass` and any name detected via body-shape matching.
+/// Matches unresolved `_createClass` and bindings detected via body-shape matching.
 fn try_parse_create_class(
     call: &CallExpr,
     ctor_name: &str,
     members: &mut Vec<ClassMember>,
-    create_class_helpers: &HashSet<Atom>,
+    create_class_helpers: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
 ) -> bool {
-    // Callee must be `_createClass` or a detected helper name
+    // Callee must be unresolved `_createClass` or a detected helper binding.
     let Callee::Expr(callee) = &call.callee else {
         return false;
     };
     let is_create_class = match strip_parens(callee) {
         Expr::Ident(id) => {
-            id.sym.as_ref() == "_createClass" || create_class_helpers.contains(&id.sym)
+            let is_unresolved_builtin =
+                id.sym.as_ref() == "_createClass" && id.ctxt.outer() == unresolved_mark;
+            is_unresolved_builtin || create_class_helpers.contains(&binding_key(id))
         }
         _ => false,
     };

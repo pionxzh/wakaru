@@ -43,8 +43,12 @@ impl VisitMut for UnObjectRest {
     fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
         // Collect named OWP helpers (function declarations detected by babel_helper_utils)
         let all_helpers = collect_helpers_of_kind(module, BabelHelperKind::ObjectWithoutProperties);
-        let helper_dependencies =
+        let mut helper_dependencies =
             collect_helpers_of_kind(module, BabelHelperKind::HelperDependency);
+        helper_dependencies.extend(collect_helpers_of_kind(
+            module,
+            BabelHelperKind::DefineProperty,
+        ));
         let named_helpers = all_helpers;
         let tslib_namespaces = collect_tslib_namespace_bindings(module);
 

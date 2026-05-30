@@ -912,6 +912,86 @@ var User = (function () {
 }
 
 #[test]
+fn minimal_disables_instance_class_field_recovery() {
+    let input = r#"
+function _defineProperty(e, r, t) {
+    if (r in e) {
+        Object.defineProperty(e, r, { value: t, enumerable: true, configurable: true, writable: true });
+    } else {
+        e[r] = t;
+    }
+    return e;
+}
+class Foo {
+    constructor() {
+        _defineProperty(this, "value", 1);
+    }
+}
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Minimal,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("this[\"value\"] = 1"),
+        "minimal mode should preserve constructor assignment semantics: {output}"
+    );
+    assert!(
+        !output.contains("\n    value = 1"),
+        "instance field recovery requires standard+: {output}"
+    );
+}
+
+#[test]
+fn standard_keeps_instance_class_field_recovery() {
+    let input = r#"
+function _defineProperty(e, r, t) {
+    if (r in e) {
+        Object.defineProperty(e, r, { value: t, enumerable: true, configurable: true, writable: true });
+    } else {
+        e[r] = t;
+    }
+    return e;
+}
+class Foo {
+    constructor() {
+        _defineProperty(this, "value", 1);
+    }
+}
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Standard,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("\n    value = 1"),
+        "standard mode should recover instance fields: {output}"
+    );
+    assert!(
+        !output.contains("_defineProperty(this, \"value\", 1)"),
+        "Babel helper call should be promoted in standard mode: {output}"
+    );
+}
+
+#[test]
 fn minimal_disables_arg_rest_recovery() {
     let input = r#"
 function foo() {
