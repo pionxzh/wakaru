@@ -57,15 +57,22 @@ pub(crate) enum BabelHelperKind {
     HelperDependency,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TsHelperKind {
+    SpreadArray,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct LocalHelperContext {
     helpers: HashMap<BindingKey, BabelHelperKind>,
+    ts_helpers: HashMap<BindingKey, TsHelperKind>,
 }
 
 impl LocalHelperContext {
     pub(crate) fn collect(module: &Module) -> Self {
         Self {
             helpers: collect_helpers(module),
+            ts_helpers: collect_ts_helpers(module),
         }
     }
 
@@ -81,6 +88,14 @@ impl LocalHelperContext {
             .iter()
             .filter(|(_, helper_kind)| **helper_kind == kind)
             .map(|(key, helper_kind)| (key.clone(), *helper_kind))
+            .collect()
+    }
+
+    pub(crate) fn ts_helpers_of_kind(&self, kind: TsHelperKind) -> HashSet<BindingKey> {
+        self.ts_helpers
+            .iter()
+            .filter(|(_, helper_kind)| **helper_kind == kind)
+            .map(|(key, _)| key.clone())
             .collect()
     }
 }
@@ -238,6 +253,56 @@ pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelpe
         }
     }
     helpers
+}
+
+fn collect_ts_helpers(module: &Module) -> HashMap<BindingKey, TsHelperKind> {
+    let mut helpers = HashMap::new();
+
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) if var.decls.len() == 1 => {
+                if let Some((key, kind)) = collect_ts_helper_from_var_decl(&var.decls[0]) {
+                    helpers.insert(key, kind);
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import))
+                if !import.type_only && is_tslib_path(import.src.value.as_str().unwrap_or("")) =>
+            {
+                for specifier in &import.specifiers {
+                    let ImportSpecifier::Named(named) = specifier else {
+                        continue;
+                    };
+                    let imported = named
+                        .imported
+                        .as_ref()
+                        .map(export_name_to_atom)
+                        .unwrap_or_else(|| named.local.sym.clone());
+                    if let Some(kind) = ts_helper_name_kind(imported.as_ref()) {
+                        helpers.insert(binding_key(&named.local), kind);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    helpers
+}
+
+fn collect_ts_helper_from_var_decl(decl: &VarDeclarator) -> Option<(BindingKey, TsHelperKind)> {
+    let init = decl.init.as_deref()?;
+    let key = var_declarator_binding_key(decl)?;
+    let kind = if is_ts_spread_array_helper_init(init)
+        || tslib_require_member_name(init)
+            .and_then(ts_helper_name_kind)
+            .is_some_and(|kind| kind == TsHelperKind::SpreadArray)
+    {
+        TsHelperKind::SpreadArray
+    } else {
+        return None;
+    };
+
+    Some((key, kind))
 }
 
 /// Check if the module contains functions with Babel sub-helper body signals.
@@ -465,6 +530,13 @@ pub(crate) fn tslib_helper_name_kind(name: &str) -> Option<BabelHelperKind> {
         "__read" => Some(BabelHelperKind::SlicedToArray),
         "__importDefault" => Some(BabelHelperKind::InteropRequireDefault),
         "__importStar" => Some(BabelHelperKind::InteropRequireWildcard),
+        _ => None,
+    }
+}
+
+fn ts_helper_name_kind(name: &str) -> Option<TsHelperKind> {
+    match name {
+        "__spreadArray" => Some(TsHelperKind::SpreadArray),
         _ => None,
     }
 }
@@ -1152,6 +1224,39 @@ fn member_prop_name(prop: &MemberProp) -> Option<&str> {
         },
         MemberProp::PrivateName(_) => None,
     }
+}
+
+fn is_ts_spread_array_helper_init(expr: &Expr) -> bool {
+    let expr = strip_parens(expr);
+    let Expr::Bin(BinExpr {
+        op: BinaryOp::LogicalOr,
+        left,
+        ..
+    }) = expr
+    else {
+        return false;
+    };
+
+    let left = strip_parens(left);
+    let Expr::Bin(and_bin) = left else {
+        return false;
+    };
+    if and_bin.op != BinaryOp::LogicalAnd {
+        return false;
+    }
+
+    let and_left = strip_parens(and_bin.left.as_ref());
+    let and_right = strip_parens(and_bin.right.as_ref());
+
+    matches!(and_left, Expr::This(_))
+        && matches!(
+            and_right,
+            Expr::Member(MemberExpr {
+                obj,
+                prop: MemberProp::Ident(prop),
+                ..
+            }) if matches!(obj.as_ref(), Expr::This(_)) && prop.sym.as_ref() == "__spreadArray"
+        )
 }
 
 fn is_tslib_require_call(expr: &Expr) -> bool {
@@ -3065,7 +3170,7 @@ mod tests {
     use swc_core::common::{sync::Lrc, FileName, Globals, SourceMap, GLOBALS};
     use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 
-    fn parse_first_function(code: &str) -> Function {
+    fn parse_module(code: &str) -> Module {
         let cm: Lrc<SourceMap> = Default::default();
         let fm = cm.new_source_file(Lrc::new(FileName::Anon), code.to_string());
         let lexer = Lexer::new(
@@ -3075,13 +3180,47 @@ mod tests {
             None,
         );
         let mut parser = Parser::new_from(lexer);
-        let module = parser.parse_module().expect("failed to parse");
+        parser.parse_module().expect("failed to parse")
+    }
+
+    fn parse_first_function(code: &str) -> Function {
+        let module = parse_module(code);
         for item in &module.body {
             if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
                 return *fn_decl.function.clone();
             }
         }
         panic!("no function declaration found in source");
+    }
+
+    #[test]
+    fn local_helper_context_collects_ts_spread_array_helpers() {
+        GLOBALS.set(&Globals::new(), || {
+            let module = parse_module(
+                r#"
+                import { __spreadArray as importedSpread } from "tslib";
+                var inlineSpread = (this && this.__spreadArray) || function(to, from, pack) {
+                    return to.concat(from);
+                };
+                var requiredSpread = require("tslib").__spreadArray;
+                var notSpread = customSpreadArray;
+                "#,
+            );
+            let helpers =
+                LocalHelperContext::collect(&module).ts_helpers_of_kind(TsHelperKind::SpreadArray);
+
+            assert_eq!(helpers.len(), 3);
+            assert!(helpers
+                .iter()
+                .any(|(sym, _)| sym.as_ref() == "importedSpread"));
+            assert!(helpers
+                .iter()
+                .any(|(sym, _)| sym.as_ref() == "inlineSpread"));
+            assert!(helpers
+                .iter()
+                .any(|(sym, _)| sym.as_ref() == "requiredSpread"));
+            assert!(!helpers.iter().any(|(sym, _)| sym.as_ref() == "notSpread"));
+        });
     }
 
     #[test]

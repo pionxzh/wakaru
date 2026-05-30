@@ -1,22 +1,17 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::common::DUMMY_SP;
-use swc_core::ecma::ast::{
-    ArrayLit, BinExpr, BinaryOp, Callee, Decl, Expr, ExprOrSpread, ImportSpecifier, MemberExpr,
-    MemberProp, Module, ModuleDecl, ModuleItem, Stmt,
-};
+use swc_core::ecma::ast::{ArrayLit, Callee, Expr, ExprOrSpread, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::babel_helper_utils::{
-    collect_tslib_namespace_bindings, helpers_with_remaining_refs, is_tslib_path,
-    is_tslib_spread_array_member, remove_helper_declarations, tslib_require_member_name,
-    BabelHelperKind, BindingKey, LocalHelperContext,
+    collect_tslib_namespace_bindings, helpers_with_remaining_refs, is_tslib_spread_array_member,
+    remove_helper_declarations, BabelHelperKind, BindingKey, LocalHelperContext, TsHelperKind,
 };
 use super::helper_matcher::{
     binding_key, remaining_refs_outside_var_declarators, remove_import_specifiers_by_binding,
-    remove_var_declarators_by_binding, var_declarator_binding_key,
+    remove_var_declarators_by_binding,
 };
-use crate::utils::paren::strip_parens;
 
 /// Detects and replaces `_toConsumableArray(arr)` with `[...arr]`.
 pub struct UnToConsumableArray;
@@ -36,9 +31,9 @@ impl VisitMut for UnToConsumableArray {
 
 fn run_un_to_consumable_array(module: &mut Module, local_helpers: &LocalHelperContext) {
     let helpers = local_helpers.helpers_of_kind(BabelHelperKind::ToConsumableArray);
+    let ts_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::SpreadArray);
     let tslib_namespaces = collect_tslib_namespace_bindings(module);
     if helpers.is_empty() {
-        let ts_helpers = collect_ts_spread_array_helpers(module);
         if ts_helpers.is_empty() && tslib_namespaces.is_empty() {
             return;
         }
@@ -53,8 +48,6 @@ fn run_un_to_consumable_array(module: &mut Module, local_helpers: &LocalHelperCo
         remove_unused_ts_spread_array_helpers(module, &ts_helpers);
         return;
     }
-
-    let ts_helpers = collect_ts_spread_array_helpers(module);
 
     let mut replacer = ToConsumableArrayReplacer {
         helpers: &helpers,
@@ -159,88 +152,6 @@ fn append_array_source(
         }
         _ => None,
     }
-}
-
-fn collect_ts_spread_array_helpers(module: &Module) -> HashSet<BindingKey> {
-    module
-        .body
-        .iter()
-        .flat_map(|item| {
-            let mut helpers = Vec::new();
-            match item {
-                ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) if var.decls.len() == 1 => {
-                    let decl = &var.decls[0];
-                    if let Some(init) = decl.init.as_deref() {
-                        let is_helper = is_ts_spread_array_helper_init(init)
-                            || tslib_require_member_name(init) == Some("__spreadArray");
-                        if is_helper {
-                            if let Some(key) = var_declarator_binding_key(decl) {
-                                helpers.push(key);
-                            }
-                        }
-                    }
-                }
-                ModuleItem::ModuleDecl(ModuleDecl::Import(import))
-                    if !import.type_only
-                        && is_tslib_path(import.src.value.as_str().unwrap_or("")) =>
-                {
-                    for specifier in &import.specifiers {
-                        let ImportSpecifier::Named(named) = specifier else {
-                            continue;
-                        };
-                        let imported = named
-                            .imported
-                            .as_ref()
-                            .map(|name| match name {
-                                swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.as_ref(),
-                                swc_core::ecma::ast::ModuleExportName::Str(s) => {
-                                    s.value.as_str().unwrap_or("")
-                                }
-                            })
-                            .unwrap_or(named.local.sym.as_ref());
-                        if imported == "__spreadArray" {
-                            helpers.push(binding_key(&named.local));
-                        }
-                    }
-                }
-                _ => {}
-            }
-            helpers
-        })
-        .collect()
-}
-
-fn is_ts_spread_array_helper_init(expr: &Expr) -> bool {
-    let expr = strip_parens(expr);
-    let Expr::Bin(BinExpr {
-        op: BinaryOp::LogicalOr,
-        left,
-        ..
-    }) = expr
-    else {
-        return false;
-    };
-
-    let left = strip_parens(left);
-    let Expr::Bin(and_bin) = left else {
-        return false;
-    };
-    if and_bin.op != BinaryOp::LogicalAnd {
-        return false;
-    }
-
-    let and_left = strip_parens(and_bin.left.as_ref());
-    let and_right = strip_parens(and_bin.right.as_ref());
-
-    matches!(and_left, Expr::This(_))
-        && matches!(
-            and_right,
-            Expr::Member(MemberExpr {
-                obj,
-                prop: MemberProp::Ident(prop),
-                ..
-            }) if matches!(obj.as_ref(), Expr::This(_)) && prop.sym.as_ref() == "__spreadArray"
-        )
 }
 
 fn remove_unused_ts_spread_array_helpers(module: &mut Module, helpers: &HashSet<BindingKey>) {
