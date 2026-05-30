@@ -154,6 +154,35 @@ class Admin extends User {
 }
 
 #[test]
+fn pipeline_uses_cached_tslib_extends_alias_identity() {
+    let input = r#"
+var tslib_1 = require("tslib");
+var E = tslib_1.__extends;
+var Admin = (function (_super) {
+    E(Admin, _super);
+    function Admin(name) {
+        var _this = _super.call(this, name) || this;
+        return _this;
+    }
+    return Admin;
+}(User));
+"#;
+    let expected = r#"
+var tslib_1 = require("tslib");
+var E = tslib_1.__extends;
+class Admin extends User {
+    constructor(name) {
+        super(name);
+    }
+}
+"#;
+    assert_eq_normalized(
+        &render_pipeline_between(input, "UnEs6Class", "UnEs6Class"),
+        expected,
+    );
+}
+
+#[test]
 fn tslib_named_extends_import_is_recovered() {
     let input = r#"
 import { __extends } from "tslib";

@@ -57,17 +57,17 @@ impl VisitMut for UnEs6Class {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         // Pre-scan for helpers at module level BEFORE visiting children,
         // so nested scopes (function bodies) can also detect custom helper calls.
-        let ts_extends_helpers = self
-            .module_ts_extends_helpers
-            .take()
-            .unwrap_or_else(|| collect_ts_extends_helpers_from_items(items));
         let tslib_namespaces = collect_tslib_namespaces_from_items(items);
+        let ts_extends_helpers = self.module_ts_extends_helpers.take().unwrap_or_else(|| {
+            let mut helpers = collect_ts_extends_helpers_from_items(items);
+            helpers.extend(collect_tslib_extends_helpers_from_items(
+                items,
+                &tslib_namespaces,
+            ));
+            helpers
+        });
         let mut inherits_helpers = collect_inherits_helpers_from_items(items);
         inherits_helpers.extend(ts_extends_helpers.iter().cloned());
-        inherits_helpers.extend(collect_tslib_extends_helpers_from_items(
-            items,
-            &tslib_namespaces,
-        ));
         let set_prototype_of_helpers = collect_set_prototype_of_helpers_from_items(items);
         let create_class_helpers =
             collect_create_class_helpers_from_items(items, self.unresolved_mark);
