@@ -11,8 +11,7 @@ use super::helper_matcher::{
     binding_key, import_specifier_binding_key, var_declarator_binding_key,
 };
 use super::transpiler_helper_utils::{
-    helpers_with_remaining_refs, remove_helper_declarations, tslib_helper_name_kind,
-    tslib_member_helper_kind, tslib_require_member_name, BindingKey, LocalHelperContext,
+    helpers_with_remaining_refs, remove_helper_declarations, BindingKey, LocalHelperContext,
     TranspilerHelperKind,
 };
 
@@ -53,7 +52,7 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
     // and unwrap non-require calls in expressions.
     let mut new_body = Vec::with_capacity(module.body.len());
     for item in module.body.drain(..) {
-        if let Some(imports) = try_convert_to_namespace_import(&item, &helpers, tslib_namespaces) {
+        if let Some(imports) = try_convert_to_namespace_import(&item, local_helpers) {
             new_body.extend(imports);
         } else {
             new_body.push(item);
@@ -62,10 +61,7 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
     module.body = new_body;
 
     // Phase 2: Unwrap remaining call sites in expressions (non-var-decl contexts)
-    let mut unwrapper = WildcardCallUnwrapper {
-        helpers: &helpers,
-        tslib_namespaces,
-    };
+    let mut unwrapper = WildcardCallUnwrapper { local_helpers };
     module.visit_mut_with(&mut unwrapper);
 
     if helpers.is_empty() {
@@ -124,8 +120,7 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
 /// Returns None if the item doesn't match this pattern.
 fn try_convert_to_namespace_import(
     item: &ModuleItem,
-    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
-    tslib_namespaces: &HashSet<BindingKey>,
+    local_helpers: &LocalHelperContext,
 ) -> Option<Vec<ModuleItem>> {
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
         return None;
@@ -145,7 +140,7 @@ fn try_convert_to_namespace_import(
             continue;
         };
 
-        if let Some(source) = extract_wildcard_require(init, helpers, tslib_namespaces) {
+        if let Some(source) = extract_wildcard_require(init, local_helpers) {
             // Convert to: import * as _x from "source"
             let import = ImportDecl {
                 span: DUMMY_SP,
@@ -184,15 +179,14 @@ fn try_convert_to_namespace_import(
 /// Extract the require source from `_irw(require("path"))` or `_irw(require("path"), true)`.
 fn extract_wildcard_require(
     expr: &Expr,
-    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
-    tslib_namespaces: &HashSet<BindingKey>,
+    local_helpers: &LocalHelperContext,
 ) -> Option<swc_core::ecma::ast::Str> {
     let Expr::Call(call) = expr else { return None };
     let Callee::Expr(callee) = &call.callee else {
         return None;
     };
 
-    if !is_interop_wildcard_callee(callee, helpers, tslib_namespaces) {
+    if !local_helpers.is_helper_callee(callee, TranspilerHelperKind::InteropRequireWildcard) {
         return None;
     }
 
@@ -225,8 +219,7 @@ fn extract_wildcard_require(
 /// Non-require arguments are left as-is because the helper synthesizes
 /// a namespace object that may differ from the raw expression value.
 struct WildcardCallUnwrapper<'a> {
-    helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
-    tslib_namespaces: &'a HashSet<BindingKey>,
+    local_helpers: &'a LocalHelperContext,
 }
 
 impl VisitMut for WildcardCallUnwrapper<'_> {
@@ -238,7 +231,10 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
             return;
         };
 
-        if !is_interop_wildcard_callee(callee, self.helpers, self.tslib_namespaces) {
+        if !self
+            .local_helpers
+            .is_helper_callee(callee, TranspilerHelperKind::InteropRequireWildcard)
+        {
             return;
         }
 
@@ -251,22 +247,6 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
             *expr = *call.args[0].expr.clone();
         }
     }
-}
-
-fn is_interop_wildcard_callee(
-    callee: &Expr,
-    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
-    tslib_namespaces: &HashSet<BindingKey>,
-) -> bool {
-    if let Expr::Ident(id) = callee {
-        return helpers.contains_key(&(id.sym.clone(), id.ctxt));
-    }
-
-    matches!(
-        tslib_member_helper_kind(callee, tslib_namespaces)
-            .or_else(|| tslib_helper_name_kind(tslib_require_member_name(callee)?)),
-        Some(TranspilerHelperKind::InteropRequireWildcard)
-    )
 }
 
 fn is_require_call(expr: &Expr) -> bool {

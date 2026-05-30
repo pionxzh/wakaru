@@ -149,6 +149,21 @@ impl LocalHelperContext {
         self.tslib_require_member_calls.contains(&kind)
     }
 
+    pub(crate) fn helper_callee_kind(&self, callee: &Expr) -> Option<TranspilerHelperKind> {
+        if let Expr::Ident(id) = callee {
+            if let Some(kind) = self.helpers.get(&(id.sym.clone(), id.ctxt)) {
+                return Some(*kind);
+            }
+        }
+
+        tslib_member_helper_kind(callee, &self.tslib_namespaces)
+            .or_else(|| tslib_require_member_name(callee).and_then(tslib_helper_name_kind))
+    }
+
+    pub(crate) fn is_helper_callee(&self, callee: &Expr, kind: TranspilerHelperKind) -> bool {
+        self.helper_callee_kind(callee) == Some(kind)
+    }
+
     pub(crate) fn helper_dependencies(
         &self,
         module: &Module,
@@ -3793,6 +3808,54 @@ mod tests {
             );
             assert!(context.has_tslib_require_member_call(TranspilerHelperKind::SlicedToArray));
             assert!(!context.has_tslib_require_member_call(TranspilerHelperKind::ObjectSpread));
+        });
+    }
+
+    #[test]
+    fn local_helper_context_matches_helper_callees() {
+        GLOBALS.set(&Globals::new(), || {
+            let module = parse_module(
+                r#"
+                import * as tslibNs from "tslib";
+                var _interopRequireDefault = require("@babel/runtime/helpers/interopRequireDefault");
+                var local = _interopRequireDefault(require("local"));
+                var namespaced = tslibNs.__importDefault(require("namespaced"));
+                var direct = require("tslib").__importDefault(require("direct"));
+                var unrelated = maybe.__importDefault(require("unrelated"));
+                "#,
+            );
+            let context = LocalHelperContext::collect(&module);
+            let callees: Vec<_> = module
+                .body
+                .iter()
+                .filter_map(|item| {
+                    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+                        return None;
+                    };
+                    let decl = var.decls.first()?;
+                    let Expr::Call(call) = decl.init.as_deref()? else {
+                        return None;
+                    };
+                    let Callee::Expr(callee) = &call.callee else {
+                        return None;
+                    };
+                    Some(callee.as_ref())
+                })
+                .collect();
+
+            assert_eq!(
+                context.helper_callee_kind(callees[1]),
+                Some(TranspilerHelperKind::InteropRequireDefault)
+            );
+            assert_eq!(
+                context.helper_callee_kind(callees[2]),
+                Some(TranspilerHelperKind::InteropRequireDefault)
+            );
+            assert_eq!(
+                context.helper_callee_kind(callees[3]),
+                Some(TranspilerHelperKind::InteropRequireDefault)
+            );
+            assert_eq!(context.helper_callee_kind(callees[4]), None);
         });
     }
 
