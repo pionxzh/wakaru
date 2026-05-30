@@ -144,7 +144,7 @@ Stage 3: Structural restoration
 
 Stage 4: Complex pattern restoration
   UnIife, UnConditionals, UnParameters, UnEnum, UnJsx, UnEs6Class,
-  UnAssertThisInitialized, UnClassFields, UnDefineProperty, UnTsHelpers,
+  UnAssertThisInitialized, UnClassFields, UnDefineProperty,
   UnRegenerator, UnAsyncAwait, UnWebpackInterop (2nd pass)
 
 Stage 5: Modernization

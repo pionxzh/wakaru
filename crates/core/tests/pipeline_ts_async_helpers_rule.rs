@@ -3,7 +3,7 @@ mod common;
 use common::render;
 
 #[test]
-fn renames_awaiter_alias_and_removes_decl() {
+fn recovers_async_awaiter_alias_and_removes_decl() {
     let input = r#"
 const V = this && this.__awaiter || ((a, b, c, d) => { return new Promise(() => {}); });
 export function foo() {
@@ -18,7 +18,7 @@ export function foo() {
 }
 
 #[test]
-fn renames_generator_alias_and_removes_decl() {
+fn recovers_generator_alias_and_removes_decl() {
     let input = r#"
 const Z = this && this.__generator || ((a, b) => { });
 function foo() {
@@ -50,9 +50,7 @@ function foo() {
 }
 
 #[test]
-fn does_not_rename_shadowed_locals() {
-    // Regression: HelperRenamer was renaming ALL identifiers with the same name,
-    // including inner-scope locals that shadow the helper alias.
+fn non_async_ts_helper_is_left_for_its_consumer() {
     let input = r#"
 const Y = this && this.__assign || function() { return Object.assign.apply(Object, arguments); };
 function foo(Y) {
@@ -62,8 +60,12 @@ function foo(Y) {
 "#;
     let output = render(input);
     assert!(
-        !output.contains("__assign"),
-        "__assign alias should be removed without touching shadowed locals: {output}"
+        output.contains("const Y = this && this.__assign"),
+        "__assign alias should be left for the object-spread consumer: {output}"
+    );
+    assert!(
+        output.contains("function foo(Y)") && output.contains("let Y = \"\""),
+        "shadowed locals should remain untouched: {output}"
     );
 }
 

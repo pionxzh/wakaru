@@ -117,6 +117,8 @@ scan module-level declarations
 
 Shape matchers are plain functions: `fn(&Function) -> bool`. They check essential structural elements and ignore variable names. Writing a new matcher for a new helper is just writing a new predicate.
 
+`LocalHelperContext` also records TypeScript and `tslib` helper identities. Consumers use those binding identities directly; for example `UnAsyncAwait` matches detected `__awaiter` / `__generator` aliases instead of first renaming aliases to canonical global names.
+
 Helper utilities include `LocalHelperContext::helpers_of_kind()` (filter by kind), `remove_helper_declarations()` (delete the helper function), and `helpers_with_remaining_refs()` (check if a helper binding is still referenced elsewhere).
 
 ### Restoration

@@ -58,8 +58,7 @@ must appear in any source text that contains a pattern the rule can transform.
 | UnUseStrict | `use strict` | The literal directive string |
 | UnWebpackInterop | `__esModule` | Getter pattern checks `base.__esModule` |
 | UnClassFields | `__init` | Matches `__init*` method names |
-| UnTsHelpers | `__awaiter`, `__generator`, `__assign`, `__rest`, `__extends`, `__importDefault`, `__importStar` | Canonical TS helper names |
-| UnAsyncAwait | `__generator`, `__awaiter` | Pattern wraps in these helpers |
+| UnAsyncAwait | `__awaiter`, `__generator`, or detected TypeScript async helper aliases | Async/generator helper recovery |
 | UnPrototypeClass | `prototype` | Matches `Foo.prototype.method = ...` (very common, rarely skipped) |
 | UnWebpackObjectGetters | `defineProperties` | Calls `Object.defineProperties(...)` |
 

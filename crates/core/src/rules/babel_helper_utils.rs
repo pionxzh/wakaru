@@ -75,25 +75,6 @@ pub(crate) enum TsHelperKind {
     ClassPrivateFieldSet,
 }
 
-impl TsHelperKind {
-    pub(crate) fn canonical_name(self) -> &'static str {
-        match self {
-            TsHelperKind::Awaiter => "__awaiter",
-            TsHelperKind::Generator => "__generator",
-            TsHelperKind::Assign => "__assign",
-            TsHelperKind::Rest => "__rest",
-            TsHelperKind::Extends => "__extends",
-            TsHelperKind::ImportDefault => "__importDefault",
-            TsHelperKind::ImportStar => "__importStar",
-            TsHelperKind::CreateBinding => "__createBinding",
-            TsHelperKind::SetModuleDefault => "__setModuleDefault",
-            TsHelperKind::SpreadArray => "__spreadArray",
-            TsHelperKind::ClassPrivateFieldGet => "__classPrivateFieldGet",
-            TsHelperKind::ClassPrivateFieldSet => "__classPrivateFieldSet",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TsHelperSource {
     Inline,

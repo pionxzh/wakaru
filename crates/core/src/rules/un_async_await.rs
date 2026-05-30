@@ -9,37 +9,102 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::babel_helper_utils::{BindingKey, LocalHelperContext, TsHelperKind};
+use super::helper_matcher::{
+    binding_key, remaining_refs_outside_var_declarators, remove_var_declarators_by_binding,
+};
 use super::rename_utils::BindingId;
 use crate::utils::paren::strip_parens;
 
 pub struct UnAsyncAwait;
 
+impl UnAsyncAwait {
+    pub(crate) fn run_with_helpers(
+        module: &mut swc_core::ecma::ast::Module,
+        local_helpers: &LocalHelperContext,
+    ) {
+        let helpers = AsyncHelperContext::from_local_helpers(local_helpers);
+        module.visit_mut_with(&mut UnAsyncAwaitWithHelpers { helpers: &helpers });
+        remove_unused_inline_async_helpers(module, local_helpers);
+    }
+}
+
 impl VisitMut for UnAsyncAwait {
     fn visit_mut_function(&mut self, func: &mut Function) {
-        let awaiter_param_hints = collect_awaiter_param_hints(func);
+        let helpers = AsyncHelperContext::default();
+        visit_mut_function_with_helpers(func, &helpers);
+    }
+}
 
-        // Recurse into children first
-        func.visit_mut_children_with(self);
+struct UnAsyncAwaitWithHelpers<'a> {
+    helpers: &'a AsyncHelperContext,
+}
 
-        let body = match func.body.as_mut() {
-            Some(b) => b,
-            None => return,
+impl VisitMut for UnAsyncAwaitWithHelpers<'_> {
+    fn visit_mut_function(&mut self, func: &mut Function) {
+        visit_mut_function_with_helpers(func, self.helpers);
+    }
+}
+
+#[derive(Default)]
+struct AsyncHelperContext {
+    awaiter_helpers: HashSet<BindingKey>,
+    generator_helpers: HashSet<BindingKey>,
+}
+
+impl AsyncHelperContext {
+    fn from_local_helpers(local_helpers: &LocalHelperContext) -> Self {
+        Self {
+            awaiter_helpers: local_helpers.ts_helpers_of_kind(TsHelperKind::Awaiter),
+            generator_helpers: local_helpers.ts_helpers_of_kind(TsHelperKind::Generator),
+        }
+    }
+
+    fn is_awaiter_call(&self, call: &swc_core::ecma::ast::CallExpr) -> bool {
+        self.matches_helper_call(call, &self.awaiter_helpers, "__awaiter")
+    }
+
+    fn is_generator_call(&self, call: &swc_core::ecma::ast::CallExpr) -> bool {
+        self.matches_helper_call(call, &self.generator_helpers, "__generator")
+    }
+
+    fn matches_helper_call(
+        &self,
+        call: &swc_core::ecma::ast::CallExpr,
+        helpers: &HashSet<BindingKey>,
+        canonical_name: &str,
+    ) -> bool {
+        let Some(Expr::Ident(id)) = call.callee.as_expr().map(|expr| expr.as_ref()) else {
+            return false;
         };
+        id.sym.as_ref() == canonical_name || helpers.contains(&binding_key(id))
+    }
+}
 
-        // Try __generator transform first (makes function a generator)
-        if try_transform_generator(body) {
-            func.is_generator = true;
-            return;
-        }
+fn visit_mut_function_with_helpers(func: &mut Function, helpers: &AsyncHelperContext) {
+    let awaiter_param_hints = collect_awaiter_param_hints(func, helpers);
 
-        // Try __awaiter transform (makes function async).
-        // After extracting the inner body, also run the generator transform
-        // in case the inner function was a __generator state machine.
-        if try_transform_awaiter(body) {
-            try_transform_generator(body);
-            func.is_async = true;
-            apply_unused_param_hints(func, awaiter_param_hints);
-        }
+    // Recurse into children first
+    func.visit_mut_children_with(&mut UnAsyncAwaitWithHelpers { helpers });
+
+    let body = match func.body.as_mut() {
+        Some(b) => b,
+        None => return,
+    };
+
+    // Try __generator transform first (makes function a generator)
+    if try_transform_generator(body, helpers) {
+        func.is_generator = true;
+        return;
+    }
+
+    // Try __awaiter transform (makes function async).
+    // After extracting the inner body, also run the generator transform
+    // in case the inner function was a __generator state machine.
+    if try_transform_awaiter(body, helpers) {
+        try_transform_generator(body, helpers);
+        func.is_async = true;
+        apply_unused_param_hints(func, awaiter_param_hints);
     }
 }
 
@@ -47,16 +112,19 @@ impl VisitMut for UnAsyncAwait {
 // __generator state-machine → function*
 // ============================================================
 
-fn try_transform_generator(body: &mut BlockStmt) -> bool {
+fn try_transform_generator(body: &mut BlockStmt, helpers: &AsyncHelperContext) -> bool {
     // Find: return __generator(this, function(_a) { switch(_a.label) { ... } })
-    let return_idx = body.stmts.iter().position(is_generator_return);
+    let return_idx = body
+        .stmts
+        .iter()
+        .position(|stmt| is_generator_return(stmt, helpers));
     let return_idx = match return_idx {
         Some(i) => i,
         None => return false,
     };
 
     let ret_stmt = body.stmts.remove(return_idx);
-    let (state_name, cases) = match extract_generator_args(ret_stmt) {
+    let (state_name, cases) = match extract_generator_args(ret_stmt, helpers) {
         Some(x) => x,
         None => return false,
     };
@@ -69,7 +137,7 @@ fn try_transform_generator(body: &mut BlockStmt) -> bool {
     true
 }
 
-fn is_generator_return(stmt: &Stmt) -> bool {
+fn is_generator_return(stmt: &Stmt, helpers: &AsyncHelperContext) -> bool {
     let Stmt::Return(ret) = stmt else {
         return false;
     };
@@ -77,16 +145,19 @@ fn is_generator_return(stmt: &Stmt) -> bool {
     let Expr::Call(call) = arg.as_ref() else {
         return false;
     };
-    callee_name(call) == Some("__generator".into())
+    helpers.is_generator_call(call)
 }
 
-fn extract_generator_args(stmt: Stmt) -> Option<(Atom, Vec<SwitchCase>)> {
+fn extract_generator_args(
+    stmt: Stmt,
+    helpers: &AsyncHelperContext,
+) -> Option<(Atom, Vec<SwitchCase>)> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = *ret.arg?;
     let Expr::Call(mut call) = arg else {
         return None;
     };
-    if callee_name(&call) != Some("__generator".into()) {
+    if !helpers.is_generator_call(&call) {
         return None;
     }
     if call.args.len() < 2 {
@@ -668,16 +739,19 @@ fn reconstruct_with_regions(label_stmts: Vec<Vec<Stmt>>, trys: &[[Option<usize>;
 // __awaiter wrapper → async function
 // ============================================================
 
-fn try_transform_awaiter(body: &mut BlockStmt) -> bool {
+fn try_transform_awaiter(body: &mut BlockStmt, helpers: &AsyncHelperContext) -> bool {
     // Find: return __awaiter(this, void0, void0, function*() { ... })
-    let return_idx = body.stmts.iter().position(is_awaiter_return);
+    let return_idx = body
+        .stmts
+        .iter()
+        .position(|stmt| is_awaiter_return(stmt, helpers));
     let return_idx = match return_idx {
         Some(i) => i,
         None => return false,
     };
 
     let ret_stmt = body.stmts.remove(return_idx);
-    let inner_stmts = match extract_awaiter_body(ret_stmt) {
+    let inner_stmts = match extract_awaiter_body(ret_stmt, helpers) {
         Some(s) => s,
         None => return false,
     };
@@ -691,7 +765,7 @@ fn try_transform_awaiter(body: &mut BlockStmt) -> bool {
     true
 }
 
-fn is_awaiter_return(stmt: &Stmt) -> bool {
+fn is_awaiter_return(stmt: &Stmt, helpers: &AsyncHelperContext) -> bool {
     let Stmt::Return(ret) = stmt else {
         return false;
     };
@@ -699,16 +773,16 @@ fn is_awaiter_return(stmt: &Stmt) -> bool {
     let Expr::Call(call) = arg.as_ref() else {
         return false;
     };
-    callee_name(call) == Some("__awaiter".into())
+    helpers.is_awaiter_call(call)
 }
 
-fn extract_awaiter_body(stmt: Stmt) -> Option<Vec<Stmt>> {
+fn extract_awaiter_body(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<Vec<Stmt>> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = *ret.arg?;
     let Expr::Call(mut call) = arg else {
         return None;
     };
-    if callee_name(&call) != Some("__awaiter".into()) {
+    if !helpers.is_awaiter_call(&call) {
         return None;
     }
     if call.args.len() < 4 {
@@ -749,11 +823,43 @@ fn replace_yield_with_await(stmts: &mut Vec<Stmt>) {
     }
 }
 
-fn collect_awaiter_param_hints(func: &Function) -> HashMap<BindingId, Atom> {
+fn remove_unused_inline_async_helpers(
+    module: &mut swc_core::ecma::ast::Module,
+    local_helpers: &LocalHelperContext,
+) {
+    let inline_helpers = local_helpers.inline_ts_helpers();
+    let helper_keys: HashSet<BindingKey> = inline_helpers
+        .into_iter()
+        .filter_map(|(key, kind)| {
+            matches!(kind, TsHelperKind::Awaiter | TsHelperKind::Generator).then_some(key)
+        })
+        .collect();
+    if helper_keys.is_empty() {
+        return;
+    }
+
+    let remaining = remaining_refs_outside_var_declarators(module, &helper_keys, &helper_keys);
+    let removable: HashSet<BindingKey> = helper_keys
+        .into_iter()
+        .filter(|key| !remaining.contains(key))
+        .collect();
+    if !removable.is_empty() {
+        remove_var_declarators_by_binding(&mut module.body, &removable);
+    }
+}
+
+fn collect_awaiter_param_hints(
+    func: &Function,
+    helpers: &AsyncHelperContext,
+) -> HashMap<BindingId, Atom> {
     let Some(body) = &func.body else {
         return HashMap::new();
     };
-    if !body.stmts.iter().any(is_awaiter_return) {
+    if !body
+        .stmts
+        .iter()
+        .any(|stmt| is_awaiter_return(stmt, helpers))
+    {
         return HashMap::new();
     }
 
@@ -981,13 +1087,6 @@ fn is_valid_param_hint(value: &str) -> bool {
 // ============================================================
 // Helpers
 // ============================================================
-
-fn callee_name(call: &swc_core::ecma::ast::CallExpr) -> Option<Atom> {
-    match &**call.callee.as_expr()? {
-        Expr::Ident(id) => Some(id.sym.clone()),
-        _ => None,
-    }
-}
 
 fn is_ident_prop(prop: &swc_core::ecma::ast::MemberProp, name: &str) -> bool {
     matches!(prop, swc_core::ecma::ast::MemberProp::Ident(n) if n.sym.as_str() == name)

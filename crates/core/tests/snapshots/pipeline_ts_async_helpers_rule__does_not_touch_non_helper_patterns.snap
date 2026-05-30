@@ -1,5 +1,5 @@
 ---
-source: crates/core/tests/un_ts_helpers_rule.rs
+source: crates/core/tests/pipeline_ts_async_helpers_rule.rs
 expression: output
 ---
 const V = someOtherThing || fallback;

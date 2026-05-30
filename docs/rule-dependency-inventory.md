@@ -679,40 +679,25 @@ These rules restore structural patterns and clean up minification artifacts.
 | Safety | Heuristic |
 | Notes | Level-gated by subpattern: Babel constructor field helper recovery (`_defineProperty(this, "x", value)` -> `x = value`) requires `standard+`, runs only for base classes, and skips initializers that reference constructor params or `arguments`. Direct constructor assignments are preserved unless another pattern proves they came from class fields. |
 
-### 43. UnTsHelpers
-
-| Field | Value |
-|-------|-------|
-| Family | TypeScript |
-| Role | Helper unwrapping |
-| Uses `unresolved_mark` | No |
-| Confirmed prerequisites | **Must run after UnEsm's position is determined** — UnEsm needs `__esModule` helper patterns intact (`confirmed` by Exp 3). In practice, UnTsHelpers runs before UnEsm in the current pipeline because UnEsm is at position 46, but UnTsHelpers must not move before the point where UnEsm's interop detection has completed. |
-| Shape prerequisites | `const V = this && this.__awaiter || (...)` declarations |
-| Produces | Canonical helper names (`__awaiter`, `__generator`, etc.); removes helper declarations |
-| Downstream dependents | **UnAsyncAwait** (hard dependency — needs canonical `__awaiter`/`__generator` names), **UnWebpackInterop2** (indirect — UnAsyncAwait exposes new getter patterns) |
-| Fact behavior | **Writer** — could emit "module uses TS helpers: __awaiter, __generator, ..." |
-| Safety | Safe |
-| Notes | **Experimentally validated** (Exp 3). Cannot move to Stage 2 — breaks UnEsm's interop detection. Current position (Stage 5, before UnAsyncAwait) is correct. |
-
-### 44. UnAsyncAwait
+### 43. UnAsyncAwait
 
 | Field | Value |
 |-------|-------|
 | Family | TypeScript |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
-| Suspected prerequisites | **UnTsHelpers** (`suspected` — hard: needs canonical helper names to match `__awaiter`/`__generator` patterns) |
-| Shape prerequisites | `__generator` state machine structure, `__awaiter` wrapper |
+| Suspected prerequisites | Must run after module-system helper cleanup has completed, so removing consumed inline TS async helpers cannot hide `__esModule` patterns from UnEsm. |
+| Shape prerequisites | `__generator` state machine structure, `__awaiter` wrapper, or aliases detected by `LocalHelperContext` |
 | Produces | `async` functions, `function*` generators, `yield`/`await` expressions |
 | Downstream dependents | UnWebpackInterop2 (may expose new getter patterns after async restoration) |
-| Fact behavior | Neither |
+| Fact behavior | **Reader** — consumes detected TypeScript helper identities from `LocalHelperContext`; removes consumed inline `__awaiter` / `__generator` declarations after transformation. |
 | Safety | Heuristic (state machine reconstruction) |
 
-### 45. UnWebpackInterop2
+### 44. UnWebpackInterop2
 
 See #35 (second pass of UnWebpackInterop).
 
-### 46. UnEsm
+### 45. UnEsm
 
 | Field | Value |
 |-------|-------|
@@ -722,10 +707,10 @@ See #35 (second pass of UnWebpackInterop).
 | Confirmed prerequisites | UnInteropRequireDefault (`confirmed`), UnInteropRequireWildcard (`confirmed`), UnAssignmentMerging (`confirmed`), UnEsmoduleFlag (`confirmed`), UnWebpackInterop pass 1 (`confirmed soft` — only getter pattern), **UnWebpackInterop2** (`confirmed hard` — fixture regression without it), UnAsyncAwait → UnWebpackInterop2 chain (`confirmed`) |
 | Shape prerequisites | Clean `require()` calls, clean `exports.X = val` / `module.exports = val`, all interop getters resolved |
 | Produces | `import`/`export` declarations; renames conflicting export bindings |
-| Downstream dependents | UnTsHelpers (must run after — `confirmed`), UnImportRename, UnExportRename, SmartInline |
+| Downstream dependents | UnAsyncAwait (must run after the module-system reconstruction point for inline TS helper cleanup), UnImportRename, UnExportRename, SmartInline |
 | Fact behavior | **Writer** — could emit import/export summary, module classification (CJS/ESM) |
 | Safety | Heuristic (classification logic for default vs named imports/exports) |
-| Notes | **Experimentally validated.** Current position (end of Stage 5, after UnWebpackInterop2) is the earliest safe position. Core require→import conversion works as early as Stage 2, but webpack interop getter patterns require the full UnTsHelpers → UnAsyncAwait → UnWebpackInterop2 chain to complete first. See Step 3 experiments for details. Level-gated: entire rule disabled below `standard`. |
+| Notes | **Experimentally validated.** Current position (end of Stage 5, after UnWebpackInterop2) is the earliest safe position. Core require→import conversion works as early as Stage 2, but webpack interop getter patterns require the full UnAsyncAwait → UnWebpackInterop2 chain to complete first. See Step 3 experiments for details. Level-gated: entire rule disabled below `standard`. |
 
 ---
 
@@ -1047,7 +1032,6 @@ Detect and remove Babel/TS transpiler helper functions.
 | UnClassCallCheck | 2 | Babel | Independent, enables UnEs6Class |
 | UnPossibleConstructorReturn | 2 | Babel | Independent, enables UnEs6Class |
 | UnTypeofPolyfill | 2 | Babel | Independent |
-| UnTsHelpers | 5 | TypeScript | Independent, enables UnAsyncAwait |
 | UnRestArrayCopy | 6 | Babel | Needs ArgRest |
 
 ### Module-System Reconstruction
@@ -1094,7 +1078,7 @@ Restore higher-level code structures from minified/transpiled forms.
 | UnEnum | 4 | Needs flat statements |
 | UnEs6Class | 5 | Needs helper unwrapping |
 | UnClassFields | 5 | Needs UnEs6Class |
-| UnAsyncAwait | 5 | Needs UnTsHelpers |
+| UnAsyncAwait | 5 | Consumes detected TS async helper identities |
 
 ### Modernization
 
@@ -1141,7 +1125,7 @@ SimplifySequence ─────────────────────
 UnBracketNotation ──┬→ UnInteropRequireDefault ──[C]──┐    │  UnExportRename ──↗               → SmartRename
                     ├→ UnInteropRequireWildcard ──[C]─┤    │                                    → UnReturn
                     ├→ UnObjectRest                   ↓    │
-                    └→ UnWebpackInterop (pass 1) [C]→ UnEsm [C]→ UnTsHelpers must run after
+                    └→ UnWebpackInterop (pass 1) [C]→ UnEsm [C]→ async helper cleanup must run after
                                                       ↑
 UnIndirectCall ─────┬→ UnInteropRequireDefault        │
                     └→ UnInteropRequireWildcard        │
@@ -1149,7 +1133,7 @@ UnIndirectCall ─────┬→ UnInteropRequireDefault        │
 UnAssignmentMerging ┬→ UnVariableMerging              │
                     └──────────────────────[C]────────┤
 UnEsmoduleFlag ────────────────────────────[C]────────┤
-UnTsHelpers ───[C]→ UnAsyncAwait ──→ UnWebpackInterop2 [C]─┘
+UnAsyncAwait ──→ UnWebpackInterop2 [C]─┘
 
 UnClassCallCheck ───┬→ UnEs6Class ──→ UnClassFields
 UnPossibleConstructorReturn ↗
@@ -1187,7 +1171,7 @@ Rules that perform reliable local detection and could emit observations:
 | UnInteropRequireWildcard | "binding X was interopRequireWildcard-wrapped" | High |
 | UnEsmoduleFlag | "module has __esModule marker" | High |
 | UnWebpackInterop | "binding X had webpack interop getter" | High |
-| UnTsHelpers | "module uses TS helpers: __awaiter, __generator, ..." | High |
+| LocalHelperContext | "module uses TS helpers: __awaiter, __generator, ..." | High |
 | UnEsm | "module classified as CJS→ESM; imports: [...]; exports: [...]" | Medium |
 
 ## Candidate Fact Readers (Step 5 preview)
@@ -1255,7 +1239,7 @@ getter-wrapped default-access pattern requires pre-processing.
 
 ---
 
-### Experiment 3: UnTsHelpers + UnAsyncAwait → Stage 2
+### Experiment 3: TS async helper cleanup + UnAsyncAwait → Stage 2
 
 | Metric | Result |
 |--------|--------|
@@ -1264,17 +1248,17 @@ getter-wrapped default-access pattern requires pre-processing.
 | Fixture regressions | Not tested |
 
 **Failed tests:**
-1. `webpack_default_getter_collapses_to_import` — UnTsHelpers strips/rewrites the
+1. `webpack_default_getter_collapses_to_import` — early TS async helper cleanup stripped/rewrote the
    `__esModule` pattern before UnEsm can use it for getter detection.
 2. `webpack4_unpack_snapshots` — cosmetic JSX diff (`{<U/>}` → `<U/>`), actually an
    improvement.
 
-**Conclusion:** **UnTsHelpers cannot move before UnEsm.** UnEsm needs to see the
-`__esModule` helper patterns intact before UnTsHelpers strips them. The earliest safe
-position for UnTsHelpers is after UnEsm.
+**Conclusion:** TS async helper cleanup cannot move before UnEsm. UnEsm needs to see the
+`__esModule` helper patterns intact before consumed inline TS async helper declarations are removed. The earliest safe
+position for async helper cleanup is after UnEsm.
 
 **Prerequisite status update:**
-- UnEsm → UnTsHelpers: `confirmed` (UnTsHelpers must run after UnEsm)
+- UnEsm → UnAsyncAwait cleanup: `confirmed` (consumed inline TS async helper cleanup must run after UnEsm)
 
 ---
 
@@ -1337,7 +1321,7 @@ is correct.
 |-----------|--------------|--------------------|---------| 
 | UnEsm → Stage 2 | 1 | — | **Blocked** by UnWebpackInterop |
 | Disable UnWebpackInterop | 1 | — | **Soft** prerequisite for UnEsm |
-| UnTsHelpers → Stage 2 | 2 | — | **Blocked** — must stay after UnEsm |
+| TS async helper cleanup → Stage 2 | 2 | — | **Blocked** — must stay after UnEsm |
 | UnCurlyBraces → Stage 1 | 2 | — | **Conditionally safe** (needs pattern matcher fix) |
 | UnEsm → Stage 4 | 0 | **1 file** | **Blocked** by UnWebpackInterop2 |
 
@@ -1349,7 +1333,7 @@ UnIndirectCall ─────→ UnInteropRequireWildcard ──┤
 UnAssignmentMerging ────────────────────────────┤
 UnEsmoduleFlag ─────────────────────────────────┤
 UnWebpackInterop (pass 1) ──────────────────────┤
-UnTsHelpers → UnAsyncAwait → UnWebpackInterop2 ─┤
+UnAsyncAwait → UnWebpackInterop2 ───────────────┤
                                                  ↓
                                               UnEsm
 ```
@@ -1376,8 +1360,8 @@ SmartRename).
 | UnWebpackInterop → UnEsm | `confirmed soft` | Exp 2: only getter pattern affected |
 | UnWebpackInterop2 → UnEsm | `confirmed hard` | Exp 5: fixture regression without it |
 | UnAsyncAwait → UnWebpackInterop2 | `confirmed` | Exp 5: interop wrappers leak after async restoration |
-| UnTsHelpers → UnAsyncAwait | `confirmed` | Exp 3: UnTsHelpers strips patterns UnEsm needs |
-| UnEsm → UnTsHelpers | `confirmed` | Exp 3: UnTsHelpers must run after UnEsm |
+| LocalHelperContext → UnAsyncAwait | `confirmed` | UnAsyncAwait consumes detected TS async helper identities directly |
+| UnEsm → UnAsyncAwait cleanup | `confirmed` | Exp 3: consumed inline TS async helper cleanup must run after UnEsm |
 | UnCurlyBraces ↛ Stage 1 | `confirmed fragile` | Exp 4: breaks interop getter pattern match |
 
 ### Actionable Improvements Identified

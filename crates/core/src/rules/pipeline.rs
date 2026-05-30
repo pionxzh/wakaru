@@ -283,13 +283,6 @@ fn run_un_class_fields(module: &mut Module, ctx: RuleRunContext<'_>) {
     UnClassFields::new_with_mark(ctx.unresolved_mark, ctx.rewrite_level)
         .run_with_helpers(module, local_helpers.as_ref());
 }
-fn run_un_ts_helpers(module: &mut Module, ctx: RuleRunContext<'_>) {
-    let local_helpers = ctx.local_helpers(module);
-    if UnTsHelpers::run_with_helpers(module, local_helpers.as_ref()) {
-        ctx.invalidate_local_helpers();
-    }
-}
-
 fn run_un_regenerator(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
     UnRegenerator::run_with_helpers(
@@ -300,7 +293,11 @@ fn run_un_regenerator(module: &mut Module, ctx: RuleRunContext<'_>) {
     );
 }
 
-runner!(run_un_async_await, UnAsyncAwait);
+fn run_un_async_await(module: &mut Module, ctx: RuleRunContext<'_>) {
+    let local_helpers = ctx.local_helpers(module);
+    UnAsyncAwait::run_with_helpers(module, local_helpers.as_ref());
+    ctx.invalidate_local_helpers();
+}
 runner!(run_un_then_catch, |ctx| UnThenCatch::new(
     ctx.unresolved_mark
 ));
@@ -433,7 +430,6 @@ define_rule_registry! {
         "UnConditionals",
         "UnClassFields"
     ]),
-    ("UnTsHelpers", Complex, run_un_ts_helpers, always_enabled),
     ("UnRegenerator", Complex, run_un_regenerator, always_enabled),
     ("UnAsyncAwait", Complex, run_un_async_await, always_enabled),
     // Second pass: UnAsyncAwait can expose additional interop getter shapes.

@@ -1,0 +1,10 @@
+---
+source: crates/core/tests/pipeline_ts_async_helpers_rule.rs
+expression: output
+---
+let Y = this && this.__assign || function() {
+    return Object.assign(...arguments);
+};
+const x = Y({}, {
+    a: 1
+});
