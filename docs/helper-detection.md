@@ -88,8 +88,8 @@ matching local to that rule.
 
 Rules still own domain-specific shape recognition. For example:
 
-- `babel_helper_utils.rs` classifies known Babel helper bodies and runtime
-  imports.
+- `transpiler_helper_utils.rs` classifies known Babel/TypeScript helper bodies
+  and runtime imports.
 - `un_typeof_polyfill.rs` recognizes TypeScript `typeof Symbol.iterator`
   polyfills.
 - `un_to_consumable_array.rs` recognizes TypeScript `__spreadArray`.
@@ -102,9 +102,9 @@ This is deliberate. A helper matcher should encode the smallest semantic shape
 that proves the transform is safe, while shared utilities handle binding
 identity and declaration lifecycle mechanics.
 
-### Detection (`babel_helper_utils.rs`)
+### Detection (`transpiler_helper_utils.rs`)
 
-The `collect_helpers()` function scans module-level declarations (function declarations, function-assigned variables, and Babel runtime imports) and returns a `HashMap<BindingKey, BabelHelperKind>` by running each candidate through a set of shape matchers or matching known runtime package paths.
+The `collect_helpers()` function scans module-level declarations (function declarations, function-assigned variables, TypeScript helper imports, and Babel runtime imports) and returns helper identities by running each candidate through a set of shape matchers or matching known runtime package paths.
 
 Pipeline consumers do not call `collect_helpers()` directly. `apply_rules()` lazily builds a `LocalHelperContext` the first time a helper rule needs local helper bindings, after earlier syntax normalization rules have run. Later helper rules in the same pipeline range reuse that context instead of rescanning the module. Direct rule tests can still run individual `VisitMut` rules; those rules build a local context for themselves.
 

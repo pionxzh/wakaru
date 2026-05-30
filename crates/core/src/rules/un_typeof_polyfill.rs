@@ -4,11 +4,11 @@ use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{Callee, Expr, Module, UnaryExpr, UnaryOp};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::babel_helper_utils::{BabelHelperKind, LocalHelperContext};
 use super::helper_matcher::{
     binding_key, remaining_refs_outside_var_declarators, remove_var_declarators_by_binding,
     BindingKey,
 };
+use super::transpiler_helper_utils::{BabelHelperKind, LocalHelperContext};
 
 /// Detects and simplifies Babel's `_typeof` polyfill.
 ///

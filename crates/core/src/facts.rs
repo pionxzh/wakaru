@@ -16,7 +16,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use crate::rules::babel_helper_utils::{collect_helpers, BabelHelperKind};
+use crate::rules::transpiler_helper_utils::{collect_helpers, BabelHelperKind};
 
 /// How a binding was imported.
 #[derive(Debug, Clone, PartialEq, Eq)]

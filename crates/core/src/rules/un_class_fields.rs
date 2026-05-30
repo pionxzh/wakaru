@@ -10,8 +10,10 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::babel_helper_utils::{BabelHelperKind, BindingKey, LocalHelperContext, TsHelperKind};
 use super::helper_matcher::binding_key;
+use super::transpiler_helper_utils::{
+    BabelHelperKind, BindingKey, LocalHelperContext, TsHelperKind,
+};
 use super::RewriteLevel;
 
 /// Inline `__init*()` method bodies into the constructor.

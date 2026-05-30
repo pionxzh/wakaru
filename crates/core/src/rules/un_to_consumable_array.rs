@@ -4,13 +4,13 @@ use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{ArrayLit, Callee, Expr, ExprOrSpread, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::babel_helper_utils::{
-    is_tslib_spread_array_member, remove_helpers_without_remaining_refs, BabelHelperKind,
-    BindingKey, LocalHelperContext, TsHelperKind,
-};
 use super::helper_matcher::{
     binding_key, remaining_refs_outside_var_declarators, remove_import_specifiers_by_binding,
     remove_var_declarators_by_binding,
+};
+use super::transpiler_helper_utils::{
+    is_tslib_spread_array_member, remove_helpers_without_remaining_refs, BabelHelperKind,
+    BindingKey, LocalHelperContext, TsHelperKind,
 };
 
 /// Detects and replaces `_toConsumableArray(arr)` with `[...arr]`.

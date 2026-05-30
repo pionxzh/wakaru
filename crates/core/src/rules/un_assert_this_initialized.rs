@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use swc_core::ecma::ast::{Callee, Expr, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::babel_helper_utils::{
+use super::transpiler_helper_utils::{
     remove_helpers_without_remaining_refs, BabelHelperKind, BindingKey, LocalHelperContext,
 };
 

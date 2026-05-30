@@ -7,7 +7,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::babel_helper_utils::{
+use super::transpiler_helper_utils::{
     tslib_helper_name_kind, tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind,
     BindingKey, LocalHelperContext,
 };

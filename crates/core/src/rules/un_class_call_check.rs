@@ -3,7 +3,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::babel_helper_utils::{
+use super::transpiler_helper_utils::{
     remove_helpers_without_remaining_refs, BabelHelperKind, BindingKey, LocalHelperContext,
 };
 
@@ -51,7 +51,8 @@ fn run_un_class_call_check(module: &mut Module, local_helpers: &LocalHelperConte
 // ---------------------------------------------------------------------------
 
 struct CallRemover<'a> {
-    helpers: &'a std::collections::HashMap<BindingKey, super::babel_helper_utils::BabelHelperKind>,
+    helpers:
+        &'a std::collections::HashMap<BindingKey, super::transpiler_helper_utils::BabelHelperKind>,
 }
 
 impl VisitMut for CallRemover<'_> {

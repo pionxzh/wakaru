@@ -7,7 +7,7 @@ use swc_core::ecma::visit::VisitMutWith;
 
 use crate::facts::ModuleFactsMap;
 
-use super::babel_helper_utils::LocalHelperContext;
+use super::transpiler_helper_utils::LocalHelperContext;
 use super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -645,7 +645,7 @@ fn apply_rules_impl(
 mod tests {
     use swc_core::common::{DUMMY_SP, GLOBALS};
 
-    use super::super::babel_helper_utils::{
+    use super::super::transpiler_helper_utils::{
         collect_helpers_call_count, reset_collect_helpers_call_count,
     };
     use super::*;

@@ -12,12 +12,12 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use super::babel_helper_utils::{
+use super::expr_utils::is_unresolved_ident;
+use super::helper_matcher::{binding_key, BindingKey};
+use super::transpiler_helper_utils::{
     is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn, is_tslib_path,
     tslib_require_member_name, LocalHelperContext, TsHelperKind,
 };
-use super::expr_utils::is_unresolved_ident;
-use super::helper_matcher::{binding_key, BindingKey};
 use super::RewriteLevel;
 use crate::utils::paren::strip_parens;
 

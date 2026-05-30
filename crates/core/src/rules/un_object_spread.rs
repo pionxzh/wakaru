@@ -10,7 +10,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{HelperKind, ModuleFactsMap};
 
-use super::babel_helper_utils::{
+use super::transpiler_helper_utils::{
     remove_helpers_without_remaining_refs, tslib_member_helper_kind, BabelHelperKind, BindingKey,
     LocalHelperContext,
 };

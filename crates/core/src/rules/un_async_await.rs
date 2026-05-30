@@ -9,11 +9,11 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::babel_helper_utils::{BindingKey, LocalHelperContext, TsHelperKind};
 use super::helper_matcher::{
     binding_key, remaining_refs_outside_var_declarators, remove_var_declarators_by_binding,
 };
 use super::rename_utils::BindingId;
+use super::transpiler_helper_utils::{BindingKey, LocalHelperContext, TsHelperKind};
 use crate::utils::paren::strip_parens;
 
 pub struct UnAsyncAwait;

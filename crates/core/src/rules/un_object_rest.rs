@@ -11,7 +11,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::babel_helper_utils::{
+use super::transpiler_helper_utils::{
     remove_helpers_without_remaining_refs, tslib_member_helper_kind, BabelHelperKind, BindingKey,
     LocalHelperContext,
 };
@@ -98,6 +98,7 @@ fn run_un_object_rest(
     unresolved_mark: Mark,
     local_helpers: &LocalHelperContext,
 ) {
+    // Collect named OWP helpers (function declarations detected by transpiler_helper_utils)
     let named_helpers = local_helpers.helpers_of_kind(BabelHelperKind::ObjectWithoutProperties);
     let tslib_namespaces = local_helpers.tslib_namespaces();
 

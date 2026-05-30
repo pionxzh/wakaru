@@ -20,7 +20,7 @@ use super::types::{DecompileOptions, UnpackInput, UnpackOutput, UnpackWarning, U
 use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
-use crate::rules::babel_helper_utils::LocalHelperContext;
+use crate::rules::transpiler_helper_utils::LocalHelperContext;
 use crate::rules::{
     apply_rules, ArrowFunction, ArrowReturn, ImportDedup, RewriteLevel, RulePipelineOptions,
     SimplifySequence, UnAssignmentMerging, UnConditionalsAssignmentOnly,

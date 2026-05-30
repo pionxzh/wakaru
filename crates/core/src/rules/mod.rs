@@ -1,7 +1,6 @@
 mod arg_rest;
 mod arrow_function;
 mod arrow_return;
-pub(crate) mod babel_helper_utils;
 pub(crate) mod binding_facts;
 mod dead_decls;
 mod dead_imports;
@@ -22,6 +21,7 @@ pub(crate) mod rename_utils;
 mod simplify_sequence;
 mod smart_inline;
 mod smart_rename;
+pub(crate) mod transpiler_helper_utils;
 mod un_argument_spread;
 mod un_array_concat_spread;
 mod un_assert_this_initialized;
