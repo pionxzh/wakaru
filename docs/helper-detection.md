@@ -112,14 +112,20 @@ Pipeline consumers do not call `collect_transpiler_helpers()` directly. `apply_r
 scan module-level declarations
   → for each function body, run shape matchers
   → for each Babel runtime import, map the import path to a helper kind
+  → for each tslib import/require alias, map the raw TS helper kind
   → collect (binding_key, TranspilerHelperKind) pairs
 ```
 
 Shape matchers are plain functions: `fn(&Function) -> bool`. They check essential structural elements and ignore variable names. Writing a new matcher for a new helper is just writing a new predicate.
 
-`LocalHelperContext` also records TypeScript and `tslib` helper identities. Consumers use those binding identities directly; for example `UnAsyncAwait` matches detected `__awaiter` / `__generator` aliases instead of first renaming aliases to canonical global names.
+`LocalHelperContext` also records TypeScript and `tslib` helper identities. Consumers use those binding identities directly; for example `UnAsyncAwait` matches detected `__awaiter` / `__generator` aliases instead of first renaming aliases to canonical global names. Shared call-site helpers such as `is_helper_callee()` cover local helper bindings, tslib namespace members, and direct `require("tslib").helper` calls.
 
-Helper utilities include `LocalHelperContext::helpers_of_kind()` (filter by kind), `remove_helper_declarations()` (delete the helper function), and `helpers_with_remaining_refs()` (check if a helper binding is still referenced elsewhere).
+Helper utilities include `LocalHelperContext::helpers_of_kind()` (filter by kind), `remove_helper_declarations()` (delete the helper function), `helpers_with_remaining_refs()` (check if a helper binding is still referenced elsewhere), and TS cleanup helpers such as `remove_unused_inline_ts_helpers()` / `remove_unused_ts_helper_bindings()`.
+
+`collect_module_facts()` records two helper export channels:
+
+- `helper_exports` for semantic transpiler helpers represented by `TranspilerHelperKind` / public `HelperKind`.
+- `ts_helper_exports` for raw TypeScript/tslib helpers such as `__awaiter`, `__generator`, and `__spreadArray`.
 
 ### Restoration
 

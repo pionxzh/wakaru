@@ -202,13 +202,13 @@ These rules normalize minified syntax into canonical forms. Most are independent
 
 ## Stage 2 — Transpiler Helper Unwrapping
 
-These rules detect and remove Babel/TS transpiler helper calls, restoring original syntax.
+These rules detect and remove Babel/TypeScript/tslib/SWC transpiler helper calls, restoring original syntax.
 
 ### 11. UnInteropRequireDefault
 
 | Field | Value |
 |-------|-------|
-| Family | Babel |
+| Family | Babel / tslib |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
 | Suspected prerequisites | UnIndirectCall (`suspected`), UnBracketNotation (`suspected`) |
@@ -222,7 +222,7 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Family | Babel |
+| Family | Babel / tslib |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
 | Suspected prerequisites | UnIndirectCall (`suspected`), UnBracketNotation (`suspected`) |
@@ -236,7 +236,7 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Family | Babel |
+| Family | Babel / TypeScript / SWC |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
 | Suspected prerequisites | None |
@@ -250,7 +250,7 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Family | Babel |
+| Family | Babel / TypeScript / SWC / esbuild |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
 | Suspected prerequisites | None |
@@ -264,7 +264,7 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Family | Babel |
+| Family | Babel / TypeScript / SWC / esbuild |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
 | Suspected prerequisites | UnBracketNotation (`suspected`), SimplifySequence (`suspected`) |
@@ -278,7 +278,7 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Family | Babel |
+| Family | Babel / tslib / SWC |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
 | Suspected prerequisites | None |
@@ -292,7 +292,7 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Family | Babel |
+| Family | Babel / SWC |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
 | Suspected prerequisites | None |
@@ -320,7 +320,7 @@ These rules detect and remove Babel/TS transpiler helper calls, restoring origin
 
 | Field | Value |
 |-------|-------|
-| Family | Babel |
+| Family | Babel / TypeScript |
 | Role | Helper unwrapping |
 | Uses `unresolved_mark` | No |
 | Suspected prerequisites | None |
@@ -653,7 +653,7 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Family | Babel |
+| Family | Babel / TypeScript |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
 | Suspected prerequisites | UnClassCallCheck (`suspected`), UnPossibleConstructorReturn (`suspected`), UnIife (`suspected` — class IIFE wrappers) |
@@ -668,7 +668,7 @@ These rules restore structural patterns and clean up minification artifacts.
 
 | Field | Value |
 |-------|-------|
-| Family | Babel |
+| Family | Babel / TypeScript |
 | Role | Structural restoration |
 | Uses `unresolved_mark` | No |
 | Suspected prerequisites | UnEs6Class (`suspected` — needs class declarations to exist) |
@@ -690,7 +690,7 @@ These rules restore structural patterns and clean up minification artifacts.
 | Shape prerequisites | `__generator` state machine structure, `__awaiter` wrapper, or aliases detected by `LocalHelperContext` |
 | Produces | `async` functions, `function*` generators, `yield`/`await` expressions |
 | Downstream dependents | UnWebpackInterop2 (may expose new getter patterns after async restoration) |
-| Fact behavior | **Reader** — consumes detected TypeScript helper identities from `LocalHelperContext`; removes consumed inline `__awaiter` / `__generator` declarations after transformation. |
+| Fact behavior | **Reader** — consumes detected TypeScript helper identities from `LocalHelperContext`; removes consumed inline `__awaiter` / `__generator` declarations via shared TS helper cleanup after transformation. |
 | Safety | Heuristic (state machine reconstruction) |
 
 ### 44. UnWebpackInterop2
@@ -1019,19 +1019,19 @@ Pure syntactic transforms. No semantic dependencies. Could theoretically run in 
 
 ### Helper Unwrapping
 
-Detect and remove Babel/TS transpiler helper functions.
+Detect and remove Babel/TypeScript/tslib/SWC transpiler helper functions.
 
 | Rule | Current Stage | Family | Notes |
 |------|--------------|--------|-------|
-| UnInteropRequireDefault | 2 | Babel | Needs UnIndirectCall + UnBracketNotation |
-| UnInteropRequireWildcard | 2 | Babel | Needs UnIndirectCall + UnBracketNotation |
-| UnToConsumableArray | 2 | Babel | Independent |
-| UnObjectSpread | 2 | Babel | Independent |
-| UnObjectRest | 2 | Babel | Needs UnBracketNotation |
-| UnSlicedToArray | 2 | Babel | Independent |
-| UnClassCallCheck | 2 | Babel | Independent, enables UnEs6Class |
+| UnInteropRequireDefault | 2 | Babel / tslib | Needs UnIndirectCall + UnBracketNotation |
+| UnInteropRequireWildcard | 2 | Babel / tslib | Needs UnIndirectCall + UnBracketNotation |
+| UnToConsumableArray | 2 | Babel / TypeScript / SWC | Independent |
+| UnObjectSpread | 2 | Babel / TypeScript / SWC / esbuild | Independent |
+| UnObjectRest | 2 | Babel / TypeScript / SWC / esbuild | Needs UnBracketNotation |
+| UnSlicedToArray | 2 | Babel / tslib / SWC | Independent |
+| UnClassCallCheck | 2 | Babel / SWC | Independent, enables UnEs6Class |
 | UnPossibleConstructorReturn | 2 | Babel | Independent, enables UnEs6Class |
-| UnTypeofPolyfill | 2 | Babel | Independent |
+| UnTypeofPolyfill | 2 | Babel / TypeScript | Independent |
 | UnRestArrayCopy | 6 | Babel | Needs ArgRest |
 
 ### Module-System Reconstruction
@@ -1171,7 +1171,7 @@ Rules that perform reliable local detection and could emit observations:
 | UnInteropRequireWildcard | "binding X was interopRequireWildcard-wrapped" | High |
 | UnEsmoduleFlag | "module has __esModule marker" | High |
 | UnWebpackInterop | "binding X had webpack interop getter" | High |
-| LocalHelperContext | "module uses TS helpers: __awaiter, __generator, ..." | High |
+| LocalHelperContext | "module uses TS helpers: __awaiter, __generator, ..."; exported raw TS helper facts are available as `ts_helper_exports` | High |
 | UnEsm | "module classified as CJS→ESM; imports: [...]; exports: [...]" | Medium |
 
 ## Candidate Fact Readers (Step 5 preview)
