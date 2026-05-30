@@ -11,7 +11,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::transpiler_helper_utils::{
-    helpers_with_remaining_refs, BabelHelperKind, BindingKey, LocalHelperContext,
+    helpers_with_remaining_refs, BindingKey, LocalHelperContext, TranspilerHelperKind,
 };
 
 use crate::utils::paren::strip_parens;
@@ -70,7 +70,7 @@ fn run_un_regenerator(
     let helpers = local_helpers.helpers();
     let mut async_to_gen_bindings: Vec<BindingKey> = helpers
         .iter()
-        .filter(|(_, kind)| **kind == BabelHelperKind::AsyncToGenerator)
+        .filter(|(_, kind)| **kind == TranspilerHelperKind::AsyncToGenerator)
         .map(|((sym, ctxt), _)| (sym.clone(), *ctxt))
         .collect();
     let mut async_to_gen_default_members = Vec::new();
@@ -106,7 +106,7 @@ fn run_un_regenerator(
         let to_remove: Vec<_> = helpers
             .iter()
             .filter(|(key, kind)| {
-                **kind == BabelHelperKind::AsyncToGenerator && !remaining.contains(key)
+                **kind == TranspilerHelperKind::AsyncToGenerator && !remaining.contains(key)
             })
             .map(|((sym, ctxt), _)| (sym.clone(), *ctxt))
             .collect();

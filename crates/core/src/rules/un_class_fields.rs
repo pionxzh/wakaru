@@ -12,7 +12,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::helper_matcher::binding_key;
 use super::transpiler_helper_utils::{
-    BabelHelperKind, BindingKey, LocalHelperContext, TsHelperKind,
+    BindingKey, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
 use super::RewriteLevel;
 
@@ -72,7 +72,7 @@ impl UnClassFields {
         module: &mut Module,
         local_helpers: &LocalHelperContext,
     ) {
-        let helpers = local_helpers.helpers_of_kind(BabelHelperKind::DefineProperty);
+        let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::DefineProperty);
         let previous_helpers = std::mem::replace(
             &mut self.define_property_helpers,
             helpers.keys().cloned().collect(),

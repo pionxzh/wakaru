@@ -112,7 +112,7 @@ Pipeline consumers do not call `collect_helpers()` directly. `apply_rules()` laz
 scan module-level declarations
   → for each function body, run shape matchers
   → for each Babel runtime import, map the import path to a helper kind
-  → collect (binding_key, BabelHelperKind) pairs
+  → collect (binding_key, TranspilerHelperKind) pairs
 ```
 
 Shape matchers are plain functions: `fn(&Function) -> bool`. They check essential structural elements and ignore variable names. Writing a new matcher for a new helper is just writing a new predicate.

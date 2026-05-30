@@ -11,8 +11,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::transpiler_helper_utils::{
-    remove_helpers_without_remaining_refs, tslib_member_helper_kind, BabelHelperKind, BindingKey,
-    LocalHelperContext,
+    remove_helpers_without_remaining_refs, tslib_member_helper_kind, BindingKey,
+    LocalHelperContext, TranspilerHelperKind,
 };
 
 use crate::utils::paren::strip_parens;
@@ -66,14 +66,14 @@ fn run_un_object_spread(
     local_helper_context: &LocalHelperContext,
     module_facts: Option<&ModuleFactsMap>,
 ) {
-    let mut local_helpers: HashMap<BindingKey, BabelHelperKind> = local_helper_context
+    let mut local_helpers: HashMap<BindingKey, TranspilerHelperKind> = local_helper_context
         .helpers()
         .iter()
         .filter(|(_, kind)| {
-            **kind == BabelHelperKind::Extends
-                || **kind == BabelHelperKind::ObjectSpread
-                || **kind == BabelHelperKind::DefineProperty
-                || **kind == BabelHelperKind::HelperDependency
+            **kind == TranspilerHelperKind::Extends
+                || **kind == TranspilerHelperKind::ObjectSpread
+                || **kind == TranspilerHelperKind::DefineProperty
+                || **kind == TranspilerHelperKind::HelperDependency
         })
         .map(|(key, kind)| (key.clone(), *kind))
         .collect();
@@ -97,12 +97,12 @@ fn run_un_object_spread(
 
     // Only remove root helpers whose calls were fully transformed. Dependencies
     // referenced by retained helpers must stay with those helpers.
-    let local_root_helpers: HashMap<BindingKey, BabelHelperKind> = local_helpers
+    let local_root_helpers: HashMap<BindingKey, TranspilerHelperKind> = local_helpers
         .iter()
         .filter(|(_, kind)| {
             matches!(
                 kind,
-                BabelHelperKind::Extends | BabelHelperKind::ObjectSpread
+                TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread
             )
         })
         .map(|(key, kind)| (key.clone(), *kind))
@@ -112,10 +112,10 @@ fn run_un_object_spread(
     let standalone_dependencies = local_helpers.into_iter().filter(|(_, kind)| {
         matches!(
             kind,
-            BabelHelperKind::DefineProperty | BabelHelperKind::HelperDependency
+            TranspilerHelperKind::DefineProperty | TranspilerHelperKind::HelperDependency
         )
     });
-    let removable_helpers: HashMap<BindingKey, BabelHelperKind> = removable_roots
+    let removable_helpers: HashMap<BindingKey, TranspilerHelperKind> = removable_roots
         .into_iter()
         .chain(standalone_dependencies)
         .collect();
@@ -130,7 +130,7 @@ impl Default for UnObjectSpread<'_> {
 
 fn collect_uninitialized_object_spread_stubs(
     module: &Module,
-) -> HashMap<BindingKey, BabelHelperKind> {
+) -> HashMap<BindingKey, TranspilerHelperKind> {
     let mut helpers = HashMap::new();
 
     for item in &module.body {
@@ -147,7 +147,7 @@ fn collect_uninitialized_object_spread_stubs(
             if matches!(binding.id.sym.as_ref(), "__spreadValues" | "__spreadProps") {
                 helpers.insert(
                     (binding.id.sym.clone(), binding.id.ctxt),
-                    BabelHelperKind::HelperDependency,
+                    TranspilerHelperKind::HelperDependency,
                 );
             }
         }
@@ -159,7 +159,7 @@ fn collect_uninitialized_object_spread_stubs(
 fn collect_cross_module_object_spread_helpers(
     module: &Module,
     module_facts: &ModuleFactsMap,
-) -> HashMap<BindingKey, BabelHelperKind> {
+) -> HashMap<BindingKey, TranspilerHelperKind> {
     let mut helpers = HashMap::new();
 
     for item in &module.body {
@@ -200,26 +200,26 @@ fn module_helper_export_kind(
     module_facts: &ModuleFactsMap,
     source: &Atom,
     exported: &str,
-) -> Option<BabelHelperKind> {
+) -> Option<TranspilerHelperKind> {
     module_facts.get(source.as_ref()).and_then(|facts| {
         facts
             .helper_exports
             .iter()
             .find(|helper| helper.exported.as_ref() == exported)
-            .and_then(|helper| helper_kind_to_babel(helper.kind))
+            .and_then(|helper| helper_kind_to_transpiler(helper.kind))
     })
 }
 
-fn helper_kind_to_babel(kind: HelperKind) -> Option<BabelHelperKind> {
+fn helper_kind_to_transpiler(kind: HelperKind) -> Option<TranspilerHelperKind> {
     match kind {
-        HelperKind::Extends => Some(BabelHelperKind::Extends),
-        HelperKind::ObjectSpread => Some(BabelHelperKind::ObjectSpread),
+        HelperKind::Extends => Some(TranspilerHelperKind::Extends),
+        HelperKind::ObjectSpread => Some(TranspilerHelperKind::ObjectSpread),
         _ => None,
     }
 }
 
 struct SpreadReplacer<'a> {
-    helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &'a HashSet<BindingKey>,
 }
 
@@ -285,7 +285,7 @@ impl VisitMut for SpreadReplacer<'_> {
 
 fn is_object_spread_callee(
     callee: &Expr,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> bool {
     match strip_parens(callee) {
@@ -293,12 +293,12 @@ fn is_object_spread_callee(
             let key = (id.sym.clone(), id.ctxt);
             matches!(
                 helpers.get(&key),
-                Some(BabelHelperKind::Extends | BabelHelperKind::ObjectSpread)
+                Some(TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread)
             )
         }
         Expr::Member(_) => matches!(
             tslib_member_helper_kind(callee, tslib_namespaces),
-            Some(BabelHelperKind::Extends | BabelHelperKind::ObjectSpread)
+            Some(TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread)
         ),
         expr => is_inline_object_spread_helper(expr),
     }

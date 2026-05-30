@@ -4,7 +4,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::transpiler_helper_utils::{
-    remove_helpers_without_remaining_refs, BabelHelperKind, BindingKey, LocalHelperContext,
+    remove_helpers_without_remaining_refs, BindingKey, LocalHelperContext, TranspilerHelperKind,
 };
 
 /// Removes `_classCallCheck(this, Foo)` calls and equivalent inline IIFEs.
@@ -34,7 +34,7 @@ impl VisitMut for UnClassCallCheck {
 
 fn run_un_class_call_check(module: &mut Module, local_helpers: &LocalHelperContext) {
     // Phase 1: detect and remove module-level classCallCheck helpers
-    let helpers = local_helpers.helpers_of_kind(BabelHelperKind::ClassCallCheck);
+    let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::ClassCallCheck);
     if !helpers.is_empty() {
         let mut remover = CallRemover { helpers: &helpers };
         module.visit_mut_with(&mut remover);
@@ -51,8 +51,7 @@ fn run_un_class_call_check(module: &mut Module, local_helpers: &LocalHelperConte
 // ---------------------------------------------------------------------------
 
 struct CallRemover<'a> {
-    helpers:
-        &'a std::collections::HashMap<BindingKey, super::transpiler_helper_utils::BabelHelperKind>,
+    helpers: &'a std::collections::HashMap<BindingKey, TranspilerHelperKind>,
 }
 
 impl VisitMut for CallRemover<'_> {

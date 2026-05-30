@@ -40,7 +40,7 @@ pub(crate) fn collect_helpers_call_count() -> usize {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum BabelHelperKind {
+pub(crate) enum TranspilerHelperKind {
     InteropRequireDefault,
     InteropRequireWildcard,
     ToConsumableArray,
@@ -91,10 +91,10 @@ struct TsHelperInfo {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct LocalHelperContext {
-    helpers: HashMap<BindingKey, BabelHelperKind>,
+    helpers: HashMap<BindingKey, TranspilerHelperKind>,
     ts_helpers: HashMap<BindingKey, TsHelperInfo>,
     tslib_namespaces: HashSet<BindingKey>,
-    tslib_require_member_calls: HashSet<BabelHelperKind>,
+    tslib_require_member_calls: HashSet<TranspilerHelperKind>,
     top_level_callable_ref_graph: OnceCell<HashMap<BindingKey, HashSet<BindingKey>>>,
 }
 
@@ -110,14 +110,14 @@ impl LocalHelperContext {
         }
     }
 
-    pub(crate) fn helpers(&self) -> &HashMap<BindingKey, BabelHelperKind> {
+    pub(crate) fn helpers(&self) -> &HashMap<BindingKey, TranspilerHelperKind> {
         &self.helpers
     }
 
     pub(crate) fn helpers_of_kind(
         &self,
-        kind: BabelHelperKind,
-    ) -> HashMap<BindingKey, BabelHelperKind> {
+        kind: TranspilerHelperKind,
+    ) -> HashMap<BindingKey, TranspilerHelperKind> {
         self.helpers
             .iter()
             .filter(|(_, helper_kind)| **helper_kind == kind)
@@ -145,15 +145,15 @@ impl LocalHelperContext {
         &self.tslib_namespaces
     }
 
-    pub(crate) fn has_tslib_require_member_call(&self, kind: BabelHelperKind) -> bool {
+    pub(crate) fn has_tslib_require_member_call(&self, kind: TranspilerHelperKind) -> bool {
         self.tslib_require_member_calls.contains(&kind)
     }
 
     pub(crate) fn helper_dependencies(
         &self,
         module: &Module,
-        helpers: &HashMap<BindingKey, BabelHelperKind>,
-    ) -> HashMap<BindingKey, BabelHelperKind> {
+        helpers: &HashMap<BindingKey, TranspilerHelperKind>,
+    ) -> HashMap<BindingKey, TranspilerHelperKind> {
         let ref_graph = self
             .top_level_callable_ref_graph
             .get_or_init(|| collect_top_level_callable_ref_graph(module));
@@ -163,10 +163,10 @@ impl LocalHelperContext {
     pub(crate) fn helper_cleanup_candidates_with_dependencies(
         &self,
         module: &Module,
-        root_helpers: HashMap<BindingKey, BabelHelperKind>,
-    ) -> HashMap<BindingKey, BabelHelperKind> {
+        root_helpers: HashMap<BindingKey, TranspilerHelperKind>,
+    ) -> HashMap<BindingKey, TranspilerHelperKind> {
         let remaining_roots = helpers_with_remaining_refs(module, &root_helpers);
-        let removable_roots: HashMap<BindingKey, BabelHelperKind> = root_helpers
+        let removable_roots: HashMap<BindingKey, TranspilerHelperKind> = root_helpers
             .into_iter()
             .filter(|(key, _)| !remaining_roots.contains(key))
             .collect();
@@ -184,7 +184,7 @@ impl LocalHelperContext {
     pub(crate) fn remove_helpers_with_dependencies(
         &self,
         module: &mut Module,
-        root_helpers: HashMap<BindingKey, BabelHelperKind>,
+        root_helpers: HashMap<BindingKey, TranspilerHelperKind>,
     ) {
         let removable_helpers =
             self.helper_cleanup_candidates_with_dependencies(module, root_helpers);
@@ -254,7 +254,7 @@ const DEFINE_PROPERTY_PATHS: &[&str] = &[
 
 /// Scan module-level declarations for helper functions.
 /// Detects by function body shape and by import path.
-pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, BabelHelperKind> {
+pub(crate) fn collect_helpers(module: &Module) -> HashMap<BindingKey, TranspilerHelperKind> {
     #[cfg(test)]
     COLLECT_HELPERS_CALLS.with(|calls| calls.set(calls.get() + 1));
 
@@ -489,7 +489,7 @@ fn module_has_babel_sub_helper_signals(module: &Module) -> bool {
 /// Catches both remaining calls and aliasing (`var f = helper`).
 pub(crate) fn helpers_with_remaining_refs(
     module: &Module,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
 ) -> HashSet<BindingKey> {
     let helper_keys: HashSet<_> = helpers.keys().cloned().collect();
     remaining_refs_outside_declarations(module, &helper_keys, &helper_keys)
@@ -497,10 +497,10 @@ pub(crate) fn helpers_with_remaining_refs(
 
 pub(crate) fn remove_helpers_without_remaining_refs(
     module: &mut Module,
-    helpers: HashMap<BindingKey, BabelHelperKind>,
+    helpers: HashMap<BindingKey, TranspilerHelperKind>,
 ) {
     let remaining = helpers_with_remaining_refs(module, &helpers);
-    let safe_to_remove: HashMap<BindingKey, BabelHelperKind> = helpers
+    let safe_to_remove: HashMap<BindingKey, TranspilerHelperKind> = helpers
         .into_iter()
         .filter(|(key, _)| !remaining.contains(key))
         .collect();
@@ -511,8 +511,8 @@ pub(crate) fn remove_helpers_without_remaining_refs(
 
 fn helper_dependencies_from_ref_graph(
     ref_graph: &HashMap<BindingKey, HashSet<BindingKey>>,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
-) -> HashMap<BindingKey, BabelHelperKind> {
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
+) -> HashMap<BindingKey, TranspilerHelperKind> {
     let mut dependencies = HashSet::new();
     let mut stack: Vec<_> = helpers.keys().cloned().collect();
 
@@ -530,7 +530,7 @@ fn helper_dependencies_from_ref_graph(
 
     dependencies
         .into_iter()
-        .map(|key| (key, BabelHelperKind::HelperDependency))
+        .map(|key| (key, TranspilerHelperKind::HelperDependency))
         .collect()
 }
 
@@ -618,7 +618,7 @@ impl Visit for IdentRefCollector<'_> {
 /// Remove helper declarations from the module body.
 pub(crate) fn remove_helper_declarations(
     body: &mut Vec<ModuleItem>,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
 ) {
     let helper_keys: HashSet<_> = helpers.keys().cloned().collect();
     remove_fn_decls_from_body_by_binding(body, &helper_keys);
@@ -629,7 +629,7 @@ pub(crate) fn remove_helper_declarations(
 fn detect_helper_from_var_decl(
     decl: &VarDeclarator,
     has_sub_helpers: bool,
-) -> Option<(BindingKey, BabelHelperKind)> {
+) -> Option<(BindingKey, TranspilerHelperKind)> {
     let init = decl.init.as_ref()?;
     let key = var_declarator_binding_key(decl)?;
 
@@ -669,7 +669,7 @@ fn detect_helper_from_var_decl(
     if let Expr::Bin(bin) = init.as_ref() {
         if bin.op == BinaryOp::LogicalOr {
             if is_object_assign_ref(&bin.left) && is_extends_polyfill_fn(&bin.right) {
-                return Some((key, BabelHelperKind::Extends));
+                return Some((key, TranspilerHelperKind::Extends));
             }
             if let Some(kind) = detect_helper_from_expr(&bin.right, has_sub_helpers) {
                 return Some((key, kind));
@@ -678,7 +678,7 @@ fn detect_helper_from_var_decl(
     }
 
     if is_typeof_polyfill_init(init) {
-        return Some((key, BabelHelperKind::Typeof));
+        return Some((key, TranspilerHelperKind::Typeof));
     }
 
     if let Some(kind) = generated_helper_name_kind(key.0.as_ref(), init) {
@@ -688,13 +688,13 @@ fn detect_helper_from_var_decl(
     None
 }
 
-pub(crate) fn tslib_helper_name_kind(name: &str) -> Option<BabelHelperKind> {
+pub(crate) fn tslib_helper_name_kind(name: &str) -> Option<TranspilerHelperKind> {
     match name {
-        "__assign" => Some(BabelHelperKind::Extends),
-        "__rest" => Some(BabelHelperKind::ObjectWithoutProperties),
-        "__read" => Some(BabelHelperKind::SlicedToArray),
-        "__importDefault" => Some(BabelHelperKind::InteropRequireDefault),
-        "__importStar" => Some(BabelHelperKind::InteropRequireWildcard),
+        "__assign" => Some(TranspilerHelperKind::Extends),
+        "__rest" => Some(TranspilerHelperKind::ObjectWithoutProperties),
+        "__read" => Some(TranspilerHelperKind::SlicedToArray),
+        "__importDefault" => Some(TranspilerHelperKind::InteropRequireDefault),
+        "__importStar" => Some(TranspilerHelperKind::InteropRequireWildcard),
         _ => None,
     }
 }
@@ -782,7 +782,7 @@ pub(crate) fn is_tslib_spread_array_member(expr: &Expr, namespaces: &HashSet<Bin
 pub(crate) fn tslib_member_helper_kind(
     expr: &Expr,
     namespaces: &HashSet<BindingKey>,
-) -> Option<BabelHelperKind> {
+) -> Option<TranspilerHelperKind> {
     tslib_helper_name_kind(tslib_namespace_member_name(expr, namespaces)?)
 }
 
@@ -796,9 +796,9 @@ pub(crate) fn tslib_require_member_name(expr: &Expr) -> Option<&str> {
     member_prop_name(&member.prop)
 }
 
-fn collect_tslib_require_member_calls(module: &Module) -> HashSet<BabelHelperKind> {
+fn collect_tslib_require_member_calls(module: &Module) -> HashSet<TranspilerHelperKind> {
     struct Finder {
-        kinds: HashSet<BabelHelperKind>,
+        kinds: HashSet<TranspilerHelperKind>,
     }
 
     impl Visit for Finder {
@@ -821,23 +821,24 @@ fn collect_tslib_require_member_calls(module: &Module) -> HashSet<BabelHelperKin
     finder.kinds
 }
 
-fn detect_helper_from_tslib_require_member(member: &MemberExpr) -> Option<BabelHelperKind> {
+fn detect_helper_from_tslib_require_member(member: &MemberExpr) -> Option<TranspilerHelperKind> {
     if !is_tslib_require_call(&member.obj) {
         return None;
     }
     tslib_helper_name_kind(member_prop_name(&member.prop)?)
 }
 
-fn generated_helper_name_kind(name: &str, init: &Expr) -> Option<BabelHelperKind> {
+fn generated_helper_name_kind(name: &str, init: &Expr) -> Option<TranspilerHelperKind> {
     match name {
         // SWC object spread helpers and esbuild object spread helpers.
         "_object_spread" | "_object_spread_props" | "__spreadValues" | "__spreadProps" => {
-            matches!(init, Expr::Fn(_) | Expr::Arrow(_)).then_some(BabelHelperKind::ObjectSpread)
+            matches!(init, Expr::Fn(_) | Expr::Arrow(_))
+                .then_some(TranspilerHelperKind::ObjectSpread)
         }
         // SWC object rest helpers and esbuild object rest helper.
         "_object_without_properties" | "_object_without_properties_loose" | "__objRest" => {
             matches!(init, Expr::Fn(_) | Expr::Arrow(_))
-                .then_some(BabelHelperKind::ObjectWithoutProperties)
+                .then_some(TranspilerHelperKind::ObjectWithoutProperties)
         }
         // Generated subhelpers used only by the spread/rest helpers above.
         "_define_property"
@@ -848,23 +849,23 @@ fn generated_helper_name_kind(name: &str, init: &Expr) -> Option<BabelHelperKind
         | "__getOwnPropDescs"
         | "__getOwnPropSymbols"
         | "__hasOwnProp"
-        | "__propIsEnum" => Some(BabelHelperKind::HelperDependency),
+        | "__propIsEnum" => Some(TranspilerHelperKind::HelperDependency),
         _ => None,
     }
 }
 
-fn generated_fn_helper_name_kind(name: &str) -> Option<BabelHelperKind> {
+fn generated_fn_helper_name_kind(name: &str) -> Option<TranspilerHelperKind> {
     match name {
-        "_object_spread" | "_object_spread_props" => Some(BabelHelperKind::ObjectSpread),
+        "_object_spread" | "_object_spread_props" => Some(TranspilerHelperKind::ObjectSpread),
         "_object_without_properties" | "_object_without_properties_loose" => {
-            Some(BabelHelperKind::ObjectWithoutProperties)
+            Some(TranspilerHelperKind::ObjectWithoutProperties)
         }
-        "_define_property" | "ownKeys" => Some(BabelHelperKind::HelperDependency),
+        "_define_property" | "ownKeys" => Some(TranspilerHelperKind::HelperDependency),
         _ => None,
     }
 }
 
-fn detect_helper_from_expr(expr: &Expr, has_sub_helpers: bool) -> Option<BabelHelperKind> {
+fn detect_helper_from_expr(expr: &Expr, has_sub_helpers: bool) -> Option<TranspilerHelperKind> {
     match expr {
         Expr::Fn(fn_expr) => detect_helper_from_fn(&fn_expr.function, has_sub_helpers),
         Expr::Arrow(arrow) => detect_helper_from_arrow(arrow, has_sub_helpers),
@@ -873,7 +874,7 @@ fn detect_helper_from_expr(expr: &Expr, has_sub_helpers: bool) -> Option<BabelHe
     }
 }
 
-fn detect_helper_from_require(expr: &Expr) -> Option<BabelHelperKind> {
+fn detect_helper_from_require(expr: &Expr) -> Option<TranspilerHelperKind> {
     let Expr::Call(call) = expr else { return None };
     let Callee::Expr(callee) = &call.callee else {
         return None;
@@ -890,36 +891,36 @@ fn detect_helper_from_require(expr: &Expr) -> Option<BabelHelperKind> {
     detect_helper_from_path(s.value.as_str().unwrap_or(""))
 }
 
-pub(crate) fn detect_helper_from_path(path: &str) -> Option<BabelHelperKind> {
+pub(crate) fn detect_helper_from_path(path: &str) -> Option<TranspilerHelperKind> {
     if INTEROP_DEFAULT_PATHS.contains(&path) {
-        return Some(BabelHelperKind::InteropRequireDefault);
+        return Some(TranspilerHelperKind::InteropRequireDefault);
     }
     if INTEROP_WILDCARD_PATHS.contains(&path) {
-        return Some(BabelHelperKind::InteropRequireWildcard);
+        return Some(TranspilerHelperKind::InteropRequireWildcard);
     }
     if TO_CONSUMABLE_ARRAY_PATHS.contains(&path) {
-        return Some(BabelHelperKind::ToConsumableArray);
+        return Some(TranspilerHelperKind::ToConsumableArray);
     }
     if EXTENDS_PATHS.contains(&path) {
-        return Some(BabelHelperKind::Extends);
+        return Some(TranspilerHelperKind::Extends);
     }
     if OBJECT_SPREAD_PATHS.contains(&path) {
-        return Some(BabelHelperKind::ObjectSpread);
+        return Some(TranspilerHelperKind::ObjectSpread);
     }
     if SLICED_TO_ARRAY_PATHS.contains(&path) {
-        return Some(BabelHelperKind::SlicedToArray);
+        return Some(TranspilerHelperKind::SlicedToArray);
     }
     if OBJECT_WITHOUT_PROPERTIES_PATHS.contains(&path) {
-        return Some(BabelHelperKind::ObjectWithoutProperties);
+        return Some(TranspilerHelperKind::ObjectWithoutProperties);
     }
     if INHERITS_PATHS.contains(&path) {
-        return Some(BabelHelperKind::Inherits);
+        return Some(TranspilerHelperKind::Inherits);
     }
     if ASYNC_TO_GENERATOR_PATHS.contains(&path) {
-        return Some(BabelHelperKind::AsyncToGenerator);
+        return Some(TranspilerHelperKind::AsyncToGenerator);
     }
     if DEFINE_PROPERTY_PATHS.contains(&path) {
-        return Some(BabelHelperKind::DefineProperty);
+        return Some(TranspilerHelperKind::DefineProperty);
     }
     None
 }
@@ -956,48 +957,48 @@ fn is_swc_helper_path(path: &str) -> bool {
     path.starts_with("@swc/helpers/_/_")
 }
 
-fn detect_helper_from_fn(func: &Function, has_sub_helpers: bool) -> Option<BabelHelperKind> {
+fn detect_helper_from_fn(func: &Function, has_sub_helpers: bool) -> Option<TranspilerHelperKind> {
     if is_interop_require_default_fn(func) {
-        return Some(BabelHelperKind::InteropRequireDefault);
+        return Some(TranspilerHelperKind::InteropRequireDefault);
     }
     if is_interop_require_wildcard_fn(func) {
-        return Some(BabelHelperKind::InteropRequireWildcard);
+        return Some(TranspilerHelperKind::InteropRequireWildcard);
     }
     if is_to_consumable_array_fn(func, has_sub_helpers) {
-        return Some(BabelHelperKind::ToConsumableArray);
+        return Some(TranspilerHelperKind::ToConsumableArray);
     }
     if is_extends_fn(func) {
-        return Some(BabelHelperKind::Extends);
+        return Some(TranspilerHelperKind::Extends);
     }
     if is_object_spread_fn(func) {
-        return Some(BabelHelperKind::ObjectSpread);
+        return Some(TranspilerHelperKind::ObjectSpread);
     }
     if is_sliced_to_array_fn(func, has_sub_helpers) {
-        return Some(BabelHelperKind::SlicedToArray);
+        return Some(TranspilerHelperKind::SlicedToArray);
     }
     if is_class_call_check_fn(func) {
-        return Some(BabelHelperKind::ClassCallCheck);
+        return Some(TranspilerHelperKind::ClassCallCheck);
     }
     if is_possible_constructor_return_fn(func) {
-        return Some(BabelHelperKind::PossibleConstructorReturn);
+        return Some(TranspilerHelperKind::PossibleConstructorReturn);
     }
     if is_assert_this_initialized_fn(func) {
-        return Some(BabelHelperKind::AssertThisInitialized);
+        return Some(TranspilerHelperKind::AssertThisInitialized);
     }
     if is_object_without_properties_fn(func) {
-        return Some(BabelHelperKind::ObjectWithoutProperties);
+        return Some(TranspilerHelperKind::ObjectWithoutProperties);
     }
     if is_inherits_fn(func) {
-        return Some(BabelHelperKind::Inherits);
+        return Some(TranspilerHelperKind::Inherits);
     }
     if is_call_super_fn(func) {
-        return Some(BabelHelperKind::CallSuper);
+        return Some(TranspilerHelperKind::CallSuper);
     }
     if is_async_to_generator_fn(func) {
-        return Some(BabelHelperKind::AsyncToGenerator);
+        return Some(TranspilerHelperKind::AsyncToGenerator);
     }
     if is_define_property_fn(func) {
-        return Some(BabelHelperKind::DefineProperty);
+        return Some(TranspilerHelperKind::DefineProperty);
     }
     None
 }
@@ -1205,7 +1206,7 @@ fn prop_name_ident(key: &PropName) -> Option<Atom> {
 fn detect_helper_from_arrow(
     arrow: &swc_core::ecma::ast::ArrowExpr,
     has_sub_helpers: bool,
-) -> Option<BabelHelperKind> {
+) -> Option<TranspilerHelperKind> {
     // interopRequireDefault: single param, body returns conditional on __esModule
     if arrow.params.len() == 1 {
         let Pat::Ident(param) = &arrow.params[0] else {
@@ -1218,15 +1219,15 @@ fn detect_helper_from_arrow(
         match &*arrow.body {
             BlockStmtOrExpr::BlockStmt(block) => {
                 if matches_ternary_return_block(&block.stmts, &ctx) {
-                    return Some(BabelHelperKind::InteropRequireDefault);
+                    return Some(TranspilerHelperKind::InteropRequireDefault);
                 }
                 if matches_if_return_form(&block.stmts, &ctx) {
-                    return Some(BabelHelperKind::InteropRequireDefault);
+                    return Some(TranspilerHelperKind::InteropRequireDefault);
                 }
             }
             BlockStmtOrExpr::Expr(expr) => {
                 if matches_ternary_expr(expr, &ctx) {
-                    return Some(BabelHelperKind::InteropRequireDefault);
+                    return Some(TranspilerHelperKind::InteropRequireDefault);
                 }
             }
         }
@@ -1255,16 +1256,16 @@ fn detect_helper_from_arrow(
             return_type: None,
         };
         if is_to_consumable_array_fn(&func, has_sub_helpers) {
-            return Some(BabelHelperKind::ToConsumableArray);
+            return Some(TranspilerHelperKind::ToConsumableArray);
         }
         if is_object_spread_fn(&func) {
-            return Some(BabelHelperKind::ObjectSpread);
+            return Some(TranspilerHelperKind::ObjectSpread);
         }
         if is_sliced_to_array_fn(&func, has_sub_helpers) {
-            return Some(BabelHelperKind::SlicedToArray);
+            return Some(TranspilerHelperKind::SlicedToArray);
         }
         if is_object_without_properties_fn(&func) {
-            return Some(BabelHelperKind::ObjectWithoutProperties);
+            return Some(TranspilerHelperKind::ObjectWithoutProperties);
         }
         // Note: extends has 0 params and uses `arguments`, which arrows can't do.
     }
@@ -3684,18 +3685,18 @@ mod tests {
             let context = LocalHelperContext::collect(&module);
             let roots = HashMap::from([(
                 (Atom::from("root"), SyntaxContext::empty()),
-                BabelHelperKind::SlicedToArray,
+                TranspilerHelperKind::SlicedToArray,
             )]);
 
             let dependencies = context.helper_dependencies(&module, &roots);
 
             assert_eq!(
                 dependencies.get(&(Atom::from("dep"), SyntaxContext::empty())),
-                Some(&BabelHelperKind::HelperDependency)
+                Some(&TranspilerHelperKind::HelperDependency)
             );
             assert_eq!(
                 dependencies.get(&(Atom::from("leaf"), SyntaxContext::empty())),
-                Some(&BabelHelperKind::HelperDependency)
+                Some(&TranspilerHelperKind::HelperDependency)
             );
             assert!(!dependencies.contains_key(&(Atom::from("root"), SyntaxContext::empty())));
             assert!(!dependencies.contains_key(&(Atom::from("unrelated"), SyntaxContext::empty())));
@@ -3715,7 +3716,7 @@ mod tests {
             );
             let helpers = HashMap::from([(
                 (Atom::from("helper"), SyntaxContext::empty()),
-                BabelHelperKind::ClassCallCheck,
+                TranspilerHelperKind::ClassCallCheck,
             )]);
 
             remove_helpers_without_remaining_refs(&mut unused, helpers);
@@ -3732,7 +3733,7 @@ mod tests {
             );
             let helpers = HashMap::from([(
                 (Atom::from("helper"), SyntaxContext::empty()),
-                BabelHelperKind::ClassCallCheck,
+                TranspilerHelperKind::ClassCallCheck,
             )]);
 
             remove_helpers_without_remaining_refs(&mut referenced, helpers);
@@ -3760,7 +3761,7 @@ mod tests {
             let context = LocalHelperContext::collect(&module);
             let roots = HashMap::from([(
                 (Atom::from("root"), SyntaxContext::empty()),
-                BabelHelperKind::SlicedToArray,
+                TranspilerHelperKind::SlicedToArray,
             )]);
 
             context.remove_helpers_with_dependencies(&mut module, roots);
@@ -3784,10 +3785,14 @@ mod tests {
             );
             let context = LocalHelperContext::collect(&module);
 
-            assert!(context.has_tslib_require_member_call(BabelHelperKind::InteropRequireDefault));
-            assert!(context.has_tslib_require_member_call(BabelHelperKind::InteropRequireWildcard));
-            assert!(context.has_tslib_require_member_call(BabelHelperKind::SlicedToArray));
-            assert!(!context.has_tslib_require_member_call(BabelHelperKind::ObjectSpread));
+            assert!(
+                context.has_tslib_require_member_call(TranspilerHelperKind::InteropRequireDefault)
+            );
+            assert!(
+                context.has_tslib_require_member_call(TranspilerHelperKind::InteropRequireWildcard)
+            );
+            assert!(context.has_tslib_require_member_call(TranspilerHelperKind::SlicedToArray));
+            assert!(!context.has_tslib_require_member_call(TranspilerHelperKind::ObjectSpread));
         });
     }
 
@@ -3802,7 +3807,7 @@ mod tests {
                 var notTypeof = typeof window != "undefined" ? function(e) { return typeof e; } : function(e) { return e; };
                 "#,
             );
-            let helpers = LocalHelperContext::collect(&module).helpers_of_kind(BabelHelperKind::Typeof);
+            let helpers = LocalHelperContext::collect(&module).helpers_of_kind(TranspilerHelperKind::Typeof);
 
             assert_eq!(helpers.len(), 1);
             assert!(helpers.contains_key(&(Atom::from("_typeof"), SyntaxContext::empty())));

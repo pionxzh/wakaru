@@ -8,7 +8,7 @@ use super::helper_matcher::{
     binding_key, remaining_refs_outside_var_declarators, remove_var_declarators_by_binding,
     BindingKey,
 };
-use super::transpiler_helper_utils::{BabelHelperKind, LocalHelperContext};
+use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 
 /// Detects and simplifies Babel's `_typeof` polyfill.
 ///
@@ -38,7 +38,7 @@ impl VisitMut for UnTypeofPolyfill {
 
 fn run_un_typeof_polyfill(module: &mut Module, local_helpers: &LocalHelperContext) {
     let helpers = local_helpers
-        .helpers_of_kind(BabelHelperKind::Typeof)
+        .helpers_of_kind(TranspilerHelperKind::Typeof)
         .keys()
         .cloned()
         .collect::<HashSet<_>>();

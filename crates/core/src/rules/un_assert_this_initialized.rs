@@ -4,7 +4,7 @@ use swc_core::ecma::ast::{Callee, Expr, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::transpiler_helper_utils::{
-    remove_helpers_without_remaining_refs, BabelHelperKind, BindingKey, LocalHelperContext,
+    remove_helpers_without_remaining_refs, BindingKey, LocalHelperContext, TranspilerHelperKind,
 };
 
 /// Detects and simplifies `_assertThisInitialized(self)` helper calls.
@@ -40,7 +40,7 @@ impl VisitMut for UnAssertThisInitialized {
 }
 
 fn run_un_assert_this_initialized(module: &mut Module, local_helpers: &LocalHelperContext) {
-    let helpers = local_helpers.helpers_of_kind(BabelHelperKind::AssertThisInitialized);
+    let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::AssertThisInitialized);
     if helpers.is_empty() {
         return;
     }
@@ -52,7 +52,7 @@ fn run_un_assert_this_initialized(module: &mut Module, local_helpers: &LocalHelp
 }
 
 struct AtiReplacer<'a> {
-    helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
 }
 
 impl VisitMut for AtiReplacer<'_> {

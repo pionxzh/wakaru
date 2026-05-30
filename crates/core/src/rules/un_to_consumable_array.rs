@@ -9,8 +9,8 @@ use super::helper_matcher::{
     remove_var_declarators_by_binding,
 };
 use super::transpiler_helper_utils::{
-    is_tslib_spread_array_member, remove_helpers_without_remaining_refs, BabelHelperKind,
-    BindingKey, LocalHelperContext, TsHelperKind,
+    is_tslib_spread_array_member, remove_helpers_without_remaining_refs, BindingKey,
+    LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
 
 /// Detects and replaces `_toConsumableArray(arr)` with `[...arr]`.
@@ -30,7 +30,7 @@ impl VisitMut for UnToConsumableArray {
 }
 
 fn run_un_to_consumable_array(module: &mut Module, local_helpers: &LocalHelperContext) {
-    let helpers = local_helpers.helpers_of_kind(BabelHelperKind::ToConsumableArray);
+    let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::ToConsumableArray);
     let ts_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::SpreadArray);
     let tslib_namespaces = local_helpers.tslib_namespaces();
     if helpers.is_empty() {
@@ -61,7 +61,7 @@ fn run_un_to_consumable_array(module: &mut Module, local_helpers: &LocalHelperCo
 }
 
 struct ToConsumableArrayReplacer<'a> {
-    helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     ts_spread_array_helpers: &'a HashSet<BindingKey>,
     tslib_namespaces: &'a HashSet<BindingKey>,
 }

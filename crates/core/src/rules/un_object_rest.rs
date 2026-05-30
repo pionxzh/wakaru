@@ -12,8 +12,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::transpiler_helper_utils::{
-    remove_helpers_without_remaining_refs, tslib_member_helper_kind, BabelHelperKind, BindingKey,
-    LocalHelperContext,
+    remove_helpers_without_remaining_refs, tslib_member_helper_kind, BindingKey,
+    LocalHelperContext, TranspilerHelperKind,
 };
 
 use crate::utils::paren::strip_parens;
@@ -99,7 +99,8 @@ fn run_un_object_rest(
     local_helpers: &LocalHelperContext,
 ) {
     // Collect named OWP helpers (function declarations detected by transpiler_helper_utils)
-    let named_helpers = local_helpers.helpers_of_kind(BabelHelperKind::ObjectWithoutProperties);
+    let named_helpers =
+        local_helpers.helpers_of_kind(TranspilerHelperKind::ObjectWithoutProperties);
     let tslib_namespaces = local_helpers.tslib_namespaces();
 
     if named_helpers.is_empty()
@@ -109,8 +110,9 @@ fn run_un_object_rest(
         return;
     }
 
-    let mut helper_dependencies = local_helpers.helpers_of_kind(BabelHelperKind::HelperDependency);
-    helper_dependencies.extend(local_helpers.helpers_of_kind(BabelHelperKind::DefineProperty));
+    let mut helper_dependencies =
+        local_helpers.helpers_of_kind(TranspilerHelperKind::HelperDependency);
+    helper_dependencies.extend(local_helpers.helpers_of_kind(TranspilerHelperKind::DefineProperty));
 
     // Process inner scopes first (function bodies, etc.) with helpers available
     let mut processor = ObjectRestProcessor {
@@ -190,7 +192,7 @@ fn run_un_object_rest(
 }
 
 struct ObjectRestProcessor<'a> {
-    named_helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    named_helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &'a HashSet<BindingKey>,
     unresolved_mark: Mark,
 }
@@ -251,7 +253,7 @@ use swc_core::ecma::ast::ModuleItem;
 
 fn reattach_elided_object_rest_in_module_items(
     items: &mut [ModuleItem],
-    named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+    named_helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) {
@@ -310,7 +312,7 @@ fn reattach_elided_object_rest_in_module_items(
 
 fn reattach_elided_object_rest_in_stmts(
     stmts: &mut [Stmt],
-    named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+    named_helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) {
@@ -353,7 +355,7 @@ fn reattach_elided_object_rest_in_stmts(
 
 fn module_items_contain_owp_spread_candidate(
     items: &[ModuleItem],
-    named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+    named_helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> bool {
     let mut visitor = ObjectRestSpreadCandidateVisitor {
@@ -372,7 +374,7 @@ fn module_items_contain_owp_spread_candidate(
 
 fn stmts_contain_owp_spread_candidate(
     stmts: &[Stmt],
-    named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+    named_helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> bool {
     let mut visitor = ObjectRestSpreadCandidateVisitor {
@@ -390,7 +392,7 @@ fn stmts_contain_owp_spread_candidate(
 }
 
 struct ObjectRestSpreadCandidateVisitor<'a> {
-    named_helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    named_helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &'a HashSet<BindingKey>,
     found: bool,
 }
@@ -420,7 +422,7 @@ impl Visit for ObjectRestSpreadCandidateVisitor<'_> {
 
 fn reattach_elided_object_rest_in_stmt(
     stmt: &mut Stmt,
-    named_helpers: &HashMap<BindingKey, BabelHelperKind>,
+    named_helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) {
@@ -459,7 +461,7 @@ fn reattach_elided_object_rest_in_stmt(
 
 struct ElidedRestSpreadReplacer<'a> {
     rest_binding: &'a BindingIdent,
-    named_helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    named_helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &'a HashSet<BindingKey>,
     preceding: Option<&'a [Stmt]>,
     unresolved_mark: Mark,
@@ -611,7 +613,7 @@ fn try_extract_owp_iife(
 /// Matches: `const rest = helperName(source, ["key1", "key2"])`
 fn try_extract_owp_named_call(
     stmt: &Stmt,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> Option<(
     BindingIdent,
@@ -652,7 +654,7 @@ fn try_extract_owp_named_call(
 /// Extract (source, excluded_keys) from a call to a known named OWP helper.
 fn extract_named_owp_args(
     expr: &Expr,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> Option<(Box<Expr>, Vec<Atom>)> {
     let Expr::Call(CallExpr {
@@ -667,7 +669,7 @@ fn extract_named_owp_args(
         Expr::Ident(id) => helpers.contains_key(&(id.sym.clone(), id.ctxt)),
         Expr::Member(_) => matches!(
             tslib_member_helper_kind(callee, tslib_namespaces),
-            Some(BabelHelperKind::ObjectWithoutProperties)
+            Some(TranspilerHelperKind::ObjectWithoutProperties)
         ),
         _ => false,
     };

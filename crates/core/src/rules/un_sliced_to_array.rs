@@ -8,8 +8,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::transpiler_helper_utils::{
-    tslib_helper_name_kind, tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind,
-    BindingKey, LocalHelperContext,
+    tslib_helper_name_kind, tslib_member_helper_kind, tslib_require_member_name, BindingKey,
+    LocalHelperContext, TranspilerHelperKind,
 };
 
 /// Detects and unwraps `_slicedToArray(expr, N)` helper calls.
@@ -36,10 +36,10 @@ impl VisitMut for UnSlicedToArray {
 }
 
 fn run_un_sliced_to_array(module: &mut Module, local_helpers: &LocalHelperContext) {
-    let helpers = local_helpers.helpers_of_kind(BabelHelperKind::SlicedToArray);
+    let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::SlicedToArray);
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let has_direct_tslib_calls =
-        local_helpers.has_tslib_require_member_call(BabelHelperKind::SlicedToArray);
+        local_helpers.has_tslib_require_member_call(TranspilerHelperKind::SlicedToArray);
     if helpers.is_empty() && tslib_namespaces.is_empty() && !has_direct_tslib_calls {
         return;
     }
@@ -56,7 +56,7 @@ fn run_un_sliced_to_array(module: &mut Module, local_helpers: &LocalHelperContex
 }
 
 struct SlicedToArrayRewriter<'a> {
-    helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &'a HashSet<BindingKey>,
 }
 
@@ -86,7 +86,7 @@ impl VisitMut for SlicedToArrayRewriter<'_> {
 
 fn fold_sliced_to_array_module_item_groups(
     body: &mut Vec<ModuleItem>,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) {
     let mut i = 0;
@@ -99,7 +99,7 @@ fn fold_sliced_to_array_module_item_groups(
 fn try_fold_sliced_to_array_module_item_group(
     body: &mut Vec<ModuleItem>,
     start: usize,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> bool {
     let Some((ref_binding, source, length)) =
@@ -150,7 +150,7 @@ fn try_fold_sliced_to_array_module_item_group(
 
 fn fold_sliced_to_array_stmt_groups(
     stmts: &mut Vec<Stmt>,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) {
     let mut i = 0;
@@ -163,7 +163,7 @@ fn fold_sliced_to_array_stmt_groups(
 fn try_fold_sliced_to_array_stmt_group(
     stmts: &mut Vec<Stmt>,
     start: usize,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> bool {
     let Some((ref_binding, source, length)) =
@@ -214,7 +214,7 @@ fn try_fold_sliced_to_array_stmt_group(
 
 fn extract_sliced_to_array_module_item(
     item: &ModuleItem,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> Option<(BindingIdent, Box<Expr>, usize)> {
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
@@ -228,7 +228,7 @@ fn extract_sliced_to_array_module_item(
 
 fn extract_sliced_to_array_stmt(
     stmt: &Stmt,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> Option<(BindingIdent, Box<Expr>, usize)> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
@@ -314,7 +314,7 @@ fn expr_is_temp(expr: &Expr, temp: &swc_core::ecma::ast::Ident) -> bool {
 
 fn rewrite_sliced_to_array_decls(
     decls: &mut Vec<VarDeclarator>,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) {
     let mut i = 0;
@@ -326,7 +326,7 @@ fn rewrite_sliced_to_array_decls(
 
 fn extract_sliced_to_array_decl(
     decl: &VarDeclarator,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> Option<(BindingIdent, Box<Expr>, usize)> {
     let Pat::Ident(binding) = &decl.name else {
@@ -382,7 +382,7 @@ fn extract_ref_index_binding(
 
 fn try_unwrap_sliced_to_array(
     decl: &mut VarDeclarator,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) {
     let Some(init) = &decl.init else { return };
@@ -426,7 +426,7 @@ fn try_unwrap_sliced_to_array(
 
 fn is_sliced_to_array_callee(
     callee: &Expr,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> bool {
     if let Expr::Ident(id) = callee {
@@ -436,7 +436,7 @@ fn is_sliced_to_array_callee(
     matches!(
         tslib_member_helper_kind(callee, tslib_namespaces)
             .or_else(|| tslib_helper_name_kind(tslib_require_member_name(callee)?)),
-        Some(BabelHelperKind::SlicedToArray)
+        Some(TranspilerHelperKind::SlicedToArray)
     )
 }
 

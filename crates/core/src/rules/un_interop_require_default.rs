@@ -8,7 +8,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::transpiler_helper_utils::{
     remove_helper_declarations, tslib_helper_name_kind, tslib_member_helper_kind,
-    tslib_require_member_name, BabelHelperKind, BindingKey, LocalHelperContext,
+    tslib_require_member_name, BindingKey, LocalHelperContext, TranspilerHelperKind,
 };
 use crate::utils::paren::strip_parens;
 
@@ -36,10 +36,10 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
     let mut affected_bindings: HashSet<BindingKey> = HashSet::new();
 
     // --- Named helper path ---
-    let helpers = local_helpers.helpers_of_kind(BabelHelperKind::InteropRequireDefault);
+    let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::InteropRequireDefault);
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let has_direct_tslib_calls =
-        local_helpers.has_tslib_require_member_call(BabelHelperKind::InteropRequireDefault);
+        local_helpers.has_tslib_require_member_call(TranspilerHelperKind::InteropRequireDefault);
 
     if !helpers.is_empty() || !tslib_namespaces.is_empty() || has_direct_tslib_calls {
         // Phase 1: Collect which bindings receive helper-wrapped values
@@ -94,7 +94,7 @@ fn run_un_interop_require_default(module: &mut Module, local_helpers: &LocalHelp
 // ---------------------------------------------------------------------------
 
 struct AffectedBindingCollector<'a> {
-    helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &'a HashSet<BindingKey>,
     affected: &'a mut HashSet<BindingKey>,
 }
@@ -113,7 +113,7 @@ impl Visit for AffectedBindingCollector<'_> {
 
 fn is_helper_call(
     expr: &Expr,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> bool {
     let Expr::Call(call) = expr else { return false };
@@ -128,7 +128,7 @@ fn is_helper_call(
 // ---------------------------------------------------------------------------
 
 struct CallUnwrapper<'a> {
-    helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &'a HashSet<BindingKey>,
 }
 
@@ -161,7 +161,7 @@ impl VisitMut for CallUnwrapper<'_> {
 
 fn extract_helper_call_arg(
     call: &swc_core::ecma::ast::CallExpr,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> Option<Expr> {
     let Callee::Expr(callee) = &call.callee else {
@@ -178,7 +178,7 @@ fn extract_helper_call_arg(
 
 fn is_interop_default_callee(
     callee: &Expr,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> bool {
     if let Expr::Ident(id) = callee {
@@ -188,7 +188,7 @@ fn is_interop_default_callee(
     matches!(
         tslib_member_helper_kind(callee, tslib_namespaces)
             .or_else(|| tslib_helper_name_kind(tslib_require_member_name(callee)?)),
-        Some(BabelHelperKind::InteropRequireDefault)
+        Some(TranspilerHelperKind::InteropRequireDefault)
     )
 }
 

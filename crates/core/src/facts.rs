@@ -16,7 +16,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
-use crate::rules::transpiler_helper_utils::{collect_helpers, BabelHelperKind};
+use crate::rules::transpiler_helper_utils::{collect_helpers, TranspilerHelperKind};
 
 /// How a binding was imported.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -464,7 +464,7 @@ fn collect_helper_exports(module: &Module, exports: &[ExportFact]) -> Vec<Helper
             .iter()
             .find_map(|((sym, _), kind)| {
                 (sym == local)
-                    .then(|| helper_kind_from_babel(*kind))
+                    .then(|| helper_kind_from_transpiler(*kind))
                     .flatten()
             })
             .or_else(|| {
@@ -484,24 +484,26 @@ fn collect_helper_exports(module: &Module, exports: &[ExportFact]) -> Vec<Helper
     helper_exports
 }
 
-fn helper_kind_from_babel(kind: BabelHelperKind) -> Option<HelperKind> {
+fn helper_kind_from_transpiler(kind: TranspilerHelperKind) -> Option<HelperKind> {
     match kind {
-        BabelHelperKind::InteropRequireDefault => Some(HelperKind::InteropRequireDefault),
-        BabelHelperKind::InteropRequireWildcard => Some(HelperKind::InteropRequireWildcard),
-        BabelHelperKind::ToConsumableArray => Some(HelperKind::ToConsumableArray),
-        BabelHelperKind::Extends => Some(HelperKind::Extends),
-        BabelHelperKind::ObjectSpread => Some(HelperKind::ObjectSpread),
-        BabelHelperKind::SlicedToArray => Some(HelperKind::SlicedToArray),
-        BabelHelperKind::ClassCallCheck => Some(HelperKind::ClassCallCheck),
-        BabelHelperKind::PossibleConstructorReturn => Some(HelperKind::PossibleConstructorReturn),
-        BabelHelperKind::AssertThisInitialized => Some(HelperKind::AssertThisInitialized),
-        BabelHelperKind::ObjectWithoutProperties => Some(HelperKind::ObjectWithoutProperties),
-        BabelHelperKind::Inherits => Some(HelperKind::Inherits),
-        BabelHelperKind::CallSuper => Some(HelperKind::CallSuper),
-        BabelHelperKind::AsyncToGenerator => Some(HelperKind::AsyncToGenerator),
-        BabelHelperKind::Typeof => None,
-        BabelHelperKind::DefineProperty => None,
-        BabelHelperKind::HelperDependency => None,
+        TranspilerHelperKind::InteropRequireDefault => Some(HelperKind::InteropRequireDefault),
+        TranspilerHelperKind::InteropRequireWildcard => Some(HelperKind::InteropRequireWildcard),
+        TranspilerHelperKind::ToConsumableArray => Some(HelperKind::ToConsumableArray),
+        TranspilerHelperKind::Extends => Some(HelperKind::Extends),
+        TranspilerHelperKind::ObjectSpread => Some(HelperKind::ObjectSpread),
+        TranspilerHelperKind::SlicedToArray => Some(HelperKind::SlicedToArray),
+        TranspilerHelperKind::ClassCallCheck => Some(HelperKind::ClassCallCheck),
+        TranspilerHelperKind::PossibleConstructorReturn => {
+            Some(HelperKind::PossibleConstructorReturn)
+        }
+        TranspilerHelperKind::AssertThisInitialized => Some(HelperKind::AssertThisInitialized),
+        TranspilerHelperKind::ObjectWithoutProperties => Some(HelperKind::ObjectWithoutProperties),
+        TranspilerHelperKind::Inherits => Some(HelperKind::Inherits),
+        TranspilerHelperKind::CallSuper => Some(HelperKind::CallSuper),
+        TranspilerHelperKind::AsyncToGenerator => Some(HelperKind::AsyncToGenerator),
+        TranspilerHelperKind::Typeof => None,
+        TranspilerHelperKind::DefineProperty => None,
+        TranspilerHelperKind::HelperDependency => None,
     }
 }
 

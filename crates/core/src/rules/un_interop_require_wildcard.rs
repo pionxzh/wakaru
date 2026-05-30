@@ -12,8 +12,8 @@ use super::helper_matcher::{
 };
 use super::transpiler_helper_utils::{
     helpers_with_remaining_refs, remove_helper_declarations, tslib_helper_name_kind,
-    tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind, BindingKey,
-    LocalHelperContext,
+    tslib_member_helper_kind, tslib_require_member_name, BindingKey, LocalHelperContext,
+    TranspilerHelperKind,
 };
 
 /// Detects and unwraps `interopRequireWildcard` helper calls.
@@ -41,10 +41,10 @@ impl VisitMut for UnInteropRequireWildcard {
 }
 
 fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHelperContext) {
-    let helpers = local_helpers.helpers_of_kind(BabelHelperKind::InteropRequireWildcard);
+    let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::InteropRequireWildcard);
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let has_direct_tslib_calls =
-        local_helpers.has_tslib_require_member_call(BabelHelperKind::InteropRequireWildcard);
+        local_helpers.has_tslib_require_member_call(TranspilerHelperKind::InteropRequireWildcard);
     if helpers.is_empty() && tslib_namespaces.is_empty() && !has_direct_tslib_calls {
         return;
     }
@@ -83,21 +83,21 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
 
     let import_dependencies = collect_import_dependencies(module, &dependency_roots);
     let var_require_dependencies = collect_var_require_dependencies(module, &dependency_roots);
-    let removable_helpers: HashMap<BindingKey, BabelHelperKind> = dependency_roots
+    let removable_helpers: HashMap<BindingKey, TranspilerHelperKind> = dependency_roots
         .into_iter()
         .chain(
             import_dependencies
                 .iter()
-                .map(|key| (key.clone(), BabelHelperKind::HelperDependency)),
+                .map(|key| (key.clone(), TranspilerHelperKind::HelperDependency)),
         )
         .chain(
             var_require_dependencies
                 .iter()
-                .map(|key| (key.clone(), BabelHelperKind::HelperDependency)),
+                .map(|key| (key.clone(), TranspilerHelperKind::HelperDependency)),
         )
         .collect();
     let remaining = helpers_with_remaining_refs(module, &removable_helpers);
-    let safe_declarations: HashMap<BindingKey, BabelHelperKind> = removable_helpers
+    let safe_declarations: HashMap<BindingKey, TranspilerHelperKind> = removable_helpers
         .iter()
         .filter(|(key, _)| {
             !remaining.contains(*key)
@@ -124,7 +124,7 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
 /// Returns None if the item doesn't match this pattern.
 fn try_convert_to_namespace_import(
     item: &ModuleItem,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> Option<Vec<ModuleItem>> {
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
@@ -184,7 +184,7 @@ fn try_convert_to_namespace_import(
 /// Extract the require source from `_irw(require("path"))` or `_irw(require("path"), true)`.
 fn extract_wildcard_require(
     expr: &Expr,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> Option<swc_core::ecma::ast::Str> {
     let Expr::Call(call) = expr else { return None };
@@ -225,7 +225,7 @@ fn extract_wildcard_require(
 /// Non-require arguments are left as-is because the helper synthesizes
 /// a namespace object that may differ from the raw expression value.
 struct WildcardCallUnwrapper<'a> {
-    helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &'a HashSet<BindingKey>,
 }
 
@@ -255,7 +255,7 @@ impl VisitMut for WildcardCallUnwrapper<'_> {
 
 fn is_interop_wildcard_callee(
     callee: &Expr,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> bool {
     if let Expr::Ident(id) = callee {
@@ -265,7 +265,7 @@ fn is_interop_wildcard_callee(
     matches!(
         tslib_member_helper_kind(callee, tslib_namespaces)
             .or_else(|| tslib_helper_name_kind(tslib_require_member_name(callee)?)),
-        Some(BabelHelperKind::InteropRequireWildcard)
+        Some(TranspilerHelperKind::InteropRequireWildcard)
     )
 }
 
@@ -282,7 +282,7 @@ fn is_require_call(expr: &Expr) -> bool {
 
 fn collect_import_dependencies(
     module: &Module,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
 ) -> HashSet<BindingKey> {
     let import_bindings = collect_import_bindings(module);
     if import_bindings.is_empty() {
@@ -321,7 +321,7 @@ fn collect_import_dependencies(
 
 fn collect_var_require_dependencies(
     module: &Module,
-    helpers: &HashMap<BindingKey, BabelHelperKind>,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
 ) -> HashSet<BindingKey> {
     let var_require_bindings = collect_var_require_bindings(module);
     if var_require_bindings.is_empty() {
@@ -387,7 +387,7 @@ fn collect_import_bindings(module: &Module) -> HashSet<BindingKey> {
 }
 
 struct ImportDependencyCollector<'a> {
-    helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     import_bindings: &'a HashSet<BindingKey>,
     dependencies: HashSet<BindingKey>,
 }
@@ -402,7 +402,7 @@ impl Visit for ImportDependencyCollector<'_> {
 }
 
 struct VarRequireDependencyCollector<'a> {
-    helpers: &'a HashMap<BindingKey, BabelHelperKind>,
+    helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     var_require_bindings: &'a HashSet<BindingKey>,
     dependencies: HashSet<BindingKey>,
 }
