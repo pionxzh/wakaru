@@ -8,9 +8,9 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helper_dependencies, helpers_with_remaining_refs, remove_helper_declarations,
-    tslib_helper_name_kind, tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind,
-    BindingKey, LocalHelperContext,
+    helpers_with_remaining_refs, remove_helper_declarations, tslib_helper_name_kind,
+    tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind, BindingKey,
+    LocalHelperContext,
 };
 
 /// Detects and unwraps `_slicedToArray(expr, N)` helper calls.
@@ -61,7 +61,7 @@ fn run_un_sliced_to_array(module: &mut Module, local_helpers: &LocalHelperContex
         .filter(|(key, _)| !remaining_roots.contains(*key))
         .map(|(key, kind)| (key.clone(), *kind))
         .collect::<HashMap<_, _>>();
-    let helper_dependencies = collect_helper_dependencies(module, &removable_roots);
+    let helper_dependencies = local_helpers.helper_dependencies(module, &removable_roots);
     let removable_helpers = removable_roots
         .into_iter()
         .chain(helper_dependencies)

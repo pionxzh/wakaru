@@ -1,5 +1,6 @@
 #[cfg(test)]
 use std::cell::Cell;
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
@@ -113,6 +114,7 @@ pub(crate) struct LocalHelperContext {
     ts_helpers: HashMap<BindingKey, TsHelperInfo>,
     tslib_namespaces: HashSet<BindingKey>,
     tslib_require_member_calls: HashSet<BabelHelperKind>,
+    top_level_callable_ref_graph: OnceCell<HashMap<BindingKey, HashSet<BindingKey>>>,
 }
 
 impl LocalHelperContext {
@@ -123,6 +125,7 @@ impl LocalHelperContext {
             ts_helpers: collect_ts_helpers(module, &tslib_namespaces),
             tslib_namespaces,
             tslib_require_member_calls: collect_tslib_require_member_calls(module),
+            top_level_callable_ref_graph: OnceCell::new(),
         }
     }
 
@@ -163,6 +166,17 @@ impl LocalHelperContext {
 
     pub(crate) fn has_tslib_require_member_call(&self, kind: BabelHelperKind) -> bool {
         self.tslib_require_member_calls.contains(&kind)
+    }
+
+    pub(crate) fn helper_dependencies(
+        &self,
+        module: &Module,
+        helpers: &HashMap<BindingKey, BabelHelperKind>,
+    ) -> HashMap<BindingKey, BabelHelperKind> {
+        let ref_graph = self
+            .top_level_callable_ref_graph
+            .get_or_init(|| collect_top_level_callable_ref_graph(module));
+        helper_dependencies_from_ref_graph(ref_graph, helpers)
     }
 }
 
@@ -469,11 +483,10 @@ pub(crate) fn helpers_with_remaining_refs(
     remaining_refs_outside_declarations(module, &helper_keys, &helper_keys)
 }
 
-pub(crate) fn collect_helper_dependencies(
-    module: &Module,
+fn helper_dependencies_from_ref_graph(
+    ref_graph: &HashMap<BindingKey, HashSet<BindingKey>>,
     helpers: &HashMap<BindingKey, BabelHelperKind>,
 ) -> HashMap<BindingKey, BabelHelperKind> {
-    let ref_graph = collect_top_level_callable_ref_graph(module);
     let mut dependencies = HashSet::new();
     let mut stack: Vec<_> = helpers.keys().cloned().collect();
 
@@ -3610,6 +3623,46 @@ mod tests {
                     .tslib_namespaces()
                     .contains(&(Atom::from("tslib_1"), SyntaxContext::empty()))
             );
+        });
+    }
+
+    #[test]
+    fn local_helper_context_collects_helper_dependencies() {
+        GLOBALS.set(&Globals::new(), || {
+            let module = parse_module(
+                r#"
+                function root(value) {
+                    return dep(value);
+                }
+                function dep(value) {
+                    return leaf(value);
+                }
+                function leaf(value) {
+                    return value;
+                }
+                function unrelated(value) {
+                    return dep(value);
+                }
+                "#,
+            );
+            let context = LocalHelperContext::collect(&module);
+            let roots = HashMap::from([(
+                (Atom::from("root"), SyntaxContext::empty()),
+                BabelHelperKind::SlicedToArray,
+            )]);
+
+            let dependencies = context.helper_dependencies(&module, &roots);
+
+            assert_eq!(
+                dependencies.get(&(Atom::from("dep"), SyntaxContext::empty())),
+                Some(&BabelHelperKind::HelperDependency)
+            );
+            assert_eq!(
+                dependencies.get(&(Atom::from("leaf"), SyntaxContext::empty())),
+                Some(&BabelHelperKind::HelperDependency)
+            );
+            assert!(!dependencies.contains_key(&(Atom::from("root"), SyntaxContext::empty())));
+            assert!(!dependencies.contains_key(&(Atom::from("unrelated"), SyntaxContext::empty())));
         });
     }
 

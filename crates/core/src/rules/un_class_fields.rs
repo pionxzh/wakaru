@@ -11,8 +11,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helper_dependencies, helpers_with_remaining_refs, remove_helper_declarations,
-    BabelHelperKind, BindingKey, LocalHelperContext, TsHelperKind,
+    helpers_with_remaining_refs, remove_helper_declarations, BabelHelperKind, BindingKey,
+    LocalHelperContext, TsHelperKind,
 };
 use super::helper_matcher::binding_key;
 use super::RewriteLevel;
@@ -135,7 +135,8 @@ impl UnClassFields {
                 .into_iter()
                 .filter(|(key, _)| !remaining.contains(key))
                 .collect();
-            let removable_dependencies = collect_helper_dependencies(module, &removable_roots);
+            let removable_dependencies =
+                local_helpers.helper_dependencies(module, &removable_roots);
             let removable_helpers: HashMap<BindingKey, BabelHelperKind> = removable_roots
                 .into_iter()
                 .chain(removable_dependencies)

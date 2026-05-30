@@ -8,9 +8,9 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::babel_helper_utils::{
-    collect_helper_dependencies, helpers_with_remaining_refs, remove_helper_declarations,
-    tslib_helper_name_kind, tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind,
-    BindingKey, LocalHelperContext,
+    helpers_with_remaining_refs, remove_helper_declarations, tslib_helper_name_kind,
+    tslib_member_helper_kind, tslib_require_member_name, BabelHelperKind, BindingKey,
+    LocalHelperContext,
 };
 use super::helper_matcher::{
     binding_key, import_specifier_binding_key, var_declarator_binding_key,
@@ -84,7 +84,7 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
         return;
     }
 
-    let helper_dependencies = collect_helper_dependencies(module, &removable_roots);
+    let helper_dependencies = local_helpers.helper_dependencies(module, &removable_roots);
     let dependency_roots: HashMap<BindingKey, BabelHelperKind> = removable_roots
         .iter()
         .chain(helper_dependencies.iter())

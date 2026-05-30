@@ -11,8 +11,8 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::babel_helper_utils::{
-    collect_helper_dependencies, helpers_with_remaining_refs, remove_helper_declarations,
-    tslib_member_helper_kind, BabelHelperKind, BindingKey, LocalHelperContext,
+    helpers_with_remaining_refs, remove_helper_declarations, tslib_member_helper_kind,
+    BabelHelperKind, BindingKey, LocalHelperContext,
 };
 
 use crate::utils::paren::strip_parens;
@@ -112,7 +112,7 @@ fn run_un_object_spread(
         .into_iter()
         .filter(|(key, _)| !remaining_roots.contains(key))
         .collect();
-    let helper_dependencies = collect_helper_dependencies(module, &removable_roots);
+    let helper_dependencies = local_helper_context.helper_dependencies(module, &removable_roots);
     let standalone_dependencies = local_helpers.into_iter().filter(|(_, kind)| {
         matches!(
             kind,
