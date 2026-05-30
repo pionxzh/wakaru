@@ -174,7 +174,7 @@ fn run_un_interop_require_wildcard(module: &mut Module, ctx: RuleRunContext<'_>)
 
 fn run_un_to_consumable_array(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
-    UnToConsumableArray::run_with_helpers(module, local_helpers.as_ref());
+    UnToConsumableArray::run_with_helpers(module, local_helpers.as_ref(), ctx.module_facts);
 }
 
 fn run_un_object_spread(module: &mut Module, ctx: RuleRunContext<'_>) {

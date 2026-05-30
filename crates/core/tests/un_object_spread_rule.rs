@@ -1,6 +1,9 @@
 mod common;
 use common::{assert_eq_normalized, render, render_rule};
-use wakaru_core::facts::{HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap};
+use wakaru_core::facts::{
+    HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact,
+    TypeScriptHelperKind,
+};
 use wakaru_core::rules::UnObjectSpread;
 
 #[test]
@@ -152,6 +155,64 @@ var x = _extends({}, app_info, base_info);
     let expected = r#"
 import { Z as _extends } from "./helpers.js";
 var x = { ...app_info, ...base_info };
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |_| UnObjectSpread::new_with_facts(&facts)),
+        expected,
+    );
+}
+
+#[test]
+fn handles_cross_module_ts_assign_helper_fact() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            ts_helper_exports: vec![TypeScriptHelperExportFact {
+                exported: "__assign".into(),
+                local: Some("__assign".into()),
+                kind: TypeScriptHelperKind::Assign,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import { __assign as assign } from "./helpers.js";
+var x = assign({ id: app_id }, app_info, { name: value });
+"#;
+    let expected = r#"
+import { __assign as assign } from "./helpers.js";
+var x = { id: app_id, ...app_info, name: value };
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |_| UnObjectSpread::new_with_facts(&facts)),
+        expected,
+    );
+}
+
+#[test]
+fn handles_cross_module_ts_assign_namespace_fact() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            ts_helper_exports: vec![TypeScriptHelperExportFact {
+                exported: "__assign".into(),
+                local: Some("__assign".into()),
+                kind: TypeScriptHelperKind::Assign,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import * as helpers from "./helpers.js";
+var x = helpers.__assign({ id: app_id }, app_info, { name: value });
+"#;
+    let expected = r#"
+import * as helpers from "./helpers.js";
+var x = { id: app_id, ...app_info, name: value };
 "#;
     assert_eq_normalized(
         &render_rule(input, |_| UnObjectSpread::new_with_facts(&facts)),

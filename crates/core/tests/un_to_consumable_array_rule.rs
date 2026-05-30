@@ -1,5 +1,9 @@
 mod common;
-use common::{assert_eq_normalized, render};
+use common::{assert_eq_normalized, render, render_rule};
+use wakaru_core::facts::{
+    ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact, TypeScriptHelperKind,
+};
+use wakaru_core::rules::UnToConsumableArray;
 
 #[test]
 fn replaces_to_consumable_array_with_spread() {
@@ -200,6 +204,64 @@ var out = __spreadArray([head], items, true);
 const out = [head, ...items];
 "#;
     assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_cross_module_ts_spread_array_helper_fact() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            ts_helper_exports: vec![TypeScriptHelperExportFact {
+                exported: "__spreadArray".into(),
+                local: Some("__spreadArray".into()),
+                kind: TypeScriptHelperKind::SpreadArray,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import { __spreadArray as spread } from "./helpers.js";
+var out = spread([head], items, true);
+"#;
+    let expected = r#"
+import { __spreadArray as spread } from "./helpers.js";
+var out = [head, ...items];
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |_| UnToConsumableArray::new_with_facts(&facts)),
+        expected,
+    );
+}
+
+#[test]
+fn unwraps_cross_module_ts_spread_array_namespace_fact() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            ts_helper_exports: vec![TypeScriptHelperExportFact {
+                exported: "__spreadArray".into(),
+                local: Some("__spreadArray".into()),
+                kind: TypeScriptHelperKind::SpreadArray,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import * as helpers from "./helpers.js";
+var out = helpers.__spreadArray([head], items, true);
+"#;
+    let expected = r#"
+import * as helpers from "./helpers.js";
+var out = [head, ...items];
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |_| UnToConsumableArray::new_with_facts(&facts)),
+        expected,
+    );
 }
 
 #[test]
