@@ -330,7 +330,10 @@ runner!(run_un_export_rename, UnExportRename);
 runner!(run_un_destructuring, |ctx| {
     UnDestructuring::new_with_level(ctx.unresolved_mark, ctx.rewrite_level)
 });
-runner!(run_smart_inline, |ctx| SmartInline::new(ctx.rewrite_level));
+runner!(run_smart_inline, |ctx| SmartInline::new_with_mark(
+    ctx.rewrite_level,
+    ctx.unresolved_mark
+));
 runner!(run_smart_rename, |ctx| SmartRename::new(
     ctx.unresolved_mark
 ));

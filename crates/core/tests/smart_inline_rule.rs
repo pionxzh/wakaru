@@ -8,7 +8,9 @@ fn apply(input: &str) -> String {
 }
 
 fn apply_with_level(input: &str, level: RewriteLevel) -> String {
-    render_rule(input, |_| SmartInline::new(level))
+    render_rule(input, |unresolved_mark| {
+        SmartInline::new_with_mark(level, unresolved_mark)
+    })
 }
 
 fn apply_pipeline(input: &str) -> String {
@@ -668,6 +670,42 @@ Math.floor(2.5);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_does_not_inline_member_alias_from_local_builtin_name() {
+    let input = r#"
+let Object = customObject;
+const a = Object.defineProperty;
+a(t1, k1, d1);
+a(t2, k2, d2);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_does_not_inline_member_alias_from_imported_builtin_name() {
+    let input = r#"
+import { Object } from "custom";
+const a = Object.defineProperty;
+a(t1, k1, d1);
+a(t2, k2, d2);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_does_not_inline_bare_alias_from_local_builtin_name() {
+    let input = r#"
+const TypeError = CustomError;
+const E = TypeError;
+throw new E("bad");
+handle(E);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]

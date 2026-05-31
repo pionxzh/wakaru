@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{SyntaxContext, DUMMY_SP};
+use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, BindingIdent, BlockStmtOrExpr, Callee, ComputedPropName, Decl, DoWhileStmt, Expr,
     ExprStmt, ForInStmt, ForOfStmt, ForStmt, Ident, ImportSpecifier, KeyValuePatProp, Lit,
@@ -15,6 +15,7 @@ use super::RewriteLevel;
 
 pub struct SmartInline {
     level: RewriteLevel,
+    unresolved_mark: Option<Mark>,
     use_state_bindings: HashSet<BindingKey>,
     for_init_bindings: Vec<HashSet<BindingKey>>,
 }
@@ -23,6 +24,16 @@ impl SmartInline {
     pub fn new(level: RewriteLevel) -> Self {
         Self {
             level,
+            unresolved_mark: None,
+            use_state_bindings: HashSet::new(),
+            for_init_bindings: Vec::new(),
+        }
+    }
+
+    pub fn new_with_mark(level: RewriteLevel, unresolved_mark: Mark) -> Self {
+        Self {
+            level,
+            unresolved_mark: Some(unresolved_mark),
             use_state_bindings: HashSet::new(),
             for_init_bindings: Vec::new(),
         }
@@ -51,7 +62,7 @@ impl VisitMut for SmartInline {
         // This depends on the standard+ `stable_builtins` assumption: the alias
         // captures the global/property now, while inlining reads it later.
         if self.level >= RewriteLevel::Standard {
-            inline_module_builtin_aliases(module);
+            inline_module_builtin_aliases(module, self.unresolved_mark);
         }
 
         // Process module-level statements
@@ -71,6 +82,7 @@ impl VisitMut for SmartInline {
         let new_stmts = process_stmts(
             stmts,
             self.level,
+            self.unresolved_mark,
             &self.use_state_bindings,
             &context_for_init_bindings,
         );
@@ -106,6 +118,7 @@ impl VisitMut for SmartInline {
         *stmts = process_stmts(
             taken,
             self.level,
+            self.unresolved_mark,
             &self.use_state_bindings,
             &context_for_init_bindings,
         );
@@ -140,6 +153,7 @@ impl SmartInline {
 fn process_stmts(
     stmts: Vec<Stmt>,
     level: RewriteLevel,
+    unresolved_mark: Option<Mark>,
     use_state_bindings: &HashSet<BindingKey>,
     context_for_init_bindings: &HashSet<BindingKey>,
 ) -> Vec<Stmt> {
@@ -147,7 +161,7 @@ fn process_stmts(
     // Standard+ only; this assumes globals and builtin properties are not patched
     // between alias capture and use.
     let stmts = if level >= RewriteLevel::Standard {
-        inline_builtin_aliases_stmts(stmts)
+        inline_builtin_aliases_stmts(stmts, unresolved_mark)
     } else {
         stmts
     };
@@ -200,7 +214,7 @@ struct GlobalUsageStats {
 /// Also handles bare builtin aliases like `const E = TypeError` and `const O = Object`.
 /// These aliases are created by minifiers to save bytes and can be restored under
 /// the standard+ `stable_builtins` assumption.
-fn inline_module_builtin_aliases(module: &mut Module) {
+fn inline_module_builtin_aliases(module: &mut Module, unresolved_mark: Option<Mark>) {
     let mut candidates: HashMap<BindingKey, Box<Expr>> = HashMap::new();
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
@@ -212,7 +226,7 @@ fn inline_module_builtin_aliases(module: &mut Module) {
         let decl = &var.decls[0];
         let Pat::Ident(bi) = &decl.name else { continue };
         let Some(init) = &decl.init else { continue };
-        if is_builtin_alias_expr(init) {
+        if is_builtin_alias_expr(init, unresolved_mark) {
             candidates.insert((bi.id.sym.clone(), bi.id.ctxt), init.clone());
         }
     }
@@ -255,7 +269,7 @@ fn inline_module_builtin_aliases(module: &mut Module) {
 
 /// Same as `inline_module_builtin_aliases` but operates on a `Vec<Stmt>` (function bodies).
 /// Handles `const Math_floor = Math.floor` inside nested scopes.
-fn inline_builtin_aliases_stmts(mut stmts: Vec<Stmt>) -> Vec<Stmt> {
+fn inline_builtin_aliases_stmts(mut stmts: Vec<Stmt>, unresolved_mark: Option<Mark>) -> Vec<Stmt> {
     let mut candidates: HashMap<BindingKey, Box<Expr>> = HashMap::new();
     for stmt in &stmts {
         let Stmt::Decl(Decl::Var(var)) = stmt else {
@@ -267,7 +281,7 @@ fn inline_builtin_aliases_stmts(mut stmts: Vec<Stmt>) -> Vec<Stmt> {
         let decl = &var.decls[0];
         let Pat::Ident(bi) = &decl.name else { continue };
         let Some(init) = &decl.init else { continue };
-        if is_builtin_alias_expr(init) {
+        if is_builtin_alias_expr(init, unresolved_mark) {
             candidates.insert((bi.id.sym.clone(), bi.id.ctxt), init.clone());
         }
     }
@@ -310,22 +324,26 @@ fn inline_builtin_aliases_stmts(mut stmts: Vec<Stmt>) -> Vec<Stmt> {
     stmts
 }
 
-fn is_builtin_alias_expr(expr: &Expr) -> bool {
+fn is_builtin_alias_expr(expr: &Expr, unresolved_mark: Option<Mark>) -> bool {
     match expr {
-        Expr::Ident(id) => is_builtin_global(&id.sym),
+        Expr::Ident(id) => is_unresolved_builtin_ident(id, unresolved_mark),
         Expr::Member(MemberExpr {
             obj,
             prop: MemberProp::Ident(_),
             ..
         }) => {
             if let Expr::Ident(obj_id) = obj.as_ref() {
-                is_builtin_global(&obj_id.sym)
+                is_unresolved_builtin_ident(obj_id, unresolved_mark)
             } else {
                 false
             }
         }
         _ => false,
     }
+}
+
+fn is_unresolved_builtin_ident(id: &Ident, unresolved_mark: Option<Mark>) -> bool {
+    is_builtin_global(&id.sym) && unresolved_mark.is_none_or(|mark| id.ctxt.outer() == mark)
 }
 
 #[derive(Default)]
