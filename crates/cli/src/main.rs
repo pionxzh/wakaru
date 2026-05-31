@@ -220,7 +220,7 @@ fn run_default(cli: Cli) -> Result<()> {
         };
 
         let out_dir = cli.output.expect("checked above");
-        ensure_output_dir(&out_dir, cli.force)?;
+        let check_existing_writes = ensure_output_dir(&out_dir, cli.force)?;
         let out_dir = canonicalize_output_dir(&out_dir)?;
 
         let output = if inputs.len() == 1 {
@@ -248,20 +248,34 @@ fn run_default(cli: Cli) -> Result<()> {
             })
             .collect();
 
-        // Resolve output paths (serial — deduplication needs mutable seen set).
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let resolved: Vec<(PathBuf, &str)> = pairs
-            .iter()
-            .map(|(filename, code)| {
-                let out_path = resolve_unpack_output_path(&out_dir, filename, &mut seen)?;
-                Ok((out_path, code.as_str()))
-            })
-            .collect::<Result<_>>()?;
+        let resolved: Vec<(PathBuf, &str)> = {
+            let span = tracing::info_span!("cli_resolve_output_paths");
+            let _enter = span.enter();
+            // Resolve output paths (serial — deduplication needs mutable seen set).
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            pairs
+                .iter()
+                .map(|(filename, code)| {
+                    let out_path = resolve_unpack_output_path(&out_dir, filename, &mut seen)?;
+                    Ok((out_path, code.as_str()))
+                })
+                .collect::<Result<_>>()?
+        };
 
-        // Write files in parallel.
-        resolved.par_iter().try_for_each(|(path, code)| {
-            fs::write(path, code).with_context(|| format!("failed to write {}", path.display()))
-        })?;
+        {
+            let span = tracing::info_span!("cli_write_output_files", count = resolved.len());
+            let _enter = span.enter();
+            // Write files in parallel.
+            if check_existing_writes {
+                resolved
+                    .par_iter()
+                    .try_for_each(|(path, code)| write_if_changed(path, code))?;
+            } else {
+                resolved
+                    .par_iter()
+                    .try_for_each(|(path, code)| write_file(path, code))?;
+            }
+        }
 
         if io::stderr().is_terminal() {
             if let Some(stats) = scan_stats {
@@ -568,7 +582,11 @@ fn ensure_output_file(path: &Path, force: bool) -> Result<()> {
     Ok(())
 }
 
-fn ensure_output_dir(path: &PathBuf, force: bool) -> Result<()> {
+/// Ensures an output directory is usable.
+///
+/// Returns true when the directory already contained entries and writes should
+/// preserve the read-before-write unchanged-file fast path.
+fn ensure_output_dir(path: &PathBuf, force: bool) -> Result<bool> {
     if path.exists() {
         if !path.is_dir() {
             bail!(
@@ -587,11 +605,28 @@ fn ensure_output_dir(path: &PathBuf, force: bool) -> Result<()> {
                 path.display()
             );
         }
+        return Ok(!is_empty);
     } else {
         fs::create_dir_all(path)
             .with_context(|| format!("failed to create output directory {}", path.display()))?;
     }
-    Ok(())
+    Ok(false)
+}
+
+fn write_file(path: &Path, content: &str) -> Result<()> {
+    fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))
+}
+
+fn write_if_changed(path: &Path, content: &str) -> Result<()> {
+    if let Ok(metadata) = fs::metadata(path) {
+        if metadata.len() == content.len() as u64
+            && fs::read(path).is_ok_and(|existing| existing == content.as_bytes())
+        {
+            return Ok(());
+        }
+    }
+
+    write_file(path, content)
 }
 
 fn canonicalize_output_dir(path: &Path) -> Result<PathBuf> {
@@ -1007,7 +1042,7 @@ mod tests {
         fs::write(dir.join("entry.js"), "old").expect("write temp file");
 
         assert!(ensure_output_dir(&dir, false).is_err());
-        assert!(ensure_output_dir(&dir, true).is_ok());
+        assert!(ensure_output_dir(&dir, true).expect("force should allow non-empty dir"));
 
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
@@ -1196,6 +1231,67 @@ mod tests {
             "unexpected error: {err}"
         );
 
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn output_dir_reports_when_existing_writes_need_checks() {
+        let empty_dir = temp_test_dir("output-dir-empty");
+        fs::create_dir_all(&empty_dir).expect("create temp dir");
+        assert!(
+            !ensure_output_dir(&empty_dir, false).expect("empty dir should be accepted"),
+            "empty directories can write directly without checking existing files"
+        );
+        fs::remove_dir_all(&empty_dir).expect("remove empty temp dir");
+
+        let new_dir = temp_test_dir("output-dir-new");
+        assert!(
+            !ensure_output_dir(&new_dir, false).expect("new dir should be created"),
+            "new directories can write directly without checking existing files"
+        );
+        fs::remove_dir_all(&new_dir).expect("remove new temp dir");
+
+        let non_empty_dir = temp_test_dir("output-dir-non-empty");
+        fs::create_dir_all(&non_empty_dir).expect("create temp dir");
+        fs::write(non_empty_dir.join("entry.js"), "old").expect("write temp file");
+        assert!(
+            ensure_output_dir(&non_empty_dir, true).expect("force should allow non-empty dir"),
+            "non-empty forced directories should preserve write-if-changed checks"
+        );
+        fs::remove_dir_all(&non_empty_dir).expect("remove non-empty temp dir");
+    }
+
+    #[test]
+    fn write_if_changed_skips_identical_readonly_file() {
+        let dir = temp_test_dir("write-if-changed");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("entry.js");
+        fs::write(&path, "same").expect("write temp file");
+
+        let original_permissions = fs::metadata(&path).expect("metadata").permissions();
+        let mut permissions = original_permissions.clone();
+        permissions.set_readonly(true);
+        fs::set_permissions(&path, permissions).expect("set readonly");
+
+        assert!(write_if_changed(&path, "same").is_ok());
+
+        fs::set_permissions(&path, original_permissions).expect("restore permissions");
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn write_if_changed_overwrites_different_length_file() {
+        let dir = temp_test_dir("write-if-changed-length");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("entry.js");
+        fs::write(&path, "short").expect("write temp file");
+
+        write_if_changed(&path, "longer content").expect("write changed file");
+
+        assert_eq!(
+            fs::read_to_string(&path).expect("read updated file"),
+            "longer content"
+        );
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 
