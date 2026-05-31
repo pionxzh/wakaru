@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::DUMMY_SP;
+use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, CatchClause, Expr, ExprStmt,
     Function, Ident, MemberExpr, Module, Pat, Prop, PropName, SimpleAssignTarget, Stmt, SwitchCase,
@@ -19,9 +19,10 @@ pub struct UnAsyncAwait;
 impl UnAsyncAwait {
     pub(crate) fn run_with_helpers(
         module: &mut swc_core::ecma::ast::Module,
+        unresolved_mark: Mark,
         local_helpers: &LocalHelperContext,
     ) {
-        let helpers = AsyncHelperContext::from_local_helpers(local_helpers);
+        let helpers = AsyncHelperContext::from_local_helpers(local_helpers, Some(unresolved_mark));
         module.visit_mut_with(&mut UnAsyncAwaitWithHelpers { helpers: &helpers });
         remove_unused_inline_async_helpers(module, local_helpers);
     }
@@ -30,7 +31,9 @@ impl UnAsyncAwait {
 impl VisitMut for UnAsyncAwait {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let local_helpers = LocalHelperContext::collect(module);
-        Self::run_with_helpers(module, &local_helpers);
+        let helpers = AsyncHelperContext::from_local_helpers(&local_helpers, None);
+        module.visit_mut_with(&mut UnAsyncAwaitWithHelpers { helpers: &helpers });
+        remove_unused_inline_async_helpers(module, &local_helpers);
     }
 
     fn visit_mut_function(&mut self, func: &mut Function) {
@@ -53,13 +56,18 @@ impl VisitMut for UnAsyncAwaitWithHelpers<'_> {
 struct AsyncHelperContext {
     awaiter_helpers: HashSet<BindingKey>,
     generator_helpers: HashSet<BindingKey>,
+    unresolved_mark: Option<Mark>,
 }
 
 impl AsyncHelperContext {
-    fn from_local_helpers(local_helpers: &LocalHelperContext) -> Self {
+    fn from_local_helpers(
+        local_helpers: &LocalHelperContext,
+        unresolved_mark: Option<Mark>,
+    ) -> Self {
         Self {
             awaiter_helpers: local_helpers.ts_helpers_of_kind(TsHelperKind::Awaiter),
             generator_helpers: local_helpers.ts_helpers_of_kind(TsHelperKind::Generator),
+            unresolved_mark,
         }
     }
 
@@ -80,7 +88,11 @@ impl AsyncHelperContext {
         let Some(Expr::Ident(id)) = call.callee.as_expr().map(|expr| expr.as_ref()) else {
             return false;
         };
-        id.sym.as_ref() == canonical_name || helpers.contains(&binding_key(id))
+        helpers.contains(&binding_key(id))
+            || (id.sym.as_ref() == canonical_name
+                && self
+                    .unresolved_mark
+                    .is_some_and(|unresolved_mark| id.ctxt.outer() == unresolved_mark))
     }
 }
 
@@ -122,6 +134,7 @@ pub(crate) fn try_transform_ts_generator_body(
     let helpers = AsyncHelperContext {
         awaiter_helpers: HashSet::new(),
         generator_helpers: generator_helpers.iter().cloned().collect(),
+        unresolved_mark: None,
     };
     try_transform_generator(body, &helpers)
 }

@@ -6,8 +6,27 @@ use wakaru_core::rules::UnAsyncAwait;
 // ── __generator only ────────────────────────────────────────────────────────
 
 fn apply(input: &str) -> String {
+    let input = format!("{TS_HELPERS}\n{input}");
+    render_rule(&input, |_| UnAsyncAwait)
+}
+
+fn apply_without_helpers(input: &str) -> String {
     render_rule(input, |_| UnAsyncAwait)
 }
+
+const TS_HELPERS: &str = r#"
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+  return new (P || (P = Promise))(function (resolve, reject) {
+    function fulfilled(value) { step(generator.next(value)); }
+    function rejected(value) { step(generator["throw"](value)); }
+    function step(result) { result.done ? resolve(result.value) : Promise.resolve(result.value).then(fulfilled, rejected); }
+    step((generator = generator.apply(thisArg, _arguments || [])).next());
+  });
+};
+var __generator = (this && this.__generator) || function (thisArg, body) {
+  var _ = { label: 0, sent: function() { return t[1]; }, trys: [], ops: [] }, f, y, t, g;
+};
+"#;
 
 #[test]
 fn simple_generator_yields() {
@@ -108,6 +127,30 @@ function* read_items(items) {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn canonical_awaiter_name_without_helper_shape_is_not_proof() {
+    let input = r#"
+function __awaiter(thisArg, args, P, generator) {
+  log("custom");
+  return generator();
+}
+function foo() {
+  return __awaiter(this, void 0, void 0, function* () {
+    yield work();
+  });
+}
+"#;
+    let output = apply_without_helpers(input);
+    assert!(
+        output.contains("return __awaiter(this, void 0, void 0, function*"),
+        "custom canonical-name helper must not be treated as a proven TS helper, got:\n{output}"
+    );
+    assert!(
+        output.contains("log(\"custom\")"),
+        "custom helper body must be preserved, got:\n{output}"
+    );
 }
 
 // ── __awaiter only (inner is already function*) ──────────────────────────────
