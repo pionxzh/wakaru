@@ -2467,6 +2467,11 @@ fn extract_esbuild_async_call_body(
     if !is_esbuild_async_callee(callee, esbuild_async_helpers) {
         return None;
     }
+    if !is_esbuild_async_this_arg(&call.args[0].expr)
+        || !is_esbuild_async_arguments_arg(&call.args[1].expr)
+    {
+        return None;
+    }
 
     let Expr::Fn(fn_expr) = call.args[2].expr.as_ref() else {
         return None;
@@ -2475,6 +2480,18 @@ fn extract_esbuild_async_call_body(
         return None;
     }
     Some(fn_expr.function.body.as_ref()?.stmts.clone())
+}
+
+fn is_esbuild_async_this_arg(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::This(_) | Expr::Lit(Lit::Null(_)))
+}
+
+fn is_esbuild_async_arguments_arg(expr: &Expr) -> bool {
+    match strip_parens(expr) {
+        Expr::Ident(id) => id.sym.as_ref() == "arguments",
+        Expr::Lit(Lit::Null(_)) => true,
+        _ => false,
+    }
 }
 
 fn is_esbuild_async_callee(expr: &Expr, esbuild_async_helpers: &[BindingKey]) -> bool {

@@ -591,6 +591,32 @@ function load_user(app_id) {
 }
 
 #[test]
+fn esbuild_async_helper_preserves_side_effectful_context_args() {
+    let input = r#"
+var __async = (__this, __arguments, generator) => new Promise((resolve) => {
+  var fulfilled = (value) => step(generator.next(value));
+  var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled);
+  step((generator = generator.apply(__this, __arguments)).next());
+});
+function load_user(app_id) {
+  return __async(get_this(), get_args(), function* () {
+    const response = yield fetch_user(app_id);
+    return response;
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("__async(get_this(), get_args()"),
+        "side-effectful __async receiver/arguments must be preserved, got:\n{output}"
+    );
+    assert!(
+        output.contains("yield fetch_user(app_id)"),
+        "unsafe __async call should keep the generator argument intact, got:\n{output}"
+    );
+}
+
+#[test]
 fn babel_async_arrow_iife_trampoline() {
     let input = r#"
 const load_user = function () {
