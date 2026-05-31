@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
@@ -109,6 +111,7 @@ fn run_un_regenerator(
         consumed_marks: &mut consumed_marks,
     };
     module.visit_mut_with(&mut transformer);
+    collapse_async_trampoline_sequences(module);
     collapse_async_trampoline_assignments(module);
 
     // Phase 3: Remove only the mark declarations that were consumed
@@ -2083,6 +2086,49 @@ fn try_collapse_async_trampoline_iife(expr: &Expr) -> Option<Expr> {
     Some(anonymous_async_fn_expr(async_fn))
 }
 
+fn collapse_async_trampoline_sequences(module: &mut Module) {
+    let binding_ref_counts = collect_binding_ref_counts(module);
+    let mut collapser = AsyncTrampolineSequenceCollapser { binding_ref_counts };
+    module.visit_mut_with(&mut collapser);
+}
+
+struct AsyncTrampolineSequenceCollapser {
+    binding_ref_counts: HashMap<BindingKey, usize>,
+}
+
+impl VisitMut for AsyncTrampolineSequenceCollapser {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+        if let Some(collapsed) =
+            try_collapse_async_trampoline_sequence(expr, &self.binding_ref_counts)
+        {
+            *expr = collapsed;
+        }
+    }
+}
+
+fn try_collapse_async_trampoline_sequence(
+    expr: &Expr,
+    binding_ref_counts: &HashMap<BindingKey, usize>,
+) -> Option<Expr> {
+    let Expr::Seq(seq) = expr else {
+        return None;
+    };
+    let [assignment, wrapper] = seq.exprs.as_slice() else {
+        return None;
+    };
+
+    let (binding, async_fn) = async_fn_assignment_from_expr(assignment)?;
+    if binding_ref_counts.get(&binding).copied() != Some(2) {
+        return None;
+    }
+    if !expr_applies_binding(wrapper, &binding) {
+        return None;
+    }
+
+    Some(anonymous_async_fn_expr(async_fn))
+}
+
 fn collapse_async_trampoline_assignments(module: &mut Module) {
     let mut index = 0;
     while index + 1 < module.body.len() {
@@ -2110,6 +2156,20 @@ fn collapse_async_trampoline_assignments(module: &mut Module) {
         }
         module.body.remove(index);
     }
+}
+
+fn async_fn_assignment_from_expr(expr: &Expr) -> Option<(BindingKey, FnExpr)> {
+    let Expr::Assign(assign) = expr else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(left)) = &assign.left else {
+        return None;
+    };
+    let async_fn = async_fn_from_expr(&assign.right)?;
+    Some(((left.id.sym.clone(), left.id.ctxt), async_fn.clone()))
 }
 
 fn async_fn_binding_from_decl_stmt(stmt: &Stmt) -> Option<(BindingKey, FnExpr)> {
@@ -2198,6 +2258,41 @@ fn expr_applies_binding(expr: &Expr, binding: &BindingKey) -> bool {
 fn anonymous_async_fn_expr(mut fn_expr: FnExpr) -> Expr {
     fn_expr.ident = None;
     Expr::Fn(fn_expr)
+}
+
+fn collect_binding_ref_counts(module: &Module) -> HashMap<BindingKey, usize> {
+    let mut counter = BindingRefCounter {
+        counts: HashMap::new(),
+    };
+    module.visit_with(&mut counter);
+    counter.counts
+}
+
+struct BindingRefCounter {
+    counts: HashMap<BindingKey, usize>,
+}
+
+impl Visit for BindingRefCounter {
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        if let Some(init) = &decl.init {
+            init.visit_with(self);
+        }
+    }
+
+    fn visit_fn_decl(&mut self, fn_decl: &FnDecl) {
+        fn_decl.function.visit_with(self);
+    }
+
+    fn visit_fn_expr(&mut self, fn_expr: &FnExpr) {
+        fn_expr.function.visit_with(self);
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        *self
+            .counts
+            .entry((ident.sym.clone(), ident.ctxt))
+            .or_default() += 1;
+    }
 }
 
 // ============================================================

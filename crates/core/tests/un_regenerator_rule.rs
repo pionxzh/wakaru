@@ -660,6 +660,99 @@ use(_ref, load_user);
 }
 
 #[test]
+fn babel_729_terser_class_method_sequence_trampoline() {
+    // Reproduced from:
+    //   @babel/preset-env targeting IE 11 on `class Client { async fetchInternal(request, init) { return await send(request, init); } }`
+    //   then Terser compress+mangle. Babel emits the lazy method trampoline;
+    //   Terser lowers it to this comma-sequence form.
+    let input = r#"
+function _asyncToGenerator(e) {
+  return function() {
+    var r = this, t = arguments;
+    return new Promise(function(n, o) {
+      var i = e.apply(r, t);
+      function a(e) {}
+      a(void 0);
+    });
+  }
+}
+const descriptors = [{
+  key: "fetchInternal",
+  value: (e = _asyncToGenerator(_regenerator().m(function e(r, t) {
+    return _regenerator().w(function(e) {
+      for (;;) {
+        switch (e.n) {
+          case 0:
+            return e.n = 1, send(r, t);
+          case 1:
+            return e.a(2, e.v);
+        }
+      }
+    }, e);
+  })), function(r, t) {
+    return e.apply(this, arguments);
+  })
+}];
+var e;
+"#;
+    let expected = r#"
+const descriptors = [{
+  key: "fetchInternal",
+  value: async function(r, t) {
+    return await send(r, t);
+  }
+}];
+var e;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn babel_729_terser_class_method_sequence_keeps_escaped_private_binding() {
+    let input = r#"
+function _asyncToGenerator(e) {
+  return function() {
+    var r = this, t = arguments;
+    return new Promise(function(n, o) {
+      var i = e.apply(r, t);
+      function a(e) {}
+      a(void 0);
+    });
+  }
+}
+const descriptors = [{
+  key: "fetchInternal",
+  value: (e = _asyncToGenerator(_regenerator().m(function e(r, t) {
+    return _regenerator().w(function(e) {
+      for (;;) {
+        switch (e.n) {
+          case 0:
+            return e.n = 1, send(r, t);
+          case 1:
+            return e.a(2, e.v);
+        }
+      }
+    }, e);
+  })), function(r, t) {
+    return e.apply(this, arguments);
+  })
+}];
+var e;
+use(e, descriptors);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("e = async function"),
+        "escaped private async function assignment must be preserved, got:\n{output}"
+    );
+    assert!(
+        output.contains("use(e, descriptors)"),
+        "escaped private binding use must remain valid, got:\n{output}"
+    );
+}
+
+#[test]
 fn async_to_generator_expression_var_init() {
     let input = r#"
 function _asyncToGenerator(fn) {
