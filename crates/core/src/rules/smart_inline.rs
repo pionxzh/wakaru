@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, BindingIdent, BlockStmtOrExpr, Callee, ComputedPropName, Decl, Expr, ExprStmt, Ident,
-    ImportSpecifier, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleExportName,
-    ModuleItem, Number, ObjectPat, ObjectPatProp, Pat, PropName, Stmt, VarDecl, VarDeclKind,
-    VarDeclarator,
+    ArrayPat, BindingIdent, BlockStmtOrExpr, Callee, ComputedPropName, Decl, DoWhileStmt, Expr,
+    ExprStmt, ForInStmt, ForOfStmt, ForStmt, Ident, ImportSpecifier, KeyValuePatProp, Lit,
+    MemberExpr, MemberProp, Module, ModuleExportName, ModuleItem, Number, ObjectPat, ObjectPatProp,
+    Pat, PropName, Stmt, VarDecl, VarDeclKind, VarDeclarator, WhileStmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -16,6 +16,7 @@ use super::RewriteLevel;
 pub struct SmartInline {
     level: RewriteLevel,
     use_state_bindings: HashSet<BindingKey>,
+    for_init_bindings: Vec<HashSet<BindingKey>>,
 }
 
 impl SmartInline {
@@ -23,6 +24,7 @@ impl SmartInline {
         Self {
             level,
             use_state_bindings: HashSet::new(),
+            for_init_bindings: Vec::new(),
         }
     }
 }
@@ -65,7 +67,13 @@ impl VisitMut for SmartInline {
             })
             .collect();
 
-        let new_stmts = process_stmts(stmts, self.level, &self.use_state_bindings);
+        let context_for_init_bindings = self.context_for_init_bindings();
+        let new_stmts = process_stmts(
+            stmts,
+            self.level,
+            &self.use_state_bindings,
+            &context_for_init_bindings,
+        );
 
         // Rebuild module body
         let mut new_body = Vec::new();
@@ -94,8 +102,34 @@ impl VisitMut for SmartInline {
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         let taken = std::mem::take(stmts);
-        *stmts = process_stmts(taken, self.level, &self.use_state_bindings);
+        let context_for_init_bindings = self.context_for_init_bindings();
+        *stmts = process_stmts(
+            taken,
+            self.level,
+            &self.use_state_bindings,
+            &context_for_init_bindings,
+        );
         stmts.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_for_stmt(&mut self, stmt: &mut ForStmt) {
+        stmt.init.visit_mut_with(self);
+        stmt.test.visit_mut_with(self);
+        stmt.update.visit_mut_with(self);
+
+        self.for_init_bindings
+            .push(collect_for_stmt_init_bindings(stmt));
+        stmt.body.visit_mut_with(self);
+        self.for_init_bindings.pop();
+    }
+}
+
+impl SmartInline {
+    fn context_for_init_bindings(&self) -> HashSet<BindingKey> {
+        self.for_init_bindings
+            .iter()
+            .flat_map(|bindings| bindings.iter().cloned())
+            .collect()
     }
 }
 
@@ -107,6 +141,7 @@ fn process_stmts(
     stmts: Vec<Stmt>,
     level: RewriteLevel,
     use_state_bindings: &HashSet<BindingKey>,
+    context_for_init_bindings: &HashSet<BindingKey>,
 ) -> Vec<Stmt> {
     // Pass 0: inline builtin global aliases (const x = Math.floor → replace x with Math.floor)
     // Standard+ only; this assumes globals and builtin properties are not patched
@@ -120,7 +155,7 @@ fn process_stmts(
         return stmts;
     }
     // Pass 1: inline single-use const declarations (temp vars)
-    let stmts = inline_temp_vars(stmts);
+    let stmts = inline_temp_vars(stmts, context_for_init_bindings);
     // Pass 1b: recover the React useState tuple pattern without making generic
     // numeric property reads iterable.
     let stmts = fold_use_state_tuple_reads(stmts, use_state_bindings);
@@ -579,11 +614,13 @@ impl VisitMut for GlobalIdentInliner<'_> {
 // Pass 1: Temp variable inlining
 // ============================================================
 
-fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
-    // Collect candidates: `const t = e` where e is a simple expr (Ident or Lit)
+fn inline_temp_vars(
+    stmts: Vec<Stmt>,
+    context_for_init_bindings: &HashSet<BindingKey>,
+) -> Vec<Stmt> {
+    // Collect candidates: `const t = e` where e is a simple expr.
     // Only inline if t is used exactly once in the rest of the block (not in nested functions)
-    let mut candidates: HashMap<BindingKey, Box<Expr>> = HashMap::new();
-    let mut def_indices: HashMap<BindingKey, usize> = HashMap::new();
+    let mut candidates: HashMap<BindingKey, TempCandidate> = HashMap::new();
 
     for (idx, stmt) in stmts.iter().enumerate() {
         if let Stmt::Decl(Decl::Var(var)) = stmt {
@@ -593,8 +630,13 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
                     if let Some(init) = &decl.init {
                         if is_simple_expr(init) {
                             let key = (bi.id.sym.clone(), bi.id.ctxt);
-                            candidates.insert(key.clone(), init.clone());
-                            def_indices.insert(key, idx);
+                            candidates.insert(
+                                key,
+                                TempCandidate {
+                                    init: init.clone(),
+                                    def_idx: idx,
+                                },
+                            );
                         }
                     }
                 }
@@ -606,59 +648,17 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
         return stmts;
     }
 
-    // Single pass: count usages excluding definition stmts, and record use positions.
-    // Track the last stmt index where each candidate was referenced — for
-    // single-use candidates this is the unique use site.
-    let mut usage_counts: HashMap<BindingKey, usize> =
-        candidates.keys().map(|k| (k.clone(), 0)).collect();
-    let mut use_indices: HashMap<BindingKey, usize> = HashMap::new();
+    let analysis = TempUsageAnalysis::collect(&stmts, &candidates, context_for_init_bindings);
 
-    for (idx, stmt) in stmts.iter().enumerate() {
-        if let Stmt::Decl(Decl::Var(var)) = stmt {
-            if var.kind == VarDeclKind::Const && var.decls.len() == 1 {
-                if let Pat::Ident(bi) = &var.decls[0].name {
-                    if candidates.contains_key(&(bi.id.sym.clone(), bi.id.ctxt)) {
-                        continue;
-                    }
-                }
-            }
-        }
-        let mut counter = StmtIdentCounter {
-            counts: &mut usage_counts,
-            use_indices: &mut use_indices,
-            stmt_idx: idx,
-        };
-        stmt.visit_with(&mut counter);
-    }
-
-    // Build set of names to inline (exactly 1 top-level use)
+    // Build set of names to inline (exactly 1 top-level use).
     let to_inline: HashMap<BindingKey, Box<Expr>> = candidates
         .into_iter()
-        .filter(|(key, _)| usage_counts.get(key).copied().unwrap_or(0) == 1)
-        .collect();
-
-    if to_inline.is_empty() {
-        return stmts;
-    }
-
-    // Safety: don't inline `const t = X` if X is assigned (mutated) between the
-    // definition of t and its single use. The temp var captures X's value at
-    // a specific point; inlining would move the read to a later point where X
-    // may have a different value.
-    //
-    // We only check statements BETWEEN def and use, not the entire block.
-    // Mutations before the def or after the use are irrelevant.
-    let to_inline: HashMap<BindingKey, Box<Expr>> = to_inline
-        .into_iter()
-        .filter(|(key, init)| {
-            if let Expr::Ident(src_id) = init.as_ref() {
-                let def_idx = def_indices[key];
-                let use_idx = use_indices[key];
-                is_ident_alias_safe_to_inline_with_positions(src_id, key, &stmts, def_idx, use_idx)
-            } else {
-                true
-            }
+        .filter(|(key, candidate)| {
+            analysis
+                .candidate(key)
+                .is_some_and(|usage| usage.can_inline(candidate, &analysis))
         })
+        .map(|(key, candidate)| (key, candidate.init))
         .collect();
 
     if to_inline.is_empty() {
@@ -686,26 +686,6 @@ fn inline_temp_vars(stmts: Vec<Stmt>) -> Vec<Stmt> {
     }
 
     result
-}
-
-fn is_ident_alias_safe_to_inline_with_positions(
-    src_id: &Ident,
-    _temp_key: &BindingKey,
-    stmts: &[Stmt],
-    def_idx: usize,
-    use_idx: usize,
-) -> bool {
-    let src_key = (src_id.sym.clone(), src_id.ctxt);
-    if is_ident_mutated_in_stmts(&src_key, &stmts[def_idx + 1..]) {
-        return false;
-    }
-    if use_idx <= def_idx + 1 {
-        return true;
-    }
-
-    !stmts[def_idx + 1..use_idx]
-        .iter()
-        .any(stmt_has_top_level_side_effect)
 }
 
 fn stmt_has_top_level_side_effect(stmt: &Stmt) -> bool {
@@ -769,51 +749,12 @@ fn stmt_has_top_level_side_effect(stmt: &Stmt) -> bool {
     finder.found
 }
 
-/// Check if `src_key` is mutated after the definition of `temp_key`.
-/// `temp_key` is the inline candidate (e.g. `u`), `src_key` is its init value (e.g. `e`).
-///
-/// Check if an identifier is assigned (mutated) anywhere in a list of statements.
-fn is_ident_mutated_in_stmts(key: &BindingKey, stmts: &[Stmt]) -> bool {
-    use swc_core::ecma::ast::{AssignTarget, SimpleAssignTarget, UpdateExpr};
-
-    struct MutationFinder {
-        key: BindingKey,
-        found: bool,
+fn member_root_ident(member: &MemberExpr) -> Option<&Ident> {
+    match member.obj.as_ref() {
+        Expr::Ident(id) => Some(id),
+        Expr::Member(member) => member_root_ident(member),
+        _ => None,
     }
-
-    impl Visit for MutationFinder {
-        fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
-            if let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = &assign.left {
-                if (id.sym.clone(), id.ctxt) == self.key {
-                    self.found = true;
-                    return;
-                }
-            }
-            assign.visit_children_with(self);
-        }
-
-        fn visit_update_expr(&mut self, update: &UpdateExpr) {
-            if let Expr::Ident(id) = &*update.arg {
-                if (id.sym.clone(), id.ctxt) == self.key {
-                    self.found = true;
-                    return;
-                }
-            }
-            update.visit_children_with(self);
-        }
-    }
-
-    let mut finder = MutationFinder {
-        key: key.clone(),
-        found: false,
-    };
-    for stmt in stmts {
-        stmt.visit_with(&mut finder);
-        if finder.found {
-            return true;
-        }
-    }
-    false
 }
 
 fn is_simple_expr(expr: &Expr) -> bool {
@@ -823,27 +764,427 @@ fn is_simple_expr(expr: &Expr) -> bool {
     matches!(expr, Expr::Ident(_))
 }
 
-struct StmtIdentCounter<'a> {
-    counts: &'a mut HashMap<BindingKey, usize>,
-    use_indices: &'a mut HashMap<BindingKey, usize>,
-    stmt_idx: usize,
+struct TempCandidate {
+    init: Box<Expr>,
+    def_idx: usize,
 }
 
-impl Visit for StmtIdentCounter<'_> {
-    fn visit_ident(&mut self, id: &Ident) {
-        let key = (id.sym.clone(), id.ctxt);
-        if let Some(c) = self.counts.get_mut(&key) {
-            *c += 1;
-            self.use_indices.insert(key, self.stmt_idx);
+#[derive(Default)]
+struct TempUsageInfo {
+    ref_count: usize,
+    use_idx: Option<usize>,
+    used_above_decl: bool,
+    used_in_loop: bool,
+    used_in_nested_function: bool,
+    source_mutated_after_def: bool,
+}
+
+impl TempUsageInfo {
+    fn can_inline(&self, candidate: &TempCandidate, analysis: &TempUsageAnalysis) -> bool {
+        if self.ref_count != 1
+            || self.used_above_decl
+            || self.used_in_nested_function
+            || self.source_mutated_after_def
+        {
+            return false;
         }
+
+        let Some(use_idx) = self.use_idx else {
+            return false;
+        };
+
+        if let Expr::Ident(src_id) = candidate.init.as_ref() {
+            let src_key = (src_id.sym.clone(), src_id.ctxt);
+            let Some(source) = analysis.source_binding(&src_key) else {
+                return !self.used_in_loop
+                    && !analysis.has_side_effect_between(candidate.def_idx, use_idx);
+            };
+
+            if !source.is_safe_before(candidate.def_idx)
+                || self.used_in_loop && !source.is_loop_stable()
+            {
+                return false;
+            }
+        } else if self.used_in_loop {
+            return false;
+        }
+
+        if let Expr::Member(member) = candidate.init.as_ref() {
+            if let Some(src_id) = member_root_ident(member) {
+                let src_key = (src_id.sym.clone(), src_id.ctxt);
+                if analysis.property_mutated_between(&src_key, candidate.def_idx, use_idx) {
+                    return false;
+                }
+            }
+        }
+
+        !analysis.has_side_effect_between(candidate.def_idx, use_idx)
     }
+}
+
+struct TempUsageAnalysis {
+    usage: HashMap<BindingKey, TempUsageInfo>,
+    source_bindings: HashMap<BindingKey, SourceBindingInfo>,
+    property_mutations: HashMap<BindingKey, Vec<usize>>,
+    side_effect_stmts: Vec<usize>,
+}
+
+impl TempUsageAnalysis {
+    fn collect(
+        stmts: &[Stmt],
+        candidates: &HashMap<BindingKey, TempCandidate>,
+        context_for_init_bindings: &HashSet<BindingKey>,
+    ) -> Self {
+        let mut analysis = Self {
+            usage: candidates
+                .keys()
+                .map(|key| (key.clone(), TempUsageInfo::default()))
+                .collect(),
+            source_bindings: context_for_init_bindings
+                .iter()
+                .map(|key| {
+                    (
+                        key.clone(),
+                        SourceBindingInfo {
+                            declared_in_for_init: true,
+                            ..SourceBindingInfo::default()
+                        },
+                    )
+                })
+                .collect(),
+            property_mutations: HashMap::new(),
+            side_effect_stmts: Vec::new(),
+        };
+
+        let mut source_collector = SourceBindingCollector {
+            source_bindings: &mut analysis.source_bindings,
+            seen_refs: HashSet::new(),
+            stmt_idx: 0,
+            in_for_init: false,
+            var_kind: None,
+        };
+        for (idx, stmt) in stmts.iter().enumerate() {
+            source_collector.stmt_idx = idx;
+            stmt.visit_with(&mut source_collector);
+        }
+
+        for (idx, stmt) in stmts.iter().enumerate() {
+            if stmt_is_temp_definition(stmt, candidates) {
+                continue;
+            }
+
+            if stmt_has_top_level_side_effect(stmt) {
+                analysis.side_effect_stmts.push(idx);
+            }
+
+            let mut collector = TempUsageCollector {
+                analysis: &mut analysis,
+                candidates,
+                stmt_idx: idx,
+                loop_depth: 0,
+            };
+            stmt.visit_with(&mut collector);
+        }
+
+        analysis
+    }
+
+    fn candidate(&self, key: &BindingKey) -> Option<&TempUsageInfo> {
+        self.usage.get(key)
+    }
+
+    fn source_binding(&self, key: &BindingKey) -> Option<&SourceBindingInfo> {
+        self.source_bindings.get(key)
+    }
+
+    fn property_mutated_between(&self, key: &BindingKey, def_idx: usize, use_idx: usize) -> bool {
+        self.property_mutations
+            .get(key)
+            .is_some_and(|indices| indices.iter().any(|idx| def_idx < *idx && *idx < use_idx))
+    }
+
+    fn has_side_effect_between(&self, def_idx: usize, use_idx: usize) -> bool {
+        self.side_effect_stmts
+            .iter()
+            .any(|idx| def_idx < *idx && *idx < use_idx)
+    }
+}
+
+#[derive(Default)]
+struct SourceBindingInfo {
+    decl_idx: Option<usize>,
+    var_kind: Option<VarDeclKind>,
+    declared_in_for_init: bool,
+    used_above_decl: bool,
+}
+
+impl SourceBindingInfo {
+    fn is_safe_before(&self, candidate_def_idx: usize) -> bool {
+        !self.used_above_decl
+            && !self.declared_in_for_init
+            && self
+                .decl_idx
+                .is_none_or(|decl_idx| decl_idx <= candidate_def_idx)
+    }
+
+    fn is_loop_stable(&self) -> bool {
+        self.var_kind == Some(VarDeclKind::Const)
+            && !self.declared_in_for_init
+            && !self.used_above_decl
+    }
+}
+
+struct SourceBindingCollector<'a> {
+    source_bindings: &'a mut HashMap<BindingKey, SourceBindingInfo>,
+    seen_refs: HashSet<BindingKey>,
+    stmt_idx: usize,
+    in_for_init: bool,
+    var_kind: Option<VarDeclKind>,
+}
+
+impl Visit for SourceBindingCollector<'_> {
+    fn visit_ident(&mut self, id: &Ident) {
+        self.seen_refs.insert((id.sym.clone(), id.ctxt));
+    }
+
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        decl.init.visit_with(self);
+
+        let Some(binding) = direct_binding_ident_from_pat(&decl.name) else {
+            return;
+        };
+        let key = (binding.id.sym.clone(), binding.id.ctxt);
+        let info = self.source_bindings.entry(key.clone()).or_default();
+        info.decl_idx.get_or_insert(self.stmt_idx);
+        info.var_kind
+            .get_or_insert(self.var_kind.unwrap_or(VarDeclKind::Var));
+        info.declared_in_for_init |= self.in_for_init;
+        info.used_above_decl |= self.seen_refs.contains(&key);
+    }
+
+    fn visit_var_decl(&mut self, var: &VarDecl) {
+        let previous_var_kind = self.var_kind;
+        self.var_kind = Some(var.kind);
+        var.visit_children_with(self);
+        self.var_kind = previous_var_kind;
+    }
+
+    fn visit_for_stmt(&mut self, stmt: &ForStmt) {
+        let previous_in_for_init = self.in_for_init;
+        self.in_for_init = true;
+        stmt.init.visit_with(self);
+        self.in_for_init = previous_in_for_init;
+
+        stmt.test.visit_with(self);
+        stmt.update.visit_with(self);
+        stmt.body.visit_with(self);
+    }
+
     fn visit_function(&mut self, _: &swc_core::ecma::ast::Function) {}
     fn visit_arrow_expr(&mut self, _: &swc_core::ecma::ast::ArrowExpr) {}
+    fn visit_class(&mut self, _: &swc_core::ecma::ast::Class) {}
     fn visit_member_prop(&mut self, prop: &MemberProp) {
         if let MemberProp::Computed(c) = prop {
             c.visit_with(self);
         }
     }
+    fn visit_prop_name(&mut self, _: &PropName) {}
+}
+
+fn stmt_is_temp_definition(stmt: &Stmt, candidates: &HashMap<BindingKey, TempCandidate>) -> bool {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return false;
+    };
+    if var.kind != VarDeclKind::Const || var.decls.len() != 1 {
+        return false;
+    }
+    let Pat::Ident(bi) = &var.decls[0].name else {
+        return false;
+    };
+    candidates.contains_key(&(bi.id.sym.clone(), bi.id.ctxt))
+}
+
+fn collect_for_stmt_init_bindings(stmt: &ForStmt) -> HashSet<BindingKey> {
+    let mut bindings = HashSet::new();
+    let Some(swc_core::ecma::ast::VarDeclOrExpr::VarDecl(var)) = &stmt.init else {
+        return bindings;
+    };
+
+    for decl in &var.decls {
+        if let Some(binding) = direct_binding_ident_from_pat(&decl.name) {
+            bindings.insert((binding.id.sym.clone(), binding.id.ctxt));
+        }
+    }
+
+    bindings
+}
+
+struct TempUsageCollector<'a> {
+    analysis: &'a mut TempUsageAnalysis,
+    candidates: &'a HashMap<BindingKey, TempCandidate>,
+    stmt_idx: usize,
+    loop_depth: usize,
+}
+
+impl Visit for TempUsageCollector<'_> {
+    fn visit_ident(&mut self, id: &Ident) {
+        let key = (id.sym.clone(), id.ctxt);
+        if let Some(candidate) = self.candidates.get(&key) {
+            if let Some(usage) = self.analysis.usage.get_mut(&key) {
+                usage.ref_count += 1;
+                usage.use_idx = Some(self.stmt_idx);
+                usage.used_above_decl |= self.stmt_idx < candidate.def_idx;
+                usage.used_in_loop |= self.loop_depth > 0;
+            }
+        }
+    }
+
+    fn visit_assign_expr(&mut self, assign: &swc_core::ecma::ast::AssignExpr) {
+        use swc_core::ecma::ast::{AssignTarget, SimpleAssignTarget};
+
+        match &assign.left {
+            AssignTarget::Simple(SimpleAssignTarget::Ident(id)) => {
+                self.record_direct_mutation(&(id.sym.clone(), id.ctxt));
+            }
+            AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
+                self.record_property_mutation(member);
+            }
+            _ => {}
+        }
+
+        assign.visit_children_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
+        match update.arg.as_ref() {
+            Expr::Ident(id) => self.record_direct_mutation(&(id.sym.clone(), id.ctxt)),
+            Expr::Member(member) => self.record_property_mutation(member),
+            _ => {}
+        }
+
+        update.visit_children_with(self);
+    }
+
+    fn visit_unary_expr(&mut self, unary: &swc_core::ecma::ast::UnaryExpr) {
+        if unary.op == swc_core::ecma::ast::UnaryOp::Delete {
+            if let Expr::Member(member) = unary.arg.as_ref() {
+                self.record_property_mutation(member);
+            }
+            return;
+        }
+
+        unary.visit_children_with(self);
+    }
+
+    fn visit_function(&mut self, function: &swc_core::ecma::ast::Function) {
+        let mut collector = NestedTempRefCollector {
+            usage: &mut self.analysis.usage,
+            candidates: self.candidates,
+        };
+        function.visit_children_with(&mut collector);
+    }
+    fn visit_arrow_expr(&mut self, arrow: &swc_core::ecma::ast::ArrowExpr) {
+        let mut collector = NestedTempRefCollector {
+            usage: &mut self.analysis.usage,
+            candidates: self.candidates,
+        };
+        arrow.visit_children_with(&mut collector);
+    }
+    fn visit_class(&mut self, class: &swc_core::ecma::ast::Class) {
+        let mut collector = NestedTempRefCollector {
+            usage: &mut self.analysis.usage,
+            candidates: self.candidates,
+        };
+        class.visit_children_with(&mut collector);
+    }
+    fn visit_for_stmt(&mut self, stmt: &ForStmt) {
+        stmt.init.visit_with(self);
+        self.visit_within_loop(&stmt.test);
+        self.visit_within_loop(&stmt.update);
+        self.visit_within_loop(&stmt.body);
+    }
+    fn visit_for_in_stmt(&mut self, stmt: &ForInStmt) {
+        stmt.left.visit_with(self);
+        stmt.right.visit_with(self);
+        self.visit_within_loop(&stmt.body);
+    }
+    fn visit_for_of_stmt(&mut self, stmt: &ForOfStmt) {
+        stmt.left.visit_with(self);
+        stmt.right.visit_with(self);
+        self.visit_within_loop(&stmt.body);
+    }
+    fn visit_while_stmt(&mut self, stmt: &WhileStmt) {
+        self.visit_within_loop(&stmt.test);
+        self.visit_within_loop(&stmt.body);
+    }
+    fn visit_do_while_stmt(&mut self, stmt: &DoWhileStmt) {
+        self.visit_within_loop(&stmt.body);
+        self.visit_within_loop(&stmt.test);
+    }
+    fn visit_member_prop(&mut self, prop: &MemberProp) {
+        if let MemberProp::Computed(c) = prop {
+            c.visit_with(self);
+        }
+    }
+    fn visit_prop_name(&mut self, _: &PropName) {}
+}
+
+impl TempUsageCollector<'_> {
+    fn record_direct_mutation(&mut self, key: &BindingKey) {
+        for (candidate_key, candidate) in self.candidates {
+            let Expr::Ident(src_id) = candidate.init.as_ref() else {
+                continue;
+            };
+            if (src_id.sym.clone(), src_id.ctxt) == *key && self.stmt_idx > candidate.def_idx {
+                if let Some(usage) = self.analysis.usage.get_mut(candidate_key) {
+                    usage.source_mutated_after_def = true;
+                }
+            }
+        }
+    }
+
+    fn record_property_mutation(&mut self, member: &MemberExpr) {
+        let Some(root) = member_root_ident(member) else {
+            return;
+        };
+        self.analysis
+            .property_mutations
+            .entry((root.sym.clone(), root.ctxt))
+            .or_default()
+            .push(self.stmt_idx);
+    }
+
+    fn visit_within_loop<N>(&mut self, node: &N)
+    where
+        N: VisitWith<Self>,
+    {
+        self.loop_depth += 1;
+        node.visit_with(self);
+        self.loop_depth -= 1;
+    }
+}
+
+struct NestedTempRefCollector<'a> {
+    usage: &'a mut HashMap<BindingKey, TempUsageInfo>,
+    candidates: &'a HashMap<BindingKey, TempCandidate>,
+}
+
+impl Visit for NestedTempRefCollector<'_> {
+    fn visit_ident(&mut self, id: &Ident) {
+        let key = (id.sym.clone(), id.ctxt);
+        if self.candidates.contains_key(&key) {
+            if let Some(usage) = self.usage.get_mut(&key) {
+                usage.used_in_nested_function = true;
+            }
+        }
+    }
+
+    fn visit_member_prop(&mut self, prop: &MemberProp) {
+        if let MemberProp::Computed(c) = prop {
+            c.visit_with(self);
+        }
+    }
+
     fn visit_prop_name(&mut self, _: &PropName) {}
 }
 

@@ -100,6 +100,112 @@ export const fn2 = () => t;
 }
 
 #[test]
+fn no_inline_when_temp_is_captured_by_nested_function() {
+    let input = r#"
+function restoreLater(value) {
+    const target = value;
+    const oldToJSON = target.toJSON;
+    if (oldToJSON) {
+        delete target.toJSON;
+        return () => {
+            target.toJSON = oldToJSON;
+        };
+    }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_use_above_declaration() {
+    // A pre-declaration const read would throw via TDZ at runtime. Inlining the
+    // initializer would erase that observable failure.
+    let input = r#"
+consume(t);
+const t = foo;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_when_source_binding_declared_after_temp() {
+    // The temp read throws before `source` is initialized. Inlining would move
+    // the read to the later use site and erase that TDZ failure.
+    let input = r#"
+const t = source;
+const source = value;
+consume(t);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_when_source_binding_used_above_own_declaration() {
+    let input = r#"
+observe(source);
+const source = value;
+const t = source;
+consume(t);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_when_source_binding_declared_in_for_init() {
+    let input = r#"
+for (let source = value; active; source = next()) {
+    const t = source;
+    consume(t);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn no_inline_ident_alias_used_in_loop_body() {
+    // `t` captures source once before the loop. Replacing it with `source`
+    // would re-read source on every iteration; `source` is not a const binding.
+    let input = r#"
+let source = value;
+const t = source;
+for (let i = 0; i < 3; i++) {
+    consume(t);
+    mutateSource();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn inline_loop_alias_when_source_is_prior_const() {
+    // Re-reading a prior local const binding inside the loop is stable, even
+    // when other calls happen in the loop body.
+    let input = r#"
+const source = value;
+const t = source;
+for (let i = 0; i < 3; i++) {
+    consume(t);
+    observe();
+}
+"#;
+    let expected = r#"
+const source = value;
+for (let i = 0; i < 3; i++) {
+    consume(source);
+    observe();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn group_property_destructuring() {
     // aliases a/b/c are ≤2 chars → SmartRename converts them to shorthand x/y/z
     let input = r#"
