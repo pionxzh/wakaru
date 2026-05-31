@@ -205,6 +205,38 @@ const result = (0, eval)("this");
 }
 
 #[test]
+fn minimal_preserves_jsx_runtime_calls() {
+    let input = r#"
+import { jsx as _jsx } from "react/jsx-runtime";
+export function view() {
+  return _jsx("div", {
+    children: "hi"
+  });
+}
+"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Minimal,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert!(
+        output.contains("jsx(\"div\""),
+        "minimal output should keep executable JSX runtime calls: {output}"
+    );
+    assert!(
+        !output.contains("<div"),
+        "minimal output should not emit raw JSX syntax: {output}"
+    );
+}
+
+#[test]
 fn standard_simplifies_indirect_calls() {
     let input = r#"
 const ref = (0, s.useRef)(0);
@@ -603,6 +635,25 @@ fn minimal_disables_argument_spread_recovery() {
 }
 
 #[test]
+fn minimal_disables_array_concat_spread_recovery() {
+    let input = r#"const x = [a].concat(b);"#;
+
+    let output = decompile(
+        input,
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Minimal,
+            dead_code_elimination: false,
+            ..Default::default()
+        },
+    )
+    .expect("decompile should succeed")
+    .code;
+
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn standard_keeps_argument_spread_recovery() {
     let input = r#"fn.apply(undefined, args);"#;
 
@@ -623,7 +674,7 @@ fn standard_keeps_argument_spread_recovery() {
 }
 
 #[test]
-fn minimal_disables_array_concat_spread_recovery() {
+fn minimal_disables_array_concat_spread_recovery_for_call_args() {
     let input = r#"const x = [this].concat(args);"#;
 
     let output = decompile(

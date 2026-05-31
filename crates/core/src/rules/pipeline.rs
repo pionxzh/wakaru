@@ -510,7 +510,7 @@ define_rule_registry! {
     ("UnWebpackInterop3", Cleanup, run_un_webpack_interop, always_enabled, requires: [
         "UnEsm"
     ]),
-    ("UnDestructuring", Cleanup, run_un_destructuring, always_enabled, requires: [
+    ("UnDestructuring", Cleanup, run_un_destructuring, standard_or_above, requires: [
         "UnImportRename",
         "UnExportRename"
     ]),
@@ -521,7 +521,7 @@ define_rule_registry! {
     ("SmartInline", Cleanup, run_smart_inline, always_enabled, requires: [
         "UnDestructuring"
     ]),
-    ("SmartRename", Cleanup, run_smart_rename, always_enabled, requires: [
+    ("SmartRename", Cleanup, run_smart_rename, standard_or_above, requires: [
         "SmartInline"
     ]),
     // SmartRename can make destructured aliases readable enough to fold into
