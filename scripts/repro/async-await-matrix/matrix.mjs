@@ -36,14 +36,98 @@ const snippets = [
     expected: ["async function load_user(app_id)", "try", "return await fetch_user(app_id)", "catch"],
   },
   {
+    name: "async-try-finally-await",
+    source:
+      "async function save_record(record) {\n  const lock = await acquire_lock(record.id);\n  try {\n    const payload = await prepare_record(record);\n    return await commit_record(payload);\n  } finally {\n    await lock.release();\n  }\n}\n",
+    expected: [
+      "async function save_record(record)",
+      "await acquire_lock(record.id)",
+      "try",
+      "await prepare_record(record)",
+      "return await commit_record(payload)",
+      "finally",
+      "await lock.release()",
+    ],
+  },
+  {
+    name: "async-loop-try-catch",
+    source:
+      "async function collect_enabled(items) {\n  const output = [];\n  for (let index = 0; index < items.length; index++) {\n    const item = items[index];\n    if (!item.enabled) {\n      continue;\n    }\n    try {\n      output.push(await fetch_item(item.id));\n    } catch (error) {\n      output.push(await recover_item(item, error));\n    }\n  }\n  return output;\n}\n",
+    expected: [
+      "async function collect_enabled(items)",
+      "for (let index = 0",
+      "const item = items[index]",
+      "continue",
+      "try",
+      "await fetch_item(item.id)",
+      "catch",
+      "await recover_item(item, error)",
+      "return output",
+    ],
+  },
+  {
+    name: "async-destructuring-default-await",
+    source:
+      "async function normalize_user(input) {\n  const source = input == null ? await load_user() : input;\n  const { id, profile: { name } = {}, tags: [primary, , backup] = [] } = source;\n  const resolved_backup = backup == null ? await load_backup(id) : backup;\n  const meta = await load_meta(id);\n  return { id, name, primary, backup: resolved_backup, meta };\n}\n",
+    expected: [
+      "async function normalize_user(input)",
+      "const source = input == null ? await load_user() : input",
+      "profile: { name }",
+      "tags: [primary, , backup]",
+      "await load_backup(id)",
+      "await load_meta(id)",
+      "return {",
+      "backup: resolved_backup",
+    ],
+  },
+  {
     name: "async-arrow",
     source: "const load_user = async (app_id) => await fetch_user(app_id);\nuse(load_user);\n",
     expected: ["async (app_id)", "await fetch_user(app_id)"],
   },
   {
+    name: "async-arrow-nested-awaits",
+    source:
+      "const run_pipeline = async (source) => {\n  const steps = await load_steps(source);\n  return steps.map(async (step) => await step.run(source));\n};\nuse(run_pipeline);\n",
+    expected: [
+      "const run_pipeline = async (source)",
+      "await load_steps(source)",
+      "steps.map(async (step)",
+      "await step.run(source)",
+    ],
+  },
+  {
+    name: "async-arrow-object-rest",
+    source:
+      "const load_user = async (config) => {\n  const source = config == null ? await load_config() : config;\n  const { id, token, ...options } = source;\n  const session = await open_session(token);\n  return await fetch_user(id, { ...options, session });\n};\nuse(load_user);\n",
+    expected: [
+      "const load_user = async (config)",
+      "{ id, token, ...options }",
+      "const source = config == null ? await load_config() : config",
+      "await load_config()",
+      "await open_session(token)",
+      "return await fetch_user(id, {",
+      "...options",
+    ],
+  },
+  {
     name: "generator-basic",
     source: "function* read_items(items) {\n  yield first_item(items);\n  yield second_item(items);\n}\n",
     expected: ["function* read_items(items)", "yield first_item(items)", "yield second_item(items)"],
+  },
+  {
+    name: "generator-try-finally-delegate",
+    source:
+      "function* read_all(source) {\n  try {\n    yield start_read(source);\n    yield* read_chunks(source);\n    return yield finish_read(source);\n  } finally {\n    yield close_reader(source);\n  }\n}\n",
+    expected: [
+      "function* read_all(source)",
+      "try",
+      "yield start_read(source)",
+      "yield* read_chunks(source)",
+      "return yield finish_read(source)",
+      "finally",
+      "yield close_reader(source)",
+    ],
   },
 ];
 
