@@ -12,8 +12,8 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::transpiler_helper_utils::{
-    remove_helpers_without_remaining_refs, tslib_member_helper_kind, BindingKey,
-    LocalHelperContext, TranspilerHelperKind,
+    helpers_with_remaining_refs, remove_helpers_without_remaining_refs, tslib_member_helper_kind,
+    BindingKey, LocalHelperContext, TranspilerHelperKind,
 };
 
 use crate::utils::paren::strip_parens;
@@ -110,10 +110,6 @@ fn run_un_object_rest(
         return;
     }
 
-    let mut helper_dependencies =
-        local_helpers.helpers_of_kind(TranspilerHelperKind::HelperDependency);
-    helper_dependencies.extend(local_helpers.helpers_of_kind(TranspilerHelperKind::DefineProperty));
-
     // Process inner scopes first (function bodies, etc.) with helpers available
     let mut processor = ObjectRestProcessor {
         named_helpers: &named_helpers,
@@ -182,12 +178,23 @@ fn run_un_object_rest(
 
     // Remove named helper declarations if all call sites were replaced
     if !named_helpers.is_empty() {
-        let removable_helpers = named_helpers
+        let remaining_roots = helpers_with_remaining_refs(module, &named_helpers);
+        let removable_roots = named_helpers
             .iter()
-            .chain(helper_dependencies.iter())
+            .filter(|(key, _)| !remaining_roots.contains(*key))
             .map(|(key, kind)| (key.clone(), *kind))
             .collect::<HashMap<_, _>>();
-        remove_helpers_without_remaining_refs(module, removable_helpers);
+        if !removable_roots.is_empty() {
+            let mut helper_dependencies =
+                local_helpers.helpers_of_kind(TranspilerHelperKind::HelperDependency);
+            helper_dependencies
+                .extend(local_helpers.helpers_of_kind(TranspilerHelperKind::DefineProperty));
+            let removable_helpers = removable_roots
+                .into_iter()
+                .chain(helper_dependencies)
+                .collect::<HashMap<_, _>>();
+            remove_helpers_without_remaining_refs(module, removable_helpers);
+        }
     }
 }
 
