@@ -69,9 +69,11 @@ const pathPresets = {
     "test/language/expressions/async-arrow-function",
     "test/language/expressions/async-function",
     "test/language/expressions/async-generator",
+    "test/language/expressions/await",
     "test/language/expressions/generators",
     "test/language/statements/async-function",
     "test/language/statements/async-generator",
+    "test/language/statements/for-await-of",
     "test/language/statements/generators",
   ],
   scope: [

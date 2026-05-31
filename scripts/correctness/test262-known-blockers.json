@@ -102,6 +102,15 @@
       }
     },
     {
+      "reason": "swc-parse-yield-function-name",
+      "status": "unsupported",
+      "phase": "wakaru-parse",
+      "when": {
+        "pathIncludes": ["yield-as-generator-declaration-binding-identifier"],
+        "errorIncludes": ["TS1109"]
+      }
+    },
+    {
       "reason": "transform-reject-top-level-await",
       "status": "rejected",
       "phase": "transform",

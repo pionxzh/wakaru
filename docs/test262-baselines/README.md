@@ -43,6 +43,9 @@ reserved-words
 modules
 ```
 
+The `async-generators` slice also includes standalone `await` expression tests
+and `for-await-of` statement tests.
+
 `default.md` means the default Test262 slice, not raw/no-transform input. The
 `terser-light` producer uses Terser as a parser/printer with no compression or
 mangling. Use `--pipeline none` or `--transform none` when a no-producer
