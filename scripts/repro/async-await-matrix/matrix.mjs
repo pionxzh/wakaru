@@ -111,6 +111,13 @@ const snippets = [
     ],
   },
   {
+    name: "class-async-method",
+    source:
+      "class Client {\n  async fetchInternal(request, init) {\n    return await send(request, init);\n  }\n}\nuse(Client);\n",
+    expected: ["fetchInternal", "async", "await send"],
+    extraTransformers: withTerserVariants("babel-7.29-preset-env-ie11", runBabelPresetEnvIe),
+  },
+  {
     name: "generator-basic",
     source: "function* read_items(items) {\n  yield first_item(items);\n  yield second_item(items);\n}\n",
     expected: ["function* read_items(items)", "yield first_item(items)", "yield second_item(items)"],
@@ -160,45 +167,14 @@ const babelProfiles = [
 
 const transformers = [
   ...babelProfiles.flatMap((profile) =>
-    ["async-generator", "regenerator"].flatMap((mode) => [
-      {
-        name: `${profile.name}-${mode}`,
-        run: (source) => runBabel(source, profile, mode),
-      },
-      {
-        name: `${profile.name}-${mode}-terser`,
-        run: (source) => runTerser(runBabel(source, profile, mode)),
-      },
-    ]),
+    ["async-generator", "regenerator"].flatMap((mode) =>
+      withTerserVariants(`${profile.name}-${mode}`, (source) => runBabel(source, profile, mode)),
+    ),
   ),
-  {
-    name: "tsc-es5",
-    run: runTsc,
-  },
-  {
-    name: "tsc-es5-terser",
-    run: (source) => runTerser(runTsc(source)),
-  },
-  {
-    name: "swc-es5",
-    run: runSwc,
-  },
-  {
-    name: "swc-es5-terser",
-    run: (source) => runTerser(runSwc(source)),
-  },
-  {
-    name: "esbuild-es2015",
-    run: runEsbuild,
-  },
-  {
-    name: "esbuild-es2015-terser",
-    run: (source) => runTerser(runEsbuild(source)),
-  },
-  {
-    name: "terser-5",
-    run: runTerser,
-  },
+  ...withTerserVariants("tsc-es5", runTsc),
+  ...withTerserVariants("swc-es5", runSwc),
+  ...withTerserVariants("esbuild-es2015", runEsbuild),
+  ...withTerserVariants("source", (source) => source, { includeRaw: false }),
 ];
 
 try {
@@ -252,7 +228,7 @@ function collectShapes(snippet) {
   const groups = new Map();
   const shapes = [];
 
-  for (const transformer of transformers) {
+  for (const transformer of [...transformers, ...(snippet.extraTransformers ?? [])]) {
     let lowered;
     try {
       lowered = transformer.run(snippet.source);
@@ -282,6 +258,27 @@ function collectShapes(snippet) {
   }
 
   return shapes;
+}
+
+function withTerserVariants(name, runRaw, options = {}) {
+  const variants = [
+    {
+      name,
+      run: runRaw,
+    },
+    {
+      name: `${name}-terser-compress`,
+      run: (source) => runTerser(runRaw(source)),
+    },
+    {
+      name: `${name}-terser-compress-mangle`,
+      run: (source) => runTerserMangle(runRaw(source)),
+    },
+  ];
+  if (options.includeRaw === false) {
+    return variants.slice(1);
+  }
+  return variants;
 }
 
 function runShape(snippet, shape) {
@@ -357,6 +354,36 @@ process.stdout.write(result.code + "\\n");
     cwd: toolDir,
     env: { MATRIX_BABEL_MODE: mode },
   });
+}
+
+function runBabelPresetEnvIe(source) {
+  const toolDir = ensureNodeTool("babel-7.29-preset-env-ie11", [
+    "@babel/core@7.29.7",
+    "@babel/preset-env@7.29.7",
+  ]);
+  const helper = join(toolDir, "babel-preset-env-transform.mjs");
+  writeFileSync(
+    helper,
+    `
+import fs from "node:fs";
+
+const babelModule = await import("@babel/core");
+const presetEnvModule = await import("@babel/preset-env");
+const babel = babelModule.default ?? babelModule;
+const presetEnv = presetEnvModule.default ?? presetEnvModule;
+const source = fs.readFileSync(0, "utf8");
+const result = babel.transformSync(source, {
+  filename: "input.js",
+  babelrc: false,
+  configFile: false,
+  comments: false,
+  compact: false,
+  presets: [[presetEnv, { targets: { ie: "11" } }]],
+});
+process.stdout.write(result.code + "\\n");
+`,
+  );
+  return runChecked("node", [helper], { input: source, cwd: toolDir });
 }
 
 function runTsc(source) {
@@ -436,6 +463,27 @@ const result = await minify(source, {
   module: true,
   compress: { defaults: true, unused: false },
   mangle: false,
+  format: { comments: false },
+});
+process.stdout.write(result.code + "\\n");
+`,
+  );
+  return runChecked("node", [helper], { input: source, cwd: toolDir });
+}
+
+function runTerserMangle(source) {
+  const toolDir = ensureNodeTool("terser", ["terser@5"]);
+  const helper = join(toolDir, "terser-mangle-transform.mjs");
+  writeFileSync(
+    helper,
+    `
+import fs from "node:fs";
+import { minify } from "terser";
+const source = fs.readFileSync(0, "utf8");
+const result = await minify(source, {
+  module: true,
+  compress: { defaults: true, unused: false },
+  mangle: true,
   format: { comments: false },
 });
 process.stdout.write(result.code + "\\n");

@@ -5,9 +5,20 @@ control flow, destructuring/default, object-rest, nested async callback, and
 generator delegation snippets through Babel, TypeScript, SWC, and esbuild, then
 runs wakaru over each generated shape.
 
-The matrix also includes standalone Terser rows and Babel/TypeScript/SWC/esbuild
-output minified through Terser, because some recoverable shapes only appear
-after compiler output is minified.
+Each Babel/TypeScript/SWC/esbuild output is checked in three Terser variants:
+
+- raw compiler output
+- Terser compression without name mangling
+- Terser compression with name mangling
+
+The matrix also includes standalone source-through-Terser rows for both Terser
+variants, because some recoverable shapes only appear after compiler or source
+output is minified.
+
+The `class-async-method` snippet also includes a dedicated Babel preset-env IE11
+profile. Its Terser compression+mangle variant reproduces Babel's lazy async
+class-method trampoline after minification, where the method descriptor value
+becomes a comma-sequence assignment plus `.apply(this, arguments)` wrapper.
 
 Babel is run in two modes:
 
