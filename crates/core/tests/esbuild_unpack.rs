@@ -131,6 +131,50 @@ fn esbuild_detects_minified_cjs_helper() {
 }
 
 #[test]
+fn commonjs_factory_emits_callable_module_exports_wrapper() {
+    let bundle = r#"
+var m = (q, K) => () => (K || q((K = { exports: {} }).exports, K), K.exports);
+var f1 = m((exports, module) => { module.exports = function() { return 1; }; });
+var f2 = m((exports, module) => { module.exports = 2; });
+var f3 = m((exports) => { exports.value = 3; });
+var f4 = m((exports, module) => { module.exports = 4; });
+var f5 = m((exports, module) => { module.exports = 5; });
+console.log(f1()());
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let f1_code = &raw_pairs.iter().find(|(n, _)| n == "f1.js").unwrap().1;
+    assert!(
+        f1_code.contains("export function f1()"),
+        "CommonJS factory should emit a callable export:\n{f1_code}"
+    );
+    assert!(
+        f1_code.contains("var __wakaru_f1_cache")
+            && f1_code.contains("if (__wakaru_f1_cache)")
+            && f1_code.contains("return __wakaru_f1_cache.exports")
+            && f1_code.contains("var exports = {}")
+            && f1_code.contains("var module =")
+            && f1_code.contains("exports: exports")
+            && f1_code.contains("__wakaru_f1_cache = module")
+            && f1_code.contains("return module.exports"),
+        "CommonJS factory should cache module state before running the body:\n{f1_code}"
+    );
+
+    let f3_code = &raw_pairs.iter().find(|(n, _)| n == "f3.js").unwrap().1;
+    assert!(
+        f3_code.contains("export function f3()")
+            && f3_code.contains("var __wakaru_f3_cache")
+            && f3_code.contains("if (__wakaru_f3_cache)")
+            && f3_code.contains("return __wakaru_f3_cache")
+            && f3_code.contains("var exports = {}")
+            && f3_code.contains("__wakaru_f3_cache = exports")
+            && f3_code.contains("exports.value = 3")
+            && f3_code.contains("return exports"),
+        "one-param CommonJS factory should cache and return the exports object:\n{f3_code}"
+    );
+}
+
+#[test]
 fn esbuild_factory_code_is_non_empty() {
     let bundle = make_bundle("(q,K)=>()=>(q&&(K=q(q=0)),K)", "y");
     let pairs = expect_unpack(&bundle, "bundle.js");
@@ -275,6 +319,167 @@ console.log(Root);
         !app.1.contains("Y(require(") && !app.1.contains(".default.Fragment"),
         "esbuild __toESM wrapper should not survive decompilation:\n{}",
         app.1
+    );
+}
+
+#[test]
+fn scope_module_imports_bindings_referenced_only_by_export_getters() {
+    let bundle = r#"
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { source: () => source });
+var source = 42;
+var ns_b = {};
+__export(ns_b, { reexported: () => source });
+function local() { return "local"; }
+var ns_c = {};
+__export(ns_c, { tail: () => tail });
+var tail = "tail";
+export { ns_a, ns_b, ns_c };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
+    assert!(
+        ns_a_code.contains("export") && ns_a_code.contains("source"),
+        "ns_a.js should contain and export source:\n{ns_a_code}"
+    );
+
+    let ns_b_code = &raw_pairs.iter().find(|(n, _)| n == "ns_b.js").unwrap().1;
+    assert!(
+        ns_b_code.contains("import { source }") && ns_b_code.contains("./ns_a.js"),
+        "ns_b.js should import source because its export getter references it:\n{ns_b_code}"
+    );
+    assert!(
+        ns_b_code.contains("export { source"),
+        "ns_b.js should re-export the imported source binding without dangling exports:\n{ns_b_code}"
+    );
+}
+
+#[test]
+fn scope_module_exports_namespace_object_when_referenced_by_another_module() {
+    let bundle = r#"
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { renamed: () => value });
+function value() { return 1; }
+var ns_b = {};
+__export(ns_b, { read: () => read });
+function read() { return ns_a.renamed(); }
+export { ns_a, ns_b };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
+    assert!(
+        ns_a_code.contains("export var ns_a = {}")
+            && ns_a_code.contains("\"renamed\"")
+            && ns_a_code.contains("get: ()=>value"),
+        "provider module should export its namespace object with getters:\n{ns_a_code}"
+    );
+
+    let ns_b_code = &raw_pairs.iter().find(|(n, _)| n == "ns_b.js").unwrap().1;
+    assert!(
+        ns_b_code.contains("import { ns_a }") && ns_b_code.contains("./ns_a.js"),
+        "consumer module should import the namespace from the provider module, not entry:\n{ns_b_code}"
+    );
+}
+
+#[test]
+fn restored_entry_namespace_does_not_restore_late_export_helper() {
+    let bundle = r#"
+var ns_a = {};
+T8(ns_a, { value: () => value });
+function value() { return 1; }
+var { defineProperty } = Object;
+function KK5(target, name, getter) {
+    defineProperty(target, name, { enumerable: true, get: getter });
+}
+var T8 = (target, all) => {
+    for (var name in all)
+        KK5(target, name, all[name]);
+};
+export { ns_a };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let entry_code = &raw_pairs.iter().find(|(n, _)| n == "entry.js").unwrap().1;
+    assert!(
+        entry_code.contains("Object.defineProperty(ns_a")
+            && entry_code.contains("\"value\"")
+            && entry_code.contains("get: ()=>value"),
+        "entry namespace should be restored with direct getters:\n{entry_code}"
+    );
+    assert!(
+        !entry_code.contains("T8(ns_a")
+            && !entry_code.contains("var T8")
+            && !entry_code.contains("function KK5")
+            && !entry_code.contains("defineProperty } = Object"),
+        "entry should not keep the late export helper prelude:\n{entry_code}"
+    );
+}
+
+#[test]
+fn scope_module_imports_external_bindings_used_in_body() {
+    let bundle = r#"
+import { randomUUID as uid } from "crypto";
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { make: () => make });
+function make() { return uid(); }
+export { ns_a };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
+    assert!(
+        ns_a_code.contains("import { randomUUID as uid } from \"crypto\""),
+        "scope module should preserve external imports referenced by its body:\n{ns_a_code}"
+    );
+    assert!(
+        ns_a_code.contains("return uid()"),
+        "scope module should keep the imported binding reference:\n{ns_a_code}"
+    );
+}
+
+#[test]
+fn scope_module_does_not_duplicate_external_import_already_in_body() {
+    let bundle = r#"
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { make: () => make });
+import { randomUUID as uid } from "crypto";
+function make() { return uid(); }
+var ns_b = {};
+__export(ns_b, { value: () => value });
+var value = 1;
+export { ns_a, ns_b };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let ns_a_code = &raw_pairs.iter().find(|(n, _)| n == "ns_a.js").unwrap().1;
+    let import_count = ns_a_code
+        .matches("import { randomUUID as uid } from \"crypto\"")
+        .count();
+    assert_eq!(
+        import_count, 1,
+        "scope module should not duplicate package imports already present in its body:\n{ns_a_code}"
     );
 }
 
@@ -770,9 +975,8 @@ export { ns_a };
 }
 
 /// Factory modules that reference a scope-hoisted namespace object (e.g.
-/// `ns_a.greet()`) should import it from entry.js, where the namespace
-/// declaration and __export call are restored.  The scope-hoisted module
-/// itself should NOT export the undeclared namespace binding.
+/// `ns_a.greet()`) should import it from the scope module that owns the
+/// namespace getters, avoiding an entry.js cycle.
 #[test]
 fn factory_referencing_namespace_imports_from_entry() {
     let bundle = r#"
@@ -794,31 +998,32 @@ export { ns_a };
 "#;
     let raw_pairs = expect_unpack_raw(bundle);
 
-    // f5 should import ns_a from entry.js.
+    // f5 should import ns_a from the restored namespace module.
     let f5_code = &raw_pairs.iter().find(|(n, _)| n == "f5.js").unwrap().1;
     assert!(
         f5_code.contains("import") && f5_code.contains("ns_a"),
         "f5.js should import ns_a:\n{f5_code}"
     );
     assert!(
-        f5_code.contains("entry.js"),
-        "f5.js should import ns_a from entry.js:\n{f5_code}"
+        f5_code.contains("./ns_a.js"),
+        "f5.js should import ns_a from the namespace module:\n{f5_code}"
     );
 
-    // The scope-hoisted module should NOT export `ns_a` (it doesn't declare it).
+    // The scope-hoisted module should export the synthesized namespace object.
     let ns_a_module = &raw_pairs
         .iter()
         .find(|(_, code)| code.contains("function greet"))
         .unwrap()
         .1;
     assert!(
-        !ns_a_module.contains("export { ns_a") && !ns_a_module.contains("export { ns_a,"),
-        "scope module should NOT export undeclared ns_a:\n{ns_a_module}"
+        ns_a_module.contains("export var ns_a") && ns_a_module.contains("Object.defineProperty"),
+        "scope module should export synthesized ns_a namespace:\n{ns_a_module}"
     );
 }
 
 /// When the bundle has no ESM `export { ns_a }` but a factory references the
-/// namespace, entry.js must still export it so the factory import resolves.
+/// namespace, the owning scope module must still export it so the factory
+/// import resolves.
 #[test]
 fn factory_namespace_ref_without_entry_export_adds_export() {
     let bundle = r#"
@@ -842,20 +1047,23 @@ var value = 99;
 "#;
     let raw_pairs = expect_unpack_raw(bundle);
 
-    // f5 should import ns_a from entry.js.
+    // f5 should import ns_a from the restored namespace module.
     let f5_code = &raw_pairs.iter().find(|(n, _)| n == "f5.js").unwrap().1;
     assert!(
-        f5_code.contains("import") && f5_code.contains("ns_a") && f5_code.contains("entry.js"),
-        "f5.js should import ns_a from entry.js:\n{f5_code}"
+        f5_code.contains("import") && f5_code.contains("ns_a") && f5_code.contains("./ns_a.js"),
+        "f5.js should import ns_a from the namespace module:\n{f5_code}"
     );
 
-    // entry.js must have an ESM `export { ns_a }` even though the bundle
-    // had no such declaration.  Check for the actual export statement, not
-    // the `__export` helper function name.
-    let entry_code = &raw_pairs.iter().find(|(n, _)| n == "entry.js").unwrap().1;
+    // The scope module must synthesize an ESM namespace export even though
+    // the bundle had no direct `export { ns_a }` declaration.
+    let ns_a_module = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "ns_a.js")
+        .expect("ns_a module should exist")
+        .1;
     assert!(
-        entry_code.contains("export { ns_a"),
-        "entry.js should have `export {{ ns_a }}` for the factory import:\n{entry_code}"
+        ns_a_module.contains("export var ns_a") && ns_a_module.contains("Object.defineProperty"),
+        "ns_a.js should synthesize a namespace export for the factory import:\n{ns_a_module}"
     );
 }
 
@@ -992,9 +1200,9 @@ export { ns_a };
 }
 
 /// Init factory that reads a binding from another scope module must synthesize
-/// an import in the target module after merging.
+/// an import in the standalone lazy factory module.
 #[test]
-fn merged_init_factory_imports_cross_module_reads() {
+fn standalone_init_factory_imports_cross_module_reads() {
     let bundle = r#"
 var y = (q,K) => () => (q && (K = q(q = 0)), K);
 var f1 = y(() => { v1 = 1; });
@@ -1018,26 +1226,112 @@ export { a_exports, b_exports };
 "#;
     let raw_pairs = expect_unpack_raw(bundle);
 
-    let a_code = &raw_pairs
+    let init_code = &raw_pairs
         .iter()
-        .find(|(n, _)| n.starts_with("a_exports"))
-        .expect("a_exports module should exist")
+        .find(|(n, _)| n == "init_a.js")
+        .expect("init_a module should exist")
         .1;
-    // The merged init body uses `source` from b_exports — must have an import.
+    // The init body uses `source` from b_exports — must have an import.
     assert!(
-        a_code.contains("import") && a_code.contains("source"),
-        "a_exports should import `source` from b_exports:\n{a_code}"
+        init_code.contains("import { source } from \"./b_exports.js\""),
+        "init_a should import `source` from b_exports:\n{init_code}"
     );
     assert!(
-        a_code.contains("target = source + 1"),
-        "a_exports should contain the merged assignment:\n{a_code}"
+        init_code.contains("export function init_a")
+            && init_code.contains("target = source + 1")
+            && init_code.contains("__wakaru_init_a_initialized")
+            && init_code.contains("export { target"),
+        "init_a should contain the guarded lazy body and written export:\n{init_code}"
+    );
+}
+
+/// Split init factories remain callable guarded functions so other modules can
+/// trigger the original lazy initializer without running the body at ESM
+/// evaluation time.
+#[test]
+fn standalone_init_factory_preserves_callable_symbol() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var init_target = y(() => { target = 1; });
+var init_other = y(() => { init_target(); other = target + 1; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var mod_exports = {};
+__export(mod_exports, { target: () => target, other: () => other });
+var target, other;
+export { mod_exports };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let target_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "init_target.js")
+        .expect("init_target module should exist")
+        .1;
+    assert!(
+        target_code.contains("export function init_target"),
+        "init_target should remain callable/exported:\n{target_code}"
+    );
+    assert!(
+        target_code.contains("__wakaru_init_target_initialized")
+            && target_code.contains("target = 1")
+            && target_code.contains("export { target"),
+        "init_target should remain guarded and export written state:\n{target_code}"
+    );
+
+    let other_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "init_other.js")
+        .expect("init_other module should exist")
+        .1;
+    assert!(
+        other_code.contains("import { init_target, target } from \"./init_target.js\"")
+            && other_code.contains("init_target()")
+            && other_code.contains("other = target + 1"),
+        "init_other should import and call init_target:\n{other_code}"
+    );
+}
+
+#[test]
+fn standalone_init_factory_preserves_lazy_body() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var init_lazy = y(() => { value = compute(); });
+function compute() { return 1; }
+init_lazy();
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let lazy_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "init_lazy.js")
+        .expect("init_lazy module should exist")
+        .1;
+    assert!(
+        lazy_code.contains("var __wakaru_init_lazy_initialized = false")
+            && lazy_code.contains("export function init_lazy")
+            && lazy_code.contains("value = compute()"),
+        "standalone init factory should preserve a guarded lazy body:\n{lazy_code}"
     );
 }
 
 /// Update expressions (count++) that write to a scope-hoisted binding should
-/// be merged into the target module, not emitted standalone with an import.
+/// stay in a standalone lazy factory and export the state they mutate.
 #[test]
-fn update_expr_write_merges_into_target_module() {
+fn update_expr_write_stays_in_standalone_factory() {
     let bundle = r#"
 var y = (q,K) => () => (q && (K = q(q = 0)), K);
 var f1 = y(() => { v1 = 1; });
@@ -1058,20 +1352,203 @@ export { counter_exports };
 "#;
     let raw_pairs = expect_unpack_raw(bundle);
 
-    // init_counter should NOT exist as a separate module.
-    assert!(
-        !raw_pairs.iter().any(|(n, _)| n.contains("init_counter")),
-        "init_counter should be merged, not standalone"
-    );
-
     let counter_code = &raw_pairs
         .iter()
-        .find(|(n, _)| n.starts_with("counter_exports"))
-        .expect("counter_exports module should exist")
+        .find(|(n, _)| n == "init_counter.js")
+        .expect("init_counter module should exist")
         .1;
     assert!(
-        counter_code.contains("count++"),
-        "counter_exports should contain the merged count++:\n{counter_code}"
+        counter_code.contains("count++")
+            && counter_code.contains("export var count = 0")
+            && counter_code.contains("export function init_counter"),
+        "init_counter should contain the guarded count++ and exported state:\n{counter_code}"
+    );
+}
+
+/// Standalone lazy factories own the top-level state they initialize.  If the
+/// state stays in entry.js, the emitted factory body assigns an undeclared ESM
+/// binding and Node throws before the bundle can run.
+#[test]
+fn standalone_factory_exports_written_state_for_later_factories() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var a, b;
+var init_a = y(() => { a = 1; });
+var init_b = y(() => { init_a(); b = a + 1; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+init_b();
+console.log(b);
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let init_a_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "init_a.js")
+        .expect("init_a module should exist")
+        .1;
+    assert!(
+        init_a_code.contains("var a") && init_a_code.contains("export { a"),
+        "init_a should export its written state:\n{init_a_code}"
+    );
+
+    let init_b_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "init_b.js")
+        .expect("init_b module should exist")
+        .1;
+    assert!(
+        init_b_code.contains("import { a, init_a }") && init_b_code.contains("./init_a.js"),
+        "init_b should import init_a and state a from init_a:\n{init_b_code}"
+    );
+    assert!(
+        init_b_code.contains("var b") && init_b_code.contains("export { b"),
+        "init_b should export its written state:\n{init_b_code}"
+    );
+}
+
+#[test]
+fn standalone_factory_exports_destructuring_assignment_writes() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var source = { value: 1 };
+var value;
+var init_value = y(() => { ({ value } = source); });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+init_value();
+console.log(value);
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let init_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "init_value.js")
+        .expect("init_value module should exist")
+        .1;
+    assert!(
+        init_code.contains("export var value") || init_code.contains("value }"),
+        "init_value should export destructuring assignment writes:\n{init_code}"
+    );
+}
+
+/// Copied support declarations can have their own top-level dependencies. The
+/// ownership pass must close over those references so copied functions don't
+/// read undeclared constants at runtime.
+#[test]
+fn standalone_factory_closes_over_support_declaration_refs() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var FLAG = "ok";
+function helper() { return FLAG; }
+var value;
+var init_value = y(() => { value = helper; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+init_value();
+console.log(value());
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let init_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "init_value.js")
+        .expect("init_value module should exist")
+        .1;
+    assert!(
+        init_code.contains("function helper") && init_code.contains("FLAG = \"ok\""),
+        "init_value should include helper and its referenced constant:\n{init_code}"
+    );
+}
+
+#[test]
+fn standalone_factory_keeps_support_declaration_siblings() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var cache_a, cache_b, helper = (value) => {
+    var cache = value ? cache_a ??= new WeakMap : cache_b ??= new WeakMap;
+    return cache.get(value);
+};
+var value;
+var init_value = y(() => { value = helper({}); });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+init_value();
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let init_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "init_value.js")
+        .expect("init_value module should exist")
+        .1;
+    assert!(
+        init_code.contains("cache_a") && init_code.contains("cache_b"),
+        "init_value should keep sibling cache declarators closed over by helper:\n{init_code}"
+    );
+}
+
+#[test]
+fn standalone_factory_keeps_owned_destructuring_declarations() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var { defineProperty: defProp, getOwnPropertyNames: names } = Object;
+function helper(target) { return names(target).map((name) => defProp({}, name, { value: true })); }
+var value;
+var init_value = y(() => { value = helper; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+init_value();
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let init_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "init_value.js")
+        .expect("init_value module should exist")
+        .1;
+    assert!(
+        init_code.contains("defineProperty") && init_code.contains("getOwnPropertyNames"),
+        "init_value should keep the destructuring declaration used by helper:\n{init_code}"
+    );
+    assert!(
+        !init_code.contains("Export '"),
+        "output should not contain a dangling export diagnostic:\n{init_code}"
+    );
+}
+
+#[test]
+fn arrow_returning_function_without_factories_is_not_helper() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+function encode(q) { return q; }
+var cache, template = (q = encode) => function(strings, ...values) { return strings[0]; }, tag;
+var init_tag = y(() => { cache = Object.create(null); tag = template(encode); });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+init_tag();
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let init_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "init_tag.js")
+        .expect("init_tag module should exist")
+        .1;
+    assert!(
+        init_code.contains("template") && init_code.contains("strings"),
+        "template helper should stay with the init module instead of being filtered as a lazy helper:\n{init_code}"
     );
 }
 
