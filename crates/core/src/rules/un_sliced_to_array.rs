@@ -99,6 +99,22 @@ fn try_fold_sliced_to_array_module_item_group(
     if length == 0 {
         return false;
     }
+    if module_item_sliced_ref_is_unreferenced(body, start, &ref_binding.id) {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = &mut body[start] else {
+            return false;
+        };
+        let Some(decl) = var.decls.first_mut() else {
+            return false;
+        };
+        decl.name = Pat::Array(ArrayPat {
+            span: DUMMY_SP,
+            elems: vec![None; length],
+            optional: false,
+            type_ann: None,
+        });
+        decl.init = Some(source);
+        return true;
+    }
 
     let mut elems = Vec::with_capacity(length);
     for index in 0..length {
@@ -157,6 +173,22 @@ fn try_fold_sliced_to_array_stmt_group(
     };
     if length == 0 {
         return false;
+    }
+    if stmt_sliced_ref_is_unreferenced(stmts, start, &ref_binding.id) {
+        let Stmt::Decl(Decl::Var(var)) = &mut stmts[start] else {
+            return false;
+        };
+        let Some(decl) = var.decls.first_mut() else {
+            return false;
+        };
+        decl.name = Pat::Array(ArrayPat {
+            span: DUMMY_SP,
+            elems: vec![None; length],
+            optional: false,
+            type_ann: None,
+        });
+        decl.init = Some(source);
+        return true;
     }
 
     let mut elems = Vec::with_capacity(length);
@@ -292,6 +324,25 @@ fn expr_is_equality_check_for_temp(expr: &Expr, temp: &swc_core::ecma::ast::Iden
 
 fn expr_is_temp(expr: &Expr, temp: &swc_core::ecma::ast::Ident) -> bool {
     matches!(expr, Expr::Ident(id) if same_sliced_ref_ident(id, temp))
+}
+
+fn module_item_sliced_ref_is_unreferenced(
+    body: &[ModuleItem],
+    start: usize,
+    ref_ident: &swc_core::ecma::ast::Ident,
+) -> bool {
+    body.get(start + 1)
+        .is_none_or(|_| !ident_used_in_items(&body[start + 1..], ref_ident))
+}
+
+fn stmt_sliced_ref_is_unreferenced(
+    stmts: &[Stmt],
+    start: usize,
+    ref_ident: &swc_core::ecma::ast::Ident,
+) -> bool {
+    stmts
+        .get(start + 1)
+        .is_none_or(|_| !ident_used_in_stmts(&stmts[start + 1..], ref_ident))
 }
 
 fn rewrite_sliced_to_array_decls(

@@ -27,6 +27,29 @@ var [] = a;
 }
 
 #[test]
+fn preserves_elision_only_slice_side_effects() {
+    let input = r#"
+function _arrayWithHoles(arr) {
+    if (Array.isArray(arr)) return arr;
+}
+function _slicedToArray(arr, i) {
+    return _arrayWithHoles(arr) || _iterableToArrayLimit(arr, i) || _unsupportedIterableToArray(arr, i) || _nonIterableRest();
+}
+function read(iter) {
+    var _ref = _slicedToArray(iter, 1);
+    return done();
+}
+"#;
+    let expected = r#"
+function read(iter) {
+    var [,] = iter;
+    return done();
+}
+"#;
+    assert_eq_normalized(&render_pipeline_until(input, "UnSlicedToArray"), expected);
+}
+
+#[test]
 fn handles_esm_import() {
     let input = r#"
 var _slicedToArray = require("@babel/runtime/helpers/esm/slicedToArray");
