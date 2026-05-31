@@ -1,6 +1,9 @@
 mod common;
 use common::{assert_eq_normalized, render, render_pipeline_until};
-use wakaru_core::facts::{HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap};
+use wakaru_core::facts::{
+    HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact,
+    TypeScriptHelperKind,
+};
 use wakaru_core::rules::UnSlicedToArray;
 use wakaru_core::RewriteLevel;
 
@@ -325,6 +328,98 @@ var value = _pair[1];
 "#;
     let expected = r#"
 const [key, value] = pair;
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_cross_module_ts_read_helper_fact() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            ts_helper_exports: vec![TypeScriptHelperExportFact {
+                exported: "__read".into(),
+                local: Some("__read".into()),
+                kind: TypeScriptHelperKind::Read,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import { __read } from "./helpers.js";
+var _a = __read(pair, 2), first = _a[0], second = _a[1];
+use(first, second);
+"#;
+    let expected = r#"
+import { __read } from "./helpers.js";
+var _a = pair, first = _a[0], second = _a[1];
+use(first, second);
+"#;
+    assert_eq_normalized(
+        &common::render_rule(input, |_| UnSlicedToArray::new_with_facts(&facts)),
+        expected,
+    );
+}
+
+#[test]
+fn unwraps_typescript_read_helper() {
+    let input = r#"
+var __read = (this && this.__read) || function (o, n) {
+    var m = typeof Symbol === "function" && o[Symbol.iterator];
+    if (!m) return o;
+    var i = m.call(o), r, ar = [], e;
+    try {
+        while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
+    }
+    catch (error) { e = { error: error }; }
+    finally {
+        try {
+            if (r && !r.done && (m = i["return"])) m.call(i);
+        }
+        finally {
+            if (e) throw e.error;
+        }
+    }
+    return ar;
+};
+var _a = __read(pair, 2), first = _a[0], second = _a[1];
+use(first, second);
+"#;
+    let expected = r#"
+const [first, second] = pair;
+use(first, second);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_minified_typescript_read_iife() {
+    let input = r#"
+var __read, _a = (this && this.__read || function (o, n) {
+    var m = typeof Symbol === "function" && o[Symbol.iterator];
+    if (!m) return o;
+    var i = m.call(o), r, ar = [], e;
+    try {
+        while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
+    }
+    catch (error) { e = { error: error }; }
+    finally {
+        try {
+            if (r && !r.done && (m = i["return"])) m.call(i);
+        }
+        finally {
+            if (e) throw e.error;
+        }
+    }
+    return ar;
+})(pair, 2), first = _a[0], second = _a[1];
+use(first, second);
+"#;
+    let expected = r#"
+const [first, second] = pair;
+use(first, second);
 "#;
     assert_eq_normalized(&render(input), expected);
 }

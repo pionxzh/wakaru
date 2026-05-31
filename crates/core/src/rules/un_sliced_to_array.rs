@@ -1,12 +1,13 @@
 use std::collections::HashSet;
 
-use crate::facts::ModuleFactsMap;
+use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 use crate::utils::paren::strip_parens;
+use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, Callee, Decl, Expr,
-    ExprStmt, Lit, MemberExpr, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt,
-    VarDecl, VarDeclKind, VarDeclarator,
+    ExprStmt, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Pat,
+    SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 
 use super::cross_module_helper_refs::{
@@ -18,8 +19,9 @@ use super::decl_utils::{
 };
 use super::helper_matcher::BindingKey;
 use super::transpiler_helper_utils::{
-    collect_maybe_array_like_bindings, extract_inline_sliced_to_array_call, LocalHelperContext,
-    TranspilerHelperKind,
+    collect_maybe_array_like_bindings, extract_inline_sliced_to_array_call,
+    ts_expr_matches_helper_kind, tslib_member_ts_helper_kind, tslib_require_ts_helper_kind,
+    LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
 use super::RewriteLevel;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -105,21 +107,31 @@ fn run_un_sliced_to_array(
     level: RewriteLevel,
 ) {
     let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::SlicedToArray);
-    let cross_module_helpers = module_facts
+    let ts_read_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::Read);
+    let mut cross_module_helpers = module_facts
         .map(|facts| {
             collect_cross_module_helper_refs(module, facts, |kind| {
                 kind == TranspilerHelperKind::SlicedToArray
             })
         })
         .unwrap_or_default();
+    if let Some(facts) = module_facts {
+        extend_cross_module_helpers(
+            &mut cross_module_helpers,
+            collect_cross_module_ts_read_helpers(module, facts),
+        );
+    }
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let has_direct_tslib_calls =
         local_helpers.has_tslib_require_member_call(TranspilerHelperKind::SlicedToArray);
+    let has_inline_ts_read = has_inline_ts_read_call(module);
     if helpers.is_empty()
+        && ts_read_helpers.is_empty()
         && cross_module_helpers.direct.is_empty()
         && cross_module_helpers.namespaces.is_empty()
         && tslib_namespaces.is_empty()
         && !has_direct_tslib_calls
+        && !has_inline_ts_read
         && !has_inline_sliced_to_array_candidate(module)
     {
         return;
@@ -131,6 +143,8 @@ fn run_un_sliced_to_array(
         maybe_array_like: &maybe_array_like,
         level,
     });
+
+    local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::Read);
 
     if helpers.is_empty() {
         return;
@@ -1085,12 +1099,150 @@ fn is_sliced_to_array_callee(
         || matches!(
             callee,
             Expr::Ident(id)
+                if local_helpers
+                    .ts_helpers_of_kind(TsHelperKind::Read)
+                    .contains(&(id.sym.clone(), id.ctxt))
+        )
+        || matches!(
+            callee,
+            Expr::Ident(id)
                 if cross_module_helpers
                     .direct
                     .contains_key(&(id.sym.clone(), id.ctxt))
         )
         || cross_module_member_helper_kind(callee, &cross_module_helpers.namespaces)
             == Some(TranspilerHelperKind::SlicedToArray)
+        || ts_expr_matches_helper_kind(callee, TsHelperKind::Read)
+        || tslib_member_ts_helper_kind(callee, &local_helpers.tslib_namespaces())
+            == Some(TsHelperKind::Read)
+        || tslib_require_ts_helper_kind(callee) == Some(TsHelperKind::Read)
+}
+
+fn extend_cross_module_helpers(
+    helpers: &mut CrossModuleHelperRefs,
+    extra: CrossModuleHelperRefs,
+) {
+    helpers.direct.extend(extra.direct);
+    for (namespace, members) in extra.namespaces {
+        helpers.namespaces.entry(namespace).or_default().extend(members);
+    }
+}
+
+fn collect_cross_module_ts_read_helpers(
+    module: &Module,
+    module_facts: &ModuleFactsMap,
+) -> CrossModuleHelperRefs {
+    let mut refs = CrossModuleHelperRefs::default();
+
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        let source = str_to_atom(&import.src.value);
+
+        for specifier in &import.specifiers {
+            match specifier {
+                ImportSpecifier::Default(default) => {
+                    if module_exports_ts_read_helper(module_facts, &source, "default") {
+                        refs.direct.insert(
+                            (default.local.sym.clone(), default.local.ctxt),
+                            TranspilerHelperKind::SlicedToArray,
+                        );
+                    }
+                }
+                ImportSpecifier::Named(named) => {
+                    let imported = named
+                        .imported
+                        .as_ref()
+                        .map(export_name_to_atom)
+                        .unwrap_or_else(|| named.local.sym.clone());
+                    if module_exports_ts_read_helper(module_facts, &source, imported.as_ref()) {
+                        refs.direct.insert(
+                            (named.local.sym.clone(), named.local.ctxt),
+                            TranspilerHelperKind::SlicedToArray,
+                        );
+                    }
+                }
+                ImportSpecifier::Namespace(namespace) => {
+                    let exported_names = ts_read_helper_export_names(module_facts, &source);
+                    if !exported_names.is_empty() {
+                        refs.namespaces.insert(
+                            (namespace.local.sym.clone(), namespace.local.ctxt),
+                            exported_names
+                                .into_iter()
+                                .map(|name| (name, TranspilerHelperKind::SlicedToArray))
+                                .collect(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    refs
+}
+
+fn module_exports_ts_read_helper(
+    module_facts: &ModuleFactsMap,
+    source: &Atom,
+    exported: &str,
+) -> bool {
+    module_facts.get(source.as_ref()).is_some_and(|facts| {
+        facts.ts_helper_exports.iter().any(|helper| {
+            helper.exported.as_ref() == exported && helper.kind == TypeScriptHelperKind::Read
+        })
+    })
+}
+
+fn ts_read_helper_export_names(module_facts: &ModuleFactsMap, source: &Atom) -> Vec<String> {
+    module_facts
+        .get(source.as_ref())
+        .map(|facts| {
+            facts
+                .ts_helper_exports
+                .iter()
+                .filter(|helper| helper.kind == TypeScriptHelperKind::Read)
+                .map(|helper| helper.exported.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn export_name_to_atom(name: &swc_core::ecma::ast::ModuleExportName) -> Atom {
+    match name {
+        swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.clone(),
+        swc_core::ecma::ast::ModuleExportName::Str(s) => str_to_atom(&s.value),
+    }
+}
+
+fn str_to_atom(value: &swc_core::atoms::Wtf8Atom) -> Atom {
+    Atom::from(value.as_str().unwrap_or(""))
+}
+
+fn has_inline_ts_read_call(module: &Module) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl Visit for Finder {
+        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            if self.found {
+                return;
+            }
+            let Callee::Expr(callee) = &call.callee else {
+                return;
+            };
+            if ts_expr_matches_helper_kind(callee, TsHelperKind::Read) {
+                self.found = true;
+                return;
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder { found: false };
+    module.visit_with(&mut finder);
+    finder.found
 }
 
 /// Extract `(source, length)` from either `_slicedToArray(src, n)` or

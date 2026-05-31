@@ -1,7 +1,10 @@
 mod common;
 
 use common::{assert_eq_normalized, render, render_rule};
-use wakaru_core::facts::{HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap};
+use wakaru_core::facts::{
+    HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap, TypeScriptHelperExportFact,
+    TypeScriptHelperKind,
+};
 use wakaru_core::rules::UnObjectRest;
 
 #[test]
@@ -57,6 +60,37 @@ const { a, ...rest } = props;
 use(a, rest);
 "#;
     assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn handles_cross_module_ts_rest_helper_fact() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            ts_helper_exports: vec![TypeScriptHelperExportFact {
+                exported: "__rest".into(),
+                local: Some("__rest".into()),
+                kind: TypeScriptHelperKind::Rest,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import { __rest } from "./helpers.js";
+var label = props.label, rest = __rest(props, ["label"]);
+use(label, rest);
+"#;
+    let expected = r#"
+import { __rest } from "./helpers.js";
+const { label, ...rest } = props;
+use(label, rest);
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |mark| UnObjectRest::new_with_facts(mark, &facts)),
+        expected,
+    );
 }
 
 #[test]

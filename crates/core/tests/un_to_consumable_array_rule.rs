@@ -173,12 +173,96 @@ var x = choose(items);
 }
 
 #[test]
+fn no_false_positive_class_iife_with_arguments_concat() {
+    let input = r#"
+var BrowserRouter = function(Component) {
+    function BrowserRouter() {
+        for (var len = arguments.length, args = Array(len), index = 0; index < len; index++) {
+            args[index] = arguments[index];
+        }
+        return Component.call.apply(Component, [this].concat(args));
+    }
+    return BrowserRouter;
+}(Component);
+"#;
+    let expected = r#"
+var BrowserRouter = function(Component) {
+    function BrowserRouter() {
+        for(var len = arguments.length, args = Array(len), index = 0; index < len; index++){
+            args[index] = arguments[index];
+        }
+        return Component.call.apply(Component, [
+            this
+        ].concat(args));
+    }
+    return BrowserRouter;
+}(Component);
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |_| UnToConsumableArray::new()),
+        expected,
+    );
+}
+
+#[test]
 fn unwraps_typescript_spread_array_helper() {
     let input = r#"
 var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     return to.concat(from);
 };
 var out = __spreadArray(__spreadArray([head], items, true), [tail], false);
+"#;
+    let expected = r#"
+const out = [head, ...items, tail];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_legacy_typescript_spread_arrays_helper() {
+    let input = r#"
+var __spreadArrays = (this && this.__spreadArrays) || function () {
+    for (var s = 0, i = 0, il = arguments.length; i < il; i++) s += arguments[i].length;
+    for (var r = Array(s), k = 0, i = 0; i < il; i++)
+        for (var a = arguments[i], j = 0, jl = a.length; j < jl; j++, k++)
+            r[k] = a[j];
+    return r;
+};
+var out = __spreadArrays([head], items, [tail]);
+"#;
+    let expected = r#"
+const out = [head, ...items, tail];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_minified_legacy_typescript_spread_arrays_iife() {
+    let input = r#"
+var out = (this && this.__spreadArrays || function () {
+    for (var s = 0, i = 0, il = arguments.length; i < il; i++) s += arguments[i].length;
+    for (var r = Array(s), k = 0, i = 0; i < il; i++)
+        for (var a = arguments[i], j = 0, jl = a.length; j < jl; j++, k++)
+            r[k] = a[j];
+    return r;
+})([head], items, [tail]);
+"#;
+    let expected = r#"
+const out = [head, ...items, tail];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_legacy_typescript_spread_helper() {
+    let input = r#"
+var __spread = (this && this.__spread) || function () {
+    var ar = [];
+    for (var i = 0; i < arguments.length; i++)
+        ar = ar.concat(arguments[i]);
+    return ar;
+};
+var out = __spread([head], items, [tail]);
 "#;
     let expected = r#"
 const out = [head, ...items, tail];
@@ -219,6 +303,83 @@ var out = spread([head], items, true);
 "#;
     let expected = r#"
 import { __spreadArray as spread } from "./helpers.js";
+var out = [head, ...items];
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |_| UnToConsumableArray::new_with_facts(&facts)),
+        expected,
+    );
+}
+
+#[test]
+fn unwraps_cross_module_legacy_ts_spread_arrays_helper_fact() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            ts_helper_exports: vec![TypeScriptHelperExportFact {
+                exported: "__spreadArrays".into(),
+                local: Some("__spreadArrays".into()),
+                kind: TypeScriptHelperKind::SpreadArrays,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import { __spreadArrays as spread } from "./helpers.js";
+var out = spread([head], items, [tail]);
+"#;
+    let expected = r#"
+import { __spreadArrays as spread } from "./helpers.js";
+var out = [head, ...items, tail];
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |_| UnToConsumableArray::new_with_facts(&facts)),
+        expected,
+    );
+}
+
+#[test]
+fn unwraps_tslib_read_source_inside_spread_array() {
+    let input = r#"
+import { __spreadArray, __read } from "tslib";
+var out = __spreadArray(__spreadArray([head], __read(items), false), [tail], false);
+"#;
+    let expected = r#"
+const out = [head, ...items, tail];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_cross_module_ts_read_source_inside_spread_array_fact() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            ts_helper_exports: vec![
+                TypeScriptHelperExportFact {
+                    exported: "__spreadArray".into(),
+                    local: Some("__spreadArray".into()),
+                    kind: TypeScriptHelperKind::SpreadArray,
+                },
+                TypeScriptHelperExportFact {
+                    exported: "__read".into(),
+                    local: Some("__read".into()),
+                    kind: TypeScriptHelperKind::Read,
+                },
+            ],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import { __spreadArray, __read } from "./helpers.js";
+var out = __spreadArray([head], __read(items), false);
+"#;
+    let expected = r#"
+import { __spreadArray, __read } from "./helpers.js";
 var out = [head, ...items];
 "#;
     assert_eq_normalized(

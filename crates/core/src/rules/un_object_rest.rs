@@ -6,13 +6,13 @@ use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, AssignTargetPat,
     BinaryOp, BindingIdent, BlockStmtOrExpr, Bool, CallExpr, Callee, CondExpr, Decl, Expr,
-    ExprStmt, FnExpr, Ident, JSXElementName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
-    ObjectPat, ObjectPatProp, Pat, PropName, PropOrSpread, RestPat, SimpleAssignTarget, Stmt,
-    VarDecl, VarDeclKind, VarDeclarator,
+    ExprStmt, FnExpr, Ident, ImportSpecifier, JSXElementName, KeyValuePatProp, Lit, MemberExpr,
+    MemberProp, Module, ModuleDecl, ObjectPat, ObjectPatProp, Pat, PropName, PropOrSpread, RestPat,
+    SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::facts::ModuleFactsMap;
+use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 use crate::utils::paren::strip_parens;
 
 use super::cross_module_helper_refs::{
@@ -140,6 +140,9 @@ fn run_un_object_rest(
             .iter()
             .map(|(key, kind)| (key.clone(), *kind)),
     );
+    if let Some(module_facts) = module_facts {
+        named_helpers.extend(collect_cross_module_ts_rest_helpers(module, module_facts));
+    }
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let swc_numeric_helper_namespaces = collect_swc_numeric_helper_namespaces(module);
 
@@ -413,6 +416,72 @@ impl VisitMut for ObjectRestProcessor<'_> {
 }
 
 use swc_core::ecma::ast::ModuleItem;
+
+fn collect_cross_module_ts_rest_helpers(
+    module: &swc_core::ecma::ast::Module,
+    module_facts: &ModuleFactsMap,
+) -> HashMap<BindingKey, TranspilerHelperKind> {
+    let mut helpers = HashMap::new();
+
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        let source = str_to_atom(&import.src.value);
+
+        for specifier in &import.specifiers {
+            match specifier {
+                ImportSpecifier::Default(default) => {
+                    if module_exports_ts_rest_helper(module_facts, &source, "default") {
+                        helpers.insert(
+                            (default.local.sym.clone(), default.local.ctxt),
+                            TranspilerHelperKind::ObjectWithoutProperties,
+                        );
+                    }
+                }
+                ImportSpecifier::Named(named) => {
+                    let imported = named
+                        .imported
+                        .as_ref()
+                        .map(export_name_to_atom)
+                        .unwrap_or_else(|| named.local.sym.clone());
+                    if module_exports_ts_rest_helper(module_facts, &source, imported.as_ref()) {
+                        helpers.insert(
+                            (named.local.sym.clone(), named.local.ctxt),
+                            TranspilerHelperKind::ObjectWithoutProperties,
+                        );
+                    }
+                }
+                ImportSpecifier::Namespace(_) => {}
+            }
+        }
+    }
+
+    helpers
+}
+
+fn module_exports_ts_rest_helper(
+    module_facts: &ModuleFactsMap,
+    source: &Atom,
+    exported: &str,
+) -> bool {
+    module_facts.get(source.as_ref()).is_some_and(|facts| {
+        facts.ts_helper_exports.iter().any(|helper| {
+            helper.exported.as_ref() == exported && helper.kind == TypeScriptHelperKind::Rest
+        })
+    })
+}
+
+fn export_name_to_atom(name: &swc_core::ecma::ast::ModuleExportName) -> Atom {
+    match name {
+        swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.clone(),
+        swc_core::ecma::ast::ModuleExportName::Str(s) => str_to_atom(&s.value),
+    }
+}
+
+fn str_to_atom(value: &swc_core::atoms::Wtf8Atom) -> Atom {
+    Atom::from(value.as_str().unwrap_or(""))
+}
 
 fn reattach_elided_object_rest_in_module_items(
     items: &mut [ModuleItem],

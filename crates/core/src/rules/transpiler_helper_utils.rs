@@ -74,6 +74,9 @@ pub(crate) enum TsHelperKind {
     ImportStar,
     CreateBinding,
     SetModuleDefault,
+    Read,
+    Spread,
+    SpreadArrays,
     SpreadArray,
     ClassPrivateFieldGet,
     ClassPrivateFieldSet,
@@ -783,6 +786,9 @@ fn ts_helper_name_kind(name: &str) -> Option<TsHelperKind> {
         "__importStar" => Some(TsHelperKind::ImportStar),
         "__createBinding" => Some(TsHelperKind::CreateBinding),
         "__setModuleDefault" => Some(TsHelperKind::SetModuleDefault),
+        "__read" => Some(TsHelperKind::Read),
+        "__spread" => Some(TsHelperKind::Spread),
+        "__spreadArrays" => Some(TsHelperKind::SpreadArrays),
         "__spreadArray" => Some(TsHelperKind::SpreadArray),
         _ => None,
     }
@@ -1697,6 +1703,10 @@ fn ts_inline_helper_kind(expr: &Expr) -> Option<TsHelperKind> {
     ts_inline_helper_fallback_matches(fallback, kind).then_some(kind)
 }
 
+pub(crate) fn ts_expr_matches_helper_kind(expr: &Expr, kind: TsHelperKind) -> bool {
+    ts_inline_helper_kind(expr) == Some(kind)
+}
+
 fn ts_inline_helper_parts(expr: &Expr) -> Option<(&str, &Expr)> {
     let expr = strip_parens(expr);
     let Expr::Bin(BinExpr {
@@ -1773,6 +1783,9 @@ fn ts_inline_helper_fallback_matches(expr: &Expr, kind: TsHelperKind) -> bool {
             signals.object_define_property && (signals.get_prop || signals.enumerable_prop)
         }
         TsHelperKind::SetModuleDefault => signals.object_define_property && signals.default_prop,
+        TsHelperKind::Read => signals.iterator_prop && signals.next_call,
+        TsHelperKind::Spread => signals.arguments_ref && signals.concat_call,
+        TsHelperKind::SpreadArrays => signals.arguments_ref && signals.array_constructor,
         TsHelperKind::SpreadArray => signals.concat_call,
         TsHelperKind::ClassPrivateFieldGet | TsHelperKind::ClassPrivateFieldSet => false,
     }
@@ -1803,6 +1816,7 @@ fn ts_helper_callable_body(expr: &Expr) -> Option<(usize, &[Stmt])> {
 #[derive(Default)]
 struct TsHelperBodySignals {
     arguments_ref: bool,
+    array_constructor: bool,
     concat_call: bool,
     create_binding_call: bool,
     default_prop: bool,
@@ -1811,6 +1825,7 @@ struct TsHelperBodySignals {
     generator_apply: bool,
     get_prop: bool,
     has_own_property: bool,
+    iterator_prop: bool,
     label_prop: bool,
     next_call: bool,
     object_assign: bool,
@@ -1868,6 +1883,7 @@ fn collect_ts_helper_body_signals(stmts: &[Stmt]) -> TsHelperBodySignals {
                 Some("enumerable") => self.signals.enumerable_prop = true,
                 Some("get") => self.signals.get_prop = true,
                 Some("hasOwnProperty") => self.signals.has_own_property = true,
+                Some("iterator") => self.signals.iterator_prop = true,
                 Some("label") => self.signals.label_prop = true,
                 Some("next") => self.signals.next_call = true,
                 Some("ops") => self.signals.ops_prop = true,
@@ -1897,6 +1913,7 @@ fn collect_ts_helper_body_signals(stmts: &[Stmt]) -> TsHelperBodySignals {
                 Some("default") => self.signals.default_prop = true,
                 Some("enumerable") => self.signals.enumerable_prop = true,
                 Some("get") => self.signals.get_prop = true,
+                Some("iterator") => self.signals.iterator_prop = true,
                 Some("label") => self.signals.label_prop = true,
                 Some("ops") => self.signals.ops_prop = true,
                 Some("trys") => self.signals.trys_prop = true,
@@ -1907,6 +1924,9 @@ fn collect_ts_helper_body_signals(stmts: &[Stmt]) -> TsHelperBodySignals {
 
         fn visit_call_expr(&mut self, call: &CallExpr) {
             if let Callee::Expr(callee) = &call.callee {
+                if matches!(strip_parens(callee), Expr::Ident(id) if id.sym.as_ref() == "Array") {
+                    self.signals.array_constructor = true;
+                }
                 if matches!(strip_parens(callee), Expr::Ident(id) if id.sym.as_ref() == "Promise") {
                     self.signals.promise = true;
                 }
@@ -5036,6 +5056,36 @@ mod tests {
                 setters.contains(&(Atom::from("__classPrivateFieldSet"), SyntaxContext::empty()))
             );
             assert!(!setters.contains(&(Atom::from("A4"), SyntaxContext::empty())));
+        });
+    }
+
+    #[test]
+    fn inline_legacy_spread_arrays_expression_matches_kind() {
+        GLOBALS.set(&Globals::new(), || {
+            let module = parse_module(
+                r#"
+                var out = (this && this.__spreadArrays || function () {
+                    for (var s = 0, i = 0, il = arguments.length; i < il; i++) s += arguments[i].length;
+                    for (var r = Array(s), k = 0, i = 0; i < il; i++)
+                        for (var a = arguments[i], j = 0, jl = a.length; j < jl; j++, k++)
+                            r[k] = a[j];
+                    return r;
+                })([head], items, [tail]);
+                "#,
+            );
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = &module.body[0] else {
+                panic!("expected var decl");
+            };
+            let Expr::Call(call) = var.decls[0].init.as_deref().expect("init") else {
+                panic!("expected call");
+            };
+            let Callee::Expr(callee) = &call.callee else {
+                panic!("expected expr callee");
+            };
+            assert!(ts_expr_matches_helper_kind(
+                callee,
+                TsHelperKind::SpreadArrays
+            ));
         });
     }
 

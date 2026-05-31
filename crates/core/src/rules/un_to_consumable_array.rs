@@ -12,7 +12,8 @@ use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 use super::helper_matcher::{binding_key, static_member_prop_name};
 use super::transpiler_helper_utils::{
     collect_maybe_array_like_bindings, is_tslib_spread_array_member, BindingKey,
-    LocalHelperContext, TranspilerHelperKind, TsHelperKind,
+    LocalHelperContext, TranspilerHelperKind, TsHelperKind, ts_expr_matches_helper_kind,
+    tslib_member_ts_helper_kind,
 };
 
 /// Detects and replaces `_toConsumableArray(arr)` with `[...arr]`.
@@ -62,19 +63,46 @@ fn run_un_to_consumable_array(
 ) {
     let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::ToConsumableArray);
     let ts_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::SpreadArray);
+    let mut ts_legacy_array_spread_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::Spread);
+    ts_legacy_array_spread_helpers
+        .extend(local_helpers.ts_helpers_of_kind(TsHelperKind::SpreadArrays));
+    let ts_read_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::Read);
     let cross_module_ts_helpers = module_facts
         .map(|facts| {
             collect_cross_module_ts_helper_refs(module, facts, TypeScriptHelperKind::SpreadArray)
         })
         .unwrap_or_default();
+    let mut cross_module_ts_legacy_array_spread_helpers = module_facts
+        .map(|facts| {
+            collect_cross_module_ts_helper_refs(module, facts, TypeScriptHelperKind::Spread)
+        })
+        .unwrap_or_default();
+    if let Some(facts) = module_facts {
+        cross_module_ts_legacy_array_spread_helpers.extend(collect_cross_module_ts_helper_refs(
+            module,
+            facts,
+            TypeScriptHelperKind::SpreadArrays,
+        ));
+    }
+    let cross_module_ts_read_helpers = module_facts
+        .map(|facts| collect_cross_module_ts_helper_refs(module, facts, TypeScriptHelperKind::Read))
+        .unwrap_or_default();
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let maybe_array_like = collect_maybe_array_like_bindings(module);
-
+    let has_inline_legacy_array_spread = has_inline_legacy_array_spread_call(module);
     if helpers.is_empty() {
         if ts_helpers.is_empty()
+            && ts_legacy_array_spread_helpers.is_empty()
             && cross_module_ts_helpers.direct.is_empty()
             && cross_module_ts_helpers.namespaces.is_empty()
+            && cross_module_ts_legacy_array_spread_helpers
+                .direct
+                .is_empty()
+            && cross_module_ts_legacy_array_spread_helpers
+                .namespaces
+                .is_empty()
             && tslib_namespaces.is_empty()
+            && !has_inline_legacy_array_spread
         {
             return;
         }
@@ -83,13 +111,23 @@ fn run_un_to_consumable_array(
             helpers: &helpers,
             maybe_array_like: &maybe_array_like,
             ts_spread_array_helpers: &ts_helpers,
+            ts_legacy_array_spread_helpers: &ts_legacy_array_spread_helpers,
             cross_module_ts_spread_array_helpers: &cross_module_ts_helpers.direct,
             cross_module_ts_spread_array_namespaces: &cross_module_ts_helpers.namespaces,
+            cross_module_ts_legacy_array_spread_helpers:
+                &cross_module_ts_legacy_array_spread_helpers.direct,
+            cross_module_ts_legacy_array_spread_namespaces:
+                &cross_module_ts_legacy_array_spread_helpers.namespaces,
+            ts_read_helpers: &ts_read_helpers,
+            cross_module_ts_read_helpers: &cross_module_ts_read_helpers.direct,
+            cross_module_ts_read_namespaces: &cross_module_ts_read_helpers.namespaces,
             tslib_namespaces,
         };
         module.visit_mut_with(&mut replacer);
 
         local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::SpreadArray);
+        local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::Spread);
+        local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::SpreadArrays);
         return;
     }
 
@@ -97,8 +135,16 @@ fn run_un_to_consumable_array(
         helpers: &helpers,
         maybe_array_like: &maybe_array_like,
         ts_spread_array_helpers: &ts_helpers,
+        ts_legacy_array_spread_helpers: &ts_legacy_array_spread_helpers,
         cross_module_ts_spread_array_helpers: &cross_module_ts_helpers.direct,
         cross_module_ts_spread_array_namespaces: &cross_module_ts_helpers.namespaces,
+        cross_module_ts_legacy_array_spread_helpers: &cross_module_ts_legacy_array_spread_helpers
+            .direct,
+        cross_module_ts_legacy_array_spread_namespaces:
+            &cross_module_ts_legacy_array_spread_helpers.namespaces,
+        ts_read_helpers: &ts_read_helpers,
+        cross_module_ts_read_helpers: &cross_module_ts_read_helpers.direct,
+        cross_module_ts_read_namespaces: &cross_module_ts_read_helpers.namespaces,
         tslib_namespaces,
     };
     module.visit_mut_with(&mut replacer);
@@ -108,14 +154,22 @@ fn run_un_to_consumable_array(
     // so the non-external (inlined) lowering does not leave dead declarations.
     local_helpers.remove_helpers_with_dependencies(module, helpers);
     local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::SpreadArray);
+    local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::Spread);
+    local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::SpreadArrays);
 }
 
 struct ToConsumableArrayReplacer<'a> {
     helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     maybe_array_like: &'a HashSet<BindingKey>,
     ts_spread_array_helpers: &'a HashSet<BindingKey>,
+    ts_legacy_array_spread_helpers: &'a HashSet<BindingKey>,
     cross_module_ts_spread_array_helpers: &'a HashSet<BindingKey>,
     cross_module_ts_spread_array_namespaces: &'a HashMap<BindingKey, HashSet<String>>,
+    cross_module_ts_legacy_array_spread_helpers: &'a HashSet<BindingKey>,
+    cross_module_ts_legacy_array_spread_namespaces: &'a HashMap<BindingKey, HashSet<String>>,
+    ts_read_helpers: &'a HashSet<BindingKey>,
+    cross_module_ts_read_helpers: &'a HashSet<BindingKey>,
+    cross_module_ts_read_namespaces: &'a HashMap<BindingKey, HashSet<String>>,
     tslib_namespaces: &'a HashSet<BindingKey>,
 }
 
@@ -166,7 +220,18 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
             if self.ts_spread_array_helpers.contains(&key)
                 || self.cross_module_ts_spread_array_helpers.contains(&key)
             {
-                if let Some(array) = convert_ts_spread_array_call(call) {
+                if let Some(array) = convert_ts_spread_array_call(call, self) {
+                    *expr = Expr::Array(array);
+                }
+                return;
+            }
+
+            if self.ts_legacy_array_spread_helpers.contains(&key)
+                || self
+                    .cross_module_ts_legacy_array_spread_helpers
+                    .contains(&key)
+            {
+                if let Some(array) = convert_ts_legacy_spread_call(call) {
                     *expr = Expr::Array(array);
                 }
                 return;
@@ -174,24 +239,92 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
         }
 
         if is_tslib_spread_array_member(callee, self.tslib_namespaces) {
-            if let Some(array) = convert_ts_spread_array_call(call) {
+            if let Some(array) = convert_ts_spread_array_call(call, self) {
+                *expr = Expr::Array(array);
+            }
+            return;
+        }
+
+        if matches!(
+            tslib_member_ts_helper_kind(callee, self.tslib_namespaces),
+            Some(TsHelperKind::Spread | TsHelperKind::SpreadArrays)
+        ) {
+            if let Some(array) = convert_ts_legacy_spread_call(call) {
+                *expr = Expr::Array(array);
+            }
+            return;
+        }
+
+        if is_cross_module_ts_helper_member(
+            callee,
+            self.cross_module_ts_legacy_array_spread_namespaces,
+        ) {
+            if let Some(array) = convert_ts_legacy_spread_call(call) {
+                *expr = Expr::Array(array);
+            }
+            return;
+        }
+
+        if ts_expr_matches_helper_kind(callee, TsHelperKind::Spread)
+            || ts_expr_matches_helper_kind(callee, TsHelperKind::SpreadArrays)
+        {
+            if let Some(array) = convert_ts_legacy_spread_call(call) {
                 *expr = Expr::Array(array);
             }
             return;
         }
 
         if is_cross_module_ts_helper_member(callee, self.cross_module_ts_spread_array_namespaces) {
-            if let Some(array) = convert_ts_spread_array_call(call) {
+            if let Some(array) = convert_ts_spread_array_call(call, self) {
                 *expr = Expr::Array(array);
             }
         }
     }
 }
 
+fn has_inline_legacy_array_spread_call(module: &Module) -> bool {
+    struct Finder {
+        found: bool,
+    }
+
+    impl swc_core::ecma::visit::Visit for Finder {
+        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            if self.found {
+                return;
+            }
+            let Callee::Expr(callee) = &call.callee else {
+                return;
+            };
+            if ts_expr_matches_helper_kind(callee, TsHelperKind::Spread)
+                || ts_expr_matches_helper_kind(callee, TsHelperKind::SpreadArrays)
+            {
+                self.found = true;
+                return;
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    use swc_core::ecma::visit::VisitWith;
+
+    let mut finder = Finder { found: false };
+    module.visit_with(&mut finder);
+    finder.found
+}
+
 #[derive(Default)]
 struct CrossModuleTsHelperRefs {
     direct: HashSet<BindingKey>,
     namespaces: HashMap<BindingKey, HashSet<String>>,
+}
+
+impl CrossModuleTsHelperRefs {
+    fn extend(&mut self, other: Self) {
+        self.direct.extend(other.direct);
+        for (namespace, names) in other.namespaces {
+            self.namespaces.entry(namespace).or_default().extend(names);
+        }
+    }
 }
 
 fn collect_cross_module_ts_helper_refs(
@@ -301,14 +434,69 @@ fn str_to_atom(value: &swc_core::atoms::Wtf8Atom) -> Atom {
     Atom::from(value.as_str().unwrap_or(""))
 }
 
-fn convert_ts_spread_array_call(call: &swc_core::ecma::ast::CallExpr) -> Option<ArrayLit> {
+fn convert_ts_spread_array_call(
+    call: &swc_core::ecma::ast::CallExpr,
+    helpers: &ToConsumableArrayReplacer,
+) -> Option<ArrayLit> {
     if call.args.len() != 3 || call.args.iter().any(|arg| arg.spread.is_some()) {
         return None;
     }
 
     let mut elems = Vec::new();
     append_array_source(&mut elems, call.args[0].expr.as_ref(), true)?;
-    append_array_source(&mut elems, call.args[1].expr.as_ref(), false)?;
+    let from = unwrap_ts_read_arg(call.args[1].expr.as_ref(), helpers)
+        .unwrap_or_else(|| call.args[1].expr.clone());
+    append_array_source(&mut elems, from.as_ref(), false)?;
+
+    Some(ArrayLit {
+        span: DUMMY_SP,
+        elems,
+    })
+}
+
+fn unwrap_ts_read_arg(expr: &Expr, helpers: &ToConsumableArrayReplacer) -> Option<Box<Expr>> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return None;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+
+    if is_ts_read_callee(callee, helpers) {
+        return Some(call.args[0].expr.clone());
+    }
+
+    None
+}
+
+fn is_ts_read_callee(callee: &Expr, helpers: &ToConsumableArrayReplacer) -> bool {
+    if let Expr::Ident(id) = callee {
+        let key = binding_key(id);
+        if helpers.ts_read_helpers.contains(&key)
+            || helpers.cross_module_ts_read_helpers.contains(&key)
+        {
+            return true;
+        }
+    }
+
+    matches!(
+        tslib_member_ts_helper_kind(callee, helpers.tslib_namespaces),
+        Some(TsHelperKind::Read)
+    ) || is_cross_module_ts_helper_member(callee, helpers.cross_module_ts_read_namespaces)
+}
+
+fn convert_ts_legacy_spread_call(call: &swc_core::ecma::ast::CallExpr) -> Option<ArrayLit> {
+    if call.args.is_empty() || call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+
+    let mut elems = Vec::new();
+    for arg in &call.args {
+        append_array_source(&mut elems, arg.expr.as_ref(), false)?;
+    }
 
     Some(ArrayLit {
         span: DUMMY_SP,
