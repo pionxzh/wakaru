@@ -1543,6 +1543,11 @@ fn ts_inline_helper_parts(expr: &Expr) -> Option<(&str, &Expr)> {
 }
 
 fn ts_inline_helper_fallback_matches(expr: &Expr, kind: TsHelperKind) -> bool {
+    if let Expr::Cond(cond) = strip_parens(expr) {
+        return ts_inline_helper_fallback_matches(&cond.cons, kind)
+            || ts_inline_helper_fallback_matches(&cond.alt, kind);
+    }
+
     let Some((param_len, body)) = ts_helper_callable_body(expr) else {
         return false;
     };
