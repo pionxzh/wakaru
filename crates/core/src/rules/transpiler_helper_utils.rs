@@ -156,13 +156,14 @@ impl LocalHelperContext {
             return;
         }
 
-        let remaining = remaining_refs_outside_var_declarators(module, &helper_keys, &helper_keys);
+        let remaining = remaining_refs_outside_declarations(module, &helper_keys, &helper_keys);
         let removable: HashSet<BindingKey> = helper_keys
             .into_iter()
             .filter(|key| !remaining.contains(key))
             .collect();
         if !removable.is_empty() {
             remove_var_declarators_by_binding(&mut module.body, &removable);
+            remove_fn_decls_from_body_by_binding(&mut module.body, &removable);
         }
     }
 
@@ -2134,20 +2135,42 @@ fn is_typeof_of_binding(expr: &Expr, binding: &BindingKey) -> bool {
 
 fn ts_private_helper_decl_kind(name: &str, init: &Expr) -> Option<TsHelperKind> {
     let kind = match name {
+        "_ts_generator" => TsHelperKind::Generator,
         "__classPrivateFieldGet" => TsHelperKind::ClassPrivateFieldGet,
         "__classPrivateFieldSet" => TsHelperKind::ClassPrivateFieldSet,
         _ => return None,
     };
-    expr_contains_tsc_private_helper_fn(init, kind).then_some(kind)
+    match kind {
+        TsHelperKind::Generator => ts_inline_helper_fallback_matches(init, kind).then_some(kind),
+        _ => expr_contains_tsc_private_helper_fn(init, kind).then_some(kind),
+    }
 }
 
 fn ts_private_helper_name_kind(name: &str, function: &Function) -> Option<TsHelperKind> {
     let kind = match name {
+        "_ts_generator" => TsHelperKind::Generator,
         "__classPrivateFieldGet" => TsHelperKind::ClassPrivateFieldGet,
         "__classPrivateFieldSet" => TsHelperKind::ClassPrivateFieldSet,
         _ => return None,
     };
-    is_tsc_private_helper_fn(function, kind).then_some(kind)
+    match kind {
+        TsHelperKind::Generator => ts_function_matches_kind(function, kind).then_some(kind),
+        _ => is_tsc_private_helper_fn(function, kind).then_some(kind),
+    }
+}
+
+fn ts_function_matches_kind(function: &Function, kind: TsHelperKind) -> bool {
+    let Some(body) = &function.body else {
+        return false;
+    };
+    let signals = collect_ts_helper_body_signals(&body.stmts);
+    match kind {
+        TsHelperKind::Generator => {
+            function.params.len() >= 2
+                && (signals.label_prop || signals.trys_prop || signals.ops_prop)
+        }
+        _ => false,
+    }
 }
 
 fn expr_contains_tsc_private_helper_fn(expr: &Expr, kind: TsHelperKind) -> bool {

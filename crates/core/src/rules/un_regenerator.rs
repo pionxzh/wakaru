@@ -1,18 +1,19 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, CatchClause, Decl, Expr,
-    ExprStmt, FnDecl, FnExpr, Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp,
-    Module, ModuleDecl, ModuleItem, Param, Pat, ReturnStmt, SimpleAssignTarget, Stmt, SwitchCase,
-    VarDeclarator, WhileStmt, YieldExpr,
+    ArrayLit, ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BlockStmtOrExpr,
+    CatchClause, Decl, Expr, ExprStmt, FnDecl, FnExpr, Function, Ident, ImportSpecifier, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Param, Pat, ReturnStmt,
+    SimpleAssignTarget, Stmt, SwitchCase, VarDeclarator, WhileStmt, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::transpiler_helper_utils::{
-    helpers_with_remaining_refs, BindingKey, LocalHelperContext, TranspilerHelperKind,
+    helpers_with_remaining_refs, BindingKey, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
+use super::un_async_await::try_transform_ts_generator_body;
 
 use crate::utils::paren::strip_parens;
 
@@ -83,19 +84,32 @@ fn run_un_regenerator(
         direct: &async_to_gen_bindings,
         default_members: &async_to_gen_default_members,
     };
+    let generator_helpers: Vec<BindingKey> = local_helpers
+        .ts_helpers_of_kind(TsHelperKind::Generator)
+        .into_iter()
+        .collect();
+    let esbuild_async_helpers = collect_esbuild_async_helpers(module, unresolved_mark);
 
     // Phase 2: Transform functions containing regeneratorRuntime.wrap()
     // and _asyncToGenerator() calls. Track consumed mark bindings.
     let mut consumed_marks: Vec<BindingKey> = Vec::new();
 
-    transform_babel_async_trampolines(module, &async_to_gen_callees, &mut consumed_marks);
+    transform_babel_async_trampolines(
+        module,
+        &async_to_gen_callees,
+        &generator_helpers,
+        &mut consumed_marks,
+    );
 
     let mut transformer = FunctionTransformer {
         unresolved_mark,
         async_to_gen_callees: &async_to_gen_callees,
+        generator_helpers: &generator_helpers,
+        esbuild_async_helpers: &esbuild_async_helpers,
         consumed_marks: &mut consumed_marks,
     };
     module.visit_mut_with(&mut transformer);
+    collapse_async_trampoline_assignments(module);
 
     // Phase 3: Remove only the mark declarations that were consumed
     remove_consumed_mark_declarations(module, &consumed_marks);
@@ -112,6 +126,8 @@ fn run_un_regenerator(
             .collect();
         remove_helper_decls(module, &to_remove);
     }
+
+    remove_unused_helper_decls(module, &esbuild_async_helpers);
 }
 
 struct AsyncToGenCallees<'a> {
@@ -247,6 +263,7 @@ fn require_source(expr: &Expr) -> Option<Atom> {
 fn transform_babel_async_trampolines(
     module: &mut Module,
     async_to_gen_callees: &AsyncToGenCallees,
+    generator_helpers: &[BindingKey],
     consumed_marks: &mut Vec<BindingKey>,
 ) {
     let mut index = 0;
@@ -266,6 +283,7 @@ fn transform_babel_async_trampolines(
             &module.body[index + 1],
             &private_key,
             async_to_gen_callees,
+            generator_helpers,
         ) else {
             index += 1;
             continue;
@@ -373,6 +391,7 @@ fn extract_private_trampoline_body(
     item: &ModuleItem,
     private_key: &BindingKey,
     async_to_gen_callees: &AsyncToGenCallees,
+    generator_helpers: &[BindingKey],
 ) -> Option<(Vec<Param>, Vec<Stmt>, Option<BindingKey>)> {
     let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item else {
         return None;
@@ -395,7 +414,7 @@ fn extract_private_trampoline_body(
         )?,
         _ => return None,
     };
-    extract_async_to_gen_body_with_params(gen_arg)
+    extract_async_to_gen_body_with_params(gen_arg, generator_helpers)
 }
 
 fn apply_return_ident_from_stmt(stmt: &Stmt) -> Option<Ident> {
@@ -500,6 +519,7 @@ fn extract_async_assignment_arg_from_returned_apply(
 
 fn extract_async_to_gen_body_with_params(
     gen_fn_arg: Expr,
+    generator_helpers: &[BindingKey],
 ) -> Option<(Vec<Param>, Vec<Stmt>, Option<BindingKey>)> {
     match gen_fn_arg {
         Expr::Fn(fn_expr) => {
@@ -508,7 +528,13 @@ fn extract_async_to_gen_body_with_params(
                 return Some((params, fn_expr.function.body?.stmts, None));
             }
             let mut body = fn_expr.function.body?;
-            let mark_key = try_transform_regenerator_wrap(&mut body)?;
+            let mark_key = if let Some(mark_key) = try_transform_regenerator_wrap(&mut body) {
+                mark_key
+            } else if try_transform_ts_generator_body(&mut body, generator_helpers) {
+                None
+            } else {
+                return None;
+            };
             Some((params, body.stmts, mark_key))
         }
         Expr::Call(mark_call) => {
@@ -524,7 +550,13 @@ fn extract_async_to_gen_body_with_params(
             };
             let params = fn_expr.function.params.clone();
             let mut body = fn_expr.function.body?;
-            let mark_key = try_transform_regenerator_wrap(&mut body)?;
+            let mark_key = if let Some(mark_key) = try_transform_regenerator_wrap(&mut body) {
+                mark_key
+            } else if try_transform_ts_generator_body(&mut body, generator_helpers) {
+                None
+            } else {
+                return None;
+            };
             Some((params, body.stmts, mark_key))
         }
         _ => None,
@@ -556,6 +588,12 @@ struct BindingUseFinder {
 }
 
 impl Visit for BindingUseFinder {
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        if let Some(init) = &decl.init {
+            init.visit_with(self);
+        }
+    }
+
     fn visit_ident(&mut self, ident: &Ident) {
         if ident.sym == self.key.0 && ident.ctxt == self.key.1 {
             self.found = true;
@@ -566,15 +604,19 @@ impl Visit for BindingUseFinder {
 struct FunctionTransformer<'a> {
     unresolved_mark: Mark,
     async_to_gen_callees: &'a AsyncToGenCallees<'a>,
+    generator_helpers: &'a [BindingKey],
+    esbuild_async_helpers: &'a [BindingKey],
     consumed_marks: &'a mut Vec<BindingKey>,
 }
 
 impl VisitMut for FunctionTransformer<'_> {
     fn visit_mut_assign_expr(&mut self, assign: &mut AssignExpr) {
         assign.visit_mut_children_with(self);
-        if let Some((expr, mark_key)) =
-            try_transform_async_to_generator_expr(*assign.right.clone(), self.async_to_gen_callees)
-        {
+        if let Some((expr, mark_key)) = try_transform_async_to_generator_expr(
+            *assign.right.clone(),
+            self.async_to_gen_callees,
+            self.generator_helpers,
+        ) {
             *assign.right = expr;
             if let Some(mark_key) = mark_key {
                 self.consumed_marks.push(mark_key);
@@ -587,25 +629,38 @@ impl VisitMut for FunctionTransformer<'_> {
         let Some(init) = decl.init.take() else {
             return;
         };
-        if let Some((expr, mark_key)) =
-            try_transform_async_to_generator_expr(*init.clone(), self.async_to_gen_callees)
-        {
+        if let Some((expr, mark_key)) = try_transform_async_to_generator_expr(
+            *init.clone(),
+            self.async_to_gen_callees,
+            self.generator_helpers,
+        ) {
             decl.init = Some(Box::new(expr));
             if let Some(mark_key) = mark_key {
                 self.consumed_marks.push(mark_key);
             }
+        } else if let Some(expr) = try_collapse_async_trampoline_iife(&init) {
+            decl.init = Some(Box::new(expr));
         } else {
             decl.init = Some(init);
         }
     }
 
     fn visit_mut_function(&mut self, func: &mut Function) {
+        if let Some(body) = func.body.as_mut() {
+            if try_transform_esbuild_async_function(body, self.esbuild_async_helpers) {
+                func.is_async = true;
+                func.visit_mut_children_with(self);
+                return;
+            }
+        }
+
         // Try _asyncToGenerator BEFORE recursing — the inner function hasn't
         // been transformed yet, so we can still detect the full pattern.
         if let Some(body) = func.body.as_mut() {
             if try_transform_async_to_generator(
                 body,
                 self.async_to_gen_callees,
+                self.generator_helpers,
                 self.unresolved_mark,
             ) {
                 func.is_async = true;
@@ -629,6 +684,15 @@ impl VisitMut for FunctionTransformer<'_> {
                 self.consumed_marks.push(key);
             }
         }
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        if try_transform_esbuild_async_arrow(arrow, self.esbuild_async_helpers) {
+            arrow.visit_mut_children_with(self);
+            return;
+        }
+
+        arrow.visit_mut_children_with(self);
     }
 }
 
@@ -1988,12 +2052,353 @@ fn reconstruct_with_regions(label_stmts: Vec<Vec<Stmt>>, trys: &[[Option<usize>;
 }
 
 // ============================================================
+// Babel async arrow trampoline cleanup
+// ============================================================
+
+fn try_collapse_async_trampoline_iife(expr: &Expr) -> Option<Expr> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if !call.args.is_empty() {
+        return None;
+    }
+    let callee = call.callee.as_expr()?;
+
+    let body = match strip_parens(callee) {
+        Expr::Fn(fn_expr) => fn_expr.function.body.as_ref()?,
+        Expr::Arrow(arrow) => match arrow.body.as_ref() {
+            BlockStmtOrExpr::BlockStmt(block) => block,
+            BlockStmtOrExpr::Expr(_) => return None,
+        },
+        _ => return None,
+    };
+
+    let [decl_stmt, return_stmt] = body.stmts.as_slice() else {
+        return None;
+    };
+    let (binding, async_fn) = async_fn_binding_from_decl_stmt(decl_stmt)?;
+    if !return_stmt_applies_binding(return_stmt, &binding) {
+        return None;
+    }
+    Some(anonymous_async_fn_expr(async_fn))
+}
+
+fn collapse_async_trampoline_assignments(module: &mut Module) {
+    let mut index = 0;
+    while index + 1 < module.body.len() {
+        let Some((binding, async_fn)) = async_fn_assignment_from_item(&module.body[index]) else {
+            index += 1;
+            continue;
+        };
+        if !var_item_init_applies_binding(&module.body[index + 1], &binding) {
+            index += 1;
+            continue;
+        }
+        if binding_used_outside_pair(&module.body, index, index + 1, &binding) {
+            index += 1;
+            continue;
+        }
+
+        if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = &mut module.body[index + 1] {
+            for decl in &mut var.decls {
+                if let Some(init) = &decl.init {
+                    if expr_applies_binding(init, &binding) {
+                        decl.init = Some(Box::new(anonymous_async_fn_expr(async_fn.clone())));
+                    }
+                }
+            }
+        }
+        module.body.remove(index);
+    }
+}
+
+fn async_fn_binding_from_decl_stmt(stmt: &Stmt) -> Option<(BindingKey, FnExpr)> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let decl = &var.decls[0];
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    let async_fn = async_fn_from_expr(decl.init.as_deref()?)?;
+    Some(((binding.id.sym.clone(), binding.id.ctxt), async_fn.clone()))
+}
+
+fn async_fn_assignment_from_item(item: &ModuleItem) -> Option<(BindingKey, FnExpr)> {
+    let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(left)) = &assign.left else {
+        return None;
+    };
+    let async_fn = async_fn_from_expr(&assign.right)?;
+    Some(((left.id.sym.clone(), left.id.ctxt), async_fn.clone()))
+}
+
+fn async_fn_from_expr(expr: &Expr) -> Option<&FnExpr> {
+    let Expr::Fn(fn_expr) = expr else {
+        return None;
+    };
+    if fn_expr.function.is_async && !fn_expr.function.is_generator {
+        Some(fn_expr)
+    } else {
+        None
+    }
+}
+
+fn return_stmt_applies_binding(stmt: &Stmt, binding: &BindingKey) -> bool {
+    let Stmt::Return(ret) = stmt else {
+        return false;
+    };
+    let Some(arg) = ret.arg.as_deref() else {
+        return false;
+    };
+    expr_applies_binding(arg, binding)
+}
+
+fn var_item_init_applies_binding(item: &ModuleItem, binding: &BindingKey) -> bool {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+        return false;
+    };
+    var.decls.iter().any(|decl| {
+        decl.init
+            .as_deref()
+            .is_some_and(|init| expr_applies_binding(init, binding))
+    })
+}
+
+fn expr_applies_binding(expr: &Expr, binding: &BindingKey) -> bool {
+    if extract_apply_this_arguments_callee(expr)
+        .is_some_and(|id| id.sym == binding.0 && id.ctxt == binding.1)
+    {
+        return true;
+    }
+
+    let Expr::Fn(fn_expr) = expr else {
+        return false;
+    };
+    let Some(body) = &fn_expr.function.body else {
+        return false;
+    };
+    let [stmt] = body.stmts.as_slice() else {
+        return false;
+    };
+    return_stmt_applies_binding(stmt, binding)
+}
+
+fn anonymous_async_fn_expr(mut fn_expr: FnExpr) -> Expr {
+    fn_expr.ident = None;
+    Expr::Fn(fn_expr)
+}
+
+// ============================================================
+// esbuild __async → async function
+// ============================================================
+
+fn collect_esbuild_async_helpers(module: &Module, unresolved_mark: Mark) -> Vec<BindingKey> {
+    module
+        .body
+        .iter()
+        .flat_map(|item| {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+                return Vec::new();
+            };
+            var.decls
+                .iter()
+                .filter_map(|decl| {
+                    let Pat::Ident(binding) = &decl.name else {
+                        return None;
+                    };
+                    if binding.id.sym.as_ref() != "__async" {
+                        return None;
+                    }
+                    let init = decl.init.as_deref()?;
+                    if is_esbuild_async_helper_expr(init, unresolved_mark) {
+                        Some((binding.id.sym.clone(), binding.id.ctxt))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn is_esbuild_async_helper_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let body = match expr {
+        Expr::Arrow(arrow) => arrow.body.as_ref(),
+        Expr::Fn(fn_expr) => {
+            let Some(body) = &fn_expr.function.body else {
+                return false;
+            };
+            return esbuild_async_helper_body_has_shape(&body.stmts, unresolved_mark);
+        }
+        _ => return false,
+    };
+
+    match body {
+        BlockStmtOrExpr::BlockStmt(block) => {
+            esbuild_async_helper_body_has_shape(&block.stmts, unresolved_mark)
+        }
+        BlockStmtOrExpr::Expr(expr) => {
+            let mut finder = EsbuildAsyncHelperFinder::new(unresolved_mark);
+            expr.visit_with(&mut finder);
+            finder.found_promise && finder.found_generator_apply
+        }
+    }
+}
+
+fn esbuild_async_helper_body_has_shape(stmts: &[Stmt], unresolved_mark: Mark) -> bool {
+    let mut finder = EsbuildAsyncHelperFinder::new(unresolved_mark);
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+    }
+    finder.found_promise && finder.found_generator_apply
+}
+
+struct EsbuildAsyncHelperFinder {
+    unresolved_mark: Mark,
+    found_promise: bool,
+    found_generator_apply: bool,
+}
+
+impl EsbuildAsyncHelperFinder {
+    fn new(unresolved_mark: Mark) -> Self {
+        Self {
+            unresolved_mark,
+            found_promise: false,
+            found_generator_apply: false,
+        }
+    }
+}
+
+impl Visit for EsbuildAsyncHelperFinder {
+    fn visit_expr(&mut self, expr: &Expr) {
+        if let Expr::New(new_expr) = expr {
+            if matches!(
+                new_expr.callee.as_ref(),
+                Expr::Ident(id)
+                    if id.sym.as_ref() == "Promise" && id.ctxt.outer() == self.unresolved_mark
+            ) {
+                self.found_promise = true;
+            }
+        }
+
+        if let Expr::Call(call) = expr {
+            if let Some(callee) = call.callee.as_expr() {
+                if let Expr::Member(member) = callee.as_ref() {
+                    if is_member_prop(&member.prop, "apply") {
+                        self.found_generator_apply = true;
+                    }
+                }
+            }
+        }
+
+        expr.visit_children_with(self);
+    }
+}
+
+fn try_transform_esbuild_async_function(
+    body: &mut BlockStmt,
+    esbuild_async_helpers: &[BindingKey],
+) -> bool {
+    if body.stmts.len() != 1 {
+        return false;
+    }
+    let Stmt::Return(ret) = &body.stmts[0] else {
+        return false;
+    };
+    let Some(arg) = ret.arg.as_deref() else {
+        return false;
+    };
+    let Some(mut stmts) = extract_esbuild_async_call_body(arg, esbuild_async_helpers) else {
+        return false;
+    };
+    replace_yield_with_await(&mut stmts);
+    body.stmts = stmts;
+    true
+}
+
+fn try_transform_esbuild_async_arrow(
+    arrow: &mut ArrowExpr,
+    esbuild_async_helpers: &[BindingKey],
+) -> bool {
+    let Some(mut stmts) = (match arrow.body.as_ref() {
+        BlockStmtOrExpr::Expr(expr) => extract_esbuild_async_call_body(expr, esbuild_async_helpers),
+        BlockStmtOrExpr::BlockStmt(block) if block.stmts.len() == 1 => {
+            let Stmt::Return(ret) = &block.stmts[0] else {
+                return false;
+            };
+            let Some(arg) = ret.arg.as_deref() else {
+                return false;
+            };
+            extract_esbuild_async_call_body(arg, esbuild_async_helpers)
+        }
+        _ => None,
+    }) else {
+        return false;
+    };
+
+    replace_yield_with_await(&mut stmts);
+    arrow.is_async = true;
+    *arrow.body = BlockStmtOrExpr::BlockStmt(BlockStmt {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        stmts,
+    });
+    true
+}
+
+fn extract_esbuild_async_call_body(
+    expr: &Expr,
+    esbuild_async_helpers: &[BindingKey],
+) -> Option<Vec<Stmt>> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if call.args.len() != 3 {
+        return None;
+    }
+    let callee = call.callee.as_expr()?;
+    if !is_esbuild_async_callee(callee, esbuild_async_helpers) {
+        return None;
+    }
+
+    let Expr::Fn(fn_expr) = call.args[2].expr.as_ref() else {
+        return None;
+    };
+    if !fn_expr.function.is_generator || !fn_expr.function.params.is_empty() {
+        return None;
+    }
+    Some(fn_expr.function.body.as_ref()?.stmts.clone())
+}
+
+fn is_esbuild_async_callee(expr: &Expr, esbuild_async_helpers: &[BindingKey]) -> bool {
+    let Expr::Ident(id) = expr else {
+        return false;
+    };
+    esbuild_async_helpers
+        .iter()
+        .any(|(sym, ctxt)| id.sym == *sym && id.ctxt == *ctxt)
+}
+
+// ============================================================
 // _asyncToGenerator → async function
 // ============================================================
 
 fn try_transform_async_to_generator_expr(
     expr: Expr,
     async_to_gen_callees: &AsyncToGenCallees,
+    generator_helpers: &[BindingKey],
 ) -> Option<(Expr, Option<BindingKey>)> {
     let Expr::Call(mut call) = expr else {
         return None;
@@ -2007,7 +2412,7 @@ fn try_transform_async_to_generator_expr(
     }
 
     let gen_fn_arg = *call.args.remove(0).expr;
-    let (mut fn_expr, mark_key) = build_async_fn_expr_from_gen_arg(gen_fn_arg)?;
+    let (mut fn_expr, mark_key) = build_async_fn_expr_from_gen_arg(gen_fn_arg, generator_helpers)?;
     let body = fn_expr.function.body.as_mut()?;
     replace_yield_with_await(&mut body.stmts);
     fn_expr.function.is_async = true;
@@ -2015,7 +2420,10 @@ fn try_transform_async_to_generator_expr(
     Some((Expr::Fn(fn_expr), mark_key))
 }
 
-fn build_async_fn_expr_from_gen_arg(gen_fn_arg: Expr) -> Option<(FnExpr, Option<BindingKey>)> {
+fn build_async_fn_expr_from_gen_arg(
+    gen_fn_arg: Expr,
+    generator_helpers: &[BindingKey],
+) -> Option<(FnExpr, Option<BindingKey>)> {
     match gen_fn_arg {
         Expr::Fn(fn_expr) => {
             let mut function = *fn_expr.function;
@@ -2023,7 +2431,13 @@ fn build_async_fn_expr_from_gen_arg(gen_fn_arg: Expr) -> Option<(FnExpr, Option<
                 None
             } else {
                 let body = function.body.as_mut()?;
-                try_transform_regenerator_wrap(body)?
+                if let Some(mark_key) = try_transform_regenerator_wrap(body) {
+                    mark_key
+                } else if try_transform_ts_generator_body(body, generator_helpers) {
+                    None
+                } else {
+                    return None;
+                }
             };
             Some((
                 FnExpr {
@@ -2049,7 +2463,13 @@ fn build_async_fn_expr_from_gen_arg(gen_fn_arg: Expr) -> Option<(FnExpr, Option<
                 None
             } else {
                 let body = function.body.as_mut()?;
-                try_transform_regenerator_wrap(body)?
+                if let Some(mark_key) = try_transform_regenerator_wrap(body) {
+                    mark_key
+                } else if try_transform_ts_generator_body(body, generator_helpers) {
+                    None
+                } else {
+                    return None;
+                }
             };
             Some((
                 FnExpr {
@@ -2066,6 +2486,7 @@ fn build_async_fn_expr_from_gen_arg(gen_fn_arg: Expr) -> Option<(FnExpr, Option<
 fn try_transform_async_to_generator(
     body: &mut BlockStmt,
     async_to_gen_callees: &AsyncToGenCallees,
+    generator_helpers: &[BindingKey],
     _unresolved_mark: Mark,
 ) -> bool {
     let return_idx = body
@@ -2078,15 +2499,16 @@ fn try_transform_async_to_generator(
     };
 
     // Pre-check: validate the pattern is extractable before removing the stmt.
-    if !can_extract_async_to_gen(&body.stmts[return_idx]) {
+    if !can_extract_async_to_gen(&body.stmts[return_idx], generator_helpers) {
         return false;
     }
 
     let ret_stmt = body.stmts.remove(return_idx);
-    let inner_stmts = match extract_async_to_gen_body(ret_stmt, async_to_gen_callees) {
-        Some(s) => s,
-        None => unreachable!("can_extract_async_to_gen passed but extract failed"),
-    };
+    let inner_stmts =
+        match extract_async_to_gen_body(ret_stmt, async_to_gen_callees, generator_helpers) {
+            Some(s) => s,
+            None => unreachable!("can_extract_async_to_gen passed but extract failed"),
+        };
 
     let mut inner_stmts = inner_stmts;
     replace_yield_with_await(&mut inner_stmts);
@@ -2105,7 +2527,7 @@ fn is_async_to_gen_return(stmt: &Stmt, async_to_gen_callees: &AsyncToGenCallees)
 
 /// Non-destructive check: can we extract the async body from this statement?
 /// Validates the same conditions as extract_async_to_gen_body without consuming the AST.
-fn can_extract_async_to_gen(stmt: &Stmt) -> bool {
+fn can_extract_async_to_gen(stmt: &Stmt, generator_helpers: &[BindingKey]) -> bool {
     let Stmt::Return(ret) = stmt else {
         return false;
     };
@@ -2136,11 +2558,16 @@ fn can_extract_async_to_gen(stmt: &Stmt) -> bool {
             if fn_expr.function.is_generator {
                 return true;
             }
-            // Non-generator: must contain regenerator.wrap and pass nested-CF check
+            // Non-generator: must contain either regenerator.wrap or SWC's
+            // _ts_generator state machine.
             fn_expr.function.body.as_ref().is_some_and(|body| {
                 body.stmts
                     .iter()
                     .any(|s| is_regenerator_wrap_return(s) && !has_nested_control_flow_in_stmt(s))
+                    || {
+                        let mut body = body.clone();
+                        try_transform_ts_generator_body(&mut body, generator_helpers)
+                    }
             })
         }
         Expr::Call(mark_call) => {
@@ -2164,6 +2591,10 @@ fn can_extract_async_to_gen(stmt: &Stmt) -> bool {
                 body.stmts
                     .iter()
                     .any(|s| is_regenerator_wrap_return(s) && !has_nested_control_flow_in_stmt(s))
+                    || {
+                        let mut body = body.clone();
+                        try_transform_ts_generator_body(&mut body, generator_helpers)
+                    }
             })
         }
         _ => false,
@@ -2213,6 +2644,7 @@ fn is_async_to_gen_callee(expr: &Expr, async_to_gen_callees: &AsyncToGenCallees)
 fn extract_async_to_gen_body(
     stmt: Stmt,
     async_to_gen_callees: &AsyncToGenCallees,
+    generator_helpers: &[BindingKey],
 ) -> Option<Vec<Stmt>> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = *ret.arg?;
@@ -2253,7 +2685,9 @@ fn extract_async_to_gen_body(
             }
             // Non-generator function that contains regeneratorRuntime.wrap
             let mut body = fn_expr.function.body?;
-            if try_transform_regenerator_wrap(&mut body).is_some() {
+            if try_transform_regenerator_wrap(&mut body).is_some()
+                || try_transform_ts_generator_body(&mut body, generator_helpers)
+            {
                 return Some(body.stmts);
             }
             None
@@ -2275,7 +2709,9 @@ fn extract_async_to_gen_body(
                 return None;
             };
             let mut body = fn_expr.function.body?;
-            if try_transform_regenerator_wrap(&mut body).is_some() {
+            if try_transform_regenerator_wrap(&mut body).is_some()
+                || try_transform_ts_generator_body(&mut body, generator_helpers)
+            {
                 return Some(body.stmts);
             }
             None
@@ -2375,6 +2811,37 @@ fn remove_helper_decls(module: &mut Module, to_remove: &[(Atom, swc_core::common
             .any(|(sym, ctxt)| fn_decl.ident.sym == *sym && fn_decl.ident.ctxt == *ctxt),
         _ => true,
     });
+}
+
+fn remove_unused_helper_decls(module: &mut Module, helpers: &[BindingKey]) {
+    if helpers.is_empty() {
+        return;
+    }
+    let unused: Vec<_> = helpers
+        .iter()
+        .filter(|helper| count_binding_uses(module, helper) <= 1)
+        .cloned()
+        .collect();
+    remove_helper_decls(module, &unused);
+}
+
+fn count_binding_uses(module: &Module, binding: &BindingKey) -> usize {
+    struct Counter<'a> {
+        binding: &'a BindingKey,
+        count: usize,
+    }
+
+    impl Visit for Counter<'_> {
+        fn visit_ident(&mut self, ident: &Ident) {
+            if ident.sym == self.binding.0 && ident.ctxt == self.binding.1 {
+                self.count += 1;
+            }
+        }
+    }
+
+    let mut counter = Counter { binding, count: 0 };
+    module.visit_with(&mut counter);
+    counter.count
 }
 
 // ============================================================

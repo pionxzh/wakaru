@@ -4,7 +4,7 @@ use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
     AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, CatchClause, Expr, ExprStmt,
-    Function, Ident, MemberExpr, Pat, Prop, PropName, SimpleAssignTarget, Stmt, SwitchCase,
+    Function, Ident, MemberExpr, Module, Pat, Prop, PropName, SimpleAssignTarget, Stmt, SwitchCase,
     TryStmt, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -28,6 +28,11 @@ impl UnAsyncAwait {
 }
 
 impl VisitMut for UnAsyncAwait {
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        let local_helpers = LocalHelperContext::collect(module);
+        Self::run_with_helpers(module, &local_helpers);
+    }
+
     fn visit_mut_function(&mut self, func: &mut Function) {
         let helpers = AsyncHelperContext::default();
         visit_mut_function_with_helpers(func, &helpers);
@@ -109,6 +114,17 @@ fn visit_mut_function_with_helpers(func: &mut Function, helpers: &AsyncHelperCon
 // ============================================================
 // __generator state-machine → function*
 // ============================================================
+
+pub(crate) fn try_transform_ts_generator_body(
+    body: &mut BlockStmt,
+    generator_helpers: &[BindingKey],
+) -> bool {
+    let helpers = AsyncHelperContext {
+        awaiter_helpers: HashSet::new(),
+        generator_helpers: generator_helpers.iter().cloned().collect(),
+    };
+    try_transform_generator(body, &helpers)
+}
 
 fn try_transform_generator(body: &mut BlockStmt, helpers: &AsyncHelperContext) -> bool {
     // Find: return __generator(this, function(_a) { switch(_a.label) { ... } })

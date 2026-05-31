@@ -74,6 +74,42 @@ function* func() {
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn swc_ts_generator_helper() {
+    let input = r#"
+function _ts_generator(thisArg, body) {
+  var t, _ = {
+    label: 0,
+    sent: function() { return t[1]; },
+    trys: [],
+    ops: []
+  };
+}
+function read_items(items) {
+  return _ts_generator(this, function(_state) {
+    switch (_state.label) {
+      case 0:
+        return [4, first_item(items)];
+      case 1:
+        _state.sent();
+        return [4, second_item(items)];
+      case 2:
+        _state.sent();
+        return [2];
+    }
+  });
+}
+"#;
+    let expected = r#"
+function* read_items(items) {
+  yield first_item(items);
+  yield second_item(items);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
 // ── __awaiter only (inner is already function*) ──────────────────────────────
 
 #[test]

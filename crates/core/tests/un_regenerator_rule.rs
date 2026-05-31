@@ -466,6 +466,200 @@ async function fetchUser(id) {
 }
 
 #[test]
+fn swc_async_to_generator_with_ts_generator() {
+    let input = r#"
+function _async_to_generator(fn) {
+  return function() {
+    var self = this, args = arguments;
+    return new Promise(function(resolve, reject) {
+      var gen = fn.apply(self, args);
+      function _next(value) {
+        resolve(gen.next(value).value);
+      }
+      _next(undefined);
+    });
+  };
+}
+function _ts_generator(thisArg, body) {
+  var t, _ = {
+    label: 0,
+    sent: function() { return t[1]; },
+    trys: [],
+    ops: []
+  };
+}
+function load_user(app_id) {
+  return _async_to_generator(function() {
+    var response, data;
+    return _ts_generator(this, function(_state) {
+      switch (_state.label) {
+        case 0:
+          return [4, fetch_user(app_id)];
+        case 1:
+          response = _state.sent();
+          return [4, response.json()];
+        case 2:
+          data = _state.sent();
+          return [2, data];
+      }
+    });
+  })();
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("async function load_user(app_id)"),
+        "should restore SWC async wrapper, got:\n{output}"
+    );
+    assert!(
+        output.contains("response = await fetch_user(app_id)")
+            && output.contains("data = await response.json()")
+            && output.contains("return data"),
+        "should restore awaited SWC state-machine body, got:\n{output}"
+    );
+}
+
+#[test]
+fn esbuild_async_arrow_helper() {
+    let input = r#"
+var __async = (__this, __arguments, generator) => {
+  return new Promise((resolve, reject) => {
+    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
+    step((generator = generator.apply(__this, __arguments)).next());
+  });
+};
+const load_user = (app_id) => __async(null, null, function* () {
+  return yield fetch_user(app_id);
+});
+use(load_user);
+"#;
+    let expected = r#"
+const load_user = async (app_id) => {
+  return await fetch_user(app_id);
+};
+use(load_user);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn esbuild_async_function_helper() {
+    let input = r#"
+var __async = (__this, __arguments, generator) => new Promise((resolve) => {
+  step((generator = generator.apply(__this, __arguments)).next());
+});
+function load_user(app_id) {
+  return __async(this, arguments, function* () {
+    var response = yield fetch_user(app_id);
+    return response;
+  });
+}
+"#;
+    let expected = r#"
+async function load_user(app_id) {
+  var response = await fetch_user(app_id);
+  return response;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn esbuild_async_helper_ignores_shadowed_promise() {
+    let input = r#"
+const Promise = makePromise();
+var __async = (__this, __arguments, generator) => new Promise((resolve) => {
+  step((generator = generator.apply(__this, __arguments)).next());
+});
+function load_user(app_id) {
+  return __async(this, arguments, function* () {
+    return yield fetch_user(app_id);
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("var __async"),
+        "shadowed Promise helper should not be classified as esbuild __async, got:\n{output}"
+    );
+    assert!(
+        !output.contains("async function load_user"),
+        "shadowed Promise helper must not be rewritten to native async, got:\n{output}"
+    );
+}
+
+#[test]
+fn babel_async_arrow_iife_trampoline() {
+    let input = r#"
+const load_user = function () {
+  var _ref = async function _callee(app_id) {
+    return await fetch_user(app_id);
+  };
+  return function load_user(_x) {
+    return _ref.apply(this, arguments);
+  };
+}();
+use(load_user);
+"#;
+    let expected = r#"
+const load_user = async function(app_id) {
+  return await fetch_user(app_id);
+};
+use(load_user);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn babel_async_arrow_sequence_trampoline() {
+    let input = r#"
+_ref = async function _callee(app_id) {
+  return await fetch_user(app_id);
+};
+const load_user = function load_user(_x) {
+  return _ref.apply(this, arguments);
+};
+var _ref;
+use(load_user);
+"#;
+    let expected = r#"
+const load_user = async function(app_id) {
+  return await fetch_user(app_id);
+};
+var _ref;
+use(load_user);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn babel_async_arrow_sequence_trampoline_keeps_escaped_private_binding() {
+    let input = r#"
+_ref = async function _callee(app_id) {
+  return await fetch_user(app_id);
+};
+const load_user = function load_user(_x) {
+  return _ref.apply(this, arguments);
+};
+var _ref;
+use(_ref, load_user);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("_ref = async function"),
+        "escaped private async function assignment must be preserved, got:\n{output}"
+    );
+    assert!(
+        output.contains("use(_ref, load_user)"),
+        "escaped private binding use must remain valid, got:\n{output}"
+    );
+}
+
+#[test]
 fn async_to_generator_expression_var_init() {
     let input = r#"
 function _asyncToGenerator(fn) {
