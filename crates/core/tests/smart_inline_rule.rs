@@ -44,6 +44,24 @@ bar(foo);
 }
 
 #[test]
+fn module_decl_keeps_statement_run_order() {
+    let input = r#"
+const first = source.first;
+const second = source.second;
+export class ExportedClass {}
+decorate(ExportedClass.prototype);
+"#;
+    let expected = r#"
+const { first, second } = source;
+export class ExportedClass {
+}
+decorate(ExportedClass.prototype);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn minimal_does_not_inline_single_use_temp_var() {
     let input = r#"
 const t = foo;

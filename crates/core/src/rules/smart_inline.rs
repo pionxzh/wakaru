@@ -65,48 +65,14 @@ impl VisitMut for SmartInline {
             inline_module_builtin_aliases(module, self.unresolved_mark);
         }
 
-        // Process module-level statements
-        let stmts: Vec<Stmt> = module
-            .body
-            .iter()
-            .filter_map(|item| {
-                if let ModuleItem::Stmt(s) = item {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
         let context_for_init_bindings = self.context_for_init_bindings();
-        let new_stmts = process_stmts(
-            stmts,
+        process_module_stmt_runs(
+            &mut module.body,
             self.level,
             self.unresolved_mark,
             &self.use_state_bindings,
             &context_for_init_bindings,
         );
-
-        // Rebuild module body
-        let mut new_body = Vec::new();
-        let mut stmt_idx = 0;
-        for item in module.body.drain(..) {
-            match item {
-                ModuleItem::Stmt(_) => {
-                    if stmt_idx < new_stmts.len() {
-                        new_body.push(ModuleItem::Stmt(new_stmts[stmt_idx].clone()));
-                        stmt_idx += 1;
-                    }
-                }
-                other => new_body.push(other),
-            }
-        }
-        // Add any remaining (new_stmts may be longer after splitting)
-        while stmt_idx < new_stmts.len() {
-            new_body.push(ModuleItem::Stmt(new_stmts[stmt_idx].clone()));
-            stmt_idx += 1;
-        }
-        module.body = new_body;
 
         module.visit_mut_children_with(self);
         self.use_state_bindings = previous_use_state_bindings;
@@ -149,6 +115,69 @@ impl SmartInline {
 // ============================================================
 // Main processing pipeline per statement list
 // ============================================================
+
+fn process_module_stmt_runs(
+    body: &mut Vec<ModuleItem>,
+    level: RewriteLevel,
+    unresolved_mark: Option<Mark>,
+    use_state_bindings: &HashSet<BindingKey>,
+    context_for_init_bindings: &HashSet<BindingKey>,
+) {
+    let mut new_body = Vec::with_capacity(body.len());
+    let mut run = Vec::new();
+
+    for item in std::mem::take(body) {
+        match item {
+            ModuleItem::Stmt(stmt) => run.push(stmt),
+            other => {
+                flush_stmt_run(
+                    &mut new_body,
+                    &mut run,
+                    level,
+                    unresolved_mark,
+                    use_state_bindings,
+                    context_for_init_bindings,
+                );
+                new_body.push(other);
+            }
+        }
+    }
+    flush_stmt_run(
+        &mut new_body,
+        &mut run,
+        level,
+        unresolved_mark,
+        use_state_bindings,
+        context_for_init_bindings,
+    );
+
+    *body = new_body;
+}
+
+fn flush_stmt_run(
+    new_body: &mut Vec<ModuleItem>,
+    run: &mut Vec<Stmt>,
+    level: RewriteLevel,
+    unresolved_mark: Option<Mark>,
+    use_state_bindings: &HashSet<BindingKey>,
+    context_for_init_bindings: &HashSet<BindingKey>,
+) {
+    if run.is_empty() {
+        return;
+    }
+
+    new_body.extend(
+        process_stmts(
+            std::mem::take(run),
+            level,
+            unresolved_mark,
+            use_state_bindings,
+            context_for_init_bindings,
+        )
+        .into_iter()
+        .map(ModuleItem::Stmt),
+    );
+}
 
 fn process_stmts(
     stmts: Vec<Stmt>,
