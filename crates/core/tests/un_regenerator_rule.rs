@@ -811,6 +811,52 @@ const load_user = async function(app_id) {
 }
 
 #[test]
+fn async_to_generator_removes_top_level_step_dependency() {
+    let input = r#"
+function asyncGeneratorStep(n, t, e, r, o, a, c) {
+  try {
+    var i = n[a](c), u = i.value;
+  } catch (n) {
+    return void e(n);
+  }
+  i.done ? t(u) : Promise.resolve(u).then(r, o);
+}
+function _asyncToGenerator(n) {
+  return function() {
+    var t = this, e = arguments;
+    return new Promise(function(r, o) {
+      var a = n.apply(t, e);
+      function _next(n) {
+        asyncGeneratorStep(a, r, o, _next, _throw, "next", n);
+      }
+      function _throw(n) {
+        asyncGeneratorStep(a, r, o, _next, _throw, "throw", n);
+      }
+      _next(void 0);
+    });
+  };
+}
+function loadValue(_arg) {
+  return _loadValue.apply(this, arguments);
+}
+function _loadValue() {
+  return (_loadValue = _asyncToGenerator(function* (recordId) {
+    const response = yield fetchRecord(recordId);
+    return yield response.json();
+  })).apply(this, arguments);
+}
+"#;
+    let expected = r#"
+async function loadValue(recordId) {
+  const response = await fetchRecord(recordId);
+  return await response.json();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn async_to_generator_babel_trampoline_with_params() {
     let input = r#"
 function _asyncToGenerator(fn) {

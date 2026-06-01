@@ -13,7 +13,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::transpiler_helper_utils::{
-    helpers_with_remaining_refs, BindingKey, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
+    BindingKey, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
 use super::un_async_await::try_transform_ts_generator_body;
 
@@ -119,15 +119,15 @@ fn run_un_regenerator(
 
     // Phase 4: Remove _asyncToGenerator helper if no longer referenced
     if !async_to_gen_bindings.is_empty() {
-        let remaining = helpers_with_remaining_refs(module, helpers);
-        let to_remove: Vec<_> = helpers
+        let roots: HashMap<BindingKey, TranspilerHelperKind> = helpers
             .iter()
             .filter(|(key, kind)| {
-                **kind == TranspilerHelperKind::AsyncToGenerator && !remaining.contains(key)
+                **kind == TranspilerHelperKind::AsyncToGenerator
+                    && async_to_gen_bindings.contains(key)
             })
-            .map(|((sym, ctxt), _)| (sym.clone(), *ctxt))
+            .map(|(key, kind)| (key.clone(), *kind))
             .collect();
-        remove_helper_decls(module, &to_remove);
+        local_helpers.remove_helpers_with_dependencies(module, roots);
     }
 
     remove_unused_helper_decls(module, &esbuild_async_helpers);
