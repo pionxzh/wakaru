@@ -271,6 +271,96 @@ for (x = 5; false;);
 }
 
 #[test]
+fn splits_swc_single_call_for_initializer() {
+    // Produced by @swc/core minify with compress.sequences=true, mangle=false.
+    let input = r#"
+function run() {
+  for (setup(); i < n; i++) work(i);
+}
+"#;
+    let expected = r#"
+function run() {
+  setup();
+  for (; i < n; i++) work(i);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn splits_single_call_for_initializer_inside_conditional_branch() {
+    let input = r#"
+function run(flag) {
+  if (flag) for (setup(); i < n; i++) work(i);
+}
+"#;
+    let expected = r#"
+function run(flag) {
+  if (flag) {
+    setup();
+    for (; i < n; i++) work(i);
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn splits_single_call_for_initializer_before_later_lexical_binding() {
+    let input = r#"
+{
+  for (setup(later); false;) {}
+  let later = 1;
+}
+"#;
+    let expected = r#"
+{
+  setup(later);
+  for (; false;) {}
+  let later = 1;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn does_not_split_member_call_for_initializer() {
+    let input = r#"
+function run(iterator) {
+  for (iterator.start(); !iterator.done(); ) work(iterator.value);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn does_not_split_directive_like_for_initializer() {
+    let input = r#"
+function run(flag) {
+  for ("use strict"; flag; flag = false) work();
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn does_not_split_tdz_sensitive_identifier_for_initializer() {
+    let input = r#"
+{
+  for (later; false;) {}
+  let later = 1;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn splits_for_init_sequence_with_var_decl() {
     let input = r#"
 for (let x = (a(), b(), c()), y = 1; x < 10; x++) {

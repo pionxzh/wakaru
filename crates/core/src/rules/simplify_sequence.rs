@@ -657,8 +657,17 @@ fn split_for_stmt(mut for_stmt: ForStmt, level: RewriteLevel) -> Vec<Stmt> {
             VarDeclOrExpr::Expr(expr) => {
                 let (pre, last) = split_expr_seq(expr);
                 if pre.is_empty() {
-                    // Not a sequence — restore unchanged
-                    for_stmt.init = Some(VarDeclOrExpr::Expr(last));
+                    if is_assign_expr(&last) {
+                        // Keep assignment initializers in the loop header.
+                        for_stmt.init = Some(VarDeclOrExpr::Expr(last));
+                    } else if can_split_standalone_for_init_expr(&last) {
+                        prefix.push(Stmt::Expr(ExprStmt {
+                            span: for_stmt.span,
+                            expr: last,
+                        }));
+                    } else {
+                        for_stmt.init = Some(VarDeclOrExpr::Expr(last));
+                    }
                 } else {
                     for p in pre {
                         prefix.push(Stmt::Expr(ExprStmt {
@@ -692,6 +701,18 @@ fn split_for_stmt(mut for_stmt: ForStmt, level: RewriteLevel) -> Vec<Stmt> {
 
     prefix.push(Stmt::For(for_stmt));
     prefix
+}
+
+fn can_split_standalone_for_init_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Call(call) => matches!(
+            &call.callee,
+            swc_core::ecma::ast::Callee::Expr(callee)
+                if matches!(strip_parens(callee), Expr::Ident(_))
+        ),
+        Expr::Paren(paren) => can_split_standalone_for_init_expr(&paren.expr),
+        _ => false,
+    }
 }
 
 /// Extract sequence prefixes from each declarator's init, without splitting
