@@ -61,6 +61,8 @@ enum CjsRequireKind {
 
 /// Classified CJS export kinds
 enum CjsExportKind {
+    /// Object.defineProperty(exports, "__esModule", ...) marker → remove
+    EsModuleFlag,
     /// module.exports = expr → export default expr
     ModuleExportsDefault { expr: Box<Expr> },
     /// exports.foo = expr or module.exports.foo = expr
@@ -164,6 +166,7 @@ impl VisitMut for UnEsm {
         for (idx, c) in classified.iter().enumerate() {
             if let Classified::CjsExport { kind } = c {
                 let (name, is_void) = match kind {
+                    CjsExportKind::EsModuleFlag => continue,
                     CjsExportKind::ModuleExportsDefault { .. } => (None, false),
                     CjsExportKind::NamedDefault { .. } => (None, false),
                     CjsExportKind::Named { name, is_void, .. } => (Some(name.clone()), *is_void),
@@ -1453,6 +1456,7 @@ fn make_import_decl(src: &str, specifiers: Vec<ImportSpecifier>) -> ImportDecl {
 
 fn build_export_items(kind: CjsExportKind) -> Vec<ModuleItem> {
     match kind {
+        CjsExportKind::EsModuleFlag => vec![],
         CjsExportKind::ModuleExportsDefault { expr } => vec![ModuleItem::ModuleDecl(
             ModuleDecl::ExportDefaultExpr(ExportDefaultExpr {
                 span: DUMMY_SP,
@@ -1541,7 +1545,8 @@ fn build_dropped_export_side_effect_items(kind: CjsExportKind) -> Vec<ModuleItem
             is_void: false,
             ..
         } => expr,
-        CjsExportKind::Named { is_void: true, .. }
+        CjsExportKind::EsModuleFlag
+        | CjsExportKind::Named { is_void: true, .. }
         | CjsExportKind::DefaultMirror
         | CjsExportKind::SelfRef => return vec![],
     };
@@ -2188,6 +2193,12 @@ fn try_classify_cjs_export(stmt: &Stmt, unresolved_mark: Mark) -> Option<CjsExpo
     let Stmt::Expr(expr_stmt) = stmt else {
         return None;
     };
+    if let Some(kind) =
+        try_classify_define_property_export(expr_stmt.expr.as_ref(), unresolved_mark)
+    {
+        return Some(kind);
+    }
+
     let Expr::Assign(assign) = expr_stmt.expr.as_ref() else {
         return None;
     };
@@ -2201,9 +2212,8 @@ fn try_classify_cjs_export(stmt: &Stmt, unresolved_mark: Mark) -> Option<CjsExpo
         return None;
     };
 
-    // Check if obj is `module.exports` (the member object itself is `module.exports`)
-    if is_module_exports_expr(&member.obj, unresolved_mark) {
-        // module.exports.foo = expr
+    // Check if obj is `module.exports` or `exports`.
+    if is_cjs_export_object_expr(&member.obj, unresolved_mark) {
         if let Some(prop) = is_ident_prop(&member.prop) {
             if prop.as_ref() == "default" {
                 // module.exports.default = module.exports → self-ref
@@ -2241,26 +2251,35 @@ fn try_classify_cjs_export(stmt: &Stmt, unresolved_mark: Mark) -> Option<CjsExpo
         }
     }
 
-    // Check if obj is `exports` identifier
-    if let Expr::Ident(obj_id) = member.obj.as_ref() {
-        if is_unresolved_ident(obj_id, "exports", unresolved_mark) {
-            if let Some(prop) = is_ident_prop(&member.prop) {
-                if prop.as_ref() == "default" {
-                    return Some(CjsExportKind::NamedDefault {
-                        expr: assign.right.clone(),
-                    });
-                }
-                let is_void = is_void_or_undefined(&assign.right, unresolved_mark);
-                return Some(CjsExportKind::Named {
-                    name: prop,
-                    expr: assign.right.clone(),
-                    is_void,
-                });
-            }
-        }
+    None
+}
+
+fn try_classify_define_property_export(
+    expr: &Expr,
+    unresolved_mark: Mark,
+) -> Option<CjsExportKind> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if !is_object_define_property_global_call(call, unresolved_mark) || call.args.len() != 3 {
+        return None;
+    }
+    if !is_cjs_export_object_expr(call.args[0].expr.as_ref(), unresolved_mark) {
+        return None;
+    }
+    if is_esmodule_name_arg(call.args[1].expr.as_ref())
+        && is_esmodule_descriptor(call.args[2].expr.as_ref())
+    {
+        return Some(CjsExportKind::EsModuleFlag);
     }
 
-    None
+    let export_name = literal_export_name_arg(call.args[1].expr.as_ref())?;
+    let ident = extract_define_property_getter_ident(call.args[2].expr.as_ref(), unresolved_mark)?;
+    Some(CjsExportKind::Named {
+        name: export_name,
+        expr: Box::new(Expr::Ident(ident)),
+        is_void: false,
+    })
 }
 
 /// Try to classify as a CJS require statement
@@ -2440,6 +2459,157 @@ fn is_module_exports_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
         }
     }
     false
+}
+
+fn is_cjs_export_object_expr(expr: &Expr, unresolved_mark: Mark) -> bool {
+    let expr = strip_parens(expr);
+    if is_module_exports_expr(expr, unresolved_mark) {
+        return true;
+    }
+    let Expr::Ident(id) = expr else {
+        return false;
+    };
+    is_unresolved_ident(id, "exports", unresolved_mark)
+}
+
+fn is_object_define_property_global_call(call: &CallExpr, unresolved_mark: Mark) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    is_unresolved_member_expr(callee.as_ref(), "Object", "defineProperty", unresolved_mark)
+}
+
+fn is_esmodule_name_arg(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::Lit(Lit::Str(str)) if str.value.as_str() == Some("__esModule"))
+}
+
+fn literal_export_name_arg(expr: &Expr) -> Option<Atom> {
+    let Expr::Lit(Lit::Str(str)) = strip_parens(expr) else {
+        return None;
+    };
+    let value = str.value.as_str()?;
+    if is_valid_js_ident(value) {
+        Some(value.into())
+    } else {
+        None
+    }
+}
+
+fn is_esmodule_descriptor(expr: &Expr) -> bool {
+    let Expr::Object(object) = strip_parens(expr) else {
+        return false;
+    };
+    let mut has_value_true = false;
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return false;
+        };
+        let Prop::KeyValue(entry) = prop.as_ref() else {
+            return false;
+        };
+        let Some(name) = prop_name_as_atom(&entry.key) else {
+            return false;
+        };
+        match name.as_ref() {
+            "value" => {
+                if !matches!(entry.value.as_ref(), Expr::Lit(Lit::Bool(value)) if value.value) {
+                    return false;
+                }
+                has_value_true = true;
+            }
+            "enumerable" | "configurable" | "writable" => {
+                if !matches!(entry.value.as_ref(), Expr::Lit(Lit::Bool(_))) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    has_value_true
+}
+
+fn extract_define_property_getter_ident(expr: &Expr, unresolved_mark: Mark) -> Option<Ident> {
+    let Expr::Object(object) = strip_parens(expr) else {
+        return None;
+    };
+    let mut has_enumerable_true = false;
+    let mut has_enumerable = false;
+    let mut has_configurable = false;
+    let mut getter_ident = None;
+
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return None;
+        };
+        match prop.as_ref() {
+            Prop::KeyValue(entry) => match prop_name_as_atom(&entry.key).as_deref() {
+                Some("enumerable") => {
+                    if has_enumerable || !matches!(entry.value.as_ref(), Expr::Lit(Lit::Bool(_))) {
+                        return None;
+                    }
+                    has_enumerable = true;
+                    has_enumerable_true =
+                        matches!(entry.value.as_ref(), Expr::Lit(Lit::Bool(value)) if value.value);
+                }
+                Some("get") => {
+                    if getter_ident.is_some() {
+                        return None;
+                    }
+                    getter_ident = Some(extract_getter_expr_return_ident(entry.value.as_ref())?);
+                }
+                Some("configurable") => {
+                    if has_configurable {
+                        return None;
+                    }
+                    if !matches!(entry.value.as_ref(), Expr::Lit(Lit::Bool(_))) {
+                        return None;
+                    }
+                    has_configurable = true;
+                }
+                _ => return None,
+            },
+            Prop::Method(method) => {
+                if matches!(prop_name_as_atom(&method.key).as_deref(), Some("get")) {
+                    if getter_ident.is_some() {
+                        return None;
+                    }
+                    if !method.function.params.is_empty()
+                        || method.function.is_async
+                        || method.function.is_generator
+                    {
+                        return None;
+                    }
+                    getter_ident =
+                        Some(extract_single_return_ident(method.function.body.as_ref()?)?);
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+
+    let ident = has_enumerable_true.then_some(getter_ident).flatten()?;
+    if ident.ctxt.outer() == unresolved_mark {
+        return None;
+    }
+    Some(ident)
+}
+
+fn extract_getter_expr_return_ident(expr: &Expr) -> Option<Ident> {
+    let expr = extract_getter_expr_return_expr(expr)?;
+    let Expr::Ident(ident) = expr.as_ref() else {
+        return None;
+    };
+    Some(ident.clone())
+}
+
+fn extract_single_return_ident(block: &BlockStmt) -> Option<Ident> {
+    let expr = extract_single_return_expr(block)?;
+    let Expr::Ident(ident) = expr.as_ref() else {
+        return None;
+    };
+    Some(ident.clone())
 }
 
 fn is_unresolved_ident(id: &Ident, name: &str, unresolved_mark: Mark) -> bool {
@@ -2652,7 +2822,7 @@ fn rename_export_kind(kind: &mut CjsExportKind, renames: &[BindingRename]) {
         | CjsExportKind::NamedDefault { expr } => {
             rename_bindings(expr.as_mut(), renames);
         }
-        CjsExportKind::DefaultMirror | CjsExportKind::SelfRef => {}
+        CjsExportKind::EsModuleFlag | CjsExportKind::DefaultMirror | CjsExportKind::SelfRef => {}
     }
 }
 

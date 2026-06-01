@@ -167,6 +167,125 @@ exports.foo = 1;
 }
 
 #[test]
+fn esmodule_marker_on_arbitrary_object_does_not_create_exports_alias() {
+    let input = r#"
+Object.defineProperty(moduleExports, "__esModule", { value: true });
+moduleExports.Service = void 0;
+class Service {}
+moduleExports.Service = Service;
+"#;
+    let expected = r#"
+Object.defineProperty(moduleExports, "__esModule", {
+    value: true
+});
+moduleExports.Service = undefined;
+class Service {}
+moduleExports.Service = Service;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn define_property_getter_on_exports_to_named_export() {
+    let input = r#"
+const rawCache = require("./raw-cache.js");
+Object.defineProperty(exports, "rawCache", {
+  enumerable: true,
+  get() {
+    return rawCache;
+  }
+});
+"#;
+    let expected = r#"
+import rawCache from "./raw-cache.js";
+export { rawCache };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn define_property_getter_on_arbitrary_object_is_not_export() {
+    let input = r#"
+Object.defineProperty(moduleExports, "__esModule", {
+  value: true
+});
+Object.defineProperty(moduleExports, "helperValue", {
+  enumerable: true,
+  get() {
+    return helperValue;
+  }
+});
+const helperValue = createHelperValue();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn define_property_default_getter_uses_live_export_specifier() {
+    let input = r#"
+const value = createValue();
+Object.defineProperty(exports, "default", {
+  enumerable: true,
+  get() {
+    return value;
+  }
+});
+"#;
+    let expected = r#"
+const value = createValue();
+export { value as default };
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn define_property_getter_with_call_return_is_not_export() {
+    let input = r#"
+Object.defineProperty(exports, "value", {
+  enumerable: true,
+  get() {
+    return compute();
+  }
+});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn define_property_getter_with_unresolved_return_is_not_export() {
+    let input = r#"
+Object.defineProperty(exports, "value", {
+  enumerable: true,
+  get() {
+    return globalValue;
+  }
+});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn define_property_getter_with_effectful_descriptor_is_not_export() {
+    let input = r#"
+const value = createValue();
+Object.defineProperty(exports, "value", {
+  enumerable: computeEnumerable(),
+  get() {
+    return value;
+  }
+});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn local_module_binding_not_converted_to_export() {
     let input = r#"
 var module = { exports: {} };
