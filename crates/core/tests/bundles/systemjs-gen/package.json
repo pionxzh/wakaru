@@ -2,6 +2,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "generate": "node -e \"process.exit(process.platform === 'win32' ? 1 : 0)\" && bash generate.sh || powershell -ExecutionPolicy Bypass -File generate.ps1"
+    "generate": "node generate.mjs"
   }
 }
