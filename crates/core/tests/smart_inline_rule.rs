@@ -758,6 +758,62 @@ cwd();
 }
 
 #[test]
+fn standard_inlines_newer_standard_builtin_alias_roots() {
+    let input = r#"
+const B = BigInt;
+B(1);
+B(2);
+const add = Atomics.add;
+add(i32, 0, 1);
+add(i32, 0, 2);
+const W = WeakRef;
+new W(target);
+new W(otherTarget);
+const F = FinalizationRegistry;
+new F(cleanup);
+new F(otherCleanup);
+"#;
+    let expected = r#"
+BigInt(1);
+BigInt(2);
+Atomics.add(i32, 0, 1);
+Atomics.add(i32, 0, 2);
+new WeakRef(target);
+new WeakRef(otherTarget);
+new FinalizationRegistry(cleanup);
+new FinalizationRegistry(otherCleanup);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_does_not_destructure_newer_standard_builtin_roots() {
+    let input = r#"
+const add = Atomics.add;
+const wait = Atomics.wait;
+const deref = WeakRef.prototype.deref;
+const cleanup = FinalizationRegistry.prototype.cleanupSome;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn standard_does_not_inline_broad_builtin_global_function_aliases() {
+    let input = r#"
+const p = parseInt;
+p("1", 10);
+p("2", 10);
+const d = decodeURI;
+d(url);
+d(nextUrl);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn standard_builtin_global_accesses_inlined_through_pipeline() {
     // All builtin global aliases are inlined back to Object.X(...) form in
     // standard mode.
