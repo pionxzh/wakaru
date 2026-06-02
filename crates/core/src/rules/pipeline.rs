@@ -698,7 +698,11 @@ mod tests {
                 RulePipelineOptions::between("UnInteropRequireDefault", "UnRegenerator"),
             );
 
-            assert_eq!(collect_transpiler_helpers_call_count(), 3);
+            // The context is reused across non-mutating helper rules, but is
+            // intentionally rebuilt after rules that can remove helpers or
+            // rewrite helper calls. The late object spread/rest passes add two
+            // more invalidation points to the original helper span.
+            assert_eq!(collect_transpiler_helpers_call_count(), 5);
         });
     }
 }
