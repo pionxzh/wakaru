@@ -11,6 +11,9 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{HelperKind, ModuleFactsMap, TypeScriptHelperKind};
 
+use super::cross_module_helper_refs::{
+    collect_cross_module_helper_refs, cross_module_member_helper_kind,
+};
 use super::helper_matcher::binding_key;
 use super::transpiler_helper_utils::{
     remove_helpers_without_remaining_refs, tslib_member_helper_kind, BindingKey,
@@ -87,6 +90,22 @@ fn run_un_object_spread(
             module_facts,
         ));
     }
+    let cross_module_helper_refs = module_facts
+        .map(|facts| {
+            collect_cross_module_helper_refs(module, facts, |kind| {
+                matches!(
+                    kind,
+                    TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread
+                )
+            })
+        })
+        .unwrap_or_default();
+    helpers.extend(
+        cross_module_helper_refs
+            .direct
+            .iter()
+            .map(|(key, kind)| (key.clone(), *kind)),
+    );
     let cross_module_ts_assign_namespaces = module_facts
         .map(|facts| collect_cross_module_ts_assign_helpers(module, facts, &mut helpers))
         .unwrap_or_default();
@@ -95,12 +114,14 @@ fn run_un_object_spread(
     if helpers.is_empty()
         && cross_module_ts_assign_namespaces.is_empty()
         && swc_numeric_helper_namespaces.is_empty()
+        && cross_module_helper_refs.namespaces.is_empty()
         && tslib_namespaces.is_empty()
     {
         return;
     }
     let mut replacer = SpreadReplacer {
         helpers: &helpers,
+        cross_module_helper_namespaces: &cross_module_helper_refs.namespaces,
         cross_module_ts_assign_namespaces: &cross_module_ts_assign_namespaces,
         swc_numeric_helper_namespaces: &swc_numeric_helper_namespaces,
         tslib_namespaces,
@@ -423,6 +444,7 @@ fn ident_used_in_module(body: &[ModuleItem], target: &Ident) -> bool {
 
 struct SpreadReplacer<'a> {
     helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
+    cross_module_helper_namespaces: &'a HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
     cross_module_ts_assign_namespaces: &'a HashMap<BindingKey, HashSet<String>>,
     swc_numeric_helper_namespaces: &'a HashSet<BindingKey>,
     tslib_namespaces: &'a HashSet<BindingKey>,
@@ -439,6 +461,7 @@ impl VisitMut for SpreadReplacer<'_> {
         if !is_object_spread_callee(
             callee,
             self.helpers,
+            self.cross_module_helper_namespaces,
             self.cross_module_ts_assign_namespaces,
             self.swc_numeric_helper_namespaces,
             self.tslib_namespaces,
@@ -497,6 +520,7 @@ impl VisitMut for SpreadReplacer<'_> {
 fn is_object_spread_callee(
     callee: &Expr,
     helpers: &HashMap<BindingKey, TranspilerHelperKind>,
+    cross_module_helper_namespaces: &HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
     cross_module_ts_assign_namespaces: &HashMap<BindingKey, HashSet<String>>,
     swc_numeric_helper_namespaces: &HashSet<BindingKey>,
     tslib_namespaces: &HashSet<BindingKey>,
@@ -512,6 +536,9 @@ fn is_object_spread_callee(
         Expr::Member(_) => {
             matches!(
                 tslib_member_helper_kind(callee, tslib_namespaces),
+                Some(TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread)
+            ) || matches!(
+                cross_module_member_helper_kind(callee, cross_module_helper_namespaces),
                 Some(TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread)
             ) || is_cross_module_ts_assign_member(callee, cross_module_ts_assign_namespaces)
                 || is_swc_numeric_object_spread_member(callee, swc_numeric_helper_namespaces)

@@ -182,14 +182,29 @@ fn run_un_object_spread(module: &mut Module, ctx: RuleRunContext<'_>) {
     UnObjectSpread::run_with_helpers(module, local_helpers.as_ref(), ctx.module_facts);
 }
 
+fn run_un_object_spread_late(module: &mut Module, ctx: RuleRunContext<'_>) {
+    run_un_object_spread(module, ctx.clone());
+    ctx.invalidate_local_helpers();
+}
+
 fn run_un_object_rest(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
-    UnObjectRest::run_with_helpers(module, ctx.unresolved_mark, local_helpers.as_ref());
+    UnObjectRest::run_with_helpers(
+        module,
+        ctx.unresolved_mark,
+        local_helpers.as_ref(),
+        ctx.module_facts,
+    );
+}
+
+fn run_un_object_rest_late(module: &mut Module, ctx: RuleRunContext<'_>) {
+    run_un_object_rest(module, ctx.clone());
+    ctx.invalidate_local_helpers();
 }
 
 fn run_un_sliced_to_array(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
-    UnSlicedToArray::run_with_helpers(module, local_helpers.as_ref());
+    UnSlicedToArray::run_with_helpers(module, local_helpers.as_ref(), ctx.module_facts);
 }
 
 runner!(run_un_define_property, UnDefineProperty);
@@ -224,7 +239,11 @@ runner!(run_un_esm, |ctx| UnEsm::new(
     ctx.rewrite_level
 ));
 runner!(run_un_template_literal, |ctx| {
-    UnTemplateLiteral::new_with_level(ctx.rewrite_level)
+    if let Some(module_facts) = ctx.module_facts {
+        UnTemplateLiteral::new_with_facts(ctx.rewrite_level, module_facts)
+    } else {
+        UnTemplateLiteral::new_with_level(ctx.rewrite_level)
+    }
 });
 runner!(run_un_while_loop, UnWhileLoop);
 runner!(run_un_type_constructor, |ctx| UnTypeConstructor::new(
@@ -396,6 +415,15 @@ define_rule_registry! {
         "UnUseStrict",
         "UnAssignmentMerging",
         "UnWebpackInterop"
+    ]),
+    ("UnObjectSpread2", Helpers, run_un_object_spread_late, always_enabled, requires: [
+        "UnEsm"
+    ]),
+    ("UnObjectRest2", Helpers, run_un_object_rest_late, always_enabled, requires: [
+        "UnObjectSpread2"
+    ]),
+    ("UnSlicedToArray2", Helpers, run_un_sliced_to_array, always_enabled, requires: [
+        "UnObjectRest2"
     ]),
     ("UnTemplateLiteral", Structural, run_un_template_literal, always_enabled),
     ("UnTypeConstructor", Structural, run_un_type_constructor, always_enabled),

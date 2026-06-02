@@ -1,5 +1,7 @@
 mod common;
 use common::{assert_eq_normalized, render, render_pipeline_until};
+use wakaru_core::facts::{HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap};
+use wakaru_core::rules::UnSlicedToArray;
 
 #[test]
 fn unwraps_sliced_to_array() {
@@ -84,6 +86,37 @@ var value = _ref[1];
 const [key, value] = pair;
 "#;
     assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn handles_cross_module_default_object_helper_member_fact() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            default_object_helper_exports: vec![HelperExportFact {
+                exported: "_".into(),
+                local: Some("sliced".into()),
+                kind: HelperKind::SlicedToArray,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import helpers from "./helpers.js";
+var _useState = helpers._(useState(value), 2), current = _useState[0], setCurrent = _useState[1];
+use(current, setCurrent);
+"#;
+    let expected = r#"
+import helpers from "./helpers.js";
+var _useState = useState(value), current = _useState[0], setCurrent = _useState[1];
+use(current, setCurrent);
+"#;
+    assert_eq_normalized(
+        &common::render_rule(input, |_| UnSlicedToArray::new_with_facts(&facts)),
+        expected,
+    );
 }
 
 #[test]

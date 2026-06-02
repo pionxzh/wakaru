@@ -11,12 +11,16 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::facts::ModuleFactsMap;
+use crate::utils::paren::strip_parens;
+
+use super::cross_module_helper_refs::{
+    collect_cross_module_helper_refs, cross_module_member_helper_kind,
+};
 use super::transpiler_helper_utils::{
     helpers_with_remaining_refs, remove_helpers_without_remaining_refs, tslib_member_helper_kind,
     BindingKey, LocalHelperContext, TranspilerHelperKind,
 };
-
-use crate::utils::paren::strip_parens;
 
 /// Convert inline `_objectWithoutPropertiesLoose` IIFEs to object rest destructuring.
 ///
@@ -31,25 +35,39 @@ use crate::utils::paren::strip_parens;
 /// // →
 /// const { a, b, ...rest } = obj;
 /// ```
-pub struct UnObjectRest {
+pub struct UnObjectRest<'a> {
     unresolved_mark: Mark,
+    module_facts: Option<&'a ModuleFactsMap>,
 }
 
-impl UnObjectRest {
+impl UnObjectRest<'_> {
     pub fn new(unresolved_mark: Mark) -> Self {
-        Self { unresolved_mark }
+        Self {
+            unresolved_mark,
+            module_facts: None,
+        }
+    }
+}
+
+impl<'a> UnObjectRest<'a> {
+    pub fn new_with_facts(unresolved_mark: Mark, module_facts: &'a ModuleFactsMap) -> Self {
+        Self {
+            unresolved_mark,
+            module_facts: Some(module_facts),
+        }
     }
 
     pub(crate) fn run_with_helpers(
         module: &mut swc_core::ecma::ast::Module,
         unresolved_mark: Mark,
         local_helpers: &LocalHelperContext,
+        module_facts: Option<&ModuleFactsMap>,
     ) {
-        run_un_object_rest(module, unresolved_mark, local_helpers);
+        run_un_object_rest(module, unresolved_mark, local_helpers, module_facts);
     }
 }
 
-impl UnObjectRest {
+impl UnObjectRest<'_> {
     fn has_owp_iife_candidate(module: &swc_core::ecma::ast::Module) -> bool {
         struct Scan {
             found: bool,
@@ -86,10 +104,15 @@ impl UnObjectRest {
     }
 }
 
-impl VisitMut for UnObjectRest {
+impl VisitMut for UnObjectRest<'_> {
     fn visit_mut_module(&mut self, module: &mut swc_core::ecma::ast::Module) {
         let local_helpers = LocalHelperContext::collect(module);
-        run_un_object_rest(module, self.unresolved_mark, &local_helpers);
+        run_un_object_rest(
+            module,
+            self.unresolved_mark,
+            &local_helpers,
+            self.module_facts,
+        );
     }
 }
 
@@ -97,14 +120,30 @@ fn run_un_object_rest(
     module: &mut swc_core::ecma::ast::Module,
     unresolved_mark: Mark,
     local_helpers: &LocalHelperContext,
+    module_facts: Option<&ModuleFactsMap>,
 ) {
     // Collect named OWP helpers (function declarations detected by transpiler_helper_utils)
-    let named_helpers =
+    let local_named_helpers =
         local_helpers.helpers_of_kind(TranspilerHelperKind::ObjectWithoutProperties);
+    let mut named_helpers = local_named_helpers.clone();
+    let cross_module_helpers = module_facts
+        .map(|facts| {
+            collect_cross_module_helper_refs(module, facts, |kind| {
+                kind == TranspilerHelperKind::ObjectWithoutProperties
+            })
+        })
+        .unwrap_or_default();
+    named_helpers.extend(
+        cross_module_helpers
+            .direct
+            .iter()
+            .map(|(key, kind)| (key.clone(), *kind)),
+    );
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let swc_numeric_helper_namespaces = collect_swc_numeric_helper_namespaces(module);
 
     if named_helpers.is_empty()
+        && cross_module_helpers.namespaces.is_empty()
         && tslib_namespaces.is_empty()
         && swc_numeric_helper_namespaces.is_empty()
         && !UnObjectRest::has_owp_iife_candidate(module)
@@ -118,6 +157,7 @@ fn run_un_object_rest(
         named_helpers: &named_helpers,
         tslib_namespaces,
         swc_numeric_helper_namespaces: &swc_numeric_helper_namespaces,
+        cross_module_namespaces: &cross_module_helpers.namespaces,
         exclusion_arrays: exclusion_arrays.clone(),
         unresolved_mark,
     };
@@ -126,6 +166,7 @@ fn run_un_object_rest(
         &mut module.body,
         &named_helpers,
         tslib_namespaces,
+        &cross_module_helpers.namespaces,
         unresolved_mark,
     );
 
@@ -148,6 +189,7 @@ fn run_un_object_rest(
                 &named_helpers,
                 tslib_namespaces,
                 &swc_numeric_helper_namespaces,
+                &cross_module_helpers.namespaces,
                 &exclusion_arrays,
             )
         });
@@ -207,9 +249,9 @@ fn run_un_object_rest(
     remove_unused_numeric_helper_namespace_decls(&mut module.body, &swc_numeric_helper_namespaces);
 
     // Remove named helper declarations if all call sites were replaced
-    if !named_helpers.is_empty() {
-        let remaining_roots = helpers_with_remaining_refs(module, &named_helpers);
-        let removable_roots = named_helpers
+    if !local_named_helpers.is_empty() {
+        let remaining_roots = helpers_with_remaining_refs(module, &local_named_helpers);
+        let removable_roots = local_named_helpers
             .iter()
             .filter(|(key, _)| !remaining_roots.contains(*key))
             .map(|(key, kind)| (key.clone(), *kind))
@@ -232,6 +274,7 @@ struct ObjectRestProcessor<'a> {
     named_helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &'a HashSet<BindingKey>,
     swc_numeric_helper_namespaces: &'a HashSet<BindingKey>,
+    cross_module_namespaces: &'a HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
     exclusion_arrays: HashMap<BindingKey, Vec<Atom>>,
     unresolved_mark: Mark,
 }
@@ -243,6 +286,7 @@ impl VisitMut for ObjectRestProcessor<'_> {
             stmts,
             self.named_helpers,
             self.tslib_namespaces,
+            self.cross_module_namespaces,
             self.unresolved_mark,
         );
 
@@ -256,6 +300,7 @@ impl VisitMut for ObjectRestProcessor<'_> {
                     self.named_helpers,
                     self.tslib_namespaces,
                     self.swc_numeric_helper_namespaces,
+                    self.cross_module_namespaces,
                     &exclusion_arrays,
                 )
             });
@@ -314,9 +359,15 @@ fn reattach_elided_object_rest_in_module_items(
     items: &mut [ModuleItem],
     named_helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
+    cross_module_namespaces: &HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
     unresolved_mark: Mark,
 ) {
-    if !module_items_contain_owp_spread_candidate(items, named_helpers, tslib_namespaces) {
+    if !module_items_contain_owp_spread_candidate(
+        items,
+        named_helpers,
+        tslib_namespaces,
+        cross_module_namespaces,
+    ) {
         return;
     }
 
@@ -326,6 +377,7 @@ fn reattach_elided_object_rest_in_module_items(
                 stmt,
                 named_helpers,
                 tslib_namespaces,
+                cross_module_namespaces,
                 unresolved_mark,
             );
         }
@@ -352,6 +404,7 @@ fn reattach_elided_object_rest_in_module_items(
                 rest_binding: &rest_binding,
                 named_helpers,
                 tslib_namespaces,
+                cross_module_namespaces,
                 preceding: Some(&preceding),
                 unresolved_mark,
                 replacement_init: None,
@@ -373,14 +426,26 @@ fn reattach_elided_object_rest_in_stmts(
     stmts: &mut [Stmt],
     named_helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
+    cross_module_namespaces: &HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
     unresolved_mark: Mark,
 ) {
-    if !stmts_contain_owp_spread_candidate(stmts, named_helpers, tslib_namespaces) {
+    if !stmts_contain_owp_spread_candidate(
+        stmts,
+        named_helpers,
+        tslib_namespaces,
+        cross_module_namespaces,
+    ) {
         return;
     }
 
     for stmt in stmts.iter_mut() {
-        reattach_elided_object_rest_in_stmt(stmt, named_helpers, tslib_namespaces, unresolved_mark);
+        reattach_elided_object_rest_in_stmt(
+            stmt,
+            named_helpers,
+            tslib_namespaces,
+            cross_module_namespaces,
+            unresolved_mark,
+        );
     }
 
     for rest_idx in 0..stmts.len() {
@@ -395,6 +460,7 @@ fn reattach_elided_object_rest_in_stmts(
                 rest_binding: &rest_binding,
                 named_helpers,
                 tslib_namespaces,
+                cross_module_namespaces,
                 preceding: Some(&preceding),
                 unresolved_mark,
                 replacement_init: None,
@@ -416,10 +482,12 @@ fn module_items_contain_owp_spread_candidate(
     items: &[ModuleItem],
     named_helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
+    cross_module_namespaces: &HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
 ) -> bool {
     let mut visitor = ObjectRestSpreadCandidateVisitor {
         named_helpers,
         tslib_namespaces,
+        cross_module_namespaces,
         found: false,
     };
     for item in items {
@@ -435,10 +503,12 @@ fn stmts_contain_owp_spread_candidate(
     stmts: &[Stmt],
     named_helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
+    cross_module_namespaces: &HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
 ) -> bool {
     let mut visitor = ObjectRestSpreadCandidateVisitor {
         named_helpers,
         tslib_namespaces,
+        cross_module_namespaces,
         found: false,
     };
     for stmt in stmts {
@@ -453,6 +523,7 @@ fn stmts_contain_owp_spread_candidate(
 struct ObjectRestSpreadCandidateVisitor<'a> {
     named_helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &'a HashSet<BindingKey>,
+    cross_module_namespaces: &'a HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
     found: bool,
 }
 
@@ -472,6 +543,7 @@ impl Visit for ObjectRestSpreadCandidateVisitor<'_> {
             self.named_helpers,
             self.tslib_namespaces,
             &HashSet::new(),
+            self.cross_module_namespaces,
             &HashMap::new(),
         )
         .or_else(|| try_extract_owp_call(&spread.expr, &HashMap::new()))
@@ -489,6 +561,7 @@ fn reattach_elided_object_rest_in_stmt(
     stmt: &mut Stmt,
     named_helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
+    cross_module_namespaces: &HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
     unresolved_mark: Mark,
 ) {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
@@ -506,6 +579,7 @@ fn reattach_elided_object_rest_in_stmt(
                 rest_binding: &rest_binding,
                 named_helpers,
                 tslib_namespaces,
+                cross_module_namespaces,
                 preceding: None,
                 unresolved_mark,
                 replacement_init: None,
@@ -528,6 +602,7 @@ struct ElidedRestSpreadReplacer<'a> {
     rest_binding: &'a BindingIdent,
     named_helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &'a HashSet<BindingKey>,
+    cross_module_namespaces: &'a HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
     preceding: Option<&'a [Stmt]>,
     unresolved_mark: Mark,
     replacement_init: Option<Box<Expr>>,
@@ -549,6 +624,7 @@ impl VisitMut for ElidedRestSpreadReplacer<'_> {
             self.named_helpers,
             self.tslib_namespaces,
             &HashSet::new(),
+            self.cross_module_namespaces,
             &HashMap::new(),
         )
         .or_else(|| try_extract_owp_call(&spread.expr, &HashMap::new()));
@@ -687,6 +763,7 @@ fn try_extract_owp_named_call(
     helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
     swc_numeric_helper_namespaces: &HashSet<BindingKey>,
+    cross_module_namespaces: &HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
     exclusion_arrays: &HashMap<BindingKey, Vec<Atom>>,
 ) -> Option<(
     BindingIdent,
@@ -695,7 +772,10 @@ fn try_extract_owp_named_call(
     Vec<VarDeclarator>,
     Vec<VarDeclarator>,
 )> {
-    if helpers.is_empty() && tslib_namespaces.is_empty() && swc_numeric_helper_namespaces.is_empty()
+    if helpers.is_empty()
+        && tslib_namespaces.is_empty()
+        && swc_numeric_helper_namespaces.is_empty()
+        && cross_module_namespaces.is_empty()
     {
         return None;
     }
@@ -715,6 +795,7 @@ fn try_extract_owp_named_call(
             helpers,
             tslib_namespaces,
             swc_numeric_helper_namespaces,
+            cross_module_namespaces,
             exclusion_arrays,
         )
         .is_some()
@@ -730,6 +811,7 @@ fn try_extract_owp_named_call(
         helpers,
         tslib_namespaces,
         swc_numeric_helper_namespaces,
+        cross_module_namespaces,
         exclusion_arrays,
     )?;
 
@@ -744,6 +826,7 @@ fn extract_named_owp_args(
     helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
     swc_numeric_helper_namespaces: &HashSet<BindingKey>,
+    cross_module_namespaces: &HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
     exclusion_arrays: &HashMap<BindingKey, Vec<Atom>>,
 ) -> Option<(Box<Expr>, Vec<Atom>)> {
     let Expr::Call(CallExpr {
@@ -761,6 +844,8 @@ fn extract_named_owp_args(
                 tslib_member_helper_kind(callee, tslib_namespaces),
                 Some(TranspilerHelperKind::ObjectWithoutProperties)
             ) || is_swc_numeric_object_rest_member(callee, swc_numeric_helper_namespaces)
+                || cross_module_member_helper_kind(callee, cross_module_namespaces)
+                    == Some(TranspilerHelperKind::ObjectWithoutProperties)
         }
         _ => false,
     };

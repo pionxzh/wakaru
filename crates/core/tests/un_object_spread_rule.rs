@@ -253,6 +253,35 @@ var x = { id: app_id, ...app_info, name: value };
 }
 
 #[test]
+fn handles_cross_module_default_object_helper_member_fact() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            default_object_helper_exports: vec![HelperExportFact {
+                exported: "_".into(),
+                local: Some("spread".into()),
+                kind: HelperKind::ObjectSpread,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import helpers from "./helpers.js";
+var x = helpers._({}, app_info, { name: value });
+"#;
+    let expected = r#"
+import helpers from "./helpers.js";
+var x = { ...app_info, name: value };
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |_| UnObjectSpread::new_with_facts(&facts)),
+        expected,
+    );
+}
+
+#[test]
 fn handles_nested_babel_pattern() {
     // Babel generates nested _objectSpread2 calls, each with {} as first arg:
     // _objectSpread2(_objectSpread2({}, a), {}, { b: 1 })

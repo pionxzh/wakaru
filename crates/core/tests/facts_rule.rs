@@ -360,6 +360,85 @@ export function Z() {
 }
 
 #[test]
+fn default_object_helper_exports_use_property_names_for_aliases() {
+    let facts = collect_facts(
+        r#"
+function n(strings, raw) {
+    if (!raw) {
+        raw = strings.slice(0);
+    }
+    return Object.freeze(Object.defineProperties(strings, {
+        raw: {
+            value: Object.freeze(raw)
+        }
+    }));
+}
+module.exports = {
+    _: n,
+    _tagged_template_literal: n
+};
+"#,
+    );
+    assert_eq!(
+        facts.default_object_helper_exports,
+        vec![
+            helper_export("_", Some("n"), HelperKind::TaggedTemplateLiteral),
+            helper_export(
+                "_tagged_template_literal",
+                Some("n"),
+                HelperKind::TaggedTemplateLiteral
+            ),
+        ]
+    );
+}
+
+#[test]
+fn default_object_helper_exports_require_proven_local_helper_shape() {
+    let facts = collect_facts(
+        r#"
+function fake(target, source) {
+    console.log("side effect");
+    return null;
+}
+module.exports = {
+    _extends: fake
+};
+"#,
+    );
+    assert!(
+        facts.default_object_helper_exports.is_empty(),
+        "property name alone should not prove helper semantics"
+    );
+}
+
+#[test]
+fn tagged_template_literal_helper_export_detects_swc_shape() {
+    let facts = collect_facts(
+        r#"
+function Y(strings, raw) {
+    if (!raw) {
+        raw = strings.slice(0);
+    }
+    return Object.freeze(Object.defineProperties(strings, {
+        raw: {
+            value: Object.freeze(raw)
+        }
+    }));
+}
+export { Y as _ };
+"#,
+    );
+    assert_eq!(
+        facts.helper_exports,
+        vec![helper_export(
+            "_",
+            Some("Y"),
+            HelperKind::TaggedTemplateLiteral
+        )]
+    );
+}
+
+#[test]
 fn regenerator_runtime_default_helper_export() {
     let facts = collect_facts(
         r#"

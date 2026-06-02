@@ -2,6 +2,7 @@ mod arg_rest;
 mod arrow_function;
 mod arrow_return;
 pub(crate) mod binding_facts;
+pub(crate) mod cross_module_helper_refs;
 mod dead_decls;
 mod dead_imports;
 pub(crate) mod decl_utils;

@@ -20,12 +20,10 @@ use super::types::{DecompileOptions, UnpackInput, UnpackOutput, UnpackWarning, U
 use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
-use crate::rules::transpiler_helper_utils::LocalHelperContext;
 use crate::rules::{
     apply_rules, ArrowFunction, ArrowReturn, ImportDedup, RewriteLevel, RulePipelineOptions,
     SimplifySequence, UnAssignmentMerging, UnConditionalsAssignmentOnly,
-    UnConditionalsExprStmtOnly, UnEsm, UnExportRename, UnIife, UnImportRename, UnObjectSpread,
-    UnOptionalChaining,
+    UnConditionalsExprStmtOnly, UnEsm, UnExportRename, UnIife, UnImportRename, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::{scope_hoist, try_unpack_bundle, webpack5, UnpackResult, UnpackedModule};
@@ -897,14 +895,11 @@ fn unpack_multi_module_with_plan(
                 // Late pass at the barrier
                 run_reexport_consolidation(&mut module, facts_ref);
                 run_namespace_decomposition(&mut module, facts_ref);
-                let local_helpers = LocalHelperContext::collect(&module);
-                UnObjectSpread::run_with_helpers(&mut module, &local_helpers, Some(facts_ref));
-
-                // UnTemplateLiteral-through-UnReturn range.
+                // Late helper-through-UnReturn range.
                 apply_rules(
                     &mut module,
                     unresolved_mark,
-                    RulePipelineOptions::between("UnTemplateLiteral", "UnReturn")
+                    RulePipelineOptions::between("UnObjectSpread2", "UnReturn")
                         .with_dead_code_elimination(options.dead_code_elimination)
                         .with_rewrite_level(options.level)
                         .with_module_facts(facts_ref),

@@ -1,6 +1,7 @@
 mod common;
 
 use common::{assert_eq_normalized, render_rule};
+use wakaru_core::facts::{HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap};
 use wakaru_core::rules::{RewriteLevel, UnTemplateLiteral};
 
 fn apply(input: &str) -> String {
@@ -232,6 +233,69 @@ var out = tag(_templateObject(), dynamicOne, dynamicTwo, dynamicThree);
 
     let output = apply(input);
     assert_eq!(output, expected);
+}
+
+#[test]
+fn restores_cross_module_default_object_swc_tagged_template() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            default_object_helper_exports: vec![HelperExportFact {
+                exported: "_".into(),
+                local: Some("template".into()),
+                kind: HelperKind::TaggedTemplateLiteral,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import helpers from "./helpers.js";
+function _templateObject() {
+    const data = helpers._(["hello ", ""]);
+    _templateObject = () => data;
+    return data;
+}
+var out = tag(_templateObject(), name);
+"#;
+    let expected = r#"
+import helpers from "./helpers.js";
+var out = tag`hello ${name}`;
+"#;
+    let output = render_rule(input, |_| {
+        UnTemplateLiteral::new_with_facts(RewriteLevel::Standard, &facts)
+    });
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn restores_cross_module_direct_tagged_template_keeps_import() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            helper_exports: vec![HelperExportFact {
+                exported: "_".into(),
+                local: Some("template".into()),
+                kind: HelperKind::TaggedTemplateLiteral,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import { _ as template } from "./helpers.js";
+var out = tag(template(["hello ", ""], ["hello ", ""]), name);
+"#;
+    let expected = r#"
+import { _ as template } from "./helpers.js";
+var out = tag`hello ${name}`;
+"#;
+    let output = render_rule(input, |_| {
+        UnTemplateLiteral::new_with_facts(RewriteLevel::Standard, &facts)
+    });
+    assert_eq_normalized(&output, expected);
 }
 
 #[test]

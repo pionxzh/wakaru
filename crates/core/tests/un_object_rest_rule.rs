@@ -1,6 +1,7 @@
 mod common;
 
 use common::{assert_eq_normalized, render, render_rule};
+use wakaru_core::facts::{HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap};
 use wakaru_core::rules::UnObjectRest;
 
 #[test]
@@ -308,6 +309,68 @@ const { name, ...rest_info } = app_info;
 use(name, rest_info);
 "#;
     assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn named_owp_cross_module_default_object_helper_member() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            default_object_helper_exports: vec![HelperExportFact {
+                exported: "_".into(),
+                local: Some("rest".into()),
+                kind: HelperKind::ObjectWithoutProperties,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import helpers from "./helpers.js";
+var name = app_info.name, rest_info = helpers._(app_info, ["name"]);
+use(name, rest_info);
+"#;
+    let expected = r#"
+import helpers from "./helpers.js";
+const { name, ...rest_info } = app_info;
+use(name, rest_info);
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |mark| UnObjectRest::new_with_facts(mark, &facts)),
+        expected,
+    );
+}
+
+#[test]
+fn named_owp_cross_module_direct_helper_keeps_import() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            helper_exports: vec![HelperExportFact {
+                exported: "rest".into(),
+                local: Some("rest".into()),
+                kind: HelperKind::ObjectWithoutProperties,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import { rest as objectWithoutProperties } from "./helpers.js";
+var name = app_info.name, rest_info = objectWithoutProperties(app_info, ["name"]);
+use(name, rest_info);
+"#;
+    let expected = r#"
+import { rest as objectWithoutProperties } from "./helpers.js";
+const { name, ...rest_info } = app_info;
+use(name, rest_info);
+"#;
+    assert_eq_normalized(
+        &render_rule(input, |mark| UnObjectRest::new_with_facts(mark, &facts)),
+        expected,
+    );
 }
 
 #[test]

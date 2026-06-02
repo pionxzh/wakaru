@@ -12,7 +12,7 @@ use std::fmt;
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
     AssignExpr, Callee, Decl, DefaultDecl, ExportSpecifier, Expr, ImportSpecifier, Lit, Module,
-    ModuleDecl, ModuleItem,
+    ModuleDecl, ModuleItem, Prop, PropName,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
@@ -81,6 +81,7 @@ pub enum HelperKind {
     Inherits,
     CallSuper,
     AsyncToGenerator,
+    TaggedTemplateLiteral,
     RegeneratorRuntime,
 }
 
@@ -131,6 +132,7 @@ pub struct ModuleFacts {
     pub imports: Vec<ImportFact>,
     pub exports: Vec<ExportFact>,
     pub helper_exports: Vec<HelperExportFact>,
+    pub default_object_helper_exports: Vec<HelperExportFact>,
     pub ts_helper_exports: Vec<TypeScriptHelperExportFact>,
     /// If this module is a passthrough re-export (`export default require("./X.js")`),
     /// this is the target module specifier. Importers can be redirected to the target.
@@ -267,6 +269,7 @@ impl fmt::Display for HelperKind {
             HelperKind::Inherits => write!(f, "inherits"),
             HelperKind::CallSuper => write!(f, "callSuper"),
             HelperKind::AsyncToGenerator => write!(f, "asyncToGenerator"),
+            HelperKind::TaggedTemplateLiteral => write!(f, "taggedTemplateLiteral"),
             HelperKind::RegeneratorRuntime => write!(f, "regeneratorRuntime"),
         }
     }
@@ -347,6 +350,7 @@ impl fmt::Display for ModuleFacts {
         if self.imports.is_empty()
             && self.exports.is_empty()
             && self.helper_exports.is_empty()
+            && self.default_object_helper_exports.is_empty()
             && self.ts_helper_exports.is_empty()
         {
             return write!(f, "(no imports or exports)");
@@ -377,6 +381,20 @@ impl fmt::Display for ModuleFacts {
             write!(f, "{helper}")?;
         }
         if (!self.imports.is_empty() || !self.exports.is_empty() || !self.helper_exports.is_empty())
+            && !self.default_object_helper_exports.is_empty()
+        {
+            writeln!(f)?;
+        }
+        for (i, helper) in self.default_object_helper_exports.iter().enumerate() {
+            if i > 0 {
+                writeln!(f)?;
+            }
+            write!(f, "default object {helper}")?;
+        }
+        if (!self.imports.is_empty()
+            || !self.exports.is_empty()
+            || !self.helper_exports.is_empty()
+            || !self.default_object_helper_exports.is_empty())
             && !self.ts_helper_exports.is_empty()
         {
             writeln!(f)?;
@@ -529,6 +547,7 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
 
     facts.passthrough_target = detect_passthrough(module);
     facts.helper_exports = collect_helper_exports(module, &facts.exports);
+    facts.default_object_helper_exports = collect_default_object_helper_exports(module);
     facts.ts_helper_exports = collect_ts_helper_exports(module, &facts.exports);
     facts
 }
@@ -610,9 +629,79 @@ fn helper_kind_from_transpiler(kind: TranspilerHelperKind) -> Option<HelperKind>
         TranspilerHelperKind::Inherits => Some(HelperKind::Inherits),
         TranspilerHelperKind::CallSuper => Some(HelperKind::CallSuper),
         TranspilerHelperKind::AsyncToGenerator => Some(HelperKind::AsyncToGenerator),
+        TranspilerHelperKind::TaggedTemplateLiteral => Some(HelperKind::TaggedTemplateLiteral),
         TranspilerHelperKind::Typeof => None,
         TranspilerHelperKind::DefineProperty => None,
         TranspilerHelperKind::HelperDependency => None,
+    }
+}
+
+fn collect_default_object_helper_exports(module: &Module) -> Vec<HelperExportFact> {
+    let local_helpers = collect_transpiler_helpers(module);
+    let local_kinds: std::collections::HashMap<Atom, HelperKind> = local_helpers
+        .iter()
+        .filter_map(|((local, _), kind)| {
+            helper_kind_from_transpiler(*kind).map(|kind| (local.clone(), kind))
+        })
+        .collect();
+
+    let mut helper_exports = Vec::new();
+    for prop in default_export_object_props(module) {
+        let Some((exported, local)) = object_prop_exported_local(prop) else {
+            continue;
+        };
+        let Some(kind) = local_kinds.get(&local).copied() else {
+            continue;
+        };
+        helper_exports.push(HelperExportFact {
+            exported,
+            local: Some(local),
+            kind,
+        });
+    }
+
+    helper_exports
+}
+
+fn default_export_object_props(module: &Module) -> impl Iterator<Item = &Prop> {
+    module
+        .body
+        .iter()
+        .filter_map(|item| {
+            let ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) = item else {
+                return None;
+            };
+            let Expr::Object(object) = export.expr.as_ref() else {
+                return None;
+            };
+            Some(object.props.iter().filter_map(|prop| match prop {
+                swc_core::ecma::ast::PropOrSpread::Prop(prop) => Some(prop.as_ref()),
+                swc_core::ecma::ast::PropOrSpread::Spread(_) => None,
+            }))
+        })
+        .flatten()
+}
+
+fn object_prop_exported_local(prop: &Prop) -> Option<(Atom, Atom)> {
+    match prop {
+        Prop::Shorthand(id) => Some((id.sym.clone(), id.sym.clone())),
+        Prop::KeyValue(kv) => {
+            let exported = prop_name_to_atom(&kv.key)?;
+            let Expr::Ident(local) = kv.value.as_ref() else {
+                return None;
+            };
+            Some((exported, local.sym.clone()))
+        }
+        _ => None,
+    }
+}
+
+fn prop_name_to_atom(name: &PropName) -> Option<Atom> {
+    match name {
+        PropName::Ident(id) => Some(id.sym.clone()),
+        PropName::Str(s) => Some(str_to_atom(&s.value)),
+        PropName::Num(num) => Some(Atom::from(num.value.to_string())),
+        _ => None,
     }
 }
 

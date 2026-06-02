@@ -1,13 +1,17 @@
+use crate::facts::ModuleFactsMap;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, BinaryOp, BindingIdent, Callee, Decl, Expr, Lit, MemberProp, Module, ModuleItem, Pat,
     Stmt, VarDeclarator,
 };
-use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::cross_module_helper_refs::{
+    collect_cross_module_helper_refs, cross_module_member_helper_kind, CrossModuleHelperRefs,
+};
 use super::transpiler_helper_utils::{
     extract_inline_sliced_to_array_call, LocalHelperContext, TranspilerHelperKind,
 };
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 /// Detects and unwraps `_slicedToArray(expr, N)` helper calls.
 ///
@@ -17,7 +21,9 @@ use super::transpiler_helper_utils::{
 ///
 /// The downstream `SmartInline` + destructuring rules handle converting
 /// `var a = _ref[0]; var b = _ref[1]` → `const [a, b] = expr`.
-pub struct UnSlicedToArray;
+pub struct UnSlicedToArray<'a> {
+    module_facts: Option<&'a ModuleFactsMap>,
+}
 
 struct SlicedExtraction {
     ref_binding: BindingIdent,
@@ -26,32 +32,70 @@ struct SlicedExtraction {
     length: Option<usize>,
 }
 
-impl UnSlicedToArray {
-    pub(crate) fn run_with_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
-        run_un_sliced_to_array(module, local_helpers);
+impl UnSlicedToArray<'_> {
+    pub fn new() -> Self {
+        Self { module_facts: None }
     }
 }
 
-impl VisitMut for UnSlicedToArray {
+impl<'a> UnSlicedToArray<'a> {
+    pub fn new_with_facts(module_facts: &'a ModuleFactsMap) -> Self {
+        Self {
+            module_facts: Some(module_facts),
+        }
+    }
+
+    pub(crate) fn run_with_helpers(
+        module: &mut Module,
+        local_helpers: &LocalHelperContext,
+        module_facts: Option<&ModuleFactsMap>,
+    ) {
+        run_un_sliced_to_array(module, local_helpers, module_facts);
+    }
+}
+
+impl Default for UnSlicedToArray<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl VisitMut for UnSlicedToArray<'_> {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let local_helpers = LocalHelperContext::collect(module);
-        run_un_sliced_to_array(module, &local_helpers);
+        run_un_sliced_to_array(module, &local_helpers, self.module_facts);
     }
 }
 
-fn run_un_sliced_to_array(module: &mut Module, local_helpers: &LocalHelperContext) {
+fn run_un_sliced_to_array(
+    module: &mut Module,
+    local_helpers: &LocalHelperContext,
+    module_facts: Option<&ModuleFactsMap>,
+) {
     let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::SlicedToArray);
+    let cross_module_helpers = module_facts
+        .map(|facts| {
+            collect_cross_module_helper_refs(module, facts, |kind| {
+                kind == TranspilerHelperKind::SlicedToArray
+            })
+        })
+        .unwrap_or_default();
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let has_direct_tslib_calls =
         local_helpers.has_tslib_require_member_call(TranspilerHelperKind::SlicedToArray);
     if helpers.is_empty()
+        && cross_module_helpers.direct.is_empty()
+        && cross_module_helpers.namespaces.is_empty()
         && tslib_namespaces.is_empty()
         && !has_direct_tslib_calls
         && !has_inline_sliced_to_array_candidate(module)
     {
         return;
     }
-    module.visit_mut_children_with(&mut SlicedToArrayRewriter { local_helpers });
+    module.visit_mut_children_with(&mut SlicedToArrayRewriter {
+        local_helpers,
+        cross_module_helpers: &cross_module_helpers,
+    });
 
     if helpers.is_empty() {
         return;
@@ -85,28 +129,41 @@ fn has_inline_sliced_to_array_candidate(module: &Module) -> bool {
 
 struct SlicedToArrayRewriter<'a> {
     local_helpers: &'a LocalHelperContext,
+    cross_module_helpers: &'a CrossModuleHelperRefs,
 }
 
 impl VisitMut for SlicedToArrayRewriter<'_> {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         items.visit_mut_children_with(self);
-        fold_sliced_to_array_module_item_groups(items, self.local_helpers);
+        fold_sliced_to_array_module_item_groups(
+            items,
+            self.local_helpers,
+            self.cross_module_helpers,
+        );
         for item in items {
             let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
                 continue;
             };
-            rewrite_sliced_to_array_decls(&mut var.decls, self.local_helpers);
+            rewrite_sliced_to_array_decls(
+                &mut var.decls,
+                self.local_helpers,
+                self.cross_module_helpers,
+            );
         }
     }
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-        fold_sliced_to_array_stmt_groups(stmts, self.local_helpers);
+        fold_sliced_to_array_stmt_groups(stmts, self.local_helpers, self.cross_module_helpers);
         for stmt in stmts {
             let Stmt::Decl(Decl::Var(var)) = stmt else {
                 continue;
             };
-            rewrite_sliced_to_array_decls(&mut var.decls, self.local_helpers);
+            rewrite_sliced_to_array_decls(
+                &mut var.decls,
+                self.local_helpers,
+                self.cross_module_helpers,
+            );
         }
     }
 }
@@ -114,10 +171,11 @@ impl VisitMut for SlicedToArrayRewriter<'_> {
 fn fold_sliced_to_array_module_item_groups(
     body: &mut Vec<ModuleItem>,
     local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
 ) {
     let mut i = 0;
     while i < body.len() {
-        try_fold_sliced_to_array_module_item_group(body, i, local_helpers);
+        try_fold_sliced_to_array_module_item_group(body, i, local_helpers, cross_module_helpers);
         i += 1;
     }
 }
@@ -126,8 +184,11 @@ fn try_fold_sliced_to_array_module_item_group(
     body: &mut Vec<ModuleItem>,
     start: usize,
     local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
 ) -> bool {
-    let Some(extraction) = extract_sliced_to_array_module_item(&body[start], local_helpers) else {
+    let Some(extraction) =
+        extract_sliced_to_array_module_item(&body[start], local_helpers, cross_module_helpers)
+    else {
         return false;
     };
     if extraction.length == Some(0) {
@@ -209,10 +270,14 @@ fn try_fold_sliced_to_array_module_item_group(
     true
 }
 
-fn fold_sliced_to_array_stmt_groups(stmts: &mut Vec<Stmt>, local_helpers: &LocalHelperContext) {
+fn fold_sliced_to_array_stmt_groups(
+    stmts: &mut Vec<Stmt>,
+    local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
+) {
     let mut i = 0;
     while i < stmts.len() {
-        try_fold_sliced_to_array_stmt_group(stmts, i, local_helpers);
+        try_fold_sliced_to_array_stmt_group(stmts, i, local_helpers, cross_module_helpers);
         i += 1;
     }
 }
@@ -221,8 +286,11 @@ fn try_fold_sliced_to_array_stmt_group(
     stmts: &mut Vec<Stmt>,
     start: usize,
     local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
 ) -> bool {
-    let Some(extraction) = extract_sliced_to_array_stmt(&stmts[start], local_helpers) else {
+    let Some(extraction) =
+        extract_sliced_to_array_stmt(&stmts[start], local_helpers, cross_module_helpers)
+    else {
         return false;
     };
     if extraction.length == Some(0) {
@@ -306,6 +374,7 @@ fn try_fold_sliced_to_array_stmt_group(
 fn extract_sliced_to_array_module_item(
     item: &ModuleItem,
     local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
 ) -> Option<SlicedExtraction> {
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
         return None;
@@ -313,12 +382,13 @@ fn extract_sliced_to_array_module_item(
     if var.decls.len() != 1 {
         return None;
     }
-    extract_sliced_to_array_decl(&var.decls[0], local_helpers)
+    extract_sliced_to_array_decl(&var.decls[0], local_helpers, cross_module_helpers)
 }
 
 fn extract_sliced_to_array_stmt(
     stmt: &Stmt,
     local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
 ) -> Option<SlicedExtraction> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
@@ -326,7 +396,7 @@ fn extract_sliced_to_array_stmt(
     if var.decls.len() != 1 {
         return None;
     }
-    extract_sliced_to_array_decl(&var.decls[0], local_helpers)
+    extract_sliced_to_array_decl(&var.decls[0], local_helpers, cross_module_helpers)
 }
 
 fn extract_ref_index_module_item(
@@ -423,10 +493,11 @@ fn stmt_sliced_ref_is_unreferenced(
 fn rewrite_sliced_to_array_decls(
     decls: &mut Vec<VarDeclarator>,
     local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
 ) {
     let mut i = 0;
     while i < decls.len() {
-        try_unwrap_sliced_to_array(&mut decls[i], local_helpers);
+        try_unwrap_sliced_to_array(&mut decls[i], local_helpers, cross_module_helpers);
         i += 1;
     }
 }
@@ -434,6 +505,7 @@ fn rewrite_sliced_to_array_decls(
 fn extract_sliced_to_array_decl(
     decl: &VarDeclarator,
     local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
 ) -> Option<SlicedExtraction> {
     let Pat::Ident(binding) = &decl.name else {
         return None;
@@ -453,7 +525,7 @@ fn extract_sliced_to_array_decl(
         return None;
     };
 
-    if !local_helpers.is_helper_callee(callee, TranspilerHelperKind::SlicedToArray) {
+    if !is_sliced_to_array_callee(callee, local_helpers, cross_module_helpers) {
         return None;
     }
     if call.args.len() != 2 {
@@ -512,7 +584,11 @@ fn extract_ref_index_binding(
     (numeric_length(num.value)? == index).then(|| binding.clone())
 }
 
-fn try_unwrap_sliced_to_array(decl: &mut VarDeclarator, local_helpers: &LocalHelperContext) {
+fn try_unwrap_sliced_to_array(
+    decl: &mut VarDeclarator,
+    local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
+) {
     let Some(init) = &decl.init else { return };
     let Expr::Call(call) = init.as_ref() else {
         return;
@@ -521,7 +597,7 @@ fn try_unwrap_sliced_to_array(decl: &mut VarDeclarator, local_helpers: &LocalHel
         return;
     };
 
-    if !local_helpers.is_helper_callee(callee, TranspilerHelperKind::SlicedToArray) {
+    if !is_sliced_to_array_callee(callee, local_helpers, cross_module_helpers) {
         return;
     }
 
@@ -550,6 +626,23 @@ fn try_unwrap_sliced_to_array(decl: &mut VarDeclarator, local_helpers: &LocalHel
         // var _ref = expr (unwrap the helper call, keep the binding)
         decl.init = Some(call.args[0].expr.clone());
     }
+}
+
+fn is_sliced_to_array_callee(
+    callee: &Expr,
+    local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
+) -> bool {
+    local_helpers.is_helper_callee(callee, TranspilerHelperKind::SlicedToArray)
+        || matches!(
+            callee,
+            Expr::Ident(id)
+                if cross_module_helpers
+                    .direct
+                    .contains_key(&(id.sym.clone(), id.ctxt))
+        )
+        || cross_module_member_helper_kind(callee, &cross_module_helpers.namespaces)
+            == Some(TranspilerHelperKind::SlicedToArray)
 }
 
 fn numeric_length(value: f64) -> Option<usize> {

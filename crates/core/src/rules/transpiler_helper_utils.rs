@@ -55,6 +55,7 @@ pub(crate) enum TranspilerHelperKind {
     Inherits,
     CallSuper,
     AsyncToGenerator,
+    TaggedTemplateLiteral,
     DefineProperty,
     Typeof,
     HelperDependency,
@@ -311,6 +312,8 @@ const DEFINE_PROPERTY_PATHS: &[&str] = &[
     "@babel/runtime/helpers/defineProperty",
     "@babel/runtime/helpers/esm/defineProperty",
 ];
+
+const TAGGED_TEMPLATE_LITERAL_PATHS: &[&str] = &["@swc/helpers/_/_tagged_template_literal"];
 
 /// Scan module-level declarations for helper functions.
 /// Detects by function body shape and by import path.
@@ -942,6 +945,8 @@ fn generated_helper_name_kind(name: &str, init: &Expr) -> Option<TranspilerHelpe
             matches!(init, Expr::Fn(_) | Expr::Arrow(_))
                 .then_some(TranspilerHelperKind::ObjectWithoutProperties)
         }
+        "_tagged_template_literal" => matches!(init, Expr::Fn(_) | Expr::Arrow(_))
+            .then_some(TranspilerHelperKind::TaggedTemplateLiteral),
         // Generated subhelpers used only by the spread/rest helpers above.
         "_define_property"
         | "ownKeys"
@@ -962,6 +967,7 @@ fn generated_fn_helper_name_kind(name: &str) -> Option<TranspilerHelperKind> {
         "_object_without_properties" | "_object_without_properties_loose" => {
             Some(TranspilerHelperKind::ObjectWithoutProperties)
         }
+        "_tagged_template_literal" => Some(TranspilerHelperKind::TaggedTemplateLiteral),
         "_define_property" | "ownKeys" => Some(TranspilerHelperKind::HelperDependency),
         _ => None,
     }
@@ -1023,6 +1029,9 @@ pub(crate) fn detect_helper_from_path(path: &str) -> Option<TranspilerHelperKind
     }
     if DEFINE_PROPERTY_PATHS.contains(&path) {
         return Some(TranspilerHelperKind::DefineProperty);
+    }
+    if TAGGED_TEMPLATE_LITERAL_PATHS.contains(&path) {
+        return Some(TranspilerHelperKind::TaggedTemplateLiteral);
     }
     None
 }
@@ -1099,10 +1108,137 @@ fn detect_helper_from_fn(func: &Function, has_sub_helpers: bool) -> Option<Trans
     if is_async_to_generator_fn(func) {
         return Some(TranspilerHelperKind::AsyncToGenerator);
     }
+    if is_tagged_template_literal_fn(func) {
+        return Some(TranspilerHelperKind::TaggedTemplateLiteral);
+    }
     if is_define_property_fn(func) {
         return Some(TranspilerHelperKind::DefineProperty);
     }
     None
+}
+
+fn is_tagged_template_literal_fn(func: &Function) -> bool {
+    let Some(ctx) = MatchContext::from_params(func, &["strings", "raws"]) else {
+        return false;
+    };
+    let Some(body) = &func.body else {
+        return false;
+    };
+
+    let signals = collect_tagged_template_literal_signals(body, &ctx);
+    signals.slice_copy && signals.freeze_define_raw
+}
+
+#[derive(Default)]
+struct TaggedTemplateLiteralSignals {
+    slice_copy: bool,
+    freeze_define_raw: bool,
+}
+
+fn collect_tagged_template_literal_signals(
+    body: &BlockStmt,
+    ctx: &MatchContext,
+) -> TaggedTemplateLiteralSignals {
+    struct SignalVisitor<'a> {
+        ctx: &'a MatchContext,
+        signals: TaggedTemplateLiteralSignals,
+    }
+
+    impl Visit for SignalVisitor<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if is_strings_slice_zero_call(call, self.ctx) {
+                self.signals.slice_copy = true;
+            }
+            if is_freeze_define_raw_call(call, self.ctx) {
+                self.signals.freeze_define_raw = true;
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut visitor = SignalVisitor {
+        ctx,
+        signals: TaggedTemplateLiteralSignals::default(),
+    };
+    body.visit_with(&mut visitor);
+    visitor.signals
+}
+
+fn is_strings_slice_zero_call(call: &CallExpr, ctx: &MatchContext) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = strip_parens(callee) else {
+        return false;
+    };
+    ctx.is_binding(&member.obj, "strings")
+        && is_member_prop_name(&member.prop, "slice")
+        && call.args.len() == 1
+        && call.args[0].spread.is_none()
+        && matches!(strip_parens(&call.args[0].expr), Expr::Lit(Lit::Num(num)) if num.value == 0.0)
+}
+
+fn is_freeze_define_raw_call(call: &CallExpr, ctx: &MatchContext) -> bool {
+    if !is_object_static_call(call, "freeze") || call.args.len() != 1 {
+        return false;
+    }
+    let Expr::Call(define_call) = strip_parens(&call.args[0].expr) else {
+        return false;
+    };
+    if !is_object_static_call(define_call, "defineProperties") || define_call.args.len() != 2 {
+        return false;
+    }
+    if !ctx.is_binding(&define_call.args[0].expr, "strings") {
+        return false;
+    }
+    let Expr::Object(descriptor) = strip_parens(&define_call.args[1].expr) else {
+        return false;
+    };
+    descriptor.props.iter().any(|prop| {
+        let PropOrSpread::Prop(prop) = prop else {
+            return false;
+        };
+        let Prop::KeyValue(raw_prop) = prop.as_ref() else {
+            return false;
+        };
+        if prop_name_as_str(&raw_prop.key) != Some("raw") {
+            return false;
+        }
+        raw_descriptor_freezes_raws(&raw_prop.value, ctx)
+    })
+}
+
+fn raw_descriptor_freezes_raws(expr: &Expr, ctx: &MatchContext) -> bool {
+    let Expr::Object(raw_descriptor) = strip_parens(expr) else {
+        return false;
+    };
+    raw_descriptor.props.iter().any(|prop| {
+        let PropOrSpread::Prop(prop) = prop else {
+            return false;
+        };
+        let Prop::KeyValue(value_prop) = prop.as_ref() else {
+            return false;
+        };
+        if prop_name_as_str(&value_prop.key) != Some("value") {
+            return false;
+        }
+        let Expr::Call(freeze_call) = strip_parens(&value_prop.value) else {
+            return false;
+        };
+        is_object_static_call(freeze_call, "freeze")
+            && freeze_call.args.len() == 1
+            && ctx.is_binding(&freeze_call.args[0].expr, "raws")
+    })
+}
+
+fn is_object_static_call(call: &CallExpr, prop: &str) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    let Expr::Member(member) = strip_parens(callee) else {
+        return false;
+    };
+    is_object_member(member, prop)
 }
 
 fn is_define_property_fn(func: &Function) -> bool {
