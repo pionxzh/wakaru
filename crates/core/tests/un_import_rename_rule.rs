@@ -208,15 +208,19 @@ fn keeps_alias_when_imported_name_is_reserved() {
 import {
   if as if_,
   import as import_,
+  let as let_,
+  static as static_,
   await as await_,
   arguments as arguments_,
   eval as eval_
 } from './module.js';
 assert.sameValue(if_, 1);
 assert.sameValue(import_, 2);
-assert.sameValue(await_, 3);
-assert.sameValue(arguments_, 4);
-assert.sameValue(eval_, 5);
+assert.sameValue(let_, 3);
+assert.sameValue(static_, 4);
+assert.sameValue(await_, 5);
+assert.sameValue(arguments_, 6);
+assert.sameValue(eval_, 7);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, input);

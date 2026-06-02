@@ -8,6 +8,7 @@
 
 pub mod driver;
 pub mod facts;
+pub(crate) mod js_names;
 pub mod namespace_decomposition;
 pub mod reexport_consolidation;
 pub mod rules;

@@ -7,6 +7,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
+use crate::js_names::is_reserved_binding_name;
+
 use super::rename_utils::{
     collect_module_names, rename_bindings_in_module, BindingId, BindingRename, RenameShadowIndex,
 };
@@ -141,50 +143,4 @@ fn generate_unique_name(base: Atom, existing: &HashSet<Atom>) -> Atom {
         }
         i += 1;
     }
-}
-
-fn is_reserved_binding_name(name: &str) -> bool {
-    matches!(
-        name,
-        "await"
-            | "break"
-            | "case"
-            | "catch"
-            | "class"
-            | "const"
-            | "continue"
-            | "debugger"
-            | "default"
-            | "delete"
-            | "do"
-            | "else"
-            | "enum"
-            | "export"
-            | "extends"
-            | "false"
-            | "finally"
-            | "for"
-            | "function"
-            | "if"
-            | "import"
-            | "in"
-            | "instanceof"
-            | "new"
-            | "null"
-            | "return"
-            | "super"
-            | "switch"
-            | "this"
-            | "throw"
-            | "true"
-            | "try"
-            | "typeof"
-            | "var"
-            | "void"
-            | "while"
-            | "with"
-            | "yield"
-            | "arguments"
-            | "eval"
-    )
 }

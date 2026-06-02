@@ -8,6 +8,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::VisitMut;
 
+use crate::js_names::is_reserved_binding_name;
+
 use super::rename_utils::{
     collect_module_names, collect_top_level_binding_infos, rename_bindings_in_module,
     rename_causes_shadowing, BindingId, BindingRename, TopLevelBindingInfo, TopLevelBindingKind,
@@ -98,7 +100,7 @@ fn collect_export_rename_plans(
                             }
                             let new_name = id.id.sym.clone();
                             if new_name != info.id.0
-                                && !is_invalid_binding_name(&new_name)
+                                && !is_reserved_binding_name(&new_name)
                                 && !name_is_import_binding(&new_name, module_names, binding_infos)
                                 && !plans
                                     .iter()
@@ -154,7 +156,7 @@ fn collect_export_rename_plans(
                     };
                     if old_name == new_name
                         || new_name.len() < old_name.len()
-                        || is_invalid_binding_name(&new_name)
+                        || is_reserved_binding_name(&new_name)
                         || name_is_import_binding(&new_name, module_names, binding_infos)
                         || name_conflicts_with_unmoved_binding(
                             binding_infos,
@@ -227,7 +229,7 @@ fn compute_freed_names(
                     if info.exported {
                         continue;
                     }
-                    if is_invalid_binding_name(&exported.sym) {
+                    if is_reserved_binding_name(&exported.sym) {
                         continue;
                     }
                     if name_is_import_binding(&exported.sym, module_names, binding_infos) {
@@ -283,63 +285,6 @@ fn compute_freed_names(
     }
 
     freed
-}
-
-fn is_invalid_binding_name(name: &str) -> bool {
-    matches!(
-        name,
-        // Reserved words
-        "break"
-            | "case"
-            | "catch"
-            | "class"
-            | "const"
-            | "continue"
-            | "debugger"
-            | "default"
-            | "delete"
-            | "do"
-            | "else"
-            | "enum"
-            | "export"
-            | "extends"
-            | "false"
-            | "finally"
-            | "for"
-            | "function"
-            | "if"
-            | "import"
-            | "in"
-            | "instanceof"
-            | "new"
-            | "null"
-            | "return"
-            | "super"
-            | "switch"
-            | "this"
-            | "throw"
-            | "true"
-            | "try"
-            | "typeof"
-            | "var"
-            | "void"
-            | "while"
-            | "with"
-            // Strict-mode / module-level reserved
-            | "yield"
-            | "let"
-            | "static"
-            | "implements"
-            | "interface"
-            | "package"
-            | "private"
-            | "protected"
-            | "public"
-            // Not keywords but invalid as module binding identifiers
-            | "await"
-            | "eval"
-            | "arguments"
-    )
 }
 
 fn name_is_import_binding(

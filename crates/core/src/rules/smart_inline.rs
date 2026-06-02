@@ -10,6 +10,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::js_names::is_stable_builtin_alias_root;
+
 use super::decl_utils::same_ident;
 use super::RewriteLevel;
 
@@ -372,7 +374,8 @@ fn is_builtin_alias_expr(expr: &Expr, unresolved_mark: Option<Mark>) -> bool {
 }
 
 fn is_unresolved_builtin_ident(id: &Ident, unresolved_mark: Option<Mark>) -> bool {
-    is_builtin_global(&id.sym) && unresolved_mark.is_none_or(|mark| id.ctxt.outer() == mark)
+    is_stable_builtin_alias_root(&id.sym)
+        && unresolved_mark.is_none_or(|mark| id.ctxt.outer() == mark)
 }
 
 #[derive(Default)]
@@ -1285,46 +1288,6 @@ enum PropKey {
     Str(Atom),
 }
 
-/// Well-known globals whose methods should not be destructured.
-/// `Object.defineProperty(...)` is universally recognized; `defineProperty(...)` is not.
-fn is_builtin_global(name: &str) -> bool {
-    matches!(
-        name,
-        "Object"
-            | "Array"
-            | "Math"
-            | "JSON"
-            | "Reflect"
-            | "Promise"
-            | "Number"
-            | "String"
-            | "Symbol"
-            | "Date"
-            | "RegExp"
-            | "Map"
-            | "Set"
-            | "WeakMap"
-            | "WeakSet"
-            | "Error"
-            | "EvalError"
-            | "RangeError"
-            | "ReferenceError"
-            | "SyntaxError"
-            | "TypeError"
-            | "URIError"
-            | "AggregateError"
-            | "console"
-            | "Proxy"
-            | "Intl"
-            | "ArrayBuffer"
-            | "DataView"
-            | "Int8Array"
-            | "Uint8Array"
-            | "Float32Array"
-            | "Float64Array"
-    )
-}
-
 fn collect_use_state_bindings(module: &Module) -> HashSet<BindingKey> {
     struct UseStateBindingCollector {
         bindings: HashSet<BindingKey>,
@@ -1604,7 +1567,7 @@ fn group_destructuring(stmts: Vec<Stmt>, level: RewriteLevel) -> Vec<Stmt> {
         if let Some((obj_name, access)) = next_access {
             // Don't group built-in globals — `Object.defineProperty(...)` is clearer
             // than `defineProperty(...)` and destructuring can break `this` binding.
-            if is_builtin_global(&obj_name.sym) {
+            if is_stable_builtin_alias_root(&obj_name.sym) {
                 if let Some((obj, acc)) = current_obj.take() {
                     flush_group(&mut result, obj, acc, level);
                 }

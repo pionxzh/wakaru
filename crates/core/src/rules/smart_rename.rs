@@ -12,6 +12,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::js_names::{is_reserved_binding_name, to_valid_identifier_name};
+
 use super::decl_utils::collect_decl_binding_ids;
 use super::expr_utils::is_unresolved_ident;
 use super::rename_utils::{
@@ -706,11 +708,7 @@ fn extract_binding_from_pat(pat: &Pat) -> Option<BindingId> {
 }
 
 fn find_non_conflicting_name(base: &str, used_names: &HashSet<String>) -> String {
-    let base = if is_reserved_keyword(base) {
-        format!("_{}", base)
-    } else {
-        base.to_string()
-    };
+    let base = to_valid_identifier_name(base);
 
     if !used_names.contains(&base) {
         return base;
@@ -723,60 +721,6 @@ fn find_non_conflicting_name(base: &str, used_names: &HashSet<String>) -> String
     }
     panic!(
         "could not find non-conflicting name for `{base}` after {MAX_SYNTHETIC_NAME_ATTEMPTS} attempts"
-    )
-}
-
-fn is_reserved_keyword(name: &str) -> bool {
-    matches!(
-        name,
-        "break"
-            | "case"
-            | "catch"
-            | "class"
-            | "const"
-            | "continue"
-            | "debugger"
-            | "default"
-            | "delete"
-            | "do"
-            | "else"
-            | "export"
-            | "extends"
-            | "false"
-            | "finally"
-            | "for"
-            | "function"
-            | "if"
-            | "import"
-            | "in"
-            | "instanceof"
-            | "let"
-            | "new"
-            | "null"
-            | "return"
-            | "static"
-            | "super"
-            | "switch"
-            | "this"
-            | "throw"
-            | "true"
-            | "try"
-            | "typeof"
-            | "var"
-            | "void"
-            | "while"
-            | "with"
-            | "yield"
-            | "enum"
-            | "await"
-            | "implements"
-            | "interface"
-            | "package"
-            | "private"
-            | "protected"
-            | "public"
-            | "arguments"
-            | "eval"
     )
 }
 
@@ -1373,7 +1317,7 @@ fn value_position_rename_module(module: &mut Module) {
     let mut needs_suffix: Vec<(String, BindingId)> = Vec::new();
 
     for (target, bid) in candidates {
-        if is_reserved_keyword(&target) {
+        if is_reserved_binding_name(&target) {
             continue;
         }
         let atom: Atom = target.as_str().into();
@@ -1602,7 +1546,7 @@ impl Visit for ValuePositionClassifier {
             let bid = (id.sym.clone(), id.ctxt);
             if self.states.contains_key(&bid) {
                 let target = name.sym.to_string();
-                if is_valid_js_ident(&target) && !is_reserved_keyword(&target) {
+                if is_valid_js_ident(&target) && !is_reserved_binding_name(&target) {
                     self.record_value_use(&bid, target);
                 } else {
                     self.record_other_use(&bid);
@@ -1696,7 +1640,7 @@ fn key_as_ident_target(key: &PropName) -> Option<String> {
         PropName::Str(s) => s.value.as_str().map(|s| s.to_string())?,
         _ => return None,
     };
-    if raw.is_empty() || !is_valid_js_ident(&raw) || is_reserved_keyword(&raw) {
+    if raw.is_empty() || !is_valid_js_ident(&raw) || is_reserved_binding_name(&raw) {
         return None;
     }
     Some(raw)

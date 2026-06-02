@@ -9,6 +9,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use crate::js_names::is_reserved_binding_name;
+
 use super::decl_utils::same_ident;
 use super::rename_utils::{rename_bindings, BindingRename};
 use super::RewriteLevel;
@@ -1584,54 +1586,6 @@ fn is_short_alias_for_key(key: &Atom, alias: &Atom) -> bool {
 
 fn is_preferred_short_alias_target(key: &Atom) -> bool {
     matches!(key.as_ref(), "type" | "kind" | "name" | "key")
-}
-
-fn is_reserved_binding_name(name: &str) -> bool {
-    matches!(
-        name,
-        "await"
-            | "break"
-            | "case"
-            | "catch"
-            | "class"
-            | "const"
-            | "continue"
-            | "debugger"
-            | "default"
-            | "delete"
-            | "do"
-            | "else"
-            | "enum"
-            | "export"
-            | "extends"
-            | "false"
-            | "finally"
-            | "for"
-            | "function"
-            | "if"
-            | "import"
-            | "in"
-            | "instanceof"
-            | "let"
-            | "new"
-            | "null"
-            | "return"
-            | "static"
-            | "super"
-            | "switch"
-            | "this"
-            | "throw"
-            | "true"
-            | "try"
-            | "typeof"
-            | "var"
-            | "void"
-            | "while"
-            | "with"
-            | "yield"
-            | "arguments"
-            | "eval"
-    )
 }
 
 fn stmts_contain_emitted_ident_name(stmts: &[Stmt], name: &Atom) -> bool {

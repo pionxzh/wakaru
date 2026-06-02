@@ -836,6 +836,17 @@ export default { default: r };
 }
 
 #[test]
+fn value_position_does_not_rename_to_strict_binding_name() {
+    let input = r#"
+const f = (e) => ({
+    arguments: e
+});
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn value_position_skips_computed_key() {
     let input = r#"
 import r from "./m.js";

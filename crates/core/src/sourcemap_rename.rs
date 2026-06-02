@@ -11,6 +11,8 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+use crate::js_names::is_valid_identifier_name;
+
 /// Precompute byte offset of each line start for O(log n) (line, col) lookup.
 fn compute_line_starts(src: &str) -> Vec<u32> {
     let mut starts = vec![0u32];
@@ -281,7 +283,7 @@ impl Visit for NameVoter<'_> {
         if orig_name.is_empty() || orig_name == ident.sym {
             return;
         }
-        if !is_valid_js_identifier(orig_name.as_ref()) {
+        if !is_valid_identifier_name(orig_name.as_ref()) {
             return;
         }
 
@@ -352,70 +354,4 @@ fn is_ident_start(b: u8) -> bool {
 #[inline]
 fn is_ident_continue(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
-}
-
-fn is_valid_js_identifier(name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-    let bytes = name.as_bytes();
-    if !is_ident_start(bytes[0]) {
-        return false;
-    }
-    if !bytes[1..].iter().all(|&b| is_ident_continue(b)) {
-        return false;
-    }
-    !is_reserved_keyword(name)
-}
-
-fn is_reserved_keyword(name: &str) -> bool {
-    matches!(
-        name,
-        "break"
-            | "case"
-            | "catch"
-            | "class"
-            | "const"
-            | "continue"
-            | "debugger"
-            | "default"
-            | "delete"
-            | "do"
-            | "else"
-            | "export"
-            | "extends"
-            | "false"
-            | "finally"
-            | "for"
-            | "function"
-            | "if"
-            | "import"
-            | "in"
-            | "instanceof"
-            | "let"
-            | "new"
-            | "null"
-            | "return"
-            | "static"
-            | "super"
-            | "switch"
-            | "this"
-            | "throw"
-            | "true"
-            | "try"
-            | "typeof"
-            | "var"
-            | "void"
-            | "while"
-            | "with"
-            | "yield"
-            | "enum"
-            | "await"
-            | "implements"
-            | "interface"
-            | "package"
-            | "private"
-            | "protected"
-            | "public"
-    )
 }

@@ -744,6 +744,20 @@ Object.defineProperty(t2, k2, d2);
 }
 
 #[test]
+fn standard_does_not_inline_environment_global_member_aliases() {
+    let input = r#"
+const q = document.querySelector;
+q(".one");
+q(".two");
+const cwd = process.cwd;
+cwd();
+cwd();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn standard_builtin_global_accesses_inlined_through_pipeline() {
     // All builtin global aliases are inlined back to Object.X(...) form in
     // standard mode.
