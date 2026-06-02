@@ -5,7 +5,9 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
+use super::transpiler_helper_utils::{
+    extract_inline_sliced_to_array_call, LocalHelperContext, TranspilerHelperKind,
+};
 
 /// Detects and unwraps `_slicedToArray(expr, N)` helper calls.
 ///
@@ -16,6 +18,13 @@ use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 /// The downstream `SmartInline` + destructuring rules handle converting
 /// `var a = _ref[0]; var b = _ref[1]` → `const [a, b] = expr`.
 pub struct UnSlicedToArray;
+
+struct SlicedExtraction {
+    ref_binding: BindingIdent,
+    source: Box<Expr>,
+    source_ref: Option<swc_core::ecma::ast::Ident>,
+    length: Option<usize>,
+}
 
 impl UnSlicedToArray {
     pub(crate) fn run_with_helpers(module: &mut Module, local_helpers: &LocalHelperContext) {
@@ -35,7 +44,11 @@ fn run_un_sliced_to_array(module: &mut Module, local_helpers: &LocalHelperContex
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let has_direct_tslib_calls =
         local_helpers.has_tslib_require_member_call(TranspilerHelperKind::SlicedToArray);
-    if helpers.is_empty() && tslib_namespaces.is_empty() && !has_direct_tslib_calls {
+    if helpers.is_empty()
+        && tslib_namespaces.is_empty()
+        && !has_direct_tslib_calls
+        && !has_inline_sliced_to_array_candidate(module)
+    {
         return;
     }
     module.visit_mut_children_with(&mut SlicedToArrayRewriter { local_helpers });
@@ -45,6 +58,29 @@ fn run_un_sliced_to_array(module: &mut Module, local_helpers: &LocalHelperContex
     }
 
     local_helpers.remove_helpers_with_dependencies(module, helpers);
+}
+
+fn has_inline_sliced_to_array_candidate(module: &Module) -> bool {
+    struct Scan {
+        found: bool,
+    }
+
+    impl Visit for Scan {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if self.found {
+                return;
+            }
+            if extract_inline_sliced_to_array_call(expr).is_some() {
+                self.found = true;
+                return;
+            }
+            expr.visit_children_with(self);
+        }
+    }
+
+    let mut scan = Scan { found: false };
+    module.visit_with(&mut scan);
+    scan.found
 }
 
 struct SlicedToArrayRewriter<'a> {
@@ -91,15 +127,19 @@ fn try_fold_sliced_to_array_module_item_group(
     start: usize,
     local_helpers: &LocalHelperContext,
 ) -> bool {
-    let Some((ref_binding, source, length)) =
-        extract_sliced_to_array_module_item(&body[start], local_helpers)
-    else {
+    let Some(extraction) = extract_sliced_to_array_module_item(&body[start], local_helpers) else {
         return false;
     };
-    if length == 0 {
+    if extraction.length == Some(0) {
         return false;
     }
-    if module_item_sliced_ref_is_unreferenced(body, start, &ref_binding.id) {
+    if module_item_sliced_ref_is_unreferenced(body, start, &extraction.ref_binding.id) {
+        let Some(length) = extraction.length else {
+            return false;
+        };
+        if sliced_source_ref_is_used_in_items(&body[start + 1..], &extraction) {
+            return false;
+        }
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = &mut body[start] else {
             return false;
         };
@@ -112,17 +152,23 @@ fn try_fold_sliced_to_array_module_item_group(
             optional: false,
             type_ann: None,
         });
-        decl.init = Some(source);
+        decl.init = Some(extraction.source);
         return true;
     }
 
-    let mut elems = Vec::with_capacity(length);
-    for index in 0..length {
+    let known_length = extraction.length;
+    let mut elems = Vec::with_capacity(known_length.unwrap_or(2));
+    let max_len = known_length.unwrap_or(64);
+    for index in 0..max_len {
         let Some(item) = body.get(start + 1 + index) else {
-            return false;
+            break;
         };
-        let Some(binding) = extract_ref_index_module_item(item, &ref_binding.id, index) else {
-            return false;
+        let Some(binding) = extract_ref_index_module_item(item, &extraction.ref_binding.id, index)
+        else {
+            if known_length.is_some() {
+                return false;
+            }
+            break;
         };
         if body
             .get(start + 2 + index)
@@ -132,7 +178,17 @@ fn try_fold_sliced_to_array_module_item_group(
         }
         elems.push(Some(Pat::Ident(binding)));
     }
-    if ident_used_in_items(&body[start + 1 + length..], &ref_binding.id) {
+    let length = elems.len();
+    if length == 0 {
+        return false;
+    }
+    if known_length.is_some_and(|known| known != length) {
+        return false;
+    }
+    if ident_used_in_items(&body[start + 1 + length..], &extraction.ref_binding.id) {
+        return false;
+    }
+    if sliced_source_ref_is_used_in_items(&body[start + 1 + length..], &extraction) {
         return false;
     }
 
@@ -148,7 +204,7 @@ fn try_fold_sliced_to_array_module_item_group(
         optional: false,
         type_ann: None,
     });
-    decl.init = Some(source);
+    decl.init = Some(extraction.source);
     body.drain(start + 1..start + 1 + length);
     true
 }
@@ -166,15 +222,19 @@ fn try_fold_sliced_to_array_stmt_group(
     start: usize,
     local_helpers: &LocalHelperContext,
 ) -> bool {
-    let Some((ref_binding, source, length)) =
-        extract_sliced_to_array_stmt(&stmts[start], local_helpers)
-    else {
+    let Some(extraction) = extract_sliced_to_array_stmt(&stmts[start], local_helpers) else {
         return false;
     };
-    if length == 0 {
+    if extraction.length == Some(0) {
         return false;
     }
-    if stmt_sliced_ref_is_unreferenced(stmts, start, &ref_binding.id) {
+    if stmt_sliced_ref_is_unreferenced(stmts, start, &extraction.ref_binding.id) {
+        let Some(length) = extraction.length else {
+            return false;
+        };
+        if sliced_source_ref_is_used_in_stmts(&stmts[start + 1..], &extraction) {
+            return false;
+        }
         let Stmt::Decl(Decl::Var(var)) = &mut stmts[start] else {
             return false;
         };
@@ -187,17 +247,22 @@ fn try_fold_sliced_to_array_stmt_group(
             optional: false,
             type_ann: None,
         });
-        decl.init = Some(source);
+        decl.init = Some(extraction.source);
         return true;
     }
 
-    let mut elems = Vec::with_capacity(length);
-    for index in 0..length {
+    let known_length = extraction.length;
+    let mut elems = Vec::with_capacity(known_length.unwrap_or(2));
+    let max_len = known_length.unwrap_or(64);
+    for index in 0..max_len {
         let Some(stmt) = stmts.get(start + 1 + index) else {
-            return false;
+            break;
         };
-        let Some(binding) = extract_ref_index_stmt(stmt, &ref_binding.id, index) else {
-            return false;
+        let Some(binding) = extract_ref_index_stmt(stmt, &extraction.ref_binding.id, index) else {
+            if known_length.is_some() {
+                return false;
+            }
+            break;
         };
         if stmts
             .get(start + 2 + index)
@@ -207,7 +272,17 @@ fn try_fold_sliced_to_array_stmt_group(
         }
         elems.push(Some(Pat::Ident(binding)));
     }
-    if ident_used_in_stmts(&stmts[start + 1 + length..], &ref_binding.id) {
+    let length = elems.len();
+    if length == 0 {
+        return false;
+    }
+    if known_length.is_some_and(|known| known != length) {
+        return false;
+    }
+    if ident_used_in_stmts(&stmts[start + 1 + length..], &extraction.ref_binding.id) {
+        return false;
+    }
+    if sliced_source_ref_is_used_in_stmts(&stmts[start + 1 + length..], &extraction) {
         return false;
     }
 
@@ -223,7 +298,7 @@ fn try_fold_sliced_to_array_stmt_group(
         optional: false,
         type_ann: None,
     });
-    decl.init = Some(source);
+    decl.init = Some(extraction.source);
     stmts.drain(start + 1..start + 1 + length);
     true
 }
@@ -231,7 +306,7 @@ fn try_fold_sliced_to_array_stmt_group(
 fn extract_sliced_to_array_module_item(
     item: &ModuleItem,
     local_helpers: &LocalHelperContext,
-) -> Option<(BindingIdent, Box<Expr>, usize)> {
+) -> Option<SlicedExtraction> {
     let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
         return None;
     };
@@ -244,7 +319,7 @@ fn extract_sliced_to_array_module_item(
 fn extract_sliced_to_array_stmt(
     stmt: &Stmt,
     local_helpers: &LocalHelperContext,
-) -> Option<(BindingIdent, Box<Expr>, usize)> {
+) -> Option<SlicedExtraction> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
@@ -359,13 +434,20 @@ fn rewrite_sliced_to_array_decls(
 fn extract_sliced_to_array_decl(
     decl: &VarDeclarator,
     local_helpers: &LocalHelperContext,
-) -> Option<(BindingIdent, Box<Expr>, usize)> {
+) -> Option<SlicedExtraction> {
     let Pat::Ident(binding) = &decl.name else {
         return None;
     };
     let init = decl.init.as_ref()?;
     let Expr::Call(call) = init.as_ref() else {
-        return None;
+        return extract_inline_sliced_to_array_call(init.as_ref()).map(|inline_call| {
+            SlicedExtraction {
+                ref_binding: binding.clone(),
+                source: inline_call.source,
+                source_ref: inline_call.source_ref,
+                length: inline_call.length,
+            }
+        });
     };
     let Callee::Expr(callee) = &call.callee else {
         return None;
@@ -381,7 +463,26 @@ fn extract_sliced_to_array_decl(
         return None;
     };
     let length = numeric_length(num.value)?;
-    Some((binding.clone(), call.args[0].expr.clone(), length))
+    Some(SlicedExtraction {
+        ref_binding: binding.clone(),
+        source: call.args[0].expr.clone(),
+        source_ref: None,
+        length: Some(length),
+    })
+}
+
+fn sliced_source_ref_is_used_in_items(items: &[ModuleItem], extraction: &SlicedExtraction) -> bool {
+    extraction
+        .source_ref
+        .as_ref()
+        .is_some_and(|source_ref| ident_used_in_items(items, source_ref))
+}
+
+fn sliced_source_ref_is_used_in_stmts(stmts: &[Stmt], extraction: &SlicedExtraction) -> bool {
+    extraction
+        .source_ref
+        .as_ref()
+        .is_some_and(|source_ref| ident_used_in_stmts(stmts, source_ref))
 }
 
 fn extract_ref_index_binding(
@@ -501,6 +602,8 @@ struct IdentUseFinder<'a> {
 }
 
 impl Visit for IdentUseFinder<'_> {
+    fn visit_binding_ident(&mut self, _: &BindingIdent) {}
+
     fn visit_ident(&mut self, ident: &swc_core::ecma::ast::Ident) {
         if same_sliced_ref_ident(ident, self.target) {
             self.found = true;

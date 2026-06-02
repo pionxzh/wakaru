@@ -159,6 +159,11 @@ const transformers = [
     name: "terser-5",
     run: runTerser,
   },
+  {
+    name: "babel-7.28-spec-terser-inline",
+    snippets: ["array-destructure-tuple"],
+    run: (source) => runTerserInline(runBabel(source, babelProfiles[2], babelModeOptions("spec"))),
+  },
 ];
 
 try {
@@ -215,6 +220,10 @@ function collectShapes(snippet) {
   const shapes = [];
 
   for (const transformer of transformers) {
+    if (transformer.snippets && !transformer.snippets.includes(snippet.name)) {
+      continue;
+    }
+
     let lowered;
     try {
       lowered = transformer.run(snippet.source);
@@ -439,6 +448,34 @@ const result = await minify(source, {
   module: true,
   compress: { defaults: true, unused: false },
   mangle: false,
+  format: { comments: false },
+});
+process.stdout.write(result.code + "\\n");
+`,
+  );
+  return runChecked("node", [helper], { input: source, cwd: toolDir });
+}
+
+function runTerserInline(source) {
+  const toolDir = ensureNodeTool("terser", ["terser@5"]);
+  const helper = join(toolDir, "terser-inline-transform.mjs");
+  writeFileSync(
+    helper,
+    `
+import fs from "node:fs";
+import { minify } from "terser";
+const source = fs.readFileSync(0, "utf8");
+const result = await minify(source, {
+  module: true,
+  toplevel: true,
+  compress: {
+    defaults: true,
+    passes: 3,
+    inline: true,
+    reduce_funcs: true,
+    unused: true,
+  },
+  mangle: { reserved: ["useState", "current", "setCurrent", "use", "value"] },
   format: { comments: false },
 });
 process.stdout.write(result.code + "\\n");

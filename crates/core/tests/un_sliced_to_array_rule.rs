@@ -209,6 +209,142 @@ var key = _ref[0];
 }
 
 #[test]
+fn folds_inline_sliced_helper_chain_with_temp_length() {
+    let input = r#"
+function read() {
+    var e;
+    var t;
+    e = useState("counter");
+    t = 2;
+    var b = ((e) => {
+        if (Array.isArray(e)) {
+            return e;
+        }
+    })(e) || ((e, t) => {
+        var r = e == null ? null : typeof Symbol !== "undefined" && e[Symbol.iterator] || e["@@iterator"];
+        if (r != null) {
+            var n;
+            var o;
+            var l;
+            var a;
+            var u = [];
+            var i = true;
+            var c = false;
+            try {
+                l = (r = r.call(e)).next;
+                if (t === 0) {
+                    if (Object(r) !== r) {
+                        return;
+                    }
+                    i = false;
+                } else {
+                    for(; !(i = (n = l.call(r)).done) && (u.push(n.value), u.length !== t); i = true);
+                }
+            } catch (e) {
+                c = true;
+                o = e;
+            } finally {
+                try {
+                    if (!i && r.return != null && (a = r.return(), Object(a) !== a)) {
+                        return;
+                    }
+                } finally {
+                    if (c) {
+                        throw o;
+                    }
+                }
+            }
+            return u;
+        }
+    })(e, t) || ((e, t) => {
+        if (e) {
+            if (typeof e === "string") {
+                return c(e, t);
+            }
+            var r = Object.prototype.toString.call(e).slice(8, -1);
+            return r === "Map" || r === "Set" ? Array.from(e) : undefined;
+        }
+    })(e, t) || (() => {
+        throw new TypeError("Invalid attempt to destructure non-iterable instance.");
+    })();
+    var p = b[0];
+    var d = b[1];
+    return use(p, d);
+}
+"#;
+    let expected = r#"
+function read() {
+    var e;
+    var t;
+    e = useState("counter");
+    t = 2;
+    var [p, d] = e;
+    return use(p, d);
+}
+"#;
+    assert_eq_normalized(&render_pipeline_until(input, "UnSlicedToArray"), expected);
+}
+
+#[test]
+fn folds_repro_derived_inline_sliced_helper_chain_with_assigned_source() {
+    let input = r#"
+const pairRef = function(value) {
+    if (Array.isArray(value)) {
+        return value;
+    }
+}(pairTemp = readPair()) || function(value) {
+    var iterator = value == null ? null : typeof Symbol !== "undefined" && value[Symbol.iterator] || value["@@iterator"];
+    if (iterator != null) {
+        return Array.from(value).slice(0, 2);
+    }
+}(pairTemp) || function(value) {
+    if (value) {
+        return Array.from(value);
+    }
+}(pairTemp) || function() {
+    throw new TypeError("Invalid attempt to destructure non-iterable instance.");
+}();
+var first = pairRef[0];
+var second = pairRef[1];
+var pairTemp;
+use(first, second);
+"#;
+    let expected = r#"
+const [first, second] = readPair();
+var pairTemp;
+use(first, second);
+"#;
+    assert_eq_normalized(&render_pipeline_until(input, "UnSlicedToArray"), expected);
+}
+
+#[test]
+fn keeps_inline_sliced_helper_chain_when_assigned_source_temp_escapes() {
+    let input = r#"
+const pairRef = function(value) {
+    if (Array.isArray(value)) {
+        return value;
+    }
+}(pairTemp = readPair()) || function(value) {
+    var iterator = value == null ? null : typeof Symbol !== "undefined" && value[Symbol.iterator] || value["@@iterator"];
+    if (iterator != null) {
+        return Array.from(value).slice(0, 2);
+    }
+}(pairTemp) || function(value) {
+    if (value) {
+        return Array.from(value);
+    }
+}(pairTemp) || function() {
+    throw new TypeError("Invalid attempt to destructure non-iterable instance.");
+}();
+var first = pairRef[0];
+var second = pairRef[1];
+use(first, second, pairTemp);
+"#;
+    let output = render_pipeline_until(input, "UnSlicedToArray");
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn detects_var_assigned_sliced_to_array() {
     let input = r#"
 function _arrayWithHoles(arr) {

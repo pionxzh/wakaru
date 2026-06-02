@@ -3452,6 +3452,197 @@ fn is_sliced_to_array_fn(func: &Function, has_sub_helpers: bool) -> bool {
     false
 }
 
+pub(crate) struct InlineSlicedToArrayCall {
+    pub(crate) source: Box<Expr>,
+    pub(crate) source_ref: Option<Ident>,
+    pub(crate) length: Option<usize>,
+}
+
+/// Match Babel's slicedToArray helper after Terser has inlined the helper
+/// dispatcher and sub-helpers at the call site:
+/// `f(source) || g(source, len) || h(source, len) || k()`.
+///
+/// Terser can also sink the source into a temp assignment in the first IIFE,
+/// then pass that temp to the later IIFEs:
+/// `f(tmp = source) || g(tmp) || h(tmp) || k()`.
+pub(crate) fn extract_inline_sliced_to_array_call(expr: &Expr) -> Option<InlineSlicedToArrayCall> {
+    let mut terms = Vec::new();
+    collect_logical_or_terms(expr, &mut terms);
+    if terms.len() != 4 {
+        return None;
+    }
+
+    let first_call = as_inline_helper_call(terms[0])?;
+    if first_call.args.len() != 1 {
+        return None;
+    }
+    let (source, source_ref) = inline_sliced_source_arg(first_call.args[0].expr.as_ref())?;
+
+    let mut length = None;
+    for term in &terms[1..3] {
+        let call = as_inline_helper_call(term)?;
+        if !matches!(call.args.len(), 1 | 2) {
+            return None;
+        }
+        if !inline_sliced_arg_matches_source(
+            call.args[0].expr.as_ref(),
+            source.as_ref(),
+            &source_ref,
+        ) {
+            return None;
+        }
+        if call.args.len() == 2 {
+            let term_length = inline_sliced_length_arg(call.args[1].expr.as_ref())?;
+            if let (Some(existing), Some(term_length)) = (length, term_length) {
+                if existing != term_length {
+                    return None;
+                }
+            }
+            length = length.or(term_length);
+        }
+    }
+
+    let last_call = as_inline_helper_call(terms[3])?;
+    if !last_call.args.is_empty() {
+        return None;
+    }
+
+    let mut markers = BodyMarkerState::default();
+    for term in &terms[..3] {
+        scan_inline_helper_call_markers(as_inline_helper_call(term)?, &mut markers);
+    }
+    if !markers.has_array_is_array || !(markers.has_symbol_iterator || markers.has_array_from) {
+        return None;
+    }
+
+    Some(InlineSlicedToArrayCall {
+        source,
+        source_ref,
+        length,
+    })
+}
+
+fn collect_logical_or_terms<'a>(expr: &'a Expr, terms: &mut Vec<&'a Expr>) {
+    if let Expr::Bin(bin) = expr {
+        if bin.op == BinaryOp::LogicalOr {
+            collect_logical_or_terms(bin.left.as_ref(), terms);
+            collect_logical_or_terms(bin.right.as_ref(), terms);
+            return;
+        }
+    }
+    terms.push(expr);
+}
+
+fn as_inline_helper_call(expr: &Expr) -> Option<&CallExpr> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if call.args.iter().any(|arg| arg.spread.is_some()) {
+        return None;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let arg_count = call.args.len();
+    match strip_parens(callee.as_ref()) {
+        Expr::Arrow(arrow) => (arrow.params.len() == arg_count).then_some(call),
+        Expr::Fn(func) => (func.function.params.len() == arg_count).then_some(call),
+        _ => None,
+    }
+}
+
+fn inline_sliced_source_arg(expr: &Expr) -> Option<(Box<Expr>, Option<Ident>)> {
+    let expr = strip_parens(expr);
+    let Expr::Assign(AssignExpr {
+        op: AssignOp::Assign,
+        left,
+        right,
+        ..
+    }) = expr
+    else {
+        return Some((Box::new(expr.clone()), inline_sliced_expr_ident(expr)));
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(ident)) = left else {
+        return None;
+    };
+    Some((right.clone(), Some(ident.id.clone())))
+}
+
+fn inline_sliced_arg_matches_source(
+    expr: &Expr,
+    source: &Expr,
+    source_ref: &Option<Ident>,
+) -> bool {
+    if source_ref
+        .as_ref()
+        .is_some_and(|ident| inline_sliced_expr_matches_ident(expr, ident))
+    {
+        return true;
+    }
+    inline_sliced_same_expr(expr, source)
+}
+
+fn inline_sliced_length_arg(expr: &Expr) -> Option<Option<usize>> {
+    match strip_parens(expr) {
+        Expr::Lit(Lit::Num(num)) => Some(Some(inline_sliced_numeric_length(num.value)?)),
+        Expr::Ident(_) => Some(None),
+        _ => None,
+    }
+}
+
+fn inline_sliced_numeric_length(value: f64) -> Option<usize> {
+    if value < 0.0 || value.fract() != 0.0 || value > 64.0 {
+        return None;
+    }
+    Some(value as usize)
+}
+
+fn inline_sliced_same_expr(left: &Expr, right: &Expr) -> bool {
+    match (strip_parens(left), strip_parens(right)) {
+        (Expr::Ident(left), Expr::Ident(right)) => inline_sliced_ident_matches(left, right),
+        _ => false,
+    }
+}
+
+fn inline_sliced_expr_ident(expr: &Expr) -> Option<Ident> {
+    let Expr::Ident(id) = strip_parens(expr) else {
+        return None;
+    };
+    Some(id.clone())
+}
+
+fn inline_sliced_expr_matches_ident(expr: &Expr, target: &Ident) -> bool {
+    let Expr::Ident(id) = strip_parens(expr) else {
+        return false;
+    };
+    inline_sliced_ident_matches(id, target)
+}
+
+fn inline_sliced_ident_matches(left: &Ident, right: &Ident) -> bool {
+    left.sym == right.sym
+        && (left.ctxt == right.ctxt
+            || (left.ctxt == SyntaxContext::empty() && right.ctxt != SyntaxContext::empty()))
+}
+
+fn scan_inline_helper_call_markers(call: &CallExpr, markers: &mut BodyMarkerState) {
+    let Callee::Expr(callee) = &call.callee else {
+        return;
+    };
+    match strip_parens(callee.as_ref()) {
+        Expr::Arrow(arrow) => {
+            if let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() {
+                scan_stmts_for_markers(&block.stmts, markers);
+            }
+        }
+        Expr::Fn(func) => {
+            if let Some(body) = &func.function.body {
+                scan_stmts_for_markers(&body.stmts, markers);
+            }
+        }
+        _ => {}
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shared body scanning infrastructure
 // ---------------------------------------------------------------------------
