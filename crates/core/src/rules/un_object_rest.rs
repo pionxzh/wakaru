@@ -5,9 +5,9 @@ use swc_core::common::Mark;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignPat, AssignPatProp, BinaryOp, BindingIdent, BlockStmtOrExpr, Bool, CallExpr,
-    Callee, CondExpr, Decl, Expr, ExprStmt, FnExpr, Ident, KeyValuePatProp, Lit, MemberExpr,
-    MemberProp, ObjectPat, ObjectPatProp, Pat, PropName, PropOrSpread, RestPat, Stmt, VarDecl,
-    VarDeclKind, VarDeclarator,
+    Callee, CondExpr, Decl, Expr, ExprStmt, FnExpr, Ident, JSXElementName, KeyValuePatProp, Lit,
+    MemberExpr, MemberProp, Module, ObjectPat, ObjectPatProp, Pat, PropName, PropOrSpread, RestPat,
+    Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -61,7 +61,7 @@ impl UnObjectRest {
                 }
                 if call.args.len() == 2
                     && call.args.iter().all(|a| a.spread.is_none())
-                    && matches!(call.args[1].expr.as_ref(), Expr::Array(_))
+                    && matches!(call.args[1].expr.as_ref(), Expr::Array(_) | Expr::Ident(_))
                 {
                     let callee_is_fn = if let Callee::Expr(e) = &call.callee {
                         match strip_parens(e) {
@@ -102,18 +102,23 @@ fn run_un_object_rest(
     let named_helpers =
         local_helpers.helpers_of_kind(TranspilerHelperKind::ObjectWithoutProperties);
     let tslib_namespaces = local_helpers.tslib_namespaces();
+    let swc_numeric_helper_namespaces = collect_swc_numeric_helper_namespaces(module);
 
     if named_helpers.is_empty()
         && tslib_namespaces.is_empty()
+        && swc_numeric_helper_namespaces.is_empty()
         && !UnObjectRest::has_owp_iife_candidate(module)
     {
         return;
     }
 
     // Process inner scopes first (function bodies, etc.) with helpers available
+    let exclusion_arrays = collect_exclusion_arrays_from_module_items(&module.body);
     let mut processor = ObjectRestProcessor {
         named_helpers: &named_helpers,
         tslib_namespaces,
+        swc_numeric_helper_namespaces: &swc_numeric_helper_namespaces,
+        exclusion_arrays: exclusion_arrays.clone(),
         unresolved_mark,
     };
     module.visit_mut_children_with(&mut processor);
@@ -127,18 +132,40 @@ fn run_un_object_rest(
     // Process module-level statements
     let mut new_body = Vec::with_capacity(module.body.len());
     let mut recent_stmts: Vec<Stmt> = Vec::new();
+    let mut exclusion_arrays = exclusion_arrays;
 
-    for item in std::mem::take(&mut module.body) {
+    let items = std::mem::take(&mut module.body);
+    for (index, item) in items.iter().cloned().enumerate() {
         let ModuleItem::Stmt(ref stmt) = item else {
             recent_stmts.clear();
             new_body.push(item);
             continue;
         };
 
-        let extraction = try_extract_owp_iife(stmt)
-            .or_else(|| try_extract_owp_named_call(stmt, &named_helpers, tslib_namespaces));
+        let extraction = try_extract_owp_iife(stmt, &exclusion_arrays).or_else(|| {
+            try_extract_owp_named_call(
+                stmt,
+                &named_helpers,
+                tslib_namespaces,
+                &swc_numeric_helper_namespaces,
+                &exclusion_arrays,
+            )
+        });
 
         if let Some((rest_binding, source, excluded_keys, before, after)) = extraction {
+            let future_jsx_tag_bindings = jsx_tag_bindings_in_module_items(&items[index + 1..]);
+            if has_jsx_tag_default_pair(
+                &recent_stmts,
+                &source,
+                &excluded_keys,
+                &future_jsx_tag_bindings,
+                unresolved_mark,
+            ) {
+                collect_exclusion_arrays_from_stmt(stmt, &mut exclusion_arrays);
+                recent_stmts.push(stmt.clone());
+                new_body.push(item);
+                continue;
+            }
             let mut inline_accesses = declarators_to_accesses(&before, &source, &excluded_keys);
             let (absorbed, mut preceding_accesses) =
                 scan_preceding(&recent_stmts, &source, &excluded_keys, unresolved_mark);
@@ -171,10 +198,13 @@ fn run_un_object_rest(
             continue;
         }
 
+        collect_exclusion_arrays_from_stmt(stmt, &mut exclusion_arrays);
         recent_stmts.push(stmt.clone());
         new_body.push(item);
     }
     module.body = new_body;
+    remove_unused_exclusion_array_decls(&mut module.body, &exclusion_arrays);
+    remove_unused_numeric_helper_namespace_decls(&mut module.body, &swc_numeric_helper_namespaces);
 
     // Remove named helper declarations if all call sites were replaced
     if !named_helpers.is_empty() {
@@ -201,6 +231,8 @@ fn run_un_object_rest(
 struct ObjectRestProcessor<'a> {
     named_helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &'a HashSet<BindingKey>,
+    swc_numeric_helper_namespaces: &'a HashSet<BindingKey>,
+    exclusion_arrays: HashMap<BindingKey, Vec<Atom>>,
     unresolved_mark: Mark,
 }
 
@@ -215,13 +247,32 @@ impl VisitMut for ObjectRestProcessor<'_> {
         );
 
         let mut new_stmts = Vec::with_capacity(stmts.len());
+        let mut exclusion_arrays = self.exclusion_arrays.clone();
 
-        for stmt in stmts.iter() {
-            let extraction = try_extract_owp_iife(stmt).or_else(|| {
-                try_extract_owp_named_call(stmt, self.named_helpers, self.tslib_namespaces)
+        for (index, stmt) in stmts.iter().enumerate() {
+            let extraction = try_extract_owp_iife(stmt, &exclusion_arrays).or_else(|| {
+                try_extract_owp_named_call(
+                    stmt,
+                    self.named_helpers,
+                    self.tslib_namespaces,
+                    self.swc_numeric_helper_namespaces,
+                    &exclusion_arrays,
+                )
             });
 
             if let Some((rest_binding, source, excluded_keys, before, after)) = extraction {
+                let future_jsx_tag_bindings = jsx_tag_bindings_in_stmts(&stmts[index + 1..]);
+                if has_jsx_tag_default_pair(
+                    &new_stmts,
+                    &source,
+                    &excluded_keys,
+                    &future_jsx_tag_bindings,
+                    self.unresolved_mark,
+                ) {
+                    collect_exclusion_arrays_from_stmt(stmt, &mut exclusion_arrays);
+                    new_stmts.push(stmt.clone());
+                    continue;
+                }
                 let mut inline_accesses = declarators_to_accesses(&before, &source, &excluded_keys);
                 let (absorbed, mut preceding_accesses) =
                     scan_preceding(&new_stmts, &source, &excluded_keys, self.unresolved_mark);
@@ -249,6 +300,7 @@ impl VisitMut for ObjectRestProcessor<'_> {
                 continue;
             }
 
+            collect_exclusion_arrays_from_stmt(stmt, &mut exclusion_arrays);
             new_stmts.push(stmt.clone());
         }
 
@@ -415,9 +467,15 @@ impl Visit for ObjectRestSpreadCandidateVisitor<'_> {
             return;
         };
 
-        if extract_named_owp_args(&spread.expr, self.named_helpers, self.tslib_namespaces)
-            .or_else(|| try_extract_owp_call(&spread.expr))
-            .is_some()
+        if extract_named_owp_args(
+            &spread.expr,
+            self.named_helpers,
+            self.tslib_namespaces,
+            &HashSet::new(),
+            &HashMap::new(),
+        )
+        .or_else(|| try_extract_owp_call(&spread.expr, &HashMap::new()))
+        .is_some()
         {
             self.found = true;
             return;
@@ -486,9 +544,14 @@ impl VisitMut for ElidedRestSpreadReplacer<'_> {
             return;
         };
 
-        let extraction =
-            extract_named_owp_args(&spread.expr, self.named_helpers, self.tslib_namespaces)
-                .or_else(|| try_extract_owp_call(&spread.expr));
+        let extraction = extract_named_owp_args(
+            &spread.expr,
+            self.named_helpers,
+            self.tslib_namespaces,
+            &HashSet::new(),
+            &HashMap::new(),
+        )
+        .or_else(|| try_extract_owp_call(&spread.expr, &HashMap::new()));
         let Some((source, excluded_keys)) = extraction else {
             spread.visit_mut_children_with(self);
             return;
@@ -582,6 +645,7 @@ enum PrecedingAccess {
 /// The before/after declarators are from the same var decl if it had multiple declarators.
 fn try_extract_owp_iife(
     stmt: &Stmt,
+    exclusion_arrays: &HashMap<BindingKey, Vec<Atom>>,
 ) -> Option<(
     BindingIdent,
     Box<Expr>,
@@ -601,7 +665,7 @@ fn try_extract_owp_iife(
         let Some(init) = &decl.init else {
             return false;
         };
-        try_extract_owp_call(init).is_some()
+        try_extract_owp_call(init, exclusion_arrays).is_some()
     })?;
 
     let decl = &var.decls[owp_idx];
@@ -609,7 +673,7 @@ fn try_extract_owp_iife(
         return None;
     };
     let init = decl.init.as_ref()?;
-    let (source, excluded_keys) = try_extract_owp_call(init)?;
+    let (source, excluded_keys) = try_extract_owp_call(init, exclusion_arrays)?;
 
     let before = var.decls[..owp_idx].to_vec();
     let after = var.decls[owp_idx + 1..].to_vec();
@@ -622,6 +686,8 @@ fn try_extract_owp_named_call(
     stmt: &Stmt,
     helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
+    swc_numeric_helper_namespaces: &HashSet<BindingKey>,
+    exclusion_arrays: &HashMap<BindingKey, Vec<Atom>>,
 ) -> Option<(
     BindingIdent,
     Box<Expr>,
@@ -629,7 +695,8 @@ fn try_extract_owp_named_call(
     Vec<VarDeclarator>,
     Vec<VarDeclarator>,
 )> {
-    if helpers.is_empty() && tslib_namespaces.is_empty() {
+    if helpers.is_empty() && tslib_namespaces.is_empty() && swc_numeric_helper_namespaces.is_empty()
+    {
         return None;
     }
     let Stmt::Decl(Decl::Var(var)) = stmt else {
@@ -643,7 +710,14 @@ fn try_extract_owp_named_call(
         let Some(init) = &decl.init else {
             return false;
         };
-        extract_named_owp_args(init, helpers, tslib_namespaces).is_some()
+        extract_named_owp_args(
+            init,
+            helpers,
+            tslib_namespaces,
+            swc_numeric_helper_namespaces,
+            exclusion_arrays,
+        )
+        .is_some()
     })?;
 
     let decl = &var.decls[owp_idx];
@@ -651,7 +725,13 @@ fn try_extract_owp_named_call(
         return None;
     };
     let init = decl.init.as_ref()?;
-    let (source, excluded_keys) = extract_named_owp_args(init, helpers, tslib_namespaces)?;
+    let (source, excluded_keys) = extract_named_owp_args(
+        init,
+        helpers,
+        tslib_namespaces,
+        swc_numeric_helper_namespaces,
+        exclusion_arrays,
+    )?;
 
     let before = var.decls[..owp_idx].to_vec();
     let after = var.decls[owp_idx + 1..].to_vec();
@@ -663,6 +743,8 @@ fn extract_named_owp_args(
     expr: &Expr,
     helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     tslib_namespaces: &HashSet<BindingKey>,
+    swc_numeric_helper_namespaces: &HashSet<BindingKey>,
+    exclusion_arrays: &HashMap<BindingKey, Vec<Atom>>,
 ) -> Option<(Box<Expr>, Vec<Atom>)> {
     let Expr::Call(CallExpr {
         callee: Callee::Expr(callee),
@@ -674,10 +756,12 @@ fn extract_named_owp_args(
     };
     let is_helper = match callee.as_ref() {
         Expr::Ident(id) => helpers.contains_key(&(id.sym.clone(), id.ctxt)),
-        Expr::Member(_) => matches!(
-            tslib_member_helper_kind(callee, tslib_namespaces),
-            Some(TranspilerHelperKind::ObjectWithoutProperties)
-        ),
+        Expr::Member(_) => {
+            matches!(
+                tslib_member_helper_kind(callee, tslib_namespaces),
+                Some(TranspilerHelperKind::ObjectWithoutProperties)
+            ) || is_swc_numeric_object_rest_member(callee, swc_numeric_helper_namespaces)
+        }
         _ => false,
     };
     if !is_helper {
@@ -686,9 +770,74 @@ fn extract_named_owp_args(
     if args.len() != 2 || args[0].spread.is_some() || args[1].spread.is_some() {
         return None;
     }
-    let Expr::Array(arr) = args[1].expr.as_ref() else {
-        return None;
+    let keys = extract_exclusion_keys(args[1].expr.as_ref(), exclusion_arrays)?;
+    Some((args[0].expr.clone(), keys))
+}
+
+fn extract_exclusion_keys(
+    expr: &Expr,
+    exclusion_arrays: &HashMap<BindingKey, Vec<Atom>>,
+) -> Option<Vec<Atom>> {
+    match expr {
+        Expr::Array(arr) => extract_exclusion_keys_from_array(arr),
+        Expr::Ident(id) => exclusion_arrays
+            .get(&(id.sym.clone(), id.ctxt))
+            .cloned()
+            .or_else(|| {
+                exclusion_arrays
+                    .iter()
+                    .find_map(|((sym, _), keys)| (sym == &id.sym).then(|| keys.clone()))
+            }),
+        _ => None,
+    }
+}
+
+fn collect_swc_numeric_helper_namespaces(module: &Module) -> HashSet<BindingKey> {
+    let mut namespaces = HashSet::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            if decl.init.as_deref().is_some_and(is_numeric_require_call) {
+                namespaces.insert((binding.id.sym.clone(), binding.id.ctxt));
+            }
+        }
+    }
+    namespaces
+}
+
+fn is_numeric_require_call(expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
     };
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return false;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require") {
+        return false;
+    }
+    matches!(call.args[0].expr.as_ref(), Expr::Lit(Lit::Num(_)))
+}
+
+fn is_swc_numeric_object_rest_member(expr: &Expr, namespaces: &HashSet<BindingKey>) -> bool {
+    let Expr::Member(member) = expr else {
+        return false;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    namespaces.contains(&(obj.sym.clone(), obj.ctxt))
+        && member_prop_atom(&member.prop).is_some_and(|name| name.as_ref() == "_T")
+}
+
+fn extract_exclusion_keys_from_array(arr: &swc_core::ecma::ast::ArrayLit) -> Option<Vec<Atom>> {
     let mut keys: Vec<Atom> = Vec::new();
     for elem in &arr.elems {
         let Some(elem) = elem else { return None };
@@ -701,11 +850,134 @@ fn extract_named_owp_args(
         let key_str = s.value.as_str()?;
         keys.push(Atom::from(key_str));
     }
-    Some((args[0].expr.clone(), keys))
+    Some(keys)
+}
+
+fn collect_exclusion_arrays_from_module_items(
+    items: &[ModuleItem],
+) -> HashMap<BindingKey, Vec<Atom>> {
+    let mut arrays = HashMap::new();
+    for item in items {
+        if let ModuleItem::Stmt(stmt) = item {
+            collect_exclusion_arrays_from_stmt(stmt, &mut arrays);
+        }
+    }
+    arrays
+}
+
+fn collect_exclusion_arrays_from_stmt(stmt: &Stmt, arrays: &mut HashMap<BindingKey, Vec<Atom>>) {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return;
+    };
+    for decl in &var.decls {
+        let Pat::Ident(binding) = &decl.name else {
+            continue;
+        };
+        let Some(init) = &decl.init else {
+            continue;
+        };
+        let Expr::Array(arr) = init.as_ref() else {
+            continue;
+        };
+        let Some(keys) = extract_exclusion_keys_from_array(arr) else {
+            continue;
+        };
+        arrays.insert((binding.id.sym.clone(), binding.id.ctxt), keys);
+    }
+}
+
+fn remove_unused_exclusion_array_decls(
+    body: &mut Vec<ModuleItem>,
+    exclusion_arrays: &HashMap<BindingKey, Vec<Atom>>,
+) {
+    let mut unused = HashSet::new();
+    for key in exclusion_arrays.keys() {
+        let ident = Ident::new(key.0.clone(), DUMMY_SP, key.1);
+        if !ident_used_in_module_items(body, &ident) {
+            unused.insert(key.clone());
+        }
+    }
+    if unused.is_empty() {
+        return;
+    }
+
+    body.retain_mut(|item| {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            return true;
+        };
+        var.decls.retain(|decl| {
+            let Pat::Ident(binding) = &decl.name else {
+                return true;
+            };
+            !unused.contains(&(binding.id.sym.clone(), binding.id.ctxt))
+        });
+        !var.decls.is_empty()
+    });
+}
+
+fn remove_unused_numeric_helper_namespace_decls(
+    body: &mut Vec<ModuleItem>,
+    namespaces: &HashSet<BindingKey>,
+) {
+    let mut unused = HashSet::new();
+    for key in namespaces {
+        let ident = Ident::new(key.0.clone(), DUMMY_SP, key.1);
+        if !ident_used_in_module_items(body, &ident) {
+            unused.insert(key.clone());
+        }
+    }
+    if unused.is_empty() {
+        return;
+    }
+
+    body.retain_mut(|item| {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            return true;
+        };
+        var.decls.retain(|decl| {
+            let Pat::Ident(binding) = &decl.name else {
+                return true;
+            };
+            !unused.contains(&(binding.id.sym.clone(), binding.id.ctxt))
+        });
+        !var.decls.is_empty()
+    });
+}
+
+fn ident_used_in_module_items(body: &[ModuleItem], target: &Ident) -> bool {
+    struct Finder<'a> {
+        target: &'a Ident,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_binding_ident(&mut self, _: &BindingIdent) {}
+
+        fn visit_ident(&mut self, ident: &Ident) {
+            if ident.sym == self.target.sym && ident.ctxt == self.target.ctxt {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = Finder {
+        target,
+        found: false,
+    };
+    for item in body {
+        item.visit_with(&mut finder);
+        if finder.found {
+            return true;
+        }
+    }
+    false
 }
 
 /// Check if an expression is an OWP IIFE call, returning (source, excluded_keys).
-fn try_extract_owp_call(expr: &Expr) -> Option<(Box<Expr>, Vec<Atom>)> {
+fn try_extract_owp_call(
+    expr: &Expr,
+    exclusion_arrays: &HashMap<BindingKey, Vec<Atom>>,
+) -> Option<(Box<Expr>, Vec<Atom>)> {
     let Expr::Call(CallExpr {
         callee: Callee::Expr(callee),
         args,
@@ -717,21 +989,7 @@ fn try_extract_owp_call(expr: &Expr) -> Option<(Box<Expr>, Vec<Atom>)> {
     if args.len() != 2 || args[0].spread.is_some() || args[1].spread.is_some() {
         return None;
     }
-    let Expr::Array(arr) = args[1].expr.as_ref() else {
-        return None;
-    };
-    let mut keys: Vec<Atom> = Vec::new();
-    for elem in &arr.elems {
-        let Some(elem) = elem else { return None };
-        if elem.spread.is_some() {
-            return None;
-        }
-        let Expr::Lit(Lit::Str(s)) = elem.expr.as_ref() else {
-            return None;
-        };
-        let key_str = s.value.as_str()?;
-        keys.push(Atom::from(key_str));
-    }
+    let keys = extract_exclusion_keys(args[1].expr.as_ref(), exclusion_arrays)?;
     let callee = strip_parens(callee);
     let body_stmts = match callee {
         Expr::Arrow(ArrowExpr { body, params, .. }) if params.len() == 2 => match &**body {
@@ -758,6 +1016,10 @@ fn try_extract_owp_call(expr: &Expr) -> Option<(Box<Expr>, Vec<Atom>)> {
 /// return n;
 /// ```
 fn is_owp_body(stmts: &[Stmt]) -> bool {
+    if is_owp_spec_wrapper_body(stmts) {
+        return true;
+    }
+
     // 3 statements: var init, for-in, return
     if stmts.len() != 3 {
         return false;
@@ -790,6 +1052,51 @@ fn is_owp_body(stmts: &[Stmt]) -> bool {
         return false;
     };
     matches!(&ret.arg, Some(arg) if matches!(arg.as_ref(), Expr::Ident(_)))
+}
+
+fn is_owp_spec_wrapper_body(stmts: &[Stmt]) -> bool {
+    if stmts.len() < 4 {
+        return false;
+    }
+
+    let has_symbol_copy = stmts.iter().any(|stmt| {
+        let Stmt::If(symbols_if) = stmt else {
+            return false;
+        };
+        stmt_has_member_prop(&symbols_if.cons, "getOwnPropertySymbols")
+            && stmt_has_member_prop(&symbols_if.cons, "propertyIsEnumerable")
+    });
+    if !has_symbol_copy {
+        return false;
+    }
+
+    matches!(stmts.last(), Some(Stmt::Return(ret)) if matches!(&ret.arg, Some(arg) if matches!(arg.as_ref(), Expr::Ident(_))))
+}
+
+fn stmt_has_member_prop(stmt: &Stmt, prop: &str) -> bool {
+    struct Finder<'a> {
+        prop: &'a str,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_member_expr(&mut self, member: &MemberExpr) {
+            if self.found {
+                return;
+            }
+            if let MemberProp::Ident(id) = &member.prop {
+                if id.sym.as_ref() == self.prop {
+                    self.found = true;
+                    return;
+                }
+            }
+            member.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder { prop, found: false };
+    stmt.visit_with(&mut finder);
+    finder.found
 }
 
 /// Scan backward from the end of `preceding` for statements that access `source`.
@@ -840,6 +1147,98 @@ fn scan_preceding(
 
     accesses.reverse();
     (absorbed, accesses)
+}
+
+fn has_jsx_tag_default_pair(
+    preceding: &[Stmt],
+    source: &Expr,
+    excluded_keys: &[Atom],
+    future_jsx_tag_bindings: &HashSet<BindingKey>,
+    unresolved_mark: Mark,
+) -> bool {
+    if preceding.len() < 2 || future_jsx_tag_bindings.is_empty() {
+        return false;
+    }
+    let source_name = match source {
+        Expr::Ident(id) => &id.sym,
+        _ => return false,
+    };
+    let Some(PrecedingAccess::PropAccessWithDefault {
+        prop,
+        binding,
+        ctxt,
+        ..
+    }) = try_match_default_pair(
+        &preceding[preceding.len() - 2],
+        &preceding[preceding.len() - 1],
+        source_name,
+        excluded_keys,
+        unresolved_mark,
+    )
+    else {
+        return false;
+    };
+    excluded_keys.contains(&prop) && future_jsx_tag_bindings.contains(&(binding, ctxt))
+}
+
+fn jsx_tag_bindings_in_module_items(items: &[ModuleItem]) -> HashSet<BindingKey> {
+    let mut collector = JsxTagBindingCollector::default();
+    for item in items {
+        item.visit_with(&mut collector);
+    }
+    collector.bindings
+}
+
+fn jsx_tag_bindings_in_stmts(stmts: &[Stmt]) -> HashSet<BindingKey> {
+    let mut collector = JsxTagBindingCollector::default();
+    for stmt in stmts {
+        stmt.visit_with(&mut collector);
+    }
+    collector.bindings
+}
+
+#[derive(Default)]
+struct JsxTagBindingCollector {
+    bindings: HashSet<BindingKey>,
+}
+
+impl Visit for JsxTagBindingCollector {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if is_jsx_factory_call(call) {
+            if let Some(first_arg) = call.args.first() {
+                if let Expr::Ident(ident) = first_arg.expr.as_ref() {
+                    self.bindings.insert((ident.sym.clone(), ident.ctxt));
+                }
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_jsx_element_name(&mut self, name: &JSXElementName) {
+        match name {
+            JSXElementName::Ident(ident) => {
+                self.bindings.insert((ident.sym.clone(), ident.ctxt));
+            }
+            JSXElementName::JSXMemberExpr(member) => member.visit_children_with(self),
+            JSXElementName::JSXNamespacedName(_) => {}
+        }
+    }
+}
+
+fn is_jsx_factory_call(call: &CallExpr) -> bool {
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    match strip_parens(callee.as_ref()) {
+        Expr::Ident(ident) => matches!(
+            ident.sym.as_ref(),
+            "jsx" | "jsxs" | "jsxDEV" | "createElement"
+        ),
+        Expr::Member(member) => member_prop_atom(&member.prop).is_some_and(|prop| {
+            matches!(prop.as_ref(), "jsx" | "jsxs" | "jsxDEV" | "createElement")
+        }),
+        _ => false,
+    }
 }
 
 /// Convert preceding declarators from the same var decl to PrecedingAccess entries.

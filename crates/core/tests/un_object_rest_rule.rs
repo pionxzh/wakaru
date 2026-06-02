@@ -636,7 +636,7 @@ use(name, rest_info);
 }
 
 #[test]
-fn keeps_spec_wrapper_loose_dependency_when_call_remains() {
+fn named_spec_wrapper_with_hoisted_exclusion_array() {
     let input = r#"
 var _excluded = ["name"];
 function _objectWithoutProperties(e, t) {
@@ -660,15 +660,146 @@ function _objectWithoutPropertiesLoose(r, e) {
 const rest_info = _objectWithoutProperties(app_info, _excluded);
 use(rest_info);
 "#;
+    let expected = r#"
+const { name: _name, ...rest_info } = app_info;
+use(rest_info);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn iife_spec_wrapper_with_hoisted_exclusion_array() {
+    let input = r#"
+const excluded = ["label"];
+const component = (props) => {
+    const label = props.label;
+    const rest = ((e, t) => {
+        if (e == null) return {};
+        var o, r, i = ((r, e) => {
+            if (r == null) return {};
+            var t = {};
+            for (var n in r) if ({}.hasOwnProperty.call(r, n)) {
+                if (-1 !== e.indexOf(n)) continue;
+                t[n] = r[n];
+            }
+            return t;
+        })(e, t);
+        if (Object.getOwnPropertySymbols) {
+            var n = Object.getOwnPropertySymbols(e);
+            for (r = 0; r < n.length; r++) o = n[r], -1 === t.indexOf(o) && {}.propertyIsEnumerable.call(e, o) && (i[o] = e[o]);
+        }
+        return i;
+    })(props, excluded);
+    use(label, rest);
+};
+"#;
+
+    let expected = r#"
+const component = ({ label, ...rest }) => {
+    use(label, rest);
+};
+"#;
+
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn keeps_defaulted_prop_alias_used_as_jsx_tag() {
+    let input = r#"
+const component = (props) => {
+    const asProp = props.as;
+    const Tag = asProp === undefined ? "div" : asProp;
+    const rest = ((e, t) => {
+        if (e == null) return {};
+        var o, r, i = ((r, e) => {
+            if (r == null) return {};
+            var t = {};
+            for (var n in r) if ({}.hasOwnProperty.call(r, n)) {
+                if (-1 !== e.indexOf(n)) continue;
+                t[n] = r[n];
+            }
+            return t;
+        })(e, t);
+        if (Object.getOwnPropertySymbols) {
+            var n = Object.getOwnPropertySymbols(e);
+            for (r = 0; r < n.length; r++) o = n[r], -1 === t.indexOf(o) && {}.propertyIsEnumerable.call(e, o) && (i[o] = e[o]);
+        }
+        return i;
+    })(props, ["as"]);
+    return <Tag {...rest}/>;
+};
+"#;
+
     let output = render(input);
     assert!(
-        output.contains("function _objectWithoutPropertiesLoose"),
-        "retained spec object-rest helper must keep its loose dependency:\n{output}"
+        output.contains("const Tag = asProp === undefined ? \"div\" : asProp"),
+        "defaulted JSX tag alias should stay intact:\n{output}"
     );
     assert!(
-        output.contains("function _objectWithoutProperties"),
-        "untransformed object-rest helper should remain:\n{output}"
+        output.contains("return <Tag {...rest}/>"),
+        "JSX tag should stay capitalized:\n{output}"
     );
+    assert!(
+        output.contains("const rest ="),
+        "object-rest helper should not fold when it would remove the JSX tag alias:\n{output}"
+    );
+}
+
+#[test]
+fn keeps_defaulted_prop_alias_used_as_create_element_tag() {
+    let input = r#"
+const component = (props) => {
+    const asProp = props.as;
+    const Tag = asProp === undefined ? "div" : asProp;
+    const rest = ((e, t) => {
+        if (e == null) return {};
+        var o, r, i = ((r, e) => {
+            if (r == null) return {};
+            var t = {};
+            for (var n in r) if ({}.hasOwnProperty.call(r, n)) {
+                if (-1 !== e.indexOf(n)) continue;
+                t[n] = r[n];
+            }
+            return t;
+        })(e, t);
+        if (Object.getOwnPropertySymbols) {
+            var n = Object.getOwnPropertySymbols(e);
+            for (r = 0; r < n.length; r++) o = n[r], -1 === t.indexOf(o) && {}.propertyIsEnumerable.call(e, o) && (i[o] = e[o]);
+        }
+        return i;
+    })(props, ["as"]);
+    return React.createElement(Tag, rest);
+};
+"#;
+
+    let output = render(input);
+    assert!(
+        output.contains("const Tag = asProp === undefined ? \"div\" : asProp"),
+        "defaulted createElement tag alias should stay intact:\n{output}"
+    );
+    assert!(
+        output.contains("<Tag {...rest}/>"),
+        "createElement tag should keep the alias binding:\n{output}"
+    );
+    assert!(
+        output.contains("const rest ="),
+        "object-rest helper should not fold when it would remove the createElement tag alias:\n{output}"
+    );
+}
+
+#[test]
+fn swc_numeric_namespace_object_rest() {
+    let input = r#"
+const helpers = require(12345);
+const picked = input.picked;
+const rest = helpers._T(input, ["picked"]);
+use(picked, rest);
+"#;
+    let expected = r#"
+const { picked, ...rest } = input;
+use(picked, rest);
+"#;
+    assert_eq_normalized(&render(input), expected);
 }
 
 #[test]
