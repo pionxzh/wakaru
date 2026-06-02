@@ -118,8 +118,8 @@ pub fn unpack_files(
         return Err(anyhow!("no modules were extracted from input files"));
     }
 
-    let modules = stabilize_multi_source_modules(modules);
-    unpack_multi_module(modules, options)
+    let (modules, numeric_rewrite_plan) = prepare_multi_source_modules(modules);
+    unpack_multi_module_with_plan(modules, numeric_rewrite_plan, options)
 }
 
 /// Unpack a bundle without running the decompiler rule pipeline.
@@ -272,27 +272,64 @@ impl MultiSourceModule {
     }
 }
 
-fn stabilize_multi_source_modules(mut modules: Vec<MultiSourceModule>) -> Vec<UnpackedModule> {
-    assign_unique_module_filenames(&mut modules);
-    let id_to_filename = unique_numeric_chunk_module_id_map(&modules);
+struct PreparedUnpackModule {
+    module: UnpackedModule,
+    numeric_rewrite: Option<NumericRewriteModuleContext>,
+}
 
-    if !id_to_filename.is_empty() {
-        for module in &mut modules {
-            if !module.allow_cross_chunk_rewrite {
-                continue;
-            }
-            if let Ok(code) = rewrite_webpack_numeric_module_refs(
-                &module.module.code,
-                &module.module.filename,
-                &module.input_group,
-                &id_to_filename,
-            ) {
-                module.module.code = code;
-            }
+impl PreparedUnpackModule {
+    fn plain(module: UnpackedModule) -> Self {
+        Self {
+            module,
+            numeric_rewrite: None,
         }
     }
+}
 
-    modules.into_iter().map(|module| module.module).collect()
+struct NumericRewriteModuleContext {
+    input_group: String,
+}
+
+#[derive(Default)]
+struct NumericRewritePlan {
+    plain_id_to_filename: HashMap<usize, String>,
+    chunk_id_to_filename: HashMap<(String, usize, usize), String>,
+}
+
+impl NumericRewritePlan {
+    fn is_empty(&self) -> bool {
+        self.plain_id_to_filename.is_empty() && self.chunk_id_to_filename.is_empty()
+    }
+}
+
+fn prepare_multi_source_modules(
+    mut modules: Vec<MultiSourceModule>,
+) -> (Vec<PreparedUnpackModule>, NumericRewritePlan) {
+    assign_unique_module_filenames(&mut modules);
+    let numeric_rewrite_plan = NumericRewritePlan {
+        plain_id_to_filename: unique_numeric_module_id_map(&modules),
+        chunk_id_to_filename: unique_numeric_chunk_module_id_map(&modules),
+    };
+    let has_rewrites = !numeric_rewrite_plan.is_empty();
+
+    let modules = modules
+        .into_iter()
+        .map(|module| {
+            let numeric_rewrite = if has_rewrites && module.allow_cross_chunk_rewrite {
+                Some(NumericRewriteModuleContext {
+                    input_group: module.input_group,
+                })
+            } else {
+                None
+            };
+            PreparedUnpackModule {
+                module: module.module,
+                numeric_rewrite,
+            }
+        })
+        .collect();
+
+    (modules, numeric_rewrite_plan)
 }
 
 fn assign_unique_module_filenames(modules: &mut [MultiSourceModule]) {
@@ -371,6 +408,28 @@ fn chunk_filename_matches_id(filename: &str, chunk_id: usize) -> bool {
     name == format!("{chunk_id}.js") || name == format!("{chunk_id}.bundle.js")
 }
 
+fn unique_numeric_module_id_map(modules: &[MultiSourceModule]) -> HashMap<usize, String> {
+    let mut counts: HashMap<usize, (usize, String)> = HashMap::new();
+    for module in modules {
+        if !module.allow_cross_chunk_rewrite {
+            continue;
+        }
+        let Ok(id) = module.module.id.parse::<usize>() else {
+            continue;
+        };
+        let entry = counts
+            .entry(id)
+            .or_insert((0, module.module.filename.clone()));
+        entry.0 += 1;
+        entry.1 = module.module.filename.clone();
+    }
+
+    counts
+        .into_iter()
+        .filter_map(|(key, (count, filename))| (count == 1).then_some((key, filename)))
+        .collect()
+}
+
 fn unique_numeric_chunk_module_id_map(
     modules: &[MultiSourceModule],
 ) -> HashMap<(String, usize, usize), String> {
@@ -400,40 +459,63 @@ fn unique_numeric_chunk_module_id_map(
         .collect()
 }
 
-fn rewrite_webpack_numeric_module_refs(
-    source: &str,
-    filename: &str,
-    input_group: &str,
-    id_to_filename: &HashMap<(String, usize, usize), String>,
-) -> Result<String> {
-    GLOBALS.set(&Default::default(), || {
-        let cm: Lrc<SourceMap> = Default::default();
-        let mut module = parse_js(source, filename, cm.clone())?;
-        let unresolved_mark = Mark::new();
-        let top_level_mark = Mark::new();
-        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-        module.visit_mut_with(&mut WebpackNumericReferenceRewriter {
-            input_group,
-            id_to_filename,
-        });
-        module.visit_mut_with(&mut fixer(None));
-        print_js(&module, cm)
-    })
+fn apply_numeric_rewrites(
+    module: &mut Module,
+    unresolved_mark: Mark,
+    context: Option<&NumericRewriteModuleContext>,
+    plan: &NumericRewritePlan,
+) {
+    let Some(context) = context else {
+        return;
+    };
+    if plan.is_empty() {
+        return;
+    }
+
+    module.visit_mut_with(&mut WebpackNumericReferenceRewriter {
+        input_group: &context.input_group,
+        unresolved_mark,
+        plain_id_to_filename: &plan.plain_id_to_filename,
+        chunk_id_to_filename: &plan.chunk_id_to_filename,
+    });
 }
 
 struct WebpackNumericReferenceRewriter<'a> {
     input_group: &'a str,
-    id_to_filename: &'a HashMap<(String, usize, usize), String>,
+    unresolved_mark: Mark,
+    plain_id_to_filename: &'a HashMap<usize, String>,
+    chunk_id_to_filename: &'a HashMap<(String, usize, usize), String>,
 }
 
 impl VisitMut for WebpackNumericReferenceRewriter<'_> {
     fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
         self.rewrite_async_chunk_t_bind(call);
         call.visit_mut_children_with(self);
+        self.rewrite_plain_require(call);
     }
 }
 
 impl WebpackNumericReferenceRewriter<'_> {
+    fn rewrite_plain_require(&self, call: &mut CallExpr) {
+        let Callee::Expr(callee_expr) = &call.callee else {
+            return;
+        };
+        let Expr::Ident(callee) = strip_parens(callee_expr) else {
+            return;
+        };
+        if callee.sym.as_ref() != "require" || callee.ctxt.outer() != self.unresolved_mark {
+            return;
+        }
+
+        let Some(module_id) = numeric_single_arg_id(call) else {
+            return;
+        };
+        let Some(filename) = self.plain_id_to_filename.get(&module_id) else {
+            return;
+        };
+        rewrite_numeric_arg_to_filename(&mut call.args[0], filename);
+    }
+
     fn rewrite_async_chunk_t_bind(&self, call: &mut CallExpr) {
         let Some((runtime, chunk_id)) = self.extract_then_chunk_loader(&call.callee) else {
             return;
@@ -555,17 +637,12 @@ impl WebpackNumericReferenceRewriter<'_> {
             return;
         };
         let Some(filename) =
-            self.id_to_filename
+            self.chunk_id_to_filename
                 .get(&(self.input_group.to_string(), chunk_id, module_id))
         else {
             return;
         };
-        let path = format!("./{filename}");
-        *arg.expr = Expr::Lit(Lit::Str(Str {
-            span: DUMMY_SP,
-            value: path.into(),
-            raw: None,
-        }));
+        rewrite_numeric_arg_to_filename(arg, filename);
     }
 }
 
@@ -593,6 +670,22 @@ fn numeric_arg_id(expr: &Expr) -> Option<usize> {
         return None;
     }
     Some(value as usize)
+}
+
+fn numeric_single_arg_id(call: &CallExpr) -> Option<usize> {
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return None;
+    }
+    numeric_arg_id(&call.args[0].expr)
+}
+
+fn rewrite_numeric_arg_to_filename(arg: &mut ExprOrSpread, filename: &str) {
+    let path = format!("./{filename}");
+    *arg.expr = Expr::Lit(Lit::Str(Str {
+        span: DUMMY_SP,
+        value: path.into(),
+        raw: None,
+    }));
 }
 
 fn member_prop_is(prop: &MemberProp, expected: &str) -> bool {
@@ -683,6 +776,18 @@ fn unpack_multi_module(
     modules: Vec<crate::unpacker::UnpackedModule>,
     options: DecompileOptions,
 ) -> Result<UnpackOutput> {
+    let modules = modules
+        .into_iter()
+        .map(PreparedUnpackModule::plain)
+        .collect();
+    unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options)
+}
+
+fn unpack_multi_module_with_plan(
+    modules: Vec<PreparedUnpackModule>,
+    numeric_rewrite_plan: NumericRewritePlan,
+    options: DecompileOptions,
+) -> Result<UnpackOutput> {
     let span = tracing::info_span!("unpack_multi_module", count = modules.len());
     let _enter = span.enter();
 
@@ -697,20 +802,20 @@ fn unpack_multi_module(
     // module and extract import/export facts. The AST is discarded — only facts
     // survive the barrier.
     let collect_facts =
-        |unpacked: &crate::unpacker::UnpackedModule| -> (
+        |unpacked: &PreparedUnpackModule| -> (
             String,
             crate::facts::ModuleFacts,
             Option<UnpackWarning>,
         ) {
             let (facts, warning) = GLOBALS.set(&Default::default(), || {
                 let cm: Lrc<SourceMap> = Default::default();
-                let mut module = match parse_js(&unpacked.code, &unpacked.filename, cm) {
+                let mut module = match parse_js(&unpacked.module.code, &unpacked.module.filename, cm) {
                     Ok(module) => module,
                     Err(e) => {
                         return (
                             crate::facts::ModuleFacts::default(),
                             Some(UnpackWarning::new(
-                                unpacked.filename.clone(),
+                                unpacked.module.filename.clone(),
                                 UnpackWarningKind::FactCollectionParseFailed,
                                 format!("parse failed during fact collection, using empty facts: {e}"),
                             )),
@@ -720,6 +825,12 @@ fn unpack_multi_module(
                 let unresolved_mark = Mark::new();
                 let top_level_mark = Mark::new();
                 module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+                apply_numeric_rewrites(
+                    &mut module,
+                    unresolved_mark,
+                    unpacked.numeric_rewrite.as_ref(),
+                    &numeric_rewrite_plan,
+                );
                 apply_rules(
                     &mut module,
                     unresolved_mark,
@@ -732,7 +843,7 @@ fn unpack_multi_module(
                 );
                 (collect_module_facts(&module), None)
             });
-            (unpacked.filename.clone(), facts, warning)
+            (unpacked.module.filename.clone(), facts, warning)
         };
 
     let phase1: Vec<_> = {
@@ -757,15 +868,24 @@ fn unpack_multi_module(
     let sm_ref = &parsed_sourcemap;
 
     let decompile_module =
-        |unpacked: crate::unpacker::UnpackedModule| -> (String, String, Vec<UnpackWarning>) {
+        |unpacked: PreparedUnpackModule| -> (String, String, Vec<UnpackWarning>) {
             match GLOBALS.set(&Default::default(), || {
                 let cm: Lrc<SourceMap> = Default::default();
-                let parsed =
-                    parse_js_with_recovery(&unpacked.code, &unpacked.filename, cm.clone())?;
+                let parsed = parse_js_with_recovery(
+                    &unpacked.module.code,
+                    &unpacked.module.filename,
+                    cm.clone(),
+                )?;
                 let mut module = parsed.module;
                 let unresolved_mark = Mark::new();
                 let top_level_mark = Mark::new();
                 module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+                apply_numeric_rewrites(
+                    &mut module,
+                    unresolved_mark,
+                    unpacked.numeric_rewrite.as_ref(),
+                    &numeric_rewrite_plan,
+                );
 
                 // Through-UnEsm range.
                 apply_rules(
@@ -814,10 +934,10 @@ fn unpack_multi_module(
 
                 let mut diag_warnings = if options.diagnostics {
                     let mut warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
-                    warnings.extend(collect_tdz_warnings(&module, &unpacked.filename));
+                    warnings.extend(collect_tdz_warnings(&module, &unpacked.module.filename));
                     warnings.extend(collect_duplicate_declaration_warnings(
                         &module,
-                        &unpacked.filename,
+                        &unpacked.module.filename,
                     ));
                     warnings
                 } else {
@@ -828,17 +948,17 @@ fn unpack_multi_module(
                 let code = print_js(&module, cm)?;
 
                 if options.diagnostics {
-                    diag_warnings.extend(verify_output_parses(&code, &unpacked.filename));
+                    diag_warnings.extend(verify_output_parses(&code, &unpacked.module.filename));
                 }
 
                 Ok::<_, anyhow::Error>((code, diag_warnings))
             }) {
-                Ok((code, diag_warnings)) => (unpacked.filename, code, diag_warnings),
+                Ok((code, diag_warnings)) => (unpacked.module.filename, code, diag_warnings),
                 Err(e) => (
-                    unpacked.filename.clone(),
-                    unpacked.code,
+                    unpacked.module.filename.clone(),
+                    unpacked.module.code,
                     vec![UnpackWarning::new(
-                        unpacked.filename,
+                        unpacked.module.filename,
                         UnpackWarningKind::DecompileFailed,
                         format!("decompile failed, preserving raw code: {e}"),
                     )],
@@ -945,6 +1065,64 @@ mod tests {
             output.modules[0].1.contains("const value"),
             "expected TypeScript input to decompile, got: {}",
             output.modules[0].1
+        );
+    }
+
+    #[test]
+    fn numeric_rewrite_plan_applies_to_existing_ast_without_source_stabilization() {
+        let modules = vec![
+            MultiSourceModule::detected(
+                UnpackedModule {
+                    id: "20".to_string(),
+                    is_entry: false,
+                    code: "const other = require(999);".to_string(),
+                    filename: "module-20.js".to_string(),
+                },
+                HashSet::new(),
+                "entry.js".to_string(),
+            ),
+            MultiSourceModule::detected(
+                UnpackedModule {
+                    id: "999".to_string(),
+                    is_entry: false,
+                    code: "export default 1;".to_string(),
+                    filename: "module-999.js".to_string(),
+                },
+                HashSet::new(),
+                "chunk.js".to_string(),
+            ),
+        ];
+
+        let (prepared, plan) = prepare_multi_source_modules(modules);
+        assert!(
+            prepared[0].module.code.contains("require(999)"),
+            "prepare should keep source strings untouched"
+        );
+
+        let output = GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = parse_js(
+                &prepared[0].module.code,
+                &prepared[0].module.filename,
+                cm.clone(),
+            )
+            .expect("fixture should parse");
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+            apply_numeric_rewrites(
+                &mut module,
+                unresolved_mark,
+                prepared[0].numeric_rewrite.as_ref(),
+                &plan,
+            );
+            module.visit_mut_with(&mut fixer(None));
+            print_js(&module, cm).expect("fixture should print")
+        });
+
+        assert!(
+            output.contains(r#"require("./module-999.js")"#),
+            "rewrite plan should apply to the already-parsed AST:\n{output}"
         );
     }
 }

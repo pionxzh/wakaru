@@ -364,7 +364,7 @@ exports.modules = {
 }
 
 #[test]
-fn webpack5_multi_file_does_not_rewrite_bare_require_across_inputs() {
+fn webpack5_multi_file_rewrites_unambiguous_bare_require_across_inputs() {
     let entry = r#"
 (() => {
   var __webpack_modules__ = ({
@@ -378,10 +378,10 @@ fn webpack5_multi_file_does_not_rewrite_bare_require_across_inputs() {
   __webpack_require__(20);
 })();
 "#;
-    let unrelated_chunk = r#"
+    let chunk = r#"
 exports.modules = {
   999: function(module, exports) {
-    module.exports = "unrelated runtime";
+    module.exports = "shared runtime";
   }
 };
 "#;
@@ -393,13 +393,13 @@ exports.modules = {
                 source: entry.to_string(),
             },
             UnpackInput {
-                filename: "unrelated.bundle.js".to_string(),
-                source: unrelated_chunk.to_string(),
+                filename: "shared.bundle.js".to_string(),
+                source: chunk.to_string(),
             },
         ],
         DecompileOptions::default(),
     )
-    .expect("unrelated inputs should still unpack independently");
+    .expect("inputs should unpack together");
 
     let module_20 = output
         .modules
@@ -408,8 +408,62 @@ exports.modules = {
         .map(|(_, code)| code)
         .expect("module-20.js should exist");
     assert!(
-        !module_20.contains("./module-999.js"),
-        "bare require across inputs should not be linked to an unrelated chunk:\n{module_20}"
+        module_20.contains("./module-999.js"),
+        "bare numeric require should link to the unique extracted module:\n{module_20}"
+    );
+    assert!(
+        !module_20.contains("require(999)"),
+        "bare numeric require should be rewritten before UnEsm:\n{module_20}"
+    );
+}
+
+#[test]
+fn webpack5_multi_file_rewrites_bare_require_across_nested_chunk_directories() {
+    let entry = r#"
+(() => {
+  var __webpack_modules__ = ({
+    20: function(module, exports, require) {
+      "use strict";
+      var other = require(999);
+      module.exports = other;
+    }
+  });
+  function __webpack_require__(id) { return {}; }
+  __webpack_require__(20);
+})();
+"#;
+    let chunk = r#"
+exports.modules = {
+  999: function(module, exports) {
+    module.exports = "shared runtime";
+  }
+};
+"#;
+
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "chunks/496.js".to_string(),
+                source: entry.to_string(),
+            },
+            UnpackInput {
+                filename: "chunks/pages/_app.js".to_string(),
+                source: chunk.to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("nested chunk inputs should unpack together");
+
+    let module_20 = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-20.js")
+        .map(|(_, code)| code)
+        .expect("module-20.js should exist");
+    assert!(
+        module_20.contains("./module-999.js"),
+        "bare numeric require should link to the globally unique extracted module:\n{module_20}"
     );
 }
 
@@ -522,5 +576,63 @@ exports.modules = {
     assert!(
         entry.contains(", 529,"),
         "ambiguous duplicate module id should not be globally rewritten:\n{entry}"
+    );
+}
+
+#[test]
+fn webpack5_multi_file_does_not_rewrite_duplicate_bare_require_ids() {
+    let entry = r#"
+(() => {
+  var __webpack_modules__ = ({
+    20: function(module, exports, require) {
+      "use strict";
+      var other = require(529);
+      module.exports = other;
+    }
+  });
+  function __webpack_require__(id) { return {}; }
+  __webpack_require__(20);
+})();
+"#;
+    let chunk = r#"
+exports.modules = {
+  529: function(module, exports) {
+    exports.answer = 42;
+  }
+};
+"#;
+
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "entry.js".to_string(),
+                source: entry.to_string(),
+            },
+            UnpackInput {
+                filename: "a.bundle.js".to_string(),
+                source: chunk.to_string(),
+            },
+            UnpackInput {
+                filename: "b.bundle.js".to_string(),
+                source: chunk.to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("entry and duplicate chunks should unpack together");
+
+    let module_20 = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-20.js")
+        .map(|(_, code)| code)
+        .expect("module-20.js should exist");
+    assert!(
+        !module_20.contains("./module-529.js") && !module_20.contains("./module-529_2.js"),
+        "ambiguous duplicate module id should not be globally rewritten:\n{module_20}"
+    );
+    assert!(
+        module_20.contains("require(529)"),
+        "ambiguous duplicate module id should keep the numeric require:\n{module_20}"
     );
 }
