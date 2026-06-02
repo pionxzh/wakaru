@@ -1,0 +1,8 @@
+---
+source: crates/core/tests/un_object_spread_rule.rs
+expression: output
+---
+const Y = require(39889);
+const out = Y.notPi(Y.notPi({}, app_info), {
+    app_name: name
+});

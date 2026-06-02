@@ -105,6 +105,38 @@ const x = { ...app_info, app_name: name };
 }
 
 #[test]
+fn handles_swc_numeric_namespace_object_spread() {
+    let input = r#"
+const Y = require(39889);
+const out = Y.pi(Y.pi({}, app_info), { app_name: name });
+"#;
+    let expected = r#"
+const out = { ...app_info, app_name: name };
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn swc_numeric_namespace_object_spread_requires_pi_export() {
+    let input = r#"
+const Y = require(39889);
+const out = Y.notPi(Y.notPi({}, app_info), { app_name: name });
+"#;
+    let output = render(input);
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn swc_numeric_namespace_object_spread_preserves_mutating_target() {
+    let input = r#"
+const Y = require(39889);
+const out = Y.pi(target, app_info);
+"#;
+    let output = render(input);
+    insta::assert_snapshot!(output);
+}
+
+#[test]
 fn handles_cross_module_extends_helper_fact() {
     let mut facts = ModuleFactsMap::new();
     facts.insert(

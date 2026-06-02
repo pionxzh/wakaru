@@ -90,9 +90,11 @@ fn run_un_object_spread(
     let cross_module_ts_assign_namespaces = module_facts
         .map(|facts| collect_cross_module_ts_assign_helpers(module, facts, &mut helpers))
         .unwrap_or_default();
+    let swc_numeric_helper_namespaces = collect_swc_numeric_helper_namespaces(module);
     let tslib_namespaces = local_helper_context.tslib_namespaces();
     if helpers.is_empty()
         && cross_module_ts_assign_namespaces.is_empty()
+        && swc_numeric_helper_namespaces.is_empty()
         && tslib_namespaces.is_empty()
     {
         return;
@@ -100,9 +102,11 @@ fn run_un_object_spread(
     let mut replacer = SpreadReplacer {
         helpers: &helpers,
         cross_module_ts_assign_namespaces: &cross_module_ts_assign_namespaces,
+        swc_numeric_helper_namespaces: &swc_numeric_helper_namespaces,
         tslib_namespaces,
     };
     module.visit_mut_with(&mut replacer);
+    remove_unused_numeric_helper_namespace_decls(module, &swc_numeric_helper_namespaces);
 
     // Only remove root helpers whose calls were fully transformed. Dependencies
     // referenced by retained helpers must stay with those helpers.
@@ -322,9 +326,105 @@ fn ts_helper_export_names(
         .unwrap_or_default()
 }
 
+fn collect_swc_numeric_helper_namespaces(module: &Module) -> HashSet<BindingKey> {
+    let mut namespaces = HashSet::new();
+    for item in &module.body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            if decl.init.as_deref().is_some_and(is_numeric_require_call) {
+                namespaces.insert((binding.id.sym.clone(), binding.id.ctxt));
+            }
+        }
+    }
+    namespaces
+}
+
+fn is_numeric_require_call(expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return false;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    if !matches!(callee.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require") {
+        return false;
+    }
+    matches!(call.args[0].expr.as_ref(), Expr::Lit(Lit::Num(_)))
+}
+
+fn remove_unused_numeric_helper_namespace_decls(
+    module: &mut Module,
+    namespaces: &HashSet<BindingKey>,
+) {
+    if namespaces.is_empty() {
+        return;
+    }
+    let unused: HashSet<_> = namespaces
+        .iter()
+        .filter(|(sym, ctxt)| {
+            let ident = Ident::new(sym.clone(), DUMMY_SP, *ctxt);
+            !ident_used_in_module(&module.body, &ident)
+        })
+        .cloned()
+        .collect();
+    if unused.is_empty() {
+        return;
+    }
+    module.body.retain_mut(|item| {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            return true;
+        };
+        var.decls.retain(|decl| {
+            let Pat::Ident(binding) = &decl.name else {
+                return true;
+            };
+            !unused.contains(&(binding.id.sym.clone(), binding.id.ctxt))
+        });
+        !var.decls.is_empty()
+    });
+}
+
+fn ident_used_in_module(body: &[ModuleItem], target: &Ident) -> bool {
+    struct Finder<'a> {
+        target: &'a Ident,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_binding_ident(&mut self, _: &swc_core::ecma::ast::BindingIdent) {}
+
+        fn visit_ident(&mut self, ident: &Ident) {
+            if ident.sym == self.target.sym && ident.ctxt == self.target.ctxt {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = Finder {
+        target,
+        found: false,
+    };
+    for item in body {
+        item.visit_with(&mut finder);
+        if finder.found {
+            return true;
+        }
+    }
+    false
+}
+
 struct SpreadReplacer<'a> {
     helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
     cross_module_ts_assign_namespaces: &'a HashMap<BindingKey, HashSet<String>>,
+    swc_numeric_helper_namespaces: &'a HashSet<BindingKey>,
     tslib_namespaces: &'a HashSet<BindingKey>,
 }
 
@@ -340,6 +440,7 @@ impl VisitMut for SpreadReplacer<'_> {
             callee,
             self.helpers,
             self.cross_module_ts_assign_namespaces,
+            self.swc_numeric_helper_namespaces,
             self.tslib_namespaces,
         ) {
             return;
@@ -397,6 +498,7 @@ fn is_object_spread_callee(
     callee: &Expr,
     helpers: &HashMap<BindingKey, TranspilerHelperKind>,
     cross_module_ts_assign_namespaces: &HashMap<BindingKey, HashSet<String>>,
+    swc_numeric_helper_namespaces: &HashSet<BindingKey>,
     tslib_namespaces: &HashSet<BindingKey>,
 ) -> bool {
     match strip_parens(callee) {
@@ -412,9 +514,20 @@ fn is_object_spread_callee(
                 tslib_member_helper_kind(callee, tslib_namespaces),
                 Some(TranspilerHelperKind::Extends | TranspilerHelperKind::ObjectSpread)
             ) || is_cross_module_ts_assign_member(callee, cross_module_ts_assign_namespaces)
+                || is_swc_numeric_object_spread_member(callee, swc_numeric_helper_namespaces)
         }
         expr => is_inline_object_spread_helper(expr),
     }
+}
+
+fn is_swc_numeric_object_spread_member(expr: &Expr, namespaces: &HashSet<BindingKey>) -> bool {
+    let Expr::Member(member) = expr else {
+        return false;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    namespaces.contains(&binding_key(obj)) && member_prop_name(&member.prop) == Some("pi")
 }
 
 fn is_inline_object_spread_helper(expr: &Expr) -> bool {

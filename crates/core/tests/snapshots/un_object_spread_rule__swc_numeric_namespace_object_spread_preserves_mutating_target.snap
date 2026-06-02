@@ -1,0 +1,6 @@
+---
+source: crates/core/tests/un_object_spread_rule.rs
+expression: output
+---
+const Y = require(39889);
+const out = Y.pi(target, app_info);
