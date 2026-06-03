@@ -1,6 +1,6 @@
 use std::fs;
 
-use wakaru_core::{unpack, unpack_files, DecompileOptions, UnpackInput};
+use wakaru_core::{unpack, unpack_files, unpack_files_raw, DecompileOptions, UnpackInput};
 
 fn fixture(path: &str) -> String {
     let full = format!("tests/bundles/webpack-gen/dist/{path}");
@@ -205,6 +205,73 @@ exports.modules = {
     assert!(
         !entry.contains(", 529,"),
         "entry should not keep the raw numeric module id:\n{entry}"
+    );
+}
+
+#[test]
+fn webpack5_multi_file_raw_rewrites_unambiguous_numeric_chunk_id() {
+    let entry = r#"
+(() => {
+  var __webpack_modules__ = ({
+    10: function(module, exports, __webpack_require__) {
+      module.exports = "entry";
+    }
+  });
+  function __webpack_require__(id) { return {}; }
+  __webpack_require__.e = function(id) { return Promise.resolve(id); };
+  __webpack_require__.t = function(value) { return value; };
+  (() => {
+    __webpack_require__.e(529).then(__webpack_require__.t.bind(__webpack_require__, 529, 19));
+  })();
+})();
+"#;
+    let chunk = r#"
+exports.id = 529;
+exports.ids = [529];
+exports.modules = {
+  529: function(module, exports) {
+    exports.answer = 42;
+  }
+};
+"#;
+
+    let output = unpack_files_raw(
+        vec![
+            UnpackInput {
+                filename: "entry.js".to_string(),
+                source: entry.to_string(),
+            },
+            UnpackInput {
+                filename: "529.bundle.js".to_string(),
+                source: chunk.to_string(),
+            },
+        ],
+        &DecompileOptions::default(),
+    )
+    .expect("raw entry and numeric chunk should unpack together");
+
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let entry = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "entry.js")
+        .map(|(_, code)| code)
+        .expect("entry.js should exist");
+    assert!(
+        entry.contains("./module-529.js"),
+        "raw entry should reference the final chunk module path:\n{entry}"
+    );
+    assert!(
+        !entry.contains(", 529,"),
+        "raw entry should not keep the raw numeric module id:\n{entry}"
+    );
+    assert!(
+        !entry.contains("export "),
+        "raw output should not run ESM recovery:\n{entry}"
     );
 }
 
@@ -414,6 +481,69 @@ exports.modules = {
     assert!(
         !module_20.contains("require(999)"),
         "bare numeric require should be rewritten before UnEsm:\n{module_20}"
+    );
+}
+
+#[test]
+fn webpack5_multi_file_raw_rewrites_unambiguous_bare_require_across_inputs() {
+    let entry = r#"
+(() => {
+  var __webpack_modules__ = ({
+    20: function(module, exports, require) {
+      "use strict";
+      var other = require(999);
+      module.exports = other;
+    }
+  });
+  function __webpack_require__(id) { return {}; }
+  __webpack_require__(20);
+})();
+"#;
+    let chunk = r#"
+exports.modules = {
+  999: function(module, exports) {
+    module.exports = "shared runtime";
+  }
+};
+"#;
+
+    let output = unpack_files_raw(
+        vec![
+            UnpackInput {
+                filename: "entry.js".to_string(),
+                source: entry.to_string(),
+            },
+            UnpackInput {
+                filename: "shared.bundle.js".to_string(),
+                source: chunk.to_string(),
+            },
+        ],
+        &DecompileOptions::default(),
+    )
+    .expect("raw inputs should unpack together");
+
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    let module_20 = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "module-20.js")
+        .map(|(_, code)| code)
+        .expect("module-20.js should exist");
+    assert!(
+        module_20.contains("./module-999.js"),
+        "raw bare numeric require should link to the unique extracted module:\n{module_20}"
+    );
+    assert!(
+        !module_20.contains("require(999)"),
+        "raw bare numeric require should be rewritten without running rules:\n{module_20}"
+    );
+    assert!(
+        !module_20.contains("export "),
+        "raw output should not run ESM recovery:\n{module_20}"
     );
 }
 

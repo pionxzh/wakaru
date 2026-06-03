@@ -200,7 +200,7 @@ fn unpack_driver_recovers_optional_calls_exposed_by_late_cleanup() {
 }
 
 #[test]
-fn raw_unpack_driver_recovers_esm_after_factory_iife_unwrap() {
+fn raw_unpack_driver_preserves_pre_rule_module_shape() {
     let source = r#"
 !function(modules) {
   function __webpack_require__(id) {
@@ -241,20 +241,20 @@ fn raw_unpack_driver_recovers_esm_after_factory_iife_unwrap() {
         .expect("expected entry.js module");
 
     assert!(
-        code.contains(r#"import "./module-1.js""#),
-        "raw unpack normalization should recover side-effect imports from unwrapped factory IIFEs:\n{code}"
+        code.contains(r#"require("./module-1.js")"#),
+        "raw unpack should still rewrite webpack numeric require ids:\n{code}"
     );
     assert!(
-        code.contains("export default value"),
-        "raw unpack normalization should recover default exports from unwrapped factory IIFEs:\n{code}"
+        code.contains(r#"require.d(exports, "named", function() {"#),
+        "raw unpack should preserve webpack runtime getter exports before decompile rules:\n{code}"
     );
     assert!(
-        code.contains("export const named"),
-        "raw unpack normalization should promote recovered named exports:\n{code}"
+        code.contains("exports.default = value"),
+        "raw unpack should preserve CommonJS default export assignments before decompile rules:\n{code}"
     );
     assert!(
-        !code.contains("require.d") && !code.contains("exports.default") && !code.contains(".call"),
-        "raw unpack output should not leave webpack export helpers or factory wrapper calls:\n{code}"
+        !code.contains(".call"),
+        "raw unpack should unwrap the webpack factory call:\n{code}"
     );
 }
 

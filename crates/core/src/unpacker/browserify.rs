@@ -23,6 +23,14 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
 }
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+    detect_from_module_with_mode(module, cm, true)
+}
+
+pub(super) fn detect_from_module_with_mode(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    run_decompile_rules: bool,
+) -> Option<UnpackResult> {
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             continue;
@@ -37,7 +45,9 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
             continue;
         };
 
-        if let Some(result) = extract_browserify_modules(outer_call, cm.clone()) {
+        if let Some(result) =
+            extract_browserify_modules(outer_call, cm.clone(), run_decompile_rules)
+        {
             return Some(result);
         }
     }
@@ -47,6 +57,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
 fn extract_browserify_modules(
     call: &swc_core::ecma::ast::CallExpr,
     cm: Lrc<SourceMap>,
+    run_decompile_rules: bool,
 ) -> Option<UnpackResult> {
     if call.args.len() != 3 {
         return None;
@@ -85,7 +96,7 @@ fn extract_browserify_modules(
         };
         let (factory, body_stmts) = extract_factory(module_parts)?;
 
-        let code = emit_browserify_module(&factory, body_stmts, cm.clone())?;
+        let code = emit_browserify_module(&factory, body_stmts, cm.clone(), run_decompile_rules)?;
         let is_entry = entry_ids.contains(&module_id);
         let filename = if is_entry && entry_ids.len() == 1 {
             "entry.js".to_string()
@@ -177,6 +188,7 @@ fn emit_browserify_module(
     factory: &Function,
     body_stmts: Vec<Stmt>,
     cm: Lrc<SourceMap>,
+    run_decompile_rules: bool,
 ) -> Option<String> {
     let mut synthetic_module = build_module_from_stmts(body_stmts);
 
@@ -210,11 +222,13 @@ fn emit_browserify_module(
         replace_ident(&mut synthetic_module, from_id, &to_ident);
     }
 
-    run_rules(
-        &mut synthetic_module,
-        unresolved_mark,
-        RulePipelineOptions::until("UnEsm"),
-    );
+    if run_decompile_rules {
+        run_rules(
+            &mut synthetic_module,
+            unresolved_mark,
+            RulePipelineOptions::until("UnEsm"),
+        );
+    }
     synthetic_module.visit_mut_with(&mut fixer(None));
 
     emit_module(&synthetic_module, cm).ok()

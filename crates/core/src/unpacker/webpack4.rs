@@ -414,8 +414,7 @@ pub(crate) fn rewrite_require_n_accesses(
 /// Detects whether the parsed module is a webpack4 bundle and extracts modules,
 /// skipping the normal decompile pipeline. Returns the intermediate state after
 /// webpack normalization (param renaming, require.d / require.r conversion,
-/// require(N) rewriting, require.n rewriting) but before the driver applies raw
-/// ESM/runtime normalization.
+/// require(N) rewriting, require.n rewriting).
 pub fn detect_and_extract_raw(source: &str) -> Option<UnpackResult> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
@@ -443,11 +442,24 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
 }
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+    detect_from_module_with_mode(module, cm, true)
+}
+
+pub(super) fn detect_from_module_with_mode(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    apply_rules: bool,
+) -> Option<UnpackResult> {
     for item in &module.body {
         let ModuleItem::Stmt(stmt) = item else {
             continue;
         };
-        if let Some(result) = try_extract_from_stmt(stmt, cm.clone()) {
+        let result = if apply_rules {
+            try_extract_from_stmt(stmt, cm.clone())
+        } else {
+            try_extract_from_stmt_raw(stmt, cm.clone())
+        };
+        if let Some(result) = result {
             return Some(result);
         }
     }

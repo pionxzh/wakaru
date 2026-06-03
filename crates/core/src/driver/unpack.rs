@@ -23,7 +23,7 @@ use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
     apply_rules, ArrowFunction, ArrowReturn, ImportDedup, RewriteLevel, RulePipelineOptions,
     SimplifySequence, UnAssignmentMerging, UnConditionalsAssignmentOnly,
-    UnConditionalsExprStmtOnly, UnEsm, UnExportRename, UnIife, UnImportRename, UnOptionalChaining,
+    UnConditionalsExprStmtOnly, UnExportRename, UnIife, UnImportRename, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::{scope_hoist, try_unpack_bundle, webpack5, UnpackResult, UnpackedModule};
@@ -122,14 +122,11 @@ pub fn unpack_files(
 
 /// Unpack a bundle without running the decompiler rule pipeline.
 ///
-/// This returns raw module output after detector-specific extraction and raw
-/// ESM/runtime normalization. Cross-module analysis and the normal decompile
-/// rule pipeline are skipped.
-///
-/// Like [`unpack_multi_module`], individual module parse failures fall back to
-/// raw code and are reported via `UnpackOutput::warnings`.
+/// This returns raw module output after detector-specific extraction and
+/// bundler-coupled normalization. Cross-module analysis and the normal
+/// decompile rule pipeline are skipped.
 pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutput> {
-    let result = detect_bundle(source, &options.filename)?.or_else(|| {
+    let result = detect_bundle_raw(source, &options.filename)?.or_else(|| {
         if options.heuristic_split {
             let r = scope_hoist::split_scope_hoisted(source)?;
             if r.modules.len() > 1 {
@@ -142,28 +139,14 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
         }
     });
     match result {
-        Some(result) => {
-            let mut warnings = Vec::new();
-            let modules = result
+        Some(result) => Ok(UnpackOutput {
+            modules: result
                 .modules
                 .into_iter()
-                .map(|module| {
-                    let code = match normalize_raw_unpacked_module(&module.code, &module.filename) {
-                        Ok(normalized) => normalized,
-                        Err(e) => {
-                            warnings.push(UnpackWarning::new(
-                                module.filename.clone(),
-                                UnpackWarningKind::RawNormalizationFailed,
-                                format!("raw normalization failed, preserving unparsed code: {e}"),
-                            ));
-                            module.code
-                        }
-                    };
-                    (module.filename, code)
-                })
-                .collect();
-            Ok(UnpackOutput { modules, warnings })
-        }
+                .map(|module| (module.filename, module.code))
+                .collect(),
+            warnings: Vec::new(),
+        }),
         None => Ok(UnpackOutput {
             modules: vec![("module.js".to_string(), source.to_string())],
             warnings: Vec::new(),
@@ -186,11 +169,10 @@ pub fn unpack_files_raw(
         return unpack_raw(&input.source, &opts);
     }
 
-    let mut warnings = Vec::new();
     let mut modules = Vec::new();
 
     for input in inputs {
-        let result = detect_bundle(&input.source, &input.filename)?.or_else(|| {
+        let result = detect_bundle_raw(&input.source, &input.filename)?.or_else(|| {
             if options.heuristic_split {
                 let r = scope_hoist::split_scope_hoisted(&input.source)?;
                 if r.modules.len() > 1 {
@@ -205,29 +187,22 @@ pub fn unpack_files_raw(
 
         match result {
             Some(result) => {
-                for module in result.modules {
-                    let code = match normalize_raw_unpacked_module(&module.code, &module.filename) {
-                        Ok(normalized) => normalized,
-                        Err(e) => {
-                            warnings.push(UnpackWarning::new(
-                                module.filename.clone(),
-                                UnpackWarningKind::RawNormalizationFailed,
-                                format!("raw normalization failed, preserving unparsed code: {e}"),
-                            ));
-                            module.code
-                        }
-                    };
-                    modules.push((module.filename, code));
-                }
+                let chunk_ids = webpack5::detect_chunk_ids(&input.source);
+                modules.extend(result.modules.into_iter().map(|module| {
+                    MultiSourceModule::detected(module, chunk_ids.clone(), input.filename.clone())
+                }));
             }
-            None => modules.push((
-                filename_for_fallback_input(&input.filename),
-                input.source.to_string(),
-            )),
+            None => modules.push(MultiSourceModule::fallback(UnpackedModule {
+                id: input.filename.clone(),
+                is_entry: false,
+                code: input.source.to_string(),
+                filename: filename_for_fallback_input(&input.filename),
+            })),
         }
     }
 
-    Ok(UnpackOutput { modules, warnings })
+    let (modules, numeric_rewrite_plan) = prepare_multi_source_modules(modules);
+    emit_raw_modules_with_numeric_rewrites(modules, numeric_rewrite_plan)
 }
 
 fn filename_for_fallback_input(filename: &str) -> String {
@@ -478,6 +453,68 @@ fn apply_numeric_rewrites(
     });
 }
 
+fn emit_raw_modules_with_numeric_rewrites(
+    modules: Vec<PreparedUnpackModule>,
+    numeric_rewrite_plan: NumericRewritePlan,
+) -> Result<UnpackOutput> {
+    if numeric_rewrite_plan.is_empty() {
+        return Ok(UnpackOutput {
+            modules: modules
+                .into_iter()
+                .map(|module| (module.module.filename, module.module.code))
+                .collect(),
+            warnings: Vec::new(),
+        });
+    }
+
+    let triples = modules
+        .into_par_iter()
+        .map(|unpacked| {
+            match GLOBALS.set(&Default::default(), || {
+                let cm: Lrc<SourceMap> = Default::default();
+                let mut module =
+                    parse_js(&unpacked.module.code, &unpacked.module.filename, cm.clone())?;
+                let unresolved_mark = Mark::new();
+                let top_level_mark = Mark::new();
+                module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+                apply_numeric_rewrites(
+                    &mut module,
+                    unresolved_mark,
+                    unpacked.numeric_rewrite.as_ref(),
+                    &numeric_rewrite_plan,
+                );
+                module.visit_mut_with(&mut fixer(None));
+                print_js(&module, cm)
+            }) {
+                Ok(code) => (unpacked.module.filename, code, None),
+                Err(e) => {
+                    let warning = UnpackWarning::new(
+                        unpacked.module.filename.clone(),
+                        UnpackWarningKind::RawNormalizationFailed,
+                        format!("raw numeric rewrite failed, preserving unparsed code: {e}"),
+                    );
+                    (
+                        unpacked.module.filename,
+                        unpacked.module.code,
+                        Some(warning),
+                    )
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut modules = Vec::new();
+    let mut warnings = Vec::new();
+    for (filename, code, warning) in triples {
+        modules.push((filename, code));
+        if let Some(warning) = warning {
+            warnings.push(warning);
+        }
+    }
+
+    Ok(UnpackOutput { modules, warnings })
+}
+
 struct WebpackNumericReferenceRewriter<'a> {
     input_group: &'a str,
     unresolved_mark: Mark,
@@ -716,18 +753,22 @@ pub(super) fn detect_bundle(source: &str, filename: &str) -> Result<Option<Unpac
     }
 }
 
-fn normalize_raw_unpacked_module(source: &str, filename: &str) -> Result<String> {
-    GLOBALS.set(&Default::default(), || {
-        let cm: Lrc<SourceMap> = Default::default();
-        let mut module = parse_js(source, filename, cm.clone())?;
-        let unresolved_mark = Mark::new();
-        let top_level_mark = Mark::new();
-        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-        module.visit_mut_with(&mut UnEsm::new(unresolved_mark, RewriteLevel::Standard));
-        recover_late_esm_from_factory_iifes(&mut module, unresolved_mark, RewriteLevel::Standard);
-        module.visit_mut_with(&mut fixer(None));
-        print_js(&module, cm)
-    })
+fn detect_bundle_raw(source: &str, filename: &str) -> Result<Option<UnpackResult>> {
+    match crate::unpacker::try_unpack_bundle_raw(source) {
+        Ok(result) => Ok(result),
+        Err(bundle_parse_error) => {
+            let input_parse_result = GLOBALS.set(&Default::default(), || {
+                let cm: Lrc<SourceMap> = Default::default();
+                parse_js(source, filename, cm)
+            });
+            match input_parse_result {
+                Ok(_) => Ok(None),
+                Err(input_parse_error) => Err(anyhow!(
+                    "{input_parse_error}; bundle detection also failed: {bundle_parse_error}"
+                )),
+            }
+        }
+    }
 }
 
 fn recover_late_esm_from_factory_iifes(

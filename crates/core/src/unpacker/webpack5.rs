@@ -257,6 +257,14 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
 }
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+    detect_from_module_with_mode(module, cm, true)
+}
+
+pub(super) fn detect_from_module_with_mode(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    run_decompile_rules: bool,
+) -> Option<UnpackResult> {
     let span = tracing::info_span!("webpack5: detect_from_module");
     let _enter = span.enter();
     for item in &module.body {
@@ -266,7 +274,9 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         let Some(bootstrap_body) = extract_iife_body(expr) else {
             continue;
         };
-        if let Some(result) = extract_webpack5_modules(bootstrap_body, cm.clone()) {
+        if let Some(result) =
+            extract_webpack5_modules(bootstrap_body, cm.clone(), run_decompile_rules)
+        {
             return Some(result);
         }
     }
@@ -336,6 +346,14 @@ pub(super) fn detect_chunk_from_module(
     module: &Module,
     cm: Lrc<SourceMap>,
 ) -> Option<UnpackResult> {
+    detect_chunk_from_module_with_mode(module, cm, true)
+}
+
+pub(super) fn detect_chunk_from_module_with_mode(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    run_decompile_rules: bool,
+) -> Option<UnpackResult> {
     let span = tracing::info_span!("webpack5: detect_chunk_from_module");
     let _enter = span.enter();
     let mut all_modules = Vec::new();
@@ -345,10 +363,12 @@ pub(super) fn detect_chunk_from_module(
             continue;
         };
         if let Some(modules_object) = extract_chunk_push_modules(expr) {
-            let extracted = extract_modules_from_object(modules_object, cm.clone())?;
+            let extracted =
+                extract_modules_from_object(modules_object, cm.clone(), run_decompile_rules)?;
             all_modules.extend(extracted);
         } else if let Some(modules_object) = extract_commonjs_chunk_modules(expr) {
-            let extracted = extract_modules_from_object(modules_object, cm.clone())?;
+            let extracted =
+                extract_modules_from_object(modules_object, cm.clone(), run_decompile_rules)?;
             all_modules.extend(extracted);
         }
     }
@@ -577,6 +597,7 @@ fn member_prop_name_is(prop: &MemberProp, expected: &str) -> bool {
 fn extract_modules_from_object(
     modules_object: &ObjectLit,
     cm: Lrc<SourceMap>,
+    run_decompile_rules: bool,
 ) -> Option<Vec<UnpackedModule>> {
     let span = tracing::info_span!(
         "webpack5: extract_modules_from_object",
@@ -604,7 +625,13 @@ fn extract_modules_from_object(
     let mut modules = Vec::new();
 
     for (module_id, factory, body_stmts, filename) in &module_entries {
-        let code = emit_webpack5_module(factory, body_stmts.clone(), cm.clone(), &id_to_filename)?;
+        let code = emit_webpack5_module(
+            factory,
+            body_stmts.clone(),
+            cm.clone(),
+            &id_to_filename,
+            run_decompile_rules,
+        )?;
         modules.push(UnpackedModule {
             id: module_id.clone(),
             is_entry: false,
@@ -619,6 +646,7 @@ fn extract_modules_from_object(
 fn extract_webpack5_modules(
     bootstrap_body: &swc_core::ecma::ast::BlockStmt,
     cm: Lrc<SourceMap>,
+    run_decompile_rules: bool,
 ) -> Option<UnpackResult> {
     let span = tracing::info_span!("webpack5: extract_modules");
     let _enter = span.enter();
@@ -667,8 +695,13 @@ fn extract_webpack5_modules(
         let span = tracing::info_span!("webpack5: emit all modules", count = module_entries.len());
         let _enter = span.enter();
         for (module_id, factory, body_stmts, filename) in &module_entries {
-            let code =
-                emit_webpack5_module(factory, body_stmts.clone(), cm.clone(), &id_to_filename)?;
+            let code = emit_webpack5_module(
+                factory,
+                body_stmts.clone(),
+                cm.clone(),
+                &id_to_filename,
+                run_decompile_rules,
+            )?;
             modules.push(UnpackedModule {
                 id: module_id.clone(),
                 is_entry: false,
@@ -680,7 +713,12 @@ fn extract_webpack5_modules(
 
     // Check for trailing IIFE entry point
     let has_trailing_entry = if let Some(entry_body) = extract_trailing_entry_body(bootstrap_body) {
-        let code = emit_webpack5_entry_module(entry_body, cm.clone(), &id_to_filename)?;
+        let code = emit_webpack5_entry_module(
+            entry_body,
+            cm.clone(),
+            &id_to_filename,
+            run_decompile_rules,
+        )?;
         modules.push(UnpackedModule {
             id: "entry".to_string(),
             is_entry: true,
@@ -717,6 +755,7 @@ fn emit_webpack5_entry_module(
     body_stmts: Vec<Stmt>,
     cm: Lrc<SourceMap>,
     id_to_filename: &HashMap<usize, String>,
+    run_decompile_rules: bool,
 ) -> Option<String> {
     let mut synthetic_module = build_module_from_stmts(body_stmts);
     let unresolved_mark = Mark::new();
@@ -754,11 +793,13 @@ fn emit_webpack5_entry_module(
     };
     synthetic_module.visit_mut_with(&mut normalizer);
 
-    run_rules(
-        &mut synthetic_module,
-        unresolved_mark,
-        RulePipelineOptions::until("UnEsm"),
-    );
+    if run_decompile_rules {
+        run_rules(
+            &mut synthetic_module,
+            unresolved_mark,
+            RulePipelineOptions::until("UnEsm"),
+        );
+    }
     synthetic_module.visit_mut_with(&mut fixer(None));
     emit_module(&synthetic_module, cm).ok()
 }
@@ -1036,6 +1077,7 @@ fn emit_webpack5_module(
     body_stmts: Vec<Stmt>,
     cm: Lrc<SourceMap>,
     id_to_filename: &HashMap<usize, String>,
+    run_decompile_rules: bool,
 ) -> Option<String> {
     let span = tracing::info_span!("webpack5: emit_module");
     let _enter = span.enter();
@@ -1096,7 +1138,7 @@ fn emit_webpack5_module(
         synthetic_module.visit_mut_with(&mut normalizer);
     }
 
-    {
+    if run_decompile_rules {
         let span = tracing::info_span!("webpack5: rules");
         let _enter = span.enter();
         run_rules(

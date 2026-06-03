@@ -97,8 +97,8 @@ are treated as ambiguous and are not rewritten globally, which avoids merging
 unrelated webpack runtimes from the same scanned directory.
 
 **`unpack_raw(source)`** — bundle splitting without the normal decompile rule
-pipeline. It still runs raw module normalization so extracted CommonJS/runtime
-shapes can become standalone modules.
+pipeline. It returns detector output after only the extraction and
+bundler-coupled cleanup needed to make each extracted module stand alone.
 
 **`unpack_files_raw(inputs)`** — multi-source raw unpack. It merges raw
 detector output from all inputs and skips the normal decompile pipeline.

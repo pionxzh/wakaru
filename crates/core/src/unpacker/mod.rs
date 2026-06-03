@@ -28,6 +28,17 @@ pub fn unpack_bundle(source: &str) -> Option<UnpackResult> {
 }
 
 pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
+    try_unpack_bundle_with_mode(source, true)
+}
+
+pub fn try_unpack_bundle_raw(source: &str) -> anyhow::Result<Option<UnpackResult>> {
+    try_unpack_bundle_with_mode(source, false)
+}
+
+fn try_unpack_bundle_with_mode(
+    source: &str,
+    run_decompile_rules: bool,
+) -> anyhow::Result<Option<UnpackResult>> {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let module = {
@@ -39,7 +50,7 @@ pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
         let result = {
             let span = tracing::info_span!("detect_webpack5");
             let _enter = span.enter();
-            webpack5::detect_from_module(&module, cm.clone())
+            webpack5::detect_from_module_with_mode(&module, cm.clone(), run_decompile_rules)
         };
         if result.is_some() {
             return Ok(result);
@@ -57,7 +68,7 @@ pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
         let result = {
             let span = tracing::info_span!("detect_webpack4");
             let _enter = span.enter();
-            webpack4::detect_from_module(&module, cm.clone())
+            webpack4::detect_from_module_with_mode(&module, cm.clone(), run_decompile_rules)
         };
         if result.is_some() {
             return Ok(result);
@@ -66,7 +77,7 @@ pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
         let result = {
             let span = tracing::info_span!("detect_webpack5_chunk");
             let _enter = span.enter();
-            webpack5::detect_chunk_from_module(&module, cm.clone())
+            webpack5::detect_chunk_from_module_with_mode(&module, cm.clone(), run_decompile_rules)
         };
         if result.is_some() {
             return Ok(result);
@@ -75,7 +86,7 @@ pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
         let result = {
             let span = tracing::info_span!("detect_browserify");
             let _enter = span.enter();
-            browserify::detect_from_module(&module, cm.clone())
+            browserify::detect_from_module_with_mode(&module, cm.clone(), run_decompile_rules)
         };
         if result.is_some() {
             return Ok(result);
