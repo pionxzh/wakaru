@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
+use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::{
     CallExpr, Callee, Expr, ExprOrSpread, Lit, MemberExpr, MemberProp, Module, Str,
 };
@@ -261,6 +261,19 @@ impl PreparedUnpackModule {
 
 struct NumericRewriteModuleContext {
     input_group: String,
+}
+
+struct Phase1PreparedModule {
+    globals: Globals,
+    module: Module,
+    unresolved_mark: Mark,
+}
+
+struct Phase1Module {
+    filename: String,
+    facts: crate::facts::ModuleFacts,
+    prepared: Option<Phase1PreparedModule>,
+    warning: Option<UnpackWarning>,
 }
 
 #[derive(Default)]
@@ -837,54 +850,70 @@ fn unpack_multi_module_with_plan(
         .as_deref()
         .map(parse_sourcemap)
         .transpose()?;
+    let can_reuse_phase1_ast = parsed_sourcemap.is_none();
 
     // Phase 1: collect facts. Run the through-UnEsm normalization range on each
-    // module and extract import/export facts. The AST is discarded — only facts
-    // survive the barrier.
-    let collect_facts =
-        |unpacked: &PreparedUnpackModule| -> (
-            String,
-            crate::facts::ModuleFacts,
-            Option<UnpackWarning>,
-        ) {
-            let (facts, warning) = GLOBALS.set(&Default::default(), || {
-                let cm: Lrc<SourceMap> = Default::default();
-                let mut module = match parse_js(&unpacked.module.code, &unpacked.module.filename, cm) {
+    // module and extract import/export facts. For normal unpacking, keep that
+    // normalized AST so Phase 2 can resume after the facts barrier. Source-map
+    // mode still reparses in Phase 2 because sourcemap renaming depends on the
+    // original parser SourceMap.
+    let collect_facts = |unpacked: &PreparedUnpackModule| -> Phase1Module {
+        let globals = Globals::new();
+        let (facts, prepared_parts, warning) = GLOBALS.set(&globals, || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module =
+                match parse_js(&unpacked.module.code, &unpacked.module.filename, cm.clone()) {
                     Ok(module) => module,
                     Err(e) => {
                         return (
                             crate::facts::ModuleFacts::default(),
+                            None,
                             Some(UnpackWarning::new(
                                 unpacked.module.filename.clone(),
                                 UnpackWarningKind::FactCollectionParseFailed,
-                                format!("parse failed during fact collection, using empty facts: {e}"),
+                                format!(
+                                    "parse failed during fact collection, using empty facts: {e}"
+                                ),
                             )),
                         );
                     }
                 };
-                let unresolved_mark = Mark::new();
-                let top_level_mark = Mark::new();
-                module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
-                apply_numeric_rewrites(
-                    &mut module,
-                    unresolved_mark,
-                    unpacked.numeric_rewrite.as_ref(),
-                    &numeric_rewrite_plan,
-                );
-                apply_rules(
-                    &mut module,
-                    unresolved_mark,
-                    RulePipelineOptions::until("UnEsm"),
-                );
-                recover_late_esm_from_factory_iifes(
-                    &mut module,
-                    unresolved_mark,
-                    RewriteLevel::Standard,
-                );
-                (collect_module_facts(&module), None)
-            });
-            (unpacked.module.filename.clone(), facts, warning)
-        };
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+            apply_numeric_rewrites(
+                &mut module,
+                unresolved_mark,
+                unpacked.numeric_rewrite.as_ref(),
+                &numeric_rewrite_plan,
+            );
+            apply_rules(
+                &mut module,
+                unresolved_mark,
+                RulePipelineOptions::until("UnEsm"),
+            );
+            let mut facts_module = module.clone();
+            recover_late_esm_from_factory_iifes(
+                &mut facts_module,
+                unresolved_mark,
+                RewriteLevel::Standard,
+            );
+            let facts = collect_module_facts(&facts_module);
+            let prepared = can_reuse_phase1_ast.then_some((module, unresolved_mark));
+            (facts, prepared, None)
+        });
+        let prepared = prepared_parts.map(|(module, unresolved_mark)| Phase1PreparedModule {
+            globals,
+            module,
+            unresolved_mark,
+        });
+        Phase1Module {
+            filename: unpacked.module.filename.clone(),
+            facts,
+            prepared,
+            warning,
+        }
+    };
 
     let phase1: Vec<_> = {
         let span = tracing::info_span!("phase1_collect_facts");
@@ -893,23 +922,102 @@ fn unpack_multi_module_with_plan(
     };
 
     let mut module_facts = ModuleFactsMap::new();
+    let mut prepared_modules = Vec::with_capacity(phase1.len());
     let mut warnings = Vec::new();
-    for (filename, facts, warning) in phase1 {
-        module_facts.insert(&filename, facts);
-        if let Some(w) = warning {
+    for phase1_module in phase1 {
+        module_facts.insert(&phase1_module.filename, phase1_module.facts);
+        prepared_modules.push(phase1_module.prepared);
+        if let Some(w) = phase1_module.warning {
             warnings.push(w);
         }
     }
 
     // Phase 2: output pipeline with late pass. Each module is parsed from
-    // scratch, runs the same through-UnEsm range, then crosses the facts barrier
-    // before the remaining rule range and targeted late cleanup.
+    // the original source only when Phase 1 failed to prepare an AST; otherwise
+    // it continues from the Phase 1 normalized AST after the facts barrier.
     let facts_ref = &module_facts;
     let sm_ref = &parsed_sourcemap;
+    let phase2_inputs: Vec<_> = modules.into_iter().zip(prepared_modules).collect();
 
-    let decompile_module =
-        |unpacked: PreparedUnpackModule| -> (String, String, Vec<UnpackWarning>) {
-            match GLOBALS.set(&Default::default(), || {
+    let decompile_module = |(unpacked, prepared): (
+        PreparedUnpackModule,
+        Option<Phase1PreparedModule>,
+    )|
+     -> (String, String, Vec<UnpackWarning>) {
+        let run_phase2_tail = |mut module: Module,
+                               cm: Lrc<SourceMap>,
+                               unresolved_mark: Mark,
+                               input_parse_warnings: Vec<UnpackWarning>|
+         -> Result<(String, Vec<UnpackWarning>)> {
+            // Late pass at the barrier
+            run_reexport_consolidation(&mut module, facts_ref);
+            run_namespace_decomposition(&mut module, facts_ref);
+            // Late helper-through-UnReturn range.
+            apply_rules(
+                &mut module,
+                unresolved_mark,
+                RulePipelineOptions::between("UnObjectSpread2", "UnReturn")
+                    .with_dead_code_elimination(options.dead_code_elimination)
+                    .with_rewrite_level(options.level)
+                    .with_module_facts(facts_ref),
+            );
+            // Later rules can expose sequence expressions. The old unpack
+            // path cleaned those by running a second full module pipeline;
+            // keep only the syntax cleanup needed after the split.
+            module.visit_mut_with(&mut SimplifySequence::new_with_level(
+                unresolved_mark,
+                options.level,
+            ));
+            module.visit_mut_with(&mut UnAssignmentMerging);
+            // UnIife2 can expose webpack export helpers that were hidden in
+            // factory wrappers at the Stage 2 barrier. Recover just that ESM
+            // shape without restoring the old full second pass.
+            recover_late_esm_from_factory_iifes(&mut module, unresolved_mark, options.level);
+            module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
+            module.visit_mut_with(&mut UnConditionalsAssignmentOnly);
+            module.visit_mut_with(&mut UnConditionalsExprStmtOnly);
+
+            // Source-map-enhanced passes
+            if let Some(sm) = sm_ref {
+                module.visit_mut_with(&mut ImportDedup);
+                apply_sourcemap_renames(&mut module, sm, &cm, unresolved_mark);
+                module.visit_mut_with(&mut UnImportRename::new(unresolved_mark));
+            }
+
+            let mut diag_warnings = if options.diagnostics {
+                let mut warnings = input_parse_warnings;
+                warnings.extend(collect_tdz_warnings(&module, &unpacked.module.filename));
+                warnings.extend(collect_duplicate_declaration_warnings(
+                    &module,
+                    &unpacked.module.filename,
+                ));
+                warnings
+            } else {
+                Vec::new()
+            };
+
+            module.visit_mut_with(&mut fixer(None));
+            let code = print_js(&module, cm)?;
+
+            if options.diagnostics {
+                diag_warnings.extend(verify_output_parses(&code, &unpacked.module.filename));
+            }
+
+            Ok((code, diag_warnings))
+        };
+
+        let result = if let Some(prepared) = prepared {
+            let Phase1PreparedModule {
+                globals,
+                module,
+                unresolved_mark,
+            } = prepared;
+            GLOBALS.set(&globals, || {
+                let cm: Lrc<SourceMap> = Default::default();
+                run_phase2_tail(module, cm, unresolved_mark, Vec::new())
+            })
+        } else {
+            GLOBALS.set(&Default::default(), || {
                 let cm: Lrc<SourceMap> = Default::default();
                 let parsed = parse_js_with_recovery(
                     &unpacked.module.code,
@@ -934,79 +1042,36 @@ fn unpack_multi_module_with_plan(
                     RulePipelineOptions::until("UnEsm"),
                 );
 
-                // Late pass at the barrier
-                run_reexport_consolidation(&mut module, facts_ref);
-                run_namespace_decomposition(&mut module, facts_ref);
-                // Late helper-through-UnReturn range.
-                apply_rules(
-                    &mut module,
-                    unresolved_mark,
-                    RulePipelineOptions::between("UnObjectSpread2", "UnReturn")
-                        .with_dead_code_elimination(options.dead_code_elimination)
-                        .with_rewrite_level(options.level)
-                        .with_module_facts(facts_ref),
-                );
-                // Later rules can expose sequence expressions. The old unpack
-                // path cleaned those by running a second full module pipeline;
-                // keep only the syntax cleanup needed after the split.
-                module.visit_mut_with(&mut SimplifySequence::new_with_level(
-                    unresolved_mark,
-                    options.level,
-                ));
-                module.visit_mut_with(&mut UnAssignmentMerging);
-                // UnIife2 can expose webpack export helpers that were hidden in
-                // factory wrappers at the Stage 2 barrier. Recover just that ESM
-                // shape without restoring the old full second pass.
-                recover_late_esm_from_factory_iifes(&mut module, unresolved_mark, options.level);
-                module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
-                module.visit_mut_with(&mut UnConditionalsAssignmentOnly);
-                module.visit_mut_with(&mut UnConditionalsExprStmtOnly);
-
-                // Source-map-enhanced passes
-                if let Some(sm) = sm_ref {
-                    module.visit_mut_with(&mut ImportDedup);
-                    apply_sourcemap_renames(&mut module, sm, &cm, unresolved_mark);
-                    module.visit_mut_with(&mut UnImportRename::new(unresolved_mark));
-                }
-
-                let mut diag_warnings = if options.diagnostics {
-                    let mut warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
-                    warnings.extend(collect_tdz_warnings(&module, &unpacked.module.filename));
-                    warnings.extend(collect_duplicate_declaration_warnings(
-                        &module,
-                        &unpacked.module.filename,
-                    ));
-                    warnings
+                let input_parse_warnings = if options.diagnostics {
+                    collect_input_parse_warnings(&parsed.recoverable_errors)
                 } else {
                     Vec::new()
                 };
-
-                module.visit_mut_with(&mut fixer(None));
-                let code = print_js(&module, cm)?;
-
-                if options.diagnostics {
-                    diag_warnings.extend(verify_output_parses(&code, &unpacked.module.filename));
-                }
-
-                Ok::<_, anyhow::Error>((code, diag_warnings))
-            }) {
-                Ok((code, diag_warnings)) => (unpacked.module.filename, code, diag_warnings),
-                Err(e) => (
-                    unpacked.module.filename.clone(),
-                    unpacked.module.code,
-                    vec![UnpackWarning::new(
-                        unpacked.module.filename,
-                        UnpackWarningKind::DecompileFailed,
-                        format!("decompile failed, preserving raw code: {e}"),
-                    )],
-                ),
-            }
+                run_phase2_tail(module, cm, unresolved_mark, input_parse_warnings)
+            })
         };
+
+        match result {
+            Ok((code, diag_warnings)) => (unpacked.module.filename, code, diag_warnings),
+            Err(e) => (
+                unpacked.module.filename.clone(),
+                unpacked.module.code,
+                vec![UnpackWarning::new(
+                    unpacked.module.filename,
+                    UnpackWarningKind::DecompileFailed,
+                    format!("decompile failed, preserving raw code: {e}"),
+                )],
+            ),
+        }
+    };
 
     let triples: Vec<_> = {
         let span = tracing::info_span!("phase2_decompile_modules");
         let _enter = span.enter();
-        modules.into_par_iter().map(decompile_module).collect()
+        phase2_inputs
+            .into_par_iter()
+            .map(decompile_module)
+            .collect()
     };
 
     let mut modules = Vec::with_capacity(triples.len());
