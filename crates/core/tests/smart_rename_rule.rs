@@ -183,6 +183,26 @@ const [, setG] = o.useState(0);
 }
 
 #[test]
+fn react_rename_usestate_in_arrow_body() {
+    let input = r#"
+const Component = ({ value }) => {
+    const [value_1, M] = l.useState(value);
+    M(value);
+    return value_1;
+};
+"#;
+    let expected = r#"
+const Component = ({ value }) => {
+    const [value_1, setValue_1] = l.useState(value);
+    setValue_1(value);
+    return value_1;
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn react_rename_usereducer() {
     let input = r#"
 const [e, f] = useReducer(r, i);
@@ -1163,6 +1183,21 @@ function App() {
     assert!(
         output.contains("setX"),
         "SmartRenameSecondPass should apply function-level React hook renames: {output}"
+    );
+}
+
+#[test]
+fn second_pass_applies_arrow_body_react_renames() {
+    let input = r#"
+const App = () => {
+    const [x, s] = useState(0);
+    return s(x + 1);
+};
+"#;
+    let output = apply_second_pass(input);
+    assert!(
+        output.contains("setX"),
+        "SmartRenameSecondPass should apply arrow-body React hook renames: {output}"
     );
 }
 

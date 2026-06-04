@@ -56,6 +56,7 @@ impl VisitMut for SmartRename {
     }
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        react_rename_arrow_body(arrow);
         destructuring_rename_arrow(arrow);
         member_init_rename_arrow(arrow);
         symbol_for_rename_arrow(arrow, self.unresolved_mark);
@@ -95,6 +96,7 @@ impl VisitMut for SmartRenameSecondPass {
     }
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        react_rename_arrow_body(arrow);
         destructuring_rename_arrow(arrow);
         member_init_rename_arrow(arrow);
         symbol_for_rename_arrow(arrow, self.unresolved_mark);
@@ -120,6 +122,21 @@ fn react_rename_module(module: &mut Module) {
 
 fn react_rename_function_body(func: &mut Function) {
     let Some(body) = &mut func.body else { return };
+    if !has_react_candidates_in_stmts(&body.stmts) {
+        return;
+    }
+    let all_names = collect_names_in_stmts(&body.stmts);
+    let renames = collect_react_renames_from_stmts(&body.stmts, &all_names);
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings(&mut body.stmts, &renames);
+}
+
+fn react_rename_arrow_body(arrow: &mut ArrowExpr) {
+    let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_mut() else {
+        return;
+    };
     if !has_react_candidates_in_stmts(&body.stmts) {
         return;
     }
