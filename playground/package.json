@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "@wasm-fmt/biome_fmt": "^0.2.9",
     "allotment": "^1.20.2",
     "pako": "^2.1.0",
     "react": "^19.1.0",
