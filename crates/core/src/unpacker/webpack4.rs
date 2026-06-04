@@ -15,7 +15,6 @@ use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::rules::{apply_rules as run_rules, RulePipelineOptions};
 use crate::unpacker::{UnpackResult, UnpackedModule};
 use crate::utils::paren::strip_parens;
 
@@ -27,16 +26,16 @@ enum ModuleId {
     Named(String),
 }
 
-/// Removes webpack's pure ESM marker from extracted module code.
+/// Normalizes webpack runtime wrapper constructs in extracted module code.
 ///
-/// Export getter helpers stay in the module for the rule pipeline. Lowering
-/// `require.d(exports, ...)` here would turn live getters into eager
-/// assignments before `UnEsm` can recover ESM export bindings.
+/// ESM marker/getter helpers stay in the module for the rule pipeline. Lowering
+/// `require.d(exports, ...)` here would turn live getters into eager assignments
+/// before `UnEsm` can recover ESM export bindings, and deleting
+/// `require.r(exports)` would remove the marker `UnEsm` uses to prove that
+/// those getters are ESM exports.
 struct WebpackRuntimeNormalizer {
     /// The symbol name used for the require-like parameter
     require_sym: Atom,
-    /// The symbol name used for the exports parameter
-    exports_sym: Atom,
     /// Only match identifiers that resolver() marked as unresolved free-variable references.
     unresolved_mark: Mark,
 }
@@ -133,21 +132,7 @@ impl WebpackRuntimeNormalizer {
         };
 
         match prop_name.sym.as_ref() {
-            "r" => {
-                if call.args.len() != 1 {
-                    return None;
-                }
-                let Expr::Ident(exports_arg) = &*call.args[0].expr else {
-                    return None;
-                };
-                if exports_arg.sym != self.exports_sym
-                    || exports_arg.ctxt.outer() != self.unresolved_mark
-                {
-                    return None;
-                }
-                // Remove `require.r(exports)` entirely
-                Some(vec![])
-            }
+            "r" => None,
             "d" => None,
             _ => None,
         }
@@ -411,25 +396,9 @@ pub(crate) fn rewrite_require_n_accesses(
     }
 }
 
-/// Detects whether the parsed module is a webpack4 bundle and extracts modules,
-/// skipping the normal decompile pipeline. Returns the intermediate state after
-/// webpack normalization (param renaming, require.d / require.r conversion,
-/// require(N) rewriting, require.n rewriting).
+/// Detects whether the parsed module is a webpack4 bundle and extracts modules.
 pub fn detect_and_extract_raw(source: &str) -> Option<UnpackResult> {
-    GLOBALS.set(&Default::default(), || {
-        let cm: Lrc<SourceMap> = Default::default();
-        let module = super::parse_es_module(source, "webpack4.js", cm.clone()).ok()?;
-
-        for item in &module.body {
-            let ModuleItem::Stmt(stmt) = item else {
-                continue;
-            };
-            if let Some(result) = try_extract_from_stmt_raw(stmt, cm.clone()) {
-                return Some(result);
-            }
-        }
-        None
-    })
+    detect_and_extract(source)
 }
 
 /// Detects whether the parsed module is a webpack4 bundle and extracts modules.
@@ -442,42 +411,15 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
 }
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
-    detect_from_module_with_mode(module, cm, true)
-}
-
-pub(super) fn detect_from_module_with_mode(
-    module: &Module,
-    cm: Lrc<SourceMap>,
-    apply_rules: bool,
-) -> Option<UnpackResult> {
     for item in &module.body {
         let ModuleItem::Stmt(stmt) = item else {
             continue;
         };
-        let result = if apply_rules {
-            try_extract_from_stmt(stmt, cm.clone())
-        } else {
-            try_extract_from_stmt_raw(stmt, cm.clone())
-        };
-        if let Some(result) = result {
+        if let Some(result) = try_extract_from_stmt(stmt, cm.clone()) {
             return Some(result);
         }
     }
     None
-}
-
-/// Try to extract from a top-level statement that might be a webpack4 IIFE
-/// (raw, no normal decompile pipeline).
-fn try_extract_from_stmt_raw(stmt: &Stmt, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
-    let call = match stmt {
-        Stmt::Expr(ExprStmt { expr, .. }) => match &**expr {
-            Expr::Unary(u) if u.op == UnaryOp::Bang => extract_call_from_expr(&u.arg)?,
-            other => extract_call_from_expr(other)?,
-        },
-        _ => return None,
-    };
-
-    extract_webpack4_modules(call, cm, false)
 }
 
 /// Try to extract from a top-level statement that might be a webpack4 IIFE.
@@ -491,7 +433,7 @@ fn try_extract_from_stmt(stmt: &Stmt, cm: Lrc<SourceMap>) -> Option<UnpackResult
         _ => return None,
     };
 
-    extract_webpack4_modules(call, cm, true)
+    extract_webpack4_modules(call, cm)
 }
 
 fn extract_call_from_expr(expr: &Expr) -> Option<&CallExpr> {
@@ -502,12 +444,7 @@ fn extract_call_from_expr(expr: &Expr) -> Option<&CallExpr> {
 }
 
 /// Given a CallExpr that should be `bootstrapFn([...])` or `bootstrapFn({...})`, extract modules.
-/// When `apply_rules` is false, the normal decompile pipeline is skipped (raw output).
-fn extract_webpack4_modules(
-    call: &CallExpr,
-    cm: Lrc<SourceMap>,
-    apply_rules: bool,
-) -> Option<UnpackResult> {
+fn extract_webpack4_modules(call: &CallExpr, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
     // Callee must be a FnExpr (the bootstrap function), possibly wrapped in parens
     let Callee::Expr(callee_expr) = &call.callee else {
         return None;
@@ -524,12 +461,8 @@ fn extract_webpack4_modules(
 
     // Branch on argument type: Array (numeric IDs) or Object (string IDs)
     match &*call.args[0].expr {
-        Expr::Array(array_lit) => {
-            extract_webpack4_array_modules(array_lit, bootstrap_fn, cm, apply_rules)
-        }
-        Expr::Object(object_lit) => {
-            extract_webpack4_object_modules(object_lit, bootstrap_fn, cm, apply_rules)
-        }
+        Expr::Array(array_lit) => extract_webpack4_array_modules(array_lit, bootstrap_fn, cm),
+        Expr::Object(object_lit) => extract_webpack4_object_modules(object_lit, bootstrap_fn, cm),
         _ => None,
     }
 }
@@ -539,7 +472,6 @@ fn extract_webpack4_array_modules(
     array_lit: &swc_core::ecma::ast::ArrayLit,
     bootstrap_fn: &FnExpr,
     cm: Lrc<SourceMap>,
-    apply_rules: bool,
 ) -> Option<UnpackResult> {
     // Array must have at least one element
     if array_lit.elems.is_empty() {
@@ -605,23 +537,17 @@ fn extract_webpack4_array_modules(
 
         let is_entry = entry_ids.contains(&ModuleId::Numeric(idx));
 
-        let (mut synthetic_module, unresolved_mark) =
-            build_factory_module(fn_expr, |post_rename_require_sym, unresolv_mark, module| {
+        let (mut synthetic_module, _) = normalize_extracted_webpack_module(
+            fn_expr,
+            |post_rename_require_sym, unresolv_mark, module| {
                 let mut id_rewriter = RequireIdRewriter {
                     require_sym: post_rename_require_sym.clone(),
                     unresolved_mark: unresolv_mark,
                     id_to_filename: &id_to_filename,
                 };
                 module.visit_mut_with(&mut id_rewriter);
-            });
-
-        if apply_rules {
-            run_rules(
-                &mut synthetic_module,
-                unresolved_mark,
-                RulePipelineOptions::until("UnEsm"),
-            );
-        }
+            },
+        );
         synthetic_module.visit_mut_with(&mut fixer(None));
 
         let code = match emit_module(&synthetic_module, cm.clone()) {
@@ -659,7 +585,6 @@ fn extract_webpack4_object_modules(
     object_lit: &ObjectLit,
     bootstrap_fn: &FnExpr,
     cm: Lrc<SourceMap>,
-    apply_rules: bool,
 ) -> Option<UnpackResult> {
     if object_lit.props.is_empty() {
         return None;
@@ -745,8 +670,9 @@ fn extract_webpack4_object_modules(
             entry_ids.contains(&ModuleId::Named(key.clone()))
         };
 
-        let (mut synthetic_module, unresolved_mark) =
-            build_factory_module(fn_expr, |post_rename_require_sym, unresolv_mark, module| {
+        let (mut synthetic_module, _) = normalize_extracted_webpack_module(
+            fn_expr,
+            |post_rename_require_sym, unresolv_mark, module| {
                 if all_numeric {
                     let mut id_rewriter = RequireIdRewriter {
                         require_sym: post_rename_require_sym.clone(),
@@ -762,15 +688,8 @@ fn extract_webpack4_object_modules(
                     };
                     module.visit_mut_with(&mut str_rewriter);
                 }
-            });
-
-        if apply_rules {
-            run_rules(
-                &mut synthetic_module,
-                unresolved_mark,
-                RulePipelineOptions::until("UnEsm"),
-            );
-        }
+            },
+        );
         synthetic_module.visit_mut_with(&mut fixer(None));
 
         let code = match emit_module(&synthetic_module, cm.clone()) {
@@ -816,11 +735,18 @@ fn extract_string_module_id(key: &PropName) -> Option<String> {
     }
 }
 
-/// Shared logic for processing a webpack4 factory FnExpr into a normalized Module.
-/// The `require_rewrite` callback is invoked after param renaming and resolver, to
-/// apply the appropriate require rewriter (numeric for array-form, string for object-form).
+/// Normalize a webpack4 factory body into a standalone module.
+///
+/// This is extraction normalization, not decompiler cleanup: it only renames
+/// webpack factory parameters, rewrites require references to extracted
+/// filenames, removes webpack runtime wrapper noise, and leaves general
+/// readability/ESM recovery to the driver pipeline.
+///
+/// The `require_rewrite` callback is invoked after param renaming and resolver
+/// to apply the appropriate require rewriter (numeric for array-form, string for
+/// object-form).
 /// Returns `(module, unresolved_mark)`.
-fn build_factory_module(
+fn normalize_extracted_webpack_module(
     fn_expr: &FnExpr,
     require_rewrite: impl FnOnce(&Atom, Mark, &mut Module),
 ) -> (Module, Mark) {
@@ -856,30 +782,6 @@ fn build_factory_module(
     let body_stmts = match &fn_expr.function.body {
         Some(body) => body.stmts.clone(),
         None => vec![],
-    };
-
-    // Determine the (possibly renamed) exports/require symbols for normalizer
-    let exports_sym = {
-        let orig = param_syms
-            .get(1)
-            .cloned()
-            .unwrap_or_else(|| Atom::from("exports"));
-        if renames.iter().any(|(old, _)| old == &orig) {
-            Atom::from("exports")
-        } else {
-            orig
-        }
-    };
-    let require_sym = {
-        let orig = param_syms
-            .get(2)
-            .cloned()
-            .unwrap_or_else(|| Atom::from("require"));
-        if renames.iter().any(|(old, _)| old == &orig) {
-            Atom::from("require")
-        } else {
-            orig
-        }
     };
 
     let mut synthetic_module = build_module_from_stmts(body_stmts);
@@ -919,15 +821,9 @@ fn build_factory_module(
         unresolved_mark,
     );
 
-    // Step 2: normalize webpack runtime helpers (require.r / require.d)
-    let final_require_sym = if param_syms.get(2).map(|s| s.as_ref()) == Some("require") {
-        Atom::from("require")
-    } else {
-        require_sym.clone()
-    };
+    // Step 2: normalize webpack runtime helpers while preserving ESM markers/getters
     let mut normalizer = WebpackRuntimeNormalizer {
-        require_sym: final_require_sym,
-        exports_sym,
+        require_sym: post_rename_require_sym,
         unresolved_mark,
     };
     synthetic_module.visit_mut_with(&mut normalizer);

@@ -83,6 +83,21 @@ impl VisitMut for ArrowFunctionConverter<'_> {
             prop.value.visit_mut_with(self);
         }
     }
+
+    fn visit_mut_export_default_expr(
+        &mut self,
+        export: &mut swc_core::ecma::ast::ExportDefaultExpr,
+    ) {
+        // A default-exported function expression remains constructable by
+        // consumers. Converting it to an arrow would remove its prototype.
+        if let Expr::Fn(fn_expr) = export.expr.as_mut() {
+            if let Some(body) = &mut fn_expr.function.body {
+                body.visit_mut_with(self);
+            }
+        } else {
+            export.expr.visit_mut_with(self);
+        }
+    }
 }
 
 fn collect_constructed_bindings(module: &Module) -> HashSet<BindingId> {

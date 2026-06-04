@@ -157,23 +157,47 @@ fn tsc_systemjs_raw_reconstructs_namespace_import_and_outer_exports() {
 
 #[test]
 fn webpack_system_library_raw_recurses_into_inner_bundle() {
-    let raw = unpack_fixture_raw("webpack-system/bundle.js");
+    let source = fixture("webpack-system/bundle.js");
+    let raw = unpack_raw(&source, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    assert!(
+        !raw.has_errors(),
+        "unexpected raw warnings: {:?}",
+        raw.warnings
+    );
+    let raw = raw.modules;
     assert_eq!(raw.len(), 2);
 
     let entry = module_code(&raw, "entry.js");
     assert!(
-        entry.contains(r#"from "./webpack-src/dep.js";"#),
+        entry.contains(r#"require("./webpack-src/dep.js")"#),
         "webpack System.register wrapper should expose the inner entry module:\n{entry}"
     );
     assert!(
-        entry.contains("export const value") && entry.contains("export default run"),
-        "webpack inner entry should recover exports:\n{entry}"
+        entry.contains("require.r(exports);") && entry.contains("require.d(exports,"),
+        "raw webpack inner entry should preserve runtime export markers:\n{entry}"
     );
 
     let dep = module_code(&raw, "webpack-src/dep.js");
     assert!(
-        dep.contains("export const named") && dep.contains("export default double"),
-        "webpack inner dependency should recover exports:\n{dep}"
+        dep.contains("require.r(exports);") && dep.contains("require.d(exports,"),
+        "raw webpack inner dependency should preserve runtime export markers:\n{dep}"
+    );
+
+    let modules = unpack_source(&source);
+    let entry = module_code(&modules, "entry.js");
+    assert!(
+        entry.contains(r#"from "./webpack-src/dep.js";"#),
+        "normal unpack should convert the inner entry require to import:\n{entry}"
+    );
+    assert!(
+        entry.contains("export { value };") && entry.contains("export { run as default };"),
+        "normal unpack should recover inner entry exports:\n{entry}"
+    );
+
+    let dep = module_code(&modules, "webpack-src/dep.js");
+    assert!(
+        dep.contains("export { named };") && dep.contains("export { double as default };"),
+        "normal unpack should recover inner dependency exports:\n{dep}"
     );
 }
 

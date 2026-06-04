@@ -3,6 +3,7 @@ source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
+require.r(exports);
 var r = require("./module-4.js"), o = ()=>r && r.__esModule ? r.default : r, i = require("./module-3.js"), a = ()=>i && i.__esModule ? i.default : i, u = require("./module-1.js"), l = ()=>u && u.__esModule ? u.default : u, c = require("./module-8.js"), s = require("./module-16.js"), f = s.a;
 function d(e, t) {
     if (!e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");

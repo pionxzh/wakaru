@@ -13,6 +13,7 @@ function o(e, t) {
     e.prototype.constructor = e;
     r(e, t);
 }
+require.r(exports);
 var i = require("./module-3.js"), a = ()=>i && i.__esModule ? i.default : i, u = require("./module-1.js"), l = ()=>u && u.__esModule ? u.default : u, c = l().shape({
     trySubscribe: l().func.isRequired,
     tryUnsubscribe: l().func.isRequired,

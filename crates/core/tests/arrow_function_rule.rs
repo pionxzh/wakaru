@@ -205,6 +205,26 @@ export const observed = (function named() {})?.name;
 }
 
 #[test]
+fn default_exported_function_expression_not_converted() {
+    let input = r#"
+export default function() {
+    return values.map(function(value) {
+        return value;
+    });
+}
+"#;
+    let expected = r#"
+export default function() {
+    return values.map(value => {
+        return value;
+    });
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn object_method_value_not_converted_to_arrow() {
     // Object method values may use `this`; the obj-method shorthand rule handles
     // them separately. Arrow conversion must not fire here.

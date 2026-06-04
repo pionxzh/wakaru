@@ -15,14 +15,12 @@ use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::rules::{apply_rules as run_rules, RulePipelineOptions};
 use crate::unpacker::webpack4::{rewrite_require_n_accesses, RequireIdRewriter};
 use crate::unpacker::{UnpackResult, UnpackedModule};
 use crate::utils::paren::strip_parens;
 
 struct Webpack5RuntimeNormalizer {
     require_sym: Atom,
-    exports_sym: Atom,
     unresolved_mark: Mark,
 }
 
@@ -127,20 +125,7 @@ impl Webpack5RuntimeNormalizer {
         };
 
         match prop_name.sym.as_ref() {
-            "r" => {
-                if call.args.len() != 1 {
-                    return None;
-                }
-                let Expr::Ident(exports_arg) = &*call.args[0].expr else {
-                    return None;
-                };
-                if exports_arg.sym != self.exports_sym
-                    || exports_arg.ctxt.outer() != self.unresolved_mark
-                {
-                    return None;
-                }
-                Some(vec![])
-            }
+            "r" => None,
             "d" => None,
             _ => None,
         }
@@ -257,14 +242,6 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
 }
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
-    detect_from_module_with_mode(module, cm, true)
-}
-
-pub(super) fn detect_from_module_with_mode(
-    module: &Module,
-    cm: Lrc<SourceMap>,
-    run_decompile_rules: bool,
-) -> Option<UnpackResult> {
     let span = tracing::info_span!("webpack5: detect_from_module");
     let _enter = span.enter();
     for item in &module.body {
@@ -274,9 +251,7 @@ pub(super) fn detect_from_module_with_mode(
         let Some(bootstrap_body) = extract_iife_body(expr) else {
             continue;
         };
-        if let Some(result) =
-            extract_webpack5_modules(bootstrap_body, cm.clone(), run_decompile_rules)
-        {
+        if let Some(result) = extract_webpack5_modules(bootstrap_body, cm.clone()) {
             return Some(result);
         }
     }
@@ -346,14 +321,6 @@ pub(super) fn detect_chunk_from_module(
     module: &Module,
     cm: Lrc<SourceMap>,
 ) -> Option<UnpackResult> {
-    detect_chunk_from_module_with_mode(module, cm, true)
-}
-
-pub(super) fn detect_chunk_from_module_with_mode(
-    module: &Module,
-    cm: Lrc<SourceMap>,
-    run_decompile_rules: bool,
-) -> Option<UnpackResult> {
     let span = tracing::info_span!("webpack5: detect_chunk_from_module");
     let _enter = span.enter();
     let mut all_modules = Vec::new();
@@ -363,12 +330,10 @@ pub(super) fn detect_chunk_from_module_with_mode(
             continue;
         };
         if let Some(modules_object) = extract_chunk_push_modules(expr) {
-            let extracted =
-                extract_modules_from_object(modules_object, cm.clone(), run_decompile_rules)?;
+            let extracted = extract_modules_from_object(modules_object, cm.clone())?;
             all_modules.extend(extracted);
         } else if let Some(modules_object) = extract_commonjs_chunk_modules(expr) {
-            let extracted =
-                extract_modules_from_object(modules_object, cm.clone(), run_decompile_rules)?;
+            let extracted = extract_modules_from_object(modules_object, cm.clone())?;
             all_modules.extend(extracted);
         }
     }
@@ -597,7 +562,6 @@ fn member_prop_name_is(prop: &MemberProp, expected: &str) -> bool {
 fn extract_modules_from_object(
     modules_object: &ObjectLit,
     cm: Lrc<SourceMap>,
-    run_decompile_rules: bool,
 ) -> Option<Vec<UnpackedModule>> {
     let span = tracing::info_span!(
         "webpack5: extract_modules_from_object",
@@ -625,13 +589,7 @@ fn extract_modules_from_object(
     let mut modules = Vec::new();
 
     for (module_id, factory, body_stmts, filename) in &module_entries {
-        let code = emit_webpack5_module(
-            factory,
-            body_stmts.clone(),
-            cm.clone(),
-            &id_to_filename,
-            run_decompile_rules,
-        )?;
+        let code = emit_webpack5_module(factory, body_stmts.clone(), cm.clone(), &id_to_filename)?;
         modules.push(UnpackedModule {
             id: module_id.clone(),
             is_entry: false,
@@ -646,7 +604,6 @@ fn extract_modules_from_object(
 fn extract_webpack5_modules(
     bootstrap_body: &swc_core::ecma::ast::BlockStmt,
     cm: Lrc<SourceMap>,
-    run_decompile_rules: bool,
 ) -> Option<UnpackResult> {
     let span = tracing::info_span!("webpack5: extract_modules");
     let _enter = span.enter();
@@ -695,13 +652,8 @@ fn extract_webpack5_modules(
         let span = tracing::info_span!("webpack5: emit all modules", count = module_entries.len());
         let _enter = span.enter();
         for (module_id, factory, body_stmts, filename) in &module_entries {
-            let code = emit_webpack5_module(
-                factory,
-                body_stmts.clone(),
-                cm.clone(),
-                &id_to_filename,
-                run_decompile_rules,
-            )?;
+            let code =
+                emit_webpack5_module(factory, body_stmts.clone(), cm.clone(), &id_to_filename)?;
             modules.push(UnpackedModule {
                 id: module_id.clone(),
                 is_entry: false,
@@ -713,12 +665,7 @@ fn extract_webpack5_modules(
 
     // Check for trailing IIFE entry point
     let has_trailing_entry = if let Some(entry_body) = extract_trailing_entry_body(bootstrap_body) {
-        let code = emit_webpack5_entry_module(
-            entry_body,
-            cm.clone(),
-            &id_to_filename,
-            run_decompile_rules,
-        )?;
+        let code = emit_webpack5_entry_module(entry_body, cm.clone(), &id_to_filename)?;
         modules.push(UnpackedModule {
             id: "entry".to_string(),
             is_entry: true,
@@ -755,15 +702,28 @@ fn emit_webpack5_entry_module(
     body_stmts: Vec<Stmt>,
     cm: Lrc<SourceMap>,
     id_to_filename: &HashMap<usize, String>,
-    run_decompile_rules: bool,
 ) -> Option<String> {
+    let (mut synthetic_module, _) =
+        normalize_extracted_webpack_entry_module(body_stmts, id_to_filename);
+    synthetic_module.visit_mut_with(&mut fixer(None));
+    emit_module(&synthetic_module, cm).ok()
+}
+
+/// Normalize a webpack5 runtime entry body into a standalone module.
+///
+/// This is extraction normalization only: it rewrites webpack runtime
+/// identifiers, module ids, and runtime helper noise, then leaves ESM recovery
+/// and readability cleanup to the driver pipeline.
+fn normalize_extracted_webpack_entry_module(
+    body_stmts: Vec<Stmt>,
+    id_to_filename: &HashMap<usize, String>,
+) -> (Module, Mark) {
     let mut synthetic_module = build_module_from_stmts(body_stmts);
     let unresolved_mark = Mark::new();
     let top_level_mark = Mark::new();
     synthetic_module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
     let require_sym = Atom::from("__webpack_require__");
-    let exports_sym = Atom::from("__webpack_exports__");
     let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
 
     let mut id_rewriter = RequireIdRewriter {
@@ -782,26 +742,17 @@ fn emit_webpack5_entry_module(
     );
     replace_ident(
         &mut synthetic_module,
-        (exports_sym.clone(), unresolved_ctxt),
+        (Atom::from("__webpack_exports__"), unresolved_ctxt),
         &Ident::new(Atom::from("exports"), Default::default(), unresolved_ctxt),
     );
 
     let mut normalizer = Webpack5RuntimeNormalizer {
         require_sym: Atom::from("require"),
-        exports_sym: Atom::from("exports"),
         unresolved_mark,
     };
     synthetic_module.visit_mut_with(&mut normalizer);
 
-    if run_decompile_rules {
-        run_rules(
-            &mut synthetic_module,
-            unresolved_mark,
-            RulePipelineOptions::until("UnEsm"),
-        );
-    }
-    synthetic_module.visit_mut_with(&mut fixer(None));
-    emit_module(&synthetic_module, cm).ok()
+    (synthetic_module, unresolved_mark)
 }
 
 fn extract_trailing_entry_body(
@@ -1077,11 +1028,32 @@ fn emit_webpack5_module(
     body_stmts: Vec<Stmt>,
     cm: Lrc<SourceMap>,
     id_to_filename: &HashMap<usize, String>,
-    run_decompile_rules: bool,
 ) -> Option<String> {
     let span = tracing::info_span!("webpack5: emit_module");
     let _enter = span.enter();
 
+    let (mut synthetic_module, _) =
+        normalize_extracted_webpack_module(factory, body_stmts, id_to_filename);
+
+    {
+        let span = tracing::info_span!("webpack5: fixer+emit");
+        let _enter = span.enter();
+        synthetic_module.visit_mut_with(&mut fixer(None));
+        emit_module(&synthetic_module, cm).ok()
+    }
+}
+
+/// Normalize a webpack5 factory body into a standalone module.
+///
+/// This does only bundler-format work: standardizes factory parameter names,
+/// rewrites extracted module references, expands `require.n`, and removes
+/// webpack runtime helper/decorator noise. General decompiler rules run later
+/// in the driver pipeline.
+fn normalize_extracted_webpack_module(
+    factory: &Function,
+    body_stmts: Vec<Stmt>,
+    id_to_filename: &HashMap<usize, String>,
+) -> (Module, Mark) {
     let mut synthetic_module = build_module_from_stmts(body_stmts);
 
     let param_syms: Vec<Atom> = factory
@@ -1118,7 +1090,6 @@ fn emit_webpack5_module(
             replace_ident(&mut synthetic_module, from_id, &to_ident);
         }
 
-        let exports_sym = Atom::from("exports");
         let require_sym = Atom::from("require");
 
         let mut id_rewriter = RequireIdRewriter {
@@ -1132,28 +1103,12 @@ fn emit_webpack5_module(
 
         let mut normalizer = Webpack5RuntimeNormalizer {
             require_sym,
-            exports_sym,
             unresolved_mark,
         };
         synthetic_module.visit_mut_with(&mut normalizer);
     }
 
-    if run_decompile_rules {
-        let span = tracing::info_span!("webpack5: rules");
-        let _enter = span.enter();
-        run_rules(
-            &mut synthetic_module,
-            unresolved_mark,
-            RulePipelineOptions::until("UnEsm"),
-        );
-    }
-
-    {
-        let span = tracing::info_span!("webpack5: fixer+emit");
-        let _enter = span.enter();
-        synthetic_module.visit_mut_with(&mut fixer(None));
-        emit_module(&synthetic_module, cm).ok()
-    }
+    (synthetic_module, unresolved_mark)
 }
 
 fn extract_iife_stmt_body(stmt: &Stmt) -> Option<&swc_core::ecma::ast::BlockStmt> {

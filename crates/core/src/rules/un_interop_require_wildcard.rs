@@ -118,6 +118,12 @@ fn run_un_interop_require_wildcard(module: &mut Module, local_helpers: &LocalHel
     remove_helper_declarations(&mut module.body, &safe_declarations);
     remove_var_require_bindings_preserve_side_effects(&mut module.body, &safe_var_requires);
     remove_import_bindings_preserve_side_effects(&mut module.body, &safe_imports);
+
+    let local_helpers = LocalHelperContext::collect(module);
+    local_helpers.remove_unused_inline_ts_helpers(
+        module,
+        &[TsHelperKind::CreateBinding, TsHelperKind::SetModuleDefault],
+    );
 }
 
 /// Try to convert a `var _x = _irw(require("path"))` into `import * as _x from "path"`.

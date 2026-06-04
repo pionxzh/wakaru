@@ -99,6 +99,12 @@ unrelated webpack runtimes from the same scanned directory.
 **`unpack_raw(source)`** — bundle splitting without the normal decompile rule
 pipeline. It returns detector output after only the extraction and
 bundler-coupled cleanup needed to make each extracted module stand alone.
+Webpack/browserify extractors use named extraction normalization helpers for
+that boundary work, such as factory parameter renaming, numeric/string module
+ID rewrites, `require.n` access normalization, and wrapper/decorator removal.
+They do not run a slice of the normal rule pipeline. Webpack ESM markers and
+export getters remain in raw output so the later decompile pipeline can recover
+live ESM exports without guessing.
 
 **`unpack_files_raw(inputs)`** — multi-source raw unpack. It merges raw
 detector output from all inputs and skips the normal decompile pipeline.

@@ -545,6 +545,16 @@ export const x = 23;
 }
 
 #[test]
+fn preserves_require_binding_read_statement_for_later_esm_recovery() {
+    let input = r#"
+var a = require("./dep.js");
+a;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn preserves_new_expression_statement_with_spread_argument() {
     let input = r#"
 var iter = {};

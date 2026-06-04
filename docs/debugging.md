@@ -63,7 +63,9 @@ Webpack4 has two snapshot layers:
 - `webpack4_unpack__*.snap` — final decompiled output.
 - `webpack4_unpack_raw__*.snap` — raw module output after webpack
   extraction and bundler-coupled normalization, before the normal decompile
-  pipeline.
+  pipeline. Webpack `require.r(exports)` markers and `require.d(...)` getters
+  can appear here; they are semantic inputs for later ESM recovery, not raw
+  snapshot failures by themselves.
 
 When a snapshot changes unexpectedly, compare the raw and final snapshots for
 the same module. If the raw snapshot is unchanged but the final snapshot moved,

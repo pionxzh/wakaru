@@ -400,6 +400,9 @@ define_rule_registry! {
     // resolve webpack interop getters. These dependencies are documented in
     // docs/rule-dependency-inventory.md.
     ("UnCurlyBraces", Helpers, run_un_curly_braces, always_enabled),
+    ("SimplifySequence2", Helpers, run_simplify_sequence, always_enabled, requires: [
+        "UnCurlyBraces"
+    ]),
     ("UnEsmoduleFlag", Helpers, run_un_esmodule_flag, always_enabled),
     ("UnUseStrict", Helpers, run_un_use_strict, standard_or_above),
     ("UnAssignmentMerging", Helpers, run_un_assignment_merging, always_enabled, requires: [

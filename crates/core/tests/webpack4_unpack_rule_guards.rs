@@ -35,6 +35,10 @@ fn runtime_getter_exports_stay_as_getters_in_raw_output() {
 
     let code = raw_module(source, "entry.js");
     assert!(
+        code.contains("require.r(exports);"),
+        "raw output should preserve the ESM marker used by later rules:\n{code}"
+    );
+    assert!(
         code.contains(r#"require.d(exports, "$G", function() {"#),
         "raw output should preserve runtime export getter:\n{code}"
     );
@@ -62,16 +66,89 @@ fn runtime_getter_exports_become_esm_after_rules() {
 ]);
 "#;
 
-    let result = unpack_webpack4(source).expect("webpack4 unpack should succeed");
+    let result = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack4 unpack should succeed");
     let code = result
         .modules
         .into_iter()
-        .find(|module| module.filename == "entry.js")
-        .map(|module| normalize(&module.code))
+        .find(|(filename, _)| filename == "entry.js")
+        .map(|(_, code)| normalize(&code))
         .expect("expected entry.js module");
     assert!(
-        code.contains("export { V as $G }"),
+        code.contains("export function $G(") || code.contains("export { V as $G }"),
         "runtime getter export should become ESM named export after Stage 1+2 rules:\n{code}"
+    );
+    assert!(
+        !code.contains("require.r(") && !code.contains("require.d("),
+        "driver output should consume webpack runtime export helpers:\n{code}"
+    );
+}
+
+#[test]
+fn default_export_function_keeps_later_var_dependency_hoisted() {
+    let source = r#"
+!function(modules) {
+  function __webpack_require__(id) {
+    var module = { exports: {} };
+    modules[id].call(module.exports, module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  __webpack_require__.d = function(exports, name, getter) {
+    Object.defineProperty(exports, name, { enumerable: true, get: getter });
+  };
+  __webpack_require__.r = function(exports) {
+    Object.defineProperty(exports, "__esModule", { value: true });
+  };
+  __webpack_require__.s = 0;
+  __webpack_require__(0);
+}([
+  function(module, exports, require) {
+    require.r(exports);
+    require.d(exports, "default", function() { return exported; });
+    var dep = require(1);
+    function exported(target, values) {
+      return values.map((value) => read.default(target, value)).filter(Boolean);
+    }
+    let alias;
+    alias = dep;
+    var read = alias;
+  },
+  function(module, exports, require) {
+    exports.default = function(target, value) {
+      return value;
+    };
+  }
+]);
+"#;
+
+    let result = unpack(
+        source,
+        DecompileOptions {
+            filename: "bundle.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack4 unpack should succeed");
+    let code = result
+        .modules
+        .into_iter()
+        .find(|(filename, _)| filename == "entry.js")
+        .map(|(_, code)| normalize(&code))
+        .expect("expected entry.js module");
+
+    assert!(
+        code.contains("var read = alias;"),
+        "later dependency read by exported function must stay var-hoisted:\n{code}"
+    );
+    assert!(
+        !code.contains("const read = alias;"),
+        "later dependency read by exported function was converted to TDZ const:\n{code}"
     );
 }
 

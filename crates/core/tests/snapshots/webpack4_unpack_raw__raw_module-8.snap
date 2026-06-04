@@ -3,6 +3,7 @@ source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
+require.r(exports);
 var r = require("./module-7.js");
 function o(e) {
     return "/" === e.charAt(0);

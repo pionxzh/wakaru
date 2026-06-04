@@ -3,6 +3,7 @@ source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
+require.r(exports);
 var r = require("./module-2.js"), o = require("./module-10.js");
 function i(e, t) {
     for(var n = arguments.length, i = Array(n > 2 ? n - 2 : 0), a = 2; a < n; a++)i[a - 2] = arguments[a];

@@ -11,7 +11,6 @@ use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::VisitMutWith;
 
-use crate::rules::{apply_rules as run_rules, RulePipelineOptions};
 use crate::unpacker::{UnpackResult, UnpackedModule};
 
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
@@ -23,14 +22,6 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
 }
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
-    detect_from_module_with_mode(module, cm, true)
-}
-
-pub(super) fn detect_from_module_with_mode(
-    module: &Module,
-    cm: Lrc<SourceMap>,
-    run_decompile_rules: bool,
-) -> Option<UnpackResult> {
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Expr(ExprStmt { expr, .. })) = item else {
             continue;
@@ -45,9 +36,7 @@ pub(super) fn detect_from_module_with_mode(
             continue;
         };
 
-        if let Some(result) =
-            extract_browserify_modules(outer_call, cm.clone(), run_decompile_rules)
-        {
+        if let Some(result) = extract_browserify_modules(outer_call, cm.clone()) {
             return Some(result);
         }
     }
@@ -57,7 +46,6 @@ pub(super) fn detect_from_module_with_mode(
 fn extract_browserify_modules(
     call: &swc_core::ecma::ast::CallExpr,
     cm: Lrc<SourceMap>,
-    run_decompile_rules: bool,
 ) -> Option<UnpackResult> {
     if call.args.len() != 3 {
         return None;
@@ -96,7 +84,7 @@ fn extract_browserify_modules(
         };
         let (factory, body_stmts) = extract_factory(module_parts)?;
 
-        let code = emit_browserify_module(&factory, body_stmts, cm.clone(), run_decompile_rules)?;
+        let code = emit_browserify_module(&factory, body_stmts, cm.clone())?;
         let is_entry = entry_ids.contains(&module_id);
         let filename = if is_entry && entry_ids.len() == 1 {
             "entry.js".to_string()
@@ -188,8 +176,22 @@ fn emit_browserify_module(
     factory: &Function,
     body_stmts: Vec<Stmt>,
     cm: Lrc<SourceMap>,
-    run_decompile_rules: bool,
 ) -> Option<String> {
+    let (mut synthetic_module, _) = normalize_extracted_browserify_module(factory, body_stmts);
+    synthetic_module.visit_mut_with(&mut fixer(None));
+
+    emit_module(&synthetic_module, cm).ok()
+}
+
+/// Normalize a browserify factory body into a standalone module.
+///
+/// Browserify factories use `(require, module, exports)` parameters. This only
+/// standardizes those names after resolver marks are assigned; decompiler rules
+/// run later in the driver pipeline.
+fn normalize_extracted_browserify_module(
+    factory: &Function,
+    body_stmts: Vec<Stmt>,
+) -> (Module, Mark) {
     let mut synthetic_module = build_module_from_stmts(body_stmts);
 
     let param_syms: Vec<Atom> = factory
@@ -222,16 +224,7 @@ fn emit_browserify_module(
         replace_ident(&mut synthetic_module, from_id, &to_ident);
     }
 
-    if run_decompile_rules {
-        run_rules(
-            &mut synthetic_module,
-            unresolved_mark,
-            RulePipelineOptions::until("UnEsm"),
-        );
-    }
-    synthetic_module.visit_mut_with(&mut fixer(None));
-
-    emit_module(&synthetic_module, cm).ok()
+    (synthetic_module, unresolved_mark)
 }
 
 fn build_module_from_stmts(stmts: Vec<Stmt>) -> Module {

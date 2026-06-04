@@ -842,6 +842,58 @@ var read = dep;
 }
 
 #[test]
+fn pipeline_export_default_function_callback_before_var_declaration_stays_var() {
+    let input = r#"
+import dep from "dep";
+export default function(target, values) {
+  return values.map((value) => read.default(target, value)).filter(Boolean);
+}
+let alias;
+alias = dep;
+var read = alias;
+"#;
+    let expected = r#"
+import dep from "dep";
+export default function(target, values) {
+  return values.map((value) => read.default(target, value)).filter(Boolean);
+}
+let alias;
+alias = dep;
+var read = alias;
+"#;
+    let output = render_pipeline(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn pipeline_cjs_default_function_callback_before_var_declaration_stays_var() {
+    let input = r#"
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+exports.default = function(target, values) {
+    return values.map((value) => read.default(target, value)).filter(Boolean);
+};
+var dep, read = (dep = require("./dep.js")) && dep.__esModule ? dep : {
+    default: dep
+};
+module.exports = exports.default;
+"#;
+    let expected = r#"
+import _dep from "./dep.js";
+export default function(target, values) {
+    return values.map((value) => read.default(target, value)).filter(Boolean);
+};
+let dep;
+dep = _dep;
+var read = dep;
+"#;
+    let output = render_pipeline(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn export_default_function_nested_callback_before_var_declaration_stays_var() {
     let input = r#"
 import dep from "dep";
@@ -849,6 +901,19 @@ export default function(values) {
   return values.map((value) => read.default(value));
 }
 var read = dep;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn function_decl_nested_callback_before_var_declaration_stays_var() {
+    let input = r#"
+function exported(values) {
+  return values.map((value) => read.default(value));
+}
+var read = dep;
+export { exported as default };
 "#;
     let output = apply_rule(input);
     assert_eq_normalized(&output, input);

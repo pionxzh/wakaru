@@ -26,5 +26,4 @@ export default function(e) {
         t.webpackPolyfill = 1;
     }
     return t;
-}
-;
+};

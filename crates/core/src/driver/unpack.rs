@@ -22,7 +22,7 @@ use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
     apply_rules, ArrowFunction, ArrowReturn, ImportDedup, RewriteLevel, RulePipelineOptions,
-    SimplifySequence, UnAssignmentMerging, UnConditionalsAssignmentOnly,
+    SimplifySequence, SmartRename, UnAssignmentMerging, UnConditionalsAssignmentOnly,
     UnConditionalsExprStmtOnly, UnExportRename, UnIife, UnImportRename, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
@@ -784,6 +784,7 @@ fn recover_late_esm_from_factory_iifes(
         unresolved_mark,
         RulePipelineOptions::between("UnCurlyBraces", "UnEsm").with_rewrite_level(level),
     );
+    module.visit_mut_with(&mut SmartRename::new(unresolved_mark));
     module.visit_mut_with(&mut UnExportRename);
     module.visit_mut_with(&mut ArrowReturn);
 }
@@ -1101,6 +1102,70 @@ mod tests {
             output.modules[0].1.contains("const value"),
             "expected TypeScript input to decompile, got: {}",
             output.modules[0].1
+        );
+    }
+
+    #[test]
+    fn multi_module_split_sequence_uses_member_name_for_assignment_temp() {
+        let modules = vec![UnpackedModule {
+            id: "1".to_string(),
+            is_entry: false,
+            code: r#"var i, a, o;
+module.exports = (a = (i = require("./module-2.js")).lib, o = a.WordArray, i.SHA1);
+"#
+            .to_string(),
+            filename: "module-1.js".to_string(),
+        }];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("fixture should decompile");
+        let code = &output.modules[0].1;
+        assert!(
+            code.contains("const lib ="),
+            "expected temp binding to use member name:\n{code}"
+        );
+        assert!(
+            !code.contains("const _a ="),
+            "should not synthesize the fallback assignment name:\n{code}"
+        );
+    }
+
+    #[test]
+    fn multi_module_preserves_lowered_interop_binding_read_until_import_recovery() {
+        let modules = vec![UnpackedModule {
+            id: "1".to_string(),
+            is_entry: false,
+            code: r#""use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+var a = require("./module-2.js"), o = (r(a), r(require("./module-3.js")));
+function r(e) {
+    return e && e.__esModule ? e : {
+        default: e
+    };
+}
+class l extends a.Component {}
+exports.default = o.default(l);
+"#
+            .to_string(),
+            filename: "module-1.js".to_string(),
+        }];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("fixture should decompile");
+        let code = &output.modules[0].1;
+        assert!(
+            code.contains("import a from \"./module-2.js\";"),
+            "expected require binding to become an import:\n{code}"
+        );
+        assert!(
+            code.contains("import o from \"./module-3.js\";"),
+            "expected interop require to become an import:\n{code}"
+        );
+        assert!(
+            code.contains("a;\nclass l extends a.Component"),
+            "expected lowered interop binding read to survive until import recovery:\n{code}"
         );
     }
 

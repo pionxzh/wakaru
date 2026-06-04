@@ -614,8 +614,9 @@ fn analyze_module_items_in_order(
                 if let ModuleDecl::ExportDefaultExpr(ExportDefaultExpr { expr, .. }) = decl {
                     let mut refs = collect_refs_in_expr(expr, var_ids);
                     refs.extend(collect_called_hoisted_function_refs(expr, function_refs));
-                    refs.extend(collect_refs_in_function_like_expr(expr, var_ids));
-                    refs.extend(collect_refs_in_nested_function_like_expr(expr, var_ids));
+                    refs.extend(
+                        collect_refs_in_function_like_expr_and_nested_function_likes(expr, var_ids),
+                    );
                     mark_refs_before_decl(refs, declared_so_far, must_stay);
                 }
                 if let ModuleDecl::ExportDefaultDecl(default_decl) = decl {
@@ -678,7 +679,7 @@ fn analyze_stmt_in_order(
         }
         Stmt::Decl(Decl::Fn(fn_decl)) => {
             mark_refs_before_decl(
-                collect_refs_in_function(&fn_decl.function, var_ids),
+                collect_refs_in_function_and_nested_function_likes(&fn_decl.function, var_ids),
                 declared_so_far,
                 must_stay,
             );
@@ -993,14 +994,17 @@ fn collect_hoisted_function_refs_module(
             ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) => {
                 refs.insert(
                     (function.ident.sym.clone(), function.ident.ctxt),
-                    collect_refs_in_function(&function.function, var_ids),
+                    collect_refs_in_function_and_nested_function_likes(&function.function, var_ids),
                 );
             }
             ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
                 if let Decl::Fn(function) = &export.decl {
                     refs.insert(
                         (function.ident.sym.clone(), function.ident.ctxt),
-                        collect_refs_in_function(&function.function, var_ids),
+                        collect_refs_in_function_and_nested_function_likes(
+                            &function.function,
+                            var_ids,
+                        ),
                     );
                 }
             }
@@ -1019,7 +1023,7 @@ fn collect_hoisted_function_refs_stmts(
         if let Stmt::Decl(Decl::Fn(function)) = stmt {
             refs.insert(
                 (function.ident.sym.clone(), function.ident.ctxt),
-                collect_refs_in_function(&function.function, var_ids),
+                collect_refs_in_function_and_nested_function_likes(&function.function, var_ids),
             );
         }
     }
@@ -1090,12 +1094,7 @@ fn collect_refs_in_default_decl(
     match decl {
         DefaultDecl::Class(class) => collect_refs_in_class(&class.class, var_ids),
         DefaultDecl::Fn(function) => {
-            let mut refs = collect_refs_in_function(&function.function, var_ids);
-            refs.extend(collect_nested_function_like_refs_in_function(
-                &function.function,
-                var_ids,
-            ));
-            refs
+            collect_refs_in_function_and_nested_function_likes(&function.function, var_ids)
         }
         DefaultDecl::TsInterfaceDecl(_) => HashSet::new(),
     }
@@ -1129,6 +1128,17 @@ fn collect_nested_function_like_refs_in_function(
     collector.refs
 }
 
+fn collect_refs_in_function_and_nested_function_likes(
+    function: &Function,
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    let mut refs = collect_refs_in_function(function, var_ids);
+    refs.extend(collect_nested_function_like_refs_in_function(
+        function, var_ids,
+    ));
+    refs
+}
+
 fn collect_refs_in_function_like_expr(
     expr: &Expr,
     var_ids: &HashSet<BindingId>,
@@ -1145,6 +1155,38 @@ fn collect_refs_in_function_like_expr(
         }
         Expr::Paren(paren) => collect_refs_in_function_like_expr(&paren.expr, var_ids),
         _ => HashSet::new(),
+    }
+}
+
+fn collect_refs_in_function_like_expr_and_nested_function_likes(
+    expr: &Expr,
+    var_ids: &HashSet<BindingId>,
+) -> HashSet<BindingId> {
+    match expr {
+        Expr::Fn(fn_expr) => {
+            collect_refs_in_function_and_nested_function_likes(&fn_expr.function, var_ids)
+        }
+        Expr::Arrow(arrow) => {
+            let mut refs = {
+                let mut collector = VarRefCollector {
+                    var_ids,
+                    refs: HashSet::new(),
+                };
+                arrow.body.visit_with(&mut collector);
+                collector.refs
+            };
+            let mut nested = NestedFunctionLikeRefCollector {
+                var_ids,
+                refs: HashSet::new(),
+            };
+            arrow.body.visit_with(&mut nested);
+            refs.extend(nested.refs);
+            refs
+        }
+        Expr::Paren(paren) => {
+            collect_refs_in_function_like_expr_and_nested_function_likes(&paren.expr, var_ids)
+        }
+        _ => collect_refs_in_nested_function_like_expr(expr, var_ids),
     }
 }
 

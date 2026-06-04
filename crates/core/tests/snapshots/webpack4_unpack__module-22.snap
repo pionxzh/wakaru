@@ -98,7 +98,6 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
         i[o.e] = true;
         i.id = e;
         i.name = t;
-        "done";
         a = {};
         a.done = a.done || {};
         a.done.get = ()=>{
@@ -695,8 +694,7 @@ export default function({ context = {}, ...rest } = {}) {
         o.v.assign(context, e);
     };
     return c;
-}
-;
+};
 export const END = i.a;
 export const eventChannel = i.d;
 export const channel = i.b;

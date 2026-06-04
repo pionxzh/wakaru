@@ -3573,7 +3573,7 @@ function ki(e, t, n) {
             if (t !== null && t.ref !== null && typeof t.ref === "function" && t.ref._stringRef === o) {
                 return t.ref;
             }
-            (t = (e)=>{
+            t = (e)=>{
                 let r_refs = r.refs;
                 if (r_refs === refs) {
                     r_refs = r.refs = {};
@@ -3583,7 +3583,8 @@ function ki(e, t, n) {
                 } else {
                     r_refs[o] = e;
                 }
-            })._stringRef = o;
+            };
+            t._stringRef = o;
             return t;
         }
         if (typeof e !== "string") {
@@ -3665,36 +3666,44 @@ function Si(e) {
     }
     function l(e, t, n, r) {
         if (t === null || t.tag !== 6) {
-            (t = Ll(n, e.mode, r)).return = e;
+            t = Ll(n, e.mode, r);
+            t.return = e;
             return t;
         }
-        (t = o(t, n)).return = e;
+        t = o(t, n);
+        t.return = e;
         return t;
     }
     function c(e, t, n, r) {
         if (t !== null && t.elementType === n.type) {
-            (r = o(t, n.props)).ref = ki(e, t, n);
+            r = o(t, n.props);
+            r.ref = ki(e, t, n);
             r.return = e;
             return r;
         }
-        (r = Ml(n.type, n.key, n.props, null, e.mode, r)).ref = ki(e, t, n);
+        r = Ml(n.type, n.key, n.props, null, e.mode, r);
+        r.ref = ki(e, t, n);
         r.return = e;
         return r;
     }
     function s(e, t, n, r) {
         if (t === null || t.tag !== 4 || t.stateNode.containerInfo !== n.containerInfo || t.stateNode.implementation !== n.implementation) {
-            (t = Il(n, e.mode, r)).return = e;
+            t = Il(n, e.mode, r);
+            t.return = e;
             return t;
         }
-        (t = o(t, n.children || [])).return = e;
+        t = o(t, n.children || []);
+        t.return = e;
         return t;
     }
     function f(e, t, n, r, i) {
         if (t === null || t.tag !== 7) {
-            (t = Al(n, e.mode, r, i)).return = e;
+            t = Al(n, e.mode, r, i);
+            t.return = e;
             return t;
         }
-        (t = o(t, n)).return = e;
+        t = o(t, n);
+        t.return = e;
         return t;
     }
     function d(e, t, n) {
@@ -4854,7 +4863,8 @@ function Aa(e, t, n, r, o, i) {
     if (e === null) {
         var a = n.type;
         if (typeof a !== "function" || Rl(a) || a.defaultProps !== undefined || n.compare !== null || n.defaultProps !== undefined) {
-            (e = Ml(n.type, null, r, null, t.mode, i)).ref = t.ref;
+            e = Ml(n.type, null, r, null, t.mode, i);
+            e.ref = t.ref;
             e.return = t;
             return t.child = e;
         }
@@ -4867,7 +4877,8 @@ function Aa(e, t, n, r, o, i) {
         return Ga(e, t, i);
     }
     t.effectTag |= 1;
-    (e = Nl(a, r)).ref = t.ref;
+    e = Nl(a, r);
+    e.ref = t.ref;
     e.return = t;
     return t.child = e;
 }
@@ -6630,9 +6641,9 @@ let Hu = false;
 var Wu = 0;
 const $u = 500;
 let Bu = null;
-let Vu = false;
-let Qu = null;
-let Ku = null;
+var Vu = false;
+var Qu = null;
+var Ku = null;
 let Yu = false;
 let Gu = null;
 let Xu = 90;
@@ -8123,7 +8134,7 @@ bu = (e, t, n)=>{
     }
     throw Error(a(156, t.tag));
 };
-let Pl = null;
+var Pl = null;
 var _l = null;
 function jl(e, t, n, r) {
     return new function(e, t, n, r) {

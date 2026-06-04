@@ -33,5 +33,4 @@ export default function(e = u, t) {
         return n(e, t.payload);
     }
     return e;
-}
-;
+};

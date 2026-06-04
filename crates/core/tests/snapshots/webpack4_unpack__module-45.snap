@@ -43,5 +43,4 @@ export default function() {
     };
     n.PropTypes = n;
     return n;
-}
-;
+};

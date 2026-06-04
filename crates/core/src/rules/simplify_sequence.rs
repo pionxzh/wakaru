@@ -2,10 +2,10 @@ use std::collections::HashSet;
 
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignTarget, BinaryOp, BlockStmt, Decl, Expr, ExprStmt, ForHead, ForInStmt,
-    ForOfStmt, ForStmt, IfStmt, ImportSpecifier, Invalid, Lit, MemberExpr, ModuleDecl, ModuleItem,
-    ParenExpr, Pat, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt, ThrowStmt,
-    UnaryExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator, YieldExpr,
+    AssignExpr, AssignTarget, BinaryOp, BlockStmt, Callee, Decl, Expr, ExprStmt, ForHead,
+    ForInStmt, ForOfStmt, ForStmt, IfStmt, ImportSpecifier, Invalid, Lit, MemberExpr, ModuleDecl,
+    ModuleItem, ParenExpr, Pat, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchStmt,
+    ThrowStmt, UnaryExpr, UnaryOp, VarDecl, VarDeclKind, VarDeclOrExpr, VarDeclarator, YieldExpr,
 };
 use swc_core::ecma::utils::{ExprCtx, ExprExt};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
@@ -40,6 +40,11 @@ impl VisitMut for SimplifySequence {
         let outer_observable_ident_reads = self.observable_ident_reads.clone();
         self.observable_ident_reads
             .extend(collect_import_binding_ids_from_module_items(&module.body));
+        self.observable_ident_reads
+            .extend(collect_cjs_require_binding_ids_from_module_items(
+                &module.body,
+                self.unresolved_mark,
+            ));
 
         module.visit_mut_children_with(self);
 
@@ -248,6 +253,47 @@ fn collect_import_binding_ids_from_module_items(items: &[ModuleItem]) -> HashSet
         }
     }
     ids
+}
+
+fn collect_cjs_require_binding_ids_from_module_items(
+    items: &[ModuleItem],
+    unresolved_mark: Mark,
+) -> HashSet<BindingId> {
+    let mut ids = HashSet::new();
+    for item in items {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            let Some(init) = &decl.init else {
+                continue;
+            };
+            if is_cjs_require_init(init, unresolved_mark) {
+                ids.insert((binding.id.sym.clone(), binding.id.ctxt));
+            }
+        }
+    }
+    ids
+}
+
+fn is_cjs_require_init(expr: &Expr, unresolved_mark: Mark) -> bool {
+    match expr {
+        Expr::Call(call) => {
+            let Callee::Expr(callee) = &call.callee else {
+                return false;
+            };
+            let Expr::Ident(ident) = strip_parens(callee) else {
+                return false;
+            };
+            ident.sym.as_ref() == "require" && ident.ctxt.outer() == unresolved_mark
+        }
+        Expr::Member(member) => is_cjs_require_init(&member.obj, unresolved_mark),
+        Expr::Paren(paren) => is_cjs_require_init(&paren.expr, unresolved_mark),
+        _ => false,
+    }
 }
 
 fn collect_lexical_decl_ids_from_module_items(items: &[ModuleItem]) -> HashSet<BindingId> {

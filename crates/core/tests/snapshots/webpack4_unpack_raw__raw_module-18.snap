@@ -3,6 +3,7 @@ source: crates/core/tests/webpack4_unpack_raw.rs
 expression: code
 ---
 "use strict";
+require.r(exports);
 var r = require("./module-3.js"), o = ()=>r && r.__esModule ? r.default : r, i = require("./module-1.js"), a = ()=>i && i.__esModule ? i.default : i, u = require("./module-16.js"), l = Object.assign || function(e) {
     for(var t = 1; t < arguments.length; t++){
         var n = arguments[t];
