@@ -13,6 +13,10 @@ path = "src/main.rs"
 wakaru-core.workspace = true
 anyhow.workspace = true
 clap = { version = "4.5", features = ["derive"] }
+oxc_allocator = { git = "https://github.com/oxc-project/oxc.git", rev = "2f0e46c3c8383fa00899ff5db44b399586a5fd96", package = "oxc_allocator" }
+oxc_formatter = { git = "https://github.com/oxc-project/oxc.git", rev = "2f0e46c3c8383fa00899ff5db44b399586a5fd96", package = "oxc_formatter" }
+oxc_formatter_core = { git = "https://github.com/oxc-project/oxc.git", rev = "2f0e46c3c8383fa00899ff5db44b399586a5fd96", package = "oxc_formatter_core" }
+oxc_span = { git = "https://github.com/oxc-project/oxc.git", rev = "2f0e46c3c8383fa00899ff5db44b399586a5fd96", package = "oxc_span" }
 rayon = "1.11"
 sourcemap.workspace = true
 tracing.workspace = true

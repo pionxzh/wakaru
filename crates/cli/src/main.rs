@@ -13,6 +13,10 @@ use wakaru_core::{
     UnpackInput,
 };
 
+mod formatter;
+
+use formatter::{format_cli_output, CliCodeFormatter};
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum CliRewriteLevel {
     Minimal,
@@ -90,6 +94,10 @@ struct Cli {
     /// Run post-transform diagnostic checks and print results to stderr.
     #[arg(long)]
     diagnostics: bool,
+
+    /// Run a final formatter pass on decompiled output.
+    #[arg(long, default_value = "none", value_enum)]
+    formatter: CliCodeFormatter,
 
     /// Write a Chrome trace profile to the given file (open with chrome://tracing).
     #[arg(long, value_name = "FILE")]
@@ -186,6 +194,9 @@ fn run_default(cli: Cli) -> Result<()> {
     if cli.unpack.is_some() && cli.output.is_none() {
         bail!("--unpack requires -o/--output to choose an output directory");
     }
+    if cli.raw && cli.formatter.is_enabled() {
+        bail!("--formatter is not supported with --raw");
+    }
 
     let heuristic_split = !matches!(cli.unpack, Some(UnpackMode::Strict));
 
@@ -231,6 +242,13 @@ fn run_default(cli: Cli) -> Result<()> {
         let has_errors = output.has_errors();
 
         let pairs = output.modules;
+        let pairs: Vec<(String, String)> = pairs
+            .into_par_iter()
+            .map(|(filename, code)| {
+                let formatted = format_cli_output(code, &filename, cli.formatter);
+                (filename, formatted)
+            })
+            .collect();
 
         // Resolve output paths (serial — deduplication needs mutable seen set).
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -270,6 +288,7 @@ fn run_default(cli: Cli) -> Result<()> {
             }
         }
         let (input, filename) = read_input(cli.inputs.first())?;
+        let output_filename = filename.clone();
         let sourcemap_bytes = read_sourcemap(cli.sourcemap.as_ref())?;
         let options = DecompileOptions {
             filename,
@@ -283,15 +302,16 @@ fn run_default(cli: Cli) -> Result<()> {
 
         print_warnings(&output.warnings);
         let has_errors = output.has_errors();
+        let code = format_cli_output(output.code, &output_filename, cli.formatter);
 
         match cli.output {
             Some(path) => {
                 ensure_output_file(&path, cli.force)?;
-                fs::write(&path, &output.code)
+                fs::write(&path, &code)
                     .with_context(|| format!("failed to write {}", path.display()))?;
             }
             None => {
-                print!("{}", output.code);
+                print!("{code}");
             }
         }
 
@@ -793,6 +813,35 @@ mod tests {
             }
             other => panic!("expected debug trace command, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_formatter_option() {
+        let cli = Cli::try_parse_from(["wakaru", "input.js", "--formatter", "oxc"])
+            .expect("formatter option should parse");
+        assert_eq!(cli.formatter, CliCodeFormatter::Oxc);
+    }
+
+    #[test]
+    fn rejects_formatter_with_raw_unpack() {
+        let cli = Cli::try_parse_from([
+            "wakaru",
+            "bundle.js",
+            "--unpack",
+            "--raw",
+            "--formatter",
+            "oxc",
+            "-o",
+            "out",
+        ])
+        .expect("formatter with raw should parse");
+
+        let err = run_default(cli).expect_err("formatter with raw should be rejected");
+        assert!(
+            err.to_string()
+                .contains("--formatter is not supported with --raw"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

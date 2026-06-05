@@ -80,6 +80,16 @@ Directory inputs are supported only with `--unpack`. Wakaru recursively scans
 files are not copied or decompiled. Explicit file inputs keep the normal
 fallback behavior when no bundle format is detected.
 
+### Formatter
+
+```bash
+wakaru input.js --formatter oxc -o output.js
+wakaru bundle.js --unpack --formatter oxc -o out/
+```
+
+`--formatter oxc` runs a final formatting pass with OXC after decompilation.
+Off by default. Not supported with `--raw`.
+
 ### Source maps
 
 ```bash
