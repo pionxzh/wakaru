@@ -9,6 +9,10 @@ The matrix also includes standalone Terser rows and Babel/TypeScript/SWC/esbuild
 output minified through Terser, because optional/nullish lowering can become a
 different recoverable shape after minification.
 
+The logical-AND rows include issue #166-style boolean prefixes, such as a
+lowered optional chain followed by ordinary suffix conditions or a second
+lowered optional access.
+
 It is for investigation, not as a committed snapshot source. Use it to find
 reproduced tool shapes worth minimizing into focused Rust unit tests.
 

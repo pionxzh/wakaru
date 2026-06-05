@@ -54,6 +54,30 @@ const snippets = [
     expected: ["!settings?.role?.blocks?.hideList.includes(blockName)"],
   },
   {
+    name: "logical-and-duplicated-access",
+    source:
+      'if (root?.[key]?.group?.items && root?.[key]?.group?.items.length) {\n  sink("clear");\n} else {\n  sink("fill");\n}\n',
+    expected: ["root?.[key]?.group?.items && root?.[key]?.group?.items.length"],
+  },
+  {
+    name: "logical-and-prefix-loose-comparisons",
+    source:
+      'if (item?.meta?.enabled && item.kind != "alpha" && item.kind != "beta" && item.kind != "gamma") {\n  sink(item);\n}\n',
+    expected: ['item?.meta?.enabled && item.kind != "alpha"'],
+  },
+  {
+    name: "logical-and-prefix-strict-comparisons",
+    source:
+      'if (item?.meta?.enabled && item.kind !== "alpha" && item.kind !== "beta" && item.kind !== "gamma") {\n  sink(item);\n}\n',
+    expected: ['item?.meta?.enabled && item.kind !== "alpha"'],
+  },
+  {
+    name: "logical-and-prefix-includes-condition",
+    source:
+      'const blockedKinds = ["alpha", "beta", "gamma"];\nif (item?.meta?.enabled && !blockedKinds.includes(item.kind)) {\n  sink(item);\n}\n',
+    expected: ["item?.meta?.enabled && !blockedKinds.includes(item.kind)"],
+  },
+  {
     name: "nullish-only",
     source: "const out = value ?? fallback;\n",
     expected: ["??"],
