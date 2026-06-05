@@ -2135,16 +2135,13 @@ version = "1.4.0"
 dependencies = [
  "anyhow",
  "clap",
- "oxc_allocator",
- "oxc_formatter",
- "oxc_formatter_core",
- "oxc_span",
  "rayon",
  "sourcemap",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
  "wakaru-core",
+ "wakaru-formatter",
 ]
 
 [[package]]
@@ -2161,6 +2158,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wakaru-formatter"
+version = "1.4.0"
+dependencies = [
+ "oxc_allocator",
+ "oxc_formatter",
+ "oxc_formatter_core",
+ "oxc_span",
+]
+
+[[package]]
 name = "wakaru-wasm"
 version = "1.4.0"
 dependencies = [
@@ -2169,6 +2176,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "wakaru-core",
+ "wakaru-formatter",
  "wasm-bindgen",
 ]
 

@@ -66,6 +66,7 @@ export class WasmBridge {
   async decompile(
     source: string,
     level: string,
+    formatter: string,
     diagnostics = true
   ): Promise<DecompileResult> {
     await this.initPromise;
@@ -77,6 +78,7 @@ export class WasmBridge {
         id,
         source,
         level,
+        formatter,
         diagnostics,
       } satisfies WorkerRequest);
     });

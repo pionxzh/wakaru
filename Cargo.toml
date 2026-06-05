@@ -9,6 +9,7 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 wakaru-core = { path = "crates/core" }
+wakaru-formatter = { path = "crates/formatter" }
 anyhow = "1.0"
 sourcemap = "9"
 swc_core = { version = "65", features = [

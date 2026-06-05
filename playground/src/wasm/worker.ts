@@ -34,7 +34,8 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         msg.source,
         msg.level,
         undefined,
-        msg.diagnostics
+        msg.diagnostics,
+        msg.formatter
       );
       self.postMessage({
         type: "decompile-result",

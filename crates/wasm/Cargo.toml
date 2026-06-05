@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wakaru-core.workspace = true
+wakaru-formatter.workspace = true
 wasm-bindgen = { version = "0.2", features = ["enable-interning"] }
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"

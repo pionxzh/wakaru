@@ -1,4 +1,5 @@
 use serde::Serialize;
+use wakaru_formatter::{format_code, CodeFormatter};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(start)]
@@ -37,8 +38,10 @@ pub fn decompile(
     level: Option<String>,
     sourcemap: Option<Vec<u8>>,
     diagnostics: Option<bool>,
+    formatter: Option<String>,
 ) -> Result<JsValue, JsValue> {
     let level = parse_level(level.as_deref());
+    let formatter = parse_formatter(formatter.as_deref())?;
     let options = wakaru_core::DecompileOptions {
         filename: "input.js".to_string(),
         sourcemap,
@@ -48,17 +51,10 @@ pub fn decompile(
     };
     let output =
         wakaru_core::decompile(source, options).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let formatted = format_code(output.code, "input.js", formatter);
     let result = WakaruDecompileResult {
-        code: output.code,
-        warnings: output
-            .warnings
-            .into_iter()
-            .map(|warning| WakaruWarning {
-                filename: warning.filename,
-                kind: warning.kind.as_str(),
-                message: warning.message,
-            })
-            .collect(),
+        code: formatted.code,
+        warnings: collect_warnings(output.warnings, formatted.warning),
     };
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
@@ -69,8 +65,10 @@ pub fn unpack(
     level: Option<String>,
     heuristic_split: Option<bool>,
     diagnostics: Option<bool>,
+    formatter: Option<String>,
 ) -> Result<JsValue, JsValue> {
     let level = parse_level(level.as_deref());
+    let formatter = parse_formatter(formatter.as_deref())?;
     let options = wakaru_core::DecompileOptions {
         filename: "input.js".to_string(),
         level,
@@ -80,21 +78,23 @@ pub fn unpack(
     };
     let output =
         wakaru_core::unpack(source, options).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let mut format_warnings = Vec::new();
     let result = WakaruUnpackResult {
         modules: output
             .modules
             .into_iter()
-            .map(|(filename, code)| WakaruModule { filename, code })
-            .collect(),
-        warnings: output
-            .warnings
-            .into_iter()
-            .map(|warning| WakaruWarning {
-                filename: warning.filename,
-                kind: warning.kind.as_str(),
-                message: warning.message,
+            .map(|(filename, code)| {
+                let formatted = format_code(code, &filename, formatter);
+                if let Some(warning) = formatted.warning {
+                    format_warnings.push(warning);
+                }
+                WakaruModule {
+                    filename,
+                    code: formatted.code,
+                }
             })
             .collect(),
+        warnings: collect_warnings(output.warnings, format_warnings),
     };
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
@@ -111,6 +111,37 @@ fn parse_level(level: Option<&str>) -> wakaru_core::RewriteLevel {
         Some("aggressive") => wakaru_core::RewriteLevel::Aggressive,
         _ => wakaru_core::RewriteLevel::Standard,
     }
+}
+
+fn parse_formatter(formatter: Option<&str>) -> Result<CodeFormatter, JsValue> {
+    match formatter {
+        None | Some("none") => Ok(CodeFormatter::None),
+        Some("oxc") => Ok(CodeFormatter::Oxc),
+        Some(value) => Err(JsValue::from_str(&format!("unknown formatter: {value}"))),
+    }
+}
+
+fn collect_warnings(
+    warnings: Vec<wakaru_core::UnpackWarning>,
+    format_warnings: impl IntoIterator<Item = wakaru_formatter::FormatWarning>,
+) -> Vec<WakaruWarning> {
+    warnings
+        .into_iter()
+        .map(|warning| WakaruWarning {
+            filename: warning.filename,
+            kind: warning.kind.as_str(),
+            message: warning.message,
+        })
+        .chain(format_warnings.into_iter().map(|warning| WakaruWarning {
+            filename: warning.filename,
+            kind: "formatter_failed",
+            message: format!(
+                "{} formatter failed, preserving output: {}",
+                warning.formatter.as_str(),
+                warning.message
+            ),
+        }))
+        .collect()
 }
 
 #[wasm_bindgen(typescript_custom_section)]
@@ -130,6 +161,7 @@ export function decompile(
     level?: "minimal" | "standard" | "aggressive",
     sourcemap?: Uint8Array,
     diagnostics?: boolean,
+    formatter?: "none" | "oxc",
 ): WakaruDecompileResult;
 
 export interface WakaruUnpackResult {
@@ -142,7 +174,8 @@ export type WakaruWarningKind =
     | "fact_collection_parse_failed"
     | "decompile_failed"
     | "tdz_violation"
-    | "output_parse_failed";
+    | "output_parse_failed"
+    | "formatter_failed";
 
 export interface WakaruWarning {
     filename: string;
@@ -155,6 +188,7 @@ export function unpack(
     level?: "minimal" | "standard" | "aggressive",
     heuristicSplit?: boolean,
     diagnostics?: boolean,
+    formatter?: "none" | "oxc",
 ): WakaruUnpackResult;
 
 export function ruleNames(): string[];

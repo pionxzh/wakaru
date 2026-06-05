@@ -7,7 +7,7 @@ import { SplitLayout } from "./components/SplitLayout";
 import { WarningsPanel } from "./components/WarningsPanel";
 import { WasmBridge } from "./wasm/bridge";
 import type { WakaruWarning } from "./wasm/types";
-import type { Level } from "./lib/constants";
+import type { Formatter, Level } from "./lib/constants";
 import { DEFAULT_EXAMPLE } from "./lib/examples";
 import { createShareUrl, readShareState, SHARE_LIMIT_MESSAGE } from "./lib/share";
 
@@ -21,6 +21,9 @@ export function App() {
   const [output, setOutput] = useState("");
   const [warnings, setWarnings] = useState<WakaruWarning[]>([]);
   const [level, setLevel] = useState<Level>(INITIAL_SHARE_STATE?.level ?? "standard");
+  const [formatter, setFormatter] = useState<Formatter>(
+    INITIAL_SHARE_STATE?.formatter ?? "oxc"
+  );
   const [isLoading, setIsLoading] = useState(false);
   const [wasmReady, setWasmReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,13 +32,13 @@ export function App() {
   const bridgeRef = useRef<WasmBridge | null>(null);
   const shareStatusTimeoutRef = useRef<number | null>(null);
 
-  const runDecompile = useCallback(async (src: string, lvl: string) => {
+  const runDecompile = useCallback(async (src: string, lvl: string, fmt: Formatter) => {
     if (!bridgeRef.current) return;
     setIsLoading(true);
     setError(null);
     const start = performance.now();
     try {
-      const result = await bridgeRef.current.decompile(src, lvl, true);
+      const result = await bridgeRef.current.decompile(src, lvl, fmt, true);
       setOutput(result.code);
       setWarnings(result.warnings);
       setElapsed(performance.now() - start);
@@ -55,7 +58,7 @@ export function App() {
       .waitForInit()
       .then(() => {
         setWasmReady(true);
-        runDecompile(source, level);
+        runDecompile(source, level, formatter);
       })
       .catch((e) => setError(e.message));
     return () => bridge.terminate();
@@ -64,8 +67,8 @@ export function App() {
 
   const handleRun = useCallback(async () => {
     if (!bridgeRef.current || !wasmReady) return;
-    runDecompile(source, level);
-  }, [source, level, wasmReady, runDecompile]);
+    runDecompile(source, level, formatter);
+  }, [source, level, formatter, wasmReady, runDecompile]);
 
   const showShareStatus = useCallback((message: string) => {
     if (shareStatusTimeoutRef.current !== null) {
@@ -84,6 +87,7 @@ export function App() {
       shareUrl = createShareUrl({
         source,
         level,
+        formatter,
         version: VERSION_LABEL,
       });
     } catch (e) {
@@ -102,7 +106,7 @@ export function App() {
     } catch {
       showShareStatus("URL updated");
     }
-  }, [level, showShareStatus, source]);
+  }, [formatter, level, showShareStatus, source]);
 
   useEffect(() => {
     return () => {
@@ -120,7 +124,9 @@ export function App() {
       />
       <Controls
         level={level}
+        formatter={formatter}
         onLevelChange={setLevel}
+        onFormatterChange={setFormatter}
         onRun={handleRun}
         onShare={handleShare}
         isLoading={isLoading}

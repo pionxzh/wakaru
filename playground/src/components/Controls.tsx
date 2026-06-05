@@ -1,4 +1,4 @@
-import { LEVELS, type Level } from "../lib/constants";
+import { FORMATTERS, LEVELS, type Formatter, type Level } from "../lib/constants";
 
 function ShareIcon() {
   return (
@@ -14,7 +14,9 @@ function ShareIcon() {
 
 interface ControlsProps {
   level: Level;
+  formatter: Formatter;
   onLevelChange: (level: Level) => void;
+  onFormatterChange: (formatter: Formatter) => void;
   onRun: () => void;
   onShare: () => void;
   isLoading: boolean;
@@ -25,7 +27,9 @@ interface ControlsProps {
 
 export function Controls({
   level,
+  formatter,
   onLevelChange,
+  onFormatterChange,
   onRun,
   onShare,
   isLoading,
@@ -46,6 +50,20 @@ export function Controls({
             {LEVELS.map((l) => (
               <option key={l.value} value={l.value}>
                 {l.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="controls-label">
+          Formatter
+          <select
+            className="controls-select"
+            value={formatter}
+            onChange={(e) => onFormatterChange(e.target.value as Formatter)}
+          >
+            {FORMATTERS.map((f) => (
+              <option key={f.value} value={f.value}>
+                {f.label}
               </option>
             ))}
           </select>

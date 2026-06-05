@@ -1,5 +1,5 @@
 import { gzip, ungzip } from "pako";
-import type { Level } from "./constants";
+import type { Formatter, Level } from "./constants";
 
 const SHARE_SCHEMA_VERSION = "1";
 const SHARE_HASH_PREFIX = "state=";
@@ -10,6 +10,7 @@ export const SHARE_LIMIT_MESSAGE = "Input is too large to share";
 export interface PlaygroundShareState {
   source: string;
   level: Level;
+  formatter: Formatter;
   version: string;
 }
 
@@ -45,6 +46,7 @@ export function readShareState(hash = window.location.hash): PlaygroundShareStat
     if (
       typeof parsed.source !== "string" ||
       !isLevel(parsed.level) ||
+      (parsed.formatter !== undefined && !isFormatter(parsed.formatter)) ||
       typeof parsed.version !== "string"
     ) {
       return null;
@@ -57,6 +59,7 @@ export function readShareState(hash = window.location.hash): PlaygroundShareStat
     return {
       source: parsed.source,
       level: parsed.level,
+      formatter: parsed.formatter ?? "oxc",
       version: parsed.version,
     };
   } catch {
@@ -81,6 +84,10 @@ export function createShareUrl(state: PlaygroundShareState, href = window.locati
 
 function isLevel(value: unknown): value is Level {
   return value === "minimal" || value === "standard" || value === "aggressive";
+}
+
+function isFormatter(value: unknown): value is Formatter {
+  return value === "none" || value === "oxc";
 }
 
 function encodeBase64Url(bytes: Uint8Array): string {
