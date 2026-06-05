@@ -1154,13 +1154,7 @@ fn extract_callee_body(callee: &Callee) -> Option<&swc_core::ecma::ast::BlockStm
 }
 
 fn sanitize_filename(module_id: &str) -> String {
-    let stripped = module_id.trim_start_matches("./");
-    let sanitized = stripped.replace("../", "").replace("..\\", "");
-    if sanitized.is_empty() {
-        "unknown.js".to_string()
-    } else {
-        sanitized
-    }
+    crate::unpacker::sanitize_relative_path(module_id, "unknown.js")
 }
 
 /// Scan the bootstrap body for `__webpack_require__(__webpack_require__.s = <id>)` and return
@@ -1475,13 +1469,17 @@ mod tests {
     fn sanitize_filename_strips_path_traversal() {
         assert_eq!(sanitize_filename("../../../etc/passwd"), "etc/passwd");
         assert_eq!(sanitize_filename("./../../foo.js"), "foo.js");
+        assert_eq!(
+            sanitize_filename("....//node_modules/@wakaru/cli/bin/wakaru"),
+            "..../node_modules/@wakaru/cli/bin/wakaru"
+        );
     }
 
     #[test]
     fn sanitize_filename_strips_backslash_traversal() {
         assert_eq!(
             sanitize_filename("./\\..\\node_modules\\debug\\src\\index"),
-            "\\node_modules\\debug\\src\\index"
+            "node_modules/debug/src/index"
         );
     }
 

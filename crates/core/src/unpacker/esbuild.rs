@@ -581,13 +581,7 @@ fn sanitize_path(raw: String) -> String {
         .trim_start_matches("webpack://")
         .trim_start_matches("webpack:///")
         .trim_start_matches('/');
-    // Strip leading `../` segments so the path doesn't escape the output directory.
-    let s = s.trim_start_matches("../");
-    if s.is_empty() {
-        "module.js".to_string()
-    } else {
-        s.to_string()
-    }
+    crate::unpacker::sanitize_relative_path(s, "module.js")
 }
 
 // ---------------------------------------------------------------------------

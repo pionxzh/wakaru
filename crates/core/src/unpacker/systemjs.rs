@@ -808,17 +808,7 @@ fn filename_for_register(
 }
 
 fn sanitize_filename(module_id: &str) -> String {
-    let stripped = module_id.trim_start_matches("./");
-    let sanitized = stripped.replace("../", "").replace("..\\", "");
-    let sanitized = sanitized
-        .trim_matches('/')
-        .trim_matches('\\')
-        .replace('\\', "/");
-    let mut filename = if sanitized.is_empty() {
-        "unknown".to_string()
-    } else {
-        sanitized
-    };
+    let mut filename = crate::unpacker::sanitize_relative_path(module_id, "unknown");
     if !filename
         .rsplit('/')
         .next()
@@ -929,5 +919,18 @@ System.register("../chunks/main", [], function (exports) {
         );
 
         assert_eq!(result.modules[0].filename, "chunks/main.js");
+    }
+
+    #[test]
+    fn named_register_does_not_create_traversal_from_overlapping_dots() {
+        let result = unpack(
+            r#"
+System.register("....//chunks/main", [], function (exports) {
+  return { execute: function () { exports("default", 1); } };
+});
+"#,
+        );
+
+        assert_eq!(result.modules[0].filename, "..../chunks/main.js");
     }
 }

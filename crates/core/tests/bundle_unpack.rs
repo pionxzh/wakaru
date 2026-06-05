@@ -93,6 +93,56 @@ fn webpack5_require_n_default_interop_is_recovered() {
 }
 
 #[test]
+fn webpack5_string_module_id_with_overlapping_dots_cannot_emit_parent_path() {
+    let source = r#"
+(() => {
+  var __webpack_modules__ = ({
+    "....//node_modules/@wakaru/cli/bin/wakaru": ((module) => {
+      module.exports = "pwned";
+    })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  console.log(__webpack_require__("....//node_modules/@wakaru/cli/bin/wakaru"));
+})();
+"#;
+
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: "webpack5-overlap-path.js".to_string(),
+            ..Default::default()
+        },
+    )
+    .expect("webpack5 unpack should succeed");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+
+    let names: Vec<&str> = output
+        .modules
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert!(
+        names.contains(&"..../node_modules/@wakaru/cli/bin/wakaru"),
+        "expected sanitized overlap path, got {names:?}"
+    );
+    assert!(
+        names
+            .iter()
+            .all(|name| !name.split('/').any(|part| part == "..")),
+        "module filenames must not contain parent components: {names:?}"
+    );
+}
+
+#[test]
 fn webpack5_require_g_is_recovered_as_global() {
     let source = r#"
 (() => {

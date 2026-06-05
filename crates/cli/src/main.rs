@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{self, IsTerminal, Read};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -212,6 +212,7 @@ fn run_default(cli: Cli) -> Result<()> {
 
         let out_dir = cli.output.expect("checked above");
         ensure_output_dir(&out_dir, cli.force)?;
+        let out_dir = canonicalize_output_dir(&out_dir)?;
 
         let output = if inputs.len() == 1 {
             let input = inputs.into_iter().next().expect("checked input length");
@@ -236,22 +237,10 @@ fn run_default(cli: Cli) -> Result<()> {
         let resolved: Vec<(PathBuf, &str)> = pairs
             .iter()
             .map(|(filename, code)| {
-                let out_path = deduplicate_path(&out_dir.join(filename), &mut seen);
-                (out_path, code.as_str())
+                let out_path = resolve_unpack_output_path(&out_dir, filename, &mut seen)?;
+                Ok((out_path, code.as_str()))
             })
-            .collect();
-
-        // Batch-create all unique parent directories.
-        let mut dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-        for (path, _) in &resolved {
-            if let Some(parent) = path.parent() {
-                if dirs.insert(parent.to_path_buf()) {
-                    fs::create_dir_all(parent).with_context(|| {
-                        format!("failed to create output directory {}", parent.display())
-                    })?;
-                }
-            }
-        }
+            .collect::<Result<_>>()?;
 
         // Write files in parallel.
         resolved.par_iter().try_for_each(|(path, code)| {
@@ -587,6 +576,109 @@ fn ensure_output_dir(path: &PathBuf, force: bool) -> Result<()> {
     Ok(())
 }
 
+fn canonicalize_output_dir(path: &Path) -> Result<PathBuf> {
+    path.canonicalize()
+        .with_context(|| format!("failed to canonicalize output directory {}", path.display()))
+}
+
+fn resolve_unpack_output_path(
+    out_dir: &Path,
+    filename: &str,
+    seen: &mut std::collections::HashSet<String>,
+) -> Result<PathBuf> {
+    let relative = safe_relative_module_path(filename)?;
+    let lexical_path = deduplicate_path(&out_dir.join(relative), seen);
+    canonicalize_unpack_output_path(out_dir, &lexical_path, filename)
+}
+
+fn safe_relative_module_path(filename: &str) -> Result<PathBuf> {
+    let mut relative = PathBuf::new();
+    for component in Path::new(filename).components() {
+        match component {
+            Component::Normal(part) => relative.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                bail!("unsafe module filename {filename:?}: path escapes output directory")
+            }
+        }
+    }
+
+    if relative.as_os_str().is_empty() {
+        bail!("unsafe module filename {filename:?}: empty output path");
+    }
+
+    Ok(relative)
+}
+
+fn canonicalize_unpack_output_path(
+    out_dir: &Path,
+    lexical_path: &Path,
+    filename: &str,
+) -> Result<PathBuf> {
+    let relative = lexical_path.strip_prefix(out_dir).with_context(|| {
+        format!("unsafe module filename {filename:?}: path escapes output directory")
+    })?;
+    let Some(file_name) = relative.file_name() else {
+        bail!("unsafe module filename {filename:?}: empty output path");
+    };
+
+    let parent_relative = relative.parent().unwrap_or_else(|| Path::new(""));
+    let mut current = out_dir.to_path_buf();
+    for component in parent_relative.components() {
+        let Component::Normal(part) = component else {
+            bail!("unsafe module filename {filename:?}: path escapes output directory");
+        };
+        current.push(part);
+        if current.exists() {
+            let canonical = current.canonicalize().with_context(|| {
+                format!(
+                    "failed to canonicalize output directory {}",
+                    current.display()
+                )
+            })?;
+            ensure_path_inside_output_dir(out_dir, &canonical, filename)?;
+            if !canonical.is_dir() {
+                bail!(
+                    "output path {} exists and is not a directory",
+                    current.display()
+                );
+            }
+            current = canonical;
+        } else {
+            fs::create_dir(&current).with_context(|| {
+                format!("failed to create output directory {}", current.display())
+            })?;
+            let canonical = current.canonicalize().with_context(|| {
+                format!(
+                    "failed to canonicalize output directory {}",
+                    current.display()
+                )
+            })?;
+            ensure_path_inside_output_dir(out_dir, &canonical, filename)?;
+            current = canonical;
+        }
+    }
+
+    let candidate = current.join(file_name);
+    let target = if candidate.exists() {
+        candidate.canonicalize().with_context(|| {
+            format!("failed to canonicalize output file {}", candidate.display())
+        })?
+    } else {
+        candidate
+    };
+    ensure_path_inside_output_dir(out_dir, &target, filename)?;
+    Ok(target)
+}
+
+fn ensure_path_inside_output_dir(out_dir: &Path, path: &Path, filename: &str) -> Result<()> {
+    if path.starts_with(out_dir) {
+        Ok(())
+    } else {
+        bail!("unsafe module filename {filename:?}: path escapes output directory");
+    }
+}
+
 /// Return a path that hasn't been used yet, disambiguating case collisions.
 ///
 /// `seen` stores the lowercased string representation of every path already
@@ -878,12 +970,209 @@ mod tests {
         fs::remove_dir_all(&dir).expect("remove temp dir");
     }
 
+    #[test]
+    fn unpack_output_path_rejects_parent_dir_components() {
+        let dir = temp_test_dir("unpack-output-escape");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
+        let mut seen = std::collections::HashSet::new();
+
+        let err = resolve_unpack_output_path(
+            &out_dir,
+            "../node_modules/@wakaru/cli/bin/wakaru",
+            &mut seen,
+        )
+        .expect_err("parent path should be rejected");
+        assert!(
+            err.to_string().contains("path escapes output directory"),
+            "unexpected error: {err}"
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn unpack_output_path_keeps_overlap_payload_inside_output_dir() {
+        let dir = temp_test_dir("unpack-output-overlap");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
+        let mut seen = std::collections::HashSet::new();
+
+        let path = resolve_unpack_output_path(
+            &out_dir,
+            "....//node_modules/@wakaru/cli/bin/wakaru",
+            &mut seen,
+        )
+        .expect("overlapping dots are an ordinary relative directory");
+        assert!(
+            path.starts_with(&out_dir),
+            "resolved path should stay in output dir: {}",
+            path.display()
+        );
+        assert!(path.ends_with("node_modules/@wakaru/cli/bin/wakaru"));
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn unpack_output_path_rejects_absolute_paths() {
+        let dir = temp_test_dir("unpack-output-absolute");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
+        let mut seen = std::collections::HashSet::new();
+        let absolute = format!(
+            "{}tmp{}escape.js",
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR
+        );
+
+        let err = resolve_unpack_output_path(&out_dir, &absolute, &mut seen)
+            .expect_err("absolute module path should be rejected");
+        assert!(
+            err.to_string().contains("path escapes output directory"),
+            "unexpected error: {err}"
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unpack_output_path_rejects_windows_drive_prefixes() {
+        let dir = temp_test_dir("unpack-output-drive-prefix");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
+        let mut seen = std::collections::HashSet::new();
+
+        let err = resolve_unpack_output_path(&out_dir, r"C:\tmp\escape.js", &mut seen)
+            .expect_err("drive-prefixed module path should be rejected");
+        assert!(
+            err.to_string().contains("path escapes output directory"),
+            "unexpected error: {err}"
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn unpack_output_path_rejects_parent_directory_that_is_file() {
+        let dir = temp_test_dir("unpack-output-file-parent");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        fs::write(dir.join("src"), "not a directory").expect("write file parent");
+        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
+        let mut seen = std::collections::HashSet::new();
+
+        let err = resolve_unpack_output_path(&out_dir, "src/index.js", &mut seen)
+            .expect_err("file parent should be rejected");
+        assert!(
+            err.to_string().contains("exists and is not a directory"),
+            "unexpected error: {err}"
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn unpack_output_path_deduplicates_after_safety_checks() {
+        let dir = temp_test_dir("unpack-output-dedup");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
+        let mut seen = std::collections::HashSet::new();
+
+        let first = resolve_unpack_output_path(&out_dir, "src/index.js", &mut seen)
+            .expect("first path should resolve");
+        let second = resolve_unpack_output_path(&out_dir, "src/index.js", &mut seen)
+            .expect("second path should resolve with suffix");
+
+        assert!(first.starts_with(&out_dir), "{}", first.display());
+        assert!(second.starts_with(&out_dir), "{}", second.display());
+        assert_ne!(first, second);
+        assert_eq!(first.file_name().and_then(|s| s.to_str()), Some("index.js"));
+        assert_eq!(
+            second.file_name().and_then(|s| s.to_str()),
+            Some("index_2.js")
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn unpack_cli_does_not_write_overlapping_dot_payload_outside_output_dir() {
+        let dir = temp_test_dir("unpack-cli-overlap");
+        let out_dir = dir.join("out");
+        let bundle_path = dir.join("bundle.js");
+        let outside_target = dir.join("node_modules/@wakaru/cli/bin/wakaru");
+        fs::create_dir_all(outside_target.parent().expect("outside target parent"))
+            .expect("create outside target parent");
+        fs::write(&outside_target, "original").expect("write outside marker");
+        fs::write(&bundle_path, overlapping_dot_webpack5_bundle()).expect("write bundle");
+
+        let cli = Cli::try_parse_from([
+            "wakaru",
+            bundle_path.to_str().expect("bundle path should be utf8"),
+            "--unpack",
+            "-o",
+            out_dir.to_str().expect("output path should be utf8"),
+        ])
+        .expect("cli should parse");
+        run_default(cli).expect("unpack should succeed");
+
+        assert_eq!(
+            fs::read_to_string(&outside_target).expect("read outside marker"),
+            "original",
+            "outside marker must not be overwritten"
+        );
+        assert!(
+            out_dir
+                .join("..../node_modules/@wakaru/cli/bin/wakaru")
+                .exists(),
+            "payload should be written under the output directory"
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn unpack_output_path_rejects_symlink_parent_that_points_outside() {
+        let dir = temp_test_dir("unpack-output-symlink-parent");
+        let out_dir_raw = dir.join("out");
+        let external_dir = dir.join("external");
+        fs::create_dir_all(&out_dir_raw).expect("create output dir");
+        fs::create_dir_all(&external_dir).expect("create external dir");
+        let link_path = out_dir_raw.join("link");
+        if create_dir_symlink(&external_dir, &link_path).is_err() {
+            fs::remove_dir_all(&dir).expect("remove temp dir");
+            return;
+        }
+        let out_dir = canonicalize_output_dir(&out_dir_raw).expect("canonicalize output dir");
+        let mut seen = std::collections::HashSet::new();
+
+        let err = resolve_unpack_output_path(&out_dir, "link/pwn.js", &mut seen)
+            .expect_err("symlink parent escaping output dir should be rejected");
+        assert!(
+            err.to_string().contains("path escapes output directory"),
+            "unexpected error: {err}"
+        );
+
+        fs::remove_dir_all(&dir).expect("remove temp dir");
+    }
+
     fn temp_test_dir(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("wakaru-cli-test-{name}-{nanos}"))
+    }
+
+    #[cfg(windows)]
+    fn create_dir_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_dir(target, link)
+    }
+
+    #[cfg(unix)]
+    fn create_dir_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
     }
 
     fn webpack5_chunk_source() -> &'static str {
@@ -924,6 +1213,25 @@ mod tests {
   api.u = 2;
   api.t = 3;
   api.m = 4;
+})();
+"#
+    }
+
+    fn overlapping_dot_webpack5_bundle() -> &'static str {
+        r#"
+(() => {
+  var __webpack_modules__ = ({
+    "....//node_modules/@wakaru/cli/bin/wakaru": ((module) => {
+      module.exports = "pwned";
+    })
+  });
+  var __webpack_module_cache__ = {};
+  function __webpack_require__(moduleId) {
+    var module = __webpack_module_cache__[moduleId] = { exports: {} };
+    __webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+    return module.exports;
+  }
+  console.log(__webpack_require__("....//node_modules/@wakaru/cli/bin/wakaru"));
 })();
 "#
     }

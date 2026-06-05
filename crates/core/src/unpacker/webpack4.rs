@@ -838,13 +838,7 @@ fn normalize_extracted_webpack_module(
 /// Strips leading `./`, removes path traversal (`../`, `..\`), and falls back
 /// to `"unknown.js"` when the result would be empty.
 fn sanitize_filename(module_id: &str) -> String {
-    let stripped = module_id.trim_start_matches("./");
-    let sanitized = stripped.replace("../", "").replace("..\\", "");
-    if sanitized.is_empty() {
-        "unknown.js".to_string()
-    } else {
-        sanitized
-    }
+    crate::unpacker::sanitize_relative_path(module_id, "unknown.js")
 }
 
 /// Scan the bootstrap function body for `n.s = <number>` or `n(n.s = <number>)` patterns
@@ -1887,6 +1881,10 @@ mod object_form_tests {
             "src/utils/helper.js"
         );
         assert_eq!(sanitize_filename("../../../etc/passwd"), "etc/passwd");
+        assert_eq!(
+            sanitize_filename("....//node_modules/@wakaru/cli/bin/wakaru"),
+            "..../node_modules/@wakaru/cli/bin/wakaru"
+        );
         assert_eq!(sanitize_filename("./"), "unknown.js");
         assert_eq!(sanitize_filename("../"), "unknown.js");
         assert_eq!(sanitize_filename("index.js"), "index.js");

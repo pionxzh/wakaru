@@ -23,6 +23,24 @@ pub struct UnpackResult {
 
 pub(crate) type BindingId = (Atom, SyntaxContext);
 
+/// Convert a bundler-provided module path into a relative output path.
+///
+/// This is component-based instead of replacement-based so overlapping strings
+/// like `....//foo` cannot turn into `../foo` after a single sanitation pass.
+pub(crate) fn sanitize_relative_path(raw: &str, fallback: &str) -> String {
+    let normalized = raw.replace('\\', "/");
+    let parts: Vec<&str> = normalized
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
+        .collect();
+
+    if parts.is_empty() {
+        fallback.to_string()
+    } else {
+        parts.join("/")
+    }
+}
+
 pub fn unpack_bundle(source: &str) -> Option<UnpackResult> {
     try_unpack_bundle(source).ok().flatten()
 }
@@ -186,6 +204,30 @@ pub fn unpack_webpack4_raw(source: &str) -> Option<UnpackResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_relative_path_drops_only_path_components() {
+        assert_eq!(
+            sanitize_relative_path("....//node_modules/@wakaru/cli/bin/wakaru", "module.js"),
+            "..../node_modules/@wakaru/cli/bin/wakaru"
+        );
+        assert_eq!(
+            sanitize_relative_path(".\\..\\node_modules\\debug\\src\\index", "module.js"),
+            "node_modules/debug/src/index"
+        );
+        assert_eq!(
+            sanitize_relative_path("./src/../utils/./helper.js", "module.js"),
+            "src/utils/helper.js"
+        );
+    }
+
+    #[test]
+    fn sanitize_relative_path_uses_fallback_for_empty_or_traversal_only_paths() {
+        assert_eq!(sanitize_relative_path("", "module.js"), "module.js");
+        assert_eq!(sanitize_relative_path("./", "module.js"), "module.js");
+        assert_eq!(sanitize_relative_path("../../..", "module.js"), "module.js");
+        assert_eq!(sanitize_relative_path("..\\..\\", "module.js"), "module.js");
+    }
 
     #[test]
     fn try_unpack_bundle_distinguishes_parse_errors_from_non_bundles() {
