@@ -1362,6 +1362,7 @@ fn fold_use_state_tuple_reads(
     stmts: Vec<Stmt>,
     use_state_bindings: &HashSet<BindingKey>,
 ) -> Vec<Stmt> {
+    let mut stmts = stmts;
     let mut result = Vec::with_capacity(stmts.len());
     let mut i = 0;
 
@@ -1370,12 +1371,19 @@ fn fold_use_state_tuple_reads(
             result.push(stmt);
             i += 3;
         } else {
-            result.push(stmts[i].clone());
+            result.push(take_stmt(&mut stmts, i));
             i += 1;
         }
     }
 
     result
+}
+
+fn take_stmt(stmts: &mut [Stmt], i: usize) -> Stmt {
+    std::mem::replace(
+        &mut stmts[i],
+        Stmt::Empty(swc_core::ecma::ast::EmptyStmt { span: DUMMY_SP }),
+    )
 }
 
 fn try_fold_use_state_tuple_at(
@@ -1536,7 +1544,7 @@ fn ident_is_referenced_in_stmts(id: &Ident, stmts: &[Stmt]) -> bool {
     false
 }
 
-fn group_destructuring(stmts: Vec<Stmt>, level: RewriteLevel) -> Vec<Stmt> {
+fn group_destructuring(mut stmts: Vec<Stmt>, level: RewriteLevel) -> Vec<Stmt> {
     // Scan for groups of consecutive `const t = obj.prop` / `const t = obj[n]`
     // where `obj` is a plain identifier.
     // Group by the obj name, emit destructuring when group is "flushed".
@@ -1571,7 +1579,7 @@ fn group_destructuring(stmts: Vec<Stmt>, level: RewriteLevel) -> Vec<Stmt> {
                 if let Some((obj, acc)) = current_obj.take() {
                     flush_group(&mut result, obj, acc, level);
                 }
-                result.push(stmts[i].clone());
+                result.push(take_stmt(&mut stmts, i));
                 i += 1;
                 continue;
             }
@@ -1597,7 +1605,7 @@ fn group_destructuring(stmts: Vec<Stmt>, level: RewriteLevel) -> Vec<Stmt> {
         if let Some((obj, acc)) = current_obj.take() {
             flush_group(&mut result, obj, acc, level);
         }
-        result.push(stmts[i].clone());
+        result.push(take_stmt(&mut stmts, i));
         i += 1;
     }
 

@@ -37,10 +37,10 @@ impl SmartRename {
 impl VisitMut for SmartRename {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let mut cached_names = collect_names_in_module(&module.body);
-        react_rename_module_with(module, &cached_names);
+        react_rename_module_with(module, &mut cached_names);
         destructuring_rename_module_with(module, &mut cached_names);
-        member_init_rename_module_with(module, &cached_names);
-        symbol_for_rename_module_with(module, &cached_names, self.unresolved_mark);
+        member_init_rename_module_with(module, &mut cached_names);
+        symbol_for_rename_module_with(module, &mut cached_names, self.unresolved_mark);
 
         sentry_component_rename_module(module);
         module.visit_mut_children_with(self);
@@ -113,10 +113,13 @@ impl VisitMut for SmartRenameSecondPass {
 
 const MAX_SYNTHETIC_NAME_ATTEMPTS: usize = 10_000;
 
-fn react_rename_module_with(module: &mut Module, all_names: &HashSet<Atom>) {
+fn react_rename_module_with(module: &mut Module, all_names: &mut HashSet<Atom>) {
     let renames = collect_react_renames_from_module_items(&module.body, all_names);
     if renames.is_empty() {
         return;
+    }
+    for r in &renames {
+        all_names.insert(r.new.clone());
     }
     rename_bindings_in_module(module, &renames);
 }
@@ -884,10 +887,13 @@ fn member_init_rename_arrow(arrow: &mut ArrowExpr) {
     rename_bindings(&mut block.stmts, &renames);
 }
 
-fn member_init_rename_module_with(module: &mut Module, all_names: &HashSet<Atom>) {
+fn member_init_rename_module_with(module: &mut Module, all_names: &mut HashSet<Atom>) {
     let renames = collect_member_init_renames_from_module(&module.body, all_names);
     if renames.is_empty() {
         return;
+    }
+    for r in &renames {
+        all_names.insert(r.new.clone());
     }
     rename_bindings_in_module(module, &renames);
 }
@@ -1014,12 +1020,15 @@ fn symbol_for_rename_function(func: &mut Function, unresolved_mark: Mark) {
 
 fn symbol_for_rename_module_with(
     module: &mut Module,
-    all_names: &HashSet<Atom>,
+    all_names: &mut HashSet<Atom>,
     unresolved_mark: Mark,
 ) {
     let renames = collect_symbol_for_renames_from_module(&module.body, all_names, unresolved_mark);
     if renames.is_empty() {
         return;
+    }
+    for r in &renames {
+        all_names.insert(r.new.clone());
     }
     rename_bindings_in_module(module, &renames);
 }
@@ -1197,18 +1206,6 @@ struct NameCollector {
 impl Visit for NameCollector {
     fn visit_ident(&mut self, id: &Ident) {
         self.names.insert(id.sym.clone());
-    }
-
-    fn visit_function(&mut self, f: &Function) {
-        for param in &f.params {
-            param.visit_with(self);
-        }
-    }
-
-    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-        for param in &arrow.params {
-            param.visit_with(self);
-        }
     }
 }
 

@@ -1331,3 +1331,20 @@ console.log(x);
         "SmartRenameSecondPass should not apply module-level member-init renames: {output}"
     );
 }
+
+#[test]
+fn cross_pass_rename_does_not_collide() {
+    let input = r#"
+import { useState } from "react";
+const [e, t] = useState();
+const { setE: a } = props;
+console.log(t, a);
+"#;
+    let expected = r#"
+import { useState } from "react";
+const [e, setE] = useState();
+const { setE: setE_1 } = props;
+console.log(setE, setE_1);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
