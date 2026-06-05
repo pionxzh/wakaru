@@ -217,7 +217,12 @@ impl UnJsx {
                 || (self.level >= RewriteLevel::Standard
                     && self.has_strong_jsx_shape(pragma, call));
             if should_alias {
-                let alias = self.create_component_alias(type_expr);
+                let base = if expr_contains_inlined_jsx_component(type_expr) {
+                    "InlineComponent"
+                } else {
+                    "Component"
+                };
+                let alias = self.create_component_alias(type_expr, base);
                 tag = Some(JSXElementName::Ident(alias));
             }
         }
@@ -301,9 +306,8 @@ impl UnJsx {
         None
     }
 
-    fn create_component_alias(&mut self, expr: &Expr) -> Ident {
-        let base = "Component".to_string();
-        let name = self.generate_name(base);
+    fn create_component_alias(&mut self, expr: &Expr, base: &str) -> Ident {
+        let name = self.generate_name(base.to_string());
         let ident = Ident::new(name.clone().into(), DUMMY_SP, SyntaxContext::empty());
         if let Some(pending) = self.pending_stmts.last_mut() {
             pending.push(Stmt::Decl(Decl::Var(Box::new(VarDecl {
@@ -543,6 +547,10 @@ impl UnJsx {
     fn has_strong_jsx_shape(&self, pragma: &str, call: &CallExpr) -> bool {
         if call.args.len() < 2 {
             return false;
+        }
+
+        if expr_contains_inlined_jsx_component(call.args[0].expr.as_ref()) {
+            return true;
         }
 
         let props_expr = call.args[1].expr.as_ref();
@@ -1367,6 +1375,39 @@ fn is_jsxish_prop_name(name: &str) -> bool {
         .strip_prefix("on")
         .and_then(|rest| rest.chars().next())
         .is_some_and(|ch| ch.is_ascii_uppercase())
+}
+
+fn expr_contains_inlined_jsx_component(expr: &Expr) -> bool {
+    let mut visitor = JsxPresenceVisitor::default();
+    match expr {
+        Expr::Arrow(arrow) => arrow.body.visit_with(&mut visitor),
+        Expr::Fn(function) => {
+            if let Some(body) = &function.function.body {
+                body.visit_with(&mut visitor);
+            }
+        }
+        _ => return false,
+    }
+    visitor.found
+}
+
+#[derive(Default)]
+struct JsxPresenceVisitor {
+    found: bool,
+}
+
+impl Visit for JsxPresenceVisitor {
+    fn visit_jsx_element(&mut self, _element: &JSXElement) {
+        self.found = true;
+    }
+
+    fn visit_jsx_fragment(&mut self, _fragment: &JSXFragment) {
+        self.found = true;
+    }
+
+    fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+
+    fn visit_function(&mut self, _function: &swc_core::ecma::ast::Function) {}
 }
 
 fn pascalize(input: &str) -> String {

@@ -156,6 +156,48 @@ function fn() {
 }
 
 #[test]
+fn standard_hoists_minifier_inlined_jsx_component_tags() {
+    let input = r#"
+function fn() {
+  render(React.createElement(() => React.createElement(Fragment, null, child), null), mountNode);
+}
+"#;
+    let expected = r#"
+function fn() {
+  const InlineComponent = () => <>{child}</>;
+  render(<InlineComponent />, mountNode);
+}
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), expected);
+}
+
+#[test]
+fn standard_does_not_hoist_inline_function_tags_without_jsx_body() {
+    let input = r#"
+function fn() {
+  return React.createElement(() => value, null);
+}
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), input);
+}
+
+#[test]
+fn standard_does_not_hoist_inline_function_tags_with_only_nested_jsx() {
+    let input = r#"
+function fn() {
+  return React.createElement(() => {
+    const nested = () => <div />;
+    return value;
+  }, null);
+}
+"#;
+
+    assert_eq_normalized(&render_with_level(input, RewriteLevel::Standard), input);
+}
+
+#[test]
 fn aggressive_hoists_dynamic_component_tags() {
     let input = r#"
 function fn() {
