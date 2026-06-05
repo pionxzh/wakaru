@@ -273,6 +273,94 @@ const a = r?.foo?.bar?.baz;
 }
 
 #[test]
+fn standard_transforms_issue_166_pattern_1_babel_duplicated_access() {
+    let input = r#"
+var _tt, _tt2;
+if ((_tt = tt) != null && (_tt = _tt[bt]) != null && (_tt = _tt.blocks) != null && _tt.hideList && (_tt2 = tt) != null && (_tt2 = _tt2[bt]) != null && (_tt2 = _tt2.blocks) != null && _tt2.hideList.length) {
+  window_lodash.set(n, `${bt}.blocks.hideList`, []);
+} else {
+  window_lodash.set(n, `${bt}.blocks.hideList`, ne);
+}
+"#;
+    let expected = r#"
+var _tt, _tt2;
+if (tt?.[bt]?.blocks?.hideList && tt?.[bt]?.blocks?.hideList.length) {
+  window_lodash.set(n, `${bt}.blocks.hideList`, []);
+} else {
+  window_lodash.set(n, `${bt}.blocks.hideList`, ne);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_issue_166_pattern_1_mixed_duplicated_access() {
+    let input = r#"
+let e, t, l, i;
+if (tt != null && (e = tt[bt]) !== null && e !== undefined && (t = e.blocks) !== null && t !== undefined && t.hideList && tt != null && (l = tt[bt]) !== null && l !== undefined && (i = l.blocks) !== null && i !== undefined && i.hideList.length) {
+  window_lodash.set(n, `${bt}.blocks.hideList`, []);
+} else {
+  window_lodash.set(n, `${bt}.blocks.hideList`, ne);
+}
+"#;
+    let expected = r#"
+let e, t, l, i;
+if (tt?.[bt]?.blocks?.hideList && tt?.[bt]?.blocks?.hideList.length) {
+  window_lodash.set(n, `${bt}.blocks.hideList`, []);
+} else {
+  window_lodash.set(n, `${bt}.blocks.hideList`, ne);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_issue_166_pattern_2_loose_slug_exclusions() {
+    let input = r#"
+var _t;
+if ((_t = t) != null && (_t = _t.supports) != null && _t.editor && t.slug != "wp_template" && t.slug != "wp_template_part" && t.slug != "wp_navigation" && t.slug != "nav_menu_item" && t.slug != "cc_block") {}
+"#;
+    let expected = r#"
+var _t;
+if (t?.supports?.editor && t.slug != "wp_template" && t.slug != "wp_template_part" && t.slug != "wp_navigation" && t.slug != "nav_menu_item" && t.slug != "cc_block") {}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_issue_166_pattern_2_strict_slug_exclusions() {
+    let input = r#"
+var _t;
+if ((_t = t) != null && (_t = _t.supports) != null && _t.editor && t.slug !== "wp_template" && t.slug !== "wp_template_part" && t.slug !== "wp_navigation" && t.slug !== "nav_menu_item" && t.slug !== "cc_block") {}
+"#;
+    let expected = r#"
+var _t;
+if (t?.supports?.editor && t.slug !== "wp_template" && t.slug !== "wp_template_part" && t.slug !== "wp_navigation" && t.slug !== "nav_menu_item" && t.slug !== "cc_block") {}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_issue_166_pattern_2_includes_slug_exclusions() {
+    let input = r#"
+var _t;
+const excludedSlugs = ["wp_template", "wp_template_part", "wp_navigation", "nav_menu_item", "cc_block"];
+if ((_t = t) != null && (_t = _t.supports) != null && _t.editor && !excludedSlugs.includes(t.slug)) {}
+"#;
+    let expected = r#"
+var _t;
+const excludedSlugs = ["wp_template", "wp_template_part", "wp_navigation", "nav_menu_item", "cc_block"];
+if (t?.supports?.editor && !excludedSlugs.includes(t.slug)) {}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn pipeline_transforms_issue_142_swc_terser_mixed_loose_root_chain() {
     // Reproduces issue #142 from:
     //   var a = (null == r ? void 0 : r.app_info?.base_info?.app_name) ?? "game";

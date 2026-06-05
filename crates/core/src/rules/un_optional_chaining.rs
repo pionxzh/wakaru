@@ -340,7 +340,65 @@ fn try_logical_and_optional_chain(
         return None;
     }
 
-    let first = extract_logical_and_non_null_segment(&terms, 0, unresolved_mark, policy)?;
+    rewrite_logical_and_optional_chain_terms(
+        &terms,
+        unresolved_mark,
+        policy,
+        uninitialized_bindings,
+        binding_references,
+    )
+}
+
+fn rewrite_logical_and_optional_chain_terms(
+    terms: &[&Expr],
+    unresolved_mark: Mark,
+    policy: RewritePolicy,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> Option<Expr> {
+    for end in (3..=terms.len()).rev() {
+        if let Some((chain, consumed)) = try_logical_and_optional_chain_terms(
+            &terms[..end],
+            unresolved_mark,
+            policy,
+            uninitialized_bindings,
+            binding_references,
+        ) {
+            if consumed != end {
+                continue;
+            }
+            if end == terms.len() {
+                return Some(chain);
+            }
+            let suffix = rewrite_logical_and_optional_chain_terms(
+                &terms[end..],
+                unresolved_mark,
+                policy,
+                uninitialized_bindings,
+                binding_references,
+            )
+            .or_else(|| {
+                build_logical_and_expr(terms[end..].iter().map(|term| (*term).clone()).collect())
+            })?;
+            return Some(make_logical_and_expr(chain, suffix));
+        }
+    }
+
+    None
+}
+
+fn try_logical_and_optional_chain_terms(
+    terms: &[&Expr],
+    unresolved_mark: Mark,
+    policy: RewritePolicy,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) -> Option<(Expr, usize)> {
+    if terms.len() < 3 {
+        return None;
+    }
+
+    let first = extract_logical_and_non_null_segment(terms, 0, unresolved_mark, policy)?;
     let mut temps = Vec::new();
     let mut temp_values = HashMap::new();
     let mut temp_call_contexts = HashMap::new();
@@ -369,7 +427,7 @@ fn try_logical_and_optional_chain(
     let mut index = first.consumed;
 
     while index < terms.len() - 1 {
-        let segment = extract_logical_and_non_null_segment(&terms, index, unresolved_mark, policy)?;
+        let segment = extract_logical_and_non_null_segment(terms, index, unresolved_mark, policy)?;
         let real_rhs = segment.real_rhs.as_ref()?;
         let Expr::Ident(tmp) = strip_parens(&segment.checked) else {
             return None;
@@ -395,7 +453,7 @@ fn try_logical_and_optional_chain(
 
     if !chain_temps_are_safe(
         &temps,
-        &[expr],
+        terms,
         policy.level,
         uninitialized_bindings,
         binding_references,
@@ -403,14 +461,30 @@ fn try_logical_and_optional_chain(
         return None;
     }
 
-    make_flattened_final_access(
+    let chain = make_flattened_final_access(
         &current_tmp,
         &chain,
         terms[index],
         &temp_values,
         &temp_call_contexts,
         unresolved_mark,
-    )
+    )?;
+    Some((chain, index + 1))
+}
+
+fn build_logical_and_expr(terms: Vec<Expr>) -> Option<Expr> {
+    let mut terms = terms.into_iter();
+    let first = terms.next()?;
+    Some(terms.fold(first, make_logical_and_expr))
+}
+
+fn make_logical_and_expr(left: Expr, right: Expr) -> Expr {
+    Expr::Bin(BinExpr {
+        span: DUMMY_SP,
+        op: BinaryOp::LogicalAnd,
+        left: Box::new(left),
+        right: Box::new(right),
+    })
 }
 
 struct LogicalAndSegment {
