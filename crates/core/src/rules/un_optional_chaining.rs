@@ -356,38 +356,31 @@ fn rewrite_logical_and_optional_chain_terms(
     uninitialized_bindings: &HashSet<BindingId>,
     binding_references: &HashMap<BindingId, usize>,
 ) -> Option<Expr> {
-    for end in (3..=terms.len()).rev() {
-        if let Some((chain, consumed)) = try_logical_and_optional_chain_terms(
-            &terms[..end],
+    let mut rewritten_terms = Vec::with_capacity(terms.len());
+    let mut changed = false;
+    let mut index = 0;
+
+    while index < terms.len() {
+        if let Some((chain, consumed)) = try_logical_and_optional_chain_prefix(
+            &terms[index..],
             unresolved_mark,
             policy,
             uninitialized_bindings,
             binding_references,
         ) {
-            if consumed != end {
-                continue;
-            }
-            if end == terms.len() {
-                return Some(chain);
-            }
-            let suffix = rewrite_logical_and_optional_chain_terms(
-                &terms[end..],
-                unresolved_mark,
-                policy,
-                uninitialized_bindings,
-                binding_references,
-            )
-            .or_else(|| {
-                build_logical_and_expr(terms[end..].iter().map(|term| (*term).clone()).collect())
-            })?;
-            return Some(make_logical_and_expr(chain, suffix));
+            rewritten_terms.push(chain);
+            index += consumed;
+            changed = true;
+        } else {
+            rewritten_terms.push(terms[index].clone());
+            index += 1;
         }
     }
 
-    None
+    changed.then(|| build_logical_and_expr(rewritten_terms))?
 }
 
-fn try_logical_and_optional_chain_terms(
+fn try_logical_and_optional_chain_prefix(
     terms: &[&Expr],
     unresolved_mark: Mark,
     policy: RewritePolicy,
@@ -426,9 +419,16 @@ fn try_logical_and_optional_chain_terms(
     let mut current_tmp = first.checked;
     let mut index = first.consumed;
 
-    while index < terms.len() - 1 {
-        let segment = extract_logical_and_non_null_segment(terms, index, unresolved_mark, policy)?;
+    while index < terms.len() {
+        let Some(segment) =
+            extract_logical_and_non_null_segment(terms, index, unresolved_mark, policy)
+        else {
+            break;
+        };
         let real_rhs = segment.real_rhs.as_ref()?;
+        if index + segment.consumed >= terms.len() {
+            break;
+        }
         let Expr::Ident(tmp) = strip_parens(&segment.checked) else {
             return None;
         };
@@ -447,13 +447,13 @@ fn try_logical_and_optional_chain_terms(
         index += segment.consumed;
     }
 
-    if index != terms.len() - 1 {
+    if index >= terms.len() {
         return None;
     }
 
     if !chain_temps_are_safe(
         &temps,
-        terms,
+        &terms[..=index],
         policy.level,
         uninitialized_bindings,
         binding_references,
