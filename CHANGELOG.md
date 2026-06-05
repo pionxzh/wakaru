@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.4.0](https://github.com/pionxzh/wakaru/compare/v1.3.0...v1.4.0) (2026-06-05)
+
+### Features
+
+* **core:** expand stable builtin alias roots ([43752197](https://github.com/pionxzh/wakaru/commit/43752197d56e4321cbcb5c07fce5702d2e0ee10a))
+
+### Bug Fixes
+
+* **cli:** prevent unpack path traversal writes ([1d30383b](https://github.com/pionxzh/wakaru/commit/1d30383b20a6f768786b8ada2f1b0945de13c316))
+* **core:** rename React hooks in arrow bodies ([3b1f0d8d](https://github.com/pionxzh/wakaru/commit/3b1f0d8dc5ea6bc1a95ce6919d51dd86ac252bd1))
+* **core:** refine unpack normalization and hoisting guards ([ca63ebf0](https://github.com/pionxzh/wakaru/commit/ca63ebf0babf6595772e3a87d3f215145e29d638))
+* **core:** keep raw unpack before decompile rules ([42a924bc](https://github.com/pionxzh/wakaru/commit/42a924bc0363189be535a0b6766a989b33aa61ec))
+* **core:** recover cross-module helper namespaces ([5d3329d3](https://github.com/pionxzh/wakaru/commit/5d3329d3d7df062beadcd45b770136d9ed44ea7d))
+* **core:** rewrite cross-module numeric require ids ([2c00edc9](https://github.com/pionxzh/wakaru/commit/2c00edc924a002a8230446bd68f91673b9323db5))
+* **core:** recover SWC namespace object spread ([a26aa49b](https://github.com/pionxzh/wakaru/commit/a26aa49bd8735fa8e84db6472203382eb09cd552))
+* **core:** recover object-rest helper variants ([4c54485f](https://github.com/pionxzh/wakaru/commit/4c54485f40d1fc7617e68f76be978382ffd5cf07))
+* **core:** recover inline sliced-array helpers ([aa044908](https://github.com/pionxzh/wakaru/commit/aa0449088137aabd1b2b2c45eb347bbaa1530cd9))
+* **core:** keep smart inline within statement runs ([d4100016](https://github.com/pionxzh/wakaru/commit/d410001671c58610d89d0d2cfd8440e59733a055))
+* **core:** remove async helper dependencies ([027747a4](https://github.com/pionxzh/wakaru/commit/027747a455549da07d029a4812091f92306c3a36))
+* **core:** recover cjs export getters ([11ffe455](https://github.com/pionxzh/wakaru/commit/11ffe455a6c2af982ea111d8860ae7b1daa53f18))
+
+### Performance
+
+* **core:** reuse normalized AST across unpack phases ([8181cc0e](https://github.com/pionxzh/wakaru/commit/8181cc0e57f64b17687d2d944b7c5da041b75695))
+
 ## [1.3.0](https://github.com/pionxzh/wakaru/compare/v1.2.0...v1.3.0) (2026-06-02)
 
 ### Features
