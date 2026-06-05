@@ -45,7 +45,7 @@ Wakaru handles all three in a single command — feed it a bundle, get back read
 ## Install
 
 ```bash
-npm install -g @wakaru/cli
+npm install -g @wakaru/cli@latest
 ```
 
 Or pre-built binaries from [GitHub Releases](https://github.com/pionxzh/wakaru/releases).
