@@ -275,19 +275,19 @@ const a = r?.foo?.bar?.baz;
 #[test]
 fn standard_transforms_issue_166_pattern_1_babel_duplicated_access() {
     let input = r#"
-var _tt, _tt2;
-if ((_tt = tt) != null && (_tt = _tt[bt]) != null && (_tt = _tt.blocks) != null && _tt.hideList && (_tt2 = tt) != null && (_tt2 = _tt2[bt]) != null && (_tt2 = _tt2.blocks) != null && _tt2.hideList.length) {
-  window_lodash.set(n, `${bt}.blocks.hideList`, []);
+var _root, _root2;
+if ((_root = root) != null && (_root = _root[key]) != null && (_root = _root.group) != null && _root.items && (_root2 = root) != null && (_root2 = _root2[key]) != null && (_root2 = _root2.group) != null && _root2.items.length) {
+  sink("clear");
 } else {
-  window_lodash.set(n, `${bt}.blocks.hideList`, ne);
+  sink("fill");
 }
 "#;
     let expected = r#"
-var _tt, _tt2;
-if (tt?.[bt]?.blocks?.hideList && tt?.[bt]?.blocks?.hideList.length) {
-  window_lodash.set(n, `${bt}.blocks.hideList`, []);
+var _root, _root2;
+if (root?.[key]?.group?.items && root?.[key]?.group?.items.length) {
+  sink("clear");
 } else {
-  window_lodash.set(n, `${bt}.blocks.hideList`, ne);
+  sink("fill");
 }
 "#;
     let output = apply(input);
@@ -297,19 +297,19 @@ if (tt?.[bt]?.blocks?.hideList && tt?.[bt]?.blocks?.hideList.length) {
 #[test]
 fn standard_transforms_issue_166_pattern_1_mixed_duplicated_access() {
     let input = r#"
-let e, t, l, i;
-if (tt != null && (e = tt[bt]) !== null && e !== undefined && (t = e.blocks) !== null && t !== undefined && t.hideList && tt != null && (l = tt[bt]) !== null && l !== undefined && (i = l.blocks) !== null && i !== undefined && i.hideList.length) {
-  window_lodash.set(n, `${bt}.blocks.hideList`, []);
+let first, firstGroup, second, secondGroup;
+if (root != null && (first = root[key]) !== null && first !== undefined && (firstGroup = first.group) !== null && firstGroup !== undefined && firstGroup.items && root != null && (second = root[key]) !== null && second !== undefined && (secondGroup = second.group) !== null && secondGroup !== undefined && secondGroup.items.length) {
+  sink("clear");
 } else {
-  window_lodash.set(n, `${bt}.blocks.hideList`, ne);
+  sink("fill");
 }
 "#;
     let expected = r#"
-let e, t, l, i;
-if (tt?.[bt]?.blocks?.hideList && tt?.[bt]?.blocks?.hideList.length) {
-  window_lodash.set(n, `${bt}.blocks.hideList`, []);
+let first, firstGroup, second, secondGroup;
+if (root?.[key]?.group?.items && root?.[key]?.group?.items.length) {
+  sink("clear");
 } else {
-  window_lodash.set(n, `${bt}.blocks.hideList`, ne);
+  sink("fill");
 }
 "#;
     let output = apply(input);
@@ -317,44 +317,44 @@ if (tt?.[bt]?.blocks?.hideList && tt?.[bt]?.blocks?.hideList.length) {
 }
 
 #[test]
-fn standard_transforms_issue_166_pattern_2_loose_slug_exclusions() {
+fn standard_transforms_issue_166_pattern_2_loose_suffix_comparisons() {
     let input = r#"
-var _t;
-if ((_t = t) != null && (_t = _t.supports) != null && _t.editor && t.slug != "wp_template" && t.slug != "wp_template_part" && t.slug != "wp_navigation" && t.slug != "nav_menu_item" && t.slug != "cc_block") {}
+var _item;
+if ((_item = item) != null && (_item = _item.meta) != null && _item.enabled && item.kind != "alpha" && item.kind != "beta" && item.kind != "gamma") {}
 "#;
     let expected = r#"
-var _t;
-if (t?.supports?.editor && t.slug != "wp_template" && t.slug != "wp_template_part" && t.slug != "wp_navigation" && t.slug != "nav_menu_item" && t.slug != "cc_block") {}
+var _item;
+if (item?.meta?.enabled && item.kind != "alpha" && item.kind != "beta" && item.kind != "gamma") {}
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn standard_transforms_issue_166_pattern_2_strict_slug_exclusions() {
+fn standard_transforms_issue_166_pattern_2_strict_suffix_comparisons() {
     let input = r#"
-var _t;
-if ((_t = t) != null && (_t = _t.supports) != null && _t.editor && t.slug !== "wp_template" && t.slug !== "wp_template_part" && t.slug !== "wp_navigation" && t.slug !== "nav_menu_item" && t.slug !== "cc_block") {}
+var _item;
+if ((_item = item) != null && (_item = _item.meta) != null && _item.enabled && item.kind !== "alpha" && item.kind !== "beta" && item.kind !== "gamma") {}
 "#;
     let expected = r#"
-var _t;
-if (t?.supports?.editor && t.slug !== "wp_template" && t.slug !== "wp_template_part" && t.slug !== "wp_navigation" && t.slug !== "nav_menu_item" && t.slug !== "cc_block") {}
+var _item;
+if (item?.meta?.enabled && item.kind !== "alpha" && item.kind !== "beta" && item.kind !== "gamma") {}
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
 
 #[test]
-fn standard_transforms_issue_166_pattern_2_includes_slug_exclusions() {
+fn standard_transforms_issue_166_pattern_2_includes_suffix_condition() {
     let input = r#"
-var _t;
-const excludedSlugs = ["wp_template", "wp_template_part", "wp_navigation", "nav_menu_item", "cc_block"];
-if ((_t = t) != null && (_t = _t.supports) != null && _t.editor && !excludedSlugs.includes(t.slug)) {}
+var _item;
+const blockedKinds = ["alpha", "beta", "gamma"];
+if ((_item = item) != null && (_item = _item.meta) != null && _item.enabled && !blockedKinds.includes(item.kind)) {}
 "#;
     let expected = r#"
-var _t;
-const excludedSlugs = ["wp_template", "wp_template_part", "wp_navigation", "nav_menu_item", "cc_block"];
-if (t?.supports?.editor && !excludedSlugs.includes(t.slug)) {}
+var _item;
+const blockedKinds = ["alpha", "beta", "gamma"];
+if (item?.meta?.enabled && !blockedKinds.includes(item.kind)) {}
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
