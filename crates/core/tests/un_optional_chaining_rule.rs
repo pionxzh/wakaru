@@ -361,6 +361,40 @@ if (item?.meta?.enabled && !blockedKinds.includes(item.kind)) {}
 }
 
 #[test]
+fn pipeline_transforms_logical_and_chain_after_conditional_statement_recovery() {
+    let input = r#"
+var _item;
+(_item = item) != null && (_item = _item.meta) != null && _item.enabled && item.kind != "alpha" ? sink("clear") : sink("fill");
+"#;
+    let expected = r#"
+if (item?.meta?.enabled && item.kind != "alpha") {
+  sink("clear");
+} else {
+  sink("fill");
+}
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn pipeline_transforms_logical_and_chain_after_short_circuit_statement_recovery() {
+    let input = r#"
+var _item;
+const blockedKinds = ["alpha", "beta", "gamma"];
+(_item = item) != null && (_item = _item.meta) != null && _item.enabled && !blockedKinds.includes(item.kind) && sink(item);
+"#;
+    let expected = r#"
+const blockedKinds = ["alpha", "beta", "gamma"];
+if (item?.meta?.enabled && !blockedKinds.includes(item.kind)) {
+  sink(item);
+}
+"#;
+    let output = render(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn pipeline_transforms_issue_142_swc_terser_mixed_loose_root_chain() {
     // Reproduces issue #142 from:
     //   var a = (null == r ? void 0 : r.app_info?.base_info?.app_name) ?? "game";

@@ -440,6 +440,9 @@ define_rule_registry! {
     ("UnOptionalChaining", Structural, run_un_optional_chaining, always_enabled),
     ("UnIife", Complex, run_un_iife, always_enabled),
     ("UnConditionals", Complex, run_un_conditionals, always_enabled),
+    ("UnOptionalChaining2", Complex, run_un_optional_chaining, always_enabled, requires: [
+        "UnConditionals"
+    ]),
     ("UnParameters", Complex, run_un_parameters, always_enabled, requires: [
         "FlipComparisons",
         "RemoveVoid"
