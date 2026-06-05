@@ -273,6 +273,94 @@ const a = r?.foo?.bar?.baz;
 }
 
 #[test]
+fn standard_transforms_issue_166_pattern_1_babel_duplicated_access() {
+    let input = r#"
+var _root, _root2;
+if ((_root = root) != null && (_root = _root[key]) != null && (_root = _root.group) != null && _root.items && (_root2 = root) != null && (_root2 = _root2[key]) != null && (_root2 = _root2.group) != null && _root2.items.length) {
+  sink("clear");
+} else {
+  sink("fill");
+}
+"#;
+    let expected = r#"
+var _root, _root2;
+if (root?.[key]?.group?.items && root?.[key]?.group?.items.length) {
+  sink("clear");
+} else {
+  sink("fill");
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_issue_166_pattern_1_mixed_duplicated_access() {
+    let input = r#"
+let first, firstGroup, second, secondGroup;
+if (root != null && (first = root[key]) !== null && first !== undefined && (firstGroup = first.group) !== null && firstGroup !== undefined && firstGroup.items && root != null && (second = root[key]) !== null && second !== undefined && (secondGroup = second.group) !== null && secondGroup !== undefined && secondGroup.items.length) {
+  sink("clear");
+} else {
+  sink("fill");
+}
+"#;
+    let expected = r#"
+let first, firstGroup, second, secondGroup;
+if (root?.[key]?.group?.items && root?.[key]?.group?.items.length) {
+  sink("clear");
+} else {
+  sink("fill");
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_issue_166_pattern_2_loose_suffix_comparisons() {
+    let input = r#"
+var _item;
+if ((_item = item) != null && (_item = _item.meta) != null && _item.enabled && item.kind != "alpha" && item.kind != "beta" && item.kind != "gamma") {}
+"#;
+    let expected = r#"
+var _item;
+if (item?.meta?.enabled && item.kind != "alpha" && item.kind != "beta" && item.kind != "gamma") {}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_issue_166_pattern_2_strict_suffix_comparisons() {
+    let input = r#"
+var _item;
+if ((_item = item) != null && (_item = _item.meta) != null && _item.enabled && item.kind !== "alpha" && item.kind !== "beta" && item.kind !== "gamma") {}
+"#;
+    let expected = r#"
+var _item;
+if (item?.meta?.enabled && item.kind !== "alpha" && item.kind !== "beta" && item.kind !== "gamma") {}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_transforms_issue_166_pattern_2_includes_suffix_condition() {
+    let input = r#"
+var _item;
+const blockedKinds = ["alpha", "beta", "gamma"];
+if ((_item = item) != null && (_item = _item.meta) != null && _item.enabled && !blockedKinds.includes(item.kind)) {}
+"#;
+    let expected = r#"
+var _item;
+const blockedKinds = ["alpha", "beta", "gamma"];
+if (item?.meta?.enabled && !blockedKinds.includes(item.kind)) {}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn pipeline_transforms_issue_142_swc_terser_mixed_loose_root_chain() {
     // Reproduces issue #142 from:
     //   var a = (null == r ? void 0 : r.app_info?.base_info?.app_name) ?? "game";
