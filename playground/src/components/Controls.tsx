@@ -17,7 +17,6 @@ interface ControlsProps {
   formatter: boolean;
   onLevelChange: (level: Level) => void;
   onFormatterChange: (formatter: boolean) => void;
-  onRun: () => void;
   onShare: () => void;
   isLoading: boolean;
   wasmReady: boolean;
@@ -30,7 +29,6 @@ export function Controls({
   formatter,
   onLevelChange,
   onFormatterChange,
-  onRun,
   onShare,
   isLoading,
   wasmReady,
@@ -66,13 +64,6 @@ export function Controls({
             <span className="controls-switch-thumb" />
           </button>
         </label>
-        <button
-          className="controls-button"
-          onClick={onRun}
-          disabled={isLoading || !wasmReady}
-        >
-          {isLoading ? "Running..." : wasmReady ? "Decompile" : "Loading WASM..."}
-        </button>
         <span className="controls-separator" aria-hidden="true" />
         <button className="controls-button controls-button-secondary" onClick={onShare}>
           <ShareIcon />
@@ -80,6 +71,8 @@ export function Controls({
         </button>
       </div>
       <div className="controls-right">
+        {!wasmReady && <span className="controls-share-status">Loading WASM...</span>}
+        {wasmReady && isLoading && <span className="controls-share-status">Running...</span>}
         {shareStatus && (
           <span className="controls-share-status" role="status">
             {shareStatus}

@@ -15,6 +15,19 @@ const WAKARU_VERSION = import.meta.env.VITE_WAKARU_VERSION;
 const WAKARU_GIT_HASH = import.meta.env.VITE_WAKARU_GIT_HASH;
 const VERSION_LABEL = `v${WAKARU_VERSION}+${WAKARU_GIT_HASH}`;
 const INITIAL_SHARE_STATE = readShareState();
+const INITIAL_AUTO_RUN_DELAY_MS = 80;
+const MIN_AUTO_RUN_DELAY_MS = 60;
+const MAX_AUTO_RUN_DELAY_MS = 300;
+const RUNNING_STATUS_DELAY_MS = 180;
+
+function getAutoRunDelay(elapsed: number) {
+  return Math.round(
+    Math.min(
+      MAX_AUTO_RUN_DELAY_MS,
+      Math.max(MIN_AUTO_RUN_DELAY_MS, elapsed * 0.5)
+    )
+  );
+}
 
 export function App() {
   const [source, setSource] = useState(INITIAL_SHARE_STATE?.source ?? DEFAULT_EXAMPLE);
@@ -25,29 +38,52 @@ export function App() {
     INITIAL_SHARE_STATE?.formatter ?? true
   );
   const [isLoading, setIsLoading] = useState(false);
+  const [showRunningStatus, setShowRunningStatus] = useState(false);
   const [wasmReady, setWasmReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const bridgeRef = useRef<WasmBridge | null>(null);
+  const activeRunRef = useRef(false);
+  const autoRunDelayRef = useRef(INITIAL_AUTO_RUN_DELAY_MS);
+  const inputVersionRef = useRef(0);
+  const latestInputRef = useRef({ source, level, formatter });
   const shareStatusTimeoutRef = useRef<number | null>(null);
 
-  const runDecompile = useCallback(async (src: string, lvl: string, fmt: boolean) => {
-    if (!bridgeRef.current) return;
+  const runDecompile = useCallback(async () => {
+    if (!bridgeRef.current || activeRunRef.current) return;
+    activeRunRef.current = true;
+    const input = latestInputRef.current;
+    const inputVersion = inputVersionRef.current;
     setIsLoading(true);
     setError(null);
     const start = performance.now();
     try {
-      const result = await bridgeRef.current.decompile(src, lvl, fmt, true);
+      const result = await bridgeRef.current.decompile(
+        input.source,
+        input.level,
+        input.formatter,
+        true
+      );
+      if (inputVersion !== inputVersionRef.current) return;
+      const duration = performance.now() - start;
+      autoRunDelayRef.current = getAutoRunDelay(duration);
       setOutput(result.code);
       setWarnings(result.warnings);
-      setElapsed(performance.now() - start);
+      setElapsed(duration);
     } catch (e) {
+      if (inputVersion !== inputVersionRef.current) return;
+      autoRunDelayRef.current = getAutoRunDelay(performance.now() - start);
       setError(e instanceof Error ? e.message : String(e));
       setOutput("");
       setWarnings([]);
     } finally {
-      setIsLoading(false);
+      activeRunRef.current = false;
+      if (inputVersion !== inputVersionRef.current) {
+        void runDecompile();
+      } else {
+        setIsLoading(false);
+      }
     }
   }, []);
 
@@ -58,17 +94,37 @@ export function App() {
       .waitForInit()
       .then(() => {
         setWasmReady(true);
-        runDecompile(source, level, formatter);
       })
       .catch((e) => setError(e.message));
     return () => bridge.terminate();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleRun = useCallback(async () => {
-    if (!bridgeRef.current || !wasmReady) return;
-    runDecompile(source, level, formatter);
+  useEffect(() => {
+    latestInputRef.current = { source, level, formatter };
+    inputVersionRef.current += 1;
+  }, [source, level, formatter]);
+
+  useEffect(() => {
+    if (!wasmReady) return;
+    if (activeRunRef.current) return;
+    const timeoutId = window.setTimeout(() => {
+      void runDecompile();
+    }, autoRunDelayRef.current);
+    return () => window.clearTimeout(timeoutId);
   }, [source, level, formatter, wasmReady, runDecompile]);
+
+  useEffect(() => {
+    if (!isLoading) {
+      setShowRunningStatus(false);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setShowRunningStatus(true);
+    }, RUNNING_STATUS_DELAY_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [isLoading]);
 
   const showShareStatus = useCallback((message: string) => {
     if (shareStatusTimeoutRef.current !== null) {
@@ -127,9 +183,8 @@ export function App() {
         formatter={formatter}
         onLevelChange={setLevel}
         onFormatterChange={setFormatter}
-        onRun={handleRun}
         onShare={handleShare}
-        isLoading={isLoading}
+        isLoading={showRunningStatus}
         wasmReady={wasmReady}
         elapsed={elapsed}
         shareStatus={shareStatus}
