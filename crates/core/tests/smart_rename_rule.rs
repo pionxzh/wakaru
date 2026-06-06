@@ -67,6 +67,46 @@ dispatchers.delete(gql, listener);
 }
 
 #[test]
+fn object_destructuring_rename_numbered_minified_aliases() {
+    let input = r#"
+const {
+  alphaName: ab1,
+  betaName: cd1,
+  gammaName: ef1,
+  deltaName: ghi1,
+} = source;
+render(ab1, cd1, ef1, ghi1);
+"#;
+    let expected = r#"
+const {
+  alphaName,
+  betaName,
+  gammaName,
+  deltaName,
+} = source;
+render(alphaName, betaName, gammaName, deltaName);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn object_destructuring_numbered_alias_avoids_existing_property_name() {
+    let input = r#"
+const alphaName = createValue();
+const { alphaName: ab1 } = source;
+render(alphaName, ab1);
+"#;
+    let expected = r#"
+const alphaName = createValue();
+const { alphaName: alphaName_1 } = source;
+render(alphaName, alphaName_1);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn object_destructuring_with_reserved_identifier() {
     let input = r#"
 const {
@@ -177,6 +217,18 @@ const [, g] = o.useState(0);
     let expected = r#"
 const [e, setE] = useState();
 const [, setG] = o.useState(0);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn react_rename_usestate_numbered_generated_setter() {
+    let input = r#"
+const [count, ab1] = useState(0);
+"#;
+    let expected = r#"
+const [count, setCount] = useState(0);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -338,6 +390,20 @@ console.log(zw_NOT_APPLICABLE);
 }
 
 #[test]
+fn member_init_rename_numbered_generated_alias() {
+    let input = r#"
+const ab1 = source.readableName;
+render(ab1);
+"#;
+    let expected = r#"
+const source_readableName = source.readableName;
+render(source_readableName);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn member_init_rename_short_obj() {
     // var z = q.length → rename z to q_length
     let input = r#"
@@ -485,6 +551,20 @@ console.log(ul, At);
 }
 
 #[test]
+fn symbol_for_renames_numbered_generated_alias() {
+    let input = r#"
+const ab1 = Symbol.for("example.key");
+console.log(ab1);
+"#;
+    let expected = r#"
+const SYMBOL_EXAMPLE_KEY = Symbol.for("example.key");
+console.log(SYMBOL_EXAMPLE_KEY);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn symbol_for_camel_case_key() {
     let input = r#"
 const Ac = Symbol.for("react.forward_ref");
@@ -610,6 +690,24 @@ export default {
 import FrontPage from "./module-28.js";
 export default {
     FrontPage
+};
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn value_position_renames_numbered_generated_alias() {
+    let input = r#"
+const ab1 = sourceValue;
+export default {
+    RecoveredName: ab1
+};
+"#;
+    let expected = r#"
+const RecoveredName = sourceValue;
+export default {
+    RecoveredName
 };
 "#;
     let output = apply(input);

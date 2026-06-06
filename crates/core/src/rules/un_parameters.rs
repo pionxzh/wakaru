@@ -9,7 +9,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::js_names::is_reserved_binding_name;
+use crate::js_names::{is_likely_generated_alias, is_reserved_binding_name};
 
 use super::decl_utils::same_ident;
 use super::rename_utils::{rename_bindings, BindingRename};
@@ -1581,7 +1581,7 @@ fn key_value_pat_has_minified_alias(kv: &swc_core::ecma::ast::KeyValuePatProp) -
 }
 
 fn is_short_alias_for_key(key: &Atom, alias: &Atom) -> bool {
-    key != alias && alias.len() <= 2
+    key != alias && is_likely_generated_alias(alias)
 }
 
 fn is_preferred_short_alias_target(key: &Atom) -> bool {

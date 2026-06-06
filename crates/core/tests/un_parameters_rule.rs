@@ -782,6 +782,28 @@ function reducer(e = s, { type, payload: r } = {}) {
 }
 
 #[test]
+fn object_property_numbered_generated_alias_renames_to_property_name() {
+    let input = r#"
+function reducer(e = s, t = {}) {
+  var ab1 = t.type;
+  if (ab1 === LOCATION_CHANGE) {
+    return e;
+  }
+  return e;
+}
+"#;
+    let expected = r#"
+function reducer(e = s, { type } = {}) {
+  if (type === LOCATION_CHANGE) {
+    return e;
+  }
+  return e;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn object_property_short_alias_rename_avoids_nested_capture() {
     let input = r#"
 function reducer(t = {}) {

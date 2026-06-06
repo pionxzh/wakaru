@@ -12,7 +12,9 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::js_names::{is_reserved_binding_name, to_valid_identifier_name};
+use crate::js_names::{
+    is_likely_generated_alias, is_reserved_binding_name, to_valid_identifier_name,
+};
 
 use super::decl_utils::collect_decl_binding_ids;
 use super::expr_utils::is_unresolved_ident;
@@ -108,7 +110,6 @@ impl VisitMut for SmartRenameSecondPass {
 // React hook renames
 // ============================================================
 
-const REACT_MINIFIED_THRESHOLD: usize = 2;
 const MAX_SYNTHETIC_NAME_ATTEMPTS: usize = 10_000;
 
 fn react_rename_module(module: &mut Module) {
@@ -159,10 +160,10 @@ fn has_react_candidates_in_stmts(stmts: &[Stmt]) -> bool {
                 return false;
             }
             match &decl.name {
-                Pat::Ident(bi) => bi.id.sym.chars().count() <= REACT_MINIFIED_THRESHOLD,
-                Pat::Array(arr) => arr.elems.iter().flatten().any(|elem| {
-                    matches!(elem, Pat::Ident(bi) if bi.id.sym.chars().count() <= REACT_MINIFIED_THRESHOLD)
-                }),
+                Pat::Ident(bi) => is_likely_generated_alias(&bi.id.sym),
+                Pat::Array(arr) => arr.elems.iter().flatten().any(
+                    |elem| matches!(elem, Pat::Ident(bi) if is_likely_generated_alias(&bi.id.sym)),
+                ),
                 _ => false,
             }
         })
@@ -213,7 +214,7 @@ fn collect_react_var_decl_renames(
                 if let Some(init) = &decl.init {
                     if let Some(hook_name) = get_single_react_hook_call(init) {
                         let old_name = binding.id.sym.to_string();
-                        if old_name.chars().count() > REACT_MINIFIED_THRESHOLD {
+                        if !is_likely_generated_alias(&binding.id.sym) {
                             continue;
                         }
 
@@ -357,7 +358,7 @@ fn get_array_elem_if_short(array_pat: &ArrayPat, idx: usize) -> Option<(String, 
         return None;
     };
     let name = bi.id.sym.to_string();
-    if name.chars().count() <= REACT_MINIFIED_THRESHOLD {
+    if is_likely_generated_alias(&bi.id.sym) {
         Some((name, (bi.id.sym.clone(), bi.id.ctxt)))
     } else {
         None
@@ -396,7 +397,7 @@ fn optimistic_state_base_name(init: &Expr, array_pat: &ArrayPat) -> Option<Strin
     }
 
     let first_name = get_array_elem_name(array_pat, 0)?;
-    if first_name.chars().count() <= REACT_MINIFIED_THRESHOLD {
+    if is_likely_generated_alias(first_name.as_str()) {
         return None;
     }
     Some(strip_optimistic_prefix(&first_name))
@@ -466,9 +467,9 @@ fn has_short_obj_pat_alias(pat: &Pat) -> bool {
     };
     obj_pat.props.iter().any(|prop| match prop {
         ObjectPatProp::KeyValue(kv) => extract_binding_from_pat(&kv.value)
-            .is_some_and(|(sym, _)| sym.chars().count() <= REACT_MINIFIED_THRESHOLD),
+            .is_some_and(|(sym, _)| is_likely_generated_alias(&sym)),
         ObjectPatProp::Rest(rest) => extract_binding_from_pat(&rest.arg)
-            .is_some_and(|(sym, _)| sym.chars().count() <= REACT_MINIFIED_THRESHOLD),
+            .is_some_and(|(sym, _)| is_likely_generated_alias(&sym)),
         _ => false,
     })
 }
@@ -680,7 +681,7 @@ fn collect_obj_pat_renames_from_pat(
                     Some(id) => id,
                     None => continue,
                 };
-                if alias.0.as_ref().chars().count() > REACT_MINIFIED_THRESHOLD {
+                if !is_likely_generated_alias(&alias.0) {
                     continue;
                 }
                 if alias.0.as_ref() == target_name {
@@ -698,7 +699,7 @@ fn collect_obj_pat_renames_from_pat(
                 let Some(alias) = extract_binding_from_pat(&rest_pat.arg) else {
                     continue;
                 };
-                if alias.0.as_ref().chars().count() > REACT_MINIFIED_THRESHOLD {
+                if !is_likely_generated_alias(&alias.0) {
                     continue;
                 }
                 let new_name = find_non_conflicting_name("rest", used_names);
@@ -826,7 +827,7 @@ fn has_member_init_candidates_in_stmts(stmts: &[Stmt]) -> bool {
             let Pat::Ident(bi) = &decl.name else {
                 return false;
             };
-            if bi.id.sym.chars().count() > REACT_MINIFIED_THRESHOLD {
+            if !is_likely_generated_alias(&bi.id.sym) {
                 return false;
             }
             matches!(
@@ -922,7 +923,7 @@ fn collect_member_init_var_renames(
         let old_name = bi.id.sym.to_string();
 
         // Only rename short (minified) names
-        if old_name.chars().count() > REACT_MINIFIED_THRESHOLD {
+        if !is_likely_generated_alias(old_name.as_str()) {
             continue;
         }
 
@@ -939,15 +940,13 @@ fn collect_member_init_var_renames(
         let new_name = if let Expr::Ident(obj) = member.obj.as_ref() {
             let obj_name = obj.sym.to_string();
             // Skip if both obj and prop are short — the combined name wouldn't help
-            if obj_name.chars().count() <= REACT_MINIFIED_THRESHOLD
-                && prop_name.chars().count() <= REACT_MINIFIED_THRESHOLD
-            {
+            if obj_name.chars().count() <= 2 && prop_name.chars().count() <= 2 {
                 continue;
             }
             format!("{}_{}", obj_name, prop_name)
         } else {
             // Non-ident obj (e.g. call().prop) — skip if prop is too short
-            if prop_name.chars().count() <= REACT_MINIFIED_THRESHOLD {
+            if prop_name.chars().count() <= 2 {
                 continue;
             }
             prop_name.clone()
@@ -974,7 +973,7 @@ fn has_symbol_for_candidates_in_stmts(stmts: &[Stmt]) -> bool {
         let Stmt::Decl(Decl::Var(var)) = stmt else { return false };
         var.decls.iter().any(|decl| {
             let Pat::Ident(bi) = &decl.name else { return false };
-            if bi.id.sym.chars().count() > REACT_MINIFIED_THRESHOLD {
+            if !is_likely_generated_alias(&bi.id.sym) {
                 return false;
             }
             let Some(Expr::Call(call)) = decl.init.as_deref() else { return false };
@@ -1084,7 +1083,7 @@ fn collect_symbol_for_var_renames(
         let old_name = bi.id.sym.to_string();
 
         // Only rename short (minified) names
-        if old_name.chars().count() > REACT_MINIFIED_THRESHOLD {
+        if !is_likely_generated_alias(old_name.as_str()) {
             continue;
         }
 
@@ -1381,7 +1380,7 @@ struct BindingCollector {
 
 impl BindingCollector {
     fn record(&mut self, id: &Ident) {
-        if id.sym.chars().count() <= REACT_MINIFIED_THRESHOLD {
+        if is_likely_generated_alias(&id.sym) {
             self.short_bindings.insert((id.sym.clone(), id.ctxt), ());
         }
     }
@@ -1694,7 +1693,7 @@ fn sentry_component_rename_module(module: &mut Module) {
         if bid.0.as_ref() == target.as_str() {
             continue;
         }
-        if bid.0.chars().count() > REACT_MINIFIED_THRESHOLD {
+        if !is_likely_generated_alias(&bid.0) {
             continue;
         }
         if !is_valid_js_ident(&target) {
@@ -1914,7 +1913,7 @@ impl Visit for JsxComponentAliasCollector {
             let Pat::Ident(binding) = &declarator.name else {
                 continue;
             };
-            if binding.id.sym.chars().count() > REACT_MINIFIED_THRESHOLD {
+            if !is_likely_generated_alias(&binding.id.sym) {
                 continue;
             }
             let Some(Expr::Ident(source)) = declarator.init.as_deref() else {

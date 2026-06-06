@@ -25,6 +25,63 @@ pub fn is_reserved_binding_name(name: &str) -> bool {
     name.is_reserved() || name.is_reserved_in_strict_mode(true) || name.is_reserved_in_strict_bind()
 }
 
+pub fn is_likely_generated_alias(name: &str) -> bool {
+    name.chars().count() <= 2
+        || is_numbered_short_alpha_alias(name)
+        || is_short_prefixed_generated_alias(name)
+}
+
+fn is_numbered_short_alpha_alias(name: &str) -> bool {
+    let mut alpha_count = 0;
+    let mut saw_digit = false;
+    for ch in name.chars() {
+        if saw_digit {
+            if !ch.is_ascii_digit() {
+                return false;
+            }
+            continue;
+        }
+        if ch.is_ascii_alphabetic() {
+            alpha_count += 1;
+            if alpha_count > 3 {
+                return false;
+            }
+        } else if ch.is_ascii_digit() {
+            saw_digit = true;
+        } else {
+            return false;
+        }
+    }
+    (2..=3).contains(&alpha_count) && saw_digit
+}
+
+fn is_short_prefixed_generated_alias(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix('_').or_else(|| name.strip_prefix('$')) else {
+        return false;
+    };
+    let mut alpha_count = 0;
+    let mut saw_digit = false;
+    for ch in rest.chars() {
+        if saw_digit {
+            if !ch.is_ascii_digit() {
+                return false;
+            }
+            continue;
+        }
+        if ch.is_ascii_alphabetic() {
+            alpha_count += 1;
+            if alpha_count > 3 {
+                return false;
+            }
+        } else if ch.is_ascii_digit() {
+            saw_digit = true;
+        } else {
+            return false;
+        }
+    }
+    (1..=3).contains(&alpha_count)
+}
+
 /// Standard global roots that are safe and useful for SmartInline alias recovery.
 ///
 /// This is intentionally not a full known-global/environment list. SmartInline uses
@@ -94,8 +151,8 @@ pub fn is_stable_builtin_alias_root(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_reserved_binding_name, is_stable_builtin_alias_root, is_valid_identifier_name,
-        to_valid_identifier_name,
+        is_likely_generated_alias, is_reserved_binding_name, is_stable_builtin_alias_root,
+        is_valid_identifier_name, to_valid_identifier_name,
     };
 
     #[test]
@@ -123,6 +180,26 @@ mod tests {
         assert!(is_reserved_binding_name("eval"));
         assert!(is_reserved_binding_name("arguments"));
         assert!(!is_reserved_binding_name("notReserved"));
+    }
+
+    #[test]
+    fn classifies_generated_alias_shapes() {
+        for name in [
+            "a", "ab", "ab1", "abc12", "_a", "_a2", "_ref", "$e", "$ref2",
+        ] {
+            assert!(is_likely_generated_alias(name), "{name}");
+        }
+
+        for name in [
+            "user2",
+            "label1",
+            "foo_1",
+            "primary",
+            "userId",
+            "rootClassName",
+        ] {
+            assert!(!is_likely_generated_alias(name), "{name}");
+        }
     }
 
     #[test]

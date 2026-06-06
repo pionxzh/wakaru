@@ -260,6 +260,33 @@ async function runTask(resourceName, B, attemptCount, waitMs, E) {}
 }
 
 #[test]
+fn async_param_hint_renames_numbered_generated_alias() {
+    let input = r#"
+function runTask(ab1) {
+  return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          return [3 /*break*/, {
+            details: {
+              targetName: ab1
+            }
+          }];
+        case 1:
+          return [2 /*return*/];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+async function runTask(targetName) {}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn async_param_hint_does_not_rename_param_used_by_default() {
     let input = r#"
 function runTask(A, B = A, C) {

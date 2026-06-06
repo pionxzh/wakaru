@@ -12,6 +12,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use super::helper_matcher::binding_key;
 use super::rename_utils::BindingId;
 use super::transpiler_helper_utils::{BindingKey, LocalHelperContext, TsHelperKind};
+use crate::js_names::is_likely_generated_alias;
 use crate::utils::paren::strip_parens;
 
 pub struct UnAsyncAwait;
@@ -877,7 +878,7 @@ fn collect_awaiter_param_hints(
         .params
         .iter()
         .filter_map(|param| match &param.pat {
-            Pat::Ident(binding) if binding.id.sym.chars().count() <= 2 => {
+            Pat::Ident(binding) if is_likely_generated_alias(&binding.id.sym) => {
                 Some((binding.id.sym.clone(), binding.id.ctxt))
             }
             _ => None,
