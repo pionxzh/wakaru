@@ -19,7 +19,11 @@ export function readShareState(hash = window.location.hash): PlaygroundShareStat
     return null;
   }
 
-  const rawState = hash.slice(1);
+  const rawState = decodeHashState(hash.slice(1));
+  if (rawState === null) {
+    return null;
+  }
+
   if (!rawState.startsWith(SHARE_HASH_PREFIX)) {
     return null;
   }
@@ -88,6 +92,14 @@ function isLevel(value: unknown): value is Level {
 
 function isFormatter(value: unknown): value is Formatter {
   return value === "none" || value === "oxc";
+}
+
+function decodeHashState(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
 }
 
 function encodeBase64Url(bytes: Uint8Array): string {
