@@ -4,6 +4,7 @@ pub mod scope_hoist;
 pub mod systemjs;
 pub mod webpack4;
 pub mod webpack5;
+mod wrappers;
 
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap, SyntaxContext, GLOBALS};
@@ -54,67 +55,86 @@ pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
             parse_es_module(source, "bundle.js", cm.clone())?
         };
 
-        let result = {
-            let span = tracing::info_span!("detect_webpack5");
-            let _enter = span.enter();
-            webpack5::detect_from_module(&module, cm.clone())
-        };
-        if result.is_some() {
-            return Ok(result);
+        if let Some(result) = detect_bundle_candidate(&module, cm.clone(), source, true) {
+            return Ok(Some(result));
         }
 
+        let unwrapped_candidates = wrappers::collect_unwrap_candidates(&module);
+        for candidate in &unwrapped_candidates {
+            if let Some(result) = detect_bundle_candidate(candidate, cm.clone(), source, false) {
+                return Ok(Some(result));
+            }
+        }
+
+        Ok(None)
+    })
+}
+
+fn detect_bundle_candidate(
+    module: &Module,
+    cm: Lrc<SourceMap>,
+    source: &str,
+    allow_runtime_entry: bool,
+) -> Option<UnpackResult> {
+    let result = {
+        let span = tracing::info_span!("detect_webpack5");
+        let _enter = span.enter();
+        webpack5::detect_from_module(module, cm.clone())
+    };
+    if result.is_some() {
+        return result;
+    }
+
+    if allow_runtime_entry {
         let result = {
             let span = tracing::info_span!("detect_webpack5_runtime_entry");
             let _enter = span.enter();
-            webpack5::detect_runtime_entry_from_module(&module, source)
+            webpack5::detect_runtime_entry_from_module(module, source)
         };
         if result.is_some() {
-            return Ok(result);
+            return result;
         }
+    }
 
-        let result = {
-            let span = tracing::info_span!("detect_webpack4");
-            let _enter = span.enter();
-            webpack4::detect_from_module(&module, cm.clone())
-        };
-        if result.is_some() {
-            return Ok(result);
-        }
+    let result = {
+        let span = tracing::info_span!("detect_webpack4");
+        let _enter = span.enter();
+        webpack4::detect_from_module(module, cm.clone())
+    };
+    if result.is_some() {
+        return result;
+    }
 
-        let result = {
-            let span = tracing::info_span!("detect_webpack5_chunk");
-            let _enter = span.enter();
-            webpack5::detect_chunk_from_module(&module, cm.clone())
-        };
-        if result.is_some() {
-            return Ok(result);
-        }
+    let result = {
+        let span = tracing::info_span!("detect_webpack5_chunk");
+        let _enter = span.enter();
+        webpack5::detect_chunk_from_module(module, cm.clone())
+    };
+    if result.is_some() {
+        return result;
+    }
 
-        let result = {
-            let span = tracing::info_span!("detect_browserify");
-            let _enter = span.enter();
-            browserify::detect_from_module(&module, cm.clone())
-        };
-        if result.is_some() {
-            return Ok(result);
-        }
+    let result = {
+        let span = tracing::info_span!("detect_browserify");
+        let _enter = span.enter();
+        browserify::detect_from_module(module, cm.clone())
+    };
+    if result.is_some() {
+        return result;
+    }
 
-        let result = {
-            let span = tracing::info_span!("detect_systemjs");
-            let _enter = span.enter();
-            systemjs::detect_from_module(&module, cm.clone())
-        };
-        if result.is_some() {
-            return Ok(result);
-        }
+    let result = {
+        let span = tracing::info_span!("detect_systemjs");
+        let _enter = span.enter();
+        systemjs::detect_from_module(module, cm.clone())
+    };
+    if result.is_some() {
+        return result;
+    }
 
-        let result = {
-            let span = tracing::info_span!("detect_esbuild");
-            let _enter = span.enter();
-            esbuild::detect_from_module(&module, cm)
-        };
-        Ok(result)
-    })
+    let span = tracing::info_span!("detect_esbuild");
+    let _enter = span.enter();
+    esbuild::detect_from_module(module, cm)
 }
 
 pub fn try_unpack_bundle_raw(source: &str) -> anyhow::Result<Option<UnpackResult>> {

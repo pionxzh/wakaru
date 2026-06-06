@@ -19,6 +19,12 @@ echo "=== Webpack 4 (4.47.0) ==="
 echo "  wp4-cjs:           CJS-only modules (dev, string IDs, object map)"
 npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-cjs.config.cjs 2>/dev/null
 
+echo "  wp4-umd:           CJS-only modules wrapped as a UMD library"
+npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-umd.config.cjs 2>/dev/null
+
+echo "  wp4-amd:           CJS-only modules wrapped as an AMD library"
+npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-amd.config.cjs 2>/dev/null
+
 echo "  wp4-esm:           ESM modules (require.r + require.d 3-arg form)"
 npx --yes -p webpack@4 -p webpack-cli@3 webpack --config webpack4-esm.config.cjs 2>/dev/null
 
@@ -58,11 +64,23 @@ npx --yes webpack-cli@5 --config webpack5-esm.config.cjs 2>/dev/null
 echo "  wp5-mixed:         ESM entry importing CJS module via require()"
 npx --yes webpack-cli@5 --config webpack5-mixed.config.cjs 2>/dev/null
 
+echo "  wp5-umd:           CJS-only modules wrapped as a UMD library"
+npx --yes webpack-cli@5 --config webpack5-umd.config.cjs 2>/dev/null
+
+echo "  wp5-umd-esm:       ESM modules wrapped as a UMD library"
+npx --yes webpack-cli@5 --config webpack5-umd-esm.config.cjs 2>/dev/null
+
+echo "  wp5-amd:           CJS-only modules wrapped as an AMD library"
+npx --yes webpack-cli@5 --config webpack5-amd.config.cjs 2>/dev/null
+
 echo "  wp5-prod:          Production (fully flattened, nothing to unpack)"
 npx --yes webpack-cli@5 --config webpack5-prod.config.cjs 2>/dev/null
 
 echo "  wp5-cjs-min:       CJS-only modules (production, minified)"
 npx --yes webpack-cli@5 --config webpack5-cjs-min.config.cjs 2>/dev/null
+
+echo "  wp5-umd-min:       CJS-only modules wrapped as a minified UMD library"
+npx --yes webpack-cli@5 --config webpack5-umd-min.config.cjs 2>/dev/null
 
 echo "  wp5-esm-min:       ESM modules (production, fully flattened + minified)"
 npx --yes webpack-cli@5 --config webpack5-esm-min.config.cjs 2>/dev/null

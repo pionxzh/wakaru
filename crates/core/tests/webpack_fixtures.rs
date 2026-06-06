@@ -75,6 +75,22 @@ fn wp4_cjs_dev() {
 }
 
 #[test]
+fn wp4_umd_library_wrapper() {
+    let pairs = unpack_fixture("wp4-umd/bundle.js");
+    assert_eq!(pairs.len(), 3, "wp4-umd: {}", filenames(&pairs).join(", "));
+    assert_has_entry(&pairs, "wp4-umd");
+    assert_no_traversal(&pairs, "wp4-umd");
+}
+
+#[test]
+fn wp4_amd_library_wrapper() {
+    let pairs = unpack_fixture("wp4-amd/bundle.js");
+    assert_eq!(pairs.len(), 3, "wp4-amd: {}", filenames(&pairs).join(", "));
+    assert_has_entry(&pairs, "wp4-amd");
+    assert_no_traversal(&pairs, "wp4-amd");
+}
+
+#[test]
 fn wp4_esm_dev() {
     let pairs = unpack_fixture("wp4-esm/bundle.js");
     assert_eq!(pairs.len(), 3, "wp4-esm: {}", filenames(&pairs).join(", "));
@@ -250,6 +266,46 @@ fn wp5_mixed_dev() {
     );
 }
 
+#[test]
+fn wp5_umd_library_wrapper() {
+    let pairs = unpack_fixture("wp5-umd/bundle.js");
+    assert!(
+        pairs.len() >= 3,
+        "wp5-umd: expected >=3, got {} — {}",
+        pairs.len(),
+        filenames(&pairs).join(", ")
+    );
+    assert_has_entry(&pairs, "wp5-umd");
+    assert_no_traversal(&pairs, "wp5-umd");
+}
+
+#[test]
+fn wp5_umd_esm_library_wrapper() {
+    let pairs = unpack_fixture("wp5-umd-esm/bundle.js");
+    assert!(
+        pairs.len() >= 3,
+        "wp5-umd-esm: expected >=3, got {} — {}",
+        pairs.len(),
+        filenames(&pairs).join(", ")
+    );
+    assert_has_entry(&pairs, "wp5-umd-esm");
+    assert_no_runtime_helpers(&pairs, "wp5-umd-esm");
+    assert_no_traversal(&pairs, "wp5-umd-esm");
+}
+
+#[test]
+fn wp5_amd_library_wrapper() {
+    let pairs = unpack_fixture("wp5-amd/bundle.js");
+    assert!(
+        pairs.len() >= 3,
+        "wp5-amd: expected >=3, got {} — {}",
+        pairs.len(),
+        filenames(&pairs).join(", ")
+    );
+    assert_has_entry(&pairs, "wp5-amd");
+    assert_no_traversal(&pairs, "wp5-amd");
+}
+
 // ========================================================================
 // Webpack 5 — production (numeric keys, minified)
 // ========================================================================
@@ -263,6 +319,22 @@ fn wp5_cjs_min() {
         pairs.len(),
         filenames(&pairs).join(", ")
     );
+}
+
+#[test]
+fn wp5_umd_min_library_wrapper() {
+    let pairs = unpack_fixture("wp5-umd-min/bundle.js");
+    assert!(
+        pairs.len() >= 2,
+        "wp5-umd-min: expected >=2, got {} — {}",
+        pairs.len(),
+        filenames(&pairs).join(", ")
+    );
+    assert!(
+        !filenames(&pairs).contains(&"module.js"),
+        "wp5-umd-min should not fall back to the whole wrapper"
+    );
+    assert_no_traversal(&pairs, "wp5-umd-min");
 }
 
 #[test]
