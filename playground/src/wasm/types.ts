@@ -5,7 +5,7 @@ export type WorkerRequest =
       id: number;
       source: string;
       level: string;
-      formatter: string;
+      formatter: boolean;
       diagnostics: boolean;
     };
 

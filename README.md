@@ -83,12 +83,11 @@ fallback behavior when no bundle format is detected.
 ### Formatter
 
 ```bash
-wakaru input.js --formatter oxc -o output.js
-wakaru bundle.js --unpack --formatter oxc -o out/
+wakaru input.js --formatter -o output.js
+wakaru bundle.js --unpack --formatter -o out/
 ```
 
-`--formatter oxc` runs a final formatting pass with OXC after decompilation.
-Off by default. Not supported with `--raw`.
+`--formatter` runs a final formatting pass after decompilation. Off by default.
 
 ### Source maps
 

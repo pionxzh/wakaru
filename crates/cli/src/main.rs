@@ -15,7 +15,7 @@ use wakaru_core::{
 
 mod formatter;
 
-use formatter::{format_cli_output, CliCodeFormatter};
+use formatter::{format_cli_output, selected_formatter};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum CliRewriteLevel {
@@ -96,8 +96,8 @@ struct Cli {
     diagnostics: bool,
 
     /// Run a final formatter pass on decompiled output.
-    #[arg(long, default_value = "none", value_enum)]
-    formatter: CliCodeFormatter,
+    #[arg(long)]
+    formatter: bool,
 
     /// Write a Chrome trace profile to the given file (open with chrome://tracing).
     #[arg(long, value_name = "FILE")]
@@ -194,11 +194,9 @@ fn run_default(cli: Cli) -> Result<()> {
     if cli.unpack.is_some() && cli.output.is_none() {
         bail!("--unpack requires -o/--output to choose an output directory");
     }
-    if cli.raw && cli.formatter.is_enabled() {
-        bail!("--formatter is not supported with --raw");
-    }
 
     let heuristic_split = !matches!(cli.unpack, Some(UnpackMode::Strict));
+    let formatter = selected_formatter(cli.formatter);
 
     if cli.unpack.is_some() {
         let input_set = read_unpack_inputs(&cli.inputs, heuristic_split)?;
@@ -245,7 +243,7 @@ fn run_default(cli: Cli) -> Result<()> {
         let pairs: Vec<(String, String)> = pairs
             .into_par_iter()
             .map(|(filename, code)| {
-                let formatted = format_cli_output(code, &filename, cli.formatter);
+                let formatted = format_cli_output(code, &filename, formatter);
                 (filename, formatted)
             })
             .collect();
@@ -302,7 +300,7 @@ fn run_default(cli: Cli) -> Result<()> {
 
         print_warnings(&output.warnings);
         let has_errors = output.has_errors();
-        let code = format_cli_output(output.code, &output_filename, cli.formatter);
+        let code = format_cli_output(output.code, &output_filename, formatter);
 
         match cli.output {
             Some(path) => {
@@ -817,31 +815,26 @@ mod tests {
 
     #[test]
     fn parses_formatter_option() {
-        let cli = Cli::try_parse_from(["wakaru", "input.js", "--formatter", "oxc"])
+        let cli = Cli::try_parse_from(["wakaru", "input.js", "--formatter"])
             .expect("formatter option should parse");
-        assert_eq!(cli.formatter, CliCodeFormatter::Oxc);
+        assert!(cli.formatter);
     }
 
     #[test]
-    fn rejects_formatter_with_raw_unpack() {
+    fn parses_formatter_with_raw_unpack() {
         let cli = Cli::try_parse_from([
             "wakaru",
             "bundle.js",
             "--unpack",
             "--raw",
             "--formatter",
-            "oxc",
             "-o",
             "out",
         ])
         .expect("formatter with raw should parse");
 
-        let err = run_default(cli).expect_err("formatter with raw should be rejected");
-        assert!(
-            err.to_string()
-                .contains("--formatter is not supported with --raw"),
-            "unexpected error: {err}"
-        );
+        assert!(cli.raw);
+        assert!(cli.formatter);
     }
 
     #[test]

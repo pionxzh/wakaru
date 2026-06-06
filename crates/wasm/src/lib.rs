@@ -38,10 +38,10 @@ pub fn decompile(
     level: Option<String>,
     sourcemap: Option<Vec<u8>>,
     diagnostics: Option<bool>,
-    formatter: Option<String>,
+    formatter: Option<bool>,
 ) -> Result<JsValue, JsValue> {
     let level = parse_level(level.as_deref());
-    let formatter = parse_formatter(formatter.as_deref())?;
+    let formatter = parse_formatter(formatter);
     let options = wakaru_core::DecompileOptions {
         filename: "input.js".to_string(),
         sourcemap,
@@ -65,10 +65,10 @@ pub fn unpack(
     level: Option<String>,
     heuristic_split: Option<bool>,
     diagnostics: Option<bool>,
-    formatter: Option<String>,
+    formatter: Option<bool>,
 ) -> Result<JsValue, JsValue> {
     let level = parse_level(level.as_deref());
-    let formatter = parse_formatter(formatter.as_deref())?;
+    let formatter = parse_formatter(formatter);
     let options = wakaru_core::DecompileOptions {
         filename: "input.js".to_string(),
         level,
@@ -113,11 +113,10 @@ fn parse_level(level: Option<&str>) -> wakaru_core::RewriteLevel {
     }
 }
 
-fn parse_formatter(formatter: Option<&str>) -> Result<CodeFormatter, JsValue> {
+fn parse_formatter(formatter: Option<bool>) -> CodeFormatter {
     match formatter {
-        None | Some("none") => Ok(CodeFormatter::None),
-        Some("oxc") => Ok(CodeFormatter::Oxc),
-        Some(value) => Err(JsValue::from_str(&format!("unknown formatter: {value}"))),
+        Some(true) => CodeFormatter::Oxc,
+        None | Some(false) => CodeFormatter::None,
     }
 }
 
@@ -161,7 +160,7 @@ export function decompile(
     level?: "minimal" | "standard" | "aggressive",
     sourcemap?: Uint8Array,
     diagnostics?: boolean,
-    formatter?: "none" | "oxc",
+    formatter?: boolean,
 ): WakaruDecompileResult;
 
 export interface WakaruUnpackResult {
@@ -188,7 +187,7 @@ export function unpack(
     level?: "minimal" | "standard" | "aggressive",
     heuristicSplit?: boolean,
     diagnostics?: boolean,
-    formatter?: "none" | "oxc",
+    formatter?: boolean,
 ): WakaruUnpackResult;
 
 export function ruleNames(): string[];

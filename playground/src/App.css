@@ -148,6 +148,45 @@ body {
   border-color: var(--accent);
 }
 
+.controls-switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  background: #4a5560;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    background 0.15s;
+}
+
+.controls-switch[aria-checked="true"] {
+  background: var(--accent-hover);
+}
+
+.controls-switch:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.controls-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgb(0 0 0 / 28%);
+  transition:
+    transform 0.15s;
+}
+
+.controls-switch[aria-checked="true"] .controls-switch-thumb {
+  transform: translateX(18px);
+}
+
 .controls-button {
   display: inline-flex;
   align-items: center;

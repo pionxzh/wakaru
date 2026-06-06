@@ -1,4 +1,4 @@
-import { FORMATTERS, LEVELS, type Formatter, type Level } from "../lib/constants";
+import { LEVELS, type Level } from "../lib/constants";
 
 function ShareIcon() {
   return (
@@ -14,9 +14,9 @@ function ShareIcon() {
 
 interface ControlsProps {
   level: Level;
-  formatter: Formatter;
+  formatter: boolean;
   onLevelChange: (level: Level) => void;
-  onFormatterChange: (formatter: Formatter) => void;
+  onFormatterChange: (formatter: boolean) => void;
   onRun: () => void;
   onShare: () => void;
   isLoading: boolean;
@@ -56,17 +56,15 @@ export function Controls({
         </label>
         <label className="controls-label">
           Formatter
-          <select
-            className="controls-select"
-            value={formatter}
-            onChange={(e) => onFormatterChange(e.target.value as Formatter)}
+          <button
+            className="controls-switch"
+            type="button"
+            role="switch"
+            aria-checked={formatter}
+            onClick={() => onFormatterChange(!formatter)}
           >
-            {FORMATTERS.map((f) => (
-              <option key={f.value} value={f.value}>
-                {f.label}
-              </option>
-            ))}
-          </select>
+            <span className="controls-switch-thumb" />
+          </button>
         </label>
         <button
           className="controls-button"

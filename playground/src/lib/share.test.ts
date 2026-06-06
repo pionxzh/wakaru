@@ -4,7 +4,7 @@ import { createShareUrl, readShareState, type PlaygroundShareState } from "./sha
 const sharedState: PlaygroundShareState = {
   source: "const value = 1;",
   level: "minimal",
-  formatter: "none",
+  formatter: false,
   version: "v1.4.0+test",
 };
 

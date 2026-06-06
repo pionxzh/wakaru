@@ -7,7 +7,7 @@ import { SplitLayout } from "./components/SplitLayout";
 import { WarningsPanel } from "./components/WarningsPanel";
 import { WasmBridge } from "./wasm/bridge";
 import type { WakaruWarning } from "./wasm/types";
-import type { Formatter, Level } from "./lib/constants";
+import type { Level } from "./lib/constants";
 import { DEFAULT_EXAMPLE } from "./lib/examples";
 import { createShareUrl, readShareState, SHARE_LIMIT_MESSAGE } from "./lib/share";
 
@@ -21,8 +21,8 @@ export function App() {
   const [output, setOutput] = useState("");
   const [warnings, setWarnings] = useState<WakaruWarning[]>([]);
   const [level, setLevel] = useState<Level>(INITIAL_SHARE_STATE?.level ?? "standard");
-  const [formatter, setFormatter] = useState<Formatter>(
-    INITIAL_SHARE_STATE?.formatter ?? "oxc"
+  const [formatter, setFormatter] = useState(
+    INITIAL_SHARE_STATE?.formatter ?? true
   );
   const [isLoading, setIsLoading] = useState(false);
   const [wasmReady, setWasmReady] = useState(false);
@@ -32,7 +32,7 @@ export function App() {
   const bridgeRef = useRef<WasmBridge | null>(null);
   const shareStatusTimeoutRef = useRef<number | null>(null);
 
-  const runDecompile = useCallback(async (src: string, lvl: string, fmt: Formatter) => {
+  const runDecompile = useCallback(async (src: string, lvl: string, fmt: boolean) => {
     if (!bridgeRef.current) return;
     setIsLoading(true);
     setError(null);
