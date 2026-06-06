@@ -113,6 +113,9 @@ impl VisitMut for UnTemplateLiteral<'_> {
             expr.visit_mut_children_with(self);
             return;
         }
+        if let Expr::Tpl(tpl) = expr {
+            normalize_escaped_newline_template_raw(tpl, self.level);
+        }
 
         expr.visit_mut_children_with(self);
     }
@@ -496,6 +499,56 @@ fn is_str_lit(expr: &Expr) -> bool {
 
 fn is_empty_str_lit(expr: &Expr) -> bool {
     matches!(expr, Expr::Lit(Lit::Str(s)) if s.value.is_empty())
+}
+
+fn normalize_escaped_newline_template_raw(tpl: &mut Tpl, level: RewriteLevel) {
+    if level == RewriteLevel::Minimal {
+        return;
+    }
+
+    for quasi in &mut tpl.quasis {
+        if quasi.cooked.is_none() {
+            continue;
+        }
+        let raw = quasi.raw.to_string();
+        let Some(next) = normalize_newline_escapes(&raw) else {
+            continue;
+        };
+        quasi.raw = next.into();
+    }
+}
+
+fn normalize_newline_escapes(raw: &str) -> Option<String> {
+    if !raw.contains("\\n") || raw.contains("\\r") {
+        return None;
+    }
+
+    let mut output = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    let mut changed = false;
+
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            output.push(ch);
+            continue;
+        }
+
+        match chars.peek().copied() {
+            Some('n') => {
+                chars.next();
+                output.push('\n');
+                changed = true;
+            }
+            Some(next) => {
+                chars.next();
+                output.push('\\');
+                output.push(next);
+            }
+            None => output.push('\\'),
+        }
+    }
+
+    changed.then_some(output)
 }
 
 fn collect_template_factories(

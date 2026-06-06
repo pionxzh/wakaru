@@ -164,6 +164,59 @@ var y = 1 + 2;
 }
 
 #[test]
+fn standard_normalizes_escaped_newlines_in_untagged_template() {
+    let input = r#"var slideIn = (direction) => `\n0% {transform: translate3d(0, ${-200 * direction}%, 0)}\n100% {transform: translate3d(0, 0, 0)}\n`;"#;
+    let expected = r#"var slideIn = (direction)=>`
+0% {transform: translate3d(0, ${-200 * direction}%, 0)}
+100% {transform: translate3d(0, 0, 0)}
+`;
+"#;
+
+    let output = apply(input);
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn minimal_preserves_escaped_newlines_in_untagged_template() {
+    let input = r#"var slideIn = (direction) => `\n0% {transform: translate3d(0, ${-200 * direction}%, 0)}\n100% {transform: translate3d(0, 0, 0)}\n`;"#;
+    let expected = r#"var slideIn = (direction)=>`\n0% {transform: translate3d(0, ${-200 * direction}%, 0)}\n100% {transform: translate3d(0, 0, 0)}\n`;
+"#;
+
+    let output = apply_minimal(input);
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn keeps_escaped_newlines_in_tagged_template_raw() {
+    let input = r#"var out = tag`\n0% {transform}\n`;"#;
+    let expected = r#"var out = tag`\n0% {transform}\n`;
+"#;
+
+    let output = apply(input);
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn keeps_literal_backslash_n_in_untagged_template() {
+    let input = r#"var out = `\\nnot a line break`;"#;
+    let expected = r#"var out = `\\nnot a line break`;
+"#;
+
+    let output = apply(input);
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn keeps_escaped_crlf_in_untagged_template() {
+    let input = r#"var out = `header\r\n\r\n`;"#;
+    let expected = r#"var out = `header\r\n\r\n`;
+"#;
+
+    let output = apply(input);
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn restores_babel_modern_tagged_template() {
     let input = r#"
 var _templateObject;
