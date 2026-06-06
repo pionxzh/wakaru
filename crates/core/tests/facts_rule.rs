@@ -516,6 +516,54 @@ export { __spreadArray as spreadArray };
     );
 }
 
+#[test]
+fn exported_typescript_public_function_helper_fact() {
+    let facts = collect_facts(
+        r#"
+function helper(source, excluded) {
+    var target = {};
+    for (var key in source) {
+        if (Object.prototype.hasOwnProperty.call(source, key) && excluded.indexOf(key) < 0) {
+            target[key] = source[key];
+        }
+    }
+    if (source != null && typeof Object.getOwnPropertySymbols === "function") {
+        for (var i = 0, key = Object.getOwnPropertySymbols(source); i < key.length; i++) {
+            if (excluded.indexOf(key[i]) < 0 && Object.prototype.propertyIsEnumerable.call(source, key[i])) {
+                target[key[i]] = source[key[i]];
+            }
+        }
+    }
+    return target;
+}
+export { helper as __rest };
+"#,
+    );
+    assert_eq!(
+        facts.ts_helper_exports,
+        vec![ts_helper_export(
+            "__rest",
+            Some("helper"),
+            TypeScriptHelperKind::Rest
+        )]
+    );
+}
+
+#[test]
+fn exported_typescript_public_function_helper_fact_requires_shape() {
+    let facts = collect_facts(
+        r#"
+export function __rest(source, excluded) {
+    return customRest(source, excluded);
+}
+"#,
+    );
+    assert!(
+        facts.ts_helper_exports.is_empty(),
+        "public helper names without matching helper bodies must not become proven facts: {facts}"
+    );
+}
+
 // ── CJS exports → ESM ──────────────────────────────────────────────
 
 #[test]

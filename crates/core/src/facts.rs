@@ -626,10 +626,17 @@ fn collect_ts_helper_exports(
         let Some(local) = &export.local else {
             continue;
         };
-        let Some(kind) = local_helpers
+        let kind = local_helpers
             .ts_helper_kind_by_symbol(local)
             .map(helper_kind_from_ts)
-        else {
+            .or_else(|| {
+                local_helpers.helpers().iter().find_map(|((sym, _), kind)| {
+                    (sym == local)
+                        .then(|| helper_kind_from_transpiler_ts(*kind))
+                        .flatten()
+                })
+            });
+        let Some(kind) = kind else {
             continue;
         };
         helper_exports.push(TypeScriptHelperExportFact {
@@ -640,6 +647,13 @@ fn collect_ts_helper_exports(
     }
 
     helper_exports
+}
+
+fn helper_kind_from_transpiler_ts(kind: TranspilerHelperKind) -> Option<TypeScriptHelperKind> {
+    match kind {
+        TranspilerHelperKind::ObjectWithoutProperties => Some(TypeScriptHelperKind::Rest),
+        _ => None,
+    }
 }
 
 fn helper_kind_from_transpiler(kind: TranspilerHelperKind) -> Option<HelperKind> {

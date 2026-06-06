@@ -283,6 +283,39 @@ const out = [head, ...items];
 }
 
 #[test]
+fn unwraps_direct_tslib_require_spread_array_call() {
+    let input = r#"
+var out = require("tslib").__spreadArray([head], items, true);
+"#;
+    let expected = r#"
+const out = [head, ...items];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_direct_tslib_require_legacy_spread_call() {
+    let input = r#"
+var out = require("tslib").__spread([head], items, [tail]);
+"#;
+    let expected = r#"
+const out = [head, ...items, tail];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_direct_tslib_require_legacy_spread_arrays_call() {
+    let input = r#"
+var out = require("tslib").__spreadArrays([head], items, [tail]);
+"#;
+    let expected = r#"
+const out = [head, ...items, tail];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn unwraps_cross_module_ts_spread_array_helper_fact() {
     let mut facts = ModuleFactsMap::new();
     facts.insert(
@@ -348,6 +381,47 @@ var out = __spreadArray(__spreadArray([head], __read(items), false), [tail], fal
 "#;
     let expected = r#"
 const out = [head, ...items, tail];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_direct_tslib_require_read_source_inside_spread_array() {
+    let input = r#"
+import { __spreadArray } from "tslib";
+var out = __spreadArray([head], require("tslib").__read(items), false);
+"#;
+    let expected = r#"
+const out = [head, ...items];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_inline_ts_read_source_inside_spread_array() {
+    let input = r#"
+import { __spreadArray } from "tslib";
+var out = __spreadArray([head], (this && this.__read || function (o, n) {
+    var m = typeof Symbol === "function" && o[Symbol.iterator];
+    if (!m) return o;
+    var i = m.call(o), r, ar = [], e;
+    try {
+        while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
+    }
+    catch (error) { e = { error: error }; }
+    finally {
+        try {
+            if (r && !r.done && (m = i["return"])) m.call(i);
+        }
+        finally {
+            if (e) throw e.error;
+        }
+    }
+    return ar;
+})(items), false);
+"#;
+    let expected = r#"
+const out = [head, ...items];
 "#;
     assert_eq_normalized(&render(input), expected);
 }

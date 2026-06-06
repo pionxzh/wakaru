@@ -2,16 +2,16 @@ use std::collections::HashSet;
 
 use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 use crate::utils::paren::strip_parens;
-use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, Callee, Decl, Expr,
-    ExprStmt, ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Pat,
-    SimpleAssignTarget, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ExprStmt, Lit, MemberExpr, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt,
+    VarDecl, VarDeclKind, VarDeclarator,
 };
 
 use super::cross_module_helper_refs::{
-    collect_cross_module_helper_refs, cross_module_member_helper_kind, CrossModuleHelperRefs,
+    collect_cross_module_helper_refs, collect_cross_module_ts_helper_refs,
+    cross_module_member_helper_kind, CrossModuleHelperRefs,
 };
 use super::decl_utils::{
     can_remove_prior_uninitialized_decls_by, remove_prior_uninitialized_decls_by,
@@ -118,7 +118,8 @@ fn run_un_sliced_to_array(
     if let Some(facts) = module_facts {
         extend_cross_module_helpers(
             &mut cross_module_helpers,
-            collect_cross_module_ts_read_helpers(module, facts),
+            collect_cross_module_ts_helper_refs(module, facts, TypeScriptHelperKind::Read),
+            TranspilerHelperKind::SlicedToArray,
         );
     }
     let tslib_namespaces = local_helpers.tslib_namespaces();
@@ -1113,110 +1114,26 @@ fn is_sliced_to_array_callee(
         || cross_module_member_helper_kind(callee, &cross_module_helpers.namespaces)
             == Some(TranspilerHelperKind::SlicedToArray)
         || ts_expr_matches_helper_kind(callee, TsHelperKind::Read)
-        || tslib_member_ts_helper_kind(callee, &local_helpers.tslib_namespaces())
+        || tslib_member_ts_helper_kind(callee, local_helpers.tslib_namespaces())
             == Some(TsHelperKind::Read)
         || tslib_require_ts_helper_kind(callee) == Some(TsHelperKind::Read)
 }
 
 fn extend_cross_module_helpers(
     helpers: &mut CrossModuleHelperRefs,
-    extra: CrossModuleHelperRefs,
+    extra: super::cross_module_helper_refs::CrossModuleTsHelperRefs,
+    kind: TranspilerHelperKind,
 ) {
-    helpers.direct.extend(extra.direct);
+    helpers
+        .direct
+        .extend(extra.direct.into_iter().map(|key| (key, kind)));
     for (namespace, members) in extra.namespaces {
-        helpers.namespaces.entry(namespace).or_default().extend(members);
+        helpers
+            .namespaces
+            .entry(namespace)
+            .or_default()
+            .extend(members.into_iter().map(|name| (name, kind)));
     }
-}
-
-fn collect_cross_module_ts_read_helpers(
-    module: &Module,
-    module_facts: &ModuleFactsMap,
-) -> CrossModuleHelperRefs {
-    let mut refs = CrossModuleHelperRefs::default();
-
-    for item in &module.body {
-        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
-            continue;
-        };
-        let source = str_to_atom(&import.src.value);
-
-        for specifier in &import.specifiers {
-            match specifier {
-                ImportSpecifier::Default(default) => {
-                    if module_exports_ts_read_helper(module_facts, &source, "default") {
-                        refs.direct.insert(
-                            (default.local.sym.clone(), default.local.ctxt),
-                            TranspilerHelperKind::SlicedToArray,
-                        );
-                    }
-                }
-                ImportSpecifier::Named(named) => {
-                    let imported = named
-                        .imported
-                        .as_ref()
-                        .map(export_name_to_atom)
-                        .unwrap_or_else(|| named.local.sym.clone());
-                    if module_exports_ts_read_helper(module_facts, &source, imported.as_ref()) {
-                        refs.direct.insert(
-                            (named.local.sym.clone(), named.local.ctxt),
-                            TranspilerHelperKind::SlicedToArray,
-                        );
-                    }
-                }
-                ImportSpecifier::Namespace(namespace) => {
-                    let exported_names = ts_read_helper_export_names(module_facts, &source);
-                    if !exported_names.is_empty() {
-                        refs.namespaces.insert(
-                            (namespace.local.sym.clone(), namespace.local.ctxt),
-                            exported_names
-                                .into_iter()
-                                .map(|name| (name, TranspilerHelperKind::SlicedToArray))
-                                .collect(),
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    refs
-}
-
-fn module_exports_ts_read_helper(
-    module_facts: &ModuleFactsMap,
-    source: &Atom,
-    exported: &str,
-) -> bool {
-    module_facts.get(source.as_ref()).is_some_and(|facts| {
-        facts.ts_helper_exports.iter().any(|helper| {
-            helper.exported.as_ref() == exported && helper.kind == TypeScriptHelperKind::Read
-        })
-    })
-}
-
-fn ts_read_helper_export_names(module_facts: &ModuleFactsMap, source: &Atom) -> Vec<String> {
-    module_facts
-        .get(source.as_ref())
-        .map(|facts| {
-            facts
-                .ts_helper_exports
-                .iter()
-                .filter(|helper| helper.kind == TypeScriptHelperKind::Read)
-                .map(|helper| helper.exported.to_string())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn export_name_to_atom(name: &swc_core::ecma::ast::ModuleExportName) -> Atom {
-    match name {
-        swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.clone(),
-        swc_core::ecma::ast::ModuleExportName::Str(s) => str_to_atom(&s.value),
-    }
-}
-
-fn str_to_atom(value: &swc_core::atoms::Wtf8Atom) -> Atom {
-    Atom::from(value.as_str().unwrap_or(""))
 }
 
 fn has_inline_ts_read_call(module: &Module) -> bool {

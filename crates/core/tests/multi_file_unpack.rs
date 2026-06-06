@@ -276,6 +276,69 @@ exports.modules = {
 }
 
 #[test]
+fn unpack_files_restores_imported_tslib_helper_from_exported_function_provider() {
+    let output = unpack_files(
+        vec![
+            UnpackInput {
+                filename: "helpers.js".to_string(),
+                source: r#"
+function helper(source, excluded) {
+    var target = {};
+    for (var key in source) {
+        if (Object.prototype.hasOwnProperty.call(source, key) && excluded.indexOf(key) < 0) {
+            target[key] = source[key];
+        }
+    }
+    if (source != null && typeof Object.getOwnPropertySymbols === "function") {
+        for (var i = 0, key = Object.getOwnPropertySymbols(source); i < key.length; i++) {
+            if (excluded.indexOf(key[i]) < 0 && Object.prototype.propertyIsEnumerable.call(source, key[i])) {
+                target[key[i]] = source[key[i]];
+            }
+        }
+    }
+    return target;
+}
+export { helper as __rest };
+"#
+                .to_string(),
+            },
+            UnpackInput {
+                filename: "consumer.js".to_string(),
+                source: r#"
+import { __rest } from "./helpers.js";
+var label = props.label, rest = __rest(props, ["label"]);
+use(label, rest);
+"#
+                .to_string(),
+            },
+        ],
+        DecompileOptions::default(),
+    )
+    .expect("plain multi-file inputs should decompile through unpack barrier");
+
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+
+    let consumer = output
+        .modules
+        .iter()
+        .find(|(name, _)| name == "consumer.js")
+        .map(|(_, code)| code)
+        .expect("consumer module should exist");
+    assert!(
+        consumer.contains("const { label, ...rest } = props;"),
+        "consumer should restore imported __rest helper into object rest:\n{consumer}"
+    );
+    assert!(
+        !consumer.contains("__rest(props"),
+        "consumer should not keep the imported helper call:\n{consumer}"
+    );
+}
+
+#[test]
 fn webpack5_multi_file_rewrites_same_directory_dot_relative_chunk() {
     let entry = r#"
 (() => {

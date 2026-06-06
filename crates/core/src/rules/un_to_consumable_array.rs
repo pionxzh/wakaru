@@ -1,19 +1,19 @@
 use std::collections::{HashMap, HashSet};
 
-use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
-use swc_core::ecma::ast::{
-    ArrayLit, Callee, Expr, ExprOrSpread, ImportSpecifier, Module, ModuleDecl, ModuleItem,
-};
+use swc_core::ecma::ast::{ArrayLit, Callee, Expr, ExprOrSpread, Module};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 
-use super::helper_matcher::{binding_key, static_member_prop_name};
+use super::cross_module_helper_refs::{
+    collect_cross_module_ts_helper_refs, cross_module_ts_member_helper,
+};
+use super::helper_matcher::binding_key;
 use super::transpiler_helper_utils::{
-    collect_maybe_array_like_bindings, is_tslib_spread_array_member, BindingKey,
-    LocalHelperContext, TranspilerHelperKind, TsHelperKind, ts_expr_matches_helper_kind,
-    tslib_member_ts_helper_kind,
+    collect_maybe_array_like_bindings, is_tslib_spread_array_member, ts_expr_matches_helper_kind,
+    tslib_member_ts_helper_kind, tslib_require_ts_helper_kind, BindingKey, LocalHelperContext,
+    TranspilerHelperKind, TsHelperKind,
 };
 
 /// Detects and replaces `_toConsumableArray(arr)` with `[...arr]`.
@@ -90,6 +90,7 @@ fn run_un_to_consumable_array(
     let tslib_namespaces = local_helpers.tslib_namespaces();
     let maybe_array_like = collect_maybe_array_like_bindings(module);
     let has_inline_legacy_array_spread = has_inline_legacy_array_spread_call(module);
+    let has_direct_tslib_array_spread = has_direct_tslib_array_spread_call(module);
     if helpers.is_empty() {
         if ts_helpers.is_empty()
             && ts_legacy_array_spread_helpers.is_empty()
@@ -102,6 +103,7 @@ fn run_un_to_consumable_array(
                 .namespaces
                 .is_empty()
             && tslib_namespaces.is_empty()
+            && !has_direct_tslib_array_spread
             && !has_inline_legacy_array_spread
         {
             return;
@@ -245,6 +247,13 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
             return;
         }
 
+        if tslib_require_ts_helper_kind(callee) == Some(TsHelperKind::SpreadArray) {
+            if let Some(array) = convert_ts_spread_array_call(call, self) {
+                *expr = Expr::Array(array);
+            }
+            return;
+        }
+
         if matches!(
             tslib_member_ts_helper_kind(callee, self.tslib_namespaces),
             Some(TsHelperKind::Spread | TsHelperKind::SpreadArrays)
@@ -255,7 +264,17 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
             return;
         }
 
-        if is_cross_module_ts_helper_member(
+        if matches!(
+            tslib_require_ts_helper_kind(callee),
+            Some(TsHelperKind::Spread | TsHelperKind::SpreadArrays)
+        ) {
+            if let Some(array) = convert_ts_legacy_spread_call(call) {
+                *expr = Expr::Array(array);
+            }
+            return;
+        }
+
+        if cross_module_ts_member_helper(
             callee,
             self.cross_module_ts_legacy_array_spread_namespaces,
         ) {
@@ -274,7 +293,7 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
             return;
         }
 
-        if is_cross_module_ts_helper_member(callee, self.cross_module_ts_spread_array_namespaces) {
+        if cross_module_ts_member_helper(callee, self.cross_module_ts_spread_array_namespaces) {
             if let Some(array) = convert_ts_spread_array_call(call, self) {
                 *expr = Expr::Array(array);
             }
@@ -312,126 +331,35 @@ fn has_inline_legacy_array_spread_call(module: &Module) -> bool {
     finder.found
 }
 
-#[derive(Default)]
-struct CrossModuleTsHelperRefs {
-    direct: HashSet<BindingKey>,
-    namespaces: HashMap<BindingKey, HashSet<String>>,
-}
-
-impl CrossModuleTsHelperRefs {
-    fn extend(&mut self, other: Self) {
-        self.direct.extend(other.direct);
-        for (namespace, names) in other.namespaces {
-            self.namespaces.entry(namespace).or_default().extend(names);
-        }
+fn has_direct_tslib_array_spread_call(module: &Module) -> bool {
+    struct Finder {
+        found: bool,
     }
-}
 
-fn collect_cross_module_ts_helper_refs(
-    module: &Module,
-    module_facts: &ModuleFactsMap,
-    kind: TypeScriptHelperKind,
-) -> CrossModuleTsHelperRefs {
-    let mut refs = CrossModuleTsHelperRefs::default();
-
-    for item in &module.body {
-        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
-            continue;
-        };
-        let source = str_to_atom(&import.src.value);
-
-        for specifier in &import.specifiers {
-            match specifier {
-                ImportSpecifier::Default(default) => {
-                    if module_exports_ts_helper(module_facts, &source, "default", kind) {
-                        refs.direct
-                            .insert((default.local.sym.clone(), default.local.ctxt));
-                    }
-                }
-                ImportSpecifier::Named(named) => {
-                    let imported = named
-                        .imported
-                        .as_ref()
-                        .map(export_name_to_atom)
-                        .unwrap_or_else(|| named.local.sym.clone());
-                    if module_exports_ts_helper(module_facts, &source, imported.as_ref(), kind) {
-                        refs.direct
-                            .insert((named.local.sym.clone(), named.local.ctxt));
-                    }
-                }
-                ImportSpecifier::Namespace(namespace) => {
-                    let exported_names = ts_helper_export_names(module_facts, &source, kind);
-                    if !exported_names.is_empty() {
-                        refs.namespaces.insert(
-                            (namespace.local.sym.clone(), namespace.local.ctxt),
-                            exported_names,
-                        );
-                    }
-                }
+    impl swc_core::ecma::visit::Visit for Finder {
+        fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
+            if self.found {
+                return;
             }
+            let Callee::Expr(callee) = &call.callee else {
+                return;
+            };
+            if matches!(
+                tslib_require_ts_helper_kind(callee),
+                Some(TsHelperKind::SpreadArray | TsHelperKind::Spread | TsHelperKind::SpreadArrays)
+            ) {
+                self.found = true;
+                return;
+            }
+            call.visit_children_with(self);
         }
     }
 
-    refs
-}
+    use swc_core::ecma::visit::VisitWith;
 
-fn module_exports_ts_helper(
-    module_facts: &ModuleFactsMap,
-    source: &Atom,
-    exported: &str,
-    kind: TypeScriptHelperKind,
-) -> bool {
-    module_facts.get(source.as_ref()).is_some_and(|facts| {
-        facts
-            .ts_helper_exports
-            .iter()
-            .any(|helper| helper.exported.as_ref() == exported && helper.kind == kind)
-    })
-}
-
-fn ts_helper_export_names(
-    module_facts: &ModuleFactsMap,
-    source: &Atom,
-    kind: TypeScriptHelperKind,
-) -> HashSet<String> {
-    module_facts
-        .get(source.as_ref())
-        .map(|facts| {
-            facts
-                .ts_helper_exports
-                .iter()
-                .filter(|helper| helper.kind == kind)
-                .map(|helper| helper.exported.to_string())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn is_cross_module_ts_helper_member(
-    expr: &Expr,
-    namespaces: &HashMap<BindingKey, HashSet<String>>,
-) -> bool {
-    let Expr::Member(member) = expr else {
-        return false;
-    };
-    let Expr::Ident(obj) = member.obj.as_ref() else {
-        return false;
-    };
-    let Some(exported_names) = namespaces.get(&binding_key(obj)) else {
-        return false;
-    };
-    static_member_prop_name(&member.prop).is_some_and(|name| exported_names.contains(name))
-}
-
-fn export_name_to_atom(name: &swc_core::ecma::ast::ModuleExportName) -> Atom {
-    match name {
-        swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.clone(),
-        swc_core::ecma::ast::ModuleExportName::Str(s) => str_to_atom(&s.value),
-    }
-}
-
-fn str_to_atom(value: &swc_core::atoms::Wtf8Atom) -> Atom {
-    Atom::from(value.as_str().unwrap_or(""))
+    let mut finder = Finder { found: false };
+    module.visit_with(&mut finder);
+    finder.found
 }
 
 fn convert_ts_spread_array_call(
@@ -485,7 +413,9 @@ fn is_ts_read_callee(callee: &Expr, helpers: &ToConsumableArrayReplacer) -> bool
     matches!(
         tslib_member_ts_helper_kind(callee, helpers.tslib_namespaces),
         Some(TsHelperKind::Read)
-    ) || is_cross_module_ts_helper_member(callee, helpers.cross_module_ts_read_namespaces)
+    ) || tslib_require_ts_helper_kind(callee) == Some(TsHelperKind::Read)
+        || ts_expr_matches_helper_kind(callee, TsHelperKind::Read)
+        || cross_module_ts_member_helper(callee, helpers.cross_module_ts_read_namespaces)
 }
 
 fn convert_ts_legacy_spread_call(call: &swc_core::ecma::ast::CallExpr) -> Option<ArrayLit> {

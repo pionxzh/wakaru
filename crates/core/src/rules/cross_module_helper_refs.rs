@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{Expr, ImportSpecifier, Module, ModuleDecl, ModuleItem};
 
-use crate::facts::{HelperKind, ModuleFactsMap};
+use crate::facts::{HelperKind, ModuleFactsMap, TypeScriptHelperKind};
 
 use super::helper_matcher::{binding_key, static_member_prop_name, BindingKey};
 use super::transpiler_helper_utils::TranspilerHelperKind;
@@ -12,6 +12,21 @@ use super::transpiler_helper_utils::TranspilerHelperKind;
 pub(crate) struct CrossModuleHelperRefs {
     pub direct: HashMap<BindingKey, TranspilerHelperKind>,
     pub namespaces: HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
+}
+
+#[derive(Default)]
+pub(crate) struct CrossModuleTsHelperRefs {
+    pub direct: HashSet<BindingKey>,
+    pub namespaces: HashMap<BindingKey, HashSet<String>>,
+}
+
+impl CrossModuleTsHelperRefs {
+    pub(crate) fn extend(&mut self, other: Self) {
+        self.direct.extend(other.direct);
+        for (namespace, names) in other.namespaces {
+            self.namespaces.entry(namespace).or_default().extend(names);
+        }
+    }
 }
 
 pub(crate) fn collect_cross_module_helper_refs(
@@ -137,6 +152,102 @@ pub(crate) fn cross_module_member_helper_kind(
         .get(&binding_key(obj))
         .and_then(|helpers| helpers.get(exported))
         .copied()
+}
+
+pub(crate) fn collect_cross_module_ts_helper_refs(
+    module: &Module,
+    module_facts: &ModuleFactsMap,
+    kind: TypeScriptHelperKind,
+) -> CrossModuleTsHelperRefs {
+    let mut refs = CrossModuleTsHelperRefs::default();
+
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
+        };
+        let source = str_to_atom(&import.src.value);
+
+        for specifier in &import.specifiers {
+            match specifier {
+                ImportSpecifier::Default(default) => {
+                    if module_exports_ts_helper(module_facts, &source, "default", kind) {
+                        refs.direct
+                            .insert((default.local.sym.clone(), default.local.ctxt));
+                    }
+                }
+                ImportSpecifier::Named(named) => {
+                    let imported = named
+                        .imported
+                        .as_ref()
+                        .map(export_name_to_atom)
+                        .unwrap_or_else(|| named.local.sym.clone());
+                    if module_exports_ts_helper(module_facts, &source, imported.as_ref(), kind) {
+                        refs.direct
+                            .insert((named.local.sym.clone(), named.local.ctxt));
+                    }
+                }
+                ImportSpecifier::Namespace(namespace) => {
+                    let exported_names = ts_helper_export_names(module_facts, &source, kind);
+                    if !exported_names.is_empty() {
+                        refs.namespaces.insert(
+                            (namespace.local.sym.clone(), namespace.local.ctxt),
+                            exported_names,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    refs
+}
+
+pub(crate) fn cross_module_ts_member_helper(
+    expr: &Expr,
+    namespaces: &HashMap<BindingKey, HashSet<String>>,
+) -> bool {
+    let Expr::Member(member) = expr else {
+        return false;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    let Some(exported_names) = namespaces.get(&binding_key(obj)) else {
+        return false;
+    };
+    static_member_prop_name(&member.prop).is_some_and(|name| exported_names.contains(name))
+}
+
+fn module_exports_ts_helper(
+    module_facts: &ModuleFactsMap,
+    source: &Atom,
+    exported: &str,
+    kind: TypeScriptHelperKind,
+) -> bool {
+    module_facts.get(source.as_ref()).is_some_and(|facts| {
+        facts
+            .ts_helper_exports
+            .iter()
+            .any(|helper| helper.exported.as_ref() == exported && helper.kind == kind)
+    })
+}
+
+fn ts_helper_export_names(
+    module_facts: &ModuleFactsMap,
+    source: &Atom,
+    kind: TypeScriptHelperKind,
+) -> HashSet<String> {
+    module_facts
+        .get(source.as_ref())
+        .map(|facts| {
+            facts
+                .ts_helper_exports
+                .iter()
+                .filter(|helper| helper.kind == kind)
+                .map(|helper| helper.exported.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn filtered_helper_members(
