@@ -245,6 +245,58 @@ const [count, setCount] = useState(0);
 }
 
 #[test]
+fn react_rename_usestate_setter_alias_from_readable_state() {
+    let input = r#"
+const [isLoading, setN] = useState(false);
+const [defaultValue, setL] = useState(options.defaultValue);
+isLoading && setN(false);
+setL(defaultValue);
+"#;
+    let expected = r#"
+const [isLoading, setIsLoading] = useState(false);
+const [defaultValue, setDefaultValue] = useState(options.defaultValue);
+isLoading && setIsLoading(false);
+setDefaultValue(defaultValue);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn react_rename_usestate_setter_uses_pending_state_rename() {
+    let input = r#"
+function useManifest() {
+    const [n, i] = useState(false);
+    i(true);
+    return {
+        isLoading: n
+    };
+}
+"#;
+    let expected = r#"
+function useManifest() {
+    const [isLoading, setIsLoading] = useState(false);
+    setIsLoading(true);
+    return {
+        isLoading
+    };
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn react_rename_usestate_keeps_matching_minified_pair() {
+    let input = r#"
+const [c, setC] = useState(false);
+setC(!c);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn react_rename_usestate_in_arrow_body() {
     let input = r#"
 const Component = ({ value }) => {
@@ -255,8 +307,8 @@ const Component = ({ value }) => {
 "#;
     let expected = r#"
 const Component = ({ value }) => {
-    const [value_1, setValue_1] = l.useState(value);
-    setValue_1(value);
+    const [value_1, setValue] = l.useState(value);
+    setValue(value);
     return value_1;
 };
 "#;

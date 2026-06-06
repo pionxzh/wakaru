@@ -26,18 +26,30 @@ use super::ObjShorthand;
 
 pub struct SmartRename {
     unresolved_mark: Mark,
+    pending_value_position_names: HashMap<BindingId, String>,
 }
 
 impl SmartRename {
     pub fn new(unresolved_mark: Mark) -> Self {
-        Self { unresolved_mark }
+        Self {
+            unresolved_mark,
+            pending_value_position_names: HashMap::new(),
+        }
     }
 }
 
 impl VisitMut for SmartRename {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        let previous_pending_names = std::mem::replace(
+            &mut self.pending_value_position_names,
+            collect_value_position_rename_map_module(module),
+        );
         let mut cached_names = collect_names_in_module(&module.body);
-        react_rename_module_with(module, &mut cached_names);
+        react_rename_module_with(
+            module,
+            &mut cached_names,
+            &self.pending_value_position_names,
+        );
         destructuring_rename_module_with(module, &mut cached_names);
         member_init_rename_module_with(module, &mut cached_names);
         symbol_for_rename_module_with(module, &mut cached_names, self.unresolved_mark);
@@ -48,10 +60,11 @@ impl VisitMut for SmartRename {
         // bindings are classified correctly without per-scope recursion.
         value_position_rename_module(module);
         jsx_component_alias_rename_module(module);
+        self.pending_value_position_names = previous_pending_names;
     }
 
     fn visit_mut_function(&mut self, func: &mut Function) {
-        react_rename_function_body(func);
+        react_rename_function_body(func, &self.pending_value_position_names);
         destructuring_rename_function(func);
         member_init_rename_function(func);
         symbol_for_rename_function(func, self.unresolved_mark);
@@ -59,7 +72,7 @@ impl VisitMut for SmartRename {
     }
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
-        react_rename_arrow_body(arrow);
+        react_rename_arrow_body(arrow, &self.pending_value_position_names);
         destructuring_rename_arrow(arrow);
         member_init_rename_arrow(arrow);
         symbol_for_rename_arrow(arrow, self.unresolved_mark);
@@ -74,24 +87,33 @@ impl VisitMut for SmartRename {
 /// (e.g. UnIife2 exposing new React hook patterns).
 pub struct SmartRenameSecondPass {
     unresolved_mark: Mark,
+    pending_value_position_names: HashMap<BindingId, String>,
 }
 
 impl SmartRenameSecondPass {
     pub fn new(unresolved_mark: Mark) -> Self {
-        Self { unresolved_mark }
+        Self {
+            unresolved_mark,
+            pending_value_position_names: HashMap::new(),
+        }
     }
 }
 
 impl VisitMut for SmartRenameSecondPass {
     fn visit_mut_module(&mut self, module: &mut Module) {
+        let previous_pending_names = std::mem::replace(
+            &mut self.pending_value_position_names,
+            collect_value_position_rename_map_module(module),
+        );
         sentry_component_rename_module(module);
         module.visit_mut_children_with(self);
         value_position_rename_module(module);
         jsx_component_alias_rename_module(module);
+        self.pending_value_position_names = previous_pending_names;
     }
 
     fn visit_mut_function(&mut self, func: &mut Function) {
-        react_rename_function_body(func);
+        react_rename_function_body(func, &self.pending_value_position_names);
         destructuring_rename_function(func);
         member_init_rename_function(func);
         symbol_for_rename_function(func, self.unresolved_mark);
@@ -99,7 +121,7 @@ impl VisitMut for SmartRenameSecondPass {
     }
 
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
-        react_rename_arrow_body(arrow);
+        react_rename_arrow_body(arrow, &self.pending_value_position_names);
         destructuring_rename_arrow(arrow);
         member_init_rename_arrow(arrow);
         symbol_for_rename_arrow(arrow, self.unresolved_mark);
@@ -113,8 +135,16 @@ impl VisitMut for SmartRenameSecondPass {
 
 const MAX_SYNTHETIC_NAME_ATTEMPTS: usize = 10_000;
 
-fn react_rename_module_with(module: &mut Module, all_names: &mut HashSet<Atom>) {
-    let renames = collect_react_renames_from_module_items(&module.body, all_names);
+fn react_rename_module_with(
+    module: &mut Module,
+    all_names: &mut HashSet<Atom>,
+    pending_value_position_names: &HashMap<BindingId, String>,
+) {
+    let renames = collect_react_renames_from_module_items(
+        &module.body,
+        all_names,
+        pending_value_position_names,
+    );
     if renames.is_empty() {
         return;
     }
@@ -124,20 +154,27 @@ fn react_rename_module_with(module: &mut Module, all_names: &mut HashSet<Atom>) 
     rename_bindings_in_module(module, &renames);
 }
 
-fn react_rename_function_body(func: &mut Function) {
+fn react_rename_function_body(
+    func: &mut Function,
+    pending_value_position_names: &HashMap<BindingId, String>,
+) {
     let Some(body) = &mut func.body else { return };
     if !has_react_candidates_in_stmts(&body.stmts) {
         return;
     }
     let all_names = collect_names_in_stmts(&body.stmts);
-    let renames = collect_react_renames_from_stmts(&body.stmts, &all_names);
+    let renames =
+        collect_react_renames_from_stmts(&body.stmts, &all_names, pending_value_position_names);
     if renames.is_empty() {
         return;
     }
     rename_bindings(&mut body.stmts, &renames);
 }
 
-fn react_rename_arrow_body(arrow: &mut ArrowExpr) {
+fn react_rename_arrow_body(
+    arrow: &mut ArrowExpr,
+    pending_value_position_names: &HashMap<BindingId, String>,
+) {
     let BlockStmtOrExpr::BlockStmt(body) = arrow.body.as_mut() else {
         return;
     };
@@ -145,7 +182,8 @@ fn react_rename_arrow_body(arrow: &mut ArrowExpr) {
         return;
     }
     let all_names = collect_names_in_stmts(&body.stmts);
-    let renames = collect_react_renames_from_stmts(&body.stmts, &all_names);
+    let renames =
+        collect_react_renames_from_stmts(&body.stmts, &all_names, pending_value_position_names);
     if renames.is_empty() {
         return;
     }
@@ -159,14 +197,20 @@ fn has_react_candidates_in_stmts(stmts: &[Stmt]) -> bool {
         };
         var_decl.decls.iter().any(|decl| {
             let Some(init) = &decl.init else { return false };
-            if get_single_react_hook_call(init).is_none() {
+            let Some(hook_name) = get_single_react_hook_call(init) else {
                 return false;
-            }
+            };
             match &decl.name {
                 Pat::Ident(bi) => is_likely_generated_alias(&bi.id.sym),
-                Pat::Array(arr) => arr.elems.iter().flatten().any(
-                    |elem| matches!(elem, Pat::Ident(bi) if is_likely_generated_alias(&bi.id.sym)),
-                ),
+                Pat::Array(arr) => arr.elems.iter().enumerate().any(|(idx, elem)| {
+                    let Some(Pat::Ident(bi)) = elem else {
+                        return false;
+                    };
+                    is_likely_generated_alias(&bi.id.sym)
+                        || (hook_name == "useState"
+                            && idx == 1
+                            && is_likely_generated_react_setter_alias(&bi.id.sym))
+                }),
                 _ => false,
             }
         })
@@ -176,13 +220,19 @@ fn has_react_candidates_in_stmts(stmts: &[Stmt]) -> bool {
 fn collect_react_renames_from_module_items(
     body: &[ModuleItem],
     all_names: &HashSet<Atom>,
+    pending_value_position_names: &HashMap<BindingId, String>,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
 
     for item in body {
         if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item {
-            collect_react_var_decl_renames(var_decl, &mut renames, &mut used_names);
+            collect_react_var_decl_renames(
+                var_decl,
+                &mut renames,
+                &mut used_names,
+                pending_value_position_names,
+            );
         }
     }
 
@@ -192,6 +242,7 @@ fn collect_react_renames_from_module_items(
 fn collect_react_renames_from_stmts(
     stmts: &[Stmt],
     all_names: &HashSet<Atom>,
+    pending_value_position_names: &HashMap<BindingId, String>,
 ) -> Vec<BindingRename> {
     let mut renames = Vec::new();
     let mut used_names = all_names.clone();
@@ -200,7 +251,12 @@ fn collect_react_renames_from_stmts(
         let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
             continue;
         };
-        collect_react_var_decl_renames(var_decl, &mut renames, &mut used_names);
+        collect_react_var_decl_renames(
+            var_decl,
+            &mut renames,
+            &mut used_names,
+            pending_value_position_names,
+        );
     }
 
     renames
@@ -210,6 +266,7 @@ fn collect_react_var_decl_renames(
     var_decl: &VarDecl,
     renames: &mut Vec<BindingRename>,
     used_names: &mut HashSet<Atom>,
+    pending_value_position_names: &HashMap<BindingId, String>,
 ) {
     for decl in &var_decl.decls {
         match &decl.name {
@@ -242,7 +299,12 @@ fn collect_react_var_decl_renames(
                 if let Some(init) = &decl.init {
                     if let Some(hook_name) = get_single_react_hook_call(init) {
                         collect_array_pat_react_renames(
-                            array_pat, init, &hook_name, renames, used_names,
+                            array_pat,
+                            init,
+                            &hook_name,
+                            renames,
+                            used_names,
+                            pending_value_position_names,
                         );
                     }
                 }
@@ -258,20 +320,39 @@ fn collect_array_pat_react_renames(
     hook_name: &str,
     renames: &mut Vec<BindingRename>,
     used_names: &mut HashSet<Atom>,
+    pending_value_position_names: &HashMap<BindingId, String>,
 ) {
     match hook_name {
         "useState" => {
-            let state_name = get_array_elem_name(array_pat, 0);
-            if let Some((setter_name, setter_id)) = get_array_elem_if_short(array_pat, 1) {
-                let base = state_name.unwrap_or_else(|| setter_name.clone());
-                let new_setter = format!("set{}", pascal_case_first(&base));
-                let setter_atom = Atom::from(new_setter.as_str());
-                if !used_names.contains(&setter_atom) || new_setter == setter_name {
-                    used_names.insert(setter_atom);
-                    renames.push(BindingRename {
-                        old: setter_id,
-                        new: new_setter.as_str().into(),
-                    });
+            let state_name = get_array_elem_binding(array_pat, 0).map(|(name, id)| {
+                pending_value_position_names
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or(name)
+            });
+            if let Some((setter_name, setter_id, is_setter_alias)) =
+                get_use_state_setter_candidate(array_pat, 1)
+            {
+                let new_setter = if let Some(base) = state_name {
+                    Some(format!(
+                        "set{}",
+                        pascal_case_first(&react_state_setter_base_name(&base))
+                    ))
+                } else if is_setter_alias {
+                    None
+                } else {
+                    Some(format!("set{}", pascal_case_first(&setter_name)))
+                };
+
+                if let Some(new_setter) = new_setter {
+                    if new_setter != setter_name {
+                        let new_setter = find_non_conflicting_name(&new_setter, used_names);
+                        used_names.insert(Atom::from(new_setter.as_str()));
+                        renames.push(BindingRename {
+                            old: setter_id,
+                            new: new_setter.as_str().into(),
+                        });
+                    }
                 }
             }
         }
@@ -316,11 +397,46 @@ fn collect_array_pat_react_renames(
     }
 }
 
+fn get_use_state_setter_candidate(
+    array_pat: &ArrayPat,
+    idx: usize,
+) -> Option<(String, BindingId, bool)> {
+    let Some(Some(Pat::Ident(bi))) = array_pat.elems.get(idx) else {
+        return None;
+    };
+    let name = bi.id.sym.to_string();
+    if is_likely_generated_alias(&bi.id.sym) {
+        return Some((name, (bi.id.sym.clone(), bi.id.ctxt), false));
+    }
+    if is_likely_generated_react_setter_alias(&name) {
+        return Some((name, (bi.id.sym.clone(), bi.id.ctxt), true));
+    }
+    None
+}
+
+fn is_likely_generated_react_setter_alias(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("set") else {
+        return false;
+    };
+    !rest.is_empty() && is_likely_generated_alias(rest)
+}
+
+fn react_state_setter_base_name(name: &str) -> String {
+    let Some((base, suffix)) = name.rsplit_once('_') else {
+        return name.to_string();
+    };
+    if base.is_empty() || suffix.is_empty() || !suffix.bytes().all(|b| b.is_ascii_digit()) {
+        return name.to_string();
+    }
+    base.to_string()
+}
+
 /// Returns the hook name if `expr` is a call to a known React hook.
 fn get_single_react_hook_call(expr: &Expr) -> Option<String> {
     let Expr::Call(CallExpr { callee, args, .. }) = expr else {
         return None;
     };
+
     let fn_name = match callee {
         Callee::Expr(e) => match e.as_ref() {
             Expr::Ident(id) => id.sym.to_string(),
@@ -358,6 +474,13 @@ fn get_array_elem_name(array_pat: &ArrayPat, idx: usize) -> Option<String> {
         return None;
     };
     Some(bi.id.sym.to_string())
+}
+
+fn get_array_elem_binding(array_pat: &ArrayPat, idx: usize) -> Option<(String, BindingId)> {
+    let Some(Some(Pat::Ident(bi))) = array_pat.elems.get(idx) else {
+        return None;
+    };
+    Some((bi.id.sym.to_string(), (bi.id.sym.clone(), bi.id.ctxt)))
 }
 
 fn get_array_elem_if_short(array_pat: &ArrayPat, idx: usize) -> Option<(String, BindingId)> {
@@ -1303,10 +1426,27 @@ fn symbol_key_to_const_name(key: &str) -> String {
 // ============================================================
 
 fn value_position_rename_module(module: &mut Module) {
+    let renames = collect_value_position_renames_module(module);
+    if renames.is_empty() {
+        return;
+    }
+    rename_bindings_in_module(module, &renames);
+    // Collapse `{ Foo: Foo }` created by the rename back to `{ Foo }`.
+    module.visit_mut_with(&mut ObjShorthand);
+}
+
+fn collect_value_position_rename_map_module(module: &Module) -> HashMap<BindingId, String> {
+    collect_value_position_renames_module(module)
+        .into_iter()
+        .map(|rename| (rename.old, rename.new.to_string()))
+        .collect()
+}
+
+fn collect_value_position_renames_module(module: &Module) -> Vec<BindingRename> {
     let mut collector = BindingCollector::default();
     module.visit_with(&mut collector);
     if collector.short_bindings.is_empty() {
-        return;
+        return Vec::new();
     }
     let exported_bindings = collect_exported_binding_ids(module);
 
@@ -1391,11 +1531,9 @@ fn value_position_rename_module(module: &mut Module) {
     }
 
     if renames.is_empty() {
-        return;
+        return Vec::new();
     }
-    rename_bindings_in_module(module, &renames);
-    // Collapse `{ Foo: Foo }` created by the rename back to `{ Foo }`.
-    module.visit_mut_with(&mut ObjShorthand);
+    renames
 }
 
 #[derive(Default)]

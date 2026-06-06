@@ -120,6 +120,45 @@ use(current, setCurrent);
 }
 
 #[test]
+fn folds_cross_module_helper_assignment_group() {
+    let mut facts = ModuleFactsMap::new();
+    facts.insert(
+        "helpers.js",
+        ModuleFacts {
+            default_object_helper_exports: vec![HelperExportFact {
+                exported: "_".into(),
+                local: Some("sliced".into()),
+                kind: HelperKind::SlicedToArray,
+            }],
+            ..Default::default()
+        },
+    );
+
+    let input = r#"
+import helpers from "./helpers.js";
+function Component() {
+    var tuple;
+    var value;
+    var setter;
+    value = (tuple = helpers._(React.useState(undefined), 2))[0];
+    setter = tuple[1];
+    setter(value);
+}
+"#;
+    let expected = r#"
+import helpers from "./helpers.js";
+function Component() {
+    var [value, setter] = React.useState(undefined);
+    setter(value);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_rule(input, |_| UnSlicedToArray::new_with_facts(&facts)),
+        expected,
+    );
+}
+
+#[test]
 fn unwraps_tslib_namespace_read_require() {
     let input = r#"
 var tslib_1 = require("tslib");

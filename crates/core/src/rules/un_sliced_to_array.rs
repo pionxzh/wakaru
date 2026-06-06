@@ -1,8 +1,10 @@
 use crate::facts::ModuleFactsMap;
+use crate::utils::paren::strip_parens;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, BinaryOp, BindingIdent, Callee, Decl, Expr, Lit, MemberProp, Module, ModuleItem, Pat,
-    Stmt, VarDeclarator,
+    ArrayPat, AssignExpr, AssignOp, AssignTarget, BinaryOp, BindingIdent, Callee, Decl, Expr,
+    ExprStmt, Lit, MemberExpr, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt,
+    VarDecl, VarDeclKind, VarDeclarator,
 };
 
 use super::cross_module_helper_refs::{
@@ -277,7 +279,13 @@ fn fold_sliced_to_array_stmt_groups(
 ) {
     let mut i = 0;
     while i < stmts.len() {
-        try_fold_sliced_to_array_stmt_group(stmts, i, local_helpers, cross_module_helpers);
+        let _ = try_fold_sliced_to_array_stmt_group(stmts, i, local_helpers, cross_module_helpers)
+            || try_fold_sliced_to_array_assignment_stmt_group(
+                stmts,
+                i,
+                local_helpers,
+                cross_module_helpers,
+            );
         i += 1;
     }
 }
@@ -371,6 +379,64 @@ fn try_fold_sliced_to_array_stmt_group(
     true
 }
 
+fn try_fold_sliced_to_array_assignment_stmt_group(
+    stmts: &mut Vec<Stmt>,
+    start: usize,
+    local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
+) -> bool {
+    let Some((first, extraction)) =
+        extract_sliced_to_array_assignment_stmt(&stmts[start], local_helpers, cross_module_helpers)
+    else {
+        return false;
+    };
+    if extraction.length != Some(2) {
+        return false;
+    }
+    let Some(second_stmt) = stmts.get(start + 1) else {
+        return false;
+    };
+    let Some(second) =
+        extract_ref_index_assignment_stmt(second_stmt, &extraction.ref_binding.id, 1)
+    else {
+        return false;
+    };
+    if ident_used_in_stmts(&stmts[start + 2..], &extraction.ref_binding.id) {
+        return false;
+    }
+    if sliced_source_ref_is_used_in_stmts(&stmts[start + 2..], &extraction) {
+        return false;
+    }
+    let ref_id = extraction.ref_binding.id.clone();
+    let first_id = first.id.clone();
+    let second_id = second.id.clone();
+    let targets = [&ref_id, &first_id, &second_id];
+    if !has_prior_uninitialized_decls(&stmts[..start], targets) {
+        return false;
+    }
+
+    stmts[start] = Stmt::Decl(Decl::Var(Box::new(VarDecl {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        kind: VarDeclKind::Var,
+        declare: false,
+        decls: vec![VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Array(ArrayPat {
+                span: DUMMY_SP,
+                elems: vec![Some(Pat::Ident(first)), Some(Pat::Ident(second))],
+                optional: false,
+                type_ann: None,
+            }),
+            init: Some(extraction.source),
+            definite: false,
+        }],
+    })));
+    stmts.drain(start + 1..start + 2);
+    remove_prior_uninitialized_decls(stmts, start, targets);
+    true
+}
+
 fn extract_sliced_to_array_module_item(
     item: &ModuleItem,
     local_helpers: &LocalHelperContext,
@@ -397,6 +463,89 @@ fn extract_sliced_to_array_stmt(
         return None;
     }
     extract_sliced_to_array_decl(&var.decls[0], local_helpers, cross_module_helpers)
+}
+
+fn extract_sliced_to_array_assignment_stmt(
+    stmt: &Stmt,
+    local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
+) -> Option<(BindingIdent, SlicedExtraction)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(expr.as_ref()) else {
+        return None;
+    };
+    let first = simple_ident_assign_target(assign)?;
+    let Expr::Member(member) = strip_parens(assign.right.as_ref()) else {
+        return None;
+    };
+    if member_index(member)? != 0 {
+        return None;
+    }
+    let Expr::Assign(tuple_assign) = strip_parens(member.obj.as_ref()) else {
+        return None;
+    };
+    let tuple = simple_ident_assign_target(tuple_assign)?;
+    let Expr::Call(call) = strip_parens(tuple_assign.right.as_ref()) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    if !is_sliced_to_array_callee(callee, local_helpers, cross_module_helpers) {
+        return None;
+    }
+    if call.args.len() != 2 {
+        return None;
+    }
+    let Expr::Lit(Lit::Num(num)) = call.args[1].expr.as_ref() else {
+        return None;
+    };
+    let length = numeric_length(num.value)?;
+
+    Some((
+        BindingIdent {
+            id: first,
+            type_ann: None,
+        },
+        SlicedExtraction {
+            ref_binding: BindingIdent {
+                id: tuple,
+                type_ann: None,
+            },
+            source: call.args[0].expr.clone(),
+            source_ref: None,
+            length: Some(length),
+        },
+    ))
+}
+
+fn extract_ref_index_assignment_stmt(
+    stmt: &Stmt,
+    ref_ident: &swc_core::ecma::ast::Ident,
+    index: usize,
+) -> Option<BindingIdent> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(expr.as_ref()) else {
+        return None;
+    };
+    let target = simple_ident_assign_target(assign)?;
+    let Expr::Member(member) = strip_parens(assign.right.as_ref()) else {
+        return None;
+    };
+    let Expr::Ident(obj) = strip_parens(member.obj.as_ref()) else {
+        return None;
+    };
+    if !same_sliced_ref_ident(obj, ref_ident) || member_index(member)? != index {
+        return None;
+    }
+    Some(BindingIdent {
+        id: target,
+        type_ann: None,
+    })
 }
 
 fn extract_ref_index_module_item(
@@ -582,6 +731,73 @@ fn extract_ref_index_binding(
         return None;
     };
     (numeric_length(num.value)? == index).then(|| binding.clone())
+}
+
+fn simple_ident_assign_target(assign: &AssignExpr) -> Option<swc_core::ecma::ast::Ident> {
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(ident)) = &assign.left else {
+        return None;
+    };
+    Some(ident.id.clone())
+}
+
+fn member_index(member: &MemberExpr) -> Option<usize> {
+    let MemberProp::Computed(computed) = &member.prop else {
+        return None;
+    };
+    let Expr::Lit(Lit::Num(num)) = strip_parens(computed.expr.as_ref()) else {
+        return None;
+    };
+    numeric_length(num.value)
+}
+
+fn remove_prior_uninitialized_decls<const N: usize>(
+    stmts: &mut Vec<Stmt>,
+    end: usize,
+    targets: [&swc_core::ecma::ast::Ident; N],
+) {
+    let end = end.min(stmts.len());
+    for stmt in &mut stmts[..end] {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        var.decls.retain(|decl| {
+            if decl.init.is_some() {
+                return true;
+            }
+            let Pat::Ident(binding) = &decl.name else {
+                return true;
+            };
+            !targets
+                .iter()
+                .any(|target| same_sliced_ref_ident(&binding.id, target))
+        });
+    }
+
+    stmts.retain(|stmt| !matches!(stmt, Stmt::Decl(Decl::Var(var)) if var.decls.is_empty()));
+}
+
+fn has_prior_uninitialized_decls<const N: usize>(
+    stmts: &[Stmt],
+    targets: [&swc_core::ecma::ast::Ident; N],
+) -> bool {
+    targets
+        .iter()
+        .all(|target| has_prior_uninitialized_decl(stmts, target))
+}
+
+fn has_prior_uninitialized_decl(stmts: &[Stmt], target: &swc_core::ecma::ast::Ident) -> bool {
+    stmts.iter().any(|stmt| {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            return false;
+        };
+        var.decls.iter().any(|decl| {
+            decl.init.is_none()
+                && matches!(&decl.name, Pat::Ident(binding) if same_sliced_ref_ident(&binding.id, target))
+        })
+    })
 }
 
 fn try_unwrap_sliced_to_array(
