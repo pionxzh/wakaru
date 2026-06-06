@@ -112,7 +112,8 @@ use(missing, value);
 
 #[test]
 fn with_bare_access() {
-    // props.replace; (bare access, no binding) — absorbed, "to" gets _prefix since no binding
+    // props.replace; (bare access, no binding) is absorbed. The long `_replace`
+    // alias stays descriptive enough, while short `_to` can collapse to shorthand.
     let input = r#"
 props.replace;
 const rest = ((e, t) => {

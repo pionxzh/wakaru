@@ -687,6 +687,9 @@ fn collect_obj_pat_renames_from_pat(
                 if alias.0.as_ref() == target_name {
                     continue;
                 }
+                if to_valid_identifier_name(&target_name) == alias.0.as_ref() {
+                    continue;
+                }
                 let new_name = find_non_conflicting_name(&target_name, used_names);
                 used_names.insert(new_name.clone());
                 renames.push(BindingRename {
@@ -952,6 +955,9 @@ fn collect_member_init_var_renames(
             prop_name.clone()
         };
 
+        if to_valid_identifier_name(&new_name) == old_name {
+            continue;
+        }
         let new_name = find_non_conflicting_name(&new_name, used_names);
         if new_name == old_name {
             continue;

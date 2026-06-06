@@ -107,6 +107,16 @@ render(alphaName, alphaName_1);
 }
 
 #[test]
+fn object_destructuring_keeps_reserved_key_placeholder() {
+    let input = r#"
+const { in: _in } = source;
+use(_in);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn object_destructuring_with_reserved_identifier() {
     let input = r#"
 const {
@@ -401,6 +411,16 @@ render(source_readableName);
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn member_init_keeps_normalized_property_placeholder() {
+    let input = r#"
+const _abc = this._abc;
+render(_abc);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
 }
 
 #[test]
