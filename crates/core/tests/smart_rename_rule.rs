@@ -637,6 +637,20 @@ console.log(SYMBOL_EXAMPLE_KEY);
 }
 
 #[test]
+fn symbol_for_keeps_uppercase_acronym_key_together() {
+    let input = r#"
+const ab1 = Symbol.for("UPPERCASE");
+console.log(ab1);
+"#;
+    let expected = r#"
+const SYMBOL_UPPERCASE = Symbol.for("UPPERCASE");
+console.log(SYMBOL_UPPERCASE);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn symbol_for_camel_case_key() {
     let input = r#"
 const Ac = Symbol.for("react.forward_ref");

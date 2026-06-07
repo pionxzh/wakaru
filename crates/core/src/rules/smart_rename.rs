@@ -1388,23 +1388,33 @@ fn is_valid_js_ident(name: &str) -> bool {
 /// Convert a Symbol.for key like "react.element" to UPPER_SNAKE_CASE: "REACT_ELEMENT".
 /// Handles dots, hyphens, and camelCase boundaries as separators.
 fn symbol_key_to_const_name(key: &str) -> String {
+    let chars = key.chars().collect::<Vec<_>>();
     let mut result = String::new();
     let mut prev_was_sep = true; // treat start as after separator
-    for ch in key.chars() {
-        if ch == '.' || ch == '-' || ch == '_' || ch == ' ' {
-            if !result.is_empty() {
+    for (idx, ch) in chars.iter().enumerate() {
+        if *ch == '.' || *ch == '-' || *ch == '_' || *ch == ' ' {
+            if !result.is_empty() && !result.ends_with('_') {
                 result.push('_');
             }
             prev_was_sep = true;
-        } else if ch.is_uppercase() && !prev_was_sep && !result.is_empty() {
-            // camelCase boundary: "forwardRef" → "FORWARD_REF"
-            result.push('_');
-            result.push(ch.to_ascii_uppercase());
-            prev_was_sep = false;
-        } else {
-            result.push(ch.to_ascii_uppercase());
-            prev_was_sep = false;
+            continue;
         }
+
+        let prev = idx.checked_sub(1).and_then(|prev_idx| chars.get(prev_idx));
+        let next = chars.get(idx + 1);
+        let camel_boundary = ch.is_ascii_uppercase()
+            && !prev_was_sep
+            && !result.is_empty()
+            && (prev.is_some_and(|prev| prev.is_ascii_lowercase() || prev.is_ascii_digit())
+                || (prev.is_some_and(|prev| prev.is_ascii_uppercase())
+                    && next.is_some_and(|next| next.is_ascii_lowercase())));
+
+        if camel_boundary {
+            // camelCase/acronym boundary: "forwardRef" -> "FORWARD_REF", "URLValue" -> "URL_VALUE".
+            result.push('_');
+        }
+        result.push(ch.to_ascii_uppercase());
+        prev_was_sep = false;
     }
     result
 }
