@@ -166,7 +166,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         let _enter = span.enter();
         extract_scope_hoisted_modules(
             &analysis_entry_items,
-            &entry_items,
+            entry_items,
             &mut global_seen,
             cm.clone(),
             &all_factory_referenced,
@@ -678,7 +678,7 @@ struct ScopeModuleMeta {
 /// lets callers synthesize imports in factory modules.
 fn extract_scope_hoisted_modules(
     analysis_items: &[ModuleItem],
-    source_items: &[ModuleItem],
+    source_items: Vec<ModuleItem>,
     seen_lower: &mut HashSet<String>,
     cm: Lrc<SourceMap>,
     factory_referenced: &HashSet<BindingId>,
@@ -692,25 +692,18 @@ fn extract_scope_hoisted_modules(
 
     // Step 1: find the __export helper binding.
     let Some((export_helper_index, export_helper)) = detect_export_helper(analysis_items) else {
-        return (
-            vec![],
-            source_items.to_vec(),
-            HashMap::new(),
-            HashMap::new(),
-        );
+        return (vec![], source_items, HashMap::new(), HashMap::new());
     };
     let item_infos = build_item_binding_infos(analysis_items);
 
     // Step 2: find all (namespace_decl_index, export_call_index, ns_atom) triples.
     let boundaries = collect_scope_hoisted_boundaries(analysis_items, &export_helper);
     if boundaries.is_empty() {
-        return (
-            vec![],
-            source_items.to_vec(),
-            HashMap::new(),
-            HashMap::new(),
-        );
+        return (vec![], source_items, HashMap::new(), HashMap::new());
     }
+
+    // Convert to Option<ModuleItem> so items can be moved out by index.
+    let mut source_slots: Vec<Option<ModuleItem>> = source_items.into_iter().map(Some).collect();
 
     // Step 3 (pass 1): partition items and collect per-module metadata.
     let mut metas: Vec<ScopeModuleMeta> = Vec::new();
@@ -797,7 +790,7 @@ fn extract_scope_hoisted_modules(
 
     // Collect remaining entry references early so they feed into the
     // effective-export expansion below.
-    let remaining_indices: Vec<usize> = (0..source_items.len())
+    let remaining_indices: Vec<usize> = (0..source_slots.len())
         .filter(|i| !consumed.contains(i))
         .collect();
 
@@ -892,9 +885,9 @@ fn extract_scope_hoisted_modules(
         // Body items with export promotion for exported bindings.
         let mut remaining_exports = exports.clone();
         for &i in &meta.body_indices {
-            let item = &source_items[i];
+            let item = source_slots[i].take().expect("body item already consumed");
             if remaining_exports.is_empty() {
-                module_items.push(item.clone());
+                module_items.push(item);
                 continue;
             }
             match try_promote_scope_export(item, &remaining_exports) {
@@ -904,8 +897,8 @@ fn extract_scope_hoisted_modules(
                         remaining_exports.remove(name);
                     }
                 }
-                ScopeExportPromotion::None => {
-                    module_items.push(item.clone());
+                ScopeExportPromotion::Unchanged(item) => {
+                    module_items.push(item);
                 }
             }
         }
@@ -946,7 +939,7 @@ fn extract_scope_hoisted_modules(
     // consumers would need `import { math }`, not `import { ns_a }`.
     let entry_already_exports: HashSet<Atom> = remaining_indices
         .iter()
-        .flat_map(|&i| match &source_items[i] {
+        .flat_map(|&i| match source_slots[i].as_ref().unwrap() {
             ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(named)) => named
                 .specifiers
                 .iter()
@@ -989,8 +982,16 @@ fn extract_scope_hoisted_modules(
             continue;
         }
         need_export_helper = true;
-        restored_items.push(source_items[ns_idx].clone());
-        restored_items.push(source_items[call_idx].clone());
+        restored_items.push(
+            source_slots[ns_idx]
+                .take()
+                .expect("ns_decl already consumed"),
+        );
+        restored_items.push(
+            source_slots[call_idx]
+                .take()
+                .expect("export_call already consumed"),
+        );
         // If a factory references this namespace but the entry doesn't
         // already export it via an ESM export declaration, synthesize one
         // so the factory's `import { ns_a } from "./entry.js"` resolves.
@@ -999,7 +1000,12 @@ fn extract_scope_hoisted_modules(
         }
     }
     if need_export_helper {
-        restored_items.insert(0, source_items[export_helper_index].clone());
+        restored_items.insert(
+            0,
+            source_slots[export_helper_index]
+                .take()
+                .expect("export_helper already consumed"),
+        );
     }
     if !factory_ns_exports.is_empty() {
         factory_ns_exports.sort();
@@ -1028,7 +1034,11 @@ fn extract_scope_hoisted_modules(
         }
     }
     remaining.extend(restored_items);
-    remaining.extend(remaining_indices.iter().map(|&i| source_items[i].clone()));
+    remaining.extend(remaining_indices.iter().map(|&i| {
+        source_slots[i]
+            .take()
+            .expect("remaining item already consumed")
+    }));
 
     (
         modules,
@@ -1604,39 +1614,50 @@ fn make_scope_export_stmt(names: &[Atom]) -> ModuleItem {
 
 enum ScopeExportPromotion {
     Promoted(ModuleItem, Vec<Atom>),
-    None,
+    Unchanged(ModuleItem),
 }
 
-fn try_promote_scope_export(item: &ModuleItem, exported: &HashSet<Atom>) -> ScopeExportPromotion {
+fn try_promote_scope_export(item: ModuleItem, exported: &HashSet<Atom>) -> ScopeExportPromotion {
     match item {
-        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl)))
+        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(ref fn_decl)))
             if exported.contains(&fn_decl.ident.sym) =>
         {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item else {
+                unreachable!()
+            };
             let names = vec![fn_decl.ident.sym.clone()];
-            let new_item = ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-                span: Default::default(),
-                decl: Decl::Fn(fn_decl.clone()),
-            }));
-            ScopeExportPromotion::Promoted(new_item, names)
+            ScopeExportPromotion::Promoted(
+                ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                    span: Default::default(),
+                    decl: Decl::Fn(fn_decl),
+                })),
+                names,
+            )
         }
-        ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl)))
+        ModuleItem::Stmt(Stmt::Decl(Decl::Class(ref class_decl)))
             if exported.contains(&class_decl.ident.sym) =>
         {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Class(class_decl))) = item else {
+                unreachable!()
+            };
             let names = vec![class_decl.ident.sym.clone()];
-            let new_item = ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-                span: Default::default(),
-                decl: Decl::Class(class_decl.clone()),
-            }));
-            ScopeExportPromotion::Promoted(new_item, names)
+            ScopeExportPromotion::Promoted(
+                ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                    span: Default::default(),
+                    decl: Decl::Class(class_decl),
+                })),
+                names,
+            )
         }
-        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
-            let all_exported = var_decl
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(ref var_decl)))
+            if var_decl
                 .decls
                 .iter()
-                .all(|d| matches!(&d.name, Pat::Ident(bi) if exported.contains(&bi.id.sym)));
-            if !all_exported {
-                return ScopeExportPromotion::None;
-            }
+                .all(|d| matches!(&d.name, Pat::Ident(bi) if exported.contains(&bi.id.sym))) =>
+        {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
+                unreachable!()
+            };
             let names: Vec<Atom> = var_decl
                 .decls
                 .iter()
@@ -1649,15 +1670,19 @@ fn try_promote_scope_export(item: &ModuleItem, exported: &HashSet<Atom>) -> Scop
                 })
                 .collect();
             if names.is_empty() {
-                return ScopeExportPromotion::None;
+                return ScopeExportPromotion::Unchanged(ModuleItem::Stmt(Stmt::Decl(Decl::Var(
+                    var_decl,
+                ))));
             }
-            let new_item = ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-                span: Default::default(),
-                decl: Decl::Var(var_decl.clone()),
-            }));
-            ScopeExportPromotion::Promoted(new_item, names)
+            ScopeExportPromotion::Promoted(
+                ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                    span: Default::default(),
+                    decl: Decl::Var(var_decl),
+                })),
+                names,
+            )
         }
-        _ => ScopeExportPromotion::None,
+        item => ScopeExportPromotion::Unchanged(item),
     }
 }
 
