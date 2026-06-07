@@ -55,6 +55,7 @@ impl VisitMut for SmartRename {
         symbol_for_rename_module_with(module, &mut cached_names, self.unresolved_mark);
 
         sentry_component_rename_module(module);
+        react_function_shape_rename_module(module);
         module.visit_mut_children_with(self);
         // Runs once at the module level; uses (sym, ctxt) matching so nested
         // bindings are classified correctly without per-scope recursion.
@@ -106,6 +107,7 @@ impl VisitMut for SmartRenameSecondPass {
             collect_value_position_rename_map_module(module),
         );
         sentry_component_rename_module(module);
+        react_function_shape_rename_module(module);
         module.visit_mut_children_with(self);
         value_position_rename_module(module);
         jsx_component_alias_rename_module(module);
@@ -1964,6 +1966,327 @@ impl Visit for SentryComponentCollector {
                 }
             }
             _ => decl.visit_children_with(self),
+        }
+    }
+}
+
+// ============================================================
+// React function shape renames
+//
+// When a generated function binding already looks React-specific, recover a
+// minimal readable name without guessing the original source name:
+//
+//   function K() { return <div />; }       -> function KComponent() { ... }
+//   function K() { useEffect(...); }       -> function useK() { ... }
+//
+// Sentry component annotations remain higher priority. If a candidate contains
+// a Sentry hint that was not accepted by `sentry_component_rename_module`, leave
+// the function alone instead of falling back to a synthetic name.
+// ============================================================
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ReactFunctionShapeKind {
+    Component,
+    Hook,
+}
+
+fn react_function_shape_rename_module(module: &mut Module) {
+    let mut collector = ReactFunctionShapeCollector::default();
+    module.visit_with(&mut collector);
+    if collector.candidates.is_empty() {
+        return;
+    }
+
+    let exported_bindings = collect_exported_binding_ids(module);
+    let component_use_bindings = collect_component_use_binding_ids(module);
+    let mut used_names = collect_module_names(module);
+    let all_candidate_bids: HashSet<BindingId> = collector
+        .candidates
+        .iter()
+        .map(|(bid, _)| bid.clone())
+        .collect();
+    let shadow_index = RenameShadowIndex::for_bindings(module, &all_candidate_bids);
+
+    let mut renames = Vec::new();
+    for (bid, kind) in collector.candidates {
+        if exported_bindings.contains(&bid) {
+            continue;
+        }
+        if !is_likely_generated_alias(&bid.0) {
+            continue;
+        }
+        let kind = if component_use_bindings.contains(&bid) {
+            ReactFunctionShapeKind::Component
+        } else {
+            kind
+        };
+        let target = react_function_shape_target_name(bid.0.as_ref(), kind);
+        if target == bid.0.as_ref() || !is_valid_js_ident(&target) {
+            continue;
+        }
+
+        let atom: Atom = target.as_str().into();
+        if used_names.contains(&atom) || shadow_index.rename_causes_shadowing(&bid, &atom) {
+            continue;
+        }
+
+        used_names.insert(atom.clone());
+        renames.push(BindingRename {
+            old: bid,
+            new: atom,
+        });
+    }
+
+    if !renames.is_empty() {
+        rename_bindings_in_module(module, &renames);
+    }
+}
+
+fn react_function_shape_target_name(name: &str, kind: ReactFunctionShapeKind) -> String {
+    let base = pascalize(name);
+    match kind {
+        ReactFunctionShapeKind::Component if base == "Component" => base,
+        ReactFunctionShapeKind::Component => format!("{base}Component"),
+        ReactFunctionShapeKind::Hook => format!("use{base}"),
+    }
+}
+
+#[derive(Default)]
+struct ReactFunctionShapeCollector {
+    candidates: Vec<(BindingId, ReactFunctionShapeKind)>,
+}
+
+impl ReactFunctionShapeCollector {
+    fn record_function(&mut self, id: &Ident, function: &Function) {
+        if !is_likely_generated_alias(&id.sym) {
+            return;
+        }
+        if let Some(kind) = classify_react_function(function) {
+            self.candidates.push(((id.sym.clone(), id.ctxt), kind));
+        }
+    }
+
+    fn record_arrow(&mut self, id: &Ident, arrow: &ArrowExpr) {
+        if !is_likely_generated_alias(&id.sym) {
+            return;
+        }
+        if let Some(kind) = classify_react_arrow(arrow) {
+            self.candidates.push(((id.sym.clone(), id.ctxt), kind));
+        }
+    }
+}
+
+impl Visit for ReactFunctionShapeCollector {
+    fn visit_fn_decl(&mut self, decl: &FnDecl) {
+        self.record_function(&decl.ident, &decl.function);
+        decl.function.visit_with(self);
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &swc_core::ecma::ast::VarDeclarator) {
+        let Pat::Ident(binding) = &declarator.name else {
+            declarator.visit_children_with(self);
+            return;
+        };
+        let Some(init) = &declarator.init else {
+            return;
+        };
+        match init.as_ref() {
+            Expr::Fn(fn_expr) => {
+                self.record_function(&binding.id, &fn_expr.function);
+                fn_expr.function.visit_with(self);
+            }
+            Expr::Arrow(arrow) => {
+                self.record_arrow(&binding.id, arrow);
+                arrow.visit_with(self);
+            }
+            _ => declarator.visit_children_with(self),
+        }
+    }
+
+    fn visit_export_default_decl(&mut self, decl: &swc_core::ecma::ast::ExportDefaultDecl) {
+        match &decl.decl {
+            swc_core::ecma::ast::DefaultDecl::Fn(fn_expr) => {
+                if let Some(ident) = &fn_expr.ident {
+                    self.record_function(ident, &fn_expr.function);
+                }
+                fn_expr.function.visit_with(self);
+            }
+            _ => decl.visit_children_with(self),
+        }
+    }
+
+    fn visit_fn_expr(&mut self, fn_expr: &FnExpr) {
+        fn_expr.function.visit_with(self);
+    }
+}
+
+fn classify_react_function(function: &Function) -> Option<ReactFunctionShapeKind> {
+    let mut classifier = ReactFunctionBodyClassifier::default();
+    function.visit_with(&mut classifier);
+    classifier.kind()
+}
+
+fn classify_react_arrow(arrow: &ArrowExpr) -> Option<ReactFunctionShapeKind> {
+    let mut classifier = ReactFunctionBodyClassifier::default();
+    arrow.body.visit_with(&mut classifier);
+    classifier.kind()
+}
+
+#[derive(Default)]
+struct ReactFunctionBodyClassifier {
+    has_jsx: bool,
+    has_hook_call: bool,
+    has_sentry_hint: bool,
+}
+
+impl ReactFunctionBodyClassifier {
+    fn kind(&self) -> Option<ReactFunctionShapeKind> {
+        if self.has_sentry_hint {
+            return None;
+        }
+        if self.has_jsx {
+            return Some(ReactFunctionShapeKind::Component);
+        }
+        if self.has_hook_call {
+            return Some(ReactFunctionShapeKind::Hook);
+        }
+        None
+    }
+}
+
+impl Visit for ReactFunctionBodyClassifier {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Some(name) = callee_terminal_name(&call.callee) {
+            if is_react_hook_name(&name) {
+                self.has_hook_call = true;
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_jsx_element(&mut self, elem: &swc_core::ecma::ast::JSXElement) {
+        self.has_jsx = true;
+        elem.visit_children_with(self);
+    }
+
+    fn visit_jsx_fragment(&mut self, fragment: &swc_core::ecma::ast::JSXFragment) {
+        self.has_jsx = true;
+        fragment.visit_children_with(self);
+    }
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+    fn visit_jsx_opening_element(&mut self, elem: &swc_core::ecma::ast::JSXOpeningElement) {
+        if elem.attrs.iter().any(|attr| {
+            matches!(
+                attr,
+                JSXAttrOrSpread::JSXAttr(JSXAttr {
+                    name: JSXAttrName::Ident(name),
+                    ..
+                }) if SENTRY_ATTR_NAMES.contains(&name.sym.as_ref())
+            )
+        }) {
+            self.has_sentry_hint = true;
+        }
+        elem.visit_children_with(self);
+    }
+
+    fn visit_fn_decl(&mut self, _: &FnDecl) {}
+
+    fn visit_fn_expr(&mut self, _: &FnExpr) {}
+
+    fn visit_class_decl(&mut self, _: &ClassDecl) {}
+
+    fn visit_class_expr(&mut self, _: &ClassExpr) {}
+}
+
+fn callee_terminal_name(callee: &Callee) -> Option<String> {
+    match callee {
+        Callee::Expr(expr) => match expr.as_ref() {
+            Expr::Ident(id) => Some(id.sym.to_string()),
+            Expr::Member(member) => member_prop_name(&member.prop),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn member_prop_name(prop: &MemberProp) -> Option<String> {
+    match prop {
+        MemberProp::Ident(ident) => Some(ident.sym.to_string()),
+        MemberProp::Computed(computed) => {
+            let Expr::Lit(Lit::Str(value)) = computed.expr.as_ref() else {
+                return None;
+            };
+            value.value.as_str().map(|value| value.to_string())
+        }
+        MemberProp::PrivateName(_) => None,
+    }
+}
+
+fn is_react_hook_name(name: &str) -> bool {
+    matches!(
+        name,
+        "useState"
+            | "useEffect"
+            | "useLayoutEffect"
+            | "useInsertionEffect"
+            | "useMemo"
+            | "useCallback"
+            | "useRef"
+            | "useContext"
+            | "useReducer"
+            | "useImperativeHandle"
+            | "useDebugValue"
+            | "useDeferredValue"
+            | "useTransition"
+            | "useId"
+            | "useSyncExternalStore"
+            | "useOptimistic"
+            | "useActionState"
+            | "useFormStatus"
+    )
+}
+
+fn collect_component_use_binding_ids(module: &Module) -> HashSet<BindingId> {
+    let mut collector = ComponentUseBindingCollector::default();
+    module.visit_with(&mut collector);
+    collector.bindings
+}
+
+#[derive(Default)]
+struct ComponentUseBindingCollector {
+    bindings: HashSet<BindingId>,
+}
+
+impl Visit for ComponentUseBindingCollector {
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if callee_terminal_name(&call.callee).as_deref() == Some("createElement") {
+            if let Some(first_arg) = call.args.first() {
+                if let Expr::Ident(ident) = first_arg.expr.as_ref() {
+                    self.bindings.insert((ident.sym.clone(), ident.ctxt));
+                }
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_jsx_element_name(&mut self, name: &JSXElementName) {
+        match name {
+            JSXElementName::Ident(ident) => {
+                self.bindings.insert((ident.sym.clone(), ident.ctxt));
+            }
+            JSXElementName::JSXMemberExpr(member) => self.visit_jsx_member_expr(member),
+            JSXElementName::JSXNamespacedName(_) => {}
+        }
+    }
+
+    fn visit_jsx_member_expr(&mut self, member: &JSXMemberExpr) {
+        match &member.obj {
+            JSXObject::Ident(ident) => {
+                self.bindings.insert((ident.sym.clone(), ident.ctxt));
+            }
+            JSXObject::JSXMemberExpr(member) => self.visit_jsx_member_expr(member),
         }
     }
 }

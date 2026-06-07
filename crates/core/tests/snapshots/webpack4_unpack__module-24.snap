@@ -562,15 +562,15 @@ Switch.propTypes = {
 };
 export const matchPath = a_2;
 export const withRouter = (e)=>{
-    const t = ({ wrappedComponentRef, ...rest })=><Route children={(t)=>createElement(e, {
+    const TComponent = ({ wrappedComponentRef, ...rest })=><Route children={(t)=>createElement(e, {
                 ...rest,
                 ...t,
                 ref: wrappedComponentRef
             })}/>;
-    t.displayName = `withRouter(${e.displayName || e.name})`;
-    t.WrappedComponent = e;
-    t.propTypes = {
+    TComponent.displayName = `withRouter(${e.displayName || e.name})`;
+    TComponent.WrappedComponent = e;
+    TComponent.propTypes = {
         wrappedComponentRef: u.func
     };
-    return le(t, e);
+    return le(TComponent, e);
 };

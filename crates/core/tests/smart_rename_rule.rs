@@ -1253,6 +1253,251 @@ function a() {
     assert_eq_normalized(&apply(input), input);
 }
 
+// ============================================================
+// React function shape renames
+// ============================================================
+
+#[test]
+fn react_shape_renames_jsx_function_decl_component() {
+    let input = r#"
+function K() {
+  return <div>Hello</div>;
+}
+use(K);
+"#;
+    let expected = r#"
+function KComponent() {
+  return <div>Hello</div>;
+}
+use(KComponent);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn react_shape_renames_jsx_arrow_component() {
+    let input = r#"
+const K = ({ children }) => <section>{children}</section>;
+render(<K />);
+"#;
+    let expected = r#"
+const KComponent = ({ children }) => <section>{children}</section>;
+render(<KComponent />);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn react_shape_renames_create_element_component() {
+    let input = r#"
+function K(props) {
+  const [value] = React.useState(props.value);
+  return value;
+}
+const node = React.createElement(K, { value: 1 });
+"#;
+    let expected = r#"
+function KComponent(props) {
+  const [value] = React.useState(props.value);
+  return value;
+}
+const node = React.createElement(KComponent, { value: 1 });
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn react_shape_uses_plain_component_for_symbol_alias() {
+    let input = r#"
+const $ = ({ children }) => <section>{children}</section>;
+render(<$ />);
+"#;
+    let expected = r#"
+const Component = ({ children }) => <section>{children}</section>;
+render(<Component />);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn react_shape_renames_hook_like_function_decl() {
+    let input = r#"
+function K() {
+  const [value, setValue] = React.useState(0);
+  React.useEffect(() => setValue(value + 1), [value]);
+  return value;
+}
+use(K);
+"#;
+    let expected = r#"
+function useK() {
+  const [value, setValue] = React.useState(0);
+  React.useEffect(() => setValue(value + 1), [value]);
+  return value;
+}
+use(useK);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn react_shape_renames_hook_like_function_with_direct_react_hook() {
+    let input = r#"
+function K() {
+  const [value, setValue] = useState(0);
+  return [value, setValue];
+}
+use(K);
+"#;
+    let expected = r#"
+function useK() {
+  const [value, setValue] = useState(0);
+  return [value, setValue];
+}
+use(useK);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn react_shape_renames_react_dom_form_status_hook() {
+    let input = r#"
+function K() {
+  const status = ReactDOM.useFormStatus();
+  return status.pending;
+}
+use(K);
+"#;
+    let expected = r#"
+function useK() {
+  const status = ReactDOM.useFormStatus();
+  return status.pending;
+}
+use(useK);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn react_shape_does_not_treat_arbitrary_use_call_as_hook() {
+    let input = r#"
+function K(value) {
+  return usePattern(value);
+}
+use(K);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn react_shape_does_not_rename_async_endpoint_resolver_as_hook() {
+    let input = r#"
+const Pz3 = async (config) => {
+  const endpoint = await config.endpoint();
+  return {
+    endpoint: () => Pz3(config),
+    useDualstackEndpoint: config.useDualstackEndpoint,
+    value: endpoint
+  };
+};
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn react_shape_ignores_hooks_inside_nested_arrow_callbacks() {
+    let input = r#"
+const Gn = (render) => React.forwardRef((props, ref) => {
+  const context = React.useContext(ThemeContext);
+  return render(props, context, ref);
+});
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn react_shape_treats_hook_candidate_used_as_jsx_tag_as_component() {
+    let input = r#"
+function Rt(props) {
+  const theme = React.useContext(ThemeContext);
+  return props.children(theme);
+}
+const node = <Rt>{children}</Rt>;
+"#;
+    let expected = r#"
+function RtComponent(props) {
+  const theme = React.useContext(ThemeContext);
+  return props.children(theme);
+}
+const node = <RtComponent>{children}</RtComponent>;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn react_shape_component_wins_over_hook_call() {
+    let input = r#"
+function K() {
+  const [open, setOpen] = useState(false);
+  return <button onClick={() => setOpen(!open)}>{open}</button>;
+}
+"#;
+    let expected = r#"
+function KComponent() {
+  const [open, setOpen] = useState(false);
+  return <button onClick={() => setOpen(!open)}>{open}</button>;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn react_shape_sentry_annotation_takes_precedence() {
+    let input = r#"
+function K() {
+  return <div data-sentry-component="Toaster">Hello</div>;
+}
+"#;
+    let expected = r#"
+function Toaster() {
+  return <div data-sentry-component="Toaster">Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn react_shape_skips_non_minified_component_name() {
+    let input = r#"
+function abc() {
+  return <div>Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn react_shape_skips_named_export() {
+    let input = r#"
+export function K() {
+  return <div>Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn react_shape_skips_component_name_conflict() {
+    let input = r#"
+const KComponent = "taken";
+function K() {
+  return <div>Hello</div>;
+}
+use(KComponent, K);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
 #[test]
 fn body_destructuring_does_not_shadow_renamed_param() {
     // Param rename: A → signal.  Body rename for `w` must not also pick
