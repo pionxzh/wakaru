@@ -1337,21 +1337,30 @@ struct ItemBindingInfo {
 }
 
 fn build_item_binding_infos(items: &[ModuleItem]) -> Vec<ItemBindingInfo> {
-    let top_level_bindings: HashSet<BindingId> = items
+    // Collect per-item declared bindings in one pass, then build the
+    // union for reference filtering.  This avoids calling
+    // module_item_declared_binding_ids twice per item.
+    let per_item_declared: Vec<HashSet<BindingId>> = items
         .iter()
-        .flat_map(module_item_declared_binding_ids)
+        .map(|item| module_item_declared_binding_ids(item).into_iter().collect())
+        .collect();
+
+    let top_level_bindings: HashSet<BindingId> = per_item_declared
+        .iter()
+        .flat_map(|s| s.iter().cloned())
         .collect();
 
     items
         .iter()
-        .map(|item| {
+        .zip(per_item_declared)
+        .map(|(item, declared)| {
             let mut collector = TopLevelRefCollector {
                 top_level_bindings: &top_level_bindings,
                 references: HashSet::new(),
             };
             item.visit_with(&mut collector);
             ItemBindingInfo {
-                declared: module_item_declared_binding_ids(item).into_iter().collect(),
+                declared,
                 references: collector.references,
             }
         })
