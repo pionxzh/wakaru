@@ -546,7 +546,7 @@ function fn() {
     .code;
 
     let expected = r#"
-function fn() {
+function FnComponent() {
   const Component = tt();
   return <Component className="hero">Hello</Component>;
 }
@@ -575,7 +575,7 @@ function fn() {
     .code;
 
     let expected = r#"
-function fn() {
+function FnComponent() {
   const Component = r ? "a" : "div";
   return <Component>Hello</Component>;
 }
