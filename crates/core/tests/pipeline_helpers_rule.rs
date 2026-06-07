@@ -315,6 +315,7 @@ fn rule_descriptors_expose_dependency_metadata() {
             "UnEsmoduleFlag",
             "UnUseStrict",
             "UnAssignmentMerging",
+            "UnVariableMergingDeclsOnly",
             "UnWebpackInterop"
         ]
     );
