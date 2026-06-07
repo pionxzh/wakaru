@@ -426,6 +426,25 @@ fn collect_dynamic_require_helpers(body: &[ModuleItem]) -> HashSet<Atom> {
     helpers
 }
 
+fn collect_esbuild_to_esm_helpers(body: &[ModuleItem]) -> HashSet<Atom> {
+    let mut helpers = HashSet::new();
+    for item in body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            let Some(init) = &decl.init else { continue };
+            if is_esbuild_to_esm_helper(init) {
+                helpers.insert(binding.id.sym.clone());
+            }
+        }
+    }
+    helpers
+}
+
 fn is_esbuild_dynamic_require_helper(expr: &Expr) -> bool {
     let Expr::Call(call) = expr else {
         return false;
@@ -439,6 +458,12 @@ fn is_esbuild_dynamic_require_helper(expr: &Expr) -> bool {
     detector.has_typeof_require
         && detector.has_require_apply_arguments
         && detector.has_dynamic_require_message
+}
+
+fn is_esbuild_to_esm_helper(expr: &Expr) -> bool {
+    let mut detector = EsbuildToEsmHelperDetector::default();
+    expr.visit_with(&mut detector);
+    detector.has_es_module_check && detector.has_default_define
 }
 
 #[derive(Default)]
@@ -484,6 +509,27 @@ impl Visit for DynamicRequireHelperDetector {
             .contains("Dynamic require of")
         {
             self.has_dynamic_require_message = true;
+        }
+    }
+}
+
+#[derive(Default)]
+struct EsbuildToEsmHelperDetector {
+    has_es_module_check: bool,
+    has_default_define: bool,
+}
+
+impl Visit for EsbuildToEsmHelperDetector {
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "__esModule") {
+            self.has_es_module_check = true;
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_str(&mut self, str: &Str) {
+        if str.value.as_str().unwrap_or("") == "default" {
+            self.has_default_define = true;
         }
     }
 }
@@ -588,6 +634,139 @@ fn collect_local_bindings_from_stmts(stmts: &[Stmt], names: &mut HashSet<Atom>) 
     let mut collector = Collector { names };
     for stmt in stmts {
         stmt.visit_with(&mut collector);
+    }
+}
+
+fn unwrap_esbuild_to_esm_helper_item(
+    item: &mut ModuleItem,
+    helpers: &HashSet<Atom>,
+    default_bindings: &mut HashSet<Atom>,
+) {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+        return;
+    };
+
+    for decl in &mut var.decls {
+        let Pat::Ident(binding) = &decl.name else {
+            continue;
+        };
+        let Some(init) = &mut decl.init else {
+            continue;
+        };
+        let Some(require_call) = take_wrapped_require_call(init, helpers) else {
+            continue;
+        };
+        *init = require_call;
+        default_bindings.insert(binding.id.sym.clone());
+    }
+}
+
+fn take_wrapped_require_call(expr: &Expr, helpers: &HashSet<Atom>) -> Option<Box<Expr>> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(helper) = callee.as_ref() else {
+        return None;
+    };
+    if !helpers.contains(&helper.sym) {
+        return None;
+    }
+
+    let first_arg = call.args.first()?;
+    if is_require_call(first_arg.expr.as_ref()) {
+        Some(first_arg.expr.clone())
+    } else {
+        None
+    }
+}
+
+fn is_require_call(expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    matches!(callee.as_ref(), Expr::Ident(ident) if ident.sym.as_ref() == "require")
+}
+
+struct DefaultInteropMemberRewriter<'a> {
+    bindings: &'a HashSet<Atom>,
+    shadowed_scopes: Vec<HashSet<Atom>>,
+}
+
+impl<'a> DefaultInteropMemberRewriter<'a> {
+    fn new(bindings: &'a HashSet<Atom>) -> Self {
+        Self {
+            bindings,
+            shadowed_scopes: Vec::new(),
+        }
+    }
+
+    fn is_shadowed(&self, sym: &Atom) -> bool {
+        self.shadowed_scopes
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(sym))
+    }
+
+    fn push_shadowed(&mut self, names: HashSet<Atom>) {
+        self.shadowed_scopes.push(names);
+    }
+
+    fn pop_shadowed(&mut self) {
+        self.shadowed_scopes.pop();
+    }
+}
+
+impl VisitMut for DefaultInteropMemberRewriter<'_> {
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        let mut names = collect_local_bindings_from_function(function);
+        for param in &function.params {
+            collect_pat_bindings(&param.pat, &mut names);
+        }
+        self.push_shadowed(names);
+        function.visit_mut_children_with(self);
+        self.pop_shadowed();
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        let mut names = HashSet::new();
+        for param in &arrow.params {
+            collect_pat_bindings(param, &mut names);
+        }
+        if let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() {
+            collect_local_bindings_from_stmts(&block.stmts, &mut names);
+        }
+        self.push_shadowed(names);
+        arrow.visit_mut_children_with(self);
+        self.pop_shadowed();
+    }
+
+    fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
+        let mut names = HashSet::new();
+        collect_local_bindings_from_stmts(&block.stmts, &mut names);
+        self.push_shadowed(names);
+        block.visit_mut_children_with(self);
+        self.pop_shadowed();
+    }
+
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if let Expr::Member(member) = expr {
+            if let Expr::Ident(obj) = member.obj.as_ref() {
+                if self.bindings.contains(&obj.sym)
+                    && !self.is_shadowed(&obj.sym)
+                    && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "default")
+                {
+                    *expr = Expr::Ident(obj.clone());
+                    return;
+                }
+            }
+        }
+        expr.visit_mut_children_with(self);
     }
 }
 
@@ -871,6 +1050,7 @@ fn emit_clusters(
     cm: Lrc<SourceMap>,
 ) -> Vec<UnpackedModule> {
     let dynamic_require_helpers = collect_dynamic_require_helpers(body);
+    let esbuild_to_esm_helpers = collect_esbuild_to_esm_helpers(body);
 
     // Pre-compute: which names does each cluster declare?
     let cluster_declared: Vec<HashSet<Atom>> = clusters
@@ -921,6 +1101,7 @@ fn emit_clusters(
             let mut needed: Vec<&Atom> = cluster_referenced[ci]
                 .iter()
                 .filter(|name| !dynamic_require_helpers.contains(*name))
+                .filter(|name| !esbuild_to_esm_helpers.contains(*name))
                 .filter(|name| other_decls.contains(*name))
                 .collect();
             if needed.is_empty() {
@@ -937,7 +1118,10 @@ fn emit_clusters(
                 continue;
             }
             for name in &cluster_declared[ci] {
-                if !dynamic_require_helpers.contains(name) && other_refs.contains(name) {
+                if !dynamic_require_helpers.contains(name)
+                    && !esbuild_to_esm_helpers.contains(name)
+                    && other_refs.contains(name)
+                {
                     exported.insert(name.clone());
                 }
             }
@@ -950,12 +1134,21 @@ fn emit_clusters(
             && !cluster_declared[ci]
                 .iter()
                 .any(|name| dynamic_require_helpers.contains(name));
+        let should_rewrite_esbuild_to_esm = !esbuild_to_esm_helpers.is_empty();
+        let mut default_interop_bindings = HashSet::new();
         for &i in &cluster.item_indices {
             let mut item = body[i].clone();
             if should_rewrite_dynamic_require {
                 item.visit_mut_with(&mut DynamicRequireHelperRewriter::new(
                     &dynamic_require_helpers,
                 ));
+            }
+            if should_rewrite_esbuild_to_esm {
+                unwrap_esbuild_to_esm_helper_item(
+                    &mut item,
+                    &esbuild_to_esm_helpers,
+                    &mut default_interop_bindings,
+                );
             }
             if exported.is_empty() {
                 module_items.push(item);
@@ -985,6 +1178,14 @@ fn emit_clusters(
             leftover_exports.sort();
             let refs: Vec<&Atom> = leftover_exports.iter().collect();
             module_items.push(make_export_stmt(&refs));
+        }
+
+        if !default_interop_bindings.is_empty() {
+            for item in &mut module_items {
+                item.visit_mut_with(&mut DefaultInteropMemberRewriter::new(
+                    &default_interop_bindings,
+                ));
+            }
         }
 
         if module_items.is_empty() {

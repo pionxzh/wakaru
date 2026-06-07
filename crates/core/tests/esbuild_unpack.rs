@@ -222,7 +222,8 @@ var X=(e,t,o,a)=>{if(t&&typeof t=="object"||typeof t=="function")for(let l of G(
 var Y=(e,t,o)=>(o=e!=null?H(Q(e)):{},X(t||!e||!e.__esModule?P(o,"default",{value:e,enumerable:!0}):o,e));
 var Z=Math.max;
 var react=r("react"),jsx=r("react/jsx-runtime"),D=(0,react.createContext)(null);
-function App(){return (0,jsx.jsx)(D.Provider,{value:null,children:"ok"})}
+var wrapped=Y(r("react"));
+function App(){return (0,jsx.jsx)(wrapped.default.Fragment,{children:(0,jsx.jsx)(D.Provider,{value:null,children:"ok"})})}
 var Root=App;
 console.log(Root);
 })();
@@ -244,6 +245,16 @@ console.log(Root);
         "dynamic require helper calls should be restored to require():\n{}",
         raw_app.1
     );
+    assert!(
+        !raw_app.1.contains("import { Y }") && !raw_app.1.contains("Y(require("),
+        "esbuild __toESM helper should not be synthesized as an import:\n{}",
+        raw_app.1
+    );
+    assert!(
+        raw_app.1.contains("wrapped.Fragment") && !raw_app.1.contains("wrapped.default"),
+        "default interop member access should be unwrapped with the helper call:\n{}",
+        raw_app.1
+    );
 
     let pairs = expect_heuristic_unpack(bundle, "bundle.js");
     let app = pairs
@@ -258,6 +269,11 @@ console.log(Root);
     assert!(
         !app.1.contains("r(\"react\")"),
         "dynamic require alias should not survive decompilation:\n{}",
+        app.1
+    );
+    assert!(
+        !app.1.contains("Y(require(") && !app.1.contains(".default.Fragment"),
+        "esbuild __toESM wrapper should not survive decompilation:\n{}",
         app.1
     );
 }
