@@ -16,15 +16,35 @@ on:
       - "*.md"
       - "docs/**"
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   INSTA_UPDATE: "no"
 
 jobs:
+  workflow-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Reject privileged PR workflows
+        shell: bash
+        run: |
+          pattern="^[[:space:]]*pull_request""_target[[:space:]]*:"
+          if grep -R --line-number --include='*.yml' --include='*.yaml' -E "$pattern" .github/workflows; then
+            echo "::error::Privileged PR workflows are not allowed. Use pull_request for PR code."
+            exit 1
+          fi
+
   fmt:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -39,6 +59,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
