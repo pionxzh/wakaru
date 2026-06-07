@@ -2,6 +2,7 @@ mod common;
 use common::{assert_eq_normalized, render, render_pipeline_until};
 use wakaru_core::facts::{HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap};
 use wakaru_core::rules::UnSlicedToArray;
+use wakaru_core::RewriteLevel;
 
 #[test]
 fn unwraps_sliced_to_array() {
@@ -154,6 +155,148 @@ function Component() {
 "#;
     assert_eq_normalized(
         &common::render_rule(input, |_| UnSlicedToArray::new_with_facts(&facts)),
+        expected,
+    );
+}
+
+#[test]
+fn keeps_assignment_group_when_prior_var_temp_is_read() {
+    let input = r#"
+import _slicedToArray from "@babel/runtime/helpers/slicedToArray";
+function Component(pair) {
+    var tuple;
+    var value;
+    var setter;
+    before(tuple);
+    value = (tuple = _slicedToArray(pair, 2))[0];
+    setter = tuple[1];
+    setter(value);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_rule(input, |_| UnSlicedToArray::new()),
+        input,
+    );
+}
+
+#[test]
+fn keeps_assignment_group_for_prior_let_decls() {
+    let input = r#"
+import _slicedToArray from "@babel/runtime/helpers/slicedToArray";
+function Component(pair) {
+    let tuple;
+    let value;
+    let setter;
+    value = (tuple = _slicedToArray(pair, 2))[0];
+    setter = tuple[1];
+    setter(value);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_rule(input, |_| UnSlicedToArray::new()),
+        input,
+    );
+}
+
+#[test]
+fn folds_helper_decl_followed_by_assignment_group() {
+    let input = r#"
+import _slicedToArray from "@babel/runtime/helpers/slicedToArray";
+function Component() {
+    var current;
+    var setCurrent;
+    var tuple = _slicedToArray(useState(value), 2);
+    current = tuple[0];
+    setCurrent = tuple[1];
+    use(current, setCurrent);
+}
+"#;
+    let expected = r#"
+function Component() {
+    var [current, setCurrent] = useState(value);
+    use(current, setCurrent);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_rule(input, |_| UnSlicedToArray::new()),
+        expected,
+    );
+}
+
+#[test]
+fn minimal_keeps_helper_decl_followed_by_assignment_group() {
+    let input = r#"
+import _slicedToArray from "@babel/runtime/helpers/slicedToArray";
+function Component() {
+    var current;
+    var setCurrent;
+    var tuple = _slicedToArray(useState(value), 2);
+    current = tuple[0];
+    setCurrent = tuple[1];
+    use(current, setCurrent);
+}
+"#;
+    let expected = r#"
+function Component() {
+    var current;
+    var setCurrent;
+    var tuple = useState(value);
+    current = tuple[0];
+    setCurrent = tuple[1];
+    use(current, setCurrent);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_rule(input, |_| {
+            UnSlicedToArray::new_with_level(RewriteLevel::Minimal)
+        }),
+        expected,
+    );
+}
+
+#[test]
+fn minimal_keeps_nested_assignment_group() {
+    let input = r#"
+import _slicedToArray from "@babel/runtime/helpers/slicedToArray";
+function Component(pair) {
+    var tuple;
+    var value;
+    var setter;
+    value = (tuple = _slicedToArray(pair, 2))[0];
+    setter = tuple[1];
+    setter(value);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_rule(input, |_| {
+            UnSlicedToArray::new_with_level(RewriteLevel::Minimal)
+        }),
+        input,
+    );
+}
+
+#[test]
+fn folds_helper_ref_assignment_followed_by_assignment_group() {
+    let input = r#"
+import { _ as _sliced_to_array } from "@swc/helpers/_/_sliced_to_array";
+function Component() {
+    var current;
+    var setCurrent;
+    var ref;
+    ref = _sliced_to_array(useState(value), 2);
+    current = ref[0];
+    setCurrent = ref[1];
+    use(current, setCurrent);
+}
+"#;
+    let expected = r#"
+function Component() {
+    var [current, setCurrent] = useState(value);
+    use(current, setCurrent);
+}
+"#;
+    assert_eq_normalized(
+        &common::render_rule(input, |_| UnSlicedToArray::new()),
         expected,
     );
 }

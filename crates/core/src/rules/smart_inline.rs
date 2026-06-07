@@ -3,14 +3,16 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, BindingIdent, BlockStmtOrExpr, Callee, ComputedPropName, Decl, DoWhileStmt, Expr,
-    ExprStmt, ForInStmt, ForOfStmt, ForStmt, Ident, ImportSpecifier, KeyValuePatProp, Lit,
-    MemberExpr, MemberProp, Module, ModuleExportName, ModuleItem, Number, ObjectPat, ObjectPatProp,
-    Pat, PropName, Stmt, VarDecl, VarDeclKind, VarDeclarator, WhileStmt,
+    ArrayPat, AssignExpr, AssignOp, AssignTarget, BindingIdent, BlockStmtOrExpr, Callee,
+    ComputedPropName, Decl, DoWhileStmt, Expr, ExprStmt, ForInStmt, ForOfStmt, ForStmt, Ident,
+    ImportSpecifier, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleExportName,
+    ModuleItem, Number, ObjectPat, ObjectPatProp, Pat, PropName, SimpleAssignTarget, Stmt, VarDecl,
+    VarDeclKind, VarDeclarator, WhileStmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::js_names::is_stable_builtin_alias_root;
+use crate::utils::paren::strip_parens;
 
 use super::decl_utils::same_ident;
 use super::RewriteLevel;
@@ -204,6 +206,7 @@ fn process_stmts(
     // Pass 1b: recover the React useState tuple pattern without making generic
     // numeric property reads iterable.
     let stmts = fold_use_state_tuple_reads(stmts, use_state_bindings);
+    let stmts = fold_use_state_assignment_tuple_reads(stmts, use_state_bindings);
     // Pass 2: group consecutive property / array accesses into destructuring
 
     group_destructuring(stmts, level)
@@ -1440,6 +1443,369 @@ fn try_fold_use_state_tuple_at(
             definite: false,
         }],
     }))))
+}
+
+struct FoldedUseStateAssignment {
+    stmt: Stmt,
+    consumed: usize,
+    removable_bindings: Vec<Ident>,
+    recovered_bindings: Vec<Ident>,
+}
+
+fn fold_use_state_assignment_tuple_reads(
+    stmts: Vec<Stmt>,
+    use_state_bindings: &HashSet<BindingKey>,
+) -> Vec<Stmt> {
+    let mut result = Vec::with_capacity(stmts.len());
+    let mut i = 0;
+
+    while i < stmts.len() {
+        if let Some(folded) = try_fold_use_state_assignment_tuple_at(&stmts, i, use_state_bindings)
+        {
+            let rest = &stmts[i + folded.consumed..];
+            if can_remove_prior_uninitialized_decls(&result, &folded.removable_bindings)
+                && !bindings_written_in_stmts(&folded.recovered_bindings, rest)
+            {
+                remove_prior_uninitialized_decls(&mut result, &folded.removable_bindings);
+                result.push(folded.stmt);
+                i += folded.consumed;
+                continue;
+            }
+        }
+
+        result.push(stmts[i].clone());
+        i += 1;
+    }
+
+    result
+}
+
+fn try_fold_use_state_assignment_tuple_at(
+    stmts: &[Stmt],
+    start: usize,
+    use_state_bindings: &HashSet<BindingKey>,
+) -> Option<FoldedUseStateAssignment> {
+    try_fold_use_state_decl_assignment_tuple_at(stmts, start, use_state_bindings)
+        .or_else(|| try_fold_use_state_ref_assignment_tuple_at(stmts, start, use_state_bindings))
+        .or_else(|| try_fold_use_state_nested_assignment_tuple_at(stmts, start, use_state_bindings))
+}
+
+fn try_fold_use_state_decl_assignment_tuple_at(
+    stmts: &[Stmt],
+    start: usize,
+    use_state_bindings: &HashSet<BindingKey>,
+) -> Option<FoldedUseStateAssignment> {
+    let [decl_stmt, first_read, second_read, rest @ ..] = stmts.get(start..)? else {
+        return None;
+    };
+    let (tuple, init) = try_extract_const_ident_init(decl_stmt)?;
+    if !is_use_state_tuple_init_expr(&init, use_state_bindings) {
+        return None;
+    }
+    let first = extract_ref_index_assignment(first_read, &tuple.id, 0)?;
+    let second = extract_ref_index_assignment(second_read, &tuple.id, 1)?;
+    if ident_is_referenced_in_stmts(&tuple.id, rest) {
+        return None;
+    }
+
+    Some(FoldedUseStateAssignment {
+        stmt: build_use_state_assignment_tuple_stmt(init, first.clone(), second.clone()),
+        consumed: 3,
+        removable_bindings: vec![first.id.clone(), second.id.clone()],
+        recovered_bindings: vec![first.id, second.id],
+    })
+}
+
+fn try_fold_use_state_ref_assignment_tuple_at(
+    stmts: &[Stmt],
+    start: usize,
+    use_state_bindings: &HashSet<BindingKey>,
+) -> Option<FoldedUseStateAssignment> {
+    let [assign_stmt, first_read, second_read, rest @ ..] = stmts.get(start..)? else {
+        return None;
+    };
+    let (tuple, init) = extract_ident_assignment(assign_stmt)?;
+    if !is_use_state_tuple_init_expr(&init, use_state_bindings) {
+        return None;
+    }
+    let first = extract_ref_index_assignment(first_read, &tuple, 0)?;
+    let second = extract_ref_index_assignment(second_read, &tuple, 1)?;
+    if ident_is_referenced_in_stmts(&tuple, rest) {
+        return None;
+    }
+
+    Some(FoldedUseStateAssignment {
+        stmt: build_use_state_assignment_tuple_stmt(init, first.clone(), second.clone()),
+        consumed: 3,
+        removable_bindings: vec![tuple, first.id.clone(), second.id.clone()],
+        recovered_bindings: vec![first.id, second.id],
+    })
+}
+
+fn try_fold_use_state_nested_assignment_tuple_at(
+    stmts: &[Stmt],
+    start: usize,
+    use_state_bindings: &HashSet<BindingKey>,
+) -> Option<FoldedUseStateAssignment> {
+    let [first_stmt, second_read, rest @ ..] = stmts.get(start..)? else {
+        return None;
+    };
+    let (first, tuple, init) = extract_nested_ref_index_assignment(first_stmt, use_state_bindings)?;
+    let second = extract_ref_index_assignment(second_read, &tuple, 1)?;
+    if ident_is_referenced_in_stmts(&tuple, rest) {
+        return None;
+    }
+
+    Some(FoldedUseStateAssignment {
+        stmt: build_use_state_assignment_tuple_stmt(init, first.clone(), second.clone()),
+        consumed: 2,
+        removable_bindings: vec![tuple, first.id.clone(), second.id.clone()],
+        recovered_bindings: vec![first.id, second.id],
+    })
+}
+
+fn build_use_state_assignment_tuple_stmt(
+    init: Box<Expr>,
+    first: BindingIdent,
+    second: BindingIdent,
+) -> Stmt {
+    Stmt::Decl(Decl::Var(Box::new(VarDecl {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        kind: VarDeclKind::Const,
+        declare: false,
+        decls: vec![VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Array(ArrayPat {
+                span: DUMMY_SP,
+                elems: vec![Some(Pat::Ident(first)), Some(Pat::Ident(second))],
+                optional: false,
+                type_ann: None,
+            }),
+            init: Some(init),
+            definite: false,
+        }],
+    })))
+}
+
+fn extract_ident_assignment(stmt: &Stmt) -> Option<(Ident, Box<Expr>)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(expr.as_ref()) else {
+        return None;
+    };
+    let target = simple_assign_target_ident(assign)?;
+    Some((target, assign.right.clone()))
+}
+
+fn extract_ref_index_assignment(
+    stmt: &Stmt,
+    ref_ident: &Ident,
+    expected_index: usize,
+) -> Option<BindingIdent> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(expr.as_ref()) else {
+        return None;
+    };
+    let target = simple_assign_target_ident(assign)?;
+    let (obj, index) = extract_index_member(strip_parens(assign.right.as_ref()))?;
+    if !same_ident(&obj, ref_ident) || index != expected_index {
+        return None;
+    }
+    Some(BindingIdent {
+        id: target,
+        type_ann: None,
+    })
+}
+
+fn extract_nested_ref_index_assignment(
+    stmt: &Stmt,
+    use_state_bindings: &HashSet<BindingKey>,
+) -> Option<(BindingIdent, Ident, Box<Expr>)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(expr.as_ref()) else {
+        return None;
+    };
+    let first = simple_assign_target_ident(assign)?;
+    let Expr::Member(member) = strip_parens(assign.right.as_ref()) else {
+        return None;
+    };
+    let index = member_prop_index(&member.prop)?;
+    if index != 0 {
+        return None;
+    }
+    let Expr::Assign(tuple_assign) = strip_parens(member.obj.as_ref()) else {
+        return None;
+    };
+    let tuple = simple_assign_target_ident(tuple_assign)?;
+    if !is_use_state_tuple_init_expr(tuple_assign.right.as_ref(), use_state_bindings) {
+        return None;
+    }
+
+    Some((
+        BindingIdent {
+            id: first,
+            type_ann: None,
+        },
+        tuple,
+        tuple_assign.right.clone(),
+    ))
+}
+
+fn simple_assign_target_ident(assign: &AssignExpr) -> Option<Ident> {
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(ident)) = &assign.left else {
+        return None;
+    };
+    Some(ident.id.clone())
+}
+
+fn extract_index_member(expr: &Expr) -> Option<(Ident, usize)> {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return None;
+    };
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return None;
+    };
+    Some((obj.clone(), member_prop_index(&member.prop)?))
+}
+
+fn member_prop_index(prop: &MemberProp) -> Option<usize> {
+    let MemberProp::Computed(computed) = prop else {
+        return None;
+    };
+    let Expr::Lit(Lit::Num(Number { value, .. })) = computed.expr.as_ref() else {
+        return None;
+    };
+    if *value < 0.0 || value.fract() != 0.0 || *value > 10.0 {
+        return None;
+    }
+    Some(*value as usize)
+}
+
+fn can_remove_prior_uninitialized_decls(stmts: &[Stmt], targets: &[Ident]) -> bool {
+    if targets
+        .iter()
+        .any(|target| ident_is_used_in_stmts_excluding_bindings(target, stmts))
+    {
+        return false;
+    }
+    targets
+        .iter()
+        .all(|target| has_uninitialized_decl(stmts, target))
+}
+
+fn ident_is_used_in_stmts_excluding_bindings(target: &Ident, stmts: &[Stmt]) -> bool {
+    struct UseFinder<'a> {
+        target: &'a Ident,
+        found: bool,
+    }
+
+    impl Visit for UseFinder<'_> {
+        fn visit_binding_ident(&mut self, _: &BindingIdent) {}
+
+        fn visit_ident(&mut self, ident: &Ident) {
+            if same_ident(ident, self.target) {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut finder = UseFinder {
+        target,
+        found: false,
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+        if finder.found {
+            return true;
+        }
+    }
+    false
+}
+
+fn has_uninitialized_decl(stmts: &[Stmt], target: &Ident) -> bool {
+    stmts.iter().any(|stmt| {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            return false;
+        };
+        var.decls.iter().any(|decl| {
+            decl.init.is_none()
+                && matches!(&decl.name, Pat::Ident(binding) if same_ident(&binding.id, target))
+        })
+    })
+}
+
+fn remove_prior_uninitialized_decls(stmts: &mut Vec<Stmt>, targets: &[Ident]) {
+    for stmt in stmts.iter_mut() {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        var.decls.retain(|decl| {
+            if decl.init.is_some() {
+                return true;
+            }
+            let Pat::Ident(binding) = &decl.name else {
+                return true;
+            };
+            !targets.iter().any(|target| same_ident(&binding.id, target))
+        });
+    }
+    stmts.retain(|stmt| !matches!(stmt, Stmt::Decl(Decl::Var(var)) if var.decls.is_empty()));
+}
+
+fn bindings_written_in_stmts(bindings: &[Ident], stmts: &[Stmt]) -> bool {
+    struct WriteFinder<'a> {
+        bindings: &'a [Ident],
+        found: bool,
+    }
+
+    impl WriteFinder<'_> {
+        fn matches(&self, ident: &Ident) -> bool {
+            self.bindings
+                .iter()
+                .any(|binding| same_ident(binding, ident))
+        }
+    }
+
+    impl Visit for WriteFinder<'_> {
+        fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+            if let AssignTarget::Simple(SimpleAssignTarget::Ident(ident)) = &assign.left {
+                if self.matches(&ident.id) {
+                    self.found = true;
+                    return;
+                }
+            }
+            assign.visit_children_with(self);
+        }
+
+        fn visit_update_expr(&mut self, update: &swc_core::ecma::ast::UpdateExpr) {
+            if let Expr::Ident(ident) = update.arg.as_ref() {
+                if self.matches(ident) {
+                    self.found = true;
+                }
+            }
+        }
+    }
+
+    let mut finder = WriteFinder {
+        bindings,
+        found: false,
+    };
+    for stmt in stmts {
+        stmt.visit_with(&mut finder);
+        if finder.found {
+            return true;
+        }
+    }
+    false
 }
 
 fn try_extract_const_ident_init(stmt: &Stmt) -> Option<(BindingIdent, Box<Expr>)> {

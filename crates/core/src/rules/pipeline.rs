@@ -204,7 +204,12 @@ fn run_un_object_rest_late(module: &mut Module, ctx: RuleRunContext<'_>) {
 
 fn run_un_sliced_to_array(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
-    UnSlicedToArray::run_with_helpers(module, local_helpers.as_ref(), ctx.module_facts);
+    UnSlicedToArray::run_with_helpers(
+        module,
+        local_helpers.as_ref(),
+        ctx.module_facts,
+        ctx.rewrite_level,
+    );
 }
 
 runner!(run_un_define_property, UnDefineProperty);

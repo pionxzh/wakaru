@@ -13,6 +13,7 @@ use super::cross_module_helper_refs::{
 use super::transpiler_helper_utils::{
     extract_inline_sliced_to_array_call, LocalHelperContext, TranspilerHelperKind,
 };
+use super::RewriteLevel;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 /// Detects and unwraps `_slicedToArray(expr, N)` helper calls.
@@ -25,6 +26,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 /// `var a = _ref[0]; var b = _ref[1]` → `const [a, b] = expr`.
 pub struct UnSlicedToArray<'a> {
     module_facts: Option<&'a ModuleFactsMap>,
+    level: RewriteLevel,
 }
 
 struct SlicedExtraction {
@@ -36,7 +38,17 @@ struct SlicedExtraction {
 
 impl UnSlicedToArray<'_> {
     pub fn new() -> Self {
-        Self { module_facts: None }
+        Self {
+            module_facts: None,
+            level: RewriteLevel::Standard,
+        }
+    }
+
+    pub fn new_with_level(level: RewriteLevel) -> Self {
+        Self {
+            module_facts: None,
+            level,
+        }
     }
 }
 
@@ -44,6 +56,14 @@ impl<'a> UnSlicedToArray<'a> {
     pub fn new_with_facts(module_facts: &'a ModuleFactsMap) -> Self {
         Self {
             module_facts: Some(module_facts),
+            level: RewriteLevel::Standard,
+        }
+    }
+
+    pub fn new_with_facts_and_level(module_facts: &'a ModuleFactsMap, level: RewriteLevel) -> Self {
+        Self {
+            module_facts: Some(module_facts),
+            level,
         }
     }
 
@@ -51,8 +71,9 @@ impl<'a> UnSlicedToArray<'a> {
         module: &mut Module,
         local_helpers: &LocalHelperContext,
         module_facts: Option<&ModuleFactsMap>,
+        level: RewriteLevel,
     ) {
-        run_un_sliced_to_array(module, local_helpers, module_facts);
+        run_un_sliced_to_array(module, local_helpers, module_facts, level);
     }
 }
 
@@ -65,7 +86,7 @@ impl Default for UnSlicedToArray<'_> {
 impl VisitMut for UnSlicedToArray<'_> {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let local_helpers = LocalHelperContext::collect(module);
-        run_un_sliced_to_array(module, &local_helpers, self.module_facts);
+        run_un_sliced_to_array(module, &local_helpers, self.module_facts, self.level);
     }
 }
 
@@ -73,6 +94,7 @@ fn run_un_sliced_to_array(
     module: &mut Module,
     local_helpers: &LocalHelperContext,
     module_facts: Option<&ModuleFactsMap>,
+    level: RewriteLevel,
 ) {
     let helpers = local_helpers.helpers_of_kind(TranspilerHelperKind::SlicedToArray);
     let cross_module_helpers = module_facts
@@ -97,6 +119,7 @@ fn run_un_sliced_to_array(
     module.visit_mut_children_with(&mut SlicedToArrayRewriter {
         local_helpers,
         cross_module_helpers: &cross_module_helpers,
+        level,
     });
 
     if helpers.is_empty() {
@@ -132,6 +155,7 @@ fn has_inline_sliced_to_array_candidate(module: &Module) -> bool {
 struct SlicedToArrayRewriter<'a> {
     local_helpers: &'a LocalHelperContext,
     cross_module_helpers: &'a CrossModuleHelperRefs,
+    level: RewriteLevel,
 }
 
 impl VisitMut for SlicedToArrayRewriter<'_> {
@@ -156,7 +180,12 @@ impl VisitMut for SlicedToArrayRewriter<'_> {
 
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-        fold_sliced_to_array_stmt_groups(stmts, self.local_helpers, self.cross_module_helpers);
+        fold_sliced_to_array_stmt_groups(
+            stmts,
+            self.local_helpers,
+            self.cross_module_helpers,
+            self.level,
+        );
         for stmt in stmts {
             let Stmt::Decl(Decl::Var(var)) = stmt else {
                 continue;
@@ -276,16 +305,31 @@ fn fold_sliced_to_array_stmt_groups(
     stmts: &mut Vec<Stmt>,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
+    level: RewriteLevel,
 ) {
     let mut i = 0;
     while i < stmts.len() {
-        let _ = try_fold_sliced_to_array_stmt_group(stmts, i, local_helpers, cross_module_helpers)
-            || try_fold_sliced_to_array_assignment_stmt_group(
+        let allow_assignment_index_folds = level >= RewriteLevel::Standard;
+        let _ = try_fold_sliced_to_array_stmt_group(
+            stmts,
+            i,
+            local_helpers,
+            cross_module_helpers,
+            allow_assignment_index_folds,
+        ) || (allow_assignment_index_folds
+            && try_fold_sliced_to_array_assignment_stmt_group(
                 stmts,
                 i,
                 local_helpers,
                 cross_module_helpers,
-            );
+            ))
+            || (allow_assignment_index_folds
+                && try_fold_sliced_to_array_ref_assignment_stmt_group(
+                    stmts,
+                    i,
+                    local_helpers,
+                    cross_module_helpers,
+                ));
         i += 1;
     }
 }
@@ -295,6 +339,7 @@ fn try_fold_sliced_to_array_stmt_group(
     start: usize,
     local_helpers: &LocalHelperContext,
     cross_module_helpers: &CrossModuleHelperRefs,
+    allow_assignment_index_folds: bool,
 ) -> bool {
     let Some(extraction) =
         extract_sliced_to_array_stmt(&stmts[start], local_helpers, cross_module_helpers)
@@ -304,6 +349,16 @@ fn try_fold_sliced_to_array_stmt_group(
     if extraction.length == Some(0) {
         return false;
     }
+    if allow_assignment_index_folds
+        && try_fold_sliced_to_array_stmt_assignment_access_group(stmts, start, extraction)
+    {
+        return true;
+    }
+    let Some(extraction) =
+        extract_sliced_to_array_stmt(&stmts[start], local_helpers, cross_module_helpers)
+    else {
+        return false;
+    };
     if stmt_sliced_ref_is_unreferenced(stmts, start, &extraction.ref_binding.id) {
         let Some(length) = extraction.length else {
             return false;
@@ -379,6 +434,57 @@ fn try_fold_sliced_to_array_stmt_group(
     true
 }
 
+fn try_fold_sliced_to_array_stmt_assignment_access_group(
+    stmts: &mut Vec<Stmt>,
+    start: usize,
+    extraction: SlicedExtraction,
+) -> bool {
+    let Some(length) = extraction.length else {
+        return false;
+    };
+    if length == 0 {
+        return false;
+    }
+    let Some(elems) =
+        collect_ref_index_assignment_elems(stmts, start + 1, &extraction.ref_binding.id, length)
+    else {
+        return false;
+    };
+    if ident_used_in_stmts(&stmts[start + 1 + length..], &extraction.ref_binding.id) {
+        return false;
+    }
+    if sliced_source_ref_is_used_in_stmts(&stmts[start + 1 + length..], &extraction) {
+        return false;
+    }
+    let targets: Vec<_> = elems
+        .iter()
+        .filter_map(|elem| match elem {
+            Some(Pat::Ident(binding)) => Some(binding.id.clone()),
+            _ => None,
+        })
+        .collect();
+    if !can_remove_prior_uninitialized_var_decls(&stmts[..start], &targets) {
+        return false;
+    }
+
+    let Stmt::Decl(Decl::Var(var)) = &mut stmts[start] else {
+        return false;
+    };
+    let Some(decl) = var.decls.first_mut() else {
+        return false;
+    };
+    decl.name = Pat::Array(ArrayPat {
+        span: DUMMY_SP,
+        elems,
+        optional: false,
+        type_ann: None,
+    });
+    decl.init = Some(extraction.source);
+    stmts.drain(start + 1..start + 1 + length);
+    remove_prior_uninitialized_decls(stmts, start, &targets);
+    true
+}
+
 fn try_fold_sliced_to_array_assignment_stmt_group(
     stmts: &mut Vec<Stmt>,
     start: usize,
@@ -410,8 +516,8 @@ fn try_fold_sliced_to_array_assignment_stmt_group(
     let ref_id = extraction.ref_binding.id.clone();
     let first_id = first.id.clone();
     let second_id = second.id.clone();
-    let targets = [&ref_id, &first_id, &second_id];
-    if !has_prior_uninitialized_decls(&stmts[..start], targets) {
+    let targets = vec![ref_id, first_id, second_id];
+    if !can_remove_prior_uninitialized_var_decls(&stmts[..start], &targets) {
         return false;
     }
 
@@ -433,7 +539,69 @@ fn try_fold_sliced_to_array_assignment_stmt_group(
         }],
     })));
     stmts.drain(start + 1..start + 2);
-    remove_prior_uninitialized_decls(stmts, start, targets);
+    remove_prior_uninitialized_decls(stmts, start, &targets);
+    true
+}
+
+fn try_fold_sliced_to_array_ref_assignment_stmt_group(
+    stmts: &mut Vec<Stmt>,
+    start: usize,
+    local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
+) -> bool {
+    let Some(extraction) = extract_sliced_to_array_ref_assignment_stmt(
+        &stmts[start],
+        local_helpers,
+        cross_module_helpers,
+    ) else {
+        return false;
+    };
+    let Some(length) = extraction.length else {
+        return false;
+    };
+    if length == 0 {
+        return false;
+    }
+    let Some(elems) =
+        collect_ref_index_assignment_elems(stmts, start + 1, &extraction.ref_binding.id, length)
+    else {
+        return false;
+    };
+    if ident_used_in_stmts(&stmts[start + 1 + length..], &extraction.ref_binding.id) {
+        return false;
+    }
+    if sliced_source_ref_is_used_in_stmts(&stmts[start + 1 + length..], &extraction) {
+        return false;
+    }
+
+    let mut targets = vec![extraction.ref_binding.id.clone()];
+    targets.extend(elems.iter().filter_map(|elem| match elem {
+        Some(Pat::Ident(binding)) => Some(binding.id.clone()),
+        _ => None,
+    }));
+    if !can_remove_prior_uninitialized_var_decls(&stmts[..start], &targets) {
+        return false;
+    }
+
+    stmts[start] = Stmt::Decl(Decl::Var(Box::new(VarDecl {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        kind: VarDeclKind::Var,
+        declare: false,
+        decls: vec![VarDeclarator {
+            span: DUMMY_SP,
+            name: Pat::Array(ArrayPat {
+                span: DUMMY_SP,
+                elems,
+                optional: false,
+                type_ann: None,
+            }),
+            init: Some(extraction.source),
+            definite: false,
+        }],
+    })));
+    stmts.drain(start + 1..start + 1 + length);
+    remove_prior_uninitialized_decls(stmts, start, &targets);
     true
 }
 
@@ -521,6 +689,46 @@ fn extract_sliced_to_array_assignment_stmt(
     ))
 }
 
+fn extract_sliced_to_array_ref_assignment_stmt(
+    stmt: &Stmt,
+    local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
+) -> Option<SlicedExtraction> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(expr.as_ref()) else {
+        return None;
+    };
+    let tuple = simple_ident_assign_target(assign)?;
+    let Expr::Call(call) = strip_parens(assign.right.as_ref()) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    if !is_sliced_to_array_callee(callee, local_helpers, cross_module_helpers) {
+        return None;
+    }
+    if call.args.len() != 2 {
+        return None;
+    }
+    let Expr::Lit(Lit::Num(num)) = call.args[1].expr.as_ref() else {
+        return None;
+    };
+    let length = numeric_length(num.value)?;
+
+    Some(SlicedExtraction {
+        ref_binding: BindingIdent {
+            id: tuple,
+            type_ann: None,
+        },
+        source: call.args[0].expr.clone(),
+        source_ref: None,
+        length: Some(length),
+    })
+}
+
 fn extract_ref_index_assignment_stmt(
     stmt: &Stmt,
     ref_ident: &swc_core::ecma::ast::Ident,
@@ -546,6 +754,21 @@ fn extract_ref_index_assignment_stmt(
         id: target,
         type_ann: None,
     })
+}
+
+fn collect_ref_index_assignment_elems(
+    stmts: &[Stmt],
+    start: usize,
+    ref_ident: &swc_core::ecma::ast::Ident,
+    length: usize,
+) -> Option<Vec<Option<Pat>>> {
+    let mut elems = Vec::with_capacity(length);
+    for index in 0..length {
+        let binding =
+            extract_ref_index_assignment_stmt(stmts.get(start + index)?, ref_ident, index)?;
+        elems.push(Some(Pat::Ident(binding)));
+    }
+    Some(elems)
 }
 
 fn extract_ref_index_module_item(
@@ -753,10 +976,10 @@ fn member_index(member: &MemberExpr) -> Option<usize> {
     numeric_length(num.value)
 }
 
-fn remove_prior_uninitialized_decls<const N: usize>(
+fn remove_prior_uninitialized_decls(
     stmts: &mut Vec<Stmt>,
     end: usize,
-    targets: [&swc_core::ecma::ast::Ident; N],
+    targets: &[swc_core::ecma::ast::Ident],
 ) {
     let end = end.min(stmts.len());
     for stmt in &mut stmts[..end] {
@@ -779,20 +1002,29 @@ fn remove_prior_uninitialized_decls<const N: usize>(
     stmts.retain(|stmt| !matches!(stmt, Stmt::Decl(Decl::Var(var)) if var.decls.is_empty()));
 }
 
-fn has_prior_uninitialized_decls<const N: usize>(
+fn can_remove_prior_uninitialized_var_decls(
     stmts: &[Stmt],
-    targets: [&swc_core::ecma::ast::Ident; N],
+    targets: &[swc_core::ecma::ast::Ident],
 ) -> bool {
+    if targets
+        .iter()
+        .any(|target| ident_used_in_stmts(stmts, target))
+    {
+        return false;
+    }
     targets
         .iter()
-        .all(|target| has_prior_uninitialized_decl(stmts, target))
+        .all(|target| has_prior_uninitialized_var_decl(stmts, target))
 }
 
-fn has_prior_uninitialized_decl(stmts: &[Stmt], target: &swc_core::ecma::ast::Ident) -> bool {
+fn has_prior_uninitialized_var_decl(stmts: &[Stmt], target: &swc_core::ecma::ast::Ident) -> bool {
     stmts.iter().any(|stmt| {
         let Stmt::Decl(Decl::Var(var)) = stmt else {
             return false;
         };
+        if var.kind != VarDeclKind::Var {
+            return false;
+        }
         var.decls.iter().any(|decl| {
             decl.init.is_none()
                 && matches!(&decl.name, Pat::Ident(binding) if same_sliced_ref_ident(&binding.id, target))

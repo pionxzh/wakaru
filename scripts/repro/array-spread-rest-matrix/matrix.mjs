@@ -81,6 +81,28 @@ const snippets = [
       "_useState[1]",
     ],
   },
+  {
+    name: "array-destructure-assignment",
+    source:
+      'import { useState } from "react";\nfunction Component() {\n  var current;\n  var setCurrent;\n  [current, setCurrent] = useState(value);\n  use(current, setCurrent);\n}\nComponent();\n',
+    expected: ["useState(value)", "use(current, setCurrent)"],
+    unexpected: [
+      "_sliced_to_array",
+      "_slicedToArray",
+      "_array_with_holes",
+      "_arrayWithHoles",
+      "_iterable_to_array_limit",
+      "_iterableToArrayLimit",
+      "_unsupported_iterable_to_array",
+      "_unsupportedIterableToArray",
+      "_array_like_to_array",
+      "_arrayLikeToArray",
+      "_non_iterable_rest",
+      "_nonIterableRest",
+      "[0]",
+      "[1]",
+    ],
+  },
 ];
 
 const babelProfiles = [

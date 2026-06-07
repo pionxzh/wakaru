@@ -352,6 +352,107 @@ function Component() {
 }
 
 #[test]
+fn standard_folds_use_state_assignment_tuple_reads() {
+    let input = r#"
+function Component() {
+    let count;
+    let setCount;
+    const pair = React.useState(false);
+    count = pair[0];
+    setCount = pair[1];
+    return count;
+}
+"#;
+    let expected = r#"
+function Component() {
+    const [count, setCount] = React.useState(false);
+    return count;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_folds_use_state_ref_assignment_tuple_reads() {
+    let input = r#"
+function Component() {
+    let pair;
+    let count;
+    let setCount;
+    pair = React.useState(false);
+    count = pair[0];
+    setCount = pair[1];
+    return count;
+}
+"#;
+    let expected = r#"
+function Component() {
+    const [count, setCount] = React.useState(false);
+    return count;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn standard_folds_use_state_nested_assignment_tuple_reads() {
+    let input = r#"
+function Component() {
+    let pair;
+    let count;
+    let setCount;
+    count = (pair = React.useState(false))[0];
+    setCount = pair[1];
+    return count;
+}
+"#;
+    let expected = r#"
+function Component() {
+    const [count, setCount] = React.useState(false);
+    return count;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn use_state_assignment_tuple_keeps_prior_read() {
+    let input = r#"
+function Component() {
+    let pair;
+    let count;
+    let setCount;
+    console.log(pair);
+    count = (pair = React.useState(false))[0];
+    setCount = pair[1];
+    return count;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn use_state_assignment_tuple_keeps_later_write() {
+    let input = r#"
+function Component() {
+    let pair;
+    let count;
+    let setCount;
+    count = (pair = React.useState(false))[0];
+    setCount = pair[1];
+    count = 1;
+    return count;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn standard_does_not_fold_local_function_named_use_state() {
     let input = r#"
 function useState(value) {
