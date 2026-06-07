@@ -748,6 +748,14 @@ fn extract_trailing_entry_body(
 }
 
 fn is_webpack5_runtime_entry_body(body: &swc_core::ecma::ast::BlockStmt) -> bool {
+    // Cheap pre-check: scan only the direct statements of the IIFE body for
+    // member assignments `obj.e =`, `obj.u =`, `obj.t =`, and `obj.m =` or
+    // `obj.f =` on the same identifier.  This rejects non-runtime IIFEs
+    // without a full recursive traversal.
+    if !has_runtime_property_assignments(body) {
+        return false;
+    }
+
     let mut collector = RuntimePropCollector::default();
     body.visit_with(&mut collector);
     collector.props_by_object.iter().any(|(object, props)| {
@@ -758,6 +766,53 @@ fn is_webpack5_runtime_entry_body(body: &swc_core::ecma::ast::BlockStmt) -> bool
             && props.contains("t")
             && (props.contains("m") || props.contains("f"))
     })
+}
+
+fn has_runtime_property_assignments(body: &swc_core::ecma::ast::BlockStmt) -> bool {
+    let mut bits_by_object: HashMap<Atom, u8> = HashMap::new();
+    for stmt in &body.stmts {
+        let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+            continue;
+        };
+        if check_runtime_assign(expr, &mut bits_by_object) {
+            return true;
+        }
+        // Minified bundles pack assignments into comma sequences:
+        //   f.m=o, f.t=function(){...}, f.e=..., f.u=...
+        if let Expr::Seq(SeqExpr { exprs, .. }) = &**expr {
+            for sub in exprs {
+                if check_runtime_assign(sub, &mut bits_by_object) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn check_runtime_assign(expr: &Expr, bits_by_object: &mut HashMap<Atom, u8>) -> bool {
+    let Expr::Assign(assign) = expr else {
+        return false;
+    };
+    let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left else {
+        return false;
+    };
+    let Expr::Ident(obj) = &*member.obj else {
+        return false;
+    };
+    let MemberProp::Ident(prop) = &member.prop else {
+        return false;
+    };
+    let flag = match prop.sym.as_str() {
+        "e" => 1u8,
+        "u" => 2,
+        "t" => 4,
+        "m" | "f" => 8,
+        _ => return false,
+    };
+    let bits = bits_by_object.entry(obj.sym.clone()).or_default();
+    *bits |= flag;
+    *bits & 0b1111 == 0b1111
 }
 
 #[derive(Default)]
