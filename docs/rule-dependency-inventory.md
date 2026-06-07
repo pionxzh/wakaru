@@ -697,14 +697,29 @@ These rules restore structural patterns and clean up minification artifacts.
 
 See #35 (second pass of UnWebpackInterop).
 
-### 45. UnEsm
+### 45. UnVariableMergingDeclsOnly
+
+| Field | Value |
+|-------|-------|
+| Family | Generic |
+| Role | Module-system prerequisite |
+| Uses `unresolved_mark` | No |
+| Confirmed prerequisites | UnAssignmentMerging |
+| Shape prerequisites | None |
+| Produces | Individual top-level declarations from declaration lists such as `var a = require("a"), b = require("b")` |
+| Downstream dependents | UnEsm (needs one declarator per statement to classify CJS imports) |
+| Fact behavior | Neither |
+| Safety | Safe |
+| Notes | This is the declaration-list subset of UnVariableMerging. The full UnVariableMerging pass stays later because its for-loop initializer extraction can interact with var-to-let conversion and loop scoping. |
+
+### 46. UnEsm
 
 | Field | Value |
 |-------|-------|
 | Family | Module-system |
 | Role | Module-system reconstruction |
 | Uses `unresolved_mark` | No |
-| Confirmed prerequisites | UnInteropRequireDefault (`confirmed`), UnInteropRequireWildcard (`confirmed`), UnAssignmentMerging (`confirmed`), UnEsmoduleFlag (`confirmed`), UnWebpackInterop pass 1 (`confirmed soft` — only getter pattern), **UnWebpackInterop2** (`confirmed hard` — fixture regression without it), UnAsyncAwait → UnWebpackInterop2 chain (`confirmed`) |
+| Confirmed prerequisites | UnInteropRequireDefault (`confirmed`), UnInteropRequireWildcard (`confirmed`), UnAssignmentMerging (`confirmed`), UnVariableMergingDeclsOnly (`confirmed`), UnEsmoduleFlag (`confirmed`), UnWebpackInterop pass 1 (`confirmed soft` — only getter pattern), **UnWebpackInterop2** (`confirmed hard` — fixture regression without it), UnAsyncAwait → UnWebpackInterop2 chain (`confirmed`) |
 | Shape prerequisites | Clean `require()` calls, clean `exports.X = val` / `module.exports = val`, all interop getters resolved |
 | Produces | `import`/`export` declarations; renames conflicting export bindings |
 | Downstream dependents | UnAsyncAwait (must run after the module-system reconstruction point for inline TS helper cleanup), UnImportRename, UnExportRename, SmartInline |

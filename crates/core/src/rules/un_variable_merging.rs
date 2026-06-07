@@ -7,82 +7,97 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 pub struct UnVariableMerging;
+pub struct UnVariableMergingDeclsOnly;
 
 impl VisitMut for UnVariableMerging {
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-
-        let old = std::mem::take(stmts);
-        let mut new_stmts: Vec<Stmt> = Vec::with_capacity(old.len());
-
-        for stmt in old {
-            match stmt {
-                // For-loop with a var init: maybe extract some declarators before the loop
-                Stmt::For(for_stmt) => {
-                    let extracted = extract_for_init_stmts(for_stmt);
-                    new_stmts.extend(extracted);
-                }
-                // Plain var/let/const declaration with multiple declarators
-                Stmt::Decl(Decl::Var(ref var_decl)) if var_decl.decls.len() > 1 => {
-                    let split = split_var_decl(var_decl);
-                    new_stmts.extend(
-                        split
-                            .into_iter()
-                            .map(|v| Stmt::Decl(Decl::Var(Box::new(v)))),
-                    );
-                }
-                other => new_stmts.push(other),
-            }
-        }
-
-        *stmts = new_stmts;
+        split_stmts(stmts, true);
     }
 
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         items.visit_mut_children_with(self);
-
-        let old = std::mem::take(items);
-        let mut new_items: Vec<ModuleItem> = Vec::with_capacity(old.len());
-
-        for item in old {
-            match item {
-                // export var a = 1, b = 2 → export var a = 1; export var b = 2;
-                ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
-                    span,
-                    decl: Decl::Var(ref var_decl),
-                })) if var_decl.decls.len() > 1 => {
-                    let split = split_var_decl(var_decl);
-                    for v in split {
-                        new_items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(
-                            ExportDecl {
-                                span,
-                                decl: Decl::Var(Box::new(v)),
-                            },
-                        )));
-                    }
-                }
-                // Plain statement with multiple var declarators
-                ModuleItem::Stmt(Stmt::Decl(Decl::Var(ref var_decl)))
-                    if var_decl.decls.len() > 1 =>
-                {
-                    let split = split_var_decl(var_decl);
-                    for v in split {
-                        new_items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(v)))));
-                    }
-                }
-                // For-loop inside module items
-                ModuleItem::Stmt(Stmt::For(for_stmt)) => {
-                    let extracted = extract_for_init_stmts(for_stmt);
-                    for s in extracted {
-                        new_items.push(ModuleItem::Stmt(s));
-                    }
-                }
-                other => new_items.push(other),
-            }
-        }
-
-        *items = new_items;
+        split_module_items(items, true);
     }
+}
+
+impl VisitMut for UnVariableMergingDeclsOnly {
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        stmts.visit_mut_children_with(self);
+        split_stmts(stmts, false);
+    }
+
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        items.visit_mut_children_with(self);
+        split_module_items(items, false);
+    }
+}
+
+fn split_stmts(stmts: &mut Vec<Stmt>, split_for_inits: bool) {
+    let old = std::mem::take(stmts);
+    let mut new_stmts: Vec<Stmt> = Vec::with_capacity(old.len());
+
+    for stmt in old {
+        match stmt {
+            // For-loop with a var init: maybe extract some declarators before the loop
+            Stmt::For(for_stmt) if split_for_inits => {
+                let extracted = extract_for_init_stmts(for_stmt);
+                new_stmts.extend(extracted);
+            }
+            // Plain var/let/const declaration with multiple declarators
+            Stmt::Decl(Decl::Var(ref var_decl)) if var_decl.decls.len() > 1 => {
+                let split = split_var_decl(var_decl);
+                new_stmts.extend(
+                    split
+                        .into_iter()
+                        .map(|v| Stmt::Decl(Decl::Var(Box::new(v)))),
+                );
+            }
+            other => new_stmts.push(other),
+        }
+    }
+
+    *stmts = new_stmts;
+}
+
+fn split_module_items(items: &mut Vec<ModuleItem>, split_for_inits: bool) {
+    let old = std::mem::take(items);
+    let mut new_items: Vec<ModuleItem> = Vec::with_capacity(old.len());
+
+    for item in old {
+        match item {
+            // export var a = 1, b = 2 → export var a = 1; export var b = 2;
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                span,
+                decl: Decl::Var(ref var_decl),
+            })) if var_decl.decls.len() > 1 => {
+                let split = split_var_decl(var_decl);
+                for v in split {
+                    new_items.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                        span,
+                        decl: Decl::Var(Box::new(v)),
+                    })));
+                }
+            }
+            // Plain statement with multiple var declarators
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(ref var_decl))) if var_decl.decls.len() > 1 => {
+                let split = split_var_decl(var_decl);
+                for v in split {
+                    new_items.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(v)))));
+                }
+            }
+            // For-loop inside module items
+            ModuleItem::Stmt(Stmt::For(for_stmt)) if split_for_inits => {
+                let extracted = extract_for_init_stmts(for_stmt);
+                for s in extracted {
+                    new_items.push(ModuleItem::Stmt(s));
+                }
+            }
+            other => new_items.push(other),
+        }
+    }
+
+    *items = new_items;
 }
 
 /// Split a `VarDecl` with multiple declarators into multiple single-declarator `VarDecl`s.

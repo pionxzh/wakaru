@@ -204,7 +204,7 @@ pub use un_typeof_polyfill::UnTypeofPolyfill;
 pub use un_typeof_strict::UnTypeofStrict;
 pub use un_undefined_init::UnUndefinedInit;
 pub use un_use_strict::UnUseStrict;
-pub use un_variable_merging::UnVariableMerging;
+pub use un_variable_merging::{UnVariableMerging, UnVariableMergingDeclsOnly};
 pub use un_webpack_define_getters::UnWebpackDefineGetters;
 pub use un_webpack_interop::UnWebpackInterop;
 pub use un_webpack_object_getters::UnWebpackObjectGetters;

@@ -266,6 +266,10 @@ runner!(run_un_spread_array_literal, UnSpreadArrayLiteral);
 runner!(run_object_assign_spread, |ctx| ObjectAssignSpread::new(
     ctx.unresolved_mark
 ));
+runner!(
+    run_un_variable_merging_decls_only,
+    UnVariableMergingDeclsOnly
+);
 runner!(run_un_variable_merging, UnVariableMerging);
 runner!(run_un_nullish_coalescing, |ctx| UnNullishCoalescing::new(
     ctx.unresolved_mark,
@@ -413,6 +417,9 @@ define_rule_registry! {
     ("UnAssignmentMerging", Helpers, run_un_assignment_merging, always_enabled, requires: [
         "UnCurlyBraces"
     ]),
+    ("UnVariableMergingDeclsOnly", Helpers, run_un_variable_merging_decls_only, always_enabled, requires: [
+        "UnAssignmentMerging"
+    ]),
     ("UnWebpackInterop", Helpers, run_un_webpack_interop, always_enabled, requires: [
         "UnBracketNotation",
         "UnEsmoduleFlag"
@@ -422,6 +429,7 @@ define_rule_registry! {
         "UnEsmoduleFlag",
         "UnUseStrict",
         "UnAssignmentMerging",
+        "UnVariableMergingDeclsOnly",
         "UnWebpackInterop"
     ]),
     ("UnObjectSpread2", Helpers, run_un_object_spread_late, always_enabled, requires: [

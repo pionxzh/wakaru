@@ -51,6 +51,20 @@ fn default_require_to_import() {
 }
 
 #[test]
+fn multi_declarator_require_to_imports() {
+    let input = r#"
+var react = require("react"), jsx = require("react/jsx-runtime"), ctx = react.createContext(null);
+"#;
+    let expected = r#"
+import react from "react";
+import jsx from "react/jsx-runtime";
+const ctx = react.createContext(null);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn destructure_require_to_named_import() {
     // var { a, b: c } = require('foo')
     // UnEsm produces: import { a, b as c } from "foo"

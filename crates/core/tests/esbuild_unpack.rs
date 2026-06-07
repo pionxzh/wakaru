@@ -19,9 +19,44 @@ fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
     output.modules
 }
 
+fn expect_heuristic_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
+    let output = unpack(
+        source,
+        DecompileOptions {
+            filename: filename.to_string(),
+            heuristic_split: true,
+            ..Default::default()
+        },
+    )
+    .expect("unpack should succeed");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    output.modules
+}
+
 fn expect_unpack_raw(source: &str) -> Vec<(String, String)> {
     let output =
         unpack_raw(source, &DecompileOptions::default()).expect("unpack_raw should succeed");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    output.modules
+}
+
+fn expect_heuristic_unpack_raw(source: &str) -> Vec<(String, String)> {
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            heuristic_split: true,
+            ..Default::default()
+        },
+    )
+    .expect("unpack_raw should succeed");
     assert!(
         !output.has_errors(),
         "unexpected warnings: {:?}",
@@ -170,6 +205,60 @@ export { ns_a, ns_b };
     assert!(
         ns_b_code.contains("console.log"),
         "ns_b.js should contain console.log (references module binding `add`): {ns_b_code}"
+    );
+}
+
+#[test]
+fn heuristic_scope_hoist_restores_esbuild_dynamic_require_imports() {
+    let bundle = r#"
+(()=>{
+var H=Object.create;
+var P=Object.defineProperty;
+var q=Object.getOwnPropertyDescriptor;
+var G=Object.getOwnPropertyNames;
+var Q=Object.getPrototypeOf,W=Object.prototype.hasOwnProperty;
+var r=(e=>typeof require<"u"?require:typeof Proxy<"u"?new Proxy(e,{get:(t,o)=>(typeof require<"u"?require:t)[o]}):e)(function(e){if(typeof require<"u")return require.apply(this,arguments);throw Error('Dynamic require of "'+e+'" is not supported')});
+var X=(e,t,o,a)=>{if(t&&typeof t=="object"||typeof t=="function")for(let l of G(t))!W.call(e,l)&&l!==o&&P(e,l,{get:()=>t[l],enumerable:!(a=q(t,l))||a.enumerable});return e};
+var Y=(e,t,o)=>(o=e!=null?H(Q(e)):{},X(t||!e||!e.__esModule?P(o,"default",{value:e,enumerable:!0}):o,e));
+var Z=Math.max;
+var react=r("react"),jsx=r("react/jsx-runtime"),D=(0,react.createContext)(null);
+function App(){return (0,jsx.jsx)(D.Provider,{value:null,children:"ok"})}
+var Root=App;
+console.log(Root);
+})();
+"#;
+
+    let raw_pairs = expect_heuristic_unpack_raw(bundle);
+    let raw_app = raw_pairs
+        .iter()
+        .find(|(_, code)| code.contains("createContext"))
+        .expect("should split app chunk");
+    assert!(
+        !raw_app.1.contains("import { r }"),
+        "dynamic require helper should not be synthesized as an import:\n{}",
+        raw_app.1
+    );
+    assert!(
+        raw_app.1.contains("require(\"react\")")
+            && raw_app.1.contains("require(\"react/jsx-runtime\")"),
+        "dynamic require helper calls should be restored to require():\n{}",
+        raw_app.1
+    );
+
+    let pairs = expect_heuristic_unpack(bundle, "bundle.js");
+    let app = pairs
+        .iter()
+        .find(|(_, code)| code.contains("createContext"))
+        .expect("should decompile app chunk");
+    assert!(
+        app.1.contains("from \"react\"") && app.1.contains("from \"react/jsx-runtime\""),
+        "require() calls should be restored to imports after UnEsm:\n{}",
+        app.1
+    );
+    assert!(
+        !app.1.contains("r(\"react\")"),
+        "dynamic require alias should not survive decompilation:\n{}",
+        app.1
     );
 }
 

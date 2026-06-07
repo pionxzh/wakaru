@@ -4,7 +4,7 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap, GLOBALS};
 use swc_core::ecma::ast::*;
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
-use swc_core::ecma::visit::{Visit, VisitWith};
+use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::{module_item_declared_names, UnpackResult, UnpackedModule};
 
@@ -407,6 +407,190 @@ fn collect_pat_bindings(pat: &Pat, bindings: &mut HashSet<Atom>) {
     }
 }
 
+fn collect_dynamic_require_helpers(body: &[ModuleItem]) -> HashSet<Atom> {
+    let mut helpers = HashSet::new();
+    for item in body {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            let Some(init) = &decl.init else { continue };
+            if is_esbuild_dynamic_require_helper(init) {
+                helpers.insert(binding.id.sym.clone());
+            }
+        }
+    }
+    helpers
+}
+
+fn is_esbuild_dynamic_require_helper(expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    if call.args.len() != 1 {
+        return false;
+    }
+
+    let mut detector = DynamicRequireHelperDetector::default();
+    call.visit_with(&mut detector);
+    detector.has_typeof_require
+        && detector.has_require_apply_arguments
+        && detector.has_dynamic_require_message
+}
+
+#[derive(Default)]
+struct DynamicRequireHelperDetector {
+    has_typeof_require: bool,
+    has_require_apply_arguments: bool,
+    has_dynamic_require_message: bool,
+}
+
+impl Visit for DynamicRequireHelperDetector {
+    fn visit_unary_expr(&mut self, expr: &UnaryExpr) {
+        if expr.op == UnaryOp::TypeOf {
+            if let Expr::Ident(ident) = expr.arg.as_ref() {
+                if ident.sym.as_ref() == "require" {
+                    self.has_typeof_require = true;
+                }
+            }
+        }
+        expr.visit_children_with(self);
+    }
+
+    fn visit_call_expr(&mut self, call: &CallExpr) {
+        if let Callee::Expr(callee) = &call.callee {
+            if let Expr::Member(member) = callee.as_ref() {
+                if matches!(member.obj.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "require")
+                    && matches!(&member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "apply")
+                    && call.args.len() == 2
+                    && matches!(call.args[0].expr.as_ref(), Expr::This(_))
+                    && matches!(call.args[1].expr.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "arguments")
+                {
+                    self.has_require_apply_arguments = true;
+                }
+            }
+        }
+        call.visit_children_with(self);
+    }
+
+    fn visit_str(&mut self, str: &Str) {
+        if str
+            .value
+            .as_str()
+            .unwrap_or("")
+            .contains("Dynamic require of")
+        {
+            self.has_dynamic_require_message = true;
+        }
+    }
+}
+
+struct DynamicRequireHelperRewriter<'a> {
+    helpers: &'a HashSet<Atom>,
+    shadowed_scopes: Vec<HashSet<Atom>>,
+}
+
+impl<'a> DynamicRequireHelperRewriter<'a> {
+    fn new(helpers: &'a HashSet<Atom>) -> Self {
+        Self {
+            helpers,
+            shadowed_scopes: Vec::new(),
+        }
+    }
+
+    fn is_shadowed(&self, sym: &Atom) -> bool {
+        self.shadowed_scopes
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(sym))
+    }
+
+    fn push_shadowed(&mut self, names: HashSet<Atom>) {
+        self.shadowed_scopes.push(names);
+    }
+
+    fn pop_shadowed(&mut self) {
+        self.shadowed_scopes.pop();
+    }
+}
+
+impl VisitMut for DynamicRequireHelperRewriter<'_> {
+    fn visit_mut_function(&mut self, function: &mut Function) {
+        let mut names = collect_local_bindings_from_function(function);
+        for param in &function.params {
+            collect_pat_bindings(&param.pat, &mut names);
+        }
+        self.push_shadowed(names);
+        function.visit_mut_children_with(self);
+        self.pop_shadowed();
+    }
+
+    fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
+        let mut names = HashSet::new();
+        for param in &arrow.params {
+            collect_pat_bindings(param, &mut names);
+        }
+        if let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() {
+            collect_local_bindings_from_stmts(&block.stmts, &mut names);
+        }
+        self.push_shadowed(names);
+        arrow.visit_mut_children_with(self);
+        self.pop_shadowed();
+    }
+
+    fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
+        let mut names = HashSet::new();
+        collect_local_bindings_from_stmts(&block.stmts, &mut names);
+        self.push_shadowed(names);
+        block.visit_mut_children_with(self);
+        self.pop_shadowed();
+    }
+
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if let Expr::Ident(ident) = expr {
+            if self.helpers.contains(&ident.sym) && !self.is_shadowed(&ident.sym) {
+                *ident = Ident::new("require".into(), ident.span, Default::default());
+                return;
+            }
+        }
+        expr.visit_mut_children_with(self);
+    }
+}
+
+fn collect_local_bindings_from_function(function: &Function) -> HashSet<Atom> {
+    let mut names = HashSet::new();
+    if let Some(body) = &function.body {
+        collect_local_bindings_from_stmts(&body.stmts, &mut names);
+    }
+    names
+}
+
+fn collect_local_bindings_from_stmts(stmts: &[Stmt], names: &mut HashSet<Atom>) {
+    struct Collector<'a> {
+        names: &'a mut HashSet<Atom>,
+    }
+
+    impl Visit for Collector<'_> {
+        fn visit_binding_ident(&mut self, binding: &BindingIdent) {
+            self.names.insert(binding.id.sym.clone());
+        }
+
+        fn visit_function(&mut self, _: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+        fn visit_class(&mut self, _: &Class) {}
+    }
+
+    let mut collector = Collector { names };
+    for stmt in stmts {
+        stmt.visit_with(&mut collector);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2: Reference graph
 // ---------------------------------------------------------------------------
@@ -686,6 +870,8 @@ fn emit_clusters(
     clusters: Vec<Cluster>,
     cm: Lrc<SourceMap>,
 ) -> Vec<UnpackedModule> {
+    let dynamic_require_helpers = collect_dynamic_require_helpers(body);
+
     // Pre-compute: which names does each cluster declare?
     let cluster_declared: Vec<HashSet<Atom>> = clusters
         .iter()
@@ -734,6 +920,7 @@ fn emit_clusters(
             }
             let mut needed: Vec<&Atom> = cluster_referenced[ci]
                 .iter()
+                .filter(|name| !dynamic_require_helpers.contains(*name))
                 .filter(|name| other_decls.contains(*name))
                 .collect();
             if needed.is_empty() {
@@ -750,7 +937,7 @@ fn emit_clusters(
                 continue;
             }
             for name in &cluster_declared[ci] {
-                if other_refs.contains(name) {
+                if !dynamic_require_helpers.contains(name) && other_refs.contains(name) {
                     exported.insert(name.clone());
                 }
             }
@@ -759,13 +946,22 @@ fn emit_clusters(
         // Original body items, with exported declarations promoted to
         // `export function ...` / `export const ...` / `export class ...`.
         let mut leftover_exports: Vec<Atom> = Vec::new();
+        let should_rewrite_dynamic_require = !dynamic_require_helpers.is_empty()
+            && !cluster_declared[ci]
+                .iter()
+                .any(|name| dynamic_require_helpers.contains(name));
         for &i in &cluster.item_indices {
-            let item = &body[i];
+            let mut item = body[i].clone();
+            if should_rewrite_dynamic_require {
+                item.visit_mut_with(&mut DynamicRequireHelperRewriter::new(
+                    &dynamic_require_helpers,
+                ));
+            }
             if exported.is_empty() {
-                module_items.push(item.clone());
+                module_items.push(item);
                 continue;
             }
-            match try_promote_export(item, &exported) {
+            match try_promote_export(&item, &exported) {
                 ExportPromotion::Promoted(new_item, promoted_names) => {
                     module_items.push(new_item);
                     for name in &promoted_names {
@@ -779,7 +975,7 @@ fn emit_clusters(
                     }
                 }
                 ExportPromotion::None => {
-                    module_items.push(item.clone());
+                    module_items.push(item);
                 }
             }
         }
