@@ -1012,3 +1012,52 @@ export { ns_a };
         "src/consumer.js should import helperFn:\n{consumer_code}"
     );
 }
+
+#[test]
+fn plain_code_not_detected_as_esbuild() {
+    // No esbuild markers (no lazy-helper arrows, no __export helper).
+    // The detector should reject this via the cheap pre-check without
+    // cloning or resolving the AST.
+    let code = r#"
+function greet(name) { return "Hello, " + name + "!"; }
+var result = greet("world");
+console.log(result);
+"#;
+    let pairs = expect_unpack(code, "app.js");
+    assert_eq!(
+        pairs.len(),
+        1,
+        "plain code should not be detected as esbuild: {:?}",
+        pairs.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn webpack_style_bundle_not_detected_as_esbuild() {
+    // A webpack-shaped IIFE with __webpack_require__ — no esbuild markers.
+    // The esbuild detector's pre-check should reject this immediately.
+    let code = r#"
+(function(modules) {
+    function __webpack_require__(moduleId) {
+        var module = { exports: {} };
+        modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+        return module.exports;
+    }
+    __webpack_require__(0);
+})([
+    function(module, exports, __webpack_require__) {
+        var dep = __webpack_require__(1);
+        console.log(dep.value);
+    },
+    function(module, exports) {
+        exports.value = 42;
+    }
+]);
+"#;
+    let pairs = expect_unpack(code, "bundle.js");
+    // Should be detected as webpack4, not esbuild.
+    assert!(
+        pairs.len() >= 2,
+        "webpack4 bundle should be split by webpack4 detector, not esbuild"
+    );
+}

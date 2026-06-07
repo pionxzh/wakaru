@@ -23,19 +23,27 @@ pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
 }
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
+    // Phase 1: cheap structural pre-checks on the unresolved module.
+    // Both scans are O(top-level items) with no cloning or resolution.
+    let helper_syms = {
+        let span = tracing::info_span!("esbuild: collect helper syms");
+        let _enter = span.enter();
+        collect_helper_syms(module)
+    };
+
+    let has_export_helper_shape = detect_export_helper(&module.body).is_some();
+
+    if helper_syms.is_empty() && !has_export_helper_shape {
+        return None;
+    }
+
+    // Evidence of esbuild structure found — clone + resolve for binding analysis.
     let analysis_module = {
         let span = tracing::info_span!("esbuild: clone and resolve for analysis");
         let _enter = span.enter();
         let mut am = module.clone();
         am.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
         am
-    };
-
-    // Phase 1: find the lazy-helper variables (esbuild's __commonJS / __esm equivalents).
-    let helper_syms = {
-        let span = tracing::info_span!("esbuild: collect helper syms");
-        let _enter = span.enter();
-        collect_helper_syms(module)
     };
 
     // Phase 2: collect factory declarations — `var X = helper(factory_fn)`.
