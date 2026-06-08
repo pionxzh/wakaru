@@ -1412,6 +1412,39 @@ console.log(b);
 }
 
 #[test]
+fn standalone_init_factory_decompiles_storage_before_callable_wrapper() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var a;
+var init_a = y(() => { a = 1; });
+var init_b = y(() => { init_a(); });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+init_b();
+console.log(a);
+"#;
+    let pairs = expect_unpack(bundle, "bundle.js");
+
+    let init_a_code = &pairs
+        .iter()
+        .find(|(n, _)| n == "init_a.js")
+        .expect("init_a module should exist")
+        .1;
+    let storage_pos = init_a_code
+        .find("let a;")
+        .or_else(|| init_a_code.find("var a;"))
+        .expect("init_a should declare its written state");
+    let wrapper_pos = init_a_code
+        .find("export function init_a")
+        .expect("init_a should export its callable wrapper");
+    assert!(
+        storage_pos < wrapper_pos,
+        "written state must be declared before the callable init wrapper:\n{init_a_code}"
+    );
+}
+
+#[test]
 fn standalone_factory_exports_destructuring_assignment_writes() {
     let bundle = r#"
 var y = (q,K) => () => (q && (K = q(q = 0)), K);

@@ -659,9 +659,44 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
             ))
             .collect();
         rename_bindings(&mut body_items, &import_renames);
-        let mut code = String::new();
         let mut factory_body_stmts = factory.body_stmts;
         rename_bindings(&mut factory_body_stmts, &import_renames);
+
+        let mut write_names: Vec<Atom> = factory
+            .write_bindings
+            .iter()
+            .filter(|binding| {
+                binding_to_filename
+                    .get(*binding)
+                    .is_some_and(|filename| filename == &factory.filename)
+                    && !declared_owned_atoms.contains(&binding.0)
+            })
+            .map(|(atom, _)| atom.clone())
+            .collect();
+        write_names.sort();
+        write_names.dedup();
+
+        let mut code = String::new();
+        // Other modules may import and call this synthetic init function while
+        // this module is still evaluating through an ESM cycle. Keep the
+        // module-local storage it mutates before the exported callable wrapper,
+        // otherwise later VarDeclToLetConst can turn trailing `var` storage
+        // into TDZ-sensitive `let` declarations.
+        if !body_items.is_empty() {
+            code.push_str(&emit_items(
+                body_items,
+                factory.filename.clone(),
+                cm.clone(),
+            ));
+        }
+        if !write_names.is_empty() {
+            let names = write_names
+                .iter()
+                .map(|name| name.as_ref())
+                .collect::<Vec<_>>()
+                .join(", ");
+            code.push_str(&format!("export var {names};\n"));
+        }
         if let Some(cjs_params) = &factory.cjs_params {
             let cache_name = format!("__wakaru_{}_cache", factory.var_name);
             code.push_str(&format!("var {cache_name};\n"));
@@ -700,34 +735,6 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
             code.push_str(&emit_esm_init_function_code(
                 &factory.var_name,
                 factory_body_stmts,
-                factory.filename.clone(),
-                cm.clone(),
-            ));
-        }
-        let mut write_names: Vec<Atom> = factory
-            .write_bindings
-            .iter()
-            .filter(|binding| {
-                binding_to_filename
-                    .get(*binding)
-                    .is_some_and(|filename| filename == &factory.filename)
-                    && !declared_owned_atoms.contains(&binding.0)
-            })
-            .map(|(atom, _)| atom.clone())
-            .collect();
-        write_names.sort();
-        write_names.dedup();
-        if !write_names.is_empty() {
-            let names = write_names
-                .iter()
-                .map(|name| name.as_ref())
-                .collect::<Vec<_>>()
-                .join(", ");
-            code.push_str(&format!("export var {names};\n"));
-        }
-        if !body_items.is_empty() {
-            code.push_str(&emit_items(
-                body_items,
                 factory.filename.clone(),
                 cm.clone(),
             ));
