@@ -18,18 +18,19 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 2180 | 1647 | 533 | 34 | 128 | 1485 | 0 |
+| 2180 | 1647 | 533 | 37 | 125 | 1485 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
 | rejected | swc-array-binding-elision | 9 |
-| rejected | transform-reject | 116 |
+| rejected | transform-reject | 113 |
 | rejected | transform-runtime | 3 |
 | skipped | flag:async | 231 |
 | skipped | negative | 302 |
-| unsupported | node-vm-baseline | 3 |
+| unsupported | node-module-baseline | 1 |
+| unsupported | node-vm-baseline | 5 |
 | unsupported | sloppy-only-strict-ident | 22 |
 | unsupported | swc-parse-async-ident | 5 |
 | unsupported | swc-parse-static-init-await | 3 |
@@ -38,3 +39,4 @@
 ## Failures
 
 No Wakaru correctness failures.
+

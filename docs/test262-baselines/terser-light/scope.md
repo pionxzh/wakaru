@@ -18,7 +18,7 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1396 | 1146 | 250 | 20 | 8 | 1118 | 0 |
+| 1396 | 1146 | 250 | 19 | 8 | 1119 | 0 |
 
 ## Reasons
 
@@ -31,7 +31,6 @@
 | unsupported | node-vm-baseline | 10 |
 | unsupported | sloppy-only-strict-ident | 3 |
 | unsupported | swc-parse-async-ident | 3 |
-| unsupported | swc-parse-deep-iife-stack-overflow | 1 |
 | unsupported | swc-parse-static-init-await | 1 |
 | unsupported | swc-parse-yield-arrow-parameter | 2 |
 

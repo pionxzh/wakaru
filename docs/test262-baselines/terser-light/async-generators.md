@@ -3,7 +3,7 @@
 ## Options
 
 - complete: true
-- paths: test/language/expressions/async-arrow-function, test/language/expressions/async-function, test/language/expressions/async-generator, test/language/expressions/generators, test/language/statements/async-function, test/language/statements/async-generator, test/language/statements/generators
+- paths: test/language/expressions/async-arrow-function, test/language/expressions/async-function, test/language/expressions/async-generator, test/language/expressions/await, test/language/expressions/generators, test/language/statements/async-function, test/language/statements/async-generator, test/language/statements/for-await-of, test/language/statements/generators
 - limit: all
 - pipeline: terser-light
 - transform: terser
@@ -18,23 +18,24 @@
 
 | Discovered | Runnable | Skipped | Unsupported | Rejected | Passed | Failed |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1707 | 666 | 1041 | 15 | 6 | 645 | 0 |
+| 2963 | 674 | 2289 | 21 | 7 | 646 | 0 |
 
 ## Reasons
 
 | Status | Reason | Count |
 |---|---|---:|
 | rejected | transform-reject | 3 |
-| rejected | transform-runtime | 3 |
-| skipped | flag:async | 756 |
+| rejected | transform-runtime | 4 |
+| skipped | flag:async | 1909 |
 | skipped | host-api | 2 |
-| skipped | negative | 283 |
+| skipped | negative | 378 |
 | unsupported | node-vm-baseline | 5 |
 | unsupported | sloppy-only-strict-ident | 6 |
-| unsupported | swc-parse-async-ident | 1 |
+| unsupported | swc-parse-async-ident | 7 |
 | unsupported | swc-parse-static-init-await | 1 |
 | unsupported | swc-parse-yield-ident | 2 |
 
 ## Failures
 
 No Wakaru correctness failures.
+
