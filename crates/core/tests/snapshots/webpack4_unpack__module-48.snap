@@ -1217,7 +1217,9 @@ function Pt(e, t) {
 function _t(e, t, n, r, o, i) {
     if (e === null || e.nativeEvent !== i) {
         e = Ct(t, n, r, o, i);
-        t !== null && (t = _n(t)) !== null && mt(t);
+        if (t !== null && (t = _n(t)) !== null) {
+            mt(t);
+        }
         return e;
     }
     e.eventSystemFlags |= r;
@@ -2628,7 +2630,10 @@ function Qr(e, t) {
             focusOffset: n.focusOffset
         };
     }
-    return Br && qr(Br, n) ? null : (Br = n, (e = Bn.getPooled(Hr.select, $r, e, t)).type = "select", e.target = Wr, Fn(e), e);
+    if (Br && qr(Br, n)) {
+        return null;
+    }
+    return Br = n, (e = Bn.getPooled(Hr.select, $r, e, t)).type = "select", e.target = Wr, Fn(e), e;
 }
 const SelectEventPlugin = {
     eventTypes: Hr,
@@ -7797,7 +7802,10 @@ bu = (e, t, n)=>{
                                 return Va(e, t, n);
                             }
                             so(Di, 1 & Di.current);
-                            return (t = Ga(e, t, n)) !== null ? t.sibling : null;
+                            if ((t = Ga(e, t, n)) !== null) {
+                                return t.sibling;
+                            }
+                            return null;
                         }
                         so(Di, 1 & Di.current);
                         break;

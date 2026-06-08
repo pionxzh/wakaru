@@ -28,8 +28,9 @@ use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
     apply_rules, ArrowFunction, ArrowReturn, ImportDedup, RewriteLevel, RulePipelineOptions,
-    SimplifySequence, SmartRename, UnAssignmentMerging, UnConditionalsAssignmentOnly,
-    UnConditionalsExprStmtOnly, UnEsm, UnExportRename, UnIife, UnImportRename, UnOptionalChaining,
+    SimplifySequence, SmartRename, UnAssignmentMerging, UnConditionals,
+    UnConditionalsAssignmentOnly, UnEsm, UnExportRename, UnIife, UnImportRename,
+    UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::{scope_hoist, try_unpack_bundle, webpack5, UnpackResult, UnpackedModule};
@@ -1151,7 +1152,7 @@ fn unpack_multi_module_with_plan(
             );
             module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
             module.visit_mut_with(&mut UnConditionalsAssignmentOnly);
-            module.visit_mut_with(&mut UnConditionalsExprStmtOnly);
+            module.visit_mut_with(&mut UnConditionals);
             prune_stale_local_named_exports(&mut module);
             dedup_duplicate_exports(&mut module);
 

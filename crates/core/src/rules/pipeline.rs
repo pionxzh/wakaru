@@ -284,10 +284,6 @@ fn run_un_conditionals(module: &mut Module, ctx: RuleRunContext<'_>) {
     module.visit_mut_with(&mut UnConditionals);
     ctx.invalidate_local_helpers();
 }
-runner!(
-    run_un_conditionals_expr_stmt_only,
-    UnConditionalsExprStmtOnly
-);
 runner!(run_un_parameters, |ctx| UnParameters::new(
     ctx.unresolved_mark,
     ctx.rewrite_level
@@ -574,9 +570,10 @@ define_rule_registry! {
     // Last pass: no downstream rule needs tail return undefined, and earlier
     // restructuring rules can introduce new ones.
     ("UnReturn", Cleanup, run_un_return, always_enabled),
-    // Final narrow conditional cleanup for standalone ternary statements only.
-    // This avoids the broad churn of running the full UnConditionals pass late.
-    ("UnConditionalsExprStmt", Cleanup, run_un_conditionals_expr_stmt_only, always_enabled, requires: [
+    // Late rules (SmartInline, ArrowFunction, UnReturn) can create or expose
+    // conditional patterns (return ternaries, short-circuit expression
+    // statements) that the first UnConditionals pass could not see.
+    ("UnConditionals2", Cleanup, run_un_conditionals, always_enabled, requires: [
         "UnReturn"
     ]),
 }
