@@ -106,7 +106,7 @@ fn extract_browserify_modules(
         return None;
     }
 
-    Some(UnpackResult { modules })
+    Some(UnpackResult::new(modules))
 }
 
 fn extract_entry_ids(entry_array: &ArrayLit) -> Option<Vec<usize>> {

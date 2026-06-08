@@ -86,6 +86,7 @@ pub enum UnpackWarningKind {
     InputParseRecovered,
     TdzViolation,
     DuplicateDeclaration,
+    ImportCycle,
     OutputParseRecovered,
     OutputParseFailed,
 }
@@ -99,6 +100,7 @@ impl UnpackWarningKind {
             Self::InputParseRecovered => "input_parse_recovered",
             Self::TdzViolation => "tdz_violation",
             Self::DuplicateDeclaration => "duplicate_declaration",
+            Self::ImportCycle => "import_cycle",
             Self::OutputParseRecovered => "output_parse_recovered",
             Self::OutputParseFailed => "output_parse_failed",
         }
@@ -107,7 +109,10 @@ impl UnpackWarningKind {
     /// Diagnostic warnings signal potential issues in transform output
     /// but do not indicate data loss or parse failure during unpack.
     pub fn is_diagnostic(self) -> bool {
-        matches!(self, Self::InputParseRecovered | Self::TdzViolation)
+        matches!(
+            self,
+            Self::InputParseRecovered | Self::TdzViolation | Self::ImportCycle
+        )
     }
 
     pub fn is_error(self) -> bool {

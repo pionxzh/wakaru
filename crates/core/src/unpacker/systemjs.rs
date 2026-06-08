@@ -56,7 +56,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         });
     }
 
-    Some(UnpackResult { modules })
+    Some(UnpackResult::new(modules))
 }
 
 fn try_unpack_dynamic_export_bundle(

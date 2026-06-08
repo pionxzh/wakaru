@@ -577,7 +577,7 @@ fn extract_webpack4_array_modules(
         return None;
     }
 
-    Some(UnpackResult { modules })
+    Some(UnpackResult::new(modules))
 }
 
 /// Extract modules from the object-form: `bootstrapFn({"./src/index.js": fn, ...})`
@@ -722,7 +722,7 @@ fn extract_webpack4_object_modules(
         return None;
     }
 
-    Some(UnpackResult { modules })
+    Some(UnpackResult::new(modules))
 }
 
 /// Extract a string module ID from a property key.

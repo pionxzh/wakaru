@@ -20,6 +20,23 @@ pub struct UnpackedModule {
 
 pub struct UnpackResult {
     pub modules: Vec<UnpackedModule>,
+    pub allow_cycle_premerge: bool,
+}
+
+impl UnpackResult {
+    pub(crate) fn new(modules: Vec<UnpackedModule>) -> Self {
+        Self {
+            modules,
+            allow_cycle_premerge: true,
+        }
+    }
+
+    pub(crate) fn without_cycle_premerge(modules: Vec<UnpackedModule>) -> Self {
+        Self {
+            modules,
+            allow_cycle_premerge: false,
+        }
+    }
 }
 
 pub(crate) type BindingId = (Atom, SyntaxContext);

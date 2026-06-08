@@ -756,7 +756,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
         });
     }
 
-    Some(UnpackResult { modules })
+    Some(UnpackResult::without_cycle_premerge(modules))
 }
 
 fn emit_esm_init_function_code(

@@ -17,13 +17,19 @@ use super::diagnostics::{
 use super::io::{parse_js, parse_js_with_recovery, print_js};
 use super::single_file::decompile;
 use super::types::{DecompileOptions, UnpackInput, UnpackOutput, UnpackWarning, UnpackWarningKind};
+#[cfg(test)]
+use super::unpack_cleanup::hoist_late_runtime_helpers;
+use super::unpack_cleanup::{dedup_duplicate_exports, prune_stale_local_named_exports};
+use super::unpack_cycles::{collect_import_cycle_warnings, merge_import_cycles};
+#[cfg(test)]
+use super::unpack_cycles::{scan_local_import_dependencies, unsafe_merge_member_reason};
 use crate::facts::{collect_module_facts, ModuleFactsMap};
 use crate::namespace_decomposition::run_namespace_decomposition;
 use crate::reexport_consolidation::run_reexport_consolidation;
 use crate::rules::{
     apply_rules, ArrowFunction, ArrowReturn, ImportDedup, RewriteLevel, RulePipelineOptions,
     SimplifySequence, SmartRename, UnAssignmentMerging, UnConditionalsAssignmentOnly,
-    UnConditionalsExprStmtOnly, UnExportRename, UnIife, UnImportRename, UnOptionalChaining,
+    UnConditionalsExprStmtOnly, UnEsm, UnExportRename, UnIife, UnImportRename, UnOptionalChaining,
 };
 use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
 use crate::unpacker::{scope_hoist, try_unpack_bundle, webpack5, UnpackResult, UnpackedModule};
@@ -34,12 +40,12 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
     let _enter = span.enter();
 
     match detect_bundle(source, &options.filename)? {
-        Some(result) => unpack_multi_module(result.modules, options),
+        Some(result) => unpack_unpack_result(result, options),
         None if options.heuristic_split => match scope_hoist::split_scope_hoisted(source) {
             Some(result) if result.modules.len() > 1 => {
                 let mut opts = options.clone();
                 opts.dead_code_elimination = false;
-                unpack_multi_module(result.modules, opts)
+                unpack_unpack_result(result, opts)
             }
             _ => {
                 let output = decompile(source, options)?;
@@ -82,8 +88,14 @@ pub fn unpack_files(
             Some(result) => {
                 let chunk_ids = webpack5::detect_chunk_ids(&input.source);
                 let input_filename = input.filename.clone();
+                let allow_cycle_premerge = result.allow_cycle_premerge;
                 modules.extend(result.modules.into_iter().map(|module| {
-                    MultiSourceModule::detected(module, chunk_ids.clone(), input_filename.clone())
+                    MultiSourceModule::detected(
+                        module,
+                        chunk_ids.clone(),
+                        input_filename.clone(),
+                        allow_cycle_premerge,
+                    )
                 }))
             }
             None if options.heuristic_split => {
@@ -126,27 +138,80 @@ pub fn unpack_files(
 /// bundler-coupled normalization. Cross-module analysis and the normal
 /// decompile rule pipeline are skipped.
 pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutput> {
-    let result = detect_bundle_raw(source, &options.filename)?.or_else(|| {
-        if options.heuristic_split {
-            let r = scope_hoist::split_scope_hoisted(source)?;
-            if r.modules.len() > 1 {
-                Some(r)
+    let result = detect_bundle_raw(source, &options.filename)?
+        .map(|result| (result, false))
+        .or_else(|| {
+            if options.heuristic_split {
+                let r = scope_hoist::split_scope_hoisted(source)?;
+                if r.modules.len() > 1 {
+                    Some((r, true))
+                } else {
+                    None
+                }
             } else {
                 None
             }
-        } else {
-            None
-        }
-    });
+        });
     match result {
-        Some(result) => Ok(UnpackOutput {
-            modules: result
-                .modules
-                .into_iter()
-                .map(|module| (module.filename, module.code))
-                .collect(),
-            warnings: Vec::new(),
-        }),
+        Some((result, normalize_for_runnable_split)) => {
+            let (modules, warnings) = if normalize_for_runnable_split {
+                // Heuristic scope-hoisted fallback does not get the esbuild
+                // detector's bundler-specific cleanup, so keep the narrow
+                // runnable normalization it still relies on.
+                let (modules, warnings) = {
+                    if should_merge_raw_import_cycles(&result.modules) {
+                        let span = tracing::info_span!("raw_merge_import_cycles");
+                        let _enter = span.enter();
+                        merge_import_cycles(result.modules)
+                    } else {
+                        (result.modules, Vec::new())
+                    }
+                };
+                let normalized: Vec<_> = modules
+                    .into_par_iter()
+                    .map(|module| {
+                        match normalize_raw_unpacked_module(&module.code, &module.filename) {
+                            Ok(normalized) => ((module.filename, normalized), None),
+                            Err(e) => {
+                                let warning = UnpackWarning::new(
+                                    module.filename.clone(),
+                                    UnpackWarningKind::RawNormalizationFailed,
+                                    format!(
+                                        "raw normalization failed, preserving unparsed code: {e}"
+                                    ),
+                                );
+                                ((module.filename, module.code), Some(warning))
+                            }
+                        }
+                    })
+                    .collect();
+                let mut output_modules = Vec::with_capacity(normalized.len());
+                let mut output_warnings = if options.diagnostics {
+                    warnings
+                } else {
+                    Vec::new()
+                };
+                for (module, warning) in normalized {
+                    if options.diagnostics {
+                        if let Some(warning) = warning {
+                            output_warnings.push(warning);
+                        }
+                    }
+                    output_modules.push(module);
+                }
+                (output_modules, output_warnings)
+            } else {
+                (
+                    result
+                        .modules
+                        .into_iter()
+                        .map(|module| (module.filename, module.code))
+                        .collect(),
+                    Vec::new(),
+                )
+            };
+            Ok(UnpackOutput { modules, warnings })
+        }
         None => Ok(UnpackOutput {
             modules: vec![("module.js".to_string(), source.to_string())],
             warnings: Vec::new(),
@@ -188,8 +253,14 @@ pub fn unpack_files_raw(
         match result {
             Some(result) => {
                 let chunk_ids = webpack5::detect_chunk_ids(&input.source);
+                let allow_cycle_premerge = result.allow_cycle_premerge;
                 modules.extend(result.modules.into_iter().map(|module| {
-                    MultiSourceModule::detected(module, chunk_ids.clone(), input.filename.clone())
+                    MultiSourceModule::detected(
+                        module,
+                        chunk_ids.clone(),
+                        input.filename.clone(),
+                        allow_cycle_premerge,
+                    )
                 }));
             }
             None => modules.push(MultiSourceModule::fallback(UnpackedModule {
@@ -217,17 +288,24 @@ fn filename_for_fallback_input(filename: &str) -> String {
 struct MultiSourceModule {
     module: UnpackedModule,
     allow_cross_chunk_rewrite: bool,
+    allow_cycle_premerge: bool,
     chunk_ids: HashSet<usize>,
     input_filename: String,
     input_group: String,
 }
 
 impl MultiSourceModule {
-    fn detected(module: UnpackedModule, chunk_ids: HashSet<usize>, input_filename: String) -> Self {
+    fn detected(
+        module: UnpackedModule,
+        chunk_ids: HashSet<usize>,
+        input_filename: String,
+        allow_cycle_premerge: bool,
+    ) -> Self {
         let input_group = input_group_for_filename(&input_filename);
         Self {
             module,
             allow_cross_chunk_rewrite: true,
+            allow_cycle_premerge,
             chunk_ids,
             input_filename,
             input_group,
@@ -238,6 +316,7 @@ impl MultiSourceModule {
         Self {
             module,
             allow_cross_chunk_rewrite: false,
+            allow_cycle_premerge: false,
             chunk_ids: HashSet::new(),
             input_filename: String::new(),
             input_group: String::new(),
@@ -248,6 +327,7 @@ impl MultiSourceModule {
 struct PreparedUnpackModule {
     module: UnpackedModule,
     numeric_rewrite: Option<NumericRewriteModuleContext>,
+    allow_cycle_premerge: bool,
 }
 
 impl PreparedUnpackModule {
@@ -255,6 +335,15 @@ impl PreparedUnpackModule {
         Self {
             module,
             numeric_rewrite: None,
+            allow_cycle_premerge: true,
+        }
+    }
+
+    fn with_cycle_premerge(module: UnpackedModule, allow_cycle_premerge: bool) -> Self {
+        Self {
+            module,
+            numeric_rewrite: None,
+            allow_cycle_premerge,
         }
     }
 }
@@ -311,6 +400,7 @@ fn prepare_multi_source_modules(
             PreparedUnpackModule {
                 module: module.module,
                 numeric_rewrite,
+                allow_cycle_premerge: module.allow_cycle_premerge,
             }
         })
         .collect();
@@ -784,10 +874,33 @@ fn detect_bundle_raw(source: &str, filename: &str) -> Result<Option<UnpackResult
     }
 }
 
+fn normalize_raw_unpacked_module(source: &str, filename: &str) -> Result<String> {
+    GLOBALS.set(&Default::default(), || {
+        let cm: Lrc<SourceMap> = Default::default();
+        let mut module = parse_js(source, filename, cm.clone())?;
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+        module.visit_mut_with(&mut UnEsm::new(unresolved_mark, RewriteLevel::Standard));
+        recover_late_esm_from_factory_iifes(
+            &mut module,
+            unresolved_mark,
+            RewriteLevel::Standard,
+            LateEsmRecoveryOptions {
+                smart_rename: false,
+                export_rename: false,
+            },
+        );
+        module.visit_mut_with(&mut fixer(None));
+        print_js(&module, cm)
+    })
+}
+
 fn recover_late_esm_from_factory_iifes(
     module: &mut Module,
     unresolved_mark: Mark,
     level: RewriteLevel,
+    options: LateEsmRecoveryOptions,
 ) {
     module.visit_mut_with(&mut ArrowFunction);
     module.visit_mut_with(&mut ArrowReturn);
@@ -797,9 +910,28 @@ fn recover_late_esm_from_factory_iifes(
         unresolved_mark,
         RulePipelineOptions::between("UnCurlyBraces", "UnEsm").with_rewrite_level(level),
     );
-    module.visit_mut_with(&mut SmartRename::new(unresolved_mark));
-    module.visit_mut_with(&mut UnExportRename);
+    if options.smart_rename {
+        module.visit_mut_with(&mut SmartRename::new(unresolved_mark));
+    }
+    if options.export_rename {
+        module.visit_mut_with(&mut UnExportRename);
+    }
     module.visit_mut_with(&mut ArrowReturn);
+}
+
+#[derive(Clone, Copy)]
+struct LateEsmRecoveryOptions {
+    smart_rename: bool,
+    export_rename: bool,
+}
+
+impl Default for LateEsmRecoveryOptions {
+    fn default() -> Self {
+        Self {
+            smart_rename: true,
+            export_rename: true,
+        }
+    }
 }
 
 /// Multi-module unpack with cross-module late pass.
@@ -825,6 +957,7 @@ fn recover_late_esm_from_factory_iifes(
 ///
 /// Both phases run via rayon. On targets without threading support, Rayon falls
 /// back to sequential execution.
+#[cfg(test)]
 fn unpack_multi_module(
     modules: Vec<crate::unpacker::UnpackedModule>,
     options: DecompileOptions,
@@ -836,6 +969,16 @@ fn unpack_multi_module(
     unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options)
 }
 
+fn unpack_unpack_result(result: UnpackResult, options: DecompileOptions) -> Result<UnpackOutput> {
+    let allow_cycle_premerge = result.allow_cycle_premerge;
+    let modules = result
+        .modules
+        .into_iter()
+        .map(|module| PreparedUnpackModule::with_cycle_premerge(module, allow_cycle_premerge))
+        .collect();
+    unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options)
+}
+
 fn unpack_multi_module_with_plan(
     modules: Vec<PreparedUnpackModule>,
     numeric_rewrite_plan: NumericRewritePlan,
@@ -843,6 +986,30 @@ fn unpack_multi_module_with_plan(
 ) -> Result<UnpackOutput> {
     let span = tracing::info_span!("unpack_multi_module", count = modules.len());
     let _enter = span.enter();
+    let report_import_cycle_warnings = modules.iter().all(|module| module.allow_cycle_premerge);
+    let (modules, cycle_warnings) =
+        if numeric_rewrite_plan.is_empty() && should_premerge_import_cycles(&modules) {
+            let (modules, warnings) = merge_import_cycles(
+                modules
+                    .into_iter()
+                    .map(|prepared| prepared.module)
+                    .collect(),
+            );
+            (
+                modules
+                    .into_iter()
+                    .map(PreparedUnpackModule::plain)
+                    .collect(),
+                warnings,
+            )
+        } else {
+            // Numeric rewrite context is per original input group. A merged cycle
+            // could contain members from different groups, but the later AST
+            // pipeline accepts only one context per output module. Keep those
+            // modules split so numeric require ids are rewritten in their original
+            // context and source strings stay untouched until the normal pipeline.
+            (modules, Vec::new())
+        };
 
     // Parse the sourcemap once before the loop.
     let parsed_sourcemap = options
@@ -897,6 +1064,7 @@ fn unpack_multi_module_with_plan(
                 &mut facts_module,
                 unresolved_mark,
                 RewriteLevel::Standard,
+                LateEsmRecoveryOptions::default(),
             );
             let facts = collect_module_facts(&facts_module);
             let prepared = can_reuse_phase1_ast.then_some((module, unresolved_mark));
@@ -924,6 +1092,9 @@ fn unpack_multi_module_with_plan(
     let mut module_facts = ModuleFactsMap::new();
     let mut prepared_modules = Vec::with_capacity(phase1.len());
     let mut warnings = Vec::new();
+    if options.diagnostics {
+        warnings.extend(cycle_warnings);
+    }
     for phase1_module in phase1 {
         module_facts.insert(&phase1_module.filename, phase1_module.facts);
         prepared_modules.push(phase1_module.prepared);
@@ -972,10 +1143,17 @@ fn unpack_multi_module_with_plan(
             // UnIife2 can expose webpack export helpers that were hidden in
             // factory wrappers at the Stage 2 barrier. Recover just that ESM
             // shape without restoring the old full second pass.
-            recover_late_esm_from_factory_iifes(&mut module, unresolved_mark, options.level);
+            recover_late_esm_from_factory_iifes(
+                &mut module,
+                unresolved_mark,
+                options.level,
+                LateEsmRecoveryOptions::default(),
+            );
             module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
             module.visit_mut_with(&mut UnConditionalsAssignmentOnly);
             module.visit_mut_with(&mut UnConditionalsExprStmtOnly);
+            prune_stale_local_named_exports(&mut module);
+            dedup_duplicate_exports(&mut module);
 
             // Source-map-enhanced passes
             if let Some(sm) = sm_ref {
@@ -1079,14 +1257,88 @@ fn unpack_multi_module_with_plan(
         modules.push((filename, code));
         warnings.extend(module_warnings);
     }
+    if options.diagnostics && report_import_cycle_warnings {
+        warnings.extend(collect_import_cycle_warnings(&modules));
+    }
 
     Ok(UnpackOutput { modules, warnings })
+}
+
+fn should_merge_raw_import_cycles(_modules: &[UnpackedModule]) -> bool {
+    // Keep the raw merge hook available, but disabled for now. ESM cycles are
+    // often valid, and the previous repair could undo recovered module
+    // boundaries before users had a chance to inspect raw output.
+    false
+}
+
+fn should_premerge_import_cycles(_modules: &[PreparedUnpackModule]) -> bool {
+    // Keep the pre-merge hook available for a future static validator, but do
+    // not merge only because a local import SCC exists. Native ESM cycles are
+    // often valid, while concatenating SCCs reduces split fidelity and can hide
+    // import-synthesis bugs. Remaining cycles are reported by diagnostics for
+    // non-scope-hoisted outputs.
+    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::unpacker::UnpackedModule;
+
+    #[test]
+    fn scan_local_import_dependencies_reads_static_imports() {
+        let module_names = ["a.js".to_string(), "nested/b.js".to_string()]
+            .into_iter()
+            .collect();
+        let deps = scan_local_import_dependencies(
+            "nested/current.js",
+            r#"
+import { a } from "../a.js";
+import {
+  b
+} from "./b.js";
+import fs from "fs";
+const value = import("./dynamic.js");
+"#,
+            &module_names,
+        )
+        .expect("static imports should scan without parsing");
+
+        assert_eq!(deps, vec!["a.js".to_string(), "nested/b.js".to_string()]);
+    }
+
+    #[test]
+    fn scan_local_import_dependencies_ignores_import_like_body_code() {
+        let module_names = ["dynamic.js".to_string()].into_iter().collect();
+        let deps = scan_local_import_dependencies(
+            "entry.js",
+            r#"
+const value = "import './dynamic.js'";
+import("./dynamic.js");
+"#,
+            &module_names,
+        )
+        .expect("non-import prefix should still be a valid fast scan");
+
+        assert!(deps.is_empty());
+    }
+
+    #[test]
+    fn scan_local_import_dependencies_ignores_nested_import_like_lines() {
+        let module_names = ["nested.js".to_string()].into_iter().collect();
+        let deps = scan_local_import_dependencies(
+            "entry.js",
+            r#"
+function load() {
+  import { nested } from "./nested.js";
+}
+"#,
+            &module_names,
+        )
+        .expect("nested import-like code should still scan without parsing");
+
+        assert!(deps.is_empty());
+    }
 
     #[test]
     fn unpack_raw_preserves_unparseable_extracted_modules() {
@@ -1130,6 +1382,155 @@ mod tests {
                 UnpackWarningKind::FactCollectionParseFailed,
                 UnpackWarningKind::DecompileFailed
             ]
+        );
+    }
+
+    #[test]
+    fn detector_raw_large_scope_split_skips_runnable_cleanup_merge() {
+        let mut source = String::from(
+            r#"
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns_a = {};
+__export(ns_a, { a: () => a });
+function a() { return b(); }
+var ns_b = {};
+__export(ns_b, { b: () => b });
+function b() { return a(); }
+"#,
+        );
+        for index in 0..1000 {
+            source.push_str(&format!(
+                "var ns_{index} = {{}};\n__export(ns_{index}, {{ v{index}: () => v{index} }});\nvar v{index} = {index};\n"
+            ));
+        }
+        source.push_str("export { ns_a, ns_b };\n");
+
+        let output = unpack_raw(&source, &DecompileOptions::default())
+            .expect("large detector raw split should unpack");
+        let filenames: HashSet<_> = output
+            .modules
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+
+        assert!(
+            filenames.contains("ns_a.js") && filenames.contains("ns_b.js"),
+            "detector raw output should preserve split cycle members instead of running merge cleanup"
+        );
+        assert!(
+            output.modules.len() > 1000,
+            "fixture should exercise large synthetic raw output, got {} modules",
+            output.modules.len()
+        );
+    }
+
+    #[test]
+    fn import_cycle_premerge_is_currently_disabled() {
+        let modules: Vec<PreparedUnpackModule> = (0..1025)
+            .map(|index| {
+                PreparedUnpackModule::plain(UnpackedModule {
+                    id: format!("m{index}"),
+                    is_entry: index == 0,
+                    code: format!("export const m{index} = {index};"),
+                    filename: if index == 0 {
+                        "entry.js".to_string()
+                    } else {
+                        format!("m{index}.js")
+                    },
+                })
+            })
+            .collect();
+
+        assert!(
+            !should_premerge_import_cycles(&modules),
+            "huge detector/split outputs should not pay for pre-merge repair"
+        );
+        assert!(
+            !should_premerge_import_cycles(&modules[..1024]),
+            "cycle pre-merge is currently disabled even for normal-sized outputs"
+        );
+
+        let mut scope_split_modules: Vec<_> = modules[..3]
+            .iter()
+            .map(|module| {
+                PreparedUnpackModule::with_cycle_premerge(
+                    UnpackedModule {
+                        id: module.module.id.clone(),
+                        is_entry: module.module.is_entry,
+                        code: module.module.code.clone(),
+                        filename: module.module.filename.clone(),
+                    },
+                    false,
+                )
+            })
+            .collect();
+        assert!(
+            !should_premerge_import_cycles(&scope_split_modules),
+            "scope-hoisted esbuild/Bun splits opt out even when small"
+        );
+        scope_split_modules[0].allow_cycle_premerge = true;
+        assert!(
+            !should_premerge_import_cycles(&scope_split_modules),
+            "all modules in the output must opt in before premerge runs"
+        );
+
+        let raw_modules: Vec<UnpackedModule> = modules
+            .iter()
+            .take(2)
+            .map(|module| UnpackedModule {
+                id: module.module.id.clone(),
+                is_entry: module.module.is_entry,
+                code: module.module.code.clone(),
+                filename: module.module.filename.clone(),
+            })
+            .collect();
+        assert!(
+            !should_merge_raw_import_cycles(&raw_modules),
+            "raw cycle merging is also kept disabled behind its gate"
+        );
+    }
+
+    #[test]
+    fn scope_split_cycles_do_not_emit_diagnostic_warnings() {
+        let modules = vec![
+            PreparedUnpackModule::with_cycle_premerge(
+                UnpackedModule {
+                    id: "a".to_string(),
+                    is_entry: true,
+                    code: r#"import { b } from "./b.js"; export const a = b + 1;"#.to_string(),
+                    filename: "entry.js".to_string(),
+                },
+                false,
+            ),
+            PreparedUnpackModule::with_cycle_premerge(
+                UnpackedModule {
+                    id: "b".to_string(),
+                    is_entry: false,
+                    code: r#"import { a } from "./entry.js"; export const b = a + 1;"#.to_string(),
+                    filename: "b.js".to_string(),
+                },
+                false,
+            ),
+        ];
+
+        let output = unpack_multi_module_with_plan(
+            modules,
+            NumericRewritePlan::default(),
+            DecompileOptions {
+                diagnostics: true,
+                ..Default::default()
+            },
+        )
+        .expect("scope split cycle should decompile");
+
+        assert!(
+            output.warnings.is_empty(),
+            "native ESM cycles from scope splits should not produce stderr warnings: {:?}",
+            output.warnings
         );
     }
 
@@ -1246,6 +1647,7 @@ exports.default = o.default(l);
                 },
                 HashSet::new(),
                 "entry.js".to_string(),
+                true,
             ),
             MultiSourceModule::detected(
                 UnpackedModule {
@@ -1256,6 +1658,7 @@ exports.default = o.default(l);
                 },
                 HashSet::new(),
                 "chunk.js".to_string(),
+                true,
             ),
         ];
 
@@ -1289,6 +1692,428 @@ exports.default = o.default(l);
         assert!(
             output.contains(r#"require("./module-999.js")"#),
             "rewrite plan should apply to the already-parsed AST:\n{output}"
+        );
+    }
+
+    #[test]
+    fn unpack_prunes_exports_for_inlined_local_aliases() {
+        let modules = vec![UnpackedModule {
+            id: "helper".to_string(),
+            is_entry: false,
+            code: r#"
+var create = Object.create;
+function wrap(value) {
+    return create(value);
+}
+export { create, wrap };
+"#
+            .to_string(),
+            filename: "helper.js".to_string(),
+        }];
+
+        let output = unpack_multi_module(
+            modules,
+            DecompileOptions {
+                level: RewriteLevel::Standard,
+                ..Default::default()
+            },
+        )
+        .expect("module should decompile");
+        let code = &output.modules[0].1;
+
+        assert!(
+            !code.contains("create }") && !code.contains("create,"),
+            "inlined alias should not remain exported:\n{code}"
+        );
+        assert!(
+            code.contains("wrap"),
+            "live export should be preserved:\n{code}"
+        );
+    }
+
+    #[test]
+    fn normal_unpack_phase_preserves_helper_declaration_order() {
+        let modules = vec![UnpackedModule {
+            id: "entry".to_string(),
+            is_entry: true,
+            code: r#"
+setup();
+const { defineProperty } = Object;
+var helper = (target) => defineProperty({}, "x", { value: target });
+function setup() {
+    return helper;
+}
+export { helper };
+"#
+            .to_string(),
+            filename: "entry.js".to_string(),
+        }];
+
+        let output = unpack_multi_module(
+            modules,
+            DecompileOptions {
+                level: RewriteLevel::Minimal,
+                dead_code_elimination: false,
+                ..Default::default()
+            },
+        )
+        .expect("module should decompile");
+        let code = &output.modules[0].1;
+        let setup_call = code.find("setup()").expect("setup call should remain");
+        let define_property = code
+            .find("defineProperty } = Object")
+            .expect("Object destructuring helper should remain");
+        let helper = code.find("helper =").expect("helper binding should remain");
+
+        assert!(
+            setup_call < define_property && define_property < helper,
+            "normal unpack should preserve declaration order; raw runnable cleanup owns helper hoisting:\n{code}"
+        );
+    }
+
+    #[test]
+    fn import_cycle_warnings_report_local_sccs() {
+        let modules = vec![
+            (
+                "a.js".to_string(),
+                r#"import { b } from "./b.js"; export const a = b;"#.to_string(),
+            ),
+            (
+                "b.js".to_string(),
+                r#"import { a } from "./a.js"; export const b = a;"#.to_string(),
+            ),
+            (
+                "c.js".to_string(),
+                r#"import { a } from "./a.js"; export const c = a;"#.to_string(),
+            ),
+        ];
+
+        let warnings = collect_import_cycle_warnings(&modules);
+
+        assert_eq!(warnings.len(), 1, "should report one SCC: {warnings:?}");
+        assert_eq!(warnings[0].kind, UnpackWarningKind::ImportCycle);
+        assert!(warnings[0].message.contains("2 modules"));
+        assert!(warnings[0].message.contains("a.js"));
+        assert!(warnings[0].message.contains("b.js"));
+    }
+
+    #[test]
+    fn merge_import_cycles_drops_internal_imports_and_retargets_consumers() {
+        let modules = vec![
+            UnpackedModule {
+                id: "a".to_string(),
+                is_entry: false,
+                code: r#"import { b } from "./b.js"; export const a = b + 1;"#.to_string(),
+                filename: "a.js".to_string(),
+            },
+            UnpackedModule {
+                id: "b".to_string(),
+                is_entry: false,
+                code: r#"import { a } from "./a.js"; export const b = a + 1;"#.to_string(),
+                filename: "b.js".to_string(),
+            },
+            UnpackedModule {
+                id: "c".to_string(),
+                is_entry: false,
+                code: r#"import { b } from "./b.js"; export const c = b;"#.to_string(),
+                filename: "c.js".to_string(),
+            },
+        ];
+
+        let (merged, warnings) = merge_import_cycles(modules);
+
+        assert!(
+            warnings.is_empty(),
+            "successful cycle repair should not surface as stderr warnings: {warnings:?}"
+        );
+        assert_eq!(merged.len(), 2);
+        let a = merged
+            .iter()
+            .find(|module| module.filename == "a.js")
+            .expect("cycle should merge into first module");
+        assert!(
+            !a.code.contains("from \"./b.js\"") && a.code.contains("export const b"),
+            "merged cycle should drop internal imports and retain member code:\n{}",
+            a.code
+        );
+        let c = merged
+            .iter()
+            .find(|module| module.filename == "c.js")
+            .expect("consumer should remain separate");
+        assert!(
+            c.code.contains("from \"./a.js\""),
+            "consumer should retarget imports to merged representative:\n{}",
+            c.code
+        );
+    }
+
+    #[test]
+    fn merge_import_cycles_does_not_reprint_unrelated_modules() {
+        let untouched_code = "const untouched = 1   ;";
+        let modules = vec![
+            UnpackedModule {
+                id: "a".to_string(),
+                is_entry: false,
+                code: r#"import { b } from "./b.js"; export const a = b + 1;"#.to_string(),
+                filename: "a.js".to_string(),
+            },
+            UnpackedModule {
+                id: "b".to_string(),
+                is_entry: false,
+                code: r#"import { a } from "./a.js"; export const b = a + 1;"#.to_string(),
+                filename: "b.js".to_string(),
+            },
+            UnpackedModule {
+                id: "d".to_string(),
+                is_entry: false,
+                code: untouched_code.to_string(),
+                filename: "d.js".to_string(),
+            },
+        ];
+
+        let (merged, warnings) = merge_import_cycles(modules);
+
+        assert!(
+            warnings.is_empty(),
+            "successful cycle repair should not surface as stderr warnings: {warnings:?}"
+        );
+        let unrelated = merged
+            .iter()
+            .find(|module| module.filename == "d.js")
+            .expect("unrelated module should remain");
+        assert_eq!(unrelated.code, untouched_code);
+    }
+
+    #[test]
+    fn merge_import_cycles_dedups_external_imports_before_safety_check() {
+        let modules = vec![
+            UnpackedModule {
+                id: "a".to_string(),
+                is_entry: false,
+                code: r#"import { shared } from "./x.js"; import { b } from "./b.js"; export const a = b + shared;"#
+                    .to_string(),
+                filename: "a.js".to_string(),
+            },
+            UnpackedModule {
+                id: "b".to_string(),
+                is_entry: false,
+                code: r#"import { shared } from "./x.js"; import { a } from "./a.js"; export const b = a + shared;"#
+                    .to_string(),
+                filename: "b.js".to_string(),
+            },
+        ];
+
+        let (merged, warnings) = merge_import_cycles(modules);
+
+        assert_eq!(merged.len(), 1, "warnings: {warnings:?}");
+        assert!(
+            warnings.is_empty(),
+            "duplicate external imports should not block a safe merge or emit stderr warnings: {:?}",
+            warnings
+        );
+        let a = &merged[0];
+        assert_eq!(a.filename, "a.js");
+        assert_eq!(
+            a.code.matches("from \"./x.js\"").count(),
+            1,
+            "merged cycle should deduplicate external imports:\n{}",
+            a.code
+        );
+        assert!(
+            !a.code.contains("from \"./b.js\"") && a.code.contains("export const b"),
+            "merged cycle should drop internal imports and retain member code:\n{}",
+            a.code
+        );
+    }
+
+    #[test]
+    fn merge_import_cycles_dedups_redundant_named_exports() {
+        let modules = vec![
+            UnpackedModule {
+                id: "a".to_string(),
+                is_entry: false,
+                code: r#"import { b } from "./b.js"; export function f() { return b; }"#
+                    .to_string(),
+                filename: "a.js".to_string(),
+            },
+            UnpackedModule {
+                id: "b".to_string(),
+                is_entry: false,
+                code: r#"import { f } from "./a.js"; export const b = 1; export { f };"#
+                    .to_string(),
+                filename: "b.js".to_string(),
+            },
+        ];
+
+        let (merged, warnings) = merge_import_cycles(modules);
+
+        assert_eq!(merged.len(), 1, "warnings: {warnings:?}");
+        let a = &merged[0];
+        assert!(
+            a.code.contains("export function f"),
+            "merged cycle should keep the declaration export:\n{}",
+            a.code
+        );
+        assert!(
+            !a.code.contains("export { f"),
+            "merged cycle should remove the redundant named export:\n{}",
+            a.code
+        );
+    }
+
+    #[test]
+    fn hoist_late_runtime_helpers_moves_helper_defs_before_side_effects() {
+        let input = r#"
+setup();
+result = helper(value);
+const { defineProperty } = Object;
+var helper = (target) => defineProperty({}, "x", { value: target });
+let cache;
+function setup() {}
+consumer = wrap(ns);
+export var ns = {};
+Object.defineProperty(ns, "value", { enumerable: true, get: () => value });
+export { helper, cache };
+"#;
+
+        let output = GLOBALS.set(&Default::default(), || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module = parse_js(input, "fixture.js", cm.clone()).expect("input parses");
+            hoist_late_runtime_helpers(&mut module);
+            print_js(&module, cm).expect("output prints")
+        });
+
+        let define_property = output
+            .find("const { defineProperty")
+            .expect("object destructuring helper should remain");
+        let helper = output
+            .find("var helper")
+            .expect("helper declaration should remain");
+        let cache = output
+            .find("let cache")
+            .expect("state declaration should remain");
+        let call = output.find("result = helper").expect("call should remain");
+        let namespace = output
+            .find("export var ns")
+            .expect("namespace export should remain");
+        let namespace_getter = output
+            .find("Object.defineProperty(ns")
+            .expect("namespace getter should remain");
+        let namespace_use = output.find("consumer = wrap").expect("use should remain");
+
+        assert!(
+            define_property < call && helper < call && cache < call,
+            "late helper declarations should move before side effects:\n{output}"
+        );
+        assert!(
+            namespace < namespace_use && namespace_getter < namespace_use,
+            "late namespace export setup should move before side effects:\n{output}"
+        );
+    }
+
+    #[test]
+    fn merge_import_cycles_skips_duplicate_declaration_merges() {
+        let modules = vec![
+            UnpackedModule {
+                id: "a".to_string(),
+                is_entry: false,
+                code:
+                    r#"import { b } from "./b.js"; const shared = 1; export const a = b + shared;"#
+                        .to_string(),
+                filename: "a.js".to_string(),
+            },
+            UnpackedModule {
+                id: "b".to_string(),
+                is_entry: false,
+                code:
+                    r#"import { a } from "./a.js"; const shared = 2; export const b = a + shared;"#
+                        .to_string(),
+                filename: "b.js".to_string(),
+            },
+        ];
+
+        let (merged, warnings) = merge_import_cycles(modules);
+
+        assert_eq!(merged.len(), 2, "unsafe cycles should stay split");
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].message.contains("not merged")
+                && warnings[0].message.contains("duplicate declarations"),
+            "warning should explain why the cycle stayed split: {:?}",
+            warnings
+        );
+        let a = merged
+            .iter()
+            .find(|module| module.filename == "a.js")
+            .expect("a.js should remain separate");
+        assert!(
+            a.code.contains("from \"./b.js\""),
+            "skipped cycle should preserve original imports:\n{}",
+            a.code
+        );
+    }
+
+    #[test]
+    fn merge_import_cycles_skips_large_components() {
+        let modules: Vec<UnpackedModule> = (0..33)
+            .map(|index| {
+                let next = (index + 1) % 33;
+                UnpackedModule {
+                    id: format!("m{index}"),
+                    is_entry: false,
+                    code: format!(
+                        r#"import {{ v{next} }} from "./m{next}.js"; export const v{index} = v{next} + {index};"#
+                    ),
+                    filename: format!("m{index}.js"),
+                }
+            })
+            .collect();
+
+        let (merged, warnings) = merge_import_cycles(modules);
+
+        assert_eq!(merged.len(), 33, "large cycles should stay split");
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].message.contains("not merged")
+                && warnings[0].message.contains("large-cycle merge limit"),
+            "warning should explain why the large cycle stayed split: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn fast_cycle_preflight_allows_duplicate_var_declarations() {
+        let modules = [
+            UnpackedModule {
+                id: "a".to_string(),
+                is_entry: false,
+                code: r#"import { b } from "./b.js"; var shared = 1; export const a = b + shared;"#
+                    .to_string(),
+                filename: "a.js".to_string(),
+            },
+            UnpackedModule {
+                id: "b".to_string(),
+                is_entry: false,
+                code: r#"import { a } from "./a.js"; var shared = 2; export const b = a + shared;"#
+                    .to_string(),
+                filename: "b.js".to_string(),
+            },
+        ];
+        let module_by_filename: HashMap<String, &UnpackedModule> = modules
+            .iter()
+            .map(|module| (module.filename.clone(), module))
+            .collect();
+        let module_names: HashSet<String> = modules
+            .iter()
+            .map(|module| module.filename.clone())
+            .collect();
+        let members = vec!["a.js".to_string(), "b.js".to_string()];
+        let member_set: HashSet<String> = members.iter().cloned().collect();
+
+        assert!(
+            unsafe_merge_member_reason(&members, &module_by_filename, &module_names, &member_set)
+                .is_none(),
+            "generated duplicate vars should not block the large-cycle fast preflight"
         );
     }
 }

@@ -270,14 +270,12 @@ pub(super) fn detect_runtime_entry_from_module(
             continue;
         };
         if is_webpack5_runtime_entry_body(bootstrap_body) {
-            return Some(UnpackResult {
-                modules: vec![UnpackedModule {
-                    id: "entry".to_string(),
-                    is_entry: true,
-                    code: source.to_string(),
-                    filename: "entry.js".to_string(),
-                }],
-            });
+            return Some(UnpackResult::new(vec![UnpackedModule {
+                id: "entry".to_string(),
+                is_entry: true,
+                code: source.to_string(),
+                filename: "entry.js".to_string(),
+            }]));
         }
     }
     None
@@ -342,9 +340,7 @@ pub(super) fn detect_chunk_from_module(
         return None;
     }
 
-    Some(UnpackResult {
-        modules: all_modules,
-    })
+    Some(UnpackResult::new(all_modules))
 }
 
 /// Match the pattern: `(self.X = self.X || []).push([[ids], {modules}])`
@@ -675,7 +671,7 @@ fn extract_webpack5_modules(
         return None;
     }
 
-    Some(UnpackResult { modules })
+    Some(UnpackResult::new(modules))
 }
 
 fn emit_webpack5_entry_module(

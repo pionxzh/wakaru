@@ -284,9 +284,11 @@ console.log(Root);
         raw_app.1
     );
     assert!(
-        raw_app.1.contains("require(\"react\")")
-            && raw_app.1.contains("require(\"react/jsx-runtime\")"),
-        "dynamic require helper calls should be restored to require():\n{}",
+        (raw_app.1.contains("require(\"react\")")
+            && raw_app.1.contains("require(\"react/jsx-runtime\")"))
+            || (raw_app.1.contains("from \"react\"")
+                && raw_app.1.contains("from \"react/jsx-runtime\"")),
+        "dynamic require helper calls should be restored to direct module references:\n{}",
         raw_app.1
     );
     assert!(
@@ -382,7 +384,7 @@ export { ns_a, ns_b };
     assert!(
         ns_a_code.contains("export var ns_a = {}")
             && ns_a_code.contains("\"renamed\"")
-            && ns_a_code.contains("get: ()=>value"),
+            && ns_a_code.contains("get: () => value"),
         "provider module should export its namespace object with getters:\n{ns_a_code}"
     );
 
@@ -1359,7 +1361,8 @@ export { counter_exports };
         .1;
     assert!(
         counter_code.contains("count++")
-            && counter_code.contains("export var count = 0")
+            && counter_code.contains("var count = 0")
+            && counter_code.contains("export { count }")
             && counter_code.contains("export function init_counter"),
         "init_counter should contain the guarded count++ and exported state:\n{counter_code}"
     );

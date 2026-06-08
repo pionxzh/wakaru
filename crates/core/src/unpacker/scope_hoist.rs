@@ -49,7 +49,7 @@ fn split_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult
 
     // Phase 5: emit modules.
     let modules = emit_clusters(body, &items, clusters, cm);
-    Some(UnpackResult { modules })
+    Some(UnpackResult::without_cycle_premerge(modules))
 }
 
 /// Detect and unwrap an IIFE wrapper: `(()=>{ ... })()` or `(function(){ ... })()`
