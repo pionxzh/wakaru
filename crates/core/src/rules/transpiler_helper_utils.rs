@@ -15,10 +15,10 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use super::helper_matcher::{
-    binding_key, expr_matches_binding, member_prop_name, remaining_refs_outside_declarations,
-    remaining_refs_outside_var_declarators, remove_fn_decls_from_body_by_binding,
-    remove_import_specifiers_by_binding, remove_var_declarators_by_binding,
-    static_member_prop_name, var_declarator_binding_key,
+    binding_key, collect_refs, expr_matches_binding, member_prop_name,
+    remaining_refs_outside_declarations, remaining_refs_outside_var_declarators,
+    remove_fn_decls_from_body_by_binding, remove_import_specifiers_by_binding,
+    remove_var_declarators_by_binding, static_member_prop_name, var_declarator_binding_key,
 };
 use super::match_context::MatchContext;
 use crate::utils::paren::strip_parens;
@@ -677,32 +677,6 @@ fn collect_top_level_callable_ref_graph(
         }
     }
     refs
-}
-
-fn collect_refs<T>(node: &T, targets: &HashSet<BindingKey>) -> HashSet<BindingKey>
-where
-    for<'a> T: VisitWith<IdentRefCollector<'a>>,
-{
-    let mut collector = IdentRefCollector {
-        targets,
-        refs: HashSet::new(),
-    };
-    node.visit_with(&mut collector);
-    collector.refs
-}
-
-struct IdentRefCollector<'a> {
-    targets: &'a HashSet<BindingKey>,
-    refs: HashSet<BindingKey>,
-}
-
-impl Visit for IdentRefCollector<'_> {
-    fn visit_ident(&mut self, ident: &Ident) {
-        let key = (ident.sym.clone(), ident.ctxt);
-        if self.targets.contains(&key) {
-            self.refs.insert(key);
-        }
-    }
 }
 
 /// Remove helper declarations from the module body.

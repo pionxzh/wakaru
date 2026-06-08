@@ -7,6 +7,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::helper_matcher::{binding_key, BindingKey};
 use super::{expr_utils::is_unresolved_undefined, RewriteLevel};
 
 /// Reconstructs destructuring from compiler-lowered ref/temp declarations.
@@ -32,8 +33,6 @@ impl UnDestructuring {
         }
     }
 }
-
-type BindingKey = (Atom, SyntaxContext);
 
 #[derive(Clone)]
 struct RefDecl {
@@ -157,7 +156,7 @@ fn try_reconstruct_ref_group(
     unresolved_mark: Mark,
 ) -> Option<(Stmt, usize)> {
     let ref_decl = extract_ref_decl(stmts.get(start)?)?;
-    let ref_key = binding_key(&ref_decl.ident);
+    let ref_key = binding_key(&ref_decl.ident.id);
 
     let mut accesses = Vec::new();
     let mut removed_temps = Vec::new();
@@ -355,7 +354,7 @@ fn try_extract_direct_default_access(
         return None;
     }
     let default = extract_default_value(binding_init, &temp.id, unresolved_mark)?;
-    let temp_key = binding_key(&temp);
+    let temp_key = binding_key(&temp.id);
     if expr_uses_ident(&default, &temp_key) {
         return None;
     }
@@ -536,7 +535,7 @@ fn try_extract_default_access(
 
     let (binding, binding_init) = extract_binding_decl(stmts.get(index + 1)?)?;
     let default = extract_default_value(binding_init, &temp.id, unresolved_mark)?;
-    let temp_key = binding_key(&temp);
+    let temp_key = binding_key(&temp.id);
     if expr_uses_ident(&default, &temp_key) {
         return None;
     }
@@ -953,14 +952,6 @@ fn build_var_stmt_from_parts(
     })))
 }
 
-fn binding_key(binding: &BindingIdent) -> BindingKey {
-    (binding.id.sym.clone(), binding.id.ctxt)
-}
-
-fn ident_key(ident: &Ident) -> BindingKey {
-    (ident.sym.clone(), ident.ctxt)
-}
-
 fn ident_used_in_stmts(stmts: &[Stmt], key: &BindingKey) -> bool {
     let mut finder = IdentUseFinder {
         key: key.clone(),
@@ -991,7 +982,7 @@ struct IdentUseFinder {
 
 impl Visit for IdentUseFinder {
     fn visit_ident(&mut self, ident: &Ident) {
-        if ident_key(ident) == self.key {
+        if binding_key(ident) == self.key {
             self.found = true;
         }
     }

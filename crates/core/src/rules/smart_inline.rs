@@ -15,6 +15,7 @@ use crate::js_names::is_stable_builtin_alias_root;
 use crate::utils::paren::strip_parens;
 
 use super::decl_utils::same_ident;
+use super::helper_matcher::BindingKey;
 use super::RewriteLevel;
 
 pub struct SmartInline {
@@ -234,9 +235,6 @@ fn try_extract_zero_param_arrow_ident(expr: &Expr) -> Option<Box<Expr>> {
     }
     None
 }
-
-/// Scope-aware key for arrow wrapper candidates: (symbol, SyntaxContext from resolver).
-type BindingKey = (Atom, SyntaxContext);
 
 #[derive(Default)]
 struct GlobalUsageStats {

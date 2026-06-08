@@ -166,7 +166,30 @@ pub(crate) fn remaining_refs_outside_declarations(
     finder.found
 }
 
-struct RemainingRefFinder<'a> {
+/// Collect which bindings from `targets` are referenced anywhere in `node`.
+pub(crate) fn collect_refs<T>(node: &T, targets: &HashSet<BindingKey>) -> HashSet<BindingKey>
+where
+    for<'a> T: VisitWith<RemainingRefFinder<'a>>,
+{
+    let mut finder = RemainingRefFinder {
+        targets,
+        found: HashSet::new(),
+    };
+    node.visit_with(&mut finder);
+    finder.found
+}
+
+/// Count how many times `key` is referenced anywhere in `node`.
+pub(crate) fn count_binding_refs<T>(node: &T, key: &BindingKey) -> usize
+where
+    for<'a> T: VisitWith<SingleBindingRefCounter<'a>>,
+{
+    let mut counter = SingleBindingRefCounter { key, count: 0 };
+    node.visit_with(&mut counter);
+    counter.count
+}
+
+pub(crate) struct RemainingRefFinder<'a> {
     targets: &'a HashSet<BindingKey>,
     found: HashSet<BindingKey>,
 }
@@ -176,6 +199,19 @@ impl Visit for RemainingRefFinder<'_> {
         let key = binding_key(ident);
         if self.targets.contains(&key) {
             self.found.insert(key);
+        }
+    }
+}
+
+pub(crate) struct SingleBindingRefCounter<'a> {
+    key: &'a BindingKey,
+    count: usize,
+}
+
+impl Visit for SingleBindingRefCounter<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym == self.key.0 && ident.ctxt == self.key.1 {
+            self.count += 1;
         }
     }
 }

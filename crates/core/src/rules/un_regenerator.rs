@@ -12,7 +12,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{HelperKind, ModuleFactsMap};
 
-use super::helper_matcher::member_prop_name;
+use super::helper_matcher::{count_binding_refs, member_prop_name};
 use super::transpiler_helper_utils::{
     BindingKey, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
@@ -2932,29 +2932,10 @@ fn remove_unused_helper_decls(module: &mut Module, helpers: &[BindingKey]) {
     }
     let unused: Vec<_> = helpers
         .iter()
-        .filter(|helper| count_binding_uses(module, helper) <= 1)
+        .filter(|helper| count_binding_refs(module, helper) <= 1)
         .cloned()
         .collect();
     remove_helper_decls(module, &unused);
-}
-
-fn count_binding_uses(module: &Module, binding: &BindingKey) -> usize {
-    struct Counter<'a> {
-        binding: &'a BindingKey,
-        count: usize,
-    }
-
-    impl Visit for Counter<'_> {
-        fn visit_ident(&mut self, ident: &Ident) {
-            if ident.sym == self.binding.0 && ident.ctxt == self.binding.1 {
-                self.count += 1;
-            }
-        }
-    }
-
-    let mut counter = Counter { binding, count: 0 };
-    module.visit_with(&mut counter);
-    counter.count
 }
 
 // ============================================================
