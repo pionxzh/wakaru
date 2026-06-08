@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
@@ -12,7 +12,10 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{HelperKind, ModuleFactsMap};
 
-use super::helper_matcher::{count_binding_refs, member_prop_name};
+use super::helper_matcher::{
+    count_binding_refs, member_prop_name, remove_fn_decls_by_binding,
+    remove_var_declarators_by_binding,
+};
 use super::transpiler_helper_utils::{
     BindingKey, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
@@ -2903,27 +2906,10 @@ fn remove_consumed_mark_declarations(module: &mut Module, consumed_marks: &[Bind
     });
 }
 
-fn remove_helper_decls(module: &mut Module, to_remove: &[(Atom, swc_core::common::SyntaxContext)]) {
-    if to_remove.is_empty() {
-        return;
-    }
-    module.body.retain_mut(|item| match item {
-        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-            var.decls.retain(|decl| {
-                if let Pat::Ident(bi) = &decl.name {
-                    return !to_remove
-                        .iter()
-                        .any(|(sym, ctxt)| bi.id.sym == *sym && bi.id.ctxt == *ctxt);
-                }
-                true
-            });
-            !var.decls.is_empty()
-        }
-        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => !to_remove
-            .iter()
-            .any(|(sym, ctxt)| fn_decl.ident.sym == *sym && fn_decl.ident.ctxt == *ctxt),
-        _ => true,
-    });
+fn remove_helper_decls(module: &mut Module, to_remove: &[BindingKey]) {
+    let removable: HashSet<BindingKey> = to_remove.iter().cloned().collect();
+    remove_fn_decls_by_binding(module, &removable);
+    remove_var_declarators_by_binding(&mut module.body, &removable);
 }
 
 fn remove_unused_helper_decls(module: &mut Module, helpers: &[BindingKey]) {

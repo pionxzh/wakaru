@@ -10,7 +10,7 @@ use swc_core::ecma::ast::{
     ModuleExportName, ModuleItem, Param, ParamOrTsParamProp, Pat, PropName, SeqExpr,
     SimpleAssignTarget, Stmt, VarDecl,
 };
-use swc_core::ecma::visit::{VisitMut, VisitMutWith};
+use swc_core::ecma::visit::{VisitMut, VisitMutWith, VisitWith};
 
 use super::expr_utils::is_unresolved_ident;
 use super::helper_matcher::{binding_key, BindingKey};
@@ -772,16 +772,8 @@ fn remove_orphaned_create_class_helpers(
     helpers: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) {
-    if helpers.is_empty() {
-        return;
-    }
-    // Count remaining references to each helper (excluding the declaration itself)
-    let refs = count_helper_references_stmts(stmts, helpers, unresolved_mark);
-    stmts.retain(|stmt| {
-        if let Some(key) = detect_create_class_stmt_key(stmt, unresolved_mark) {
-            return refs.get(&key).copied().unwrap_or(0) > 0;
-        }
-        true
+    remove_unreferenced_helpers(stmts, helpers, |stmt| {
+        detect_create_class_stmt_key(stmt, unresolved_mark)
     });
 }
 
@@ -790,15 +782,8 @@ fn remove_orphaned_create_class_helpers_module(
     helpers: &HashSet<BindingKey>,
     unresolved_mark: Mark,
 ) {
-    if helpers.is_empty() {
-        return;
-    }
-    let refs = count_helper_references_module(items, helpers, unresolved_mark);
-    items.retain(|item| {
-        if let Some(key) = detect_create_class_item_key(item, unresolved_mark) {
-            return refs.get(&key).copied().unwrap_or(0) > 0;
-        }
-        true
+    remove_unreferenced_helpers(items, helpers, |item| {
+        detect_create_class_item_key(item, unresolved_mark)
     });
 }
 
@@ -815,48 +800,6 @@ fn detect_create_class_item_key(item: &ModuleItem, unresolved_mark: Mark) -> Opt
         ModuleItem::Stmt(stmt) => detect_create_class_stmt_key(stmt, unresolved_mark),
         _ => None,
     }
-}
-
-/// Count references to helper names in statements, excluding helper definitions.
-fn count_helper_references_stmts(
-    stmts: &[Stmt],
-    helpers: &HashSet<BindingKey>,
-    unresolved_mark: Mark,
-) -> std::collections::HashMap<BindingKey, usize> {
-    use swc_core::ecma::visit::VisitWith;
-
-    let mut counter = BindingHelperRefCounter::new(helpers);
-    for stmt in stmts {
-        // Skip the helper definition itself
-        if detect_create_class_stmt_key(stmt, unresolved_mark)
-            .as_ref()
-            .is_some_and(|key| helpers.contains(key))
-        {
-            continue;
-        }
-        stmt.visit_with(&mut counter);
-    }
-    counter.counts
-}
-
-fn count_helper_references_module(
-    items: &[ModuleItem],
-    helpers: &HashSet<BindingKey>,
-    unresolved_mark: Mark,
-) -> std::collections::HashMap<BindingKey, usize> {
-    use swc_core::ecma::visit::VisitWith;
-
-    let mut counter = BindingHelperRefCounter::new(helpers);
-    for item in items {
-        if detect_create_class_item_key(item, unresolved_mark)
-            .as_ref()
-            .is_some_and(|key| helpers.contains(key))
-        {
-            continue;
-        }
-        item.visit_with(&mut counter);
-    }
-    counter.counts
 }
 
 fn remove_orphaned_ts_extends_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<BindingKey>) {
@@ -970,25 +913,30 @@ impl swc_core::ecma::visit::Visit for BindingHelperRefCounter {
     }
 }
 
-/// Remove function declarations from `helpers` that have no remaining references.
-fn remove_orphaned_fn_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<BindingKey>) {
-    use swc_core::ecma::visit::VisitWith;
-
+/// Count references to `helpers` (skipping declarations identified by
+/// `helper_key`), then remove declarations with zero remaining references.
+fn remove_unreferenced_helpers<T>(
+    items: &mut Vec<T>,
+    helpers: &HashSet<BindingKey>,
+    helper_key: impl Fn(&T) -> Option<BindingKey>,
+) where
+    T: VisitWith<BindingHelperRefCounter>,
+{
     if helpers.is_empty() {
         return;
     }
     let mut counter = BindingHelperRefCounter::new(helpers);
-    for stmt in stmts.iter() {
-        if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
-            if helpers.contains(&binding_key(&fn_decl.ident)) {
-                continue;
-            }
+    for item in items.iter() {
+        if helper_key(item)
+            .as_ref()
+            .is_some_and(|key| helpers.contains(key))
+        {
+            continue;
         }
-        stmt.visit_with(&mut counter);
+        item.visit_with(&mut counter);
     }
-    stmts.retain(|stmt| {
-        if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
-            let key = binding_key(&fn_decl.ident);
+    items.retain(|item| {
+        if let Some(key) = helper_key(item) {
             if helpers.contains(&key) {
                 return counter.counts.get(&key).copied().unwrap_or(0) > 0;
             }
@@ -997,30 +945,23 @@ fn remove_orphaned_fn_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<Bin
     });
 }
 
-/// Remove function declarations from `helpers` that have no remaining references (module items).
-fn remove_orphaned_fn_helpers_module(items: &mut Vec<ModuleItem>, helpers: &HashSet<BindingKey>) {
-    use swc_core::ecma::visit::VisitWith;
+fn remove_orphaned_fn_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<BindingKey>) {
+    remove_unreferenced_helpers(stmts, helpers, |stmt| {
+        if let Stmt::Decl(Decl::Fn(fn_decl)) = stmt {
+            Some(binding_key(&fn_decl.ident))
+        } else {
+            None
+        }
+    });
+}
 
-    if helpers.is_empty() {
-        return;
-    }
-    let mut counter = BindingHelperRefCounter::new(helpers);
-    for item in items.iter() {
+fn remove_orphaned_fn_helpers_module(items: &mut Vec<ModuleItem>, helpers: &HashSet<BindingKey>) {
+    remove_unreferenced_helpers(items, helpers, |item| {
         if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
-            if helpers.contains(&binding_key(&fn_decl.ident)) {
-                continue;
-            }
+            Some(binding_key(&fn_decl.ident))
+        } else {
+            None
         }
-        item.visit_with(&mut counter);
-    }
-    items.retain(|item| {
-        if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
-            let key = binding_key(&fn_decl.ident);
-            if helpers.contains(&key) {
-                return counter.counts.get(&key).copied().unwrap_or(0) > 0;
-            }
-        }
-        true
     });
 }
 
