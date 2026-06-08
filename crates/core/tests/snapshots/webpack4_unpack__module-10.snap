@@ -4,8 +4,8 @@ expression: code
 ---
 import r, { q } from "./module-0.js";
 import l, { k } from "./module-2.js";
-import { a as a_3 } from "./module-6.js";
-import { a as a_4 } from "./module-9.js";
+import { a as a_1 } from "./module-6.js";
+import { a as a_2 } from "./module-9.js";
 const o = {
     done: true,
     value: undefined
@@ -62,7 +62,7 @@ export function b(e, t, ...r) {
             ];
         },
         q2 () {
-            if (f === a_3) {
+            if (f === a_1) {
                 return [
                     i
                 ];
@@ -99,7 +99,7 @@ export function d(e, t, ...r) {
             ];
         },
         q2 () {
-            if (p === a_3) {
+            if (p === a_1) {
                 return [
                     i
                 ];
@@ -133,7 +133,7 @@ export function f(e, t, n, ...s) {
     let h;
     const m = {
         done: false,
-        value: l.a(t, a_4.sliding(1))
+        value: l.a(t, a_2.sliding(1))
     };
     const y = {
         done: false,
@@ -160,7 +160,7 @@ export function f(e, t, n, ...s) {
             ];
         },
         q3 () {
-            if (p === a_3) {
+            if (p === a_1) {
                 return [
                     i
                 ];

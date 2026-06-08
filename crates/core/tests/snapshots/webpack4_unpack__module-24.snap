@@ -8,7 +8,7 @@ import u from "./module-1.js";
 import { createBrowserHistory, createHashHistory, createLocation, createMemoryHistory, createPath, locationsAreEqual } from "./module-8.js";
 import s from "./module-16.js";
 import b from "./module-5.js";
-import { a as a_2 } from "./module-15.js";
+import { a } from "./module-15.js";
 import { compile } from "./module-14.js";
 import le from "./module-30.js";
 export const Router = s.a;
@@ -155,7 +155,7 @@ export class Route extends Component {
         b(t, "You should not use <Route> or withRouter() outside a <Router>");
         const t_route = t.route;
         const pathname = (location || t_route.location).pathname;
-        return a_2(pathname, {
+        return a(pathname, {
             path,
             strict,
             exact,
@@ -534,7 +534,7 @@ export class Switch extends Component {
                 const { path: u, exact, strict, sensitive, from: f } = i;
                 const d = u || f;
                 o = t;
-                r = a_2(n.pathname, {
+                r = a(n.pathname, {
                     path: d,
                     exact,
                     strict,
@@ -560,7 +560,7 @@ Switch.propTypes = {
     children: u.node,
     location: u.object
 };
-export const matchPath = a_2;
+export const matchPath = a;
 export const withRouter = (e)=>{
     const TComponent = ({ wrappedComponentRef, ...rest })=><Route children={(t)=>createElement(e, {
                 ...rest,

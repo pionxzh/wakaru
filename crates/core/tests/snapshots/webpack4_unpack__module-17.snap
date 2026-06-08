@@ -2,7 +2,7 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-import { a, b, c, e, f, g, h, j, k, l, m, n, o as o_2, p, q, r, s, t } from "./module-2.js";
+import { a, b, c, e, f, g, h, j, k, l, m, n, o as o_1, p, q, r, s, t } from "./module-2.js";
 import o, { d } from "./module-10.js";
 export function takeEvery(e, t, ...i) {
     return k(o.b, e, t, ...i);
@@ -17,7 +17,7 @@ export const take = s;
 export const takem = t;
 export const put = n;
 export const all = b;
-export const race = o_2;
+export const race = o_1;
 export const call = e;
 export const apply = c;
 export const cps = h;

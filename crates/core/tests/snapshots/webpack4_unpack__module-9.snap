@@ -2,15 +2,15 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-import { r as isEmpty, u as u_2 } from "./module-0.js";
+import { r as isEmpty, u as u_1 } from "./module-0.js";
 const o = "Channel's Buffer overflow!";
 const i = 1;
 const a = 3;
 const u = 4;
 const l = {
     isEmpty,
-    put: u_2,
-    take: u_2
+    put: u_1,
+    take: u_1
 };
 function c(e = 10, t) {
     let n = new Array(e);

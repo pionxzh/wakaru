@@ -251,6 +251,20 @@ export { A_1 as B };
 }
 
 #[test]
+fn does_not_worsen_alias_suffix() {
+    // When the bare name and _1 are both taken, the alias should stay at _1
+    // rather than being bumped to _2.
+    let input = r#"
+import { setTimeout as setTimeout_1 } from 'node:timers/promises';
+const setTimeout = ()=>{};
+setTimeout_1(100);
+setTimeout();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn nested_local_reference_does_not_block_top_level_import_rename() {
     let input = r#"
 import { b as b_2 } from './module.js';

@@ -2,7 +2,7 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-import { a as a_2 } from "./module-31.js";
+import { a as a_1 } from "./module-31.js";
 let o;
 o = globalThis;
-export const a = a_2(o);
+export const a = a_1(o);

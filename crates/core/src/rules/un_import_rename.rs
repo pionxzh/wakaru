@@ -68,10 +68,16 @@ impl VisitMut for UnImportRename {
             // `all_names` covers module-level collisions; `shadow_index`
             // catches inner-scope locals (e.g. a nested `let a` that would capture
             // references to the renamed import).
-            let mut target = generate_unique_name(imported, &all_names);
+            let mut target = generate_unique_name(imported.clone(), &all_names);
             while shadow_index.rename_causes_shadowing(&local_id, &target) {
                 all_names.insert(target.clone());
                 target = generate_unique_name(target, &all_names);
+            }
+            if target == local_id.0 {
+                continue;
+            }
+            if suffix_rank(&target, &imported) >= suffix_rank(&local_id.0, &imported) {
+                continue;
             }
             all_names.insert(target.clone());
             renames.push(BindingRename {
@@ -129,6 +135,23 @@ impl Visit for UnresolvedReferenceNameCollector {
         }
         expr.visit_children_with(self);
     }
+}
+
+/// Returns the numeric suffix rank of `name` relative to `base`.
+/// `base` itself has rank 0, `base_1` has rank 1, etc. A name that
+/// doesn't match the `base_N` pattern gets `u32::MAX` (worst).
+fn suffix_rank(name: &Atom, base: &Atom) -> u32 {
+    if name == base {
+        return 0;
+    }
+    let name_str = name.as_ref();
+    let base_str = base.as_ref();
+    if let Some(rest) = name_str.strip_prefix(base_str) {
+        if let Some(digits) = rest.strip_prefix('_') {
+            return digits.parse::<u32>().unwrap_or(u32::MAX);
+        }
+    }
+    u32::MAX
 }
 
 fn generate_unique_name(base: Atom, existing: &HashSet<Atom>) -> Atom {

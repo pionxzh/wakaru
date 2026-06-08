@@ -2,7 +2,7 @@
 source: crates/core/tests/webpack4_unpack.rs
 expression: code
 ---
-import { a as a_2 } from "./module-7.js";
+import { a as a_1 } from "./module-7.js";
 function o(e) {
     return e.charAt(0) === "/";
 }
@@ -291,7 +291,7 @@ export function createBrowserHistory(e = {}) {
     }
     const C = w();
     function P(e) {
-        a_2(q, e);
+        a_1(q, e);
         q.length = window_history.length;
         C.notifyListeners(q.location, q.action);
     }
@@ -518,7 +518,7 @@ export function createHashHistory(e = {}) {
     }
     const g = w();
     function k(e) {
-        a_2(q, e);
+        a_1(q, e);
         q.length = window_history.length;
         g.notifyListeners(q.location, q.action);
     }
@@ -692,7 +692,7 @@ export function createMemoryHistory({ getUserConfirmation, initialEntries = [
 ], initialIndex = 0, keyLength = 6 } = {}) {
     const s = w();
     function f(e) {
-        a_2(g, e);
+        a_1(g, e);
         g.length = g.entries.length;
         s.notifyListeners(g.location, g.action);
     }

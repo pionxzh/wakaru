@@ -538,6 +538,12 @@ define_rule_registry! {
     ("UnExportRename2", Cleanup, run_un_export_rename, always_enabled, requires: [
         "SmartRename"
     ]),
+    // SmartRename can free minified import alias names (e.g. P_2 → P_1,
+    // Z_2 → Z) that were occupied when the first UnImportRename pass ran.
+    ("UnImportRename2", Cleanup, run_un_import_rename, always_enabled, requires: [
+        "SmartRename",
+        "UnExportRename2"
+    ]),
     // SmartRename can recover argument names that make IIFE params readable.
     ("UnIife2", Cleanup, run_un_iife, always_enabled, requires: [
         "SmartRename"

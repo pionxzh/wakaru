@@ -6,7 +6,7 @@ import o, { q } from "./module-0.js";
 import i from "./module-6.js";
 import a from "./module-12.js";
 import u from "./module-2.js";
-import { a as a_2 } from "./module-9.js";
+import { a as a_1 } from "./module-9.js";
 import w from "./module-10.js";
 import E from "./module-17.js";
 export const utils = {
@@ -484,7 +484,7 @@ function v(e, t = ()=>o.u, n = o.u, r = o.u, s = {}, h = {}, b = 0, g = "anonymo
             return (({ pattern, buffer }, n)=>{
                 const a = m(pattern);
                 a.pattern = pattern;
-                n(i.d(t, buffer || a_2.fixed(), a));
+                n(i.d(t, buffer || a_1.fixed(), a));
             })(k, w);
         }
         if (k = u.d.flush(e)) {
@@ -698,7 +698,7 @@ export default function({ context = {}, ...rest } = {}) {
 export const END = i.a;
 export const eventChannel = i.d;
 export const channel = i.b;
-export const buffers = a_2;
+export const buffers = a_1;
 export const takeEvery = w.a;
 export const takeLatest = w.c;
 export const throttle = w.e;
