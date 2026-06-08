@@ -803,28 +803,11 @@ fn detect_create_class_item_key(item: &ModuleItem, unresolved_mark: Mark) -> Opt
 }
 
 fn remove_orphaned_ts_extends_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<BindingKey>) {
-    use swc_core::ecma::visit::VisitWith;
-
-    if helpers.is_empty() {
-        return;
-    }
-
-    let mut counter = BindingHelperRefCounter::new(helpers);
-    for stmt in stmts.iter() {
-        if var_declares_any_helper(stmt_as_var_decl(stmt), helpers) {
-            continue;
-        }
-        stmt.visit_with(&mut counter);
-    }
-
-    stmts.retain(|stmt| {
-        let Some(var_decl) = stmt_as_var_decl(stmt) else {
-            return true;
+    remove_unreferenced_helpers(stmts, helpers, |stmt| {
+        let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
+            return None;
         };
-        let Some(helper_key) = ts_extends_helper_decl_key(var_decl) else {
-            return true;
-        };
-        counter.counts.get(&helper_key).copied().unwrap_or(0) > 0
+        ts_extends_helper_decl_key(var_decl)
     });
 }
 
@@ -832,48 +815,12 @@ fn remove_orphaned_ts_extends_helpers_module(
     items: &mut Vec<ModuleItem>,
     helpers: &HashSet<BindingKey>,
 ) {
-    use swc_core::ecma::visit::VisitWith;
-
-    if helpers.is_empty() {
-        return;
-    }
-
-    let mut counter = BindingHelperRefCounter::new(helpers);
-    for item in items.iter() {
-        if let ModuleItem::Stmt(stmt) = item {
-            if var_declares_any_helper(stmt_as_var_decl(stmt), helpers) {
-                continue;
-            }
-        }
-        item.visit_with(&mut counter);
-    }
-
-    items.retain(|item| {
-        let ModuleItem::Stmt(stmt) = item else {
-            return true;
+    remove_unreferenced_helpers(items, helpers, |item| {
+        let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
+            return None;
         };
-        let Some(var_decl) = stmt_as_var_decl(stmt) else {
-            return true;
-        };
-        let Some(helper_key) = ts_extends_helper_decl_key(var_decl) else {
-            return true;
-        };
-        counter.counts.get(&helper_key).copied().unwrap_or(0) > 0
+        ts_extends_helper_decl_key(var_decl)
     });
-}
-
-fn stmt_as_var_decl(stmt: &Stmt) -> Option<&VarDecl> {
-    let Stmt::Decl(Decl::Var(var_decl)) = stmt else {
-        return None;
-    };
-    Some(var_decl)
-}
-
-fn var_declares_any_helper(var_decl: Option<&VarDecl>, helpers: &HashSet<BindingKey>) -> bool {
-    let Some(var_decl) = var_decl else {
-        return false;
-    };
-    ts_extends_helper_decl_key(var_decl).is_some_and(|key| helpers.contains(&key))
 }
 
 fn ts_extends_helper_decl_key(var_decl: &VarDecl) -> Option<BindingKey> {
