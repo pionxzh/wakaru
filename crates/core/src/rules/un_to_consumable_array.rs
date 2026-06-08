@@ -3,14 +3,13 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    ArrayLit, Callee, Expr, ExprOrSpread, ImportSpecifier, Lit, MemberProp, Module, ModuleDecl,
-    ModuleItem,
+    ArrayLit, Callee, Expr, ExprOrSpread, ImportSpecifier, Module, ModuleDecl, ModuleItem,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 
-use super::helper_matcher::binding_key;
+use super::helper_matcher::{binding_key, static_member_prop_name};
 use super::transpiler_helper_utils::{
     is_tslib_spread_array_member, remove_helpers_without_remaining_refs, BindingKey,
     LocalHelperContext, TranspilerHelperKind, TsHelperKind,
@@ -264,18 +263,7 @@ fn is_cross_module_ts_helper_member(
     let Some(exported_names) = namespaces.get(&binding_key(obj)) else {
         return false;
     };
-    member_prop_name(&member.prop).is_some_and(|name| exported_names.contains(name))
-}
-
-fn member_prop_name(prop: &MemberProp) -> Option<&str> {
-    match prop {
-        MemberProp::Ident(id) => Some(id.sym.as_ref()),
-        MemberProp::Computed(c) => match c.expr.as_ref() {
-            Expr::Lit(Lit::Str(s)) => s.value.as_str(),
-            _ => None,
-        },
-        MemberProp::PrivateName(_) => None,
-    }
+    static_member_prop_name(&member.prop).is_some_and(|name| exported_names.contains(name))
 }
 
 fn export_name_to_atom(name: &swc_core::ecma::ast::ModuleExportName) -> Atom {

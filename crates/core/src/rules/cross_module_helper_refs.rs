@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use swc_core::atoms::Atom;
-use swc_core::ecma::ast::{Expr, ImportSpecifier, Lit, MemberProp, Module, ModuleDecl, ModuleItem};
+use swc_core::ecma::ast::{Expr, ImportSpecifier, Module, ModuleDecl, ModuleItem};
 
 use crate::facts::{HelperKind, ModuleFactsMap};
 
-use super::helper_matcher::{binding_key, BindingKey};
+use super::helper_matcher::{binding_key, static_member_prop_name, BindingKey};
 use super::transpiler_helper_utils::TranspilerHelperKind;
 
 #[derive(Default)]
@@ -132,7 +132,7 @@ pub(crate) fn cross_module_member_helper_kind(
     let Expr::Ident(obj) = member.obj.as_ref() else {
         return None;
     };
-    let exported = member_prop_name(&member.prop)?;
+    let exported = static_member_prop_name(&member.prop)?;
     namespaces
         .get(&binding_key(obj))
         .and_then(|helpers| helpers.get(exported))
@@ -170,17 +170,6 @@ fn helper_kind_to_transpiler(kind: HelperKind) -> Option<TranspilerHelperKind> {
         HelperKind::AsyncToGenerator => Some(TranspilerHelperKind::AsyncToGenerator),
         HelperKind::TaggedTemplateLiteral => Some(TranspilerHelperKind::TaggedTemplateLiteral),
         HelperKind::RegeneratorRuntime => None,
-    }
-}
-
-fn member_prop_name(prop: &MemberProp) -> Option<&str> {
-    match prop {
-        MemberProp::Ident(id) => Some(id.sym.as_ref()),
-        MemberProp::Computed(c) => match c.expr.as_ref() {
-            Expr::Lit(Lit::Str(s)) => s.value.as_str(),
-            _ => None,
-        },
-        MemberProp::PrivateName(_) => None,
     }
 }
 

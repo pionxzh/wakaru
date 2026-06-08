@@ -48,18 +48,19 @@ pub(crate) fn callee_matches_binding(callee: &Callee, key: &BindingKey) -> bool 
     expr_matches_binding(expr, key)
 }
 
-#[allow(dead_code)]
-pub(crate) fn member_prop_name(prop: &MemberProp, name: &str) -> bool {
+pub(crate) fn static_member_prop_name(prop: &MemberProp) -> Option<&str> {
     match prop {
-        MemberProp::Ident(id) => id.sym.as_ref() == name,
-        MemberProp::Computed(computed) => {
-            matches!(
-                computed.expr.as_ref(),
-                Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some(name)
-            )
-        }
-        MemberProp::PrivateName(_) => false,
+        MemberProp::Ident(id) => Some(id.sym.as_ref()),
+        MemberProp::Computed(c) => match c.expr.as_ref() {
+            Expr::Lit(Lit::Str(s)) => s.value.as_str(),
+            _ => None,
+        },
+        MemberProp::PrivateName(_) => None,
     }
+}
+
+pub(crate) fn member_prop_name(prop: &MemberProp, name: &str) -> bool {
+    static_member_prop_name(prop) == Some(name)
 }
 
 #[allow(dead_code)]

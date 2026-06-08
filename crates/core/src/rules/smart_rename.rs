@@ -18,6 +18,7 @@ use crate::js_names::{
 
 use super::decl_utils::collect_decl_binding_ids;
 use super::expr_utils::is_unresolved_ident;
+use super::helper_matcher::static_member_prop_name;
 use super::rename_utils::{
     collect_module_names, rename_bindings, rename_bindings_in_module, BindingId, BindingRename,
     RenameShadowIndex,
@@ -2214,23 +2215,10 @@ fn callee_terminal_name(callee: &Callee) -> Option<String> {
     match callee {
         Callee::Expr(expr) => match expr.as_ref() {
             Expr::Ident(id) => Some(id.sym.to_string()),
-            Expr::Member(member) => member_prop_name(&member.prop),
+            Expr::Member(member) => static_member_prop_name(&member.prop).map(String::from),
             _ => None,
         },
         _ => None,
-    }
-}
-
-fn member_prop_name(prop: &MemberProp) -> Option<String> {
-    match prop {
-        MemberProp::Ident(ident) => Some(ident.sym.to_string()),
-        MemberProp::Computed(computed) => {
-            let Expr::Lit(Lit::Str(value)) = computed.expr.as_ref() else {
-                return None;
-            };
-            value.value.as_str().map(|value| value.to_string())
-        }
-        MemberProp::PrivateName(_) => None,
     }
 }
 

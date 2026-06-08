@@ -3,9 +3,8 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::DUMMY_SP;
 use swc_core::ecma::ast::{
-    BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, Function, Ident, ImportSpecifier, Lit,
-    MemberProp, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread,
-    SpreadElement, Stmt,
+    BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, Function, Ident, ImportSpecifier, Lit, Module,
+    ModuleDecl, ModuleItem, ObjectLit, Pat, Prop, PropName, PropOrSpread, SpreadElement, Stmt,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -14,7 +13,7 @@ use crate::facts::{HelperKind, ModuleFactsMap, TypeScriptHelperKind};
 use super::cross_module_helper_refs::{
     collect_cross_module_helper_refs, cross_module_member_helper_kind,
 };
-use super::helper_matcher::binding_key;
+use super::helper_matcher::{binding_key, static_member_prop_name};
 use super::transpiler_helper_utils::{
     remove_helpers_without_remaining_refs, tslib_member_helper_kind, BindingKey,
     LocalHelperContext, TranspilerHelperKind,
@@ -554,7 +553,7 @@ fn is_swc_numeric_object_spread_member(expr: &Expr, namespaces: &HashSet<Binding
     let Expr::Ident(obj) = member.obj.as_ref() else {
         return false;
     };
-    namespaces.contains(&binding_key(obj)) && member_prop_name(&member.prop) == Some("pi")
+    namespaces.contains(&binding_key(obj)) && static_member_prop_name(&member.prop) == Some("pi")
 }
 
 fn is_inline_object_spread_helper(expr: &Expr) -> bool {
@@ -590,18 +589,7 @@ fn is_cross_module_ts_assign_member(
     let Some(exported_names) = namespaces.get(&binding_key(obj)) else {
         return false;
     };
-    member_prop_name(&member.prop).is_some_and(|name| exported_names.contains(name))
-}
-
-fn member_prop_name(prop: &MemberProp) -> Option<&str> {
-    match prop {
-        MemberProp::Ident(id) => Some(id.sym.as_ref()),
-        MemberProp::Computed(c) => match c.expr.as_ref() {
-            Expr::Lit(Lit::Str(s)) => s.value.as_str(),
-            _ => None,
-        },
-        MemberProp::PrivateName(_) => None,
-    }
+    static_member_prop_name(&member.prop).is_some_and(|name| exported_names.contains(name))
 }
 
 fn function_matches_inline_object_spread(function: &Function) -> bool {

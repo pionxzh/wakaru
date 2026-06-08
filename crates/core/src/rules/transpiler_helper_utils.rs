@@ -15,10 +15,10 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitWith};
 
 use super::helper_matcher::{
-    binding_key, expr_matches_binding, remaining_refs_outside_declarations,
+    binding_key, expr_matches_binding, member_prop_name, remaining_refs_outside_declarations,
     remaining_refs_outside_var_declarators, remove_fn_decls_from_body_by_binding,
     remove_import_specifiers_by_binding, remove_var_declarators_by_binding,
-    var_declarator_binding_key,
+    static_member_prop_name, var_declarator_binding_key,
 };
 use super::match_context::MatchContext;
 use crate::utils::paren::strip_parens;
@@ -747,7 +747,7 @@ fn detect_helper_from_var_decl(
         if let Some(kind) = detect_helper_from_tslib_require_member(member) {
             return Some((key, kind));
         }
-        if is_member_prop_name(&member.prop, "default") {
+        if member_prop_name(&member.prop, "default") {
             if let Some(kind) = detect_helper_from_require(&member.obj) {
                 return Some((key, kind));
             }
@@ -862,7 +862,7 @@ pub(crate) fn tslib_namespace_member_name<'a>(
     if !namespaces.contains(&binding_key(obj)) {
         return None;
     }
-    member_prop_name(&member.prop)
+    static_member_prop_name(&member.prop)
 }
 
 pub(crate) fn is_tslib_spread_array_member(expr: &Expr, namespaces: &HashSet<BindingKey>) -> bool {
@@ -890,7 +890,7 @@ pub(crate) fn tslib_require_member_name(expr: &Expr) -> Option<&str> {
     if !is_tslib_require_call(&member.obj) {
         return None;
     }
-    member_prop_name(&member.prop)
+    static_member_prop_name(&member.prop)
 }
 
 pub(crate) fn tslib_require_ts_helper_kind(expr: &Expr) -> Option<TsHelperKind> {
@@ -930,7 +930,7 @@ fn detect_helper_from_tslib_require_member(member: &MemberExpr) -> Option<Transp
     if !is_tslib_require_call(&member.obj) {
         return None;
     }
-    tslib_helper_name_kind(member_prop_name(&member.prop)?)
+    tslib_helper_name_kind(static_member_prop_name(&member.prop)?)
 }
 
 fn generated_helper_name_kind(name: &str, init: &Expr) -> Option<TranspilerHelperKind> {
@@ -1172,7 +1172,7 @@ fn is_strings_slice_zero_call(call: &CallExpr, ctx: &MatchContext) -> bool {
         return false;
     };
     ctx.is_binding(&member.obj, "strings")
-        && is_member_prop_name(&member.prop, "slice")
+        && member_prop_name(&member.prop, "slice")
         && call.args.len() == 1
         && call.args[0].spread.is_none()
         && matches!(strip_parens(&call.args[0].expr), Expr::Lit(Lit::Num(num)) if num.value == 0.0)
@@ -1620,21 +1620,6 @@ fn matches_default_object(expr: &Expr, ctx: &MatchContext) -> bool {
     ctx.is_binding(&kv.value, "obj")
 }
 
-fn is_member_prop_name(prop: &MemberProp, name: &str) -> bool {
-    member_prop_name(prop) == Some(name)
-}
-
-fn member_prop_name(prop: &MemberProp) -> Option<&str> {
-    match prop {
-        MemberProp::Ident(id) => Some(id.sym.as_ref()),
-        MemberProp::Computed(c) => match c.expr.as_ref() {
-            Expr::Lit(Lit::Str(s)) => s.value.as_str(),
-            _ => None,
-        },
-        MemberProp::PrivateName(_) => None,
-    }
-}
-
 fn ts_inline_helper_kind(expr: &Expr) -> Option<TsHelperKind> {
     let (name, fallback) = ts_inline_helper_parts(expr)?;
     let kind = ts_helper_name_kind(name)?;
@@ -1795,7 +1780,7 @@ fn collect_ts_helper_body_signals(stmts: &[Stmt]) -> TsHelperBodySignals {
             if is_object_member(member, "setPrototypeOf") {
                 self.signals.object_set_prototype_of = true;
             }
-            match member_prop_name(&member.prop) {
+            match static_member_prop_name(&member.prop) {
                 Some("__esModule") => self.signals.es_module_prop = true,
                 Some("__proto__") => self.signals.proto_prop = true,
                 Some("concat") => self.signals.concat_call = true,
@@ -1877,14 +1862,14 @@ fn is_object_member(member: &MemberExpr, prop: &str) -> bool {
     let Expr::Ident(obj) = member.obj.as_ref() else {
         return false;
     };
-    obj.sym.as_ref() == "Object" && member_prop_name(&member.prop) == Some(prop)
+    obj.sym.as_ref() == "Object" && member_prop_name(&member.prop, prop)
 }
 
 fn is_member_call(expr: &Expr, prop: &str) -> bool {
     let Expr::Member(member) = strip_parens(expr) else {
         return false;
     };
-    member_prop_name(&member.prop) == Some(prop)
+    member_prop_name(&member.prop, prop)
 }
 
 fn prop_name_as_str(name: &PropName) -> Option<&str> {
@@ -1968,7 +1953,7 @@ fn check_stmt_for_wildcard_markers(
 
     impl Visit for WildcardMarkerVisitor<'_> {
         fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
-            if is_member_prop_name(&member.prop, "__esModule") {
+            if member_prop_name(&member.prop, "__esModule") {
                 *self.has_esmodule = true;
             }
             member.visit_children_with(self);
@@ -1990,10 +1975,10 @@ fn check_stmt_for_wildcard_markers(
                 if let Expr::Member(member) = callee.as_ref() {
                     if let Expr::Ident(obj) = member.obj.as_ref() {
                         if obj.sym.as_ref() == "Object"
-                            && (is_member_prop_name(&member.prop, "keys")
-                                || is_member_prop_name(&member.prop, "getOwnPropertyDescriptor")
-                                || is_member_prop_name(&member.prop, "defineProperty")
-                                || is_member_prop_name(&member.prop, "getOwnPropertyNames"))
+                            && (member_prop_name(&member.prop, "keys")
+                                || member_prop_name(&member.prop, "getOwnPropertyDescriptor")
+                                || member_prop_name(&member.prop, "defineProperty")
+                                || member_prop_name(&member.prop, "getOwnPropertyNames"))
                         {
                             *self.has_property_copy = true;
                         }
@@ -3460,7 +3445,7 @@ fn is_object_assign_ref(expr: &Expr) -> bool {
     let Expr::Ident(obj) = member.obj.as_ref() else {
         return false;
     };
-    obj.sym.as_ref() == "Object" && is_member_prop_name(&member.prop, "assign")
+    obj.sym.as_ref() == "Object" && member_prop_name(&member.prop, "assign")
 }
 
 /// Check if an expression is the inline polyfill function for _extends.
@@ -3813,37 +3798,37 @@ fn scan_stmts_for_markers(stmts: &[Stmt], state: &mut BodyMarkerState) {
                     // Array.isArray, Array.from
                     if let Expr::Ident(obj) = member.obj.as_ref() {
                         if obj.sym.as_ref() == "Array" {
-                            if is_member_prop_name(&member.prop, "isArray") {
+                            if member_prop_name(&member.prop, "isArray") {
                                 self.state.has_array_is_array = true;
                             }
-                            if is_member_prop_name(&member.prop, "from") {
+                            if member_prop_name(&member.prop, "from") {
                                 self.state.has_array_from = true;
                             }
                         }
                         if obj.sym.as_ref() == "Object" {
-                            if is_member_prop_name(&member.prop, "keys") {
+                            if member_prop_name(&member.prop, "keys") {
                                 self.state.has_object_keys = true;
                             }
-                            if is_member_prop_name(&member.prop, "assign") {
+                            if member_prop_name(&member.prop, "assign") {
                                 self.state.has_object_assign = true;
                             }
-                            if is_member_prop_name(&member.prop, "defineProperty")
-                                || is_member_prop_name(&member.prop, "defineProperties")
+                            if member_prop_name(&member.prop, "defineProperty")
+                                || member_prop_name(&member.prop, "defineProperties")
                             {
                                 self.state.has_object_define_property = true;
                             }
-                            if is_member_prop_name(&member.prop, "getOwnPropertyDescriptor")
-                                || is_member_prop_name(&member.prop, "getOwnPropertyDescriptors")
+                            if member_prop_name(&member.prop, "getOwnPropertyDescriptor")
+                                || member_prop_name(&member.prop, "getOwnPropertyDescriptors")
                             {
                                 self.state.has_object_get_own_property_descriptor = true;
                             }
-                            if is_member_prop_name(&member.prop, "getOwnPropertySymbols") {
+                            if member_prop_name(&member.prop, "getOwnPropertySymbols") {
                                 self.state.has_object_get_own_property_symbols = true;
                             }
                         }
                     }
                     // *.apply(this|null, arguments)
-                    if is_member_prop_name(&member.prop, "apply")
+                    if member_prop_name(&member.prop, "apply")
                         && call.args.len() == 2
                         && matches!(
                             call.args[0].expr.as_ref(),
@@ -3883,15 +3868,15 @@ fn scan_stmts_for_markers(stmts: &[Stmt], state: &mut BodyMarkerState) {
         fn visit_member_expr(&mut self, member: &swc_core::ecma::ast::MemberExpr) {
             if let Expr::Ident(obj) = member.obj.as_ref() {
                 // Object.assign (as reference, not just as call)
-                if obj.sym.as_ref() == "Object" && is_member_prop_name(&member.prop, "assign") {
+                if obj.sym.as_ref() == "Object" && member_prop_name(&member.prop, "assign") {
                     self.state.has_object_assign = true;
                 }
                 // Symbol.iterator
-                if obj.sym.as_ref() == "Symbol" && is_member_prop_name(&member.prop, "iterator") {
+                if obj.sym.as_ref() == "Symbol" && member_prop_name(&member.prop, "iterator") {
                     self.state.has_symbol_iterator = true;
                 }
             }
-            if is_member_prop_name(&member.prop, "propertyIsEnumerable") {
+            if member_prop_name(&member.prop, "propertyIsEnumerable") {
                 self.state.has_property_is_enumerable = true;
             }
             member.visit_children_with(self);

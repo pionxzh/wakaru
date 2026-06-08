@@ -1,6 +1,8 @@
 use swc_core::atoms::Atom;
 use swc_core::common::SyntaxContext;
-use swc_core::ecma::ast::{Expr, Function, Ident, Lit, MemberProp, Pat};
+use swc_core::ecma::ast::{Expr, Function, Ident, Pat};
+
+use super::helper_matcher::member_prop_name;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Binding {
@@ -71,23 +73,13 @@ impl MatchContext {
         if !self.is_binding(&member.obj, name) {
             return false;
         }
-        is_member_prop_name(&member.prop, prop_name)
+        member_prop_name(&member.prop, prop_name)
     }
 
     /// Raw `(sym, ctxt)` for APIs that still need the tuple form.
     #[allow(dead_code)]
     pub fn binding_key(&self, name: &str) -> Option<(&Atom, SyntaxContext)> {
         self.get(name).map(|b| (&b.sym, b.ctxt))
-    }
-}
-
-fn is_member_prop_name(prop: &MemberProp, name: &str) -> bool {
-    match prop {
-        MemberProp::Ident(id) => id.sym.as_ref() == name,
-        MemberProp::Computed(c) => {
-            matches!(c.expr.as_ref(), Expr::Lit(Lit::Str(s)) if s.value.as_str() == Some(name))
-        }
-        _ => false,
     }
 }
 

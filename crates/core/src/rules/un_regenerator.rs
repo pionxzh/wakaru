@@ -12,6 +12,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::facts::{HelperKind, ModuleFactsMap};
 
+use super::helper_matcher::member_prop_name;
 use super::transpiler_helper_utils::{
     BindingKey, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
@@ -381,7 +382,7 @@ fn extract_apply_this_arguments_callee(expr: &Expr) -> Option<Ident> {
     let Expr::Member(apply_member) = callee.as_ref() else {
         return None;
     };
-    if !is_member_prop(&apply_member.prop, "apply") {
+    if !member_prop_name(&apply_member.prop, "apply") {
         return None;
     }
     let Expr::Ident(id) = apply_member.obj.as_ref() else {
@@ -489,7 +490,7 @@ fn extract_async_assignment_arg_from_returned_apply(
     let Expr::Member(apply_member) = apply_callee.as_ref() else {
         return None;
     };
-    if !is_member_prop(&apply_member.prop, "apply") {
+    if !member_prop_name(&apply_member.prop, "apply") {
         return None;
     }
 
@@ -862,7 +863,7 @@ fn case_uses_catch(state_name: &Atom, case: &SwitchCase) -> bool {
             if let Some(callee) = call.callee.as_expr() {
                 if let Expr::Member(member) = callee.as_ref() {
                     if is_ident_with_name(&member.obj, &self.state_name)
-                        && is_member_prop(&member.prop, "catch")
+                        && member_prop_name(&member.prop, "catch")
                     {
                         self.found = true;
                         return;
@@ -1589,7 +1590,7 @@ fn is_stop_call(state_name: &Atom, expr: &Expr) -> bool {
     let Expr::Member(member) = callee.as_ref() else {
         return false;
     };
-    is_ident_with_name(&member.obj, state_name) && is_member_prop(&member.prop, "stop")
+    is_ident_with_name(&member.obj, state_name) && member_prop_name(&member.prop, "stop")
 }
 
 fn decode_abrupt(state_name: &Atom, expr: &Expr) -> Option<DecodedReturn> {
@@ -1600,7 +1601,7 @@ fn decode_abrupt(state_name: &Atom, expr: &Expr) -> Option<DecodedReturn> {
     let Expr::Member(member) = callee.as_ref() else {
         return None;
     };
-    if !is_ident_with_name(&member.obj, state_name) || !is_member_prop(&member.prop, "abrupt") {
+    if !is_ident_with_name(&member.obj, state_name) || !member_prop_name(&member.prop, "abrupt") {
         return None;
     }
     if call.args.is_empty() {
@@ -1637,7 +1638,7 @@ fn decode_short_abrupt(state_name: &Atom, expr: &Expr) -> Option<DecodedReturn> 
     let Expr::Member(member) = callee.as_ref() else {
         return None;
     };
-    if !is_ident_with_name(&member.obj, state_name) || !is_member_prop(&member.prop, "a") {
+    if !is_ident_with_name(&member.obj, state_name) || !member_prop_name(&member.prop, "a") {
         return None;
     }
     let Expr::Lit(Lit::Num(kind)) = call.args.first()?.expr.as_ref() else {
@@ -1698,15 +1699,15 @@ fn is_next_assign_expr(state_name: &Atom, expr: &Expr) -> bool {
 }
 
 fn is_next_prop(prop: &MemberProp) -> bool {
-    is_member_prop(prop, "next") || is_member_prop(prop, "n")
+    member_prop_name(prop, "next") || member_prop_name(prop, "n")
 }
 
 fn is_wrap_prop(prop: &MemberProp) -> bool {
-    is_member_prop(prop, "wrap") || is_member_prop(prop, "w")
+    member_prop_name(prop, "wrap") || member_prop_name(prop, "w")
 }
 
 fn is_mark_prop(prop: &MemberProp) -> bool {
-    is_member_prop(prop, "mark") || is_member_prop(prop, "m")
+    member_prop_name(prop, "mark") || member_prop_name(prop, "m")
 }
 
 fn is_label_assign(state_name: &Atom, stmt: &Stmt) -> bool {
@@ -1722,7 +1723,7 @@ fn is_label_assign(state_name: &Atom, stmt: &Stmt) -> bool {
     let Some(left_member) = assign.left.as_simple().and_then(|s| s.as_member()) else {
         return false;
     };
-    is_ident_with_name(&left_member.obj, state_name) && is_member_prop(&left_member.prop, "label")
+    is_ident_with_name(&left_member.obj, state_name) && member_prop_name(&left_member.prop, "label")
 }
 
 fn is_prev_assign(state_name: &Atom, stmt: &Stmt) -> bool {
@@ -1742,7 +1743,7 @@ fn is_prev_assign(state_name: &Atom, stmt: &Stmt) -> bool {
 }
 
 fn is_prev_prop(prop: &MemberProp) -> bool {
-    is_member_prop(prop, "prev") || is_member_prop(prop, "p")
+    member_prop_name(prop, "prev") || member_prop_name(prop, "p")
 }
 
 fn case_label_index(case: &SwitchCase) -> Option<usize> {
@@ -1771,10 +1772,10 @@ fn extract_trys_push(state_name: &Atom, stmt: &Stmt) -> Option<[Option<usize>; 4
     if !is_ident_with_name(&outer_mem.obj, state_name) {
         return None;
     }
-    if !is_member_prop(&outer_mem.prop, "trys") {
+    if !member_prop_name(&outer_mem.prop, "trys") {
         return None;
     }
-    if !is_member_prop(&callee_mem.prop, "push") {
+    if !member_prop_name(&callee_mem.prop, "push") {
         return None;
     }
     if call.args.len() != 1 {
@@ -1892,7 +1893,7 @@ fn is_state_catch_call(state_name: &Atom, expr: &Expr) -> bool {
     let Expr::Member(member) = callee.as_ref() else {
         return false;
     };
-    is_ident_with_name(&member.obj, state_name) && is_member_prop(&member.prop, "catch")
+    is_ident_with_name(&member.obj, state_name) && member_prop_name(&member.prop, "catch")
 }
 
 struct CatchValueReplacer {
@@ -1961,7 +1962,7 @@ impl VisitMut for SentReplacer {
 }
 
 fn is_sent_prop(prop: &MemberProp) -> bool {
-    is_member_prop(prop, "sent") || is_member_prop(prop, "v")
+    member_prop_name(prop, "sent") || member_prop_name(prop, "v")
 }
 
 fn reconstruct_with_regions(label_stmts: Vec<Vec<Stmt>>, trys: &[[Option<usize>; 4]]) -> Vec<Stmt> {
@@ -2391,7 +2392,7 @@ impl Visit for EsbuildAsyncHelperFinder {
         if let Expr::Call(call) = expr {
             if let Some(callee) = call.callee.as_expr() {
                 if let Expr::Member(member) = callee.as_ref() {
-                    if is_member_prop(&member.prop, "apply") {
+                    if member_prop_name(&member.prop, "apply") {
                         self.found_generator_apply = true;
                     }
                 }
@@ -2741,7 +2742,7 @@ fn is_async_to_gen_callee(expr: &Expr, async_to_gen_callees: &AsyncToGenCallees)
     let Expr::Member(member) = expr else {
         return false;
     };
-    if !is_member_prop(&member.prop, "default") {
+    if !member_prop_name(&member.prop, "default") {
         return false;
     }
     let Expr::Ident(obj) = member.obj.as_ref() else {
@@ -2962,20 +2963,6 @@ fn count_binding_uses(module: &Module, binding: &BindingKey) -> usize {
 
 fn is_ident_with_name(expr: &Expr, name: &Atom) -> bool {
     matches!(expr, Expr::Ident(id) if id.sym == *name)
-}
-
-fn is_member_prop(prop: &MemberProp, name: &str) -> bool {
-    match prop {
-        MemberProp::Ident(id) => id.sym.as_str() == name,
-        MemberProp::Computed(c) => {
-            if let Expr::Lit(Lit::Str(s)) = c.expr.as_ref() {
-                s.value.as_str() == Some(name)
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
 }
 
 fn member_prop_atom(prop: &MemberProp) -> Option<Atom> {
