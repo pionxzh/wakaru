@@ -15,7 +15,7 @@ use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use crate::unpacker::{UnpackResult, UnpackedModule};
+use crate::unpacker::{span_byte_range, UnpackResult, UnpackedModule};
 use crate::utils::paren::strip_parens;
 
 /// Identifies a webpack module by either its numeric index (array-form) or
@@ -570,6 +570,10 @@ fn extract_webpack4_array_modules(
             is_entry,
             code,
             filename,
+            source_ranges: span_byte_range(&cm, fn_expr.function.span)
+                .into_iter()
+                .collect(),
+            source_input: String::new(),
         });
     }
 
@@ -715,6 +719,10 @@ fn extract_webpack4_object_modules(
             is_entry,
             code,
             filename,
+            source_ranges: span_byte_range(&cm, fn_expr.function.span)
+                .into_iter()
+                .collect(),
+            source_input: String::new(),
         });
     }
 

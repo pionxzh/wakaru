@@ -10,6 +10,7 @@ mod unpack_cycles;
 pub use single_file::decompile;
 pub use trace::{format_trace_events, trace_rules, RuleTraceEvent, RuleTraceOptions};
 pub use types::{
-    DecompileOptions, DecompileOutput, UnpackInput, UnpackOutput, UnpackWarning, UnpackWarningKind,
+    DecompileOptions, DecompileOutput, ModuleProvenance, UnpackInput, UnpackOutput, UnpackWarning,
+    UnpackWarningKind,
 };
 pub use unpack::{unpack, unpack_files, unpack_files_raw, unpack_raw};

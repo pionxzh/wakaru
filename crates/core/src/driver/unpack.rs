@@ -16,7 +16,9 @@ use super::diagnostics::{
 };
 use super::io::{parse_js, parse_js_with_recovery, print_js};
 use super::single_file::decompile;
-use super::types::{DecompileOptions, UnpackInput, UnpackOutput, UnpackWarning, UnpackWarningKind};
+use super::types::{
+    DecompileOptions, ModuleProvenance, UnpackInput, UnpackOutput, UnpackWarning, UnpackWarningKind,
+};
 #[cfg(test)]
 use super::unpack_cleanup::hoist_late_runtime_helpers;
 use super::unpack_cleanup::{dedup_duplicate_exports, prune_stale_local_named_exports};
@@ -52,6 +54,7 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
                 let output = decompile(source, options)?;
                 Ok(UnpackOutput {
                     modules: vec![("module.js".to_string(), output.code)],
+                    provenance: vec![whole_input_provenance("module.js", "", source)],
                     warnings: output.warnings,
                 })
             }
@@ -60,6 +63,7 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
             let output = decompile(source, options)?;
             Ok(UnpackOutput {
                 modules: vec![("module.js".to_string(), output.code)],
+                provenance: vec![whole_input_provenance("module.js", "", source)],
                 warnings: output.warnings,
             })
         }
@@ -102,14 +106,19 @@ pub fn unpack_files(
             None if options.heuristic_split => {
                 match scope_hoist::split_scope_hoisted(&input.source) {
                     Some(result) if result.modules.len() > 1 => {
-                        modules.extend(result.modules.into_iter().map(MultiSourceModule::fallback))
+                        modules.extend(result.modules.into_iter().map(|mut module| {
+                            module.source_input = input.filename.clone();
+                            MultiSourceModule::fallback(module)
+                        }))
                     }
                     _ => modules.push(MultiSourceModule::fallback(
                         crate::unpacker::UnpackedModule {
                             id: input.filename.clone(),
                             is_entry: false,
-                            code: input.source,
                             filename: filename_for_fallback_input(&input.filename),
+                            source_ranges: vec![(0, input.source.len() as u32)],
+                            source_input: input.filename.clone(),
+                            code: input.source,
                         },
                     )),
                 }
@@ -118,8 +127,10 @@ pub fn unpack_files(
                 crate::unpacker::UnpackedModule {
                     id: input.filename.clone(),
                     is_entry: false,
-                    code: input.source,
                     filename: filename_for_fallback_input(&input.filename),
+                    source_ranges: vec![(0, input.source.len() as u32)],
+                    source_input: input.filename.clone(),
+                    code: input.source,
                 },
             )),
         }
@@ -155,7 +166,7 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
         });
     match result {
         Some((result, normalize_for_runnable_split)) => {
-            let (modules, warnings) = if normalize_for_runnable_split {
+            let (modules, provenance, warnings) = if normalize_for_runnable_split {
                 // Heuristic scope-hoisted fallback does not get the esbuild
                 // detector's bundler-specific cleanup, so keep the narrow
                 // runnable normalization it still relies on.
@@ -168,6 +179,7 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
                         (result.modules, Vec::new())
                     }
                 };
+                let provenance = module_provenance(&modules);
                 let normalized: Vec<_> = modules
                     .into_par_iter()
                     .map(|module| {
@@ -200,23 +212,51 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
                     }
                     output_modules.push(module);
                 }
-                (output_modules, output_warnings)
+                (output_modules, provenance, output_warnings)
             } else {
+                let provenance = module_provenance(&result.modules);
                 (
                     result
                         .modules
                         .into_iter()
                         .map(|module| (module.filename, module.code))
                         .collect(),
+                    provenance,
                     Vec::new(),
                 )
             };
-            Ok(UnpackOutput { modules, warnings })
+            Ok(UnpackOutput {
+                modules,
+                provenance,
+                warnings,
+            })
         }
         None => Ok(UnpackOutput {
             modules: vec![("module.js".to_string(), source.to_string())],
+            provenance: vec![whole_input_provenance("module.js", "", source)],
             warnings: Vec::new(),
         }),
+    }
+}
+
+/// Provenance entries for a list of unpacked modules, in module order.
+fn module_provenance(modules: &[UnpackedModule]) -> Vec<ModuleProvenance> {
+    modules
+        .iter()
+        .map(|module| ModuleProvenance {
+            filename: module.filename.clone(),
+            input: module.source_input.clone(),
+            ranges: module.source_ranges.clone(),
+        })
+        .collect()
+}
+
+/// Provenance entry covering an entire input source.
+fn whole_input_provenance(filename: &str, input: &str, source: &str) -> ModuleProvenance {
+    ModuleProvenance {
+        filename: filename.to_string(),
+        input: input.to_string(),
+        ranges: vec![(0, source.len() as u32)],
     }
 }
 
@@ -269,6 +309,8 @@ pub fn unpack_files_raw(
                 is_entry: false,
                 code: input.source.to_string(),
                 filename: filename_for_fallback_input(&input.filename),
+                source_ranges: vec![(0, input.source.len() as u32)],
+                source_input: input.filename.clone(),
             })),
         }
     }
@@ -297,12 +339,15 @@ struct MultiSourceModule {
 
 impl MultiSourceModule {
     fn detected(
-        module: UnpackedModule,
+        mut module: UnpackedModule,
         chunk_ids: HashSet<usize>,
         input_filename: String,
         allow_cycle_premerge: bool,
     ) -> Self {
         let input_group = input_group_for_filename(&input_filename);
+        // Unpackers don't know which physical input they ran on; attribute
+        // provenance ranges to it here.
+        module.source_input = input_filename.clone();
         Self {
             module,
             allow_cross_chunk_rewrite: true,
@@ -561,12 +606,22 @@ fn emit_raw_modules_with_numeric_rewrites(
     modules: Vec<PreparedUnpackModule>,
     numeric_rewrite_plan: NumericRewritePlan,
 ) -> Result<UnpackOutput> {
+    let provenance: Vec<ModuleProvenance> = modules
+        .iter()
+        .map(|prepared| ModuleProvenance {
+            filename: prepared.module.filename.clone(),
+            input: prepared.module.source_input.clone(),
+            ranges: prepared.module.source_ranges.clone(),
+        })
+        .collect();
+
     if numeric_rewrite_plan.is_empty() {
         return Ok(UnpackOutput {
             modules: modules
                 .into_iter()
                 .map(|module| (module.module.filename, module.module.code))
                 .collect(),
+            provenance,
             warnings: Vec::new(),
         });
     }
@@ -616,7 +671,11 @@ fn emit_raw_modules_with_numeric_rewrites(
         }
     }
 
-    Ok(UnpackOutput { modules, warnings })
+    Ok(UnpackOutput {
+        modules,
+        provenance,
+        warnings,
+    })
 }
 
 struct WebpackNumericReferenceRewriter<'a> {
@@ -1012,6 +1071,17 @@ fn unpack_multi_module_with_plan(
             (modules, Vec::new())
         };
 
+    // Capture provenance now: filenames are final after multi-source dedup
+    // and cycle premerge, and the phase pipeline below only rewrites code.
+    let provenance: Vec<ModuleProvenance> = modules
+        .iter()
+        .map(|prepared| ModuleProvenance {
+            filename: prepared.module.filename.clone(),
+            input: prepared.module.source_input.clone(),
+            ranges: prepared.module.source_ranges.clone(),
+        })
+        .collect();
+
     // Parse the sourcemap once before the loop.
     let parsed_sourcemap = options
         .sourcemap
@@ -1262,7 +1332,11 @@ fn unpack_multi_module_with_plan(
         warnings.extend(collect_import_cycle_warnings(&modules));
     }
 
-    Ok(UnpackOutput { modules, warnings })
+    Ok(UnpackOutput {
+        modules,
+        provenance,
+        warnings,
+    })
 }
 
 fn should_merge_raw_import_cycles(_modules: &[UnpackedModule]) -> bool {
@@ -1358,6 +1432,7 @@ function load() {
             is_entry: false,
             code: "const = ;".to_string(),
             filename: "module-1.js".to_string(),
+            ..Default::default()
         }];
         let output = unpack_multi_module(modules, DecompileOptions::default())
             .expect("unparseable extracted modules should be preserved as raw code");
@@ -1442,6 +1517,7 @@ function b() { return a(); }
                     } else {
                         format!("m{index}.js")
                     },
+                    ..Default::default()
                 })
             })
             .collect();
@@ -1464,6 +1540,7 @@ function b() { return a(); }
                         is_entry: module.module.is_entry,
                         code: module.module.code.clone(),
                         filename: module.module.filename.clone(),
+                        ..Default::default()
                     },
                     false,
                 )
@@ -1487,6 +1564,7 @@ function b() { return a(); }
                 is_entry: module.module.is_entry,
                 code: module.module.code.clone(),
                 filename: module.module.filename.clone(),
+                ..Default::default()
             })
             .collect();
         assert!(
@@ -1504,6 +1582,7 @@ function b() { return a(); }
                     is_entry: true,
                     code: r#"import { b } from "./b.js"; export const a = b + 1;"#.to_string(),
                     filename: "entry.js".to_string(),
+                    ..Default::default()
                 },
                 false,
             ),
@@ -1513,6 +1592,7 @@ function b() { return a(); }
                     is_entry: false,
                     code: r#"import { a } from "./entry.js"; export const b = a + 1;"#.to_string(),
                     filename: "b.js".to_string(),
+                    ..Default::default()
                 },
                 false,
             ),
@@ -1582,6 +1662,7 @@ module.exports = (a = (i = require("./module-2.js")).lib, o = a.WordArray, i.SHA
 "#
             .to_string(),
             filename: "module-1.js".to_string(),
+            ..Default::default()
         }];
 
         let output = unpack_multi_module(modules, DecompileOptions::default())
@@ -1617,6 +1698,7 @@ exports.default = o.default(l);
 "#
             .to_string(),
             filename: "module-1.js".to_string(),
+            ..Default::default()
         }];
 
         let output = unpack_multi_module(modules, DecompileOptions::default())
@@ -1645,6 +1727,7 @@ exports.default = o.default(l);
                     is_entry: false,
                     code: "const other = require(999);".to_string(),
                     filename: "module-20.js".to_string(),
+                    ..Default::default()
                 },
                 HashSet::new(),
                 "entry.js".to_string(),
@@ -1656,6 +1739,7 @@ exports.default = o.default(l);
                     is_entry: false,
                     code: "export default 1;".to_string(),
                     filename: "module-999.js".to_string(),
+                    ..Default::default()
                 },
                 HashSet::new(),
                 "chunk.js".to_string(),
@@ -1710,6 +1794,7 @@ export { create, wrap };
 "#
             .to_string(),
             filename: "helper.js".to_string(),
+            ..Default::default()
         }];
 
         let output = unpack_multi_module(
@@ -1748,6 +1833,7 @@ export { helper };
 "#
             .to_string(),
             filename: "entry.js".to_string(),
+            ..Default::default()
         }];
 
         let output = unpack_multi_module(
@@ -1806,18 +1892,21 @@ export { helper };
                 is_entry: false,
                 code: r#"import { b } from "./b.js"; export const a = b + 1;"#.to_string(),
                 filename: "a.js".to_string(),
+                ..Default::default()
             },
             UnpackedModule {
                 id: "b".to_string(),
                 is_entry: false,
                 code: r#"import { a } from "./a.js"; export const b = a + 1;"#.to_string(),
                 filename: "b.js".to_string(),
+                ..Default::default()
             },
             UnpackedModule {
                 id: "c".to_string(),
                 is_entry: false,
                 code: r#"import { b } from "./b.js"; export const c = b;"#.to_string(),
                 filename: "c.js".to_string(),
+                ..Default::default()
             },
         ];
 
@@ -1857,18 +1946,21 @@ export { helper };
                 is_entry: false,
                 code: r#"import { b } from "./b.js"; export const a = b + 1;"#.to_string(),
                 filename: "a.js".to_string(),
+                ..Default::default()
             },
             UnpackedModule {
                 id: "b".to_string(),
                 is_entry: false,
                 code: r#"import { a } from "./a.js"; export const b = a + 1;"#.to_string(),
                 filename: "b.js".to_string(),
+                ..Default::default()
             },
             UnpackedModule {
                 id: "d".to_string(),
                 is_entry: false,
                 code: untouched_code.to_string(),
                 filename: "d.js".to_string(),
+                ..Default::default()
             },
         ];
 
@@ -1894,6 +1986,7 @@ export { helper };
                 code: r#"import { shared } from "./x.js"; import { b } from "./b.js"; export const a = b + shared;"#
                     .to_string(),
                 filename: "a.js".to_string(),
+                ..Default::default()
             },
             UnpackedModule {
                 id: "b".to_string(),
@@ -1901,6 +1994,7 @@ export { helper };
                 code: r#"import { shared } from "./x.js"; import { a } from "./a.js"; export const b = a + shared;"#
                     .to_string(),
                 filename: "b.js".to_string(),
+                ..Default::default()
             },
         ];
 
@@ -1936,6 +2030,7 @@ export { helper };
                 code: r#"import { b } from "./b.js"; export function f() { return b; }"#
                     .to_string(),
                 filename: "a.js".to_string(),
+                ..Default::default()
             },
             UnpackedModule {
                 id: "b".to_string(),
@@ -1943,6 +2038,7 @@ export { helper };
                 code: r#"import { f } from "./a.js"; export const b = 1; export { f };"#
                     .to_string(),
                 filename: "b.js".to_string(),
+                ..Default::default()
             },
         ];
 
@@ -2022,6 +2118,7 @@ export { helper, cache };
                     r#"import { b } from "./b.js"; const shared = 1; export const a = b + shared;"#
                         .to_string(),
                 filename: "a.js".to_string(),
+                ..Default::default()
             },
             UnpackedModule {
                 id: "b".to_string(),
@@ -2030,6 +2127,7 @@ export { helper, cache };
                     r#"import { a } from "./a.js"; const shared = 2; export const b = a + shared;"#
                         .to_string(),
                 filename: "b.js".to_string(),
+                ..Default::default()
             },
         ];
 
@@ -2066,6 +2164,7 @@ export { helper, cache };
                         r#"import {{ v{next} }} from "./m{next}.js"; export const v{index} = v{next} + {index};"#
                     ),
                     filename: format!("m{index}.js"),
+                    ..Default::default()
                 }
             })
             .collect();
@@ -2091,6 +2190,7 @@ export { helper, cache };
                 code: r#"import { b } from "./b.js"; var shared = 1; export const a = b + shared;"#
                     .to_string(),
                 filename: "a.js".to_string(),
+                ..Default::default()
             },
             UnpackedModule {
                 id: "b".to_string(),
@@ -2098,6 +2198,7 @@ export { helper, cache };
                 code: r#"import { a } from "./a.js"; var shared = 2; export const b = a + shared;"#
                     .to_string(),
                 filename: "b.js".to_string(),
+                ..Default::default()
             },
         ];
         let module_by_filename: HashMap<String, &UnpackedModule> = modules

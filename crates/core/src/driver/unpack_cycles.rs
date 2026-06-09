@@ -186,6 +186,29 @@ pub(crate) fn merge_import_cycles(
                 );
                 (code, is_entry)
             };
+            // Provenance: a merged cycle covers the union of its members'
+            // ranges, but only when all members came from the same input.
+            let member_modules: Vec<_> = members
+                .iter()
+                .filter_map(|name| module_by_filename.get(name.as_str()))
+                .collect();
+            let inputs: HashSet<&str> = member_modules
+                .iter()
+                .map(|m| m.source_input.as_str())
+                .collect();
+            let (source_ranges, source_input) = if inputs.len() <= 1 {
+                let mut ranges: Vec<(u32, u32)> = member_modules
+                    .iter()
+                    .flat_map(|m| m.source_ranges.iter().copied())
+                    .collect();
+                ranges.sort_unstable();
+                (
+                    ranges,
+                    inputs.into_iter().next().unwrap_or_default().to_string(),
+                )
+            } else {
+                (Vec::new(), String::new())
+            };
             merged_modules.push(crate::unpacker::UnpackedModule {
                 id: representative
                     .strip_suffix(".js")
@@ -194,6 +217,8 @@ pub(crate) fn merge_import_cycles(
                 is_entry,
                 code,
                 filename: representative.clone(),
+                source_ranges,
+                source_input,
             });
         } else {
             let code = if module_imports_retargeted_cycle_member(
@@ -217,6 +242,8 @@ pub(crate) fn merge_import_cycles(
                 is_entry: module.is_entry,
                 code,
                 filename: module.filename.clone(),
+                source_ranges: module.source_ranges.clone(),
+                source_input: module.source_input.clone(),
             });
         }
     }

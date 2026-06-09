@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, IsTerminal, Read};
 use std::path::{Component, Path, PathBuf};
@@ -77,6 +78,12 @@ struct Cli {
     /// With --unpack, write raw unpacker output before the decompiler rule pipeline.
     #[arg(long, requires = "unpack")]
     raw: bool,
+
+    /// With --unpack, write a provenance.json in the output directory mapping
+    /// each module file to the byte ranges in the original input it was
+    /// extracted from.
+    #[arg(long, requires = "unpack")]
+    provenance: bool,
 
     /// Source map file (.map) for identifier recovery and import deduplication.
     #[arg(
@@ -223,6 +230,10 @@ fn run_default(cli: Cli) -> Result<()> {
         let check_existing_writes = ensure_output_dir(&out_dir, cli.force)?;
         let out_dir = canonicalize_output_dir(&out_dir)?;
 
+        // Provenance entries from single-source unpacks leave `input` empty;
+        // remember the input name so the provenance file can attribute them.
+        let single_input_name = (inputs.len() == 1).then(|| inputs[0].filename.clone());
+
         let output = if inputs.len() == 1 {
             let input = inputs.into_iter().next().expect("checked input length");
             if cli.raw {
@@ -239,6 +250,7 @@ fn run_default(cli: Cli) -> Result<()> {
         print_warnings(&output.warnings);
         let has_errors = output.has_errors();
 
+        let provenance = output.provenance;
         let pairs = output.modules;
         let pairs: Vec<(String, String)> = pairs
             .into_par_iter()
@@ -275,6 +287,31 @@ fn run_default(cli: Cli) -> Result<()> {
                     .par_iter()
                     .try_for_each(|(path, code)| write_file(path, code))?;
             }
+        }
+
+        if cli.provenance {
+            // Map each module to its final on-disk relative path: `resolved`
+            // is parallel to `pairs`, and CLI-side dedup may have renamed.
+            let final_names: HashMap<&str, String> = pairs
+                .iter()
+                .zip(resolved.iter())
+                .map(|((filename, _), (path, _))| {
+                    let relative = path
+                        .strip_prefix(&out_dir)
+                        .unwrap_or(path)
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    (filename.as_str(), relative)
+                })
+                .collect();
+            let json = render_provenance_json(
+                &provenance,
+                &final_names,
+                single_input_name.as_deref().unwrap_or(""),
+            );
+            let provenance_path = out_dir.join("provenance.json");
+            fs::write(&provenance_path, json)
+                .with_context(|| format!("failed to write {}", provenance_path.display()))?;
         }
 
         if io::stderr().is_terminal() {
@@ -760,6 +797,69 @@ fn deduplicate_path(path: &Path, seen: &mut std::collections::HashSet<String>) -
     }
 }
 
+/// Render provenance entries as a JSON document.
+///
+/// `final_names` maps the driver's module filename to the relative path the
+/// CLI actually wrote (CLI-side dedup can rename). `default_input` fills in
+/// entries whose input is empty (single-source unpacks).
+fn render_provenance_json(
+    provenance: &[wakaru_core::ModuleProvenance],
+    final_names: &HashMap<&str, String>,
+    default_input: &str,
+) -> String {
+    let mut entries: Vec<(String, &wakaru_core::ModuleProvenance)> = provenance
+        .iter()
+        .map(|entry| {
+            let name = final_names
+                .get(entry.filename.as_str())
+                .cloned()
+                .unwrap_or_else(|| entry.filename.clone());
+            (name, entry)
+        })
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut json = String::from("{\n  \"modules\": {\n");
+    for (i, (name, entry)) in entries.iter().enumerate() {
+        let input = if entry.input.is_empty() {
+            default_input
+        } else {
+            &entry.input
+        };
+        let ranges = entry
+            .ranges
+            .iter()
+            .map(|(start, end)| format!("[{start},{end}]"))
+            .collect::<Vec<_>>()
+            .join(",");
+        json.push_str(&format!(
+            "    \"{}\": {{\"input\": \"{}\", \"ranges\": [{}]}}{}\n",
+            json_escape(name),
+            json_escape(input),
+            ranges,
+            if i + 1 < entries.len() { "," } else { "" }
+        ));
+    }
+    json.push_str("  }\n}\n");
+    json
+}
+
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn init_profile(
     path: Option<&Path>,
     include_rule_spans: bool,
@@ -791,6 +891,40 @@ fn init_profile(
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn renders_provenance_json_with_final_names_and_default_input() {
+        let provenance = vec![
+            wakaru_core::ModuleProvenance {
+                filename: "b.js".to_string(),
+                input: String::new(),
+                ranges: vec![(10, 20), (30, 40)],
+            },
+            wakaru_core::ModuleProvenance {
+                filename: "a \"quoted\".js".to_string(),
+                input: "chunk-1.js".to_string(),
+                ranges: vec![(0, 5)],
+            },
+        ];
+        let mut final_names = HashMap::new();
+        // CLI-side dedup renamed b.js on disk.
+        final_names.insert("b.js", "b_2.js".to_string());
+
+        let json = render_provenance_json(&provenance, &final_names, "bundle.js");
+
+        assert!(
+            json.contains(r#""b_2.js": {"input": "bundle.js", "ranges": [[10,20],[30,40]]}"#),
+            "renamed module with default input missing:\n{json}"
+        );
+        assert!(
+            json.contains(r#""a \"quoted\".js": {"input": "chunk-1.js", "ranges": [[0,5]]}"#),
+            "escaped filename with explicit input missing:\n{json}"
+        );
+        // Must be alphabetically sorted and valid JSON shape.
+        assert!(json.find("a \\\"quoted\\\"").unwrap() < json.find("b_2.js").unwrap());
+        assert!(json.starts_with("{\n  \"modules\": {\n"));
+        assert!(json.ends_with("  }\n}\n"));
+    }
 
     #[test]
     fn parses_extract_without_js_input() {
