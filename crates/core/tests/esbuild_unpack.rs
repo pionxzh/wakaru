@@ -1445,6 +1445,130 @@ console.log(a);
 }
 
 #[test]
+fn scope_module_imports_factory_owned_binding_from_mixed_declaration() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+function memoize(fn) { return function() { return fn.apply(this, arguments); }; }
+var label = "ok", memo;
+var init_memo = y(() => { memo = memoize; });
+var init_user = y(() => { init_memo(); cached = useMemo; });
+var cached;
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns = {};
+__export(ns, { useMemo: () => useMemo });
+function useMemo(fn) { return memo(fn); }
+var ns_b = {};
+__export(ns_b, { other: () => other });
+function other() { return label; }
+init_user();
+console.log(cached(() => label)());
+export { ns, ns_b };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let ns_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "ns.js")
+        .expect("scope module should exist")
+        .1;
+    assert!(
+        ns_code.contains("import { memo } from \"./init_memo.js\""),
+        "scope module should import factory-owned memo binding:\n{ns_code}"
+    );
+    assert!(
+        !ns_code.contains("memo;") && !ns_code.contains("memo,"),
+        "scope module must not redeclare factory-owned memo from mixed var decl:\n{ns_code}"
+    );
+}
+
+#[test]
+fn scope_module_imports_callable_commonjs_factory_by_atom() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+var m = (q, K) => () => (K || q((K = { exports: {} }).exports, K), K.exports);
+var runtime = m((exports, module) => { module.exports = function() { return 1; }; });
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns = {};
+__export(ns, { read: () => read });
+function read() { return runtime()(); }
+var ns_b = {};
+__export(ns_b, { other: () => other });
+function other() { return 2; }
+console.log(ns.read());
+export { ns, ns_b };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let ns_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "ns.js")
+        .expect("scope module should exist")
+        .1;
+    assert!(
+        ns_code.contains("import { runtime } from \"./runtime.js\""),
+        "scope module should import callable CommonJS factory wrapper:\n{ns_code}"
+    );
+}
+
+#[test]
+fn scope_module_imports_factory_owned_support_binding() {
+    let bundle = r#"
+var y = (q,K) => () => (q && (K = q(q = 0)), K);
+function dispose(value) { return value; }
+var reader;
+var init_reader = y(() => {
+    reader = function(value) { return dispose(value); };
+});
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var ns = {};
+__export(ns, { read: () => read });
+function read(value) {
+    init_reader();
+    return dispose(reader(value));
+}
+var ns_b = {};
+__export(ns_b, { other: () => other });
+function other() { return 2; }
+console.log(ns.read(1));
+export { ns, ns_b };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let ns_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "ns.js")
+        .expect("scope module should exist")
+        .1;
+    assert!(
+        ns_code.contains("import { dispose, init_reader, reader } from \"./init_reader.js\""),
+        "scope module should import support binding owned by init factory:\n{ns_code}"
+    );
+}
+
+#[test]
 fn standalone_factory_exports_destructuring_assignment_writes() {
     let bundle = r#"
 var y = (q,K) => () => (q && (K = q(q = 0)), K);

@@ -190,6 +190,26 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
             factory_preassigned_bindings.insert(write_binding.clone(), factory.filename.clone());
         }
     }
+    let mut factory_importable_bindings = factory_preassigned_bindings.clone();
+    factory_importable_bindings.extend(
+        pending_factories
+            .iter()
+            .filter(|factory| factory.cjs_params.is_none() || factory.write_bindings.is_empty())
+            .map(|factory| (factory.binding.clone(), factory.filename.clone())),
+    );
+    for factory in &pending_factories {
+        for ref_binding in &factory.referenced_bindings {
+            if factory.write_bindings.contains(ref_binding)
+                || factory_importable_bindings.contains_key(ref_binding)
+                || helper_syms.contains(&ref_binding.0)
+                || factory_syms.contains(&ref_binding.0)
+                || !top_level_decl_items.contains_key(ref_binding)
+            {
+                continue;
+            }
+            factory_importable_bindings.insert(ref_binding.clone(), factory.filename.clone());
+        }
+    }
 
     // Phase 4: everything that is not a helper decl or factory decl becomes the entry.
     let entry_items: Vec<ModuleItem> = module
@@ -225,6 +245,7 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
             cm.clone(),
             &all_factory_referenced,
             &factory_preassigned_bindings,
+            &factory_importable_bindings,
         )
     };
     modules.extend(scope_hoisted_modules);
@@ -903,6 +924,21 @@ fn atom_binding_map_from_keys<T>(imports: &HashMap<BindingId, T>) -> HashMap<Ato
     by_atom
 }
 
+fn add_factory_atom_import(
+    imports_by_filename: &mut HashMap<String, Vec<BindingId>>,
+    current_filename: &str,
+    source_binding: &BindingId,
+    source_filename: &str,
+) {
+    if source_filename == current_filename {
+        return;
+    }
+    imports_by_filename
+        .entry(source_filename.to_string())
+        .or_default()
+        .push(source_binding.clone());
+}
+
 fn atom_to_module_binding_map(
     bindings: &HashMap<BindingId, usize>,
 ) -> HashMap<Atom, (BindingId, usize)> {
@@ -1388,6 +1424,7 @@ fn extract_scope_hoisted_modules(
     cm: Lrc<SourceMap>,
     factory_referenced: &HashSet<BindingId>,
     factory_preassigned_bindings: &HashMap<BindingId, String>,
+    factory_importable_bindings: &HashMap<BindingId, String>,
 ) -> (
     Vec<UnpackedModule>,
     Vec<ModuleItem>,
@@ -1410,6 +1447,15 @@ fn extract_scope_hoisted_modules(
         );
     };
     let item_infos = build_item_binding_infos(analysis_items);
+    let top_level_bindings: HashSet<BindingId> = item_infos
+        .iter()
+        .flat_map(|info| info.declared.iter().cloned())
+        .chain(
+            analysis_items
+                .iter()
+                .flat_map(|item| module_item_import_binding_ids(item).into_iter()),
+        )
+        .collect();
     let external_imports = collect_external_imports(analysis_items, &source_items);
 
     // Step 2: find all (namespace_decl_index, export_call_index, ns_atom) triples.
@@ -1435,6 +1481,19 @@ fn extract_scope_hoisted_modules(
         .iter()
         .flat_map(|info| info.declared.iter().map(|(atom, _)| atom.clone()))
         .collect();
+    let factory_preassigned_set: HashSet<BindingId> =
+        factory_preassigned_bindings.keys().cloned().collect();
+    let factory_preassigned_atoms: HashSet<Atom> = factory_preassigned_bindings
+        .keys()
+        .map(|(atom, _)| atom.clone())
+        .collect();
+    let mut reference_candidate_atoms = scope_candidate_atoms.clone();
+    reference_candidate_atoms.extend(factory_preassigned_atoms.iter().cloned());
+    reference_candidate_atoms.extend(
+        factory_importable_bindings
+            .keys()
+            .map(|(atom, _)| atom.clone()),
+    );
 
     // Track consumed namespace bindings so we can restore them for the entry.
     let mut consumed_ns: Vec<(usize, usize, &ScopeHoistedBoundary)> = Vec::new();
@@ -1476,28 +1535,40 @@ fn extract_scope_hoisted_modules(
         let mut referenced_bindings: HashSet<BindingId> = HashSet::new();
         let mut referenced_atoms: HashSet<Atom> = HashSet::new();
 
-        for (i, info) in item_infos.iter().enumerate().take(end).skip(start) {
+        for i in start..end {
             consumed.insert(i);
             if i == boundary.ns_decl_index || i == boundary.export_call_index {
                 continue;
             }
-            if !info.declared.is_empty()
-                && info
-                    .declared
-                    .iter()
-                    .all(|binding| factory_preassigned_bindings.contains_key(binding))
-            {
+            let Some(filtered_analysis_item) = filter_item_excluding_bindings(
+                &analysis_items[i],
+                &factory_preassigned_set,
+                &factory_preassigned_atoms,
+            ) else {
                 continue;
-            }
+            };
+            let filtered_source_item = source_slots[i]
+                .as_ref()
+                .and_then(|item| {
+                    filter_item_excluding_bindings(
+                        item,
+                        &factory_preassigned_set,
+                        &factory_preassigned_atoms,
+                    )
+                })
+                .expect("source item should filter with analysis item");
+            source_slots[i] = Some(filtered_source_item);
+            let info = item_binding_info_for(&filtered_analysis_item, &top_level_bindings);
+
             let mut atom_collector = AtomRefCollector {
-                candidate_atoms: &scope_candidate_atoms,
+                candidate_atoms: &reference_candidate_atoms,
                 references: HashSet::new(),
                 shadowed_atoms: vec![HashSet::new()],
             };
-            analysis_items[i].visit_with(&mut atom_collector);
+            filtered_analysis_item.visit_with(&mut atom_collector);
             body_indices.push(i);
             declared_bindings.extend(info.declared.iter().cloned());
-            local_import_bindings.extend(module_item_import_binding_ids(&analysis_items[i]));
+            local_import_bindings.extend(module_item_import_binding_ids(&filtered_analysis_item));
             referenced_bindings.extend(info.references.iter().cloned());
             referenced_atoms.extend(atom_collector.references);
         }
@@ -1610,6 +1681,14 @@ fn extract_scope_hoisted_modules(
     for (binding, filename) in factory_preassigned_bindings {
         binding_to_filename.insert(binding.clone(), filename.clone());
     }
+    let factory_binding_filename_by_atom =
+        atom_to_filename_binding_map(factory_importable_bindings);
+    let binding_filename_by_atom = atom_to_filename_binding_map(&binding_to_filename);
+    let filename_to_module: HashMap<String, usize> = metas
+        .iter()
+        .enumerate()
+        .map(|(mi, meta)| (meta.filename.clone(), mi))
+        .collect();
 
     // Map namespace bindings to "entry.js".  The namespace object
     // (`var ns_a = {}; __export(ns_a, {...})`) is restored into the entry
@@ -1689,12 +1768,43 @@ fn extract_scope_hoisted_modules(
             // exact binding analysis already found.  Creating new edges by
             // atom alone is too broad for large bundles with reused minified
             // names and can manufacture import cycles.
+            let mut added_existing_edge_import = false;
             if let Some((source_binding, source_mi)) = binding_module_by_atom.get(atom) {
                 if *source_mi != mi && imports_by_source.contains_key(source_mi) {
                     imports_by_source
                         .entry(*source_mi)
                         .or_default()
                         .push(source_binding.clone());
+                    added_existing_edge_import = true;
+                }
+            }
+            if !added_existing_edge_import {
+                if let Some((source_binding, source_filename)) = binding_filename_by_atom.get(atom)
+                {
+                    if let Some(source_mi) = filename_to_module.get(source_filename) {
+                        if *source_mi != mi && imports_by_source.contains_key(source_mi) {
+                            imports_by_source
+                                .entry(*source_mi)
+                                .or_default()
+                                .push(source_binding.clone());
+                            added_existing_edge_import = true;
+                        }
+                    }
+                }
+            }
+            let atom_owned_by_scope_module = binding_filename_by_atom
+                .get(atom)
+                .is_some_and(|(_, filename)| filename_to_module.contains_key(filename));
+            if !added_existing_edge_import && !atom_owned_by_scope_module {
+                if let Some((source_binding, source_filename)) =
+                    factory_binding_filename_by_atom.get(atom)
+                {
+                    add_factory_atom_import(
+                        &mut imports_by_filename,
+                        &meta.filename,
+                        source_binding,
+                        source_filename,
+                    );
                 }
             }
         }
@@ -1764,11 +1874,6 @@ fn extract_scope_hoisted_modules(
                 .iter()
                 .map(|(atom, _)| atom.clone()),
         );
-        reserved_import_atoms.extend(meta.body_indices.iter().flat_map(|&i| {
-            module_item_declared_binding_ids(&analysis_items[i])
-                .into_iter()
-                .map(|(atom, _)| atom)
-        }));
         let mut import_sources: Vec<usize> = imports_by_source.keys().copied().collect();
         import_sources.sort();
         let mut imported_atoms = HashSet::new();
@@ -1831,11 +1936,6 @@ fn extract_scope_hoisted_modules(
                 .iter()
                 .map(|(atom, _)| atom.clone()),
         );
-        local_atoms.extend(meta.body_indices.iter().flat_map(|&i| {
-            module_item_declared_binding_ids(&analysis_items[i])
-                .into_iter()
-                .map(|(atom, _)| atom)
-        }));
         module_local_atoms.insert(meta.filename.clone(), local_atoms);
         module_referenced_atoms.insert(meta.filename.clone(), meta.referenced_atoms.clone());
         let namespace_exported = effective_exports[mi].contains(&meta.namespace_binding.0);
@@ -2521,6 +2621,22 @@ fn build_item_binding_infos(items: &[ModuleItem]) -> Vec<ItemBindingInfo> {
         .collect()
 }
 
+fn item_binding_info_for(
+    item: &ModuleItem,
+    top_level_bindings: &HashSet<BindingId>,
+) -> ItemBindingInfo {
+    let declared: HashSet<BindingId> = module_item_declared_binding_ids(item).into_iter().collect();
+    let mut collector = TopLevelRefCollector {
+        top_level_bindings,
+        references: HashSet::new(),
+    };
+    item.visit_with(&mut collector);
+    ItemBindingInfo {
+        declared,
+        references: collector.references,
+    }
+}
+
 fn module_item_import_binding_ids(item: &ModuleItem) -> Vec<BindingId> {
     let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
         return vec![];
@@ -2536,6 +2652,42 @@ fn module_item_import_binding_ids(item: &ModuleItem) -> Vec<BindingId> {
             }
         })
         .collect()
+}
+
+fn filter_item_excluding_bindings(
+    item: &ModuleItem,
+    excluded: &HashSet<BindingId>,
+    excluded_atoms: &HashSet<Atom>,
+) -> Option<ModuleItem> {
+    match item {
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
+            let mut filtered = var_decl.clone();
+            filtered.decls.retain(|decl| {
+                let ids = pat_declared_binding_ids(&decl.name);
+                ids.is_empty()
+                    || !ids
+                        .iter()
+                        .all(|id| excluded.contains(id) || excluded_atoms.contains(&id.0))
+            });
+            if filtered.decls.is_empty() {
+                None
+            } else {
+                Some(ModuleItem::Stmt(Stmt::Decl(Decl::Var(filtered))))
+            }
+        }
+        _ => {
+            let declared = module_item_declared_binding_ids(item);
+            if !declared.is_empty()
+                && declared
+                    .iter()
+                    .all(|id| excluded.contains(id) || excluded_atoms.contains(&id.0))
+            {
+                None
+            } else {
+                Some(item.clone())
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -3483,6 +3635,27 @@ var obj = { JA: true };
         assert!(
             !imports_by_source.contains_key("Other.js"),
             "augmentation must not create new import edges"
+        );
+    }
+
+    #[test]
+    fn factory_atom_import_can_create_filename_edge() {
+        let mut imports_by_filename = HashMap::new();
+        let binding = (Atom::from("RT6"), Default::default());
+
+        add_factory_atom_import(&mut imports_by_filename, "Zaq_2.js", &binding, "RT6.js");
+
+        assert_eq!(
+            imports_by_filename.get("RT6.js"),
+            Some(&vec![binding.clone()])
+        );
+
+        add_factory_atom_import(&mut imports_by_filename, "RT6.js", &binding, "RT6.js");
+
+        assert_eq!(
+            imports_by_filename.get("RT6.js"),
+            Some(&vec![binding]),
+            "self imports should still be ignored"
         );
     }
 }
