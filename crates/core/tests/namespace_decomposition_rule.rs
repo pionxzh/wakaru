@@ -423,9 +423,9 @@ l.a.fixed();
 "#;
     let expected = r#"
 import a from "./module-12.js";
-import { a as a_2 } from "./module-9.js";
+import { a as a_1 } from "./module-9.js";
 a.a();
-a_2.fixed();
+a_1.fixed();
 "#;
     assert_eq_normalized(&run_decomp_then_rename(input, &facts), expected.trim());
 }
@@ -448,9 +448,9 @@ export const buffers = l.a;
 "#;
     let expected = r#"
 import a from "./module-12.js";
-import { a as a_2 } from "./module-9.js";
+import { a as a_1 } from "./module-9.js";
 a.a();
-export const buffers = a_2;
+export const buffers = a_1;
 "#;
     assert_eq_normalized(
         &run_decomp_then_late_pipeline(input, &facts),
