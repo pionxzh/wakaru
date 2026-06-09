@@ -191,16 +191,18 @@ const babelProfiles = [
   },
 ];
 
+const allSources = snippets.map((s) => s.source);
+
 const transformers = [
   ...babelProfiles.flatMap((profile) =>
     ["async-generator", "regenerator"].flatMap((mode) =>
-      withTerserVariants(`${profile.name}-${mode}`, (source) => runBabel(source, profile, mode)),
+      withTerserVariants(`${profile.name}-${mode}`, batchRunner(() => runBabelBatch(allSources, profile, mode))),
     ),
   ),
-  ...withTerserVariants("babel-7.29-preset-env-ie11", runBabelPresetEnvIe),
-  ...withTerserVariants("tsc-es5", runTsc),
-  ...withTerserVariants("swc-es5", runSwc),
-  ...withTerserVariants("esbuild-es2015", runEsbuild),
+  ...withTerserVariants("babel-7.29-preset-env-ie11", batchRunner(() => runBabelPresetEnvIeBatch(allSources))),
+  ...withTerserVariants("tsc-es5", batchRunner(() => runTscBatch(allSources))),
+  ...withTerserVariants("swc-es5", batchRunner(() => runSwcBatch(allSources))),
+  ...withTerserVariants("esbuild-es2015", batchRunner(() => runEsbuildBatch(allSources))),
   ...withTerserVariants("source", (source) => source, { includeRaw: false }),
 ];
 
@@ -251,6 +253,39 @@ try {
   rmSync(tmpRoot, { recursive: true, force: true });
 }
 
+function batchRunner(lazyBatch) {
+  let cache;
+  return (source) => {
+    if (!cache) cache = lazyBatch();
+    const result = cache.get(source);
+    if (result === undefined) throw new Error("source not in batch");
+    if (result instanceof Error) throw result;
+    return result;
+  };
+}
+
+function runBatchHelper(command, args, sources, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd ?? repoRoot,
+    input: JSON.stringify(sources),
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024 * 50,
+    shell: options.shell ?? false,
+    env: { ...process.env, ...(options.env ?? {}) },
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail = [result.stderr.trim(), result.stdout.trim()].filter(Boolean).join(" ");
+    throw new Error(`${basename(command)} batch exited ${result.status}: ${detail}`);
+  }
+  const outputs = JSON.parse(result.stdout);
+  const map = new Map();
+  for (let i = 0; i < sources.length; i++) {
+    map.set(sources[i], outputs[i].error ? new Error(outputs[i].error) : outputs[i].code);
+  }
+  return map;
+}
+
 function collectShapes(snippet) {
   const groups = new Map();
   const shapes = [];
@@ -288,6 +323,28 @@ function collectShapes(snippet) {
 }
 
 function withTerserVariants(name, runRaw, options = {}) {
+  const terserCompressCache = batchRunner(() => {
+    const rawOutputs = allSources.map((s) => { try { return runRaw(s); } catch { return null; } });
+    const valid = rawOutputs.filter((r) => r !== null);
+    if (valid.length === 0) return new Map();
+    const batchResult = runTerserBatch(valid, false);
+    const map = new Map();
+    for (let i = 0; i < allSources.length; i++) {
+      if (rawOutputs[i] !== null) map.set(allSources[i], batchResult.get(rawOutputs[i]));
+    }
+    return map;
+  });
+  const terserMangleCache = batchRunner(() => {
+    const rawOutputs = allSources.map((s) => { try { return runRaw(s); } catch { return null; } });
+    const valid = rawOutputs.filter((r) => r !== null);
+    if (valid.length === 0) return new Map();
+    const batchResult = runTerserBatch(valid, true);
+    const map = new Map();
+    for (let i = 0; i < allSources.length; i++) {
+      if (rawOutputs[i] !== null) map.set(allSources[i], batchResult.get(rawOutputs[i]));
+    }
+    return map;
+  });
   const variants = [
     {
       name,
@@ -295,11 +352,11 @@ function withTerserVariants(name, runRaw, options = {}) {
     },
     {
       name: `${name}-terser-compress`,
-      run: (source) => runTerser(runRaw(source)),
+      run: terserCompressCache,
     },
     {
       name: `${name}-terser-compress-mangle`,
-      run: (source) => runTerserMangle(runRaw(source)),
+      run: terserMangleCache,
     },
   ];
   if (options.includeRaw === false) {
@@ -356,7 +413,7 @@ function runShape(snippet, shape) {
   };
 }
 
-function runBabel(source, profile, mode) {
+function runBabelBatch(sources, profile, mode) {
   const [asyncName, asyncVersion] = profile.asyncPlugin;
   const [regeneratorName, regeneratorVersion] = profile.regeneratorPlugin;
   const packages = [`@babel/core@${profile.core}`, `${asyncName}@${asyncVersion}`];
@@ -364,7 +421,7 @@ function runBabel(source, profile, mode) {
     packages.push(`${regeneratorName}@${regeneratorVersion}`);
   }
   const toolDir = ensureNodeTool(`babel-${profile.core}-${mode}`, packages);
-  const helper = join(toolDir, "babel-transform.mjs");
+  const helper = join(toolDir, "babel-batch.mjs");
   writeFileSync(
     helper,
     `
@@ -374,165 +431,155 @@ const babelModule = await import("@babel/core");
 const asyncModule = await import(${JSON.stringify(asyncName)});
 const babel = babelModule.default ?? babelModule;
 const asyncToGenerator = asyncModule.default ?? asyncModule;
-const source = fs.readFileSync(0, "utf8");
 const mode = process.env.MATRIX_BABEL_MODE;
 const plugins = [asyncToGenerator];
 if (mode === "regenerator") {
   const regeneratorModule = await import(${JSON.stringify(regeneratorName)});
   plugins.push(regeneratorModule.default ?? regeneratorModule);
 }
-const result = babel.transformSync(source, {
-  filename: "input.js",
-  babelrc: false,
-  configFile: false,
-  comments: false,
-  compact: false,
-  plugins,
+const sources = JSON.parse(fs.readFileSync(0, "utf8"));
+const results = sources.map(source => {
+  try {
+    const result = babel.transformSync(source, {
+      filename: "input.js", babelrc: false, configFile: false, comments: false, compact: false, plugins,
+    });
+    return { code: result.code };
+  } catch (e) { return { error: e.message }; }
 });
-process.stdout.write(result.code + "\\n");
+process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runChecked("node", [helper], {
-    input: source,
+  return runBatchHelper("node", [helper], sources, {
     cwd: toolDir,
     env: { MATRIX_BABEL_MODE: mode },
   });
 }
 
-function runBabelPresetEnvIe(source) {
+function runBabelPresetEnvIeBatch(sources) {
   const toolDir = ensureNodeTool("babel-7.29-preset-env-ie11", [
     "@babel/core@7.29.7",
     "@babel/preset-env@7.29.7",
   ]);
-  const helper = join(toolDir, "babel-preset-env-transform.mjs");
+  const helper = join(toolDir, "babel-preset-env-batch.mjs");
   writeFileSync(
     helper,
     `
 import fs from "node:fs";
-
 const babelModule = await import("@babel/core");
 const presetEnvModule = await import("@babel/preset-env");
 const babel = babelModule.default ?? babelModule;
 const presetEnv = presetEnvModule.default ?? presetEnvModule;
-const source = fs.readFileSync(0, "utf8");
-const result = babel.transformSync(source, {
-  filename: "input.js",
-  babelrc: false,
-  configFile: false,
-  comments: false,
-  compact: false,
-  presets: [[presetEnv, { targets: { ie: "11" } }]],
+const sources = JSON.parse(fs.readFileSync(0, "utf8"));
+const results = sources.map(source => {
+  try {
+    const result = babel.transformSync(source, {
+      filename: "input.js", babelrc: false, configFile: false, comments: false, compact: false,
+      presets: [[presetEnv, { targets: { ie: "11" } }]],
+    });
+    return { code: result.code };
+  } catch (e) { return { error: e.message }; }
 });
-process.stdout.write(result.code + "\\n");
+process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runChecked("node", [helper], { input: source, cwd: toolDir });
+  return runBatchHelper("node", [helper], sources, { cwd: toolDir });
 }
 
-function runTsc(source) {
+function runTscBatch(sources) {
   const toolDir = ensureNodeTool("typescript", ["typescript@5"]);
-  const helper = join(toolDir, "tsc-transform.cjs");
+  const helper = join(toolDir, "tsc-batch.cjs");
   writeFileSync(
     helper,
     `
 const fs = require("node:fs");
 const ts = require("typescript");
-const source = fs.readFileSync(0, "utf8");
-const result = ts.transpileModule(source, {
-  compilerOptions: {
-    target: ts.ScriptTarget.ES5,
-    module: ts.ModuleKind.ESNext,
-  },
+const sources = JSON.parse(fs.readFileSync(0, "utf8"));
+const results = sources.map(source => {
+  try {
+    const result = ts.transpileModule(source, {
+      compilerOptions: { target: ts.ScriptTarget.ES5, module: ts.ModuleKind.ESNext },
+    });
+    return { code: result.outputText };
+  } catch (e) { return { error: e.message }; }
 });
-process.stdout.write(result.outputText);
+process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runChecked("node", [helper], { input: source, cwd: toolDir });
+  return runBatchHelper("node", [helper], sources, { cwd: toolDir });
 }
 
-function runSwc(source) {
+function runSwcBatch(sources) {
   const toolDir = ensureNodeTool("swc", ["@swc/core@1"]);
-  const helper = join(toolDir, "swc-transform.cjs");
+  const helper = join(toolDir, "swc-batch.cjs");
   writeFileSync(
     helper,
     `
 const fs = require("node:fs");
 const swc = require("@swc/core");
-const source = fs.readFileSync(0, "utf8");
-const result = swc.transformSync(source, {
-  filename: "input.js",
-  jsc: {
-    target: "es5",
-    parser: { syntax: "ecmascript" },
-  },
-  module: { type: "es6" },
+const sources = JSON.parse(fs.readFileSync(0, "utf8"));
+const results = sources.map(source => {
+  try {
+    const result = swc.transformSync(source, {
+      filename: "input.js",
+      jsc: { target: "es5", parser: { syntax: "ecmascript" } },
+      module: { type: "es6" },
+    });
+    return { code: result.code };
+  } catch (e) { return { error: e.message }; }
 });
-process.stdout.write(result.code);
+process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runChecked("node", [helper], { input: source, cwd: toolDir });
+  return runBatchHelper("node", [helper], sources, { cwd: toolDir });
 }
 
-function runEsbuild(source) {
+function runEsbuildBatch(sources) {
   const toolDir = ensureNodeTool("esbuild-0.28", ["esbuild@0.28.0"]);
-  const helper = join(toolDir, "esbuild-transform.cjs");
+  const helper = join(toolDir, "esbuild-batch.cjs");
   writeFileSync(
     helper,
     `
 const fs = require("node:fs");
 const esbuild = require("esbuild");
-const source = fs.readFileSync(0, "utf8");
-const result = esbuild.transformSync(source, {
-  loader: "js",
-  target: "es2015",
-  format: "esm",
+const sources = JSON.parse(fs.readFileSync(0, "utf8"));
+const results = sources.map(source => {
+  try {
+    const result = esbuild.transformSync(source, { loader: "js", target: "es2015", format: "esm" });
+    return { code: result.code };
+  } catch (e) { return { error: e.message }; }
 });
-process.stdout.write(result.code);
+process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runChecked("node", [helper], { input: source, cwd: toolDir });
+  return runBatchHelper("node", [helper], sources, { cwd: toolDir });
 }
 
-function runTerser(source) {
+function runTerserBatch(sources, mangle) {
   const toolDir = ensureNodeTool("terser", ["terser@5"]);
-  const helper = join(toolDir, "terser-transform.mjs");
+  const suffix = mangle ? "mangle-batch" : "batch";
+  const helper = join(toolDir, `terser-${suffix}.mjs`);
   writeFileSync(
     helper,
     `
 import fs from "node:fs";
 import { minify } from "terser";
-const source = fs.readFileSync(0, "utf8");
-const result = await minify(source, {
-  module: true,
-  compress: { defaults: true, unused: false },
-  mangle: false,
-  format: { comments: false },
-});
-process.stdout.write(result.code + "\\n");
-`,
-  );
-  return runChecked("node", [helper], { input: source, cwd: toolDir });
+const sources = JSON.parse(fs.readFileSync(0, "utf8"));
+const results = [];
+for (const source of sources) {
+  try {
+    const result = await minify(source, {
+      module: true,
+      compress: { defaults: true, unused: false },
+      mangle: ${mangle},
+      format: { comments: false },
+    });
+    results.push({ code: result.code });
+  } catch (e) { results.push({ error: e.message }); }
 }
-
-function runTerserMangle(source) {
-  const toolDir = ensureNodeTool("terser", ["terser@5"]);
-  const helper = join(toolDir, "terser-mangle-transform.mjs");
-  writeFileSync(
-    helper,
-    `
-import fs from "node:fs";
-import { minify } from "terser";
-const source = fs.readFileSync(0, "utf8");
-const result = await minify(source, {
-  module: true,
-  compress: { defaults: true, unused: false },
-  mangle: true,
-  format: { comments: false },
-});
-process.stdout.write(result.code + "\\n");
+process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runChecked("node", [helper], { input: source, cwd: toolDir });
+  return runBatchHelper("node", [helper], sources, { cwd: toolDir });
 }
 
 function runWakaru(source, name) {
