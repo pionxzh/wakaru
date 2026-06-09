@@ -610,7 +610,7 @@ fn analyze_module_items_in_order(
                 analyze_stmt_in_order(stmt, var_ids, function_refs, declared_so_far, must_stay);
             }
             ModuleItem::ModuleDecl(decl) => {
-                use swc_core::ecma::ast::{ExportDefaultExpr, ModuleDecl};
+                use swc_core::ecma::ast::{ExportDecl, ExportDefaultExpr, ModuleDecl};
                 if let ModuleDecl::ExportDefaultExpr(ExportDefaultExpr { expr, .. }) = decl {
                     let mut refs = collect_refs_in_expr(expr, var_ids);
                     refs.extend(collect_called_hoisted_function_refs(expr, function_refs));
@@ -622,6 +622,18 @@ fn analyze_module_items_in_order(
                 if let ModuleDecl::ExportDefaultDecl(default_decl) = decl {
                     mark_refs_before_decl(
                         collect_refs_in_default_decl(&default_decl.decl, var_ids),
+                        declared_so_far,
+                        must_stay,
+                    );
+                }
+                if let ModuleDecl::ExportDecl(ExportDecl {
+                    decl: inner_decl, ..
+                }) = decl
+                {
+                    analyze_stmt_in_order(
+                        &Stmt::Decl(inner_decl.clone()),
+                        var_ids,
+                        function_refs,
                         declared_so_far,
                         must_stay,
                     );

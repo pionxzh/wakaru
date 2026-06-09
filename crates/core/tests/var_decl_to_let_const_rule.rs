@@ -815,6 +815,53 @@ var o = r;
 }
 
 #[test]
+fn export_named_function_body_before_var_declaration_stays_var() {
+    let input = r#"
+export function H(B) {
+    const cache = B.cache || ti;
+    const serializer = B.serializer || tn;
+    return { cache, serializer };
+}
+var tn = function() {
+    return JSON.stringify(arguments);
+};
+var ti = {
+    create() { return {}; }
+};
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn export_class_before_var_declaration_stays_var() {
+    let input = r#"
+export class Foo {
+    constructor() {
+        this.bar = bar;
+    }
+}
+var bar = 42;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn export_var_before_other_var_stays_var() {
+    let input = r#"
+export var x = y + 1;
+var y = 10;
+"#;
+    let expected = r#"
+export const x = y + 1;
+var y = 10;
+"#;
+    let output = apply_rule(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn export_default_function_body_before_var_declaration_stays_var() {
     // Keep the later var hoisted when an earlier default-exported function
     // closes over it.
