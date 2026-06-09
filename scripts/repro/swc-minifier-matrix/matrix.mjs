@@ -1,22 +1,11 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import {
+  runMatrix, batchRunner, ensureNodeTool,
+} from "../lib/runner.mjs";
+import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
-
-const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
-const tmpRoot = mkdtempSync(join(tmpdir(), "wakaru-swc-minifier-"));
-const toolRoot = join(repoRoot, "target", "repro-tools", "swc-minifier");
-const showDetails = process.argv.includes("--details");
-const rewriteLevel = readOption("--level", "standard");
-const failures = [];
-
-if (!["minimal", "standard", "aggressive"].includes(rewriteLevel)) {
-  throw new Error(`unsupported --level ${rewriteLevel}`);
-}
 
 const profiles = [
   {
@@ -91,8 +80,6 @@ function run() {
 console.log(run());
 `,
     expected: ["side();", "return value;"],
-    // "all" inlines the function into console.log((side(),value)), erasing the
-    // return position this snippet is designed to test.
     skipProfiles: ["all"],
   },
   {
@@ -290,357 +277,90 @@ export const view = UserCard(props);
   },
 ];
 
-try {
-  console.log("# SWC minifier reproduction matrix");
-  console.log(`# wakaru: ${wakaruDescription()}`);
-  console.log(`# level: ${rewriteLevel}`);
-  console.log("");
-  console.log("| bucket | snippet | shape | tools | recovered | notes |");
-  console.log("|---|---|---:|---|---:|---|");
-
-  for (const snippet of snippets) {
-    const shapes = collectShapes(snippet);
-    for (const shape of shapes) {
-      const result = runShape(snippet, shape);
-      if (!result.recovered && result.failure) {
-        failures.push(result.failure);
-      }
-      console.log(
-        `| ${snippet.bucket} | ${snippet.name} | ${shape.label} | ${escapeCell(
-          shape.tools.join(", "),
-        )} | ${escapeCell(result.status)} | ${escapeCell(result.notes)} |`,
-      );
-    }
-  }
-
-  if (showDetails && failures.length > 0) {
-    console.log("");
-    console.log("## Miss Details");
-    for (const failure of failures) {
-      console.log("");
-      console.log(`### ${failure.bucket} / ${failure.snippet} / ${failure.shape}`);
-      console.log("");
-      console.log(`Tools: ${failure.tools.join(", ")}`);
-      console.log("");
-      console.log("SWC options:");
-      console.log("");
-      console.log("```json");
-      console.log(JSON.stringify(failure.options, null, 2));
-      console.log("```");
-      console.log("");
-      console.log("Original:");
-      console.log("");
-      console.log("```js");
-      console.log(failure.source.trim());
-      console.log("```");
-      console.log("");
-      console.log("Lowered:");
-      console.log("");
-      console.log("```js");
-      console.log(failure.lowered.trim());
-      console.log("```");
-      console.log("");
-      console.log("Wakaru:");
-      console.log("");
-      console.log("```js");
-      console.log(failure.recoveredCode.trim());
-      console.log("```");
-      console.log("");
-      console.log(`Missing expectations: ${failure.missing.join(", ")}`);
-    }
-  }
-
-  if (failures.some((failure) => failure.executionError)) {
-    process.exitCode = 1;
-  }
-} finally {
-  rmSync(tmpRoot, { recursive: true, force: true });
-}
-
-function collectShapes(snippet) {
-  const groups = new Map();
-  const shapes = [];
-
-  for (const profile of profilesFor(snippet)) {
-    let lowered;
-    try {
-      lowered = runSwcMinify(snippet.source, profile.options);
-    } catch (error) {
-      shapes.push({
-        label: `error ${shapes.length + 1}`,
-        tools: [profile.name],
-        profile,
-        transformError: error,
-      });
-      continue;
-    }
-
-    const key = shapeKey(lowered);
-    if (groups.has(key)) {
-      groups.get(key).tools.push(profile.name);
-      continue;
-    }
-
-    const shape = {
-      label: `shape ${groups.size + 1}`,
-      tools: [profile.name],
-      profile,
-      lowered,
-    };
-    groups.set(key, shape);
-    shapes.push(shape);
-  }
-
-  return shapes;
-}
-
-function profilesFor(snippet) {
-  const skip = new Set(snippet.skipProfiles ?? []);
-  const bucketProfiles = profiles.filter((profile) => profile.name === snippet.bucket);
-  const allProfile = profiles.find((profile) => profile.name === "all");
-  return [...bucketProfiles, allProfile].filter(Boolean).filter((p) => !skip.has(p.name));
-}
-
-function runShape(snippet, shape) {
-  if (shape.transformError) {
-    return {
-      recovered: false,
-      status: "transform-error",
-      notes: shape.transformError.message,
-      failure: {
-        bucket: snippet.bucket,
-        snippet: snippet.name,
-        shape: shape.label,
-        tools: shape.tools,
-        options: shape.profile.options,
-        source: snippet.source,
-        lowered: "",
-        recoveredCode: "",
-        missing: ["transform failed"],
-        informational: false,
-        executionError: true,
-      },
-    };
-  }
-
-  let recoveredCode;
-  try {
-    recoveredCode = runWakaru(shape.lowered, `${snippet.name}-${shape.label.replaceAll(" ", "-")}.js`);
-  } catch (error) {
-    return {
-      recovered: false,
-      status: "wakaru-error",
-      notes: error.message,
-      failure: {
-        bucket: snippet.bucket,
-        snippet: snippet.name,
-        shape: shape.label,
-        tools: shape.tools,
-        options: shape.profile.options,
-        source: snippet.source,
-        lowered: shape.lowered,
-        recoveredCode: "",
-        missing: ["wakaru execution failed"],
-        informational: Boolean(snippet.informational),
-        executionError: true,
-      },
-    };
-  }
-
-  const missing = bestMissingExpectation(snippet, recoveredCode);
-  if (missing.length === 0) {
-    return {
-      recovered: true,
-      status: snippet.informational ? "info-ok" : "yes",
-      notes: summarize(shape.lowered),
-    };
-  }
-
-  return {
-    recovered: false,
-    status: snippet.informational ? "info-miss" : "no",
-    notes: `missing ${missing.map((token) => JSON.stringify(token)).join(", ")}`,
-    failure: {
-      bucket: snippet.bucket,
-      snippet: snippet.name,
-      shape: shape.label,
-      tools: shape.tools,
-      options: shape.profile.options,
-      source: snippet.source,
-      lowered: shape.lowered,
-      recoveredCode,
-      missing,
-      informational: Boolean(snippet.informational),
-    },
-  };
-}
-
-function bestMissingExpectation(snippet, recoveredCode) {
-  const groups = snippet.expectedAny ?? [snippet.expected];
-  return groups
-    .map((group) => group.filter((token) => !recoveredCode.includes(token)))
-    .sort((left, right) => left.length - right.length)[0];
-}
-
-function runSwcMinify(source, options) {
+// SWC minifier batch
+function swcMinifyBatch(sources, options) {
   const toolDir = ensureNodeTool("swc", ["@swc/core@1"]);
-  const helper = join(toolDir, "swc-minify.cjs");
+  const helper = join(toolDir, "swc-minify-batch.cjs");
   writeFileSync(
     helper,
     `
 const fs = require("node:fs");
 const swc = require("@swc/core");
-const source = fs.readFileSync(0, "utf8");
 const options = JSON.parse(process.env.SWC_MINIFY_OPTIONS);
-const result = swc.minifySync(source, {
-  ...options,
-  format: {
-    ascii_only: true,
-    comments: false,
-  },
-  module: true,
+const sources = JSON.parse(fs.readFileSync(0, "utf8"));
+const results = sources.map(source => {
+  try {
+    return { code: swc.minifySync(source, {
+      ...options,
+      format: { ascii_only: true, comments: false },
+      module: true,
+    }).code };
+  } catch (e) { return { error: e.message }; }
 });
-process.stdout.write(result.code + "\\n");
+process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runChecked("node", [helper], {
-    input: source,
+  const result = spawnSync("node", [helper], {
     cwd: toolDir,
-    env: { SWC_MINIFY_OPTIONS: JSON.stringify(options) },
-  });
-}
-
-function runWakaru(source, name) {
-  const input = join(tmpRoot, name);
-  writeFileSync(input, source);
-
-  const configured = process.env.WAKARU;
-  if (configured) {
-    return runChecked(configured, ["--level", rewriteLevel, input]);
-  }
-
-  const debugBinary = join(
-    repoRoot,
-    "target",
-    "debug",
-    process.platform === "win32" ? "wakaru.exe" : "wakaru",
-  );
-  if (existsSync(debugBinary)) {
-    return runChecked(debugBinary, ["--level", rewriteLevel, input]);
-  }
-
-  return runChecked("cargo", ["run", "-q", "-p", "wakaru-cli", "--", "--level", rewriteLevel, input], {
-    cwd: repoRoot,
-  });
-}
-
-function wakaruDescription() {
-  const configured = process.env.WAKARU;
-  if (configured) {
-    return configured;
-  }
-  const debugBinary = join(
-    repoRoot,
-    "target",
-    "debug",
-    process.platform === "win32" ? "wakaru.exe" : "wakaru",
-  );
-  if (existsSync(debugBinary)) {
-    return debugBinary;
-  }
-  return "cargo run -q -p wakaru-cli --";
-}
-
-function ensureNodeTool(name, packages) {
-  const toolDir = join(toolRoot, name);
-  const packageJson = join(toolDir, "package.json");
-  const nodeModules = join(toolDir, "node_modules");
-
-  mkdirSync(toolDir, { recursive: true });
-
-  const expected = new Set(packages.map(packageName));
-  const installed = packages.every((pkg) => existsSync(join(nodeModules, packageName(pkg))));
-  if (existsSync(packageJson) && installed) {
-    return toolDir;
-  }
-
-  rmSync(nodeModules, { recursive: true, force: true });
-  rmSync(join(toolDir, "package-lock.json"), { force: true });
-  writeFileSync(packageJson, JSON.stringify({ private: true, type: "commonjs" }, null, 2));
-  runCommandScript("npm", ["install", "--silent", "--no-audit", "--no-fund", ...packages], {
-    cwd: toolDir,
-  });
-
-  for (const pkg of expected) {
-    if (!existsSync(join(nodeModules, pkg))) {
-      throw new Error(`failed to install ${pkg}`);
-    }
-  }
-
-  return toolDir;
-}
-
-function packageName(spec) {
-  if (spec.startsWith("@")) {
-    const versionIndex = spec.indexOf("@", 1);
-    return versionIndex === -1 ? spec : spec.slice(0, versionIndex);
-  }
-  const versionIndex = spec.indexOf("@");
-  return versionIndex === -1 ? spec : spec.slice(0, versionIndex);
-}
-
-function runCommandScript(command, args, options = {}) {
-  if (process.platform !== "win32") {
-    return runChecked(command, args, options);
-  }
-  return runChecked("cmd.exe", ["/d", "/s", "/c", `${command}.cmd`, ...args], options);
-}
-
-function runChecked(command, args, options = {}) {
-  const result = spawnSync(command, args, {
-    cwd: options.cwd ?? repoRoot,
-    input: options.input,
+    input: JSON.stringify(sources),
     encoding: "utf8",
-    maxBuffer: 20 * 1024 * 1024,
-    env: {
-      ...process.env,
-      ...(options.env ?? {}),
-    },
+    maxBuffer: 1024 * 1024 * 50,
+    env: { ...process.env, SWC_MINIFY_OPTIONS: JSON.stringify(options) },
   });
-
-  if (result.error) {
-    throw result.error;
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`swc batch exited ${result.status}: ${result.stderr}`);
+  const outputs = JSON.parse(result.stdout);
+  const map = new Map();
+  for (let i = 0; i < sources.length; i++) {
+    map.set(sources[i], outputs[i].error ? new Error(outputs[i].error) : outputs[i].code);
   }
+  return map;
+}
 
-  if (result.status !== 0) {
-    const details = [result.stderr, result.stdout].filter(Boolean).join("\n").trim();
-    throw new Error(`${command} ${args.join(" ")} failed${details ? `\n${details}` : ""}`);
+const allSources = snippets.map((s) => s.source);
+
+// Build per-profile batch runners (lazily cached)
+const profileRunners = new Map();
+for (const profile of profiles) {
+  profileRunners.set(profile.name, batchRunner(() => swcMinifyBatch(allSources, profile.options)));
+}
+
+function profilesFor(snippet) {
+  const skip = new Set(snippet.skipProfiles ?? []);
+  const bucketProfiles = profiles.filter((p) => p.name === snippet.bucket);
+  const allProfile = profiles.find((p) => p.name === "all");
+  return [...bucketProfiles, allProfile].filter(Boolean).filter((p) => !skip.has(p.name));
+}
+
+// Assign per-snippet transformers via extraTransformers
+for (const snippet of snippets) {
+  snippet.extraTransformers = profilesFor(snippet).map((profile) => ({
+    name: profile.name,
+    run: profileRunners.get(profile.name),
+  }));
+}
+
+// Custom expectedNeedles supporting expectedAny.
+// The runner checks that ALL returned needles are present. For expectedAny, the original
+// semantics is "pass if ANY group is fully present". We approximate this by returning
+// the intersection of all groups (needles common to every alternative).
+function expectedNeedles(snippet) {
+  if (snippet.expectedAny) {
+    const first = new Set(snippet.expectedAny[0]);
+    for (let i = 1; i < snippet.expectedAny.length; i++) {
+      const group = new Set(snippet.expectedAny[i]);
+      for (const needle of first) {
+        if (!group.has(needle)) first.delete(needle);
+      }
+    }
+    return [...first];
   }
-
-  return result.stdout;
+  return Array.isArray(snippet.expected) ? snippet.expected : [snippet.expected];
 }
 
-function summarize(code) {
-  const singleLine = code.replaceAll("\r\n", "\n").replace(/\s+/g, " ").trim();
-  return singleLine.length <= 120 ? singleLine : `${singleLine.slice(0, 117)}...`;
-}
-
-function escapeCell(value) {
-  return String(value).replaceAll("|", "\\|").replaceAll("\n", "<br>");
-}
-
-function shapeKey(code) {
-  return code.replaceAll("\r\n", "\n").trim();
-}
-
-function readOption(name, fallback) {
-  const index = process.argv.indexOf(name);
-  if (index === -1) {
-    return fallback;
-  }
-  const value = process.argv[index + 1];
-  if (!value || value.startsWith("--")) {
-    throw new Error(`${name} requires a value`);
-  }
-  return value;
-}
+runMatrix({
+  name: "swc-minifier",
+  snippets,
+  transformers: [],
+  expectedNeedles,
+});
