@@ -77,10 +77,6 @@ impl RuleRunContext<'_> {
         *self.local_helpers.borrow_mut() = Some(Rc::clone(&local_helpers));
         local_helpers
     }
-
-    fn invalidate_local_helpers(&self) {
-        *self.local_helpers.borrow_mut() = None;
-    }
 }
 
 fn always_enabled(_: RuleRunContext<'_>) -> bool {
@@ -164,7 +160,6 @@ runner!(run_un_bracket_notation, UnBracketNotation);
 fn run_un_interop_require_default(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
     UnInteropRequireDefault::run_with_helpers(module, local_helpers.as_ref());
-    ctx.invalidate_local_helpers();
 }
 
 fn run_un_interop_require_wildcard(module: &mut Module, ctx: RuleRunContext<'_>) {
@@ -184,7 +179,6 @@ fn run_un_object_spread(module: &mut Module, ctx: RuleRunContext<'_>) {
 
 fn run_un_object_spread_late(module: &mut Module, ctx: RuleRunContext<'_>) {
     run_un_object_spread(module, ctx.clone());
-    ctx.invalidate_local_helpers();
 }
 
 fn run_un_object_rest(module: &mut Module, ctx: RuleRunContext<'_>) {
@@ -199,7 +193,6 @@ fn run_un_object_rest(module: &mut Module, ctx: RuleRunContext<'_>) {
 
 fn run_un_object_rest_late(module: &mut Module, ctx: RuleRunContext<'_>) {
     run_un_object_rest(module, ctx.clone());
-    ctx.invalidate_local_helpers();
 }
 
 fn run_un_sliced_to_array(module: &mut Module, ctx: RuleRunContext<'_>) {
@@ -280,10 +273,7 @@ runner!(run_un_optional_chaining, |ctx| UnOptionalChaining::new(
     ctx.rewrite_level
 ));
 runner!(run_un_iife, |ctx| UnIife::new(ctx.rewrite_level));
-fn run_un_conditionals(module: &mut Module, ctx: RuleRunContext<'_>) {
-    module.visit_mut_with(&mut UnConditionals);
-    ctx.invalidate_local_helpers();
-}
+runner!(run_un_conditionals, UnConditionals);
 runner!(run_un_parameters, |ctx| UnParameters::new(
     ctx.unresolved_mark,
     ctx.rewrite_level
@@ -320,7 +310,6 @@ fn run_un_regenerator(module: &mut Module, ctx: RuleRunContext<'_>) {
 fn run_un_async_await(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
     UnAsyncAwait::run_with_helpers(module, ctx.unresolved_mark, local_helpers.as_ref());
-    ctx.invalidate_local_helpers();
 }
 runner!(run_un_then_catch, |ctx| UnThenCatch::new(
     ctx.unresolved_mark
@@ -720,11 +709,11 @@ mod tests {
                 RulePipelineOptions::between("UnInteropRequireDefault", "UnRegenerator"),
             );
 
-            // The context is reused across non-mutating helper rules, but is
-            // intentionally rebuilt after rules that can remove helpers or
-            // rewrite helper calls. The late object spread/rest passes add two
-            // more invalidation points to the original helper span.
-            assert_eq!(collect_transpiler_helpers_call_count(), 5);
+            // The context is built once on first access and reused across all
+            // helper rules in the range. Consumed helpers leave stale cache
+            // entries, but those are harmless — later rules filter by their own
+            // kind and never match a removed binding.
+            assert_eq!(collect_transpiler_helpers_call_count(), 1);
         });
     }
 }
