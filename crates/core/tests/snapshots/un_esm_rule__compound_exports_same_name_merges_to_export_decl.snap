@@ -2,5 +2,5 @@
 source: crates/core/tests/un_esm_rule.rs
 expression: output
 ---
-export var SessionContext = React.createContext(undefined);
+export const SessionContext = React.createContext(undefined);
 use(SessionContext);
