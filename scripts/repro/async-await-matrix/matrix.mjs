@@ -115,7 +115,6 @@ const snippets = [
     source:
       "class Client {\n  async fetchInternal(request, init) {\n    return await send(request, init);\n  }\n}\nuse(Client);\n",
     expected: ["fetchInternal", "async", "await send"],
-    extraTransformers: withTerserVariants("babel-7.29-preset-env-ie11", runBabelPresetEnvIe),
   },
   {
     name: "generator-basic",
@@ -147,6 +146,7 @@ const snippets = [
       "finally",
       "close_stream(stream)",
     ],
+    rejected: [".finish(", ".f("],
   },
   {
     name: "generator-try-finally-delegate",
@@ -197,6 +197,7 @@ const transformers = [
       withTerserVariants(`${profile.name}-${mode}`, (source) => runBabel(source, profile, mode)),
     ),
   ),
+  ...withTerserVariants("babel-7.29-preset-env-ie11", runBabelPresetEnvIe),
   ...withTerserVariants("tsc-es5", runTsc),
   ...withTerserVariants("swc-es5", runSwc),
   ...withTerserVariants("esbuild-es2015", runEsbuild),
@@ -320,8 +321,24 @@ function runShape(snippet, shape) {
   }
 
   const missing = snippet.expected.filter((needle) => !recovered.includes(needle));
-  if (missing.length === 0) {
+  const leaked = (snippet.rejected ?? []).filter((needle) => recovered.includes(needle));
+  if (missing.length === 0 && leaked.length === 0) {
     return { recovered: true, notes: "expected syntax present" };
+  }
+  if (missing.length === 0 && leaked.length > 0) {
+    const loweredShape = summarize(shape.lowered);
+    const recoveredShape = summarize(recovered);
+    return {
+      recovered: false,
+      notes: `leaked ${leaked.join(", ")}; lowered: ${loweredShape}; wakaru: ${recoveredShape}`,
+      failure: {
+        snippet: snippet.name,
+        shape: shape.label,
+        tools: shape.tools,
+        lowered: shape.lowered,
+        recovered,
+      },
+    };
   }
 
   const loweredShape = summarize(shape.lowered);
