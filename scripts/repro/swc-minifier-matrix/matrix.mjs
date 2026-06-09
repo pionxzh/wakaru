@@ -91,6 +91,9 @@ function run() {
 console.log(run());
 `,
     expected: ["side();", "return value;"],
+    // "all" inlines the function into console.log((side(),value)), erasing the
+    // return position this snippet is designed to test.
+    skipProfiles: ["all"],
   },
   {
     name: "sequence-before-for",
@@ -392,9 +395,10 @@ function collectShapes(snippet) {
 }
 
 function profilesFor(snippet) {
+  const skip = new Set(snippet.skipProfiles ?? []);
   const bucketProfiles = profiles.filter((profile) => profile.name === snippet.bucket);
   const allProfile = profiles.find((profile) => profile.name === "all");
-  return [...bucketProfiles, allProfile].filter(Boolean);
+  return [...bucketProfiles, allProfile].filter(Boolean).filter((p) => !skip.has(p.name));
 }
 
 function runShape(snippet, shape) {
