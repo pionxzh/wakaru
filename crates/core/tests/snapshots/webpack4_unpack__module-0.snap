@@ -169,7 +169,8 @@ export function t(next, t = P, name = "", r) {
 }
 function R(e, t, n = "") {
     if (typeof window === "undefined") {
-        console.log(`redux-saga ${e}: ${t}\n${n && n.stack || n}`);
+        console.log(`redux-saga ${e}: ${t}
+${n && n.stack || n}`);
     } else {
         console[e](t, n);
     }
@@ -180,7 +181,11 @@ export function n(e, t) {
     };
 }
 export const z = (e, t)=>`${e} has been deprecated in favor of ${t}, please update your code`;
-export const p = (e)=>new Error(`\n  redux-saga: Error checking hooks detected an inconsistent state. This is likely a bug\n  in redux-saga code and not yours. Thanks for reporting this in the project's github repo.\n  Error: ${e}\n`);
+export const p = (e)=>new Error(`
+  redux-saga: Error checking hooks detected an inconsistent state. This is likely a bug
+  in redux-saga code and not yours. Thanks for reporting this in the project's github repo.
+  Error: ${e}
+`);
 const L = (e, t)=>`${e ? `${e}.` : ""}setContext(props): argument ${t} is not a plain object`;
 export const A = (e)=>(t)=>e(Object.defineProperty(t, s, {
             value: true

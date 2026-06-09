@@ -126,9 +126,7 @@ fn plus_chain_mixed_string_positions() {
     let input = r#"
 var msg = "redux-saga " + level + ": " + text + "\n" + extra;
 "#;
-    let expected = r#"
-var msg = `redux-saga ${level}: ${text}\n${extra}`;
-"#;
+    let expected = "var msg = `redux-saga ${level}: ${text}\n${extra}`;\n";
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }

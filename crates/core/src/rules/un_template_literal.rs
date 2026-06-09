@@ -106,18 +106,15 @@ impl VisitMut for UnTemplateLiteral<'_> {
         if let Some(next) = rewrite_concat_chain(expr) {
             *expr = next;
             expr.visit_mut_children_with(self);
-            return;
-        }
-        if let Some(next) = rewrite_plus_chain(expr, self.level) {
+        } else if let Some(next) = rewrite_plus_chain(expr, self.level) {
             *expr = next;
             expr.visit_mut_children_with(self);
-            return;
+        } else {
+            expr.visit_mut_children_with(self);
         }
         if let Expr::Tpl(tpl) = expr {
             normalize_escaped_newline_template_raw(tpl, self.level);
         }
-
-        expr.visit_mut_children_with(self);
     }
 }
 

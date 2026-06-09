@@ -476,7 +476,8 @@ function ye(e) {
                 } else if (n) {
                     i = ` (created by ${n})`;
                 }
-                n = `\n    in ${r || "Unknown"}${i}`;
+                n = `
+    in ${r || "Unknown"}${i}`;
         }
         t += n;
         e = e.return;
@@ -7194,7 +7195,9 @@ function dl(e, t) {
                         }
                         f = f.return;
                     }while (f !== null)
-                    u = Error(`${me(a.type) || "A React component"} suspended while rendering, but no fallback UI was specified.\n\nAdd a <Suspense fallback=...> component higher in the tree to provide a loading indicator or placeholder to display.${ye(a)}`);
+                    u = Error(`${me(a.type) || "A React component"} suspended while rendering, but no fallback UI was specified.
+
+Add a <Suspense fallback=...> component higher in the tree to provide a loading indicator or placeholder to display.${ye(a)}`);
                 }
                 if (Iu !== Ru) {
                     Iu = Pu;
