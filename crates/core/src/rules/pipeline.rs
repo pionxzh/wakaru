@@ -281,7 +281,13 @@ runner!(run_un_optional_chaining, |ctx| UnOptionalChaining::new(
     ctx.rewrite_level
 ));
 runner!(run_un_iife, |ctx| UnIife::new(ctx.rewrite_level));
-runner!(run_un_conditionals, UnConditionals);
+fn run_un_conditionals(module: &mut Module, ctx: RuleRunContext<'_>) {
+    module.visit_mut_with(&mut UnConditionals);
+    // UnConditionals rewrites ternary helper bodies (e.g. _defineProperty with
+    // _toPropertyKey) into if/else form. This changes helper shapes, so rebuild
+    // the cache so UnClassFields and UnDefineProperty see the expanded bodies.
+    ctx.invalidate_local_helpers();
+}
 runner!(run_un_parameters, |ctx| UnParameters::new(
     ctx.unresolved_mark,
     ctx.rewrite_level
@@ -717,11 +723,11 @@ mod tests {
                 RulePipelineOptions::between("UnInteropRequireDefault", "UnRegenerator"),
             );
 
-            // The context is rebuilt once after UnInteropRequireDefault because
-            // unwrapping default wrappers can expose new runtime-path helpers
-            // (e.g. interopRequireWildcard). All other helper rules reuse the
-            // cache — consumed bindings are harmless stale entries.
-            assert_eq!(collect_transpiler_helpers_call_count(), 2);
+            // The context is rebuilt twice: once after UnInteropRequireDefault
+            // (unwrapping can expose new runtime-path helpers) and once after
+            // UnConditionals (ternary→if/else rewrites change helper body shapes
+            // for UnClassFields/UnDefineProperty).
+            assert_eq!(collect_transpiler_helpers_call_count(), 3);
         });
     }
 }
