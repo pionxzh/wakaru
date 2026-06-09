@@ -123,6 +123,32 @@ const snippets = [
     expected: ["function* read_items(items)", "yield first_item(items)", "yield second_item(items)"],
   },
   {
+    name: "generator-try-catch",
+    source:
+      "function* fetch_items(source) {\n  try {\n    yield start_fetch(source);\n    yield finish_fetch(source);\n  } catch (error) {\n    handle(error);\n  }\n}\n",
+    expected: [
+      "function* fetch_items(source)",
+      "try",
+      "yield start_fetch(source)",
+      "yield finish_fetch(source)",
+      "catch",
+      "handle(error)",
+    ],
+  },
+  {
+    name: "generator-try-finally",
+    source:
+      "function* process_stream(stream) {\n  try {\n    yield open_stream(stream);\n    yield read_stream(stream);\n  } finally {\n    close_stream(stream);\n  }\n}\n",
+    expected: [
+      "function* process_stream(stream)",
+      "try",
+      "yield open_stream(stream)",
+      "yield read_stream(stream)",
+      "finally",
+      "close_stream(stream)",
+    ],
+  },
+  {
     name: "generator-try-finally-delegate",
     source:
       "function* read_all(source) {\n  try {\n    yield start_read(source);\n    yield* read_chunks(source);\n    return yield finish_read(source);\n  } finally {\n    yield close_reader(source);\n  }\n}\n",
