@@ -1,12 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, SourceMap, GLOBALS};
+use swc_core::common::{sync::Lrc, FileName, SourceMap, Spanned, GLOBALS};
 use swc_core::ecma::ast::*;
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::{module_item_declared_names, BundleFormat, UnpackResult, UnpackedModule};
+use super::{
+    module_item_declared_names, spans_byte_ranges, BundleFormat, UnpackResult, UnpackedModule,
+};
 
 const MIN_DECLARATIONS: usize = 10;
 
@@ -1218,6 +1220,11 @@ fn emit_clusters(
             is_entry: cluster.is_entry,
             code,
             filename: filenames[ci].clone(),
+            source_ranges: spans_byte_ranges(
+                &cm,
+                cluster.item_indices.iter().map(|&i| body[i].span()),
+            ),
+            source_input: String::new(),
         });
     }
 

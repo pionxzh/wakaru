@@ -10,15 +10,55 @@ mod wrappers;
 use std::panic::{self, AssertUnwindSafe};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, SourceMap, SyntaxContext, GLOBALS};
+use swc_core::common::{sync::Lrc, FileName, SourceMap, Span, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{Decl, Module, ModuleDecl, ModuleItem, Stmt, VarDecl};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 
+#[derive(Default)]
 pub struct UnpackedModule {
     pub id: String,
     pub is_entry: bool,
     pub code: String,
     pub filename: String,
+    /// Byte ranges in the original input source this module was extracted
+    /// from (provenance). Empty when the extraction site has no real spans
+    /// (fully synthesized modules).
+    pub source_ranges: Vec<(u32, u32)>,
+    /// Input filename the ranges refer to. Unpackers leave this empty; the
+    /// driver fills it in for multi-source unpacks.
+    pub source_input: String,
+}
+
+/// Convert an AST span to a 0-based byte range into the parsed source.
+///
+/// Returns `None` for dummy/synthesized spans and anything that does not
+/// fall inside the span's source file.
+pub(crate) fn span_byte_range(cm: &SourceMap, span: Span) -> Option<(u32, u32)> {
+    if span.lo.0 == 0 || span.hi.0 == 0 || span.lo > span.hi {
+        return None;
+    }
+    let file = cm.lookup_byte_offset(span.lo).sf;
+    let start = span.lo.0.checked_sub(file.start_pos.0)?;
+    let end = span.hi.0.checked_sub(file.start_pos.0)?;
+    (end as usize <= file.src.len()).then_some((start, end))
+}
+
+/// Collect byte ranges for a sequence of spans, sorted and coalesced
+/// (overlapping or touching ranges are merged).
+pub(crate) fn spans_byte_ranges(
+    cm: &SourceMap,
+    spans: impl Iterator<Item = Span>,
+) -> Vec<(u32, u32)> {
+    let mut ranges: Vec<(u32, u32)> = spans.filter_map(|s| span_byte_range(cm, s)).collect();
+    ranges.sort_unstable();
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    for (lo, hi) in ranges {
+        match out.last_mut() {
+            Some(last) if lo <= last.1 => last.1 = last.1.max(hi),
+            _ => out.push((lo, hi)),
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, IsTerminal, Read};
 use std::path::{Path, PathBuf};
@@ -87,6 +87,12 @@ struct Cli {
     /// With --unpack, write raw unpacker output before the decompiler rule pipeline.
     #[arg(long, requires = "unpack")]
     raw: bool,
+
+    /// With --unpack, write a provenance.json in the output directory mapping
+    /// each module file to the byte ranges in the original input it was
+    /// extracted from.
+    #[arg(long, requires = "unpack")]
+    provenance: bool,
 
     /// Source map file (.map) for identifier recovery and import deduplication.
     #[arg(
@@ -283,6 +289,10 @@ fn run_default(cli: Cli) -> Result<()> {
         let check_existing_writes = ensure_output_dir(&out_dir, cli.force)?;
         let out_dir = canonicalize_output_dir(&out_dir)?;
 
+        // Provenance entries from single-source unpacks leave `input` empty;
+        // remember the input name so the provenance file can attribute them.
+        let single_input_name = (inputs.len() == 1).then(|| inputs[0].filename.clone());
+
         let start = Instant::now();
         let output = if inputs.len() == 1 {
             let input = inputs.into_iter().next().expect("checked input length");
@@ -310,6 +320,7 @@ fn run_default(cli: Cli) -> Result<()> {
             .into_iter()
             .collect();
 
+        let provenance = output.provenance;
         let pairs = output.modules;
         let pairs: Vec<(String, String)> = pairs
             .into_par_iter()
@@ -358,6 +369,31 @@ fn run_default(cli: Cli) -> Result<()> {
                     write_file(&map_path, map_json)?;
                 }
             }
+        }
+
+        if cli.provenance {
+            // Map each module to its final on-disk relative path: `resolved`
+            // is parallel to `pairs`, and CLI-side dedup may have renamed.
+            let final_names: HashMap<&str, String> = pairs
+                .iter()
+                .zip(resolved.iter())
+                .map(|((filename, _), (path, _))| {
+                    let relative = path
+                        .strip_prefix(&out_dir)
+                        .unwrap_or(path)
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    (filename.as_str(), relative)
+                })
+                .collect();
+            let json = render_provenance_json(
+                &provenance,
+                &final_names,
+                single_input_name.as_deref().unwrap_or(""),
+            );
+            let provenance_path = out_dir.join("provenance.json");
+            fs::write(&provenance_path, json)
+                .with_context(|| format!("failed to write {}", provenance_path.display()))?;
         }
 
         if cli.json {
@@ -768,6 +804,69 @@ fn ensure_output_dir(path: &PathBuf, force: bool) -> Result<bool> {
             .with_context(|| format!("failed to create output directory {}", path.display()))?;
     }
     Ok(false)
+}
+
+/// Render provenance entries as a JSON document.
+///
+/// `final_names` maps the driver's module filename to the relative path the
+/// CLI actually wrote (CLI-side dedup can rename). `default_input` fills in
+/// entries whose input is empty (single-source unpacks).
+fn render_provenance_json(
+    provenance: &[wakaru_core::ModuleProvenance],
+    final_names: &HashMap<&str, String>,
+    default_input: &str,
+) -> String {
+    let mut entries: Vec<(String, &wakaru_core::ModuleProvenance)> = provenance
+        .iter()
+        .map(|entry| {
+            let name = final_names
+                .get(entry.filename.as_str())
+                .cloned()
+                .unwrap_or_else(|| entry.filename.clone());
+            (name, entry)
+        })
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut json = String::from("{\n  \"modules\": {\n");
+    for (i, (name, entry)) in entries.iter().enumerate() {
+        let input = if entry.input.is_empty() {
+            default_input
+        } else {
+            &entry.input
+        };
+        let ranges = entry
+            .ranges
+            .iter()
+            .map(|(start, end)| format!("[{start},{end}]"))
+            .collect::<Vec<_>>()
+            .join(",");
+        json.push_str(&format!(
+            "    \"{}\": {{\"input\": \"{}\", \"ranges\": [{}]}}{}\n",
+            json_escape(name),
+            json_escape(input),
+            ranges,
+            if i + 1 < entries.len() { "," } else { "" }
+        ));
+    }
+    json.push_str("  }\n}\n");
+    json
+}
+
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn init_profile(

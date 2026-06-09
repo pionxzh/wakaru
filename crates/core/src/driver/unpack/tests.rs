@@ -94,6 +94,7 @@ fn unpack_raw_preserves_unparseable_extracted_modules() {
         is_entry: false,
         code: "const = ;".to_string(),
         filename: "module-1.js".to_string(),
+        ..Default::default()
     }];
     let output = unpack_multi_module(modules, DecompileOptions::default())
         .expect("unparseable extracted modules should be preserved as raw code");
@@ -236,18 +237,21 @@ fn merge_import_cycles_drops_internal_imports_and_retargets_consumers() {
             is_entry: false,
             code: r#"import { b } from "./b.js"; export const a = b + 1;"#.to_string(),
             filename: "a.js".to_string(),
+            ..Default::default()
         },
         UnpackedModule {
             id: "b".to_string(),
             is_entry: false,
             code: r#"import { a } from "./a.js"; export const b = a + 1;"#.to_string(),
             filename: "b.js".to_string(),
+            ..Default::default()
         },
         UnpackedModule {
             id: "c".to_string(),
             is_entry: false,
             code: r#"import { b } from "./b.js"; export const c = b;"#.to_string(),
             filename: "c.js".to_string(),
+            ..Default::default()
         },
     ];
 
@@ -287,18 +291,21 @@ fn merge_import_cycles_does_not_reprint_unrelated_modules() {
             is_entry: false,
             code: r#"import { b } from "./b.js"; export const a = b + 1;"#.to_string(),
             filename: "a.js".to_string(),
+            ..Default::default()
         },
         UnpackedModule {
             id: "b".to_string(),
             is_entry: false,
             code: r#"import { a } from "./a.js"; export const b = a + 1;"#.to_string(),
             filename: "b.js".to_string(),
+            ..Default::default()
         },
         UnpackedModule {
             id: "d".to_string(),
             is_entry: false,
             code: untouched_code.to_string(),
             filename: "d.js".to_string(),
+            ..Default::default()
         },
     ];
 
@@ -324,6 +331,7 @@ fn merge_import_cycles_dedups_external_imports_before_safety_check() {
                 code: r#"import { shared } from "./x.js"; import { b } from "./b.js"; export const a = b + shared;"#
                     .to_string(),
                 filename: "a.js".to_string(),
+                ..Default::default()
             },
             UnpackedModule {
                 id: "b".to_string(),
@@ -331,6 +339,7 @@ fn merge_import_cycles_dedups_external_imports_before_safety_check() {
                 code: r#"import { shared } from "./x.js"; import { a } from "./a.js"; export const b = a + shared;"#
                     .to_string(),
                 filename: "b.js".to_string(),
+                ..Default::default()
             },
         ];
 
@@ -365,12 +374,14 @@ fn merge_import_cycles_dedups_redundant_named_exports() {
             is_entry: false,
             code: r#"import { b } from "./b.js"; export function f() { return b; }"#.to_string(),
             filename: "a.js".to_string(),
+            ..Default::default()
         },
         UnpackedModule {
             id: "b".to_string(),
             is_entry: false,
             code: r#"import { f } from "./a.js"; export const b = 1; export { f };"#.to_string(),
             filename: "b.js".to_string(),
+            ..Default::default()
         },
     ];
 
@@ -449,6 +460,7 @@ fn merge_import_cycles_skips_duplicate_declaration_merges() {
             code: r#"import { b } from "./b.js"; const shared = 1; export const a = b + shared;"#
                 .to_string(),
             filename: "a.js".to_string(),
+            ..Default::default()
         },
         UnpackedModule {
             id: "b".to_string(),
@@ -456,6 +468,7 @@ fn merge_import_cycles_skips_duplicate_declaration_merges() {
             code: r#"import { a } from "./a.js"; const shared = 2; export const b = a + shared;"#
                 .to_string(),
             filename: "b.js".to_string(),
+            ..Default::default()
         },
     ];
 
@@ -492,6 +505,7 @@ fn merge_import_cycles_skips_large_components() {
                         r#"import {{ v{next} }} from "./m{next}.js"; export const v{index} = v{next} + {index};"#
                     ),
                     filename: format!("m{index}.js"),
+                    ..Default::default()
                 }
             })
             .collect();
@@ -517,6 +531,7 @@ fn fast_cycle_preflight_allows_duplicate_var_declarations() {
             code: r#"import { b } from "./b.js"; var shared = 1; export const a = b + shared;"#
                 .to_string(),
             filename: "a.js".to_string(),
+            ..Default::default()
         },
         UnpackedModule {
             id: "b".to_string(),
@@ -524,6 +539,7 @@ fn fast_cycle_preflight_allows_duplicate_var_declarations() {
             code: r#"import { a } from "./a.js"; var shared = 2; export const b = a + shared;"#
                 .to_string(),
             filename: "b.js".to_string(),
+            ..Default::default()
         },
     ];
     let module_by_filename: HashMap<String, &UnpackedModule> = modules

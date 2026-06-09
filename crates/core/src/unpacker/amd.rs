@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, SourceMap, SyntaxContext, DUMMY_SP};
+use swc_core::common::{sync::Lrc, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::*;
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::wrappers::body_looks_like_umd_wrapper;
-use crate::unpacker::{sanitize_relative_path, BundleFormat, UnpackResult, UnpackedModule};
+use crate::unpacker::{
+    sanitize_relative_path, span_byte_range, BundleFormat, UnpackResult, UnpackedModule,
+};
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
 
@@ -16,6 +18,7 @@ struct AmdDefine<'a> {
     deps: Vec<String>,
     factory: &'a Expr,
     is_anonymous: bool,
+    span: Span,
 }
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
@@ -100,6 +103,7 @@ fn parse_define_call(expr: &Expr) -> Option<AmdDefine<'_>> {
         deps,
         factory,
         is_anonymous,
+        span: call.span,
     })
 }
 
@@ -146,6 +150,8 @@ fn emit_define_modules(defines: Vec<AmdDefine<'_>>, cm: Lrc<SourceMap>) -> Optio
             is_entry: index == last_index,
             code: emit_module(module, cm.clone()).ok()?,
             filename,
+            source_ranges: span_byte_range(&cm, define.span).into_iter().collect(),
+            source_input: String::new(),
         });
     }
 
@@ -163,21 +169,23 @@ fn emit_plain_umd_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackRe
                 if factory.is_some() {
                     return None;
                 }
-                factory = Some(umd_factory_arg(expr)?);
+                factory = Some((umd_factory_arg(expr)?, expr.span()));
             }
             ModuleItem::Stmt(Stmt::Empty(_)) => {}
             _ => return None,
         }
     }
-    let factory = factory?;
+    let (factory, wrapper_span) = factory?;
 
     let synthetic = factory_to_module(factory, &[], "module.js", "module", &HashMap::new())?;
     Some(UnpackResult::new(
         vec![UnpackedModule {
             id: "module".to_string(),
             is_entry: true,
-            code: emit_module(synthetic, cm).ok()?,
+            code: emit_module(synthetic, cm.clone()).ok()?,
             filename: "module.js".to_string(),
+            source_ranges: span_byte_range(&cm, wrapper_span).into_iter().collect(),
+            source_input: String::new(),
         }],
         BundleFormat::Amd,
     ))

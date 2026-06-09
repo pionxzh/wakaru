@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, SourceMap, DUMMY_SP};
+use swc_core::common::{sync::Lrc, SourceMap, Span, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayLit, BindingIdent, BlockStmt, BlockStmtOrExpr, CallExpr, Callee, Decl, EsVersion,
     ExportDecl, ExportDefaultExpr, ExportNamedSpecifier, ExportSpecifier, Expr, ExprOrSpread,
@@ -13,7 +13,7 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
-use crate::unpacker::{BundleFormat, UnpackResult, UnpackedModule};
+use crate::unpacker::{span_byte_range, BundleFormat, UnpackResult, UnpackedModule};
 
 pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<UnpackResult> {
     let mut registers = Vec::new();
@@ -40,7 +40,13 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     let mut seen = HashSet::new();
     let mut modules = Vec::new();
     for (idx, register) in registers.into_iter().enumerate() {
-        if let Some(result) = try_unpack_dynamic_export_bundle(&register, cm.clone()) {
+        let register_range = span_byte_range(&cm, register.span);
+        if let Some(mut result) = try_unpack_dynamic_export_bundle(&register, cm.clone()) {
+            // The nested bundle was re-parsed from emitted code, so its
+            // spans are meaningless here; attribute the whole register call.
+            for module in &mut result.modules {
+                module.source_ranges = register_range.into_iter().collect();
+            }
             modules.extend(result.modules);
             continue;
         }
@@ -53,6 +59,8 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
             is_entry,
             code,
             filename,
+            source_ranges: register_range.into_iter().collect(),
+            source_input: String::new(),
         });
     }
 
@@ -101,6 +109,8 @@ struct SystemRegister {
     name: Option<String>,
     deps: Vec<String>,
     declare: Function,
+    /// Span of the whole `System.register(...)` call (provenance).
+    span: Span,
 }
 
 fn is_system_register_call(call: &CallExpr) -> bool {
@@ -130,6 +140,7 @@ fn parse_register_call(call: &CallExpr) -> Option<SystemRegister> {
         name,
         deps,
         declare,
+        span: call.span,
     })
 }
 

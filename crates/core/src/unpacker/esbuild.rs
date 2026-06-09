@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, FileName, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
+use swc_core::common::{
+    sync::Lrc, FileName, Mark, SourceMap, Span, Spanned, SyntaxContext, DUMMY_SP, GLOBALS,
+};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignTarget, AssignTargetPat, BindingIdent, BlockStmt, BlockStmtOrExpr, Bool,
     CallExpr, Callee, ClassDecl, Decl, ExportDecl, ExportNamedSpecifier, ExportSpecifier, Expr,
@@ -18,7 +20,8 @@ use swc_core::ecma::visit::{Visit, VisitMutWith, VisitWith};
 use crate::module_path::relative_import_specifier;
 use crate::rules::rename_utils::{rename_bindings, BindingRename};
 use crate::unpacker::{
-    module_item_declared_binding_ids, BindingId, BundleFormat, UnpackResult, UnpackedModule,
+    module_item_declared_binding_ids, span_byte_range, spans_byte_ranges, BindingId, BundleFormat,
+    UnpackResult, UnpackedModule,
 };
 
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
@@ -162,6 +165,7 @@ pub(super) fn detect_from_module_with_source(
         body_stmts: Vec<Stmt>,
         referenced_bindings: HashSet<BindingId>,
         write_bindings: HashSet<BindingId>,
+        span: Span,
     }
 
     let mut pending_factories: Vec<PendingFactory> = Vec::new();
@@ -190,6 +194,7 @@ pub(super) fn detect_from_module_with_source(
             body_stmts: factory.body_stmts,
             referenced_bindings,
             write_bindings,
+            span: factory.span,
         });
     }
 
@@ -839,10 +844,13 @@ pub(super) fn detect_from_module_with_source(
             is_entry: false,
             code,
             filename: factory.filename,
+            source_ranges: span_byte_range(&cm, factory.span).into_iter().collect(),
+            source_input: String::new(),
         });
     }
 
     if !remaining_entry.is_empty() {
+        let entry_ranges = spans_byte_ranges(&cm, remaining_entry.iter().map(|item| item.span()));
         let remaining_entry = repair_entry_imports(remaining_entry, &binding_to_filename);
         let entry_module = Module {
             span: Default::default(),
@@ -855,6 +863,8 @@ pub(super) fn detect_from_module_with_source(
             is_entry: true,
             code,
             filename: "entry.js".to_string(),
+            source_ranges: entry_ranges,
+            source_input: String::new(),
         });
     }
 
@@ -1047,6 +1057,8 @@ struct Factory {
     body_stmts: Vec<Stmt>,
     /// The statements inside the factory function body (resolved — for reference collection).
     analysis_body_stmts: Vec<Stmt>,
+    /// Span of the factory's `var` declarator in the original bundle (provenance).
+    span: Span,
 }
 
 #[derive(Clone)]
@@ -1330,6 +1342,7 @@ fn try_extract_factory(
                             .flatten(),
                         body_stmts,
                         analysis_body_stmts,
+                        span: decl.span,
                     });
                 }
             }
@@ -1356,6 +1369,7 @@ fn try_extract_factory(
                     .flatten(),
                 body_stmts,
                 analysis_body_stmts,
+                span: decl.span,
             })
         }
 
@@ -1379,6 +1393,7 @@ fn try_extract_factory(
                     .flatten(),
                 body_stmts,
                 analysis_body_stmts,
+                span: decl.span,
             })
         }
 
@@ -2485,8 +2500,10 @@ fn extract_scope_hoisted_modules(
                 }
             }
         }
+        let mut body_spans: Vec<Span> = Vec::with_capacity(meta.body_indices.len());
         for &i in &meta.body_indices {
             let item = source_slots[i].take().expect("body item already consumed");
+            body_spans.push(item.span());
             if remaining_exports.is_empty() {
                 module_items.push(item);
                 continue;
@@ -2526,6 +2543,8 @@ fn extract_scope_hoisted_modules(
             is_entry: false,
             code,
             filename: meta.filename.clone(),
+            source_ranges: spans_byte_ranges(&cm, body_spans.into_iter()),
+            source_input: String::new(),
         });
     }
     drop(emit_modules_enter);

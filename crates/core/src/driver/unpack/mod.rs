@@ -7,7 +7,9 @@ use swc_core::ecma::visit::VisitMutWith;
 
 use super::io::{apply_fixer, parse_js, print_js};
 use super::single_file::decompile;
-use super::types::{DecompileOptions, UnpackInput, UnpackOutput, UnpackWarning, UnpackWarningKind};
+use super::types::{
+    DecompileOptions, ModuleProvenance, UnpackInput, UnpackOutput, UnpackWarning, UnpackWarningKind,
+};
 #[cfg(test)]
 use super::unpack_cleanup::hoist_late_runtime_helpers;
 use super::unpack_cycles::merge_import_cycles;
@@ -67,6 +69,7 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
                     .unwrap_or_default();
                 Ok(UnpackOutput {
                     modules: vec![("module.js".to_string(), output.code)],
+                    provenance: vec![whole_input_provenance("module.js", "", source)],
                     warnings: output.warnings,
                     detected_formats: Vec::new(),
                     source_maps,
@@ -81,6 +84,7 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
                 .unwrap_or_default();
             Ok(UnpackOutput {
                 modules: vec![("module.js".to_string(), output.code)],
+                provenance: vec![whole_input_provenance("module.js", "", source)],
                 warnings: output.warnings,
                 detected_formats: Vec::new(),
                 source_maps,
@@ -135,14 +139,19 @@ pub fn unpack_files(
                         if !detected_formats.contains(&BundleFormat::ScopeHoisted) {
                             detected_formats.push(BundleFormat::ScopeHoisted);
                         }
-                        modules.extend(result.modules.into_iter().map(MultiSourceModule::fallback))
+                        modules.extend(result.modules.into_iter().map(|mut module| {
+                            module.source_input = input.filename.clone();
+                            MultiSourceModule::fallback(module)
+                        }))
                     }
                     _ => modules.push(MultiSourceModule::fallback(
                         crate::unpacker::UnpackedModule {
                             id: input.filename.clone(),
                             is_entry: false,
-                            code: input.source,
                             filename: filename_for_fallback_input(&input.filename),
+                            source_ranges: vec![(0, input.source.len() as u32)],
+                            source_input: input.filename.clone(),
+                            code: input.source,
                         },
                     )),
                 }
@@ -151,8 +160,10 @@ pub fn unpack_files(
                 crate::unpacker::UnpackedModule {
                     id: input.filename.clone(),
                     is_entry: false,
-                    code: input.source,
                     filename: filename_for_fallback_input(&input.filename),
+                    source_ranges: vec![(0, input.source.len() as u32)],
+                    source_input: input.filename.clone(),
+                    code: input.source,
                 },
             )),
         }
@@ -197,7 +208,7 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
         });
     match result {
         Some((result, normalize_for_runnable_split, format)) => {
-            let (modules, warnings) = if normalize_for_runnable_split {
+            let (modules, provenance, warnings) = if normalize_for_runnable_split {
                 // Heuristic scope-hoisted fallback does not get the esbuild
                 // detector's bundler-specific cleanup, so keep the narrow
                 // runnable normalization it still relies on.
@@ -210,6 +221,7 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
                         (result.modules, Vec::new())
                     }
                 };
+                let provenance = module_provenance(&modules);
                 let normalized: Vec<_> = modules
                     .into_par_iter()
                     .map(|module| {
@@ -242,19 +254,22 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
                     }
                     output_modules.push(module);
                 }
-                (output_modules, output_warnings)
+                (output_modules, provenance, output_warnings)
             } else {
+                let provenance = module_provenance(&result.modules);
                 (
                     result
                         .modules
                         .into_iter()
                         .map(|module| (module.filename, module.code))
                         .collect(),
+                    provenance,
                     Vec::new(),
                 )
             };
             Ok(UnpackOutput {
                 modules,
+                provenance,
                 warnings,
                 detected_formats: vec![format],
                 source_maps: Vec::new(),
@@ -262,6 +277,7 @@ pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutp
         }
         None => Ok(UnpackOutput {
             modules: vec![("module.js".to_string(), source.to_string())],
+            provenance: vec![whole_input_provenance("module.js", "", source)],
             warnings: Vec::new(),
             detected_formats: Vec::new(),
             source_maps: Vec::new(),
@@ -327,8 +343,10 @@ pub fn unpack_files_raw(
             None => modules.push(MultiSourceModule::fallback(UnpackedModule {
                 id: input.filename.clone(),
                 is_entry: false,
-                code: input.source.to_string(),
                 filename: filename_for_fallback_input(&input.filename),
+                source_ranges: vec![(0, input.source.len() as u32)],
+                source_input: input.filename.clone(),
+                code: input.source.to_string(),
             })),
         }
     }
@@ -460,6 +478,27 @@ fn unpack_unpack_result(result: UnpackResult, options: DecompileOptions) -> Resu
         .map(|module| PreparedUnpackModule::with_cycle_premerge(module, allow_cycle_premerge))
         .collect();
     unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options)
+}
+
+/// Provenance entries for a list of unpacked modules, in module order.
+pub(super) fn module_provenance(modules: &[UnpackedModule]) -> Vec<ModuleProvenance> {
+    modules
+        .iter()
+        .map(|module| ModuleProvenance {
+            filename: module.filename.clone(),
+            input: module.source_input.clone(),
+            ranges: module.source_ranges.clone(),
+        })
+        .collect()
+}
+
+/// Provenance entry covering an entire input source.
+fn whole_input_provenance(filename: &str, input: &str, source: &str) -> ModuleProvenance {
+    ModuleProvenance {
+        filename: filename.to_string(),
+        input: input.to_string(),
+        ranges: vec![(0, source.len() as u32)],
+    }
 }
 
 fn should_merge_raw_import_cycles(_modules: &[UnpackedModule]) -> bool {

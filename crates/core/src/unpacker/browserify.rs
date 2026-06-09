@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, Mark, SourceMap, SyntaxContext, GLOBALS};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, Spanned, SyntaxContext, GLOBALS};
 use swc_core::ecma::ast::{
     ArrayLit, Callee, Expr, ExprOrSpread, ExprStmt, FnExpr, Function, Lit, Module, ModuleItem,
     Number, Pat, Stmt,
@@ -11,7 +11,7 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::VisitMutWith;
 
-use crate::unpacker::{BundleFormat, UnpackResult, UnpackedModule};
+use crate::unpacker::{span_byte_range, BundleFormat, UnpackResult, UnpackedModule};
 use crate::utils::swc_safety::apply_fixer;
 
 pub fn detect_and_extract(source: &str) -> Option<UnpackResult> {
@@ -100,6 +100,10 @@ fn extract_browserify_modules(
             is_entry,
             code,
             filename,
+            source_ranges: span_byte_range(&cm, key_value.value.span())
+                .into_iter()
+                .collect(),
+            source_input: String::new(),
         });
     }
 

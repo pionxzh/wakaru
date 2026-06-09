@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::anyhow;
 use swc_core::atoms::Atom;
-use swc_core::common::{sync::Lrc, Mark, SourceMap, SyntaxContext, DUMMY_SP, GLOBALS};
+use swc_core::common::{sync::Lrc, Mark, SourceMap, Spanned, SyntaxContext, DUMMY_SP, GLOBALS};
 use swc_core::ecma::ast::{
     ArrayLit, AssignExpr, AssignOp, AssignTarget, BinExpr, BinaryOp, BlockStmtOrExpr, CallExpr,
     Callee, Expr, ExprStmt, FnExpr, Ident, IdentName, Lit, MemberExpr, MemberProp, Module,
@@ -18,7 +18,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::unpacker::webpack4::{
     rewrite_require_n_accesses, RequireIdRewriter, RequireStringIdRewriter,
 };
-use crate::unpacker::{BundleFormat, UnpackResult, UnpackedModule};
+use crate::unpacker::{spans_byte_ranges, BundleFormat, UnpackResult, UnpackedModule};
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
 
@@ -279,6 +279,8 @@ pub(super) fn detect_runtime_entry_from_module(
                     is_entry: true,
                     code: source.to_string(),
                     filename: "entry.js".to_string(),
+                    source_ranges: vec![(0, source.len() as u32)],
+                    source_input: String::new(),
                 }],
                 BundleFormat::Webpack5,
             ));
@@ -586,6 +588,8 @@ fn extract_modules_from_object(
             is_entry: false,
             code,
             filename: entry.filename.clone(),
+            source_ranges: spans_byte_ranges(&cm, entry.body_stmts.iter().map(|s| s.span())),
+            source_input: String::new(),
         });
     }
 
@@ -650,12 +654,15 @@ fn extract_webpack5_modules(
                 is_entry: false,
                 code,
                 filename: entry.filename.clone(),
+                source_ranges: spans_byte_ranges(&cm, entry.body_stmts.iter().map(|s| s.span())),
+                source_input: String::new(),
             });
         }
     }
 
     // Check for trailing IIFE entry point
     let has_trailing_entry = if let Some(entry_body) = extract_trailing_entry_body(bootstrap_body) {
+        let entry_ranges = spans_byte_ranges(&cm, entry_body.iter().map(|s| s.span()));
         let code = emit_webpack5_entry_module(
             entry_body,
             cm.clone(),
@@ -667,6 +674,8 @@ fn extract_webpack5_modules(
             is_entry: true,
             code,
             filename: "entry.js".to_string(),
+            source_ranges: entry_ranges,
+            source_input: String::new(),
         });
         true
     } else {

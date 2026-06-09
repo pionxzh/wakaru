@@ -79,6 +79,11 @@ fn namespace_scope_hoisted_split(
 
     let mut modules = Vec::with_capacity(split_modules.len());
     for mut module in split_modules {
+        // Child source_ranges are byte offsets into the intermediate
+        // extracted module string, not the original bundle. Attribute all
+        // children to the parent's original-bundle ranges instead.
+        module.source_ranges = parent.source_ranges.clone();
+        module.source_input = parent.source_input.clone();
         if module.is_entry {
             module.id = parent.id.clone();
             module.is_entry = parent.is_entry;
@@ -369,6 +374,7 @@ mod tests {
                 is_entry: false,
                 code: nested_scope_hoist_fixture(),
                 filename: "module-100.js".to_string(),
+                ..Default::default()
             }],
             allow_cycle_premerge: true,
             format: BundleFormat::Webpack5,
@@ -390,6 +396,7 @@ mod tests {
                 is_entry: false,
                 code: nested_scope_hoist_fixture(),
                 filename: "module-100.js".to_string(),
+                ..Default::default()
             }],
             allow_cycle_premerge: true,
             format: BundleFormat::Webpack5,
@@ -426,6 +433,7 @@ mod tests {
             is_entry: false,
             code: String::new(),
             filename: "module-11111.js".to_string(),
+            ..Default::default()
         };
         let split_modules = vec![
             UnpackedModule {
@@ -436,6 +444,7 @@ console.log(value);
 "#
                 .to_string(),
                 filename: "entry.js".to_string(),
+                ..Default::default()
             },
             UnpackedModule {
                 id: "chunk_value".to_string(),
@@ -450,6 +459,7 @@ export const value = init + 1;
 "#
                 .to_string(),
                 filename: "chunk_value.js".to_string(),
+                ..Default::default()
             },
             UnpackedModule {
                 id: "chunk_other".to_string(),
@@ -458,6 +468,7 @@ export const value = init + 1;
 "#
                 .to_string(),
                 filename: "chunk_other.js".to_string(),
+                ..Default::default()
             },
         ];
 

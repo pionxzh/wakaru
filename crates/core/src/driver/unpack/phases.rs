@@ -16,7 +16,9 @@ use super::super::io::{
     apply_fixer, build_output_sourcemap, parse_js, parse_js_with_recovery, print_js,
     print_js_with_srcmap,
 };
-use super::super::types::{DecompileOptions, UnpackOutput, UnpackWarning, UnpackWarningKind};
+use super::super::types::{
+    DecompileOptions, ModuleProvenance, UnpackOutput, UnpackWarning, UnpackWarningKind,
+};
 use super::super::unpack_cleanup::{dedup_duplicate_exports, prune_stale_local_named_exports};
 use super::super::unpack_cycles::{collect_import_cycle_warnings, merge_import_cycles};
 use super::dead_module::{collect_import_report, eliminate_dead_helper_modules, ImportReport};
@@ -118,6 +120,24 @@ pub(super) fn unpack_multi_module_with_plan(
             // context and source strings stay untouched until the normal pipeline.
             (modules, Vec::new())
         };
+
+    // Stash per-module provenance (byte ranges into the original input)
+    // keyed by provisional filename. Final provenance is built after dead
+    // module elimination and filename recovery, so only surviving modules
+    // appear with their final names.
+    let provenance_by_provisional: std::collections::HashMap<String, (String, Vec<(u32, u32)>)> =
+        modules
+            .iter()
+            .map(|prepared| {
+                (
+                    prepared.module.filename.clone(),
+                    (
+                        prepared.module.source_input.clone(),
+                        prepared.module.source_ranges.clone(),
+                    ),
+                )
+            })
+            .collect();
 
     // Parse the sourcemap once before the loop.
     let parsed_sourcemap = options
@@ -511,8 +531,30 @@ pub(super) fn unpack_multi_module_with_plan(
         })
         .collect();
 
+    // Build final provenance from the surviving output modules, mapping
+    // provisional filenames to their recovered names.  Dead helper modules
+    // that were eliminated above are excluded.
+    let provenance: Vec<ModuleProvenance> = modules
+        .iter()
+        .filter_map(|(final_filename, _)| {
+            // Phase 2 may have renamed via rename_ref; look up the
+            // provisional name that maps to this final filename.
+            let provisional = rename_ref
+                .iter()
+                .find_map(|(prov, renamed)| (renamed == final_filename).then_some(prov.as_str()))
+                .unwrap_or(final_filename.as_str());
+            let (input, ranges) = provenance_by_provisional.get(provisional)?;
+            Some(ModuleProvenance {
+                filename: final_filename.clone(),
+                input: input.clone(),
+                ranges: ranges.clone(),
+            })
+        })
+        .collect();
+
     Ok(UnpackOutput {
         modules,
+        provenance,
         warnings,
         detected_formats: Vec::new(),
         source_maps,
@@ -547,6 +589,7 @@ mod tests {
                     } else {
                         format!("m{index}.js")
                     },
+                    ..Default::default()
                 })
             })
             .collect();
@@ -569,6 +612,7 @@ mod tests {
                         is_entry: module.module.is_entry,
                         code: module.module.code.clone(),
                         filename: module.module.filename.clone(),
+                        ..Default::default()
                     },
                     false,
                 )
@@ -592,6 +636,7 @@ mod tests {
                 is_entry: module.module.is_entry,
                 code: module.module.code.clone(),
                 filename: module.module.filename.clone(),
+                ..Default::default()
             })
             .collect();
         assert!(
@@ -609,6 +654,7 @@ mod tests {
                     is_entry: true,
                     code: r#"import { b } from "./b.js"; export const a = b + 1;"#.to_string(),
                     filename: "entry.js".to_string(),
+                    ..Default::default()
                 },
                 false,
             ),
@@ -618,6 +664,7 @@ mod tests {
                     is_entry: false,
                     code: r#"import { a } from "./entry.js"; export const b = a + 1;"#.to_string(),
                     filename: "b.js".to_string(),
+                    ..Default::default()
                 },
                 false,
             ),
@@ -650,6 +697,7 @@ module.exports = (a = (i = require("./module-2.js")).lib, o = a.WordArray, i.SHA
 "#
             .to_string(),
             filename: "module-1.js".to_string(),
+            ..Default::default()
         }];
 
         let output = unpack_multi_module(modules, DecompileOptions::default())
@@ -685,6 +733,7 @@ exports.default = o.default(l);
 "#
             .to_string(),
             filename: "module-1.js".to_string(),
+            ..Default::default()
         }];
 
         let output = unpack_multi_module(modules, DecompileOptions::default())
@@ -718,6 +767,7 @@ export { create, wrap };
 "#
             .to_string(),
             filename: "helper.js".to_string(),
+            ..Default::default()
         }];
 
         let output = unpack_multi_module(
@@ -756,6 +806,7 @@ export { helper };
 "#
             .to_string(),
             filename: "entry.js".to_string(),
+            ..Default::default()
         }];
 
         let output = unpack_multi_module(
@@ -786,6 +837,7 @@ export { helper };
             is_entry: true,
             code: "const value = input + 1;\nexport { value };".to_string(),
             filename: "entry.js".to_string(),
+            ..Default::default()
         }];
 
         let output = unpack_multi_module(

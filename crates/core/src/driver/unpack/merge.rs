@@ -18,7 +18,7 @@ use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::super::io::{apply_fixer, parse_js, print_js};
-use super::super::types::{UnpackOutput, UnpackWarning, UnpackWarningKind};
+use super::super::types::{ModuleProvenance, UnpackOutput, UnpackWarning, UnpackWarningKind};
 use crate::module_path::relative_import_specifier;
 use crate::unpacker::UnpackedModule;
 use crate::utils::paren::{strip_parens, strip_parens_mut};
@@ -34,12 +34,15 @@ pub(super) struct MultiSourceModule {
 
 impl MultiSourceModule {
     pub(super) fn detected(
-        module: UnpackedModule,
+        mut module: UnpackedModule,
         chunk_ids: HashSet<usize>,
         input_filename: String,
         allow_cycle_premerge: bool,
     ) -> Self {
         let input_group = input_group_for_filename(&input_filename);
+        // Unpackers don't know which physical input they ran on; attribute
+        // provenance ranges to it here.
+        module.source_input = input_filename.clone();
         Self {
             module,
             allow_cross_chunk_rewrite: true,
@@ -288,12 +291,22 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
     modules: Vec<PreparedUnpackModule>,
     numeric_rewrite_plan: NumericRewritePlan,
 ) -> Result<UnpackOutput> {
+    let provenance: Vec<ModuleProvenance> = modules
+        .iter()
+        .map(|prepared| ModuleProvenance {
+            filename: prepared.module.filename.clone(),
+            input: prepared.module.source_input.clone(),
+            ranges: prepared.module.source_ranges.clone(),
+        })
+        .collect();
+
     if numeric_rewrite_plan.is_empty() {
         return Ok(UnpackOutput {
             modules: modules
                 .into_iter()
                 .map(|module| (module.module.filename, module.module.code))
                 .collect(),
+            provenance,
             warnings: Vec::new(),
             detected_formats: Vec::new(),
             source_maps: Vec::new(),
@@ -347,6 +360,7 @@ pub(super) fn emit_raw_modules_with_numeric_rewrites(
 
     Ok(UnpackOutput {
         modules,
+        provenance,
         warnings,
         detected_formats: Vec::new(),
         source_maps: Vec::new(),
@@ -603,6 +617,7 @@ mod tests {
                     is_entry: false,
                     code: "const other = require(999);".to_string(),
                     filename: "module-20.js".to_string(),
+                    ..Default::default()
                 },
                 HashSet::new(),
                 "entry.js".to_string(),
@@ -614,6 +629,7 @@ mod tests {
                     is_entry: false,
                     code: "export default 1;".to_string(),
                     filename: "module-999.js".to_string(),
+                    ..Default::default()
                 },
                 HashSet::new(),
                 "chunk.js".to_string(),

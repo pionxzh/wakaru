@@ -16,7 +16,7 @@ use swc_core::ecma::utils::replace_ident;
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use crate::module_path::relative_import_specifier;
-use crate::unpacker::{BundleFormat, UnpackResult, UnpackedModule};
+use crate::unpacker::{span_byte_range, BundleFormat, UnpackResult, UnpackedModule};
 use crate::utils::paren::strip_parens;
 use crate::utils::swc_safety::apply_fixer;
 
@@ -576,6 +576,10 @@ fn extract_webpack4_array_modules(
             is_entry,
             code,
             filename,
+            source_ranges: span_byte_range(&cm, fn_expr.function.span)
+                .into_iter()
+                .collect(),
+            source_input: String::new(),
         });
     }
 
@@ -724,6 +728,10 @@ fn extract_webpack4_object_modules(
             is_entry,
             code,
             filename,
+            source_ranges: span_byte_range(&cm, fn_expr.function.span)
+                .into_iter()
+                .collect(),
+            source_input: String::new(),
         });
     }
 

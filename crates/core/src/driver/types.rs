@@ -70,11 +70,27 @@ pub struct UnpackInput {
 #[derive(Debug, Clone, Default)]
 pub struct UnpackOutput {
     pub modules: Vec<(String, String)>,
+    /// Per-module provenance: where in the original input each module came
+    /// from. Parallel to `modules` by filename; modules without recoverable
+    /// spans have empty `ranges`.
+    pub provenance: Vec<ModuleProvenance>,
     pub warnings: Vec<UnpackWarning>,
     pub detected_formats: Vec<BundleFormat>,
     /// Per-module source maps (filename, source map JSON). Only populated when
     /// `DecompileOptions::emit_source_map` is set.
     pub source_maps: Vec<(String, String)>,
+}
+
+/// Byte-range provenance for one unpacked module.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModuleProvenance {
+    /// Output module filename (same value as in `UnpackOutput::modules`).
+    pub filename: String,
+    /// Input filename the ranges refer to. Empty for single-source unpacks
+    /// (the caller knows the input) and for synthesized modules.
+    pub input: String,
+    /// 0-based byte ranges `(start, end)` into the input source.
+    pub ranges: Vec<(u32, u32)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

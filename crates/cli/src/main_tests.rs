@@ -454,3 +454,37 @@ fn overlapping_dot_webpack5_bundle() -> &'static str {
 })();
 "#
 }
+
+#[test]
+fn renders_provenance_json_with_final_names_and_default_input() {
+    let provenance = vec![
+        wakaru_core::ModuleProvenance {
+            filename: "b.js".to_string(),
+            input: String::new(),
+            ranges: vec![(10, 20), (30, 40)],
+        },
+        wakaru_core::ModuleProvenance {
+            filename: "a \"quoted\".js".to_string(),
+            input: "chunk-1.js".to_string(),
+            ranges: vec![(0, 5)],
+        },
+    ];
+    let mut final_names = HashMap::new();
+    // CLI-side dedup renamed b.js on disk.
+    final_names.insert("b.js", "b_2.js".to_string());
+
+    let json = render_provenance_json(&provenance, &final_names, "bundle.js");
+
+    assert!(
+        json.contains(r#""b_2.js": {"input": "bundle.js", "ranges": [[10,20],[30,40]]}"#),
+        "renamed module with default input missing:\n{json}"
+    );
+    assert!(
+        json.contains(r#""a \"quoted\".js": {"input": "chunk-1.js", "ranges": [[0,5]]}"#),
+        "escaped filename with explicit input missing:\n{json}"
+    );
+    // Must be alphabetically sorted and valid JSON shape.
+    assert!(json.find("a \\\"quoted\\\"").unwrap() < json.find("b_2.js").unwrap());
+    assert!(json.starts_with("{\n  \"modules\": {\n"));
+    assert!(json.ends_with("  }\n}\n"));
+}
