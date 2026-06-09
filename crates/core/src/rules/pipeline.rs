@@ -77,6 +77,10 @@ impl RuleRunContext<'_> {
         *self.local_helpers.borrow_mut() = Some(Rc::clone(&local_helpers));
         local_helpers
     }
+
+    fn invalidate_local_helpers(&self) {
+        *self.local_helpers.borrow_mut() = None;
+    }
 }
 
 fn always_enabled(_: RuleRunContext<'_>) -> bool {
@@ -160,6 +164,10 @@ runner!(run_un_bracket_notation, UnBracketNotation);
 fn run_un_interop_require_default(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
     UnInteropRequireDefault::run_with_helpers(module, local_helpers.as_ref());
+    // Unwrapping `_interopRequireDefault(require("@babel/runtime/helpers/..."))` can
+    // expose new runtime-path helpers (e.g. interopRequireWildcard) that were hidden
+    // behind the default wrapper. Rebuild the cache so the next rule sees them.
+    ctx.invalidate_local_helpers();
 }
 
 fn run_un_interop_require_wildcard(module: &mut Module, ctx: RuleRunContext<'_>) {
@@ -709,11 +717,11 @@ mod tests {
                 RulePipelineOptions::between("UnInteropRequireDefault", "UnRegenerator"),
             );
 
-            // The context is built once on first access and reused across all
-            // helper rules in the range. Consumed helpers leave stale cache
-            // entries, but those are harmless — later rules filter by their own
-            // kind and never match a removed binding.
-            assert_eq!(collect_transpiler_helpers_call_count(), 1);
+            // The context is rebuilt once after UnInteropRequireDefault because
+            // unwrapping default wrappers can expose new runtime-path helpers
+            // (e.g. interopRequireWildcard). All other helper rules reuse the
+            // cache — consumed bindings are harmless stale entries.
+            assert_eq!(collect_transpiler_helpers_call_count(), 2);
         });
     }
 }
