@@ -1,9 +1,10 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, AssignPat, AssignPatProp, BinaryOp, BindingIdent, Bool, Decl, Expr, ExprOrSpread,
-    Ident, IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number,
-    ObjectPat, ObjectPatProp, Pat, PropName, RestPat, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ArrayPat, AssignPat, AssignPatProp, BinaryOp, BindingIdent, BlockStmt, Bool, Decl, Expr,
+    ExprOrSpread, Function, Ident, IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
+    ModuleItem, Number, ObjectPat, ObjectPatProp, Param, Pat, PropName, RestPat, Stmt, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -76,6 +77,15 @@ impl VisitMut for UnDestructuring {
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
         *stmts = process_stmts(std::mem::take(stmts), self.unresolved_mark, self.level);
+    }
+
+    fn visit_mut_function(&mut self, func: &mut Function) {
+        func.visit_mut_children_with(self);
+        if self.level >= RewriteLevel::Standard {
+            if let Some(body) = &mut func.body {
+                nest_param_destructuring(&mut func.params, body, self.unresolved_mark);
+            }
+        }
     }
 }
 
@@ -158,34 +168,28 @@ fn try_reconstruct_ref_group(
     let ref_decl = extract_ref_decl(stmts.get(start)?)?;
     let ref_key = binding_key(&ref_decl.ident.id);
 
-    let mut accesses = Vec::new();
     let mut removed_temps = Vec::new();
-    let mut i = start + 1;
+    let collected = collect_accesses_on(
+        stmts,
+        start + 1,
+        &ref_decl.ident.id,
+        unresolved_mark,
+        &mut removed_temps,
+    );
 
-    while i < stmts.len() {
-        if let Some((access, consumed, temp)) =
-            try_extract_access(stmts, i, &ref_decl.ident.id, unresolved_mark)
-        {
-            accesses.push(access);
-            if let Some(temp) = temp {
-                removed_temps.push(temp);
-            }
-            i += consumed;
-        } else {
-            break;
-        }
-    }
-
-    if accesses.is_empty() {
+    if collected.accesses.is_empty() {
         return None;
     }
-    if !accesses.iter().any(is_rest_or_default_access) {
+    if !collected.accesses.iter().any(is_rest_or_default_access) {
         return None;
     }
+
+    let i = start + 1 + collected.consumed;
 
     let mut removed_bindings = vec![ref_key.clone()];
     removed_bindings.extend(removed_temps.iter().cloned());
-    if accesses
+    if collected
+        .accesses
         .iter()
         .any(|access| default_uses_any_removed_binding(access, &removed_bindings))
     {
@@ -201,8 +205,40 @@ fn try_reconstruct_ref_group(
         }
     }
 
-    let stmt = build_destructuring_stmt(&ref_decl, accesses)?;
+    let stmt = build_destructuring_stmt(&ref_decl, collected.accesses)?;
     Some((stmt, i - start))
+}
+
+struct CollectedAccesses {
+    accesses: Vec<Access>,
+    consumed: usize,
+}
+
+fn collect_accesses_on(
+    stmts: &[Stmt],
+    start: usize,
+    ref_ident: &Ident,
+    unresolved_mark: Mark,
+    removed_temps: &mut Vec<BindingKey>,
+) -> CollectedAccesses {
+    let mut accesses = Vec::new();
+    let mut i = start;
+
+    while i < stmts.len() {
+        if let Some((access, consumed)) =
+            try_extract_access(stmts, i, ref_ident, unresolved_mark, removed_temps)
+        {
+            accesses.push(access);
+            i += consumed;
+        } else {
+            break;
+        }
+    }
+
+    CollectedAccesses {
+        accesses,
+        consumed: i - start,
+    }
 }
 
 fn is_rest_or_default_access(access: &Access) -> bool {
@@ -495,11 +531,22 @@ fn try_extract_access(
     index: usize,
     ref_ident: &Ident,
     unresolved_mark: Mark,
-) -> Option<(Access, usize, Option<BindingKey>)> {
-    if let Some((access, temp)) =
+    removed_temps: &mut Vec<BindingKey>,
+) -> Option<(Access, usize)> {
+    if let Some((mut access, temp)) =
         try_extract_default_access(stmts, index, ref_ident, unresolved_mark)
     {
-        return Some((access, 2, Some(temp)));
+        removed_temps.push(temp);
+        let mut consumed = 2;
+
+        if let Some((nested_pat, extra)) =
+            try_nest_default_binding(&access, stmts, index + 2, unresolved_mark, removed_temps)
+        {
+            replace_access_left(&mut access, nested_pat);
+            consumed += extra;
+        }
+
+        return Some((access, consumed));
     }
 
     let (binding, init) = extract_binding_decl(stmts.get(index)?)?;
@@ -514,14 +561,66 @@ fn try_extract_access(
                 pat: Pat::Ident(binding),
             },
         };
-        return Some((access, 1, None));
+        return Some((access, 1));
     }
 
     if let Some((start, binding)) = extract_slice_rest(init, ref_ident, binding) {
-        return Some((Access::ArrayRest { start, binding }, 1, None));
+        return Some((Access::ArrayRest { start, binding }, 1));
     }
 
     None
+}
+
+fn try_nest_default_binding(
+    access: &Access,
+    stmts: &[Stmt],
+    nested_start: usize,
+    unresolved_mark: Mark,
+    removed_temps: &mut Vec<BindingKey>,
+) -> Option<(Pat, usize)> {
+    let default_binding = match access {
+        Access::Object { pat, .. } | Access::Array { pat, .. } => {
+            let Pat::Assign(assign) = pat else {
+                return None;
+            };
+            let Pat::Ident(binding) = assign.left.as_ref() else {
+                return None;
+            };
+            &binding.id
+        }
+        Access::ArrayRest { .. } => return None,
+    };
+
+    let collected = collect_accesses_on(
+        stmts,
+        nested_start,
+        default_binding,
+        unresolved_mark,
+        removed_temps,
+    );
+
+    if collected.accesses.is_empty() || !collected.accesses.iter().any(is_rest_or_default_access) {
+        return None;
+    }
+
+    let after_nested = nested_start + collected.consumed;
+    let nested_key = binding_key(default_binding);
+    if ident_used_in_stmts(&stmts[after_nested..], &nested_key) {
+        return None;
+    }
+
+    removed_temps.push(nested_key);
+    let nested_pat = build_pat_from_accesses(collected.accesses)?;
+    Some((nested_pat, collected.consumed))
+}
+
+fn replace_access_left(access: &mut Access, nested_pat: Pat) {
+    let pat = match access {
+        Access::Object { pat, .. } | Access::Array { pat, .. } => pat,
+        Access::ArrayRest { .. } => return,
+    };
+    let Pat::Assign(assign) = pat else { return };
+    *assign.left = nested_pat;
 }
 
 fn try_extract_default_access(
@@ -745,24 +844,24 @@ fn is_ident_expr(expr: &Expr, ident: &Ident) -> bool {
 }
 
 fn build_destructuring_stmt(ref_decl: &RefDecl, accesses: Vec<Access>) -> Option<Stmt> {
+    let pat = build_pat_from_accesses(accesses)?;
+    Some(build_var_stmt(ref_decl, pat))
+}
+
+fn build_pat_from_accesses(accesses: Vec<Access>) -> Option<Pat> {
     if accesses
         .iter()
         .all(|access| matches!(access, Access::Array { .. } | Access::ArrayRest { .. }))
     {
-        build_array_destructuring_stmt(ref_decl, accesses)
+        build_array_pat(accesses)
     } else if accesses
         .iter()
         .all(|access| matches!(access, Access::Object { .. }))
     {
-        build_object_destructuring_stmt(ref_decl, accesses)
+        build_object_pat(accesses)
     } else {
         None
     }
-}
-
-fn build_array_destructuring_stmt(ref_decl: &RefDecl, accesses: Vec<Access>) -> Option<Stmt> {
-    let pat = build_array_pat(accesses)?;
-    Some(build_var_stmt(ref_decl, pat))
 }
 
 fn build_direct_array_destructuring_stmt(
@@ -854,7 +953,7 @@ fn build_array_pat(accesses: Vec<Access>) -> Option<Pat> {
     }))
 }
 
-fn build_object_destructuring_stmt(ref_decl: &RefDecl, accesses: Vec<Access>) -> Option<Stmt> {
+fn build_object_pat(accesses: Vec<Access>) -> Option<Pat> {
     let mut props = Vec::with_capacity(accesses.len());
 
     for access in accesses {
@@ -864,15 +963,12 @@ fn build_object_destructuring_stmt(ref_decl: &RefDecl, accesses: Vec<Access>) ->
         props.push(build_object_prop(key, pat));
     }
 
-    Some(build_var_stmt(
-        ref_decl,
-        Pat::Object(ObjectPat {
-            span: DUMMY_SP,
-            props,
-            optional: false,
-            type_ann: None,
-        }),
-    ))
+    Some(Pat::Object(ObjectPat {
+        span: DUMMY_SP,
+        props,
+        optional: false,
+        type_ann: None,
+    }))
 }
 
 fn build_object_prop(key: PropKey, pat: Pat) -> ObjectPatProp {
@@ -950,6 +1046,64 @@ fn build_var_stmt_from_parts(
             definite: false,
         }],
     })))
+}
+
+fn nest_param_destructuring(params: &mut [Param], body: &mut BlockStmt, unresolved_mark: Mark) {
+    for param in params.iter_mut() {
+        nest_pat_destructuring(&mut param.pat, &mut body.stmts, unresolved_mark);
+    }
+}
+
+fn nest_pat_destructuring(pat: &mut Pat, stmts: &mut Vec<Stmt>, unresolved_mark: Mark) {
+    let inner_pat = match pat {
+        Pat::Assign(assign) => &mut *assign.left,
+        other => other,
+    };
+    let props = match inner_pat {
+        Pat::Object(obj) => &mut obj.props,
+        _ => return,
+    };
+
+    for prop in props.iter_mut() {
+        let value_pat = match prop {
+            ObjectPatProp::KeyValue(kv) => &mut *kv.value,
+            _ => continue,
+        };
+        let Pat::Assign(assign) = value_pat else {
+            continue;
+        };
+        let Pat::Ident(binding) = assign.left.as_ref() else {
+            continue;
+        };
+
+        let mut removed_temps = Vec::new();
+        let collected =
+            collect_accesses_on(stmts, 0, &binding.id, unresolved_mark, &mut removed_temps);
+
+        if collected.accesses.is_empty()
+            || !collected.accesses.iter().any(is_rest_or_default_access)
+        {
+            continue;
+        }
+
+        let nested_key = binding_key(&binding.id);
+        if ident_used_in_stmts(&stmts[collected.consumed..], &nested_key) {
+            continue;
+        }
+        for temp in &removed_temps {
+            if ident_used_in_stmts(&stmts[collected.consumed..], temp) {
+                continue;
+            }
+        }
+
+        let Some(nested_pat) = build_pat_from_accesses(collected.accesses) else {
+            continue;
+        };
+
+        *assign.left = nested_pat;
+        stmts.drain(0..collected.consumed);
+        return;
+    }
 }
 
 fn ident_used_in_stmts(stmts: &[Stmt], key: &BindingKey) -> bool {

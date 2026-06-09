@@ -356,3 +356,62 @@ use(first, rest);
         expected,
     );
 }
+
+#[test]
+fn nests_destructuring_default_in_ref_group() {
+    let input = r#"
+var _ref = source;
+var _a = _ref.outer;
+var _b = _a === void 0 ? {} : _a;
+var _c = _b.value;
+var result = _c === void 0 ? fallback : _c;
+use(result);
+"#;
+    let expected = r#"
+var { outer: { value: result = fallback } = {} } = source;
+use(result);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn nests_param_destructuring_default_babel() {
+    let input = r#"
+function nested() {
+    var _ref = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
+    var _ref$outer = _ref.outer;
+    var _ref$outer2 = _ref$outer === void 0 ? {} : _ref$outer;
+    var _ref$outer2$value = _ref$outer2.value;
+    var value = _ref$outer2$value === void 0 ? fallbackValue : _ref$outer2$value;
+    return use(value);
+}
+"#;
+    let expected = r#"
+function nested({ outer: { value = fallbackValue } = {} } = {}) {
+    return use(value);
+}
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until_with_level(input, "UnDestructuring", RewriteLevel::Standard),
+        expected,
+    );
+}
+
+#[test]
+fn nests_param_destructuring_default_tsc() {
+    let input = r#"
+function nested(_a) {
+    var _b = _a === void 0 ? {} : _a, _c = _b.outer, _d = _c === void 0 ? {} : _c, _e = _d.value, value = _e === void 0 ? fallbackValue : _e;
+    return use(value);
+}
+"#;
+    let expected = r#"
+function nested({ outer: { value = fallbackValue } = {} } = {}) {
+    return use(value);
+}
+"#;
+    assert_eq_normalized(
+        &render_pipeline_until_with_level(input, "UnParameters2", RewriteLevel::Standard),
+        expected,
+    );
+}
