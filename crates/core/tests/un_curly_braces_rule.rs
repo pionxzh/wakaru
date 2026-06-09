@@ -107,16 +107,25 @@ do {
 }
 
 #[test]
-fn wraps_arrow_function_expr_body_in_block_with_return() {
-    // Reused from packages/unminify/src/transformations/__tests__/un-curly-braces.spec.ts
-    // Note: UnCurlyBraces wraps the expression body in a block, but ArrowFunction
-    // (which runs after) simplifies { return b(); } back to expression body b().
+fn skips_arrow_expr_body_without_sequence() {
+    // A simple call expression does not need block normalization — downstream
+    // rules have no work to do on the single statement.
     let input = r#"
 const fn = () => b();
 "#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn wraps_arrow_sequence_body_in_block_with_return() {
+    // Sequence expressions need block form so SimplifySequence can split them.
+    let input = r#"
+const fn = () => (a(), b(), c);
+"#;
     let expected = r#"
 const fn = () => {
-    return b();
+    return a(), b(), c;
 };
 "#;
     let output = apply(input);

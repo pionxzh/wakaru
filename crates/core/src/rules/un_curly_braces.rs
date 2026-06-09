@@ -89,6 +89,10 @@ impl VisitMut for UnCurlyBraces {
     fn visit_mut_arrow_expr(&mut self, arrow: &mut ArrowExpr) {
         arrow.visit_mut_children_with(self);
 
+        if !matches!(&*arrow.body, BlockStmtOrExpr::Expr(expr) if needs_block_normalization(expr)) {
+            return;
+        }
+
         let taken = std::mem::replace(
             &mut *arrow.body,
             BlockStmtOrExpr::Expr(Box::new(Expr::Lit(swc_core::ecma::ast::Lit::Num(
@@ -128,6 +132,18 @@ fn should_skip_wrapping(stmt: &Stmt) -> bool {
         Stmt::Block(_) => true,
         Stmt::Empty(_) => true,
         Stmt::Decl(Decl::Var(v)) if v.kind == VarDeclKind::Var => true,
+        _ => false,
+    }
+}
+
+/// Returns true when a concise arrow body contains patterns that
+/// downstream rules (SimplifySequence, UnConditionals) can only process
+/// in block-statement form.
+fn needs_block_normalization(expr: &Expr) -> bool {
+    match expr {
+        Expr::Seq(_) => true,
+        Expr::Cond(_) => true,
+        Expr::Paren(p) => needs_block_normalization(&p.expr),
         _ => false,
     }
 }
