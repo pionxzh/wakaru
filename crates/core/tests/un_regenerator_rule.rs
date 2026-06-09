@@ -344,6 +344,145 @@ function* gen2() {
     assert_eq_normalized(&output, expected);
 }
 
+#[test]
+fn generator_try_catch_inferred_region() {
+    let input = r#"
+var _marked = regeneratorRuntime.mark(g);
+function g() {
+  return regeneratorRuntime.wrap(function(_ctx) {
+    while (true) {
+      switch (_ctx.prev = _ctx.next) {
+        case 0:
+          _ctx.prev = 0;
+          _ctx.next = 3;
+          return doThing();
+        case 3:
+          _ctx.next = 8;
+          break;
+        case 5:
+          _ctx.prev = 5;
+          _ctx.t0 = _ctx.catch(0);
+          handle(_ctx.t0);
+        case 8:
+        case "end":
+          return _ctx.stop();
+      }
+    }
+  }, _marked);
+}
+"#;
+    let expected = r#"
+function* g() {
+  try {
+    yield doThing();
+  } catch (error) {
+    handle(error);
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn generator_try_finally_drops_finish() {
+    let input = r#"
+var _marked = regeneratorRuntime.mark(g);
+function g() {
+  return regeneratorRuntime.wrap(function(_ctx) {
+    while (true) {
+      switch (_ctx.prev = _ctx.next) {
+        case 0:
+          _ctx.prev = 0;
+          _ctx.next = 3;
+          return doThing();
+        case 3:
+          return _ctx.finish(0);
+        case 5:
+          _ctx.prev = 5;
+          cleanup();
+          return _ctx.finish(5);
+        case 8:
+        case "end":
+          return _ctx.stop();
+      }
+    }
+  }, _marked, null, [[0, , 5]]);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("_ctx"),
+        "should not leak state object, got:\n{output}"
+    );
+    assert!(
+        output.contains("finally"),
+        "should reconstruct finally block, got:\n{output}"
+    );
+    assert!(
+        output.contains("yield doThing()"),
+        "should keep yielded try body, got:\n{output}"
+    );
+    assert!(
+        output.contains("cleanup()"),
+        "should keep finalizer body, got:\n{output}"
+    );
+}
+
+#[test]
+fn generator_try_catch_with_region_arg_still_works() {
+    let input = r#"
+var _marked = regeneratorRuntime.mark(g);
+function g() {
+  return regeneratorRuntime.wrap(function(_ctx) {
+    while (true) {
+      switch (_ctx.prev = _ctx.next) {
+        case 0:
+          _ctx.prev = 0;
+          _ctx.next = 3;
+          return doThing();
+        case 3:
+          _ctx.next = 8;
+          break;
+        case 5:
+          _ctx.prev = 5;
+          _ctx.t0 = _ctx.catch(0);
+          handle(_ctx.t0);
+        case 8:
+        case "end":
+          return _ctx.stop();
+      }
+    }
+  }, _marked, null, [[0, 5]]);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("function* g()"),
+        "should convert to generator, got:\n{output}"
+    );
+    assert!(
+        output.contains("try"),
+        "should reconstruct try block, got:\n{output}"
+    );
+    assert!(
+        output.contains("catch (error)"),
+        "should reconstruct catch binding, got:\n{output}"
+    );
+    assert!(
+        output.contains("yield doThing()"),
+        "should keep yielded try body, got:\n{output}"
+    );
+    assert!(
+        output.contains("handle(error)"),
+        "should replace catch alias, got:\n{output}"
+    );
+    assert!(
+        !output.contains("_ctx"),
+        "should not leak state object, got:\n{output}"
+    );
+}
+
 // ── _asyncToGenerator (Babel async functions) ───────────────────────────────
 
 #[test]
