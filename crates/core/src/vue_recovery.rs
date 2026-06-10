@@ -5,7 +5,7 @@ use swc_core::atoms::{Atom, Wtf8Atom};
 use swc_core::common::{sync::Lrc, FileName, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
     BindingIdent, Callee, Decl, ExportDecl, Expr, ExprOrSpread, FnDecl, Ident, ImportSpecifier,
-    Lit, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectLit, Pat, Prop, PropName,
+    Lit, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectLit, Param, Pat, Prop, PropName,
     PropOrSpread, ReturnStmt, Stmt, VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
@@ -19,6 +19,7 @@ struct VueRecoveryContext {
     vue_helpers: HashMap<Atom, String>,
     object_bindings: HashMap<Atom, ObjectLit>,
     component_options: Option<ObjectLit>,
+    render_context: Option<Atom>,
     cm: Lrc<SourceMap>,
 }
 
@@ -37,10 +38,11 @@ pub fn decompile_vue_sfc(source: &str, options: DecompileOptions) -> Result<Deco
 pub fn recover_vue_sfc_from_js(source: &str) -> Result<Option<VueSfc>> {
     let cm: Lrc<SourceMap> = Default::default();
     let module = parse_module(source, cm.clone())?;
-    let ctx = collect_context(&module, cm);
+    let mut ctx = collect_context(&module, cm);
     let Some(render) = find_render_fn(&module) else {
         return Ok(None);
     };
+    ctx.render_context = render_context_param(render);
     let Some(root_expr) = find_render_return(render) else {
         return Ok(None);
     };
@@ -164,11 +166,30 @@ fn find_render_return(render: &FnDecl) -> Option<&Expr> {
     })
 }
 
+fn render_context_param(render: &FnDecl) -> Option<Atom> {
+    render
+        .function
+        .params
+        .first()
+        .and_then(param_binding_ident)
+        .map(|ident| ident.sym.clone())
+}
+
+fn param_binding_ident(param: &Param) -> Option<&Ident> {
+    match &param.pat {
+        Pat::Ident(binding) => Some(&binding.id),
+        _ => None,
+    }
+}
+
 fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
     match expr {
         Expr::Call(call) => {
             let Some(helper) = helper_name(&call.callee, ctx) else {
-                return Ok(Some(VueNode::RawExpr(clean_expr(&print_expr(expr, ctx)?))));
+                return Ok(Some(VueNode::RawExpr(clean_expr(
+                    &print_expr(expr, ctx)?,
+                    ctx,
+                ))));
             };
             match helper.as_str() {
                 "createElementBlock" | "createElementVNode" => recover_element(&call.args, ctx),
@@ -176,16 +197,22 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
                     let Some(arg) = call.args.first() else {
                         return Ok(None);
                     };
-                    Ok(Some(VueNode::Interpolation(clean_expr(&print_expr(
-                        arg.expr.as_ref(),
+                    Ok(Some(VueNode::Interpolation(clean_expr(
+                        &print_expr(arg.expr.as_ref(), ctx)?,
                         ctx,
-                    )?))))
+                    ))))
                 }
-                _ => Ok(Some(VueNode::RawExpr(clean_expr(&print_expr(expr, ctx)?)))),
+                _ => Ok(Some(VueNode::RawExpr(clean_expr(
+                    &print_expr(expr, ctx)?,
+                    ctx,
+                )))),
             }
         }
         Expr::Lit(Lit::Str(str)) => Ok(Some(VueNode::Text(wtf8_to_string(&str.value)))),
-        _ => Ok(Some(VueNode::RawExpr(clean_expr(&print_expr(expr, ctx)?)))),
+        _ => Ok(Some(VueNode::RawExpr(clean_expr(
+            &print_expr(expr, ctx)?,
+            ctx,
+        )))),
     }
 }
 
@@ -194,10 +221,10 @@ fn recover_element(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<Op
         return Ok(None);
     };
     let Some(tag) = string_lit(tag_arg.expr.as_ref()) else {
-        return Ok(Some(VueNode::RawExpr(clean_expr(&format!(
-            "create element {}",
-            print_expr(tag_arg.expr.as_ref(), ctx)?
-        )))));
+        return Ok(Some(VueNode::RawExpr(clean_expr(
+            &format!("create element {}", print_expr(tag_arg.expr.as_ref(), ctx)?),
+            ctx,
+        ))));
     };
 
     let attrs = args
@@ -227,10 +254,16 @@ fn recover_attrs(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueAttr>> 
             if let Some(object) = ctx.object_bindings.get(&ident.sym) {
                 recover_attrs_from_object(object, ctx)
             } else {
-                Ok(vec![VueAttr::Spread(clean_expr(&print_expr(expr, ctx)?))])
+                Ok(vec![VueAttr::Spread(clean_expr(
+                    &print_expr(expr, ctx)?,
+                    ctx,
+                ))])
             }
         }
-        _ => Ok(vec![VueAttr::Spread(clean_expr(&print_expr(expr, ctx)?))]),
+        _ => Ok(vec![VueAttr::Spread(clean_expr(
+            &print_expr(expr, ctx)?,
+            ctx,
+        ))]),
     }
 }
 
@@ -239,21 +272,24 @@ fn recover_attrs_from_object(object: &ObjectLit, ctx: &VueRecoveryContext) -> Re
     for prop in &object.props {
         match prop {
             PropOrSpread::Spread(spread) => {
-                attrs.push(VueAttr::Spread(clean_expr(&print_expr(
-                    spread.expr.as_ref(),
+                attrs.push(VueAttr::Spread(clean_expr(
+                    &print_expr(spread.expr.as_ref(), ctx)?,
                     ctx,
-                )?)));
+                )));
             }
             PropOrSpread::Prop(prop) => match prop.as_ref() {
                 Prop::KeyValue(key_value) => {
                     let Some(name) = prop_name(&key_value.key) else {
-                        attrs.push(VueAttr::Spread(clean_expr(&print_expr(
-                            &Expr::Object(ObjectLit {
-                                span: DUMMY_SP,
-                                props: vec![PropOrSpread::Prop(prop.clone())],
-                            }),
+                        attrs.push(VueAttr::Spread(clean_expr(
+                            &print_expr(
+                                &Expr::Object(ObjectLit {
+                                    span: DUMMY_SP,
+                                    props: vec![PropOrSpread::Prop(prop.clone())],
+                                }),
+                                ctx,
+                            )?,
                             ctx,
-                        )?)));
+                        )));
                         continue;
                     };
                     attrs.push(attr_from_key_value(&name, key_value.value.as_ref(), ctx)?);
@@ -273,7 +309,7 @@ fn attr_from_key_value(name: &str, value: &Expr, ctx: &VueRecoveryContext) -> Re
     if let Some(event) = name.strip_prefix("on").filter(|s| !s.is_empty()) {
         return Ok(VueAttr::On {
             name: lower_first(event),
-            expr: clean_attr_expr(&print_expr(value, ctx)?),
+            expr: clean_attr_expr(&print_expr(value, ctx)?, ctx),
         });
     }
 
@@ -295,7 +331,7 @@ fn attr_from_key_value(name: &str, value: &Expr, ctx: &VueRecoveryContext) -> Re
         }),
         _ => Ok(VueAttr::Bind {
             name: name.to_string(),
-            expr: clean_attr_expr(&print_expr(value, ctx)?),
+            expr: clean_attr_expr(&print_expr(value, ctx)?, ctx),
         }),
     }
 }
@@ -326,12 +362,12 @@ fn helper_call_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
 
 fn helper_first_arg_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
     let Expr::Call(call) = expr else {
-        return Ok(clean_expr(&print_expr(expr, ctx)?));
+        return Ok(clean_expr(&print_expr(expr, ctx)?, ctx));
     };
     let Some(first) = call.args.first() else {
-        return Ok(clean_expr(&print_expr(expr, ctx)?));
+        return Ok(clean_expr(&print_expr(expr, ctx)?, ctx));
     };
-    Ok(clean_attr_expr(&print_expr(first.expr.as_ref(), ctx)?))
+    Ok(clean_attr_expr(&print_expr(first.expr.as_ref(), ctx)?, ctx))
 }
 
 fn helper_name(callee: &Callee, ctx: &VueRecoveryContext) -> Option<String> {
@@ -395,14 +431,21 @@ fn print_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
         .to_string())
 }
 
-fn clean_expr(expr: &str) -> String {
-    expr.replace("_ctx.", "")
+fn clean_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
+    let mut cleaned = expr
+        .replace("_ctx.", "")
         .replace("$props.", "")
-        .replace("__props.", "")
+        .replace("__props.", "");
+    if let Some(render_context) = &ctx.render_context {
+        if render_context.as_ref() != "_ctx" {
+            cleaned = cleaned.replace(&format!("{render_context}."), "");
+        }
+    }
+    cleaned
 }
 
-fn clean_attr_expr(expr: &str) -> String {
-    clean_expr(expr)
+fn clean_attr_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
+    clean_expr(expr, ctx)
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -498,6 +541,23 @@ export default __sfc__;
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script>\nexport default {\n    props: {\n        msg: String\n    }\n}\n</script>\n\n<template>\n  <div>{{ msg }}</div>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_minified_render_context_interpolation() {
+        let input = r#"
+import { toDisplayString, openBlock, createElementBlock } from "vue";
+const e = { props: { msg: String } };
+export function render(e, o) {
+  openBlock();
+  return createElementBlock("div", null, toDisplayString(e.msg), 1);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div>{{ msg }}</div>\n</template>\n"
         );
     }
 
