@@ -4,9 +4,10 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::{Atom, Wtf8Atom};
 use swc_core::common::{sync::Lrc, FileName, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
-    BindingIdent, Callee, Decl, ExportDecl, Expr, ExprOrSpread, FnDecl, Ident, ImportSpecifier,
-    Lit, Module, ModuleDecl, ModuleExportName, ModuleItem, ObjectLit, Param, Pat, Prop, PropName,
-    PropOrSpread, ReturnStmt, Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    AssignOp, BinaryOp, BindingIdent, BlockStmtOrExpr, Callee, Decl, ExportDecl, Expr,
+    ExprOrSpread, FnDecl, Ident, ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName,
+    ModuleItem, ObjectLit, Param, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, VarDecl,
+    VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
@@ -184,6 +185,13 @@ fn param_binding_ident(param: &Param) -> Option<&Ident> {
 
 fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
     match expr {
+        Expr::Paren(paren) => recover_node(paren.expr.as_ref(), ctx),
+        Expr::Seq(seq) => {
+            let Some(last) = seq.exprs.last() else {
+                return Ok(None);
+            };
+            recover_node(last.as_ref(), ctx)
+        }
         Expr::Call(call) => {
             let Some(helper) = helper_name(&call.callee, ctx) else {
                 return Ok(Some(VueNode::RawExpr(clean_expr(
@@ -292,7 +300,7 @@ fn recover_attrs_from_object(object: &ObjectLit, ctx: &VueRecoveryContext) -> Re
                         )));
                         continue;
                     };
-                    attrs.push(attr_from_key_value(&name, key_value.value.as_ref(), ctx)?);
+                    attrs.extend(attrs_from_key_value(&name, key_value.value.as_ref(), ctx)?);
                 }
                 Prop::Shorthand(ident) => attrs.push(VueAttr::Bind {
                     name: ident.sym.to_string(),
@@ -305,34 +313,136 @@ fn recover_attrs_from_object(object: &ObjectLit, ctx: &VueRecoveryContext) -> Re
     Ok(attrs)
 }
 
-fn attr_from_key_value(name: &str, value: &Expr, ctx: &VueRecoveryContext) -> Result<VueAttr> {
+fn attrs_from_key_value(
+    name: &str,
+    value: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Result<Vec<VueAttr>> {
     if let Some(event) = name.strip_prefix("on").filter(|s| !s.is_empty()) {
-        return Ok(VueAttr::On {
+        return Ok(vec![VueAttr::On {
             name: lower_first(event),
-            expr: clean_attr_expr(&print_expr(value, ctx)?, ctx),
-        });
+            expr: clean_event_expr(value, ctx)?,
+        }]);
     }
 
-    if matches!(name, "class" | "style") && helper_call_name(value, ctx).is_some() {
-        return Ok(VueAttr::Bind {
+    if name == "class" {
+        if let Some(attrs) = class_attrs_from_helper(value, ctx)? {
+            return Ok(attrs);
+        }
+    }
+
+    if name == "style" && helper_call_name(value, ctx).is_some() {
+        return Ok(vec![VueAttr::Bind {
             name: name.to_string(),
             expr: helper_first_arg_expr(value, ctx)?,
-        });
+        }]);
     }
 
     match value {
-        Expr::Lit(Lit::Str(str)) => Ok(VueAttr::Static {
+        Expr::Lit(Lit::Str(str)) => Ok(vec![VueAttr::Static {
             name: name.to_string(),
             value: Some(wtf8_to_string(&str.value)),
-        }),
-        Expr::Lit(Lit::Bool(bool)) if bool.value => Ok(VueAttr::Static {
+        }]),
+        Expr::Lit(Lit::Bool(bool)) if bool.value => Ok(vec![VueAttr::Static {
             name: name.to_string(),
             value: None,
-        }),
-        _ => Ok(VueAttr::Bind {
+        }]),
+        _ => Ok(vec![VueAttr::Bind {
             name: name.to_string(),
             expr: clean_attr_expr(&print_expr(value, ctx)?, ctx),
-        }),
+        }]),
+    }
+}
+
+fn class_attrs_from_helper(value: &Expr, ctx: &VueRecoveryContext) -> Result<Option<Vec<VueAttr>>> {
+    if helper_call_name(value, ctx).is_none() {
+        return Ok(None);
+    }
+    let Expr::Call(call) = value else {
+        return Ok(None);
+    };
+    let Some(first) = call.args.first() else {
+        return Ok(None);
+    };
+
+    let Expr::Array(array) = first.expr.as_ref() else {
+        return Ok(Some(vec![VueAttr::Bind {
+            name: "class".to_string(),
+            expr: helper_first_arg_expr(value, ctx)?,
+        }]));
+    };
+
+    let mut static_classes = Vec::new();
+    let mut attrs = Vec::new();
+    for elem in array.elems.iter().flatten() {
+        if let Expr::Lit(Lit::Str(str)) = elem.expr.as_ref() {
+            static_classes.push(wtf8_to_string(&str.value));
+        } else {
+            attrs.push(VueAttr::Bind {
+                name: "class".to_string(),
+                expr: clean_attr_expr(&print_expr(elem.expr.as_ref(), ctx)?, ctx),
+            });
+        }
+    }
+
+    if !static_classes.is_empty() {
+        attrs.insert(
+            0,
+            VueAttr::Static {
+                name: "class".to_string(),
+                value: Some(static_classes.join(" ")),
+            },
+        );
+    }
+    Ok(Some(attrs))
+}
+
+fn clean_event_expr(value: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
+    if let Some(handler) = cached_event_handler_name(value, ctx)? {
+        return Ok(handler);
+    }
+    Ok(clean_attr_expr(&print_expr(value, ctx)?, ctx))
+}
+
+fn cached_event_handler_name(value: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    match value {
+        Expr::Paren(paren) => cached_event_handler_name(paren.expr.as_ref(), ctx),
+        Expr::Bin(bin) if bin.op == BinaryOp::LogicalOr => {
+            cached_event_handler_name(bin.right.as_ref(), ctx)
+        }
+        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+            arrow_handler_name(assign.right.as_ref(), ctx)
+        }
+        Expr::Arrow(arrow) => arrow_body_handler_name(&arrow.body, ctx),
+        _ => Ok(None),
+    }
+}
+
+fn arrow_handler_name(body: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    match body {
+        Expr::Arrow(arrow) => arrow_body_handler_name(&arrow.body, ctx),
+        _ => Ok(None),
+    }
+}
+
+fn arrow_body_handler_name(
+    body: &BlockStmtOrExpr,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<String>> {
+    let BlockStmtOrExpr::Expr(expr) = body else {
+        return Ok(None);
+    };
+    logical_handler_name(expr.as_ref(), ctx)
+}
+
+fn logical_handler_name(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    match expr {
+        Expr::Paren(paren) => logical_handler_name(paren.expr.as_ref(), ctx),
+        Expr::Bin(bin) if bin.op == BinaryOp::LogicalAnd => Ok(Some(clean_attr_expr(
+            &print_expr(bin.left.as_ref(), ctx)?,
+            ctx,
+        ))),
+        _ => Ok(None),
     }
 }
 
@@ -578,6 +688,25 @@ export function render(_ctx, _cache) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <button :class=\"{ active: props.active }\" @click=\"increment\">{{ props.count }}</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vue_cached_event_and_class_array() {
+        let input = r#"
+import { toDisplayString, normalizeClass, openBlock, createElementBlock } from "vue";
+const __sfc__ = { props: { active: Boolean, count: Number } };
+export function render(_ctx, _cache) {
+  return (openBlock(), createElementBlock("button", {
+    class: normalizeClass(["counter", { active: _ctx.props.active }]),
+    onClick: _cache[0] || (_cache[0] = (...args) => (_ctx.increment && _ctx.increment(...args)))
+  }, toDisplayString(_ctx.props.count), 3));
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<script>\nexport default {\n    props: {\n        active: Boolean,\n        count: Number\n    }\n}\n</script>\n\n<template>\n  <button class=\"counter\" :class=\"{ active: props.active }\" @click=\"increment\">{{ props.count }}</button>\n</template>\n"
         );
     }
 }
