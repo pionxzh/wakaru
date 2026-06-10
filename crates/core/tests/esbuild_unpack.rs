@@ -1569,6 +1569,163 @@ export { ns, ns_b };
 }
 
 #[test]
+fn scope_module_owns_local_support_function_refs() {
+    let bundle = r#"
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+function cache(fn) { return fn; }
+function readSlot(def) { return def.slot; }
+var ns_b = {};
+__export(ns_b, { b: () => b, value: () => value });
+var value, b;
+value = cache(() => 1);
+b = readSlot({ get slot() { return value(); } });
+export { ns_b };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let ns_b_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "ns_b.js")
+        .expect("scope module should exist")
+        .1;
+    assert!(
+        ns_b_code.contains("function cache") && ns_b_code.contains("function readSlot"),
+        "scope module should own local support functions it calls:\n{ns_b_code}"
+    );
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        !entry_code.contains("function cache") && !entry_code.contains("function readSlot"),
+        "owned support functions should not remain in entry.js:\n{entry_code}"
+    );
+}
+
+#[test]
+fn scope_module_owns_sibling_helper_from_mixed_lazy_declaration() {
+    let bundle = r#"
+var wrap = (value) => ({ default: value }), y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var wrapped_exports = {};
+__export(wrapped_exports, { wrapped: () => wrapped });
+var wrapped = wrap("value");
+export { wrapped_exports };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let wrapped_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "wrapped_exports.js")
+        .expect("scope module should exist")
+        .1;
+    assert!(
+        wrapped_code.contains("wrap =")
+            && wrapped_code.contains("wrapped = wrap")
+            && !wrapped_code.contains("y ="),
+        "scope module should keep the sibling helper without re-emitting the lazy helper:\n{wrapped_code}"
+    );
+}
+
+#[test]
+fn unowned_mixed_helper_siblings_do_not_leak_to_entry() {
+    let bundle = r#"
+var wrap = (value) => ({ default: value }), unused = (value) => value, y = (q,K) => () => (q && (K = q(q = 0)), K);
+var f1 = y(() => { v1 = 1; });
+var f2 = y(() => { v2 = 2; });
+var f3 = y(() => { v3 = 3; });
+var f4 = y(() => { v4 = 4; });
+var f5 = y(() => { v5 = 5; });
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var wrapped_exports = {};
+__export(wrapped_exports, { wrapped: () => wrapped });
+var wrapped = wrap("value");
+console.log(wrapped);
+export { wrapped_exports };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let wrapped_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "wrapped_exports.js")
+        .expect("scope module should exist")
+        .1;
+    assert!(
+        wrapped_code.contains("wrap =") && wrapped_code.contains("wrapped = wrap"),
+        "owned mixed-declaration sibling should still move with the scope module:\n{wrapped_code}"
+    );
+
+    let entry_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "entry.js")
+        .expect("entry module should exist")
+        .1;
+    assert!(
+        !entry_code.contains("unused ="),
+        "unowned helper siblings from mixed helper declarations should not leak into entry.js:\n{entry_code}"
+    );
+}
+
+#[test]
+fn exported_noop_support_binding_stays_with_scope_module() {
+    let bundle = r#"
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var noop = () => {};
+var ns_a = {};
+__export(ns_a, { run: () => run, noop: () => noop });
+function run() { return "a"; }
+var ns_b = {};
+__export(ns_b, { value: () => value });
+noop();
+var value = run();
+export { ns_a, ns_b };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let ns_a_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "ns_a.js")
+        .expect("ns_a module should exist")
+        .1;
+    assert!(
+        ns_a_code.contains("function noop") || ns_a_code.contains("noop ="),
+        "exported no-op support binding should be available in ns_a.js:\n{ns_a_code}"
+    );
+
+    let ns_b_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "ns_b.js")
+        .expect("ns_b module should exist")
+        .1;
+    assert!(
+        !ns_b_code.contains("noop();") || ns_b_code.contains("import { noop"),
+        "a module that still calls noop should import it instead of referencing an invisible entry binding:\n{ns_b_code}"
+    );
+}
+
+#[test]
 fn standalone_factory_exports_destructuring_assignment_writes() {
     let bundle = r#"
 var y = (q,K) => () => (q && (K = q(q = 0)), K);

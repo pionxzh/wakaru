@@ -212,18 +212,35 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
     }
 
     // Phase 4: everything that is not a helper decl or factory decl becomes the entry.
-    let entry_items: Vec<ModuleItem> = module
-        .body
+    // Mixed declarations can contain useful sibling helpers, for example
+    // `var wrap = ..., __esm = ...`; filter at declarator granularity.
+    let helper_factory_syms: HashSet<Atom> = helper_syms
         .iter()
-        .filter(|item| !is_helper_or_factory_item(item, &helper_syms, &factory_syms))
+        .chain(factory_syms.iter())
         .cloned()
         .collect();
-    let analysis_entry_items: Vec<ModuleItem> = analysis_module
-        .body
-        .iter()
-        .filter(|item| !is_helper_or_factory_item(item, &helper_syms, &factory_syms))
-        .cloned()
-        .collect();
+    let mut drop_unowned_helper_sibling_indices = HashSet::new();
+    let mut entry_items = Vec::new();
+    let mut analysis_entry_items = Vec::new();
+    for (source_item, analysis_item) in module.body.iter().zip(&analysis_module.body) {
+        let source_filtered = filter_helper_factory_declarators(source_item, &helper_factory_syms);
+        let analysis_filtered =
+            filter_helper_factory_declarators(analysis_item, &helper_factory_syms);
+        if source_filtered.is_some() != analysis_filtered.is_some() {
+            continue;
+        }
+        let Some(source_filtered) = source_filtered else {
+            continue;
+        };
+        let Some(analysis_filtered) = analysis_filtered else {
+            continue;
+        };
+        if item_has_helper_factory_declarator(analysis_item, &helper_factory_syms) {
+            drop_unowned_helper_sibling_indices.insert(entry_items.len());
+        }
+        entry_items.push(source_filtered);
+        analysis_entry_items.push(analysis_filtered);
+    }
 
     // Phase 5: split scope-hoisted modules out of the entry items.
     // Pass factory-referenced bindings so the extraction can expand exports
@@ -243,9 +260,12 @@ pub(super) fn detect_from_module(module: &Module, cm: Lrc<SourceMap>) -> Option<
             entry_items,
             &mut global_seen,
             cm.clone(),
-            &all_factory_referenced,
-            &factory_preassigned_bindings,
-            &factory_importable_bindings,
+            ScopeExtractionRefs {
+                factory_referenced: &all_factory_referenced,
+                factory_preassigned_bindings: &factory_preassigned_bindings,
+                factory_importable_bindings: &factory_importable_bindings,
+                drop_unowned_helper_sibling_indices: &drop_unowned_helper_sibling_indices,
+            },
         )
     };
     modules.extend(scope_hoisted_modules);
@@ -1328,24 +1348,39 @@ fn sanitize_path(raw: String) -> String {
     crate::unpacker::sanitize_relative_path(s, "module.js")
 }
 
-// ---------------------------------------------------------------------------
-// Entry module filter
-// ---------------------------------------------------------------------------
-
-fn is_helper_or_factory_item(
+fn filter_helper_factory_declarators(
     item: &ModuleItem,
-    helper_syms: &HashSet<Atom>,
-    factory_syms: &HashSet<Atom>,
+    helper_factory_syms: &HashSet<Atom>,
+) -> Option<ModuleItem> {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
+        return Some(item.clone());
+    };
+    let mut filtered = var_decl.clone();
+    filtered.decls.retain(|decl| {
+        !matches!(
+            &decl.name,
+            Pat::Ident(bi) if helper_factory_syms.contains(&bi.id.sym)
+        )
+    });
+    if filtered.decls.is_empty() {
+        None
+    } else {
+        Some(ModuleItem::Stmt(Stmt::Decl(Decl::Var(filtered))))
+    }
+}
+
+fn item_has_helper_factory_declarator(
+    item: &ModuleItem,
+    helper_factory_syms: &HashSet<Atom>,
 ) -> bool {
-    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) = item else {
         return false;
     };
-    var.decls.iter().any(|d| {
-        let Pat::Ident(bi) = &d.name else {
-            return false;
-        };
-        let sym = &bi.id.sym;
-        helper_syms.contains(sym) || factory_syms.contains(sym)
+    var_decl.decls.iter().any(|decl| {
+        matches!(
+            &decl.name,
+            Pat::Ident(bi) if helper_factory_syms.contains(&bi.id.sym)
+        )
     })
 }
 
@@ -1391,6 +1426,7 @@ struct ScopeModuleMeta {
     namespace_binding: BindingId,
     export_entries: Vec<(Atom, BindingId)>,
     body_indices: Vec<usize>,
+    owned_support_bindings: HashSet<BindingId>,
     exported_bindings: HashSet<BindingId>,
     exported_atoms: HashSet<Atom>,
     declared_bindings: HashSet<BindingId>,
@@ -1399,6 +1435,13 @@ struct ScopeModuleMeta {
     referenced_atoms: HashSet<Atom>,
     filename: String,
     id: String,
+}
+
+struct ScopeExtractionRefs<'a> {
+    factory_referenced: &'a HashSet<BindingId>,
+    factory_preassigned_bindings: &'a HashMap<BindingId, String>,
+    factory_importable_bindings: &'a HashMap<BindingId, String>,
+    drop_unowned_helper_sibling_indices: &'a HashSet<usize>,
 }
 
 /// Extract scope-hoisted modules from entry items.
@@ -1422,9 +1465,7 @@ fn extract_scope_hoisted_modules(
     source_items: Vec<ModuleItem>,
     seen_lower: &mut HashSet<String>,
     cm: Lrc<SourceMap>,
-    factory_referenced: &HashSet<BindingId>,
-    factory_preassigned_bindings: &HashMap<BindingId, String>,
-    factory_importable_bindings: &HashMap<BindingId, String>,
+    refs: ScopeExtractionRefs<'_>,
 ) -> (
     Vec<UnpackedModule>,
     Vec<ModuleItem>,
@@ -1434,6 +1475,12 @@ fn extract_scope_hoisted_modules(
     HashMap<String, HashSet<Atom>>,
 ) {
     debug_assert_eq!(analysis_items.len(), source_items.len());
+    let ScopeExtractionRefs {
+        factory_referenced,
+        factory_preassigned_bindings,
+        factory_importable_bindings,
+        drop_unowned_helper_sibling_indices,
+    } = refs;
 
     // Step 1: find the __export helper binding.
     let Some((export_helper_index, export_helper)) = detect_export_helper(analysis_items) else {
@@ -1473,6 +1520,10 @@ fn extract_scope_hoisted_modules(
 
     // Convert to Option<ModuleItem> so items can be moved out by index.
     let mut source_slots: Vec<Option<ModuleItem>> = source_items.into_iter().map(Some).collect();
+    let original_source_items: Vec<ModuleItem> = source_slots
+        .iter()
+        .map(|item| item.as_ref().expect("source slot should exist").clone())
+        .collect();
 
     // Step 3 (pass 1): partition items and collect per-module metadata.
     let mut metas: Vec<ScopeModuleMeta> = Vec::new();
@@ -1596,6 +1647,7 @@ fn extract_scope_hoisted_modules(
             namespace_binding: boundary.ns_binding.clone(),
             export_entries: boundary.export_entries.clone(),
             body_indices,
+            owned_support_bindings: HashSet::new(),
             exported_bindings: boundary.exported_bindings.clone(),
             exported_atoms,
             declared_bindings,
@@ -1616,6 +1668,97 @@ fn extract_scope_hoisted_modules(
             binding_to_module.insert(binding.clone(), mi);
         }
     }
+
+    let decl_index_by_binding: HashMap<BindingId, usize> = item_infos
+        .iter()
+        .enumerate()
+        .flat_map(|(index, info)| {
+            info.declared
+                .iter()
+                .cloned()
+                .map(move |binding| (binding, index))
+        })
+        .collect();
+
+    // Scope-hoisted modules often call small top-level helpers that sit before
+    // the namespace block. Move safe helper-like declarations into the first
+    // extracted module that needs them so generated modules don't reference
+    // invisible bindings left behind in entry.js.
+    let mut owned_support_by_index: HashMap<usize, HashSet<BindingId>> = HashMap::new();
+    for (mi, meta) in metas.iter_mut().enumerate() {
+        let module_start = meta
+            .body_indices
+            .iter()
+            .min()
+            .copied()
+            .unwrap_or(usize::MAX);
+        let mut queue: Vec<BindingId> = meta
+            .referenced_bindings
+            .iter()
+            .chain(meta.exported_bindings.iter())
+            .cloned()
+            .collect();
+        while let Some(binding) = queue.pop() {
+            if meta.declared_bindings.contains(&binding)
+                || binding_to_module.contains_key(&binding)
+                || factory_preassigned_bindings.contains_key(&binding)
+                || factory_importable_bindings.contains_key(&binding)
+                || external_imports.contains_key(&binding)
+                || meta.local_import_bindings.contains(&binding)
+            {
+                continue;
+            }
+
+            let Some(&decl_index) = decl_index_by_binding.get(&binding) else {
+                continue;
+            };
+            if consumed.contains(&decl_index)
+                || decl_index >= module_start
+                || !is_scope_support_declaration_for_binding(&analysis_items[decl_index], &binding)
+            {
+                continue;
+            }
+
+            binding_to_module.insert(binding.clone(), mi);
+            meta.declared_bindings.insert(binding.clone());
+            meta.owned_support_bindings.insert(binding.clone());
+            owned_support_by_index
+                .entry(decl_index)
+                .or_default()
+                .insert(binding.clone());
+
+            for ref_binding in &item_infos[decl_index].references {
+                if meta.referenced_bindings.insert(ref_binding.clone()) {
+                    queue.push(ref_binding.clone());
+                }
+            }
+
+            let mut atom_collector = AtomRefCollector {
+                candidate_atoms: &reference_candidate_atoms,
+                references: HashSet::new(),
+                shadowed_atoms: vec![HashSet::new()],
+            };
+            analysis_items[decl_index].visit_with(&mut atom_collector);
+            meta.referenced_atoms.extend(atom_collector.references);
+        }
+    }
+
+    for (index, owned) in &owned_support_by_index {
+        let owned_atoms: HashSet<Atom> = owned.iter().map(|(atom, _)| atom.clone()).collect();
+        if let Some(item) = source_slots[*index].take() {
+            source_slots[*index] = filter_item_excluding_bindings(&item, owned, &owned_atoms);
+        }
+        if source_slots[*index].is_none() {
+            consumed.insert(*index);
+        }
+    }
+    for index in drop_unowned_helper_sibling_indices {
+        if source_slots.get(*index).and_then(Option::as_ref).is_some() {
+            source_slots[*index] = None;
+            consumed.insert(*index);
+        }
+    }
+
     let binding_module_by_atom = atom_to_module_binding_map(&binding_to_module);
 
     // Collect remaining entry references early so they feed into the
@@ -1948,6 +2091,27 @@ fn extract_scope_hoisted_modules(
 
         // Body items with export promotion for exported bindings.
         let mut remaining_exports = exports;
+        for item in scope_owned_support_decl_items(
+            &meta.owned_support_bindings,
+            &decl_index_by_binding,
+            &original_source_items,
+        ) {
+            if remaining_exports.is_empty() {
+                module_items.push(item);
+                continue;
+            }
+            match try_promote_scope_export(item, &remaining_exports) {
+                ScopeExportPromotion::Promoted(new_item, promoted) => {
+                    module_items.push(new_item);
+                    for name in &promoted {
+                        remaining_exports.remove(name);
+                    }
+                }
+                ScopeExportPromotion::Unchanged(item) => {
+                    module_items.push(item);
+                }
+            }
+        }
         for &i in &meta.body_indices {
             let item = source_slots[i].take().expect("body item already consumed");
             if remaining_exports.is_empty() {
@@ -2565,6 +2729,24 @@ fn is_removable_export_helper_dependency_var(decl: &VarDeclarator) -> bool {
     matches!(init, Expr::Fn(_) | Expr::Arrow(_))
         || is_object_destructure_from_object(&decl.name, init)
         || is_object_member_alias(init)
+}
+
+fn is_scope_support_declaration_for_binding(item: &ModuleItem, binding: &BindingId) -> bool {
+    match item {
+        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
+            fn_decl.ident.sym == binding.0 && fn_decl.ident.ctxt == binding.1
+        }
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => var_decl.decls.iter().any(|decl| {
+            pat_declared_binding_ids(&decl.name)
+                .iter()
+                .any(|decl_binding| decl_binding == binding)
+                && decl
+                    .init
+                    .as_deref()
+                    .is_some_and(|init| matches!(init, Expr::Fn(_) | Expr::Arrow(_)))
+        }),
+        _ => false,
+    }
 }
 
 fn is_object_destructure_from_object(name: &Pat, init: &Expr) -> bool {
@@ -3224,6 +3406,31 @@ fn factory_owned_decl_items(
     top_level_decl_items: &HashMap<BindingId, (usize, ModuleItem, ModuleItem)>,
 ) -> Vec<ModuleItem> {
     factory_owned_decl_items_from(filename, factory_owned_bindings, top_level_decl_items, true)
+}
+
+fn scope_owned_support_decl_items(
+    owned: &HashSet<BindingId>,
+    decl_index_by_binding: &HashMap<BindingId, usize>,
+    source_items: &[ModuleItem],
+) -> Vec<ModuleItem> {
+    if owned.is_empty() {
+        return vec![];
+    }
+    let owned_atoms: HashSet<Atom> = owned.iter().map(|(atom, _)| atom.clone()).collect();
+    let mut item_indices: Vec<(usize, ModuleItem)> = owned
+        .iter()
+        .filter_map(|binding| {
+            decl_index_by_binding
+                .get(binding)
+                .map(|index| (*index, source_items[*index].clone()))
+        })
+        .collect();
+    item_indices.sort_by_key(|(index, _)| *index);
+    item_indices.dedup_by_key(|(index, _)| *index);
+    item_indices
+        .into_iter()
+        .filter_map(|(_, item)| filter_item_to_owned_bindings(&item, &owned_atoms))
+        .collect()
 }
 
 fn factory_owned_analysis_decl_items(
