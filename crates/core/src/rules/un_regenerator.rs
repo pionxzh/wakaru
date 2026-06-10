@@ -4,8 +4,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BlockStmtOrExpr,
-    CallExpr, CatchClause, Decl, Expr, ExprStmt, FnDecl, FnExpr, Function, Ident, ImportSpecifier,
-    Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Param, Pat, ReturnStmt,
+    CatchClause, Decl, Expr, ExprStmt, FnDecl, FnExpr, Function, Ident, ImportSpecifier, Lit,
+    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Param, Pat, ReturnStmt,
     SimpleAssignTarget, Stmt, SwitchCase, VarDeclarator, WhileStmt, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -796,11 +796,12 @@ fn has_nested_control_flow_in_stmt(stmt: &Stmt) -> bool {
         }
     }
     // `_ctx.catch(...)` is only safe when Babel also supplied the try-region list
-    // as the 4th .wrap() argument, or when we can infer it from the catch cases.
+    // as the 4th .wrap() argument.
     if wrap_try_regions.is_empty() {
-        let uses_catch = cases.iter().any(|case| case_uses_catch(&state_name, case));
-        if uses_catch && infer_try_regions_from_catches(&state_name, cases).is_none() {
-            return true;
+        for case in cases {
+            if case_uses_catch(&state_name, case) {
+                return true;
+            }
         }
     }
     false
@@ -886,63 +887,6 @@ fn case_uses_catch(state_name: &Atom, case: &SwitchCase) -> bool {
         }
     }
     false
-}
-
-fn infer_try_regions_from_catches(
-    state_name: &Atom,
-    cases: &[SwitchCase],
-) -> Option<Vec<[Option<usize>; 4]>> {
-    let mut regions = Vec::new();
-
-    for case in cases {
-        let catch_start = case_label_index(case);
-        let mut collector = CatchRegionCollector {
-            state_name: state_name.clone(),
-            catch_start,
-            regions: Vec::new(),
-            invalid: false,
-        };
-        case.visit_with(&mut collector);
-        if collector.invalid {
-            return None;
-        }
-        for region in collector.regions {
-            if !regions.contains(&region) {
-                regions.push(region);
-            }
-        }
-    }
-
-    Some(regions)
-}
-
-struct CatchRegionCollector {
-    state_name: Atom,
-    catch_start: Option<usize>,
-    regions: Vec<[Option<usize>; 4]>,
-    invalid: bool,
-}
-
-impl Visit for CatchRegionCollector {
-    fn visit_call_expr(&mut self, call: &CallExpr) {
-        match state_catch_call_try_start(&self.state_name, call) {
-            Some(Some(try_start)) => {
-                let Some(catch_start) = self.catch_start else {
-                    self.invalid = true;
-                    return;
-                };
-                self.regions
-                    .push([Some(try_start), Some(catch_start), None, None]);
-            }
-            Some(None) => {
-                self.invalid = true;
-                return;
-            }
-            None => {}
-        }
-
-        call.visit_children_with(self);
-    }
 }
 
 fn extract_switch_cases_ref(body: &BlockStmt) -> Option<&[SwitchCase]> {
@@ -1259,11 +1203,6 @@ fn decode_babel_state_machine(
     cases: Vec<SwitchCase>,
     mut trys: Vec<[Option<usize>; 4]>,
 ) -> Vec<Stmt> {
-    if trys.is_empty() {
-        if let Some(inferred) = infer_try_regions_from_catches(state_name, &cases) {
-            trys = inferred;
-        }
-    }
     infer_try_region_nexts(&mut trys, &cases);
     // Collect (label_idx, stmt) pairs
     let mut flat: Vec<(usize, Stmt)> = Vec::new();
@@ -1965,25 +1904,13 @@ fn is_state_catch_call(state_name: &Atom, expr: &Expr) -> bool {
     let Expr::Call(call) = expr else {
         return false;
     };
-    state_catch_call_try_start(state_name, call).is_some()
-}
-
-fn state_catch_call_try_start(state_name: &Atom, call: &CallExpr) -> Option<Option<usize>> {
-    let callee = call.callee.as_expr()?;
-    let Expr::Member(member) = callee.as_ref() else {
-        return None;
+    let Some(callee) = call.callee.as_expr() else {
+        return false;
     };
-    if !is_ident_with_name(&member.obj, state_name) || !member_prop_name(&member.prop, "catch") {
-        return None;
-    }
-
-    Some(call.args.first().and_then(|arg| {
-        if let Expr::Lit(Lit::Num(n)) = arg.expr.as_ref() {
-            Some(n.value as usize)
-        } else {
-            None
-        }
-    }))
+    let Expr::Member(member) = callee.as_ref() else {
+        return false;
+    };
+    is_ident_with_name(&member.obj, state_name) && member_prop_name(&member.prop, "catch")
 }
 
 struct CatchValueReplacer {
