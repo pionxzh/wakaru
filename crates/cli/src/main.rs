@@ -10,9 +10,10 @@ use rayon::prelude::*;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
 use wakaru_core::{
-    decompile, extract_source_entries, format_trace_events, normalize, parse_sourcemap,
-    trace_rules, unpack, unpack_files, unpack_files_raw, unpack_raw, BundleFormat, DceMode,
-    DecompileOptions, NormalizeOptions, RewriteLevel, RuleTraceOptions, UnpackInput,
+    decompile, decompile_vue_sfc, extract_source_entries, format_trace_events, normalize,
+    parse_sourcemap, recover_vue_sfc_source_from_js, trace_rules, unpack, unpack_files,
+    unpack_files_raw, unpack_raw, BundleFormat, DceMode, DecompileOptions, NormalizeOptions,
+    RewriteLevel, RuleTraceOptions, UnpackInput,
 };
 
 mod color;
@@ -116,6 +117,10 @@ struct Cli {
     /// Run post-transform diagnostic checks and print results to stderr.
     #[arg(long)]
     diagnostics: bool,
+
+    /// Recover Vue 3 render functions into best-effort .vue single-file components.
+    #[arg(long)]
+    vue_sfc: bool,
 
     /// Run a final formatter pass on decompiled output.
     #[arg(long)]
@@ -249,9 +254,12 @@ fn run_default(cli: Cli) -> Result<()> {
     if cli.unpack.is_some() && cli.output.is_none() {
         bail!("--unpack requires -o/--output to choose an output directory");
     }
+    if cli.vue_sfc && cli.raw {
+        bail!("--vue-sfc cannot be combined with --raw");
+    }
 
     let heuristic_split = !matches!(cli.unpack, Some(UnpackMode::Strict));
-    let formatter = selected_formatter(cli.formatter);
+    let formatter = selected_formatter(cli.formatter && !cli.vue_sfc);
     let styled = if cli.json {
         Styled::off()
     } else {
@@ -325,6 +333,11 @@ fn run_default(cli: Cli) -> Result<()> {
         let pairs: Vec<(String, String)> = pairs
             .into_par_iter()
             .map(|(filename, code)| {
+                if cli.vue_sfc {
+                    if let Ok(Some(sfc)) = recover_vue_sfc_source_from_js(&code) {
+                        return (vue_output_filename(&filename), sfc);
+                    }
+                }
                 let formatted = format_cli_output(code, &filename, formatter);
                 (filename, formatted)
             })
@@ -475,9 +488,12 @@ fn run_default(cli: Cli) -> Result<()> {
             diagnostics: cli.diagnostics,
             emit_source_map: cli.emit_source_map,
         };
-
         let start = Instant::now();
-        let output = decompile(&input, options)?;
+        let output = if cli.vue_sfc {
+            decompile_vue_sfc(&input, options)?
+        } else {
+            decompile(&input, options)?
+        };
         let elapsed = start.elapsed();
 
         if !cli.json {
@@ -764,6 +780,14 @@ fn append_map_extension(path: &Path) -> PathBuf {
     let mut map_name = path.as_os_str().to_owned();
     map_name.push(".map");
     PathBuf::from(map_name)
+}
+
+fn vue_output_filename(filename: &str) -> String {
+    let path = Path::new(filename);
+    if path.extension().is_some() {
+        return path.with_extension("vue").to_string_lossy().to_string();
+    }
+    format!("{filename}.vue")
 }
 
 fn ensure_output_file(path: &Path, force: bool) -> Result<()> {

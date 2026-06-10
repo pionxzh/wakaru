@@ -1,9 +1,9 @@
 # Vue Render Reproduction Matrix
 
 This harness checks how Vue 3 single-file components compile into render
-functions, then runs wakaru on the generated JavaScript without using source
-maps. It is for investigation and regression hunting, not as a committed
-snapshot source.
+functions, then runs `wakaru --vue-sfc` on the generated JavaScript without
+using source maps. It is for investigation and regression hunting, not as a
+committed snapshot source.
 
 The target recovery path is intentionally no-sourcemap:
 

@@ -337,6 +337,7 @@ docs/
 - [Fact system](fact-system.md) -- cross-module fact system
 - [Rule dependency inventory](rule-dependency-inventory.md) -- rule dependency relationships and experimental validation
 - [Rewrite assumptions](rewrite-assumptions.md) -- semantic assumptions and rewrite policy
+- [Vue decompile](vue-decompile.md) -- no-sourcemap Vue render recovery and SFC printer scope
 
 ## References
 
