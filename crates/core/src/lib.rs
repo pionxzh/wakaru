@@ -18,6 +18,7 @@ pub mod sourcemap_rename;
 pub mod tdz_check;
 pub mod unpacker;
 pub mod utils;
+pub mod vue_recovery;
 pub mod vue_template;
 
 pub use driver::{
@@ -37,6 +38,9 @@ pub use rules::{
 pub use sourcemap_rename::{extract_source_entries, parse_sourcemap, resolve_source_path};
 pub use tdz_check::{check_tdz, TdzViolation};
 pub use unpacker::{scope_hoist, unpack_webpack4, UnpackResult, UnpackedModule};
+pub use vue_recovery::{
+    decompile_vue_sfc, recover_vue_sfc_from_js, recover_vue_sfc_source_from_js,
+};
 
 /// Unpack a webpack4 bundle and return the raw (pre-decompile-rules) module code.
 /// Each element is `(filename, code)`. Returns `None` if the source is not recognized
