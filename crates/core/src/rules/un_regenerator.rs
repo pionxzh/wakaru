@@ -1555,7 +1555,7 @@ fn decode_return(state_name: &Atom, ret: &ReturnStmt) -> Option<DecodedReturn> {
     let arg = ret.arg.as_ref()?;
 
     // return _ctx.stop()
-    if is_stop_call(state_name, arg) {
+    if is_stop_call(state_name, arg) || is_finish_call(state_name, arg) {
         return Some(DecodedReturn::Stop);
     }
 
@@ -1594,6 +1594,20 @@ fn is_stop_call(state_name: &Atom, expr: &Expr) -> bool {
         return false;
     };
     is_ident_with_name(&member.obj, state_name) && member_prop_name(&member.prop, "stop")
+}
+
+fn is_finish_call(state_name: &Atom, expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    let Some(callee) = call.callee.as_expr() else {
+        return false;
+    };
+    let Expr::Member(member) = callee.as_ref() else {
+        return false;
+    };
+    is_ident_with_name(&member.obj, state_name)
+        && (member_prop_name(&member.prop, "finish") || member_prop_name(&member.prop, "f"))
 }
 
 fn decode_abrupt(state_name: &Atom, expr: &Expr) -> Option<DecodedReturn> {
