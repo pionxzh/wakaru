@@ -23,28 +23,33 @@ render calls before Vue recovery runs.
 
 ## Current Recovery Scope
 
-Supported initial shapes:
+Supported shapes:
 
 - Vue 3 imports from `"vue"` after the normal decompile pipeline.
 - `export function render(...)` modules.
-- Root `createElementBlock(...)` / `createElementVNode(...)` calls.
+- Root `createElementBlock(...)` / `createElementVNode(...)` calls, including
+  transparent `Fragment` children.
 - Hoisted object props such as `_hoisted_1 = { class: "card" }`.
 - Static string children.
 - `toDisplayString(...)` text interpolation.
 - Basic static attributes, dynamic `:class` / `:style`, and `@event`
-  attributes.
+  attributes, including cached event handlers.
+- `v-if` / `v-else-if` / `v-else` from Vue conditional render branches.
+- `v-for` from `renderList(...)` fragment children.
+- Component vnodes from `resolveComponent(...)` + `createVNode(...)`.
+- Named slots with fallback text from `renderSlot(...)`.
+- Runtime directives from `withDirectives(...)`, including `v-model` text inputs
+  and `v-show`.
 - Simple component option objects as `<script>export default ...</script>`.
 
 Known gaps:
 
-- Control flow recovery (`v-if`, `v-else-if`, `v-else`).
-- List recovery (`v-for` from `renderList` / `Fragment`).
-- Component vnode and slot recovery (`createVNode`, `resolveComponent`,
-  `renderSlot`).
-- Directive recovery (`withDirectives`, `vModelText`, `vShow`, and related
-  helpers).
+- Import reconstruction for recovered component dependencies in the `<script>`
+  block.
+- Broader directive support beyond the covered `vModelText` / `vShow` shapes.
+- Multiple roots and advanced slot scopes beyond the covered fallback case.
 - Strong source-name recovery after aggressive minification/mangling when the
-  render context parameter itself has been renamed.
+  original public names are not present in the generated render code.
 
 Use `scripts/repro/vue-render-matrix/` to reproduce Vue compiler output and
 track which generated shapes the current recovery supports.
