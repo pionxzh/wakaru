@@ -168,6 +168,44 @@ fn webpack5_chunk_unpacks_arrow_and_method_factories() {
 }
 
 #[test]
+fn webpack5_chunk_rewrites_numeric_require_in_method_factory() {
+    let source = r#"
+(self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([
+  [7],
+  {
+    100(module, exports, require) {
+      "use strict";
+      var dep = require(200);
+      exports.default = dep.value;
+    },
+    200(module, exports, require) {
+      "use strict";
+      exports.value = 42;
+    }
+  }
+]);
+"#;
+
+    let pairs = expect_unpack(source, "chunk.js");
+
+    assert_eq!(pairs.len(), 2);
+    let mod_100 = pairs
+        .iter()
+        .find(|(name, _)| name == "module-100.js")
+        .expect("module-100.js should exist");
+    assert!(
+        !mod_100.1.contains("require(200)"),
+        "raw numeric require should not remain in method factory:\n{}",
+        mod_100.1
+    );
+    assert!(
+        mod_100.1.contains("./module-200.js"),
+        "numeric require should be rewritten for method factory:\n{}",
+        mod_100.1
+    );
+}
+
+#[test]
 fn webpack5_chunk_with_string_keys() {
     let source = r#"
 (self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([
