@@ -1726,6 +1726,80 @@ export { ns_a, ns_b };
 }
 
 #[test]
+fn scope_module_imports_top_level_computed_property_refs() {
+    let bundle = r#"
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var keys = {};
+__export(keys, { keyFor: () => keyFor });
+function keyFor(name) { return "prefix:" + name; }
+var prices = {};
+__export(prices, { table: () => table });
+var table = { [keyFor("sonnet")]: 1 };
+export { keys, prices };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let prices_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "prices.js")
+        .expect("prices module should exist")
+        .1;
+    assert!(
+        prices_code.contains("import { keyFor } from \"./keys.js\"")
+            && prices_code.contains("[keyFor(\"sonnet\")]"),
+        "top-level computed property references should import their owner:\n{prices_code}"
+    );
+}
+
+#[test]
+fn scope_module_imports_one_param_commonjs_factory() {
+    let bundle = r#"
+var defProp = Object.defineProperty;
+var __export = (target, all) => {
+    for (var name in all)
+        defProp(target, name, { get: all[name], enumerable: true });
+};
+var __commonJS = (cb, mod) => function __require() {
+    return mod || (0, cb[Object.keys(cb)[0]])((mod = { exports: {} }).exports), mod.exports;
+};
+var require_value = __commonJS({
+    "value.js"(exports) { exports.value = "ok"; }
+});
+var ns_a = {};
+__export(ns_a, { value: () => value });
+var value = require_value().value;
+export { ns_a };
+"#;
+    let raw_pairs = expect_unpack_raw(bundle);
+
+    let ns_a_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "ns_a.js")
+        .expect("scope module should exist")
+        .1;
+    assert!(
+        ns_a_code.contains("import { require_value } from \"./value.js\""),
+        "scope module should import one-param CommonJS factory wrapper:\n{ns_a_code}"
+    );
+
+    let value_code = &raw_pairs
+        .iter()
+        .find(|(n, _)| n == "value.js")
+        .expect("CommonJS module should exist")
+        .1;
+    assert!(
+        value_code.contains("export function require_value()")
+            && value_code.contains("var exports = {}")
+            && value_code.contains("return exports"),
+        "one-param CommonJS factory should remain callable:\n{value_code}"
+    );
+}
+
+#[test]
 fn standalone_factory_exports_destructuring_assignment_writes() {
     let bundle = r#"
 var y = (q,K) => () => (q && (K = q(q = 0)), K);
