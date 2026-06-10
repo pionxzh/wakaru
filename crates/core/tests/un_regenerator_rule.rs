@@ -526,6 +526,128 @@ function g() {
     );
 }
 
+#[test]
+fn generator_delegate_yield_restored() {
+    let input = r#"
+var _marked = regeneratorRuntime.mark(read_all);
+function read_all(source) {
+  return regeneratorRuntime.wrap(function read_all$(_context) {
+    while (1) switch (_context.prev = _context.next) {
+      case 0:
+        _context.prev = 0;
+        _context.next = 3;
+        return start_read(source);
+      case 3:
+        return _context.delegateYield(read_chunks(source), "t0", 4);
+      case 4:
+        _context.next = 6;
+        return finish_read(source);
+      case 6:
+        return _context.abrupt("return", _context.sent);
+      case 7:
+        _context.prev = 7;
+        _context.next = 10;
+        return close_reader(source);
+      case 10:
+        return _context.finish(7);
+      case 11:
+      case "end":
+        return _context.stop();
+    }
+  }, _marked, null, [[0,, 7, 11]]);
+}
+"#;
+    let expected = r#"
+function* read_all(source) {
+  try {
+    yield start_read(source);
+    yield* read_chunks(source);
+    return yield finish_read(source);
+  } finally {
+    yield close_reader(source);
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn generator_delegate_yield_result_is_restored() {
+    let input = r#"
+var _marked = regeneratorRuntime.mark(read_all);
+function read_all(source) {
+  var result;
+  return regeneratorRuntime.wrap(function read_all$(_context) {
+    while (1) switch (_context.prev = _context.next) {
+      case 0:
+        return _context.delegateYield(read_chunks(source), "t0", 1);
+      case 1:
+        result = _context.t0;
+        return _context.abrupt("return", result);
+      case 2:
+      case "end":
+        return _context.stop();
+    }
+  }, _marked);
+}
+"#;
+    let expected = r#"
+function* read_all(source) {
+  var result;
+  result = yield* read_chunks(source);
+  return result;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn generator_short_delegate_yield_restored() {
+    let input = r#"
+var _marked = _regenerator().m(read_all);
+function read_all(source) {
+  return _regenerator().w(function(_context) {
+    while (1) switch (_context.p = _context.n) {
+      case 0:
+        _context.p = 0;
+        _context.n = 1;
+        return start_read(source);
+      case 1:
+        return _context.d(_regeneratorValues(read_chunks(source)), 2);
+      case 2:
+        _context.n = 3;
+        return finish_read(source);
+      case 3:
+        return _context.a(2, _context.v);
+      case 4:
+        _context.p = 4;
+        _context.n = 5;
+        return close_reader(source);
+      case 5:
+        return _context.f(4);
+      case 6:
+        return _context.a(2);
+    }
+  }, _marked, null, [[0,, 4, 6]]);
+}
+"#;
+    let expected = r#"
+function* read_all(source) {
+  try {
+    yield start_read(source);
+    yield* read_chunks(source);
+    return yield finish_read(source);
+  } finally {
+    yield close_reader(source);
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
 // ── _asyncToGenerator (Babel async functions) ───────────────────────────────
 
 #[test]
@@ -746,6 +868,36 @@ async function load_user(app_id) {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn esbuild_yield_star_helper_is_unwrapped() {
+    let input = r#"
+var __knownSymbol = (name, symbol) => (symbol = Symbol[name]) ? symbol : Symbol.for("Symbol." + name);
+var __await = function(promise, isYieldStar) {
+  this[0] = promise;
+  this[1] = isYieldStar;
+};
+var __yieldStar = (value) => {
+  var obj = value[__knownSymbol("asyncIterator")], isAwait = false, method, it = {};
+  return obj == null
+    ? (obj = value[__knownSymbol("iterator")](), method = (k) => it[k] = (x) => obj[k](x))
+    : (method = (k) => it[k] = (v) => ({ done: false, value: new __await(v, 1) })),
+    it;
+};
+function* read_all(source) {
+  yield* __yieldStar(read_chunks(source));
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("yield* read_chunks(source)"),
+        "should unwrap esbuild yield-star helper, got:\n{output}"
+    );
+    assert!(
+        !output.contains("__yieldStar(read_chunks"),
+        "rewritten delegate yield should not keep the esbuild helper call, got:\n{output}"
+    );
 }
 
 #[test]

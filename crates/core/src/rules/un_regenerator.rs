@@ -21,6 +21,7 @@ use super::transpiler_helper_utils::{
 };
 use super::un_async_await::try_transform_ts_generator_body;
 
+use crate::js_names::is_likely_generated_alias;
 use crate::utils::paren::strip_parens;
 
 pub struct UnRegenerator<'a> {
@@ -95,6 +96,7 @@ fn run_un_regenerator(
         .into_iter()
         .collect();
     let esbuild_async_helpers = collect_esbuild_async_helpers(module, unresolved_mark);
+    let esbuild_yield_star_helpers = collect_esbuild_yield_star_helpers(module);
 
     // Phase 2: Transform functions containing regeneratorRuntime.wrap()
     // and _asyncToGenerator() calls. Track consumed mark bindings.
@@ -112,6 +114,7 @@ fn run_un_regenerator(
         async_to_gen_callees: &async_to_gen_callees,
         generator_helpers: &generator_helpers,
         esbuild_async_helpers: &esbuild_async_helpers,
+        esbuild_yield_star_helpers: &esbuild_yield_star_helpers,
         consumed_marks: &mut consumed_marks,
     };
     module.visit_mut_with(&mut transformer);
@@ -135,6 +138,7 @@ fn run_un_regenerator(
     }
 
     remove_unused_helper_decls(module, &esbuild_async_helpers);
+    remove_unused_helper_decls(module, &esbuild_yield_star_helpers);
 }
 
 struct AsyncToGenCallees<'a> {
@@ -613,6 +617,7 @@ struct FunctionTransformer<'a> {
     async_to_gen_callees: &'a AsyncToGenCallees<'a>,
     generator_helpers: &'a [BindingKey],
     esbuild_async_helpers: &'a [BindingKey],
+    esbuild_yield_star_helpers: &'a [BindingKey],
     consumed_marks: &'a mut Vec<BindingKey>,
 }
 
@@ -700,6 +705,25 @@ impl VisitMut for FunctionTransformer<'_> {
         }
 
         arrow.visit_mut_children_with(self);
+    }
+
+    fn visit_mut_yield_expr(&mut self, yield_expr: &mut YieldExpr) {
+        yield_expr.visit_mut_children_with(self);
+
+        if !yield_expr.delegate {
+            return;
+        }
+
+        let Some(arg) = yield_expr.arg.take() else {
+            return;
+        };
+        if let Some(unwrapped) =
+            unwrap_esbuild_yield_star_arg(&arg, self.esbuild_yield_star_helpers)
+        {
+            yield_expr.arg = Some(unwrapped);
+        } else {
+            yield_expr.arg = Some(arg);
+        }
     }
 }
 
@@ -1206,6 +1230,7 @@ fn decode_babel_state_machine(
     infer_try_region_nexts(&mut trys, &cases);
     // Collect (label_idx, stmt) pairs
     let mut flat: Vec<(usize, Stmt)> = Vec::new();
+    let mut skip_delegate_result_assignments: HashSet<(usize, usize)> = HashSet::new();
 
     for case in &cases {
         let idx = match case_label_index(case) {
@@ -1219,6 +1244,11 @@ fn decode_babel_state_machine(
         let mut i = 0;
         while i < stmts.len() {
             let stmt = &stmts[i];
+
+            if skip_delegate_result_assignments.contains(&(idx, i)) {
+                i += 1;
+                continue;
+            }
 
             // Skip _ctx.next = N assignments (state transitions)
             if is_next_assign(state_name, stmt) {
@@ -1311,6 +1341,45 @@ fn decode_babel_state_machine(
                                     })),
                                 }),
                             ));
+                        }
+                        DecodedReturn::DelegateYield {
+                            expr,
+                            result_name,
+                            next_loc,
+                        } => {
+                            if let (Some(result_name), Some(next_loc)) =
+                                (result_name.as_ref(), next_loc)
+                            {
+                                if let Some((assign_index, assign_stmt)) =
+                                    extract_delegate_result_assignment(
+                                        state_name,
+                                        &cases,
+                                        next_loc,
+                                        result_name,
+                                        expr.clone(),
+                                    )
+                                {
+                                    skip_delegate_result_assignments
+                                        .insert((next_loc, assign_index));
+                                    flat.push((idx, assign_stmt));
+                                } else {
+                                    flat.push((
+                                        idx,
+                                        Stmt::Expr(ExprStmt {
+                                            span: DUMMY_SP,
+                                            expr: delegate_yield_expr(expr),
+                                        }),
+                                    ));
+                                }
+                            } else {
+                                flat.push((
+                                    idx,
+                                    Stmt::Expr(ExprStmt {
+                                        span: DUMMY_SP,
+                                        expr: delegate_yield_expr(expr),
+                                    }),
+                                ));
+                            }
                         }
                     }
                     i += 1;
@@ -1549,6 +1618,11 @@ enum DecodedReturn {
     Throw(Box<Expr>),
     Stop,
     CommaYield(Box<Expr>),
+    DelegateYield {
+        expr: Box<Expr>,
+        result_name: Option<Atom>,
+        next_loc: Option<usize>,
+    },
 }
 
 fn decode_return(state_name: &Atom, ret: &ReturnStmt) -> Option<DecodedReturn> {
@@ -1557,6 +1631,10 @@ fn decode_return(state_name: &Atom, ret: &ReturnStmt) -> Option<DecodedReturn> {
     // return _ctx.stop()
     if is_stop_call(state_name, arg) || is_finish_call(state_name, arg) {
         return Some(DecodedReturn::Stop);
+    }
+
+    if let Some(decoded) = decode_delegate_yield(state_name, arg) {
+        return Some(decoded);
     }
 
     // return _ctx.abrupt("return", value)
@@ -1581,6 +1659,141 @@ fn decode_return(state_name: &Atom, ret: &ReturnStmt) -> Option<DecodedReturn> {
     }
 
     None
+}
+
+fn decode_delegate_yield(state_name: &Atom, expr: &Expr) -> Option<DecodedReturn> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    let callee = call.callee.as_expr()?;
+    let Expr::Member(member) = callee.as_ref() else {
+        return None;
+    };
+    if !is_ident_with_name(&member.obj, state_name)
+        || !(member_prop_name(&member.prop, "delegateYield") || member_prop_name(&member.prop, "d"))
+    {
+        return None;
+    }
+    let arg = call.args.first()?.expr.clone();
+    let result_name = call.args.get(1).and_then(|arg| {
+        if let Expr::Lit(Lit::Str(str_lit)) = arg.expr.as_ref() {
+            str_lit.value.as_str().map(Atom::from)
+        } else {
+            None
+        }
+    });
+    let next_arg = if result_name.is_some() {
+        call.args.get(2)
+    } else {
+        call.args.get(1)
+    };
+    let next_loc = next_arg.and_then(|arg| number_lit_usize(&arg.expr));
+    Some(DecodedReturn::DelegateYield {
+        expr: unwrap_regenerator_values(arg),
+        result_name,
+        next_loc,
+    })
+}
+
+fn extract_delegate_result_assignment(
+    state_name: &Atom,
+    cases: &[SwitchCase],
+    next_loc: usize,
+    result_name: &Atom,
+    yielded: Box<Expr>,
+) -> Option<(usize, Stmt)> {
+    let case = cases
+        .iter()
+        .find(|case| case_label_index(case) == Some(next_loc))?;
+    for (stmt_index, stmt) in case.cons.iter().enumerate() {
+        if is_next_assign(state_name, stmt)
+            || is_prev_assign(state_name, stmt)
+            || is_label_assign(state_name, stmt)
+        {
+            continue;
+        }
+        return rewrite_delegate_result_assignment(state_name, result_name, yielded, stmt)
+            .map(|stmt| (stmt_index, stmt));
+    }
+    None
+}
+
+fn rewrite_delegate_result_assignment(
+    state_name: &Atom,
+    result_name: &Atom,
+    yielded: Box<Expr>,
+    stmt: &Stmt,
+) -> Option<Stmt> {
+    match stmt {
+        Stmt::Expr(ExprStmt { expr, .. }) => {
+            let Expr::Assign(assign) = expr.as_ref() else {
+                return None;
+            };
+            if assign.op != AssignOp::Assign
+                || !is_state_result_expr(state_name, &assign.right, result_name)
+            {
+                return None;
+            }
+            let mut assign = assign.clone();
+            assign.right = delegate_yield_expr(yielded);
+            Some(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(assign)),
+            }))
+        }
+        Stmt::Decl(Decl::Var(var_decl)) => {
+            let mut changed = false;
+            let mut var_decl = var_decl.clone();
+            for decl in &mut var_decl.decls {
+                if decl
+                    .init
+                    .as_deref()
+                    .is_some_and(|init| is_state_result_expr(state_name, init, result_name))
+                {
+                    decl.init = Some(delegate_yield_expr(yielded.clone()));
+                    changed = true;
+                }
+            }
+            changed.then_some(Stmt::Decl(Decl::Var(var_decl)))
+        }
+        _ => None,
+    }
+}
+
+fn delegate_yield_expr(expr: Box<Expr>) -> Box<Expr> {
+    Box::new(Expr::Yield(YieldExpr {
+        span: DUMMY_SP,
+        delegate: true,
+        arg: Some(expr),
+    }))
+}
+
+fn is_state_result_expr(state_name: &Atom, expr: &Expr, result_name: &Atom) -> bool {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return false;
+    };
+    is_ident_with_name(&member.obj, state_name)
+        && member_prop_atom(&member.prop).as_ref() == Some(result_name)
+}
+
+fn unwrap_regenerator_values(expr: Box<Expr>) -> Box<Expr> {
+    let Expr::Call(call) = expr.as_ref() else {
+        return expr;
+    };
+    let Some(callee) = call.callee.as_expr() else {
+        return expr;
+    };
+    let Expr::Ident(id) = callee.as_ref() else {
+        return expr;
+    };
+    if id.sym.as_ref().contains("regeneratorValues") {
+        return call
+            .args
+            .first()
+            .map(|arg| arg.expr.clone())
+            .unwrap_or(expr);
+    }
+    expr
 }
 
 fn is_stop_call(state_name: &Atom, expr: &Expr) -> bool {
@@ -2317,6 +2530,115 @@ impl Visit for BindingRefCounter {
 // esbuild __async → async function
 // ============================================================
 
+fn collect_esbuild_yield_star_helpers(module: &Module) -> Vec<BindingKey> {
+    module
+        .body
+        .iter()
+        .flat_map(|item| {
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+                return Vec::new();
+            };
+            var.decls
+                .iter()
+                .filter_map(|decl| {
+                    let Pat::Ident(binding) = &decl.name else {
+                        return None;
+                    };
+                    let name = binding.id.sym.as_ref();
+                    if name != "__yieldStar" && !is_likely_generated_alias(name) {
+                        return None;
+                    }
+                    let init = decl.init.as_deref()?;
+                    if is_esbuild_yield_star_helper_expr(init) {
+                        Some((binding.id.sym.clone(), binding.id.ctxt))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn is_esbuild_yield_star_helper_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Arrow(arrow) => {
+            let mut finder = EsbuildYieldStarHelperFinder::default();
+            arrow.body.visit_with(&mut finder);
+            finder.has_shape()
+        }
+        Expr::Fn(fn_expr) => {
+            let Some(body) = &fn_expr.function.body else {
+                return false;
+            };
+            let mut finder = EsbuildYieldStarHelperFinder::default();
+            body.visit_with(&mut finder);
+            finder.has_shape()
+        }
+        _ => false,
+    }
+}
+
+#[derive(Default)]
+struct EsbuildYieldStarHelperFinder {
+    found_async_iterator: bool,
+    found_iterator: bool,
+    found_await_wrapper: bool,
+}
+
+impl EsbuildYieldStarHelperFinder {
+    fn has_shape(&self) -> bool {
+        self.found_async_iterator && self.found_iterator && self.found_await_wrapper
+    }
+}
+
+impl Visit for EsbuildYieldStarHelperFinder {
+    fn visit_lit(&mut self, lit: &Lit) {
+        if let Lit::Str(str_lit) = lit {
+            if str_lit.value.as_str() == Some("asyncIterator") {
+                self.found_async_iterator = true;
+            }
+            if str_lit.value.as_str() == Some("iterator") {
+                self.found_iterator = true;
+            }
+        }
+    }
+
+    fn visit_new_expr(&mut self, new_expr: &swc_core::ecma::ast::NewExpr) {
+        if new_expr
+            .args
+            .as_ref()
+            .is_some_and(|args| args.len() == 2 && is_number_lit(&args[1].expr, 1.0))
+        {
+            self.found_await_wrapper = true;
+        }
+        new_expr.visit_children_with(self);
+    }
+}
+
+fn unwrap_esbuild_yield_star_arg(
+    expr: &Expr,
+    esbuild_yield_star_helpers: &[BindingKey],
+) -> Option<Box<Expr>> {
+    let Expr::Call(call) = strip_parens(expr) else {
+        return None;
+    };
+    if call.args.len() != 1 {
+        return None;
+    }
+    let callee = call.callee.as_expr()?;
+    let Expr::Ident(id) = callee.as_ref() else {
+        return None;
+    };
+    if !esbuild_yield_star_helpers
+        .iter()
+        .any(|(sym, ctxt)| id.sym == *sym && id.ctxt == *ctxt)
+    {
+        return None;
+    }
+    Some(call.args[0].expr.clone())
+}
+
 fn collect_esbuild_async_helpers(module: &Module, unresolved_mark: Mark) -> Vec<BindingKey> {
     module
         .body
@@ -2958,6 +3280,17 @@ fn member_prop_atom(prop: &MemberProp) -> Option<Atom> {
         }
         _ => None,
     }
+}
+
+fn is_number_lit(expr: &Expr, expected: f64) -> bool {
+    matches!(strip_parens(expr), Expr::Lit(Lit::Num(num)) if num.value == expected)
+}
+
+fn number_lit_usize(expr: &Expr) -> Option<usize> {
+    let Expr::Lit(Lit::Num(num)) = strip_parens(expr) else {
+        return None;
+    };
+    Some(num.value as usize)
 }
 
 fn export_name_is(name: &swc_core::ecma::ast::ModuleExportName, expected: &str) -> bool {

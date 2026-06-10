@@ -151,14 +151,11 @@ fn try_transform_generator(body: &mut BlockStmt, helpers: &AsyncHelperContext) -
         None => return false,
     };
 
-    let ret_stmt = body.stmts.remove(return_idx);
-    let (state_name, cases) = match extract_generator_args(ret_stmt, helpers) {
-        Some(x) => x,
+    let new_stmts = match extract_generator_stmts(body.stmts[return_idx].clone(), helpers) {
+        Some(stmts) => stmts,
         None => return false,
     };
-
-    // Build new statements from the state machine
-    let new_stmts = decode_state_machine(state_name, cases);
+    body.stmts.remove(return_idx);
 
     // Insert new statements where the return was
     body.stmts.splice(return_idx..return_idx, new_stmts);
@@ -176,10 +173,7 @@ fn is_generator_return(stmt: &Stmt, helpers: &AsyncHelperContext) -> bool {
     helpers.is_generator_call(call)
 }
 
-fn extract_generator_args(
-    stmt: Stmt,
-    helpers: &AsyncHelperContext,
-) -> Option<(Atom, Vec<SwitchCase>)> {
+fn extract_generator_stmts(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<Vec<Stmt>> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = *ret.arg?;
     let Expr::Call(mut call) = arg else {
@@ -204,12 +198,17 @@ fn extract_generator_args(
         }
     })?;
     let body = fn_expr.function.body?;
-    // First stmt should be a switch
-    let switch = body.stmts.into_iter().next()?;
-    let Stmt::Switch(sw) = switch else {
-        return None;
-    };
-    Some((state_name, sw.cases))
+    let mut stmts = body.stmts.into_iter();
+    let first = stmts.next()?;
+    if let Stmt::Switch(sw) = first {
+        return Some(decode_state_machine(state_name, sw.cases));
+    }
+    if stmts.next().is_none() {
+        if let Some(decoded) = decode_return_opcode(&first) {
+            return Some(decoded.into_iter().collect());
+        }
+    }
+    None
 }
 
 /// Decode the state machine into a flat list of statements.
@@ -603,7 +602,7 @@ fn decode_return_opcode(stmt: &Stmt) -> Option<Option<Stmt>> {
         }
         5 => {
             // yield*(value)
-            let expr = argument.unwrap_or_else(|| {
+            let expr = argument.map(unwrap_ts_values).unwrap_or_else(|| {
                 Box::new(Expr::Ident(Ident::new_no_ctxt(
                     "undefined".into(),
                     DUMMY_SP,
@@ -621,6 +620,26 @@ fn decode_return_opcode(stmt: &Stmt) -> Option<Option<Stmt>> {
         0 | 1 | 3 | 6 | 7 => Some(None), // skip
         _ => Some(Some(stmt.clone())),
     }
+}
+
+fn unwrap_ts_values(expr: Box<Expr>) -> Box<Expr> {
+    let Expr::Call(call) = expr.as_ref() else {
+        return expr;
+    };
+    let Some(callee) = call.callee.as_expr() else {
+        return expr;
+    };
+    let Expr::Ident(id) = callee.as_ref() else {
+        return expr;
+    };
+    if matches!(id.sym.as_ref(), "__values" | "_ts_values") {
+        return call
+            .args
+            .first()
+            .map(|arg| arg.expr.clone())
+            .unwrap_or(expr);
+    }
+    expr
 }
 
 fn stmt_uses_sent(state_name: &Atom, stmt: &Stmt) -> bool {
@@ -778,11 +797,11 @@ fn try_transform_awaiter(body: &mut BlockStmt, helpers: &AsyncHelperContext) -> 
         None => return false,
     };
 
-    let ret_stmt = body.stmts.remove(return_idx);
-    let inner_stmts = match extract_awaiter_body(ret_stmt, helpers) {
+    let inner_stmts = match extract_awaiter_body(body.stmts[return_idx].clone(), helpers) {
         Some(s) => s,
         None => return false,
     };
+    body.stmts.remove(return_idx);
 
     // Replace yield with await in the extracted statements
     let mut inner_stmts = inner_stmts;

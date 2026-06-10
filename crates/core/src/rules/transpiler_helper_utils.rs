@@ -21,6 +21,7 @@ use super::helper_matcher::{
     remove_var_declarators_by_binding, static_member_prop_name, var_declarator_binding_key,
 };
 use super::match_context::MatchContext;
+use crate::js_names::is_likely_generated_alias;
 use crate::utils::paren::strip_parens;
 
 pub(crate) use super::helper_matcher::BindingKey;
@@ -423,6 +424,7 @@ fn collect_ts_helpers(
             ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
                 if let Some(kind) =
                     ts_private_helper_name_kind(fn_decl.ident.sym.as_ref(), &fn_decl.function)
+                        .or_else(|| ts_generated_fn_helper_kind(&fn_decl.ident, &fn_decl.function))
                 {
                     helpers.insert(
                         binding_key(&fn_decl.ident),
@@ -469,6 +471,9 @@ fn collect_ts_helpers(
                 Decl::Fn(fn_decl) => {
                     if let Some(kind) =
                         ts_private_helper_name_kind(fn_decl.ident.sym.as_ref(), &fn_decl.function)
+                            .or_else(|| {
+                                ts_generated_fn_helper_kind(&fn_decl.ident, &fn_decl.function)
+                            })
                     {
                         helpers.insert(
                             binding_key(&fn_decl.ident),
@@ -2251,6 +2256,16 @@ fn ts_private_helper_name_kind(name: &str, function: &Function) -> Option<TsHelp
     match kind {
         TsHelperKind::Generator => ts_function_matches_kind(function, kind).then_some(kind),
         _ => is_tsc_private_helper_fn(function, kind).then_some(kind),
+    }
+}
+
+fn ts_generated_fn_helper_kind(ident: &Ident, function: &Function) -> Option<TsHelperKind> {
+    if is_likely_generated_alias(ident.sym.as_ref())
+        && ts_function_matches_kind(function, TsHelperKind::Generator)
+    {
+        Some(TsHelperKind::Generator)
+    } else {
+        None
     }
 }
 
@@ -4262,6 +4277,14 @@ mod tests {
                 var aliasedGenerator = (this && this.__generator) || function(thisArg, body) {
                     return body.call(thisArg, { label: 0, sent: function() {}, trys: [], ops: [] });
                 };
+                function e(thisArg, body) {
+                    var state = { label: 0, sent: function() {}, trys: [], ops: [] };
+                    return body.call(thisArg, state);
+                }
+                function realStateMachine(user, options) {
+                    var state = { label: 0, trys: [], ops: [] };
+                    return options(state);
+                }
                 var inlineSpread = (this && this.__spreadArray) || function(to, from, pack) {
                     return to.concat(from);
                 };
@@ -4305,6 +4328,14 @@ mod tests {
                 inline_helpers
                     .get(&(Atom::from("aliasedGenerator"), SyntaxContext::empty())),
                 Some(&TsHelperKind::Generator)
+            );
+            assert_eq!(
+                inline_helpers.get(&(Atom::from("e"), SyntaxContext::empty())),
+                Some(&TsHelperKind::Generator)
+            );
+            assert_eq!(
+                inline_helpers.get(&(Atom::from("realStateMachine"), SyntaxContext::empty())),
+                None
             );
             assert_eq!(
                 inline_helpers.get(&(Atom::from("importedAwaiter"), SyntaxContext::empty())),

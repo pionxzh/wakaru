@@ -61,6 +61,74 @@ function* func() {
 }
 
 #[test]
+fn generator_yield_star_unwraps_values_helper() {
+    let input = r#"
+function read_all(source) {
+  return __generator(this, function (_a) {
+    switch (_a.label) {
+      case 0:
+        return [4 /*yield*/, start_read(source)];
+      case 1:
+        _a.sent();
+        return [5 /*yield**/, __values(read_chunks(source))];
+      case 2:
+        _a.sent();
+        return [4 /*yield*/, finish_read(source)];
+      case 3:
+        return [2 /*return*/, _a.sent()];
+    }
+  });
+}
+"#;
+    let expected = r#"
+function* read_all(source) {
+  yield start_read(source);
+  yield* read_chunks(source);
+  return yield finish_read(source);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn minified_ts_generator_function_decl_is_detected_by_shape() {
+    let input = r#"
+function e(thisArg, body) {
+  var state = {
+    label: 0,
+    sent: function() {},
+    trys: [],
+    ops: []
+  };
+  return body.call(thisArg, state);
+}
+function read_items(items) {
+  return e(this, function(_a) {
+    switch (_a.label) {
+      case 0:
+        return [4, first_item(items)];
+      case 1:
+        _a.sent();
+        return [4, second_item(items)];
+      case 2:
+        _a.sent();
+        return [2];
+    }
+  });
+}
+"#;
+    let expected = r#"
+function* read_items(items) {
+  yield first_item(items);
+  yield second_item(items);
+}
+"#;
+    let output = apply_without_helpers(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn generator_with_assigned_sent_values() {
     // Generator where _a.sent() is assigned (result = _a.sent())
     // Note: var declarations belong in the outer function, not the state machine
@@ -376,6 +444,43 @@ async function func() {
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn async_transform_preserves_non_matching_helper_calls_in_nested_callbacks() {
+    let input = r#"
+function load(items) {
+  return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          return [4 /*yield*/, fetch_items()];
+        case 1:
+          return [2 /*return*/, items.map(function (item) {
+            return __generator(item, item.value);
+          })];
+      }
+    });
+  });
+}
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("async function load(items)"),
+        "outer async wrapper should still be restored, got:\n{output}"
+    );
+    assert!(
+        output.contains("await fetch_items()"),
+        "state machine yield should still become await, got:\n{output}"
+    );
+    assert!(
+        output.contains("return __generator(item, item.value);"),
+        "non-matching helper call inside nested callback must be preserved, got:\n{output}"
+    );
+    assert!(
+        !output.contains("function(item) {}"),
+        "nested callback body must not be erased, got:\n{output}"
+    );
 }
 
 #[test]
