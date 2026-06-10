@@ -231,4 +231,5 @@ runMatrix({
   name: "vue-render",
   snippets,
   transformers,
+  wakaruArgs: ["--vue-sfc"],
 });

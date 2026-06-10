@@ -99,6 +99,43 @@ fn parses_formatter_option() {
 }
 
 #[test]
+fn parses_vue_sfc_option() {
+    let cli = Cli::try_parse_from(["wakaru", "input.js", "--vue-sfc"]).expect("vue option parses");
+    assert!(cli.vue_sfc);
+}
+
+#[test]
+fn rejects_vue_sfc_with_raw_unpack() {
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        "bundle.js",
+        "--unpack",
+        "--raw",
+        "--vue-sfc",
+        "-o",
+        "out",
+    ])
+    .expect("raw vue unpack args should parse before runtime validation");
+
+    let err = run_default(cli).expect_err("raw vue output should be rejected");
+    assert!(
+        err.to_string()
+            .contains("--vue-sfc cannot be combined with --raw"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn vue_output_filename_replaces_known_extension() {
+    assert_eq!(vue_output_filename("module-1.js"), "module-1.vue");
+    assert_eq!(
+        vue_output_filename("src/App.render.mjs"),
+        "src/App.render.vue"
+    );
+    assert_eq!(vue_output_filename("module-plain"), "module-plain.vue");
+}
+
+#[test]
 fn parses_json_flag() {
     let cli =
         Cli::try_parse_from(["wakaru", "input.js", "--json"]).expect("json flag should parse");
