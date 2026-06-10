@@ -18,6 +18,7 @@ pub mod sourcemap_rename;
 pub mod tdz_check;
 pub mod unpacker;
 pub mod utils;
+pub mod vue_template;
 
 pub use driver::{
     decompile, deduplicate_path, format_trace_events, is_detected_unpack_input, normalize,
