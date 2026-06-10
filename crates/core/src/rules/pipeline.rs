@@ -281,6 +281,9 @@ runner!(run_un_optional_chaining, |ctx| UnOptionalChaining::new(
     ctx.rewrite_level
 ));
 runner!(run_un_iife, |ctx| UnIife::new(ctx.rewrite_level));
+runner!(run_extract_inlined_function, |ctx| {
+    ExtractInlinedFunction::new(ctx.rewrite_level)
+});
 fn run_un_conditionals(module: &mut Module, ctx: RuleRunContext<'_>) {
     module.visit_mut_with(&mut UnConditionals);
     // UnConditionals rewrites ternary helper bodies (e.g. _defineProperty with
@@ -547,10 +550,14 @@ define_rule_registry! {
     ("UnIife2", Cleanup, run_un_iife, always_enabled, requires: [
         "SmartRename"
     ]),
+    ("ExtractInlinedFunction", Cleanup, run_extract_inlined_function, always_enabled, requires: [
+        "UnIife2"
+    ]),
     // SmartRename may capitalize component bindings that UnJsx intentionally
     // skipped earlier because lowercase JSX tags are HTML elements.
     ("UnJsx2", Cleanup, run_un_jsx, standard_or_above, requires: [
-        "SmartRename"
+        "SmartRename",
+        "ExtractInlinedFunction"
     ]),
     // UnJsx2 can expose component aliases and value-position hints in JSX.
     // Only the JSX-aware sub-rules need to re-run; the non-JSX sub-rules

@@ -325,7 +325,11 @@ fn rule_descriptors_expose_dependency_metadata() {
     assert_eq!(requires("UnParameters3"), &["SmartRename"]);
     assert_eq!(requires("ArrowReturn2"), &["UnParameters3"]);
     assert_eq!(requires("UnExportRename2"), &["SmartRename"]);
-    assert_eq!(requires("UnJsx2"), &["SmartRename"]);
+    assert_eq!(requires("ExtractInlinedFunction"), &["UnIife2"]);
+    assert_eq!(
+        requires("UnJsx2"),
+        &["SmartRename", "ExtractInlinedFunction"]
+    );
     assert_eq!(requires("DeadImports"), &["DeadDecls"]);
 }
 
