@@ -325,6 +325,7 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
                 "createTextVNode" => recover_text_vnode(&call.args, ctx).map(Some),
                 "renderSlot" => recover_slot(&call.args, ctx).map(Some),
                 "renderList" => recover_render_list(&call.args, ctx).map(Some),
+                "withDirectives" => recover_with_directives(&call.args, ctx).map(Some),
                 "toDisplayString" => {
                     let Some(arg) = call.args.first() else {
                         return Ok(None);
@@ -549,6 +550,80 @@ fn recover_slot_fallback(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<Vu
         return Ok(Vec::new());
     };
     recover_children(fallback, ctx)
+}
+
+fn recover_with_directives(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
+    let Some(base_arg) = args.first() else {
+        return Ok(VueNode::RawExpr("withDirectives()".into()));
+    };
+    let Some(mut node) = recover_node(base_arg.expr.as_ref(), ctx)? else {
+        return Ok(VueNode::RawExpr(clean_expr(
+            &print_expr(base_arg.expr.as_ref(), ctx)?,
+            ctx,
+        )));
+    };
+    let Some(directives_arg) = args.get(1) else {
+        return Ok(node);
+    };
+    let Expr::Array(directives) = directives_arg.expr.as_ref() else {
+        return Ok(node);
+    };
+
+    for directive in directives.elems.iter().flatten() {
+        let Some(attr) = recover_directive_tuple(directive.expr.as_ref(), ctx)? else {
+            continue;
+        };
+        push_attr_to_node(&mut node, attr);
+    }
+
+    Ok(node)
+}
+
+fn recover_directive_tuple(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueAttr>> {
+    let Expr::Array(tuple) = expr else {
+        return Ok(None);
+    };
+    let Some(helper_expr) = tuple.elems.first().and_then(|elem| elem.as_ref()) else {
+        return Ok(None);
+    };
+    let Some(helper) = helper_ident_name(helper_expr.expr.as_ref(), ctx) else {
+        return Ok(None);
+    };
+    let expr = tuple
+        .elems
+        .get(1)
+        .and_then(|elem| elem.as_ref())
+        .map(|elem| print_expr(elem.expr.as_ref(), ctx).map(|expr| clean_attr_expr(&expr, ctx)))
+        .transpose()?;
+
+    match helper.as_str() {
+        helper if helper.starts_with("vModel") => Ok(Some(VueAttr::Directive {
+            name: "model".to_string(),
+            arg: None,
+            expr,
+        })),
+        "vShow" => Ok(Some(VueAttr::Directive {
+            name: "show".to_string(),
+            arg: None,
+            expr,
+        })),
+        _ => Ok(None),
+    }
+}
+
+fn push_attr_to_node(node: &mut VueNode, attr: VueAttr) {
+    match node {
+        VueNode::Element(element) => element.attrs.push(attr),
+        VueNode::Fragment(children) => {
+            if let Some(first) = children.first_mut() {
+                push_attr_to_node(first, attr);
+            }
+        }
+        VueNode::Text(_)
+        | VueNode::Interpolation(_)
+        | VueNode::Comment(_)
+        | VueNode::RawExpr(_) => {}
+    }
 }
 
 fn arrow_return_expr(body: &BlockStmtOrExpr) -> Option<&Expr> {
@@ -922,6 +997,17 @@ fn helper_name(callee: &Callee, ctx: &VueRecoveryContext) -> Option<String> {
     }
 }
 
+fn helper_ident_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
+    match expr {
+        Expr::Ident(ident) => ctx
+            .vue_helpers
+            .get(&ident.sym)
+            .cloned()
+            .or_else(|| Some(ident.sym.to_string())),
+        _ => None,
+    }
+}
+
 fn component_script(options: &ObjectLit, ctx: &VueRecoveryContext) -> Result<Option<String>> {
     if options.props.is_empty() {
         return Ok(None);
@@ -1232,5 +1318,24 @@ export function render(_ctx, _cache) {
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <article>\n    <PanelHeader :title=\"title\" />\n    <slot name=\"body\">Empty</slot>\n  </article>\n</template>\n"
         );
+    }
+
+    #[test]
+    fn recovers_model_and_show_directives() {
+        let input = r#"
+import { vModelText, vShow, withDirectives, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return withDirectives((openBlock(), createElementBlock("input", {
+    "onUpdate:modelValue": _cache[0] || (_cache[0] = $event => _ctx.value = $event)
+  }, null, 512)), [
+    [vModelText, _ctx.value],
+    [vShow, _ctx.visible]
+  ]);
+}
+"#;
+
+        let output = recover_vue_sfc_source_from_js(input).unwrap().unwrap();
+        assert!(output.contains("v-model=\"value\""));
+        assert!(output.contains("v-show=\"visible\""));
     }
 }
