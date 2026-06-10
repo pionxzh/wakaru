@@ -15,7 +15,7 @@ use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax
 use crate::driver::{decompile, DecompileOptions, DecompileOutput};
 use crate::vue_template::{VueAttr, VueElement, VueNode, VueSfc, VueTemplate};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct VueRecoveryContext {
     vue_helpers: HashMap<Atom, String>,
     object_bindings: HashMap<Atom, ObjectLit>,
@@ -246,6 +246,13 @@ fn param_binding_ident(param: &Param) -> Option<&Ident> {
     }
 }
 
+fn pat_binding_ident(pat: &Pat) -> Option<&Ident> {
+    match pat {
+        Pat::Ident(binding) => Some(&binding.id),
+        _ => None,
+    }
+}
+
 fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
     match expr {
         Expr::Paren(paren) => recover_node(paren.expr.as_ref(), ctx),
@@ -272,6 +279,7 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
             };
             match helper.as_str() {
                 "createElementBlock" | "createElementVNode" => recover_element(&call.args, ctx),
+                "renderList" => recover_render_list(&call.args, ctx).map(Some),
                 "toDisplayString" => {
                     let Some(arg) = call.args.first() else {
                         return Ok(None);
@@ -365,10 +373,127 @@ fn with_directive(
     }
 }
 
+fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
+    let Some(source_arg) = args.first() else {
+        return Ok(VueNode::RawExpr("renderList()".into()));
+    };
+    let Some(callback_arg) = args.get(1) else {
+        return Ok(VueNode::RawExpr(clean_expr(
+            &print_expr(source_arg.expr.as_ref(), ctx)?,
+            ctx,
+        )));
+    };
+    let Expr::Arrow(callback) = callback_arg.expr.as_ref() else {
+        return Ok(VueNode::RawExpr(clean_expr(
+            &print_expr(callback_arg.expr.as_ref(), ctx)?,
+            ctx,
+        )));
+    };
+    let Some(item_param) = callback
+        .params
+        .first()
+        .and_then(pat_binding_ident)
+        .map(|ident| ident.sym.clone())
+    else {
+        return Ok(VueNode::RawExpr(clean_expr(
+            &print_expr(callback_arg.expr.as_ref(), ctx)?,
+            ctx,
+        )));
+    };
+    let Some(item_expr) = arrow_return_expr(&callback.body) else {
+        return Ok(VueNode::RawExpr(clean_expr(
+            &print_expr(callback_arg.expr.as_ref(), ctx)?,
+            ctx,
+        )));
+    };
+
+    let source = clean_attr_expr(&print_expr(source_arg.expr.as_ref(), ctx)?, ctx);
+    let mut item_ctx = ctx.clone();
+    item_ctx.render_context = None;
+    let Some(mut item_node) = recover_node(item_expr, &item_ctx)? else {
+        return Ok(VueNode::RawExpr(clean_expr(
+            &print_expr(item_expr, &item_ctx)?,
+            &item_ctx,
+        )));
+    };
+    rename_node_expr_prefix(&mut item_node, item_param.as_ref(), "item");
+
+    Ok(with_directive(
+        item_node,
+        "for",
+        None,
+        Some(format!("item in {source}")),
+    ))
+}
+
+fn arrow_return_expr(body: &BlockStmtOrExpr) -> Option<&Expr> {
+    match body {
+        BlockStmtOrExpr::Expr(expr) => Some(expr.as_ref()),
+        BlockStmtOrExpr::BlockStmt(block) => block.stmts.iter().find_map(|stmt| match stmt {
+            Stmt::Return(ReturnStmt {
+                arg: Some(expr), ..
+            }) => Some(expr.as_ref()),
+            _ => None,
+        }),
+    }
+}
+
+fn rename_node_expr_prefix(node: &mut VueNode, from: &str, to: &str) {
+    match node {
+        VueNode::Element(element) => {
+            for attr in &mut element.attrs {
+                rename_attr_expr_prefix(attr, from, to);
+            }
+            for child in &mut element.children {
+                rename_node_expr_prefix(child, from, to);
+            }
+        }
+        VueNode::Fragment(children) => {
+            for child in children {
+                rename_node_expr_prefix(child, from, to);
+            }
+        }
+        VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
+            *expr = rename_expr_prefix(expr, from, to);
+        }
+        VueNode::Text(_) | VueNode::Comment(_) => {}
+    }
+}
+
+fn rename_attr_expr_prefix(attr: &mut VueAttr, from: &str, to: &str) {
+    match attr {
+        VueAttr::Bind { expr, .. }
+        | VueAttr::On { expr, .. }
+        | VueAttr::Spread(expr)
+        | VueAttr::Directive {
+            expr: Some(expr), ..
+        } => {
+            *expr = rename_expr_prefix(expr, from, to);
+        }
+        VueAttr::Static { .. } | VueAttr::Directive { expr: None, .. } => {}
+    }
+}
+
+fn rename_expr_prefix(expr: &str, from: &str, to: &str) -> String {
+    let mut renamed = expr.replace(&format!("{from}."), &format!("{to}."));
+    if renamed == from {
+        renamed = to.to_string();
+    }
+    renamed
+}
+
 fn recover_element(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
     let Some(tag_arg) = args.first() else {
         return Ok(None);
     };
+    if is_fragment_tag(tag_arg.expr.as_ref(), ctx) {
+        let children = args
+            .get(2)
+            .map(|arg| recover_children(arg.expr.as_ref(), ctx))
+            .transpose()?
+            .unwrap_or_default();
+        return Ok(Some(VueNode::Fragment(children)));
+    }
     let Some(tag) = string_lit(tag_arg.expr.as_ref()) else {
         return Ok(Some(VueNode::RawExpr(clean_expr(
             &format!("create element {}", print_expr(tag_arg.expr.as_ref(), ctx)?),
@@ -628,6 +753,17 @@ fn helper_call_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
         return None;
     };
     helper_name(&call.callee, ctx)
+}
+
+fn is_fragment_tag(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    match expr {
+        Expr::Ident(ident) => ctx
+            .vue_helpers
+            .get(&ident.sym)
+            .map(|helper| helper == "Fragment")
+            .unwrap_or_else(|| ident.sym.as_ref() == "Fragment"),
+        _ => false,
+    }
 }
 
 fn helper_first_arg_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
@@ -913,6 +1049,23 @@ export function render(_ctx, _cache) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <p v-if=\"status === 'loading'\" :key=\"0\">Loading</p>\n  <p v-else-if=\"status === 'error'\" :key=\"1\">{{ error }}</p>\n  <p v-else :key=\"2\">Ready</p>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_render_list_fragment_with_mangled_item_param() {
+        let input = r#"
+import { renderList as r, Fragment as t, openBlock as n, createElementBlock as o, toDisplayString as s } from "vue";
+export function render(e, a) {
+  return n(), o("ul", null, [
+    (n(true), o(t, null, r(e.items, e => (n(), o("li", { key: e.id }, s(e.name), 1))), 128))
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <ul>\n    <li v-for=\"item in items\" :key=\"item.id\">{{ item.name }}</li>\n  </ul>\n</template>\n"
         );
     }
 }
