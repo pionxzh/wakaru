@@ -44,10 +44,7 @@ pub fn recover_vue_sfc_from_js(source: &str) -> Result<Option<VueSfc>> {
         return Ok(None);
     };
     ctx.render_context = render_context_param(render);
-    let Some(root_expr) = find_render_return(render) else {
-        return Ok(None);
-    };
-    let Some(root) = recover_node(root_expr, &ctx)? else {
+    let Some(root) = recover_render_root(render, &ctx)? else {
         return Ok(None);
     };
 
@@ -157,6 +154,72 @@ fn find_render_fn(module: &Module) -> Option<&FnDecl> {
     None
 }
 
+fn recover_render_root(render: &FnDecl, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
+    if let Some(node) = recover_render_if_chain(render, ctx)? {
+        return Ok(Some(node));
+    }
+    let Some(root_expr) = find_render_return(render) else {
+        return Ok(None);
+    };
+    recover_node(root_expr, ctx)
+}
+
+fn recover_render_if_chain(render: &FnDecl, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
+    let Some(body) = render.function.body.as_ref() else {
+        return Ok(None);
+    };
+    let mut children = Vec::new();
+    let mut in_chain = false;
+
+    for stmt in &body.stmts {
+        match stmt {
+            Stmt::If(if_stmt) => {
+                let Some(expr) = return_expr_from_stmt(if_stmt.cons.as_ref()) else {
+                    return Ok(None);
+                };
+                let Some(node) = recover_node(expr, ctx)? else {
+                    continue;
+                };
+                let directive = if in_chain { "else-if" } else { "if" };
+                children.push(with_directive(
+                    node,
+                    directive,
+                    None,
+                    Some(clean_condition_expr(if_stmt.test.as_ref(), ctx)?),
+                ));
+                in_chain = true;
+            }
+            Stmt::Return(ReturnStmt {
+                arg: Some(expr), ..
+            }) if in_chain => {
+                if let Some(node) = recover_node(expr.as_ref(), ctx)? {
+                    children.push(with_directive(node, "else", None, None));
+                }
+                return Ok(Some(VueNode::Fragment(children)));
+            }
+            _ if in_chain => return Ok(None),
+            _ => {}
+        }
+    }
+
+    Ok(None)
+}
+
+fn return_expr_from_stmt(stmt: &Stmt) -> Option<&Expr> {
+    match stmt {
+        Stmt::Return(ReturnStmt {
+            arg: Some(expr), ..
+        }) => Some(expr.as_ref()),
+        Stmt::Block(block) => block.stmts.iter().find_map(|stmt| match stmt {
+            Stmt::Return(ReturnStmt {
+                arg: Some(expr), ..
+            }) => Some(expr.as_ref()),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
 fn find_render_return(render: &FnDecl) -> Option<&Expr> {
     let body = render.function.body.as_ref()?;
     body.stmts.iter().rev().find_map(|stmt| match stmt {
@@ -192,6 +255,14 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
             };
             recover_node(last.as_ref(), ctx)
         }
+        Expr::Cond(cond) => recover_conditional_chain(
+            cond.test.as_ref(),
+            cond.cons.as_ref(),
+            cond.alt.as_ref(),
+            "if",
+            ctx,
+        )
+        .map(Some),
         Expr::Call(call) => {
             let Some(helper) = helper_name(&call.callee, ctx) else {
                 return Ok(Some(VueNode::RawExpr(clean_expr(
@@ -221,6 +292,76 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
             &print_expr(expr, ctx)?,
             ctx,
         )))),
+    }
+}
+
+fn recover_conditional_chain(
+    test: &Expr,
+    cons: &Expr,
+    alt: &Expr,
+    first_directive: &str,
+    ctx: &VueRecoveryContext,
+) -> Result<VueNode> {
+    let mut children = Vec::new();
+    if let Some(node) = recover_node(cons, ctx)? {
+        children.push(with_directive(
+            node,
+            first_directive,
+            None,
+            Some(clean_condition_expr(test, ctx)?),
+        ));
+    }
+
+    match alt {
+        Expr::Cond(cond) => {
+            let node = recover_conditional_chain(
+                cond.test.as_ref(),
+                cond.cons.as_ref(),
+                cond.alt.as_ref(),
+                "else-if",
+                ctx,
+            )?;
+            match node {
+                VueNode::Fragment(nodes) => children.extend(nodes),
+                node => children.push(node),
+            }
+        }
+        _ => {
+            if let Some(node) = recover_node(alt, ctx)? {
+                children.push(with_directive(node, "else", None, None));
+            }
+        }
+    }
+
+    Ok(VueNode::Fragment(children))
+}
+
+fn with_directive(
+    mut node: VueNode,
+    name: &str,
+    arg: Option<String>,
+    expr: Option<String>,
+) -> VueNode {
+    match &mut node {
+        VueNode::Element(element) => {
+            element.attrs.insert(
+                0,
+                VueAttr::Directive {
+                    name: name.to_string(),
+                    arg,
+                    expr,
+                },
+            );
+            node
+        }
+        VueNode::Fragment(children) => {
+            if let Some(first) = children.first_mut() {
+                let replacement = with_directive(first.clone(), name, arg.clone(), expr.clone());
+                *first = replacement;
+            }
+            node
+        }
+        _ => VueNode::Fragment(vec![VueNode::Comment(format!("wakaru: v-{name}")), node]),
     }
 }
 
@@ -444,6 +585,25 @@ fn logical_handler_name(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<
         ))),
         _ => Ok(None),
     }
+}
+
+fn clean_condition_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
+    if let Expr::Paren(paren) = expr {
+        return clean_condition_expr(paren.expr.as_ref(), ctx);
+    }
+    if let Expr::Bin(bin) = expr {
+        if matches!(bin.op, BinaryOp::EqEq | BinaryOp::EqEqEq) {
+            if let Some(left_str) = string_lit(bin.left.as_ref()) {
+                let right = clean_attr_expr(&print_expr(bin.right.as_ref(), ctx)?, ctx);
+                return Ok(format!("{right} === '{}'", left_str.replace('\'', "\\'")));
+            }
+            if let Some(right_str) = string_lit(bin.right.as_ref()) {
+                let left = clean_attr_expr(&print_expr(bin.left.as_ref(), ctx)?, ctx);
+                return Ok(format!("{left} === '{}'", right_str.replace('\'', "\\'")));
+            }
+        }
+    }
+    Ok(clean_attr_expr(&print_expr(expr, ctx)?, ctx))
 }
 
 fn recover_children(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueNode>> {
@@ -707,6 +867,52 @@ export function render(_ctx, _cache) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<script>\nexport default {\n    props: {\n        active: Boolean,\n        count: Number\n    }\n}\n</script>\n\n<template>\n  <button class=\"counter\" :class=\"{ active: props.active }\" @click=\"increment\">{{ props.count }}</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_conditional_branch_chain() {
+        let input = r#"
+import { toDisplayString, openBlock, createElementBlock } from "vue";
+const _hoisted_1 = { key: 0 };
+const _hoisted_2 = { key: 1 };
+const _hoisted_3 = { key: 2 };
+export function render(_ctx, _cache) {
+  return (_ctx.status === 'loading')
+    ? (openBlock(), createElementBlock("p", _hoisted_1, "Loading"))
+    : (_ctx.status === 'error')
+      ? (openBlock(), createElementBlock("p", _hoisted_2, toDisplayString(_ctx.error), 1))
+      : (openBlock(), createElementBlock("p", _hoisted_3, "Ready"));
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p v-if=\"status === 'loading'\" :key=\"0\">Loading</p>\n  <p v-else-if=\"status === 'error'\" :key=\"1\">{{ error }}</p>\n  <p v-else :key=\"2\">Ready</p>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_decompiled_if_return_branch_chain() {
+        let input = r#"
+import { toDisplayString, openBlock, createElementBlock } from "vue";
+const _hoisted_1 = { key: 0 };
+const _hoisted_2 = { key: 1 };
+const _hoisted_3 = { key: 2 };
+export function render(_ctx, _cache) {
+  if (_ctx.status === "loading") {
+    return openBlock(), createElementBlock("p", _hoisted_1, "Loading");
+  }
+  if (_ctx.status === 'error') {
+    return openBlock(), createElementBlock("p", _hoisted_2, toDisplayString(_ctx.error), 1);
+  }
+  return openBlock(), createElementBlock("p", _hoisted_3, "Ready");
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <p v-if=\"status === 'loading'\" :key=\"0\">Loading</p>\n  <p v-else-if=\"status === 'error'\" :key=\"1\">{{ error }}</p>\n  <p v-else :key=\"2\">Ready</p>\n</template>\n"
         );
     }
 }

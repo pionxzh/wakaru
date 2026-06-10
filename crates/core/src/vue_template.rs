@@ -12,6 +12,7 @@ pub struct VueTemplate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VueNode {
     Element(VueElement),
+    Fragment(Vec<VueNode>),
     Text(String),
     Interpolation(String),
     Comment(String),
@@ -103,6 +104,11 @@ impl VueElement {
 fn print_node(node: &VueNode, depth: usize, out: &mut String) {
     match node {
         VueNode::Element(element) => print_element(element, depth, out),
+        VueNode::Fragment(children) => {
+            for child in children {
+                print_node(child, depth, out);
+            }
+        }
         VueNode::Text(text) => {
             indent(depth, out);
             out.push_str(&escape_text(text));
@@ -231,7 +237,7 @@ fn print_inline_children(children: &[VueNode], out: &mut String) {
                 out.push_str(expr.trim());
                 out.push_str(" }}");
             }
-            VueNode::Element(_) | VueNode::Comment(_) => {
+            VueNode::Element(_) | VueNode::Fragment(_) | VueNode::Comment(_) => {
                 unreachable!("checked by is_inline_children")
             }
         }
