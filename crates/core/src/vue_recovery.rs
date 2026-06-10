@@ -19,6 +19,7 @@ use crate::vue_template::{VueAttr, VueElement, VueNode, VueSfc, VueTemplate};
 struct VueRecoveryContext {
     vue_helpers: HashMap<Atom, String>,
     object_bindings: HashMap<Atom, ObjectLit>,
+    component_bindings: HashMap<Atom, String>,
     component_options: Option<ObjectLit>,
     render_context: Option<Atom>,
     cm: Lrc<SourceMap>,
@@ -44,6 +45,7 @@ pub fn recover_vue_sfc_from_js(source: &str) -> Result<Option<VueSfc>> {
         return Ok(None);
     };
     ctx.render_context = render_context_param(render);
+    collect_render_context(render, &mut ctx);
     let Some(root) = recover_render_root(render, &ctx)? else {
         return Ok(None);
     };
@@ -127,6 +129,42 @@ fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecoveryContext {
         }
     }
     ctx
+}
+
+fn collect_render_context(render: &FnDecl, ctx: &mut VueRecoveryContext) {
+    let Some(body) = render.function.body.as_ref() else {
+        return;
+    };
+    for stmt in &body.stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            let Some(component) = resolve_component_name(init, ctx) else {
+                continue;
+            };
+            ctx.component_bindings
+                .insert(binding.id.sym.clone(), component);
+        }
+    }
+}
+
+fn resolve_component_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if helper_name(&call.callee, ctx).as_deref() != Some("resolveComponent") {
+        return None;
+    }
+    call.args
+        .first()
+        .and_then(|arg| string_lit(arg.expr.as_ref()))
 }
 
 fn module_export_name(name: &ModuleExportName) -> String {
@@ -262,6 +300,10 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
             };
             recover_node(last.as_ref(), ctx)
         }
+        Expr::Bin(bin) if bin.op == BinaryOp::LogicalOr => recover_node(bin.right.as_ref(), ctx),
+        Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+            recover_node(assign.right.as_ref(), ctx)
+        }
         Expr::Cond(cond) => recover_conditional_chain(
             cond.test.as_ref(),
             cond.cons.as_ref(),
@@ -279,6 +321,9 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
             };
             match helper.as_str() {
                 "createElementBlock" | "createElementVNode" => recover_element(&call.args, ctx),
+                "createVNode" => recover_component_vnode(&call.args, ctx).map(Some),
+                "createTextVNode" => recover_text_vnode(&call.args, ctx).map(Some),
+                "renderSlot" => recover_slot(&call.args, ctx).map(Some),
                 "renderList" => recover_render_list(&call.args, ctx).map(Some),
                 "toDisplayString" => {
                     let Some(arg) = call.args.first() else {
@@ -424,6 +469,86 @@ fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Resul
         None,
         Some(format!("item in {source}")),
     ))
+}
+
+fn recover_component_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
+    let Some(component_arg) = args.first() else {
+        return Ok(VueNode::RawExpr("createVNode()".into()));
+    };
+    let Some(tag) = component_tag(component_arg.expr.as_ref(), ctx) else {
+        return Ok(VueNode::RawExpr(clean_expr(
+            &print_expr(component_arg.expr.as_ref(), ctx)?,
+            ctx,
+        )));
+    };
+    let attrs = args
+        .get(1)
+        .map(|arg| recover_attrs(arg.expr.as_ref(), ctx))
+        .transpose()?
+        .unwrap_or_default();
+    let children = args
+        .get(2)
+        .map(|arg| recover_children(arg.expr.as_ref(), ctx))
+        .transpose()?
+        .unwrap_or_default();
+
+    Ok(VueNode::Element(
+        VueElement::new(tag)
+            .with_attrs(attrs)
+            .with_children(children),
+    ))
+}
+
+fn recover_text_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
+    let Some(text_arg) = args.first() else {
+        return Ok(VueNode::Text(String::new()));
+    };
+    if let Some(text) = string_lit(text_arg.expr.as_ref()) {
+        return Ok(VueNode::Text(text));
+    }
+    Ok(VueNode::RawExpr(clean_expr(
+        &print_expr(text_arg.expr.as_ref(), ctx)?,
+        ctx,
+    )))
+}
+
+fn recover_slot(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
+    let slot_name = args
+        .get(1)
+        .and_then(|arg| string_lit(arg.expr.as_ref()))
+        .unwrap_or_else(|| "default".to_string());
+    let mut attrs = Vec::new();
+    if slot_name != "default" {
+        attrs.push(VueAttr::Static {
+            name: "name".to_string(),
+            value: Some(slot_name),
+        });
+    }
+    if let Some(props_arg) = args.get(2) {
+        attrs.extend(recover_attrs(props_arg.expr.as_ref(), ctx)?);
+    }
+
+    let children = args
+        .get(3)
+        .map(|arg| recover_slot_fallback(arg.expr.as_ref(), ctx))
+        .transpose()?
+        .unwrap_or_default();
+
+    Ok(VueNode::Element(
+        VueElement::new("slot")
+            .with_attrs(attrs)
+            .with_children(children),
+    ))
+}
+
+fn recover_slot_fallback(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueNode>> {
+    let Expr::Arrow(arrow) = expr else {
+        return Ok(Vec::new());
+    };
+    let Some(fallback) = arrow_return_expr(&arrow.body) else {
+        return Ok(Vec::new());
+    };
+    recover_children(fallback, ctx)
 }
 
 fn arrow_return_expr(body: &BlockStmtOrExpr) -> Option<&Expr> {
@@ -766,6 +891,17 @@ fn is_fragment_tag(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
     }
 }
 
+fn component_tag(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
+    match expr {
+        Expr::Ident(ident) => ctx
+            .component_bindings
+            .get(&ident.sym)
+            .cloned()
+            .or_else(|| is_pascal_case(&ident.sym).then(|| ident.sym.to_string())),
+        _ => None,
+    }
+}
+
 fn helper_first_arg_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
     let Expr::Call(call) = expr else {
         return Ok(clean_expr(&print_expr(expr, ctx)?, ctx));
@@ -878,6 +1014,14 @@ fn lower_first(value: &str) -> String {
         return String::new();
     };
     first.to_ascii_lowercase().to_string() + chars.as_str()
+}
+
+fn is_pascal_case(value: &str) -> bool {
+    value
+        .chars()
+        .next()
+        .map(|ch| ch.is_ascii_uppercase())
+        .unwrap_or(false)
 }
 
 fn wtf8_to_string(value: &Wtf8Atom) -> String {
@@ -1066,6 +1210,27 @@ export function render(e, a) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <ul>\n    <li v-for=\"item in items\" :key=\"item.id\">{{ item.name }}</li>\n  </ul>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_component_vnode_and_named_slot() {
+        let input = r#"
+import { resolveComponent, createVNode, renderSlot, createTextVNode, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  const _component_PanelHeader = resolveComponent("PanelHeader");
+  return openBlock(), createElementBlock("article", null, [
+    createVNode(_component_PanelHeader, { title: _ctx.title }, null, 8, ["title"]),
+    renderSlot(_ctx.$slots, "body", {}, () => [
+      _cache[0] || (_cache[0] = createTextVNode("Empty", -1))
+    ])
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <article>\n    <PanelHeader :title=\"title\" />\n    <slot name=\"body\">Empty</slot>\n  </article>\n</template>\n"
         );
     }
 }
