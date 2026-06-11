@@ -136,6 +136,32 @@ fn vue_output_filename_replaces_known_extension() {
 }
 
 #[test]
+fn vue_sfc_writes_recovered_single_file_component() {
+    let dir = temp_test_dir("vue-sfc-output");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input_path = dir.join("render.js");
+    let output_path = dir.join("App.vue");
+    fs::write(&input_path, vue_render_module_source()).expect("write vue render input");
+
+    let cli = Cli::try_parse_from([
+        "wakaru",
+        input_path.to_str().expect("input path should be utf8"),
+        "--vue-sfc",
+        "-o",
+        output_path.to_str().expect("output path should be utf8"),
+    ])
+    .expect("vue sfc cli should parse");
+    run_default(cli).expect("vue sfc decompile should succeed");
+
+    assert_eq!(
+        fs::read_to_string(&output_path).expect("read vue sfc output"),
+        "<script>\nexport default {\n    props: {\n        msg: String\n    }\n}\n</script>\n\n<template>\n  <div>{{ msg }}</div>\n</template>\n"
+    );
+
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[test]
 fn parses_json_flag() {
     let cli =
         Cli::try_parse_from(["wakaru", "input.js", "--json"]).expect("json flag should parse");
@@ -429,6 +455,18 @@ fn temp_test_dir(name: &str) -> PathBuf {
         .expect("system time should be after epoch")
         .as_nanos();
     std::env::temp_dir().join(format!("wakaru-cli-test-{name}-{nanos}"))
+}
+
+fn vue_render_module_source() -> &'static str {
+    r#"
+import { toDisplayString as _toDisplayString, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue";
+const __sfc__ = { props: { msg: String } };
+export function render(_ctx, _cache) {
+  return (_openBlock(), _createElementBlock("div", null, _toDisplayString(_ctx.msg), 1));
+}
+__sfc__.render = render;
+export default __sfc__;
+"#
 }
 
 fn webpack5_chunk_source() -> &'static str {
