@@ -154,6 +154,29 @@ const offset = ((toast, opts) => {
 }
 
 #[test]
+fn aggressive_pipeline_renames_extracted_hook_shaped_iife() {
+    let input = r#"
+const { toasts, handlers } = ((toastOptions) => {
+  React.useEffect(() => {}, []);
+  return { toasts: [], handlers: {} };
+})(options);
+"#;
+    let output = render_pipeline_until_with_level(input, "SmartRename2", RewriteLevel::Aggressive);
+    assert!(
+        output.contains("const useToasts ="),
+        "SmartRename2 should rename extracted hook-shaped function from target base:\n{output}"
+    );
+    assert!(
+        output.contains("const { toasts, handlers } = useToasts(options);"),
+        "call site should use renamed hook-shaped function:\n{output}"
+    );
+    assert!(
+        !output.contains("useComputeToasts"),
+        "rename should use original target base, not extracted helper name:\n{output}"
+    );
+}
+
+#[test]
 fn rejects_arguments_usage() {
     let input = r#"
 const value = (function(item) {

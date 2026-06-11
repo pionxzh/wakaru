@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
@@ -18,6 +20,7 @@ use crate::js_names::{
 
 use super::decl_utils::collect_decl_binding_ids;
 use super::expr_utils::is_unresolved_ident;
+use super::extract_inlined_function::SharedExtractedFunctionNames;
 use super::helper_matcher::static_member_prop_name;
 use super::rename_utils::{
     collect_module_names, rename_bindings, rename_bindings_in_module, BindingId, BindingRename,
@@ -28,6 +31,7 @@ use super::ObjShorthand;
 pub struct SmartRename {
     unresolved_mark: Mark,
     pending_value_position_names: HashMap<BindingId, String>,
+    extracted_function_names: SharedExtractedFunctionNames,
 }
 
 impl SmartRename {
@@ -35,6 +39,7 @@ impl SmartRename {
         Self {
             unresolved_mark,
             pending_value_position_names: HashMap::new(),
+            extracted_function_names: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 }
@@ -56,7 +61,7 @@ impl VisitMut for SmartRename {
         symbol_for_rename_module_with(module, &mut cached_names, self.unresolved_mark);
 
         sentry_component_rename_module(module);
-        react_function_shape_rename_module(module);
+        react_function_shape_rename_module(module, &self.extracted_function_names.borrow());
         module.visit_mut_children_with(self);
         // Runs once at the module level; uses (sym, ctxt) matching so nested
         // bindings are classified correctly without per-scope recursion.
@@ -90,13 +95,22 @@ impl VisitMut for SmartRename {
 pub struct SmartRenameSecondPass {
     unresolved_mark: Mark,
     pending_value_position_names: HashMap<BindingId, String>,
+    extracted_function_names: SharedExtractedFunctionNames,
 }
 
 impl SmartRenameSecondPass {
     pub fn new(unresolved_mark: Mark) -> Self {
+        Self::new_with_extracted_function_names(unresolved_mark, Default::default())
+    }
+
+    pub fn new_with_extracted_function_names(
+        unresolved_mark: Mark,
+        extracted_function_names: SharedExtractedFunctionNames,
+    ) -> Self {
         Self {
             unresolved_mark,
             pending_value_position_names: HashMap::new(),
+            extracted_function_names,
         }
     }
 }
@@ -108,7 +122,7 @@ impl VisitMut for SmartRenameSecondPass {
             collect_value_position_rename_map_module(module),
         );
         sentry_component_rename_module(module);
-        react_function_shape_rename_module(module);
+        react_function_shape_rename_module(module, &self.extracted_function_names.borrow());
         module.visit_mut_children_with(self);
         value_position_rename_module(module);
         jsx_component_alias_rename_module(module);
@@ -2001,8 +2015,11 @@ enum ReactFunctionShapeKind {
     Hook,
 }
 
-fn react_function_shape_rename_module(module: &mut Module) {
-    let mut collector = ReactFunctionShapeCollector::default();
+fn react_function_shape_rename_module(
+    module: &mut Module,
+    extracted_function_names: &HashMap<BindingId, Atom>,
+) {
+    let mut collector = ReactFunctionShapeCollector::new(extracted_function_names);
     module.visit_with(&mut collector);
     if collector.candidates.is_empty() {
         return;
@@ -2023,7 +2040,8 @@ fn react_function_shape_rename_module(module: &mut Module) {
         if exported_bindings.contains(&bid) {
             continue;
         }
-        if !is_likely_generated_alias(&bid.0) {
+        let is_extracted_function = extracted_function_names.contains_key(&bid);
+        if !is_likely_generated_alias(&bid.0) && !is_extracted_function {
             continue;
         }
         let kind = if component_use_bindings.contains(&bid) {
@@ -2031,7 +2049,10 @@ fn react_function_shape_rename_module(module: &mut Module) {
         } else {
             kind
         };
-        let target = react_function_shape_target_name(bid.0.as_ref(), kind);
+        let base_name = extracted_function_names
+            .get(&bid)
+            .map_or_else(|| bid.0.as_ref(), Atom::as_ref);
+        let target = react_function_shape_target_name(base_name, kind);
         if target == bid.0.as_ref() || !is_valid_js_ident(&target) {
             continue;
         }
@@ -2062,32 +2083,43 @@ fn react_function_shape_target_name(name: &str, kind: ReactFunctionShapeKind) ->
     }
 }
 
-#[derive(Default)]
-struct ReactFunctionShapeCollector {
+struct ReactFunctionShapeCollector<'a> {
     candidates: Vec<(BindingId, ReactFunctionShapeKind)>,
+    extracted_function_names: &'a HashMap<BindingId, Atom>,
 }
 
-impl ReactFunctionShapeCollector {
+impl<'a> ReactFunctionShapeCollector<'a> {
+    fn new(extracted_function_names: &'a HashMap<BindingId, Atom>) -> Self {
+        Self {
+            candidates: Vec::new(),
+            extracted_function_names,
+        }
+    }
+
     fn record_function(&mut self, id: &Ident, function: &Function) {
-        if !is_likely_generated_alias(&id.sym) {
+        let bid = (id.sym.clone(), id.ctxt);
+        if !is_likely_generated_alias(&id.sym) && !self.extracted_function_names.contains_key(&bid)
+        {
             return;
         }
         if let Some(kind) = classify_react_function(function) {
-            self.candidates.push(((id.sym.clone(), id.ctxt), kind));
+            self.candidates.push((bid, kind));
         }
     }
 
     fn record_arrow(&mut self, id: &Ident, arrow: &ArrowExpr) {
-        if !is_likely_generated_alias(&id.sym) {
+        let bid = (id.sym.clone(), id.ctxt);
+        if !is_likely_generated_alias(&id.sym) && !self.extracted_function_names.contains_key(&bid)
+        {
             return;
         }
         if let Some(kind) = classify_react_arrow(arrow) {
-            self.candidates.push(((id.sym.clone(), id.ctxt), kind));
+            self.candidates.push((bid, kind));
         }
     }
 }
 
-impl Visit for ReactFunctionShapeCollector {
+impl Visit for ReactFunctionShapeCollector<'_> {
     fn visit_fn_decl(&mut self, decl: &FnDecl) {
         self.record_function(&decl.ident, &decl.function);
         decl.function.visit_with(self);

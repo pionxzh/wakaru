@@ -1,4 +1,6 @@
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use swc_core::atoms::Atom;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
@@ -11,15 +13,30 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::js_names::to_valid_identifier_name;
 
 use super::eval_utils::is_direct_eval_call;
+use super::rename_utils::BindingId;
 use super::RewriteLevel;
+
+pub type ExtractedFunctionNames = HashMap<BindingId, Atom>;
+pub type SharedExtractedFunctionNames = Rc<RefCell<ExtractedFunctionNames>>;
 
 pub struct ExtractInlinedFunction {
     level: RewriteLevel,
+    extracted_function_names: SharedExtractedFunctionNames,
 }
 
 impl ExtractInlinedFunction {
     pub fn new(level: RewriteLevel) -> Self {
-        Self { level }
+        Self::new_with_extracted_function_names(level, Default::default())
+    }
+
+    pub fn new_with_extracted_function_names(
+        level: RewriteLevel,
+        extracted_function_names: SharedExtractedFunctionNames,
+    ) -> Self {
+        Self {
+            level,
+            extracted_function_names,
+        }
     }
 }
 
@@ -35,9 +52,10 @@ impl VisitMut for ExtractInlinedFunction {
         }
 
         let mut names = collect_module_binding_names(module);
+        let mut extracted_function_names = self.extracted_function_names.borrow_mut();
         let mut body = Vec::with_capacity(module.body.len());
         for item in std::mem::take(&mut module.body) {
-            match extract_from_module_item(item, &mut names) {
+            match extract_from_module_item(item, &mut names, &mut extracted_function_names) {
                 Ok((helper, item)) => {
                     body.push(ModuleItem::Stmt(helper));
                     body.push(item);
@@ -59,9 +77,10 @@ impl VisitMut for ExtractInlinedFunction {
         }
 
         let mut names = collect_stmt_binding_names(&block.stmts);
+        let mut extracted_function_names = self.extracted_function_names.borrow_mut();
         let mut stmts = Vec::with_capacity(block.stmts.len());
         for stmt in std::mem::take(&mut block.stmts) {
-            match extract_from_stmt(stmt, &mut names) {
+            match extract_from_stmt(stmt, &mut names, &mut extracted_function_names) {
                 Ok((helper, stmt)) => {
                     stmts.push(helper);
                     stmts.push(stmt);
@@ -82,16 +101,21 @@ impl Default for ExtractInlinedFunction {
 fn extract_from_module_item(
     item: ModuleItem,
     names: &mut HashSet<Atom>,
+    extracted_function_names: &mut ExtractedFunctionNames,
 ) -> Result<(Stmt, ModuleItem), ModuleItem> {
     let ModuleItem::Stmt(stmt) = item else {
         return Err(item);
     };
-    extract_from_stmt(stmt, names)
+    extract_from_stmt(stmt, names, extracted_function_names)
         .map(|(helper, stmt)| (helper, ModuleItem::Stmt(stmt)))
         .map_err(ModuleItem::Stmt)
 }
 
-fn extract_from_stmt(stmt: Stmt, names: &mut HashSet<Atom>) -> Result<(Stmt, Stmt), Stmt> {
+fn extract_from_stmt(
+    stmt: Stmt,
+    names: &mut HashSet<Atom>,
+    extracted_function_names: &mut ExtractedFunctionNames,
+) -> Result<(Stmt, Stmt), Stmt> {
     let Stmt::Decl(Decl::Var(mut var)) = stmt else {
         return Err(stmt);
     };
@@ -110,11 +134,13 @@ fn extract_from_stmt(stmt: Stmt, names: &mut HashSet<Atom>) -> Result<(Stmt, Stm
         return Err(Stmt::Decl(Decl::Var(var)));
     };
     **init = extraction.call;
+    extracted_function_names.insert(extraction.binding_id, Atom::from(target_name.as_str()));
 
     Ok((extraction.helper_stmt, Stmt::Decl(Decl::Var(var))))
 }
 
 struct Extraction {
+    binding_id: BindingId,
     helper_stmt: Stmt,
     call: Expr,
 }
@@ -141,6 +167,7 @@ fn extract_iife(expr: &Expr, target_name: &str, names: &mut HashSet<Atom>) -> Op
     names.insert(helper_name.clone());
 
     let helper_ident = Ident::new_no_ctxt(helper_name, DUMMY_SP);
+    let binding_id = (helper_ident.sym.clone(), helper_ident.ctxt);
     let helper_expr = function.into_expr();
     let helper_stmt = const_decl_stmt(helper_ident.clone(), helper_expr);
     let call = Expr::Call(CallExpr {
@@ -149,7 +176,11 @@ fn extract_iife(expr: &Expr, target_name: &str, names: &mut HashSet<Atom>) -> Op
         ..call.clone()
     });
 
-    Some(Extraction { helper_stmt, call })
+    Some(Extraction {
+        binding_id,
+        helper_stmt,
+        call,
+    })
 }
 
 enum ExtractableFunction {

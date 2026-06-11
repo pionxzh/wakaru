@@ -141,7 +141,9 @@ pub use arrow_return::ArrowReturn;
 pub use dead_decls::{DeadDecls, DeadUninitializedDecls};
 pub use dead_imports::DeadImports;
 pub use exponent::Exponent;
-pub use extract_inlined_function::ExtractInlinedFunction;
+pub use extract_inlined_function::{
+    ExtractInlinedFunction, ExtractedFunctionNames, SharedExtractedFunctionNames,
+};
 pub use flip_comparisons::FlipComparisons;
 pub use import_dedup::ImportDedup;
 pub use obj_method_shorthand::ObjMethodShorthand;

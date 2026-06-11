@@ -65,6 +65,7 @@ struct RuleRunContext<'a> {
     dead_code_elimination: bool,
     module_facts: Option<&'a ModuleFactsMap>,
     local_helpers: Rc<RefCell<Option<Rc<LocalHelperContext>>>>,
+    extracted_function_names: SharedExtractedFunctionNames,
 }
 
 impl RuleRunContext<'_> {
@@ -282,7 +283,10 @@ runner!(run_un_optional_chaining, |ctx| UnOptionalChaining::new(
 ));
 runner!(run_un_iife, |ctx| UnIife::new(ctx.rewrite_level));
 runner!(run_extract_inlined_function, |ctx| {
-    ExtractInlinedFunction::new(ctx.rewrite_level)
+    ExtractInlinedFunction::new_with_extracted_function_names(
+        ctx.rewrite_level,
+        Rc::clone(&ctx.extracted_function_names),
+    )
 });
 fn run_un_conditionals(module: &mut Module, ctx: RuleRunContext<'_>) {
     module.visit_mut_with(&mut UnConditionals);
@@ -368,7 +372,10 @@ runner!(run_smart_rename, |ctx| SmartRename::new(
     ctx.unresolved_mark
 ));
 runner!(run_smart_rename_second_pass, |ctx| {
-    SmartRenameSecondPass::new(ctx.unresolved_mark)
+    SmartRenameSecondPass::new_with_extracted_function_names(
+        ctx.unresolved_mark,
+        Rc::clone(&ctx.extracted_function_names),
+    )
 });
 runner!(run_dead_uninitialized_decls, DeadUninitializedDecls);
 runner!(run_dead_decls, DeadDecls);
@@ -676,6 +683,7 @@ fn apply_rules_impl(
         dead_code_elimination: options.dead_code_elimination,
         module_facts: options.module_facts,
         local_helpers: Rc::new(RefCell::new(None)),
+        extracted_function_names: Rc::new(RefCell::new(ExtractedFunctionNames::new())),
     };
     let mut started = options.start_from.is_none();
 
