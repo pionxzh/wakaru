@@ -143,6 +143,20 @@ const snippets = [
       "steps.map(async (step)",
       "await step.run(source)",
     ],
+    expectedAny: [
+      [
+        "const run_pipeline = async (source)",
+        "await load_steps(source)",
+        "steps.map(async (step)",
+        "await step.run(source)",
+      ],
+      [
+        "async (source)",
+        "await load_steps(source)",
+        ".map(async (step)",
+        "await step.run(source)",
+      ],
+    ],
   },
   {
     name: "async-arrow-object-rest",
@@ -260,6 +274,127 @@ const snippets = [
   },
 ];
 
+const RESERVED_WORDS = new Set([
+  "async", "await", "break", "case", "catch", "class", "const", "continue", "default", "do",
+  "else", "export", "extends", "finally", "for", "function", "if", "import", "in", "let", "new",
+  "of", "return", "switch", "throw", "try", "var", "while", "yield",
+]);
+
+function validateRecovered({ snippet, shape, recovered }) {
+  if (!shape.tools.some((tool) => tool.includes("mangle"))) {
+    return undefined;
+  }
+
+  const expectedGroups = expectedNeedleGroups(snippet);
+  const sourceMapping = collectLocalNameMapping(snippet.source);
+  const recoveredMapping = collectLocalNameMapping(recovered);
+  const normalizedRecovered = normalizeCode(recovered, recoveredMapping);
+  const missingGroups = expectedGroups.map((group) =>
+    group
+      .map((needle) => normalizeCode(needle, sourceMapping))
+      .filter((needle) => !normalizedRecovered.includes(needle)),
+  );
+
+  if (missingGroups.some((group) => group.length === 0)) {
+    return { recovered: true, notes: "mangle-equivalent syntax present" };
+  }
+
+  return undefined;
+}
+
+function expectedNeedleGroups(snippet) {
+  if (snippet.expectedAny) {
+    return snippet.expectedAny.map((group) => (Array.isArray(group) ? group : [group]));
+  }
+  return [Array.isArray(snippet.expected) ? snippet.expected : [snippet.expected]];
+}
+
+function collectLocalNameMapping(code) {
+  const names = [];
+  const add = (name) => {
+    if (name && !RESERVED_WORDS.has(name) && !names.includes(name)) {
+      names.push(name);
+    }
+  };
+
+  for (const match of code.matchAll(/\b(?:async\s+)?function\*?\s*([A-Za-z_$][\w$]*)?\s*\(([^)]*)\)/g)) {
+    add(match[1]);
+    collectBindingNames(match[2]).forEach(add);
+  }
+
+  for (const match of code.matchAll(/\b(?:const|let|var)\s+([^;\n]+)/g)) {
+    collectDeclaratorNames(match[1]).forEach(add);
+  }
+
+  for (const match of code.matchAll(/\bcatch\s*\(([^)]*)\)/g)) {
+    collectBindingNames(match[1]).forEach(add);
+  }
+
+  for (const match of code.matchAll(/\(([^)]*)\)\s*=>/g)) {
+    collectBindingNames(match[1]).forEach(add);
+  }
+
+  for (const match of code.matchAll(/([A-Za-z_$][\w$]*)\s*=>/g)) {
+    add(match[1]);
+  }
+
+  const mapping = new Map();
+  names.forEach((name) => mapping.set(name, "_"));
+  return mapping;
+}
+
+function collectDeclaratorNames(text) {
+  const names = [];
+  let current = "";
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === "{" || ch === "[" || ch === "(") depth++;
+    if (ch === "}" || ch === "]" || ch === ")") depth = Math.max(0, depth - 1);
+    if (ch === "," && depth === 0) {
+      names.push(...collectDeclaratorBindingNames(current));
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  names.push(...collectDeclaratorBindingNames(current));
+  return names;
+}
+
+function collectDeclaratorBindingNames(declarator) {
+  const eq = declarator.indexOf("=");
+  const left = eq === -1 ? declarator : declarator.slice(0, eq);
+  return collectBindingNames(left);
+}
+
+function collectBindingNames(pattern) {
+  return [...pattern.matchAll(/[A-Za-z_$][\w$]*/g)]
+    .map((match) => match[0])
+    .filter((name) => !RESERVED_WORDS.has(name));
+}
+
+function normalizeIdentifiers(code, mapping) {
+  return code.replace(/\b[A-Za-z_$][\w$]*\b/g, (name, offset) => {
+    if (isPropertyName(code, offset)) {
+      return name;
+    }
+    return mapping.get(name) ?? name;
+  });
+}
+
+function isPropertyName(code, offset) {
+  let index = offset - 1;
+  while (index >= 0 && /\s/.test(code[index])) index--;
+  if (code[index] === "." && code[index - 1] === "." && code[index - 2] === ".") {
+    return false;
+  }
+  return code[index] === ".";
+}
+
+function normalizeCode(code, mapping) {
+  return normalizeIdentifiers(code, mapping).replace(/\s+/g, "");
+}
+
 const babelProfiles = [
   {
     name: "babel-7.8",
@@ -320,4 +455,5 @@ runMatrix({
   name: "async-await",
   snippets,
   transformers,
+  validateRecovered,
 });

@@ -24,6 +24,7 @@ export function runMatrix(config) {
     snippets,
     transformers,
     expectedNeedles = defaultExpectedNeedles,
+    validateRecovered,
   } = config;
   const showDetails = process.argv.includes("--details");
   const rewriteLevel = readOption("--level", "standard");
@@ -45,7 +46,7 @@ export function runMatrix(config) {
     for (const snippet of snippets) {
       const shapes = collectShapes(snippet, transformers);
       for (const shape of shapes) {
-        const result = runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles);
+        const result = runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles, validateRecovered);
         if (!result.recovered && result.failure) {
           failures.push(result.failure);
         }
@@ -129,7 +130,7 @@ function collectShapes(snippet, transformers) {
   return shapes;
 }
 
-function runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles) {
+function runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles, validateRecovered) {
   if (shape.transformError) {
     return { recovered: false, notes: `transform failed: ${shape.transformError.message}` };
   }
@@ -149,6 +150,19 @@ function runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles) {
   if (missingGroups.some((group) => group.length === 0) && leaked.length === 0) {
     return { recovered: true, notes: "expected syntax present" };
   }
+
+  const customResult = validateRecovered?.({
+    snippet,
+    shape,
+    recovered,
+    rewriteLevel,
+    tmpRoot,
+    runWakaru,
+  });
+  if (customResult?.recovered && leaked.length === 0) {
+    return customResult;
+  }
+
   const loweredShape = summarize(shape.lowered);
   const recoveredShape = summarize(recovered);
   if (missing.length === 0 && leaked.length > 0) {
