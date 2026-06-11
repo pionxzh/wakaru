@@ -1,3 +1,4 @@
+pub mod amd;
 pub mod browserify;
 pub mod esbuild;
 pub mod scope_hoist;
@@ -83,7 +84,12 @@ pub fn try_unpack_bundle(source: &str) -> anyhow::Result<Option<UnpackResult>> {
             }
         }
 
-        Ok(None)
+        let result = {
+            let span = tracing::info_span!("detect_amd");
+            let _enter = span.enter();
+            amd::detect_from_module(&module, cm)
+        };
+        Ok(result)
     })
 }
 

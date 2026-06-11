@@ -117,7 +117,7 @@ fn pat_ident_sym(pat: &Pat) -> Option<Atom> {
     }
 }
 
-fn body_looks_like_umd_wrapper(body: &BlockStmt, factory_sym: &Atom) -> bool {
+pub(super) fn body_looks_like_umd_wrapper(body: &BlockStmt, factory_sym: &Atom) -> bool {
     let mut visitor = UmdWrapperUseVisitor {
         factory_sym,
         seen_factory_call: false,
