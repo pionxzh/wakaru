@@ -12,19 +12,19 @@ fn apply_rule(input: &str) -> String {
 #[test]
 fn extracts_iife_from_variable_initializer() {
     let input = r#"
-const offset = ((toast, opts) => {
-  const { reverseOrder = false, gutter = 8 } = opts || {};
-  const index = toasts.findIndex((entry) => entry.id === toast.id);
-  return index + gutter + (reverseOrder ? 1 : 0);
-})(activeToast, options);
+const score = ((record, opts) => {
+  const { includeBonus = false, step = 8 } = opts || {};
+  const index = records.findIndex((entry) => entry.id === record.id);
+  return index + step + (includeBonus ? 1 : 0);
+})(activeRecord, options);
 "#;
     let expected = r#"
-const computeOffset = (toast, opts) => {
-  const { reverseOrder = false, gutter = 8 } = opts || {};
-  const index = toasts.findIndex((entry) => entry.id === toast.id);
-  return index + gutter + (reverseOrder ? 1 : 0);
+const computeScore = (record, opts) => {
+  const { includeBonus = false, step = 8 } = opts || {};
+  const index = records.findIndex((entry) => entry.id === record.id);
+  return index + step + (includeBonus ? 1 : 0);
 };
-const offset = computeOffset(activeToast, options);
+const score = computeScore(activeRecord, options);
 "#;
     assert_eq_normalized(&apply_rule(input), expected);
 }
@@ -33,27 +33,27 @@ const offset = computeOffset(activeToast, options);
 fn extracts_iife_inside_nested_block() {
     let input = r#"
 const rendered = items.map((item) => {
-  const style = ((position, offset) => {
-    const isTop = position.includes("top");
+  const layout = ((side, distance) => {
+    const isStart = side.includes("start");
     return {
-      transform: `translateY(${offset * (isTop ? 1 : -1)}px)`,
-      ...(isTop ? { top: 0 } : { bottom: 0 }),
+      transform: `translateX(${distance * (isStart ? 1 : -1)}px)`,
+      ...(isStart ? { left: 0 } : { right: 0 }),
     };
-  })(item.position || defaultPosition, calculateOffset(item));
-  return renderItem(item, style);
+  })(item.side || defaultSide, measureDistance(item));
+  return renderItem(item, layout);
 });
 "#;
     let expected = r#"
 const rendered = items.map((item) => {
-  const computeStyle = (position, offset) => {
-    const isTop = position.includes("top");
+  const computeLayout = (side, distance) => {
+    const isStart = side.includes("start");
     return {
-      transform: `translateY(${offset * (isTop ? 1 : -1)}px)`,
-      ...isTop ? { top: 0 } : { bottom: 0 },
+      transform: `translateX(${distance * (isStart ? 1 : -1)}px)`,
+      ...isStart ? { left: 0 } : { right: 0 },
     };
   };
-  const style = computeStyle(item.position || defaultPosition, calculateOffset(item));
-  return renderItem(item, style);
+  const layout = computeLayout(item.side || defaultSide, measureDistance(item));
+  return renderItem(item, layout);
 });
 "#;
     assert_eq_normalized(&apply_rule(input), expected);
@@ -62,17 +62,17 @@ const rendered = items.map((item) => {
 #[test]
 fn derives_name_from_object_pattern_initializer() {
     let input = r#"
-const { toasts, handlers } = ((toastOptions) => {
-  const toasts = readToasts(toastOptions);
-  return { toasts, handlers: createHandlers(toasts) };
+const { records, actions } = ((sourceOptions) => {
+  const records = readRecords(sourceOptions);
+  return { records, actions: createActions(records) };
 })(options);
 "#;
     let expected = r#"
-const computeToasts = (toastOptions) => {
-  const toasts = readToasts(toastOptions);
-  return { toasts, handlers: createHandlers(toasts) };
+const computeRecords = (sourceOptions) => {
+  const records = readRecords(sourceOptions);
+  return { records, actions: createActions(records) };
 };
-const { toasts, handlers } = computeToasts(options);
+const { records, actions } = computeRecords(options);
 "#;
     assert_eq_normalized(&apply_rule(input), expected);
 }
@@ -122,14 +122,14 @@ function render(item) {
 #[test]
 fn standard_pipeline_keeps_iife() {
     let input = r#"
-const offset = ((toast, opts) => {
-  return toast.id + opts.gutter;
-})(activeToast, options);
+const score = ((record, opts) => {
+  return record.id + opts.step;
+})(activeRecord, options);
 "#;
     let output =
         render_pipeline_until_with_level(input, "ExtractInlinedFunction", RewriteLevel::Standard);
     assert!(
-        output.contains("((toast, opts)=>"),
+        output.contains("((record, opts)=>"),
         "standard mode should not extract inlined function:\n{output}"
     );
 }
@@ -137,18 +137,18 @@ const offset = ((toast, opts) => {
 #[test]
 fn aggressive_pipeline_extracts_iife() {
     let input = r#"
-const offset = ((toast, opts) => {
-  return toast.id + opts.gutter;
-})(activeToast, options);
+const score = ((record, opts) => {
+  return record.id + opts.step;
+})(activeRecord, options);
 "#;
     let output =
         render_pipeline_until_with_level(input, "ExtractInlinedFunction", RewriteLevel::Aggressive);
     assert!(
-        output.contains("const computeOffset ="),
+        output.contains("const computeScore ="),
         "aggressive mode should extract inlined function:\n{output}"
     );
     assert!(
-        output.contains("const offset = computeOffset(activeToast, options);"),
+        output.contains("const score = computeScore(activeRecord, options);"),
         "aggressive mode should replace initializer call:\n{output}"
     );
 }
@@ -156,22 +156,22 @@ const offset = ((toast, opts) => {
 #[test]
 fn aggressive_pipeline_renames_extracted_hook_shaped_iife() {
     let input = r#"
-const { toasts, handlers } = ((toastOptions) => {
+const { records, actions } = ((sourceOptions) => {
   React.useEffect(() => {}, []);
-  return { toasts: [], handlers: {} };
+  return { records: [], actions: {} };
 })(options);
 "#;
     let output = render_pipeline_until_with_level(input, "SmartRename2", RewriteLevel::Aggressive);
     assert!(
-        output.contains("const useToasts ="),
+        output.contains("const useRecords ="),
         "SmartRename2 should rename extracted hook-shaped function from target base:\n{output}"
     );
     assert!(
-        output.contains("const { toasts, handlers } = useToasts(options);"),
+        output.contains("const { records, actions } = useRecords(options);"),
         "call site should use renamed hook-shaped function:\n{output}"
     );
     assert!(
-        !output.contains("useComputeToasts"),
+        !output.contains("useComputeRecords"),
         "rename should use original target base, not extracted helper name:\n{output}"
     );
 }
