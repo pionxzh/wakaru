@@ -1074,15 +1074,18 @@ fn emit_clusters(
         })
         .collect();
 
-    // Assign filenames first so we can reference them in imports.
+    // Assign final filenames first so synthesized imports point at the same
+    // paths the caller will write. Chunk names are derived from minified
+    // bindings, so collisions are common in scope-concatenated packages.
+    let mut seen_filenames = HashSet::new();
     let filenames: Vec<String> = clusters
         .iter()
         .map(|c| {
             if c.is_entry {
-                "entry.js".to_string()
+                dedup_cluster_filename("entry.js", &mut seen_filenames)
             } else {
                 let name = derive_chunk_name(items, c);
-                format!("{name}.js")
+                dedup_cluster_filename(&format!("{name}.js"), &mut seen_filenames)
             }
         })
         .collect();
@@ -1368,6 +1371,29 @@ fn derive_chunk_name(items: &[TopLevelItem], cluster: &Cluster) -> String {
     format!("chunk_{}", cluster.item_indices[0])
 }
 
+fn dedup_cluster_filename(filename: &str, seen: &mut HashSet<String>) -> String {
+    let key = filename.to_lowercase();
+    if seen.insert(key) {
+        return filename.to_string();
+    }
+
+    let path = std::path::Path::new(filename);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("chunk");
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("js");
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new(""));
+
+    let mut n = 2u32;
+    loop {
+        let candidate = parent.join(format!("{stem}_{n}.{ext}"));
+        let candidate = candidate.to_string_lossy().replace('\\', "/");
+        let candidate_key = candidate.to_lowercase();
+        if seen.insert(candidate_key) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
 fn emit_items(items: Vec<ModuleItem>, filename: String, cm: Lrc<SourceMap>) -> String {
     let module = Module {
         span: Default::default(),
@@ -1478,6 +1504,23 @@ mod tests {
         "#;
         let n = count_modules(input);
         assert!(n >= 2, "expected at least 2 modules, got {n}");
+    }
+
+    #[test]
+    fn cluster_filename_dedup_is_case_insensitive() {
+        let mut seen = HashSet::new();
+        assert_eq!(
+            dedup_cluster_filename("chunk_Helper.js", &mut seen),
+            "chunk_Helper.js"
+        );
+        assert_eq!(
+            dedup_cluster_filename("chunk_helper.js", &mut seen),
+            "chunk_helper_2.js"
+        );
+        assert_eq!(
+            dedup_cluster_filename("chunk_helper.js", &mut seen),
+            "chunk_helper_3.js"
+        );
     }
 
     #[test]

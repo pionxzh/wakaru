@@ -15,8 +15,10 @@ pub struct DecompileOptions {
     pub dead_code_elimination: bool,
     /// Controls how aggressively wakaru recovers likely original source patterns.
     pub level: RewriteLevel,
-    /// When true and no bundle format is detected, attempt heuristic splitting
-    /// of scope-hoisted bundles (Rollup/Vite/flat esbuild).
+    /// When true, attempt heuristic splitting of scope-hoisted bundles
+    /// (Rollup/Vite/flat esbuild). For detected webpack bundles, this also
+    /// enables a conservative recursive split of extracted scope-concatenated
+    /// module bodies.
     pub heuristic_split: bool,
     /// Run post-transform diagnostic checks (lexical use-before-declaration,
     /// output parse verification). Results are returned as warnings.

@@ -1,4 +1,4 @@
-use wakaru_core::{unpack, DecompileOptions};
+use wakaru_core::{unpack, unpack_raw, DecompileOptions};
 
 fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
     let output = unpack(
@@ -9,6 +9,24 @@ fn expect_unpack(source: &str, filename: &str) -> Vec<(String, String)> {
         },
     )
     .expect("unpack should succeed");
+    assert!(
+        !output.has_errors(),
+        "unexpected warnings: {:?}",
+        output.warnings
+    );
+    output.modules
+}
+
+fn expect_heuristic_unpack_raw(source: &str, filename: &str) -> Vec<(String, String)> {
+    let output = unpack_raw(
+        source,
+        &DecompileOptions {
+            filename: filename.to_string(),
+            heuristic_split: true,
+            ..Default::default()
+        },
+    )
+    .expect("raw unpack should succeed");
     assert!(
         !output.has_errors(),
         "unexpected warnings: {:?}",
@@ -60,6 +78,51 @@ fn webpack5_chunk_rewrites_numeric_require() {
         mod_200.1.contains("./module-100.js"),
         "module-200 should reference ./module-100.js, got:\n{}",
         mod_200.1
+    );
+}
+
+#[test]
+fn webpack5_chunk_heuristic_skips_scope_split_without_import_bearing_entry() {
+    let source = r#"
+(self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([
+  [0],
+    {
+    100: function(module, exports, require) {
+      "use strict";
+      var external = require(200);
+      function helperA1() { return external.value; }
+      function helperA2() { return helperA1() + 1; }
+      function helperA3() { return helperA2() * 2; }
+      function helperA4() { return helperA3() + 3; }
+      function publicA() { return helperA4(); }
+
+      function helperB1() { return 10; }
+      function helperB2() { return helperB1() + 10; }
+      function helperB3() { return helperB2() * 20; }
+      function helperB4() { return helperB3() + 30; }
+      function publicB() { return helperB4(); }
+
+      require.r(exports);
+      require.d(exports, {
+        publicA: function() { return publicA; },
+        publicB: function() { return publicB; }
+      });
+    },
+    200: function(module, exports, require) {
+      "use strict";
+      exports.value = 40;
+    }
+  }
+]);
+"#;
+
+    let pairs = expect_heuristic_unpack_raw(source, "chunk.js");
+    let filenames: Vec<&str> = pairs.iter().map(|(name, _)| name.as_str()).collect();
+
+    assert_eq!(
+        filenames,
+        vec!["module-100.js", "module-200.js"],
+        "unsafe scope split should be rejected until the entry imports recovered chunks"
     );
 }
 

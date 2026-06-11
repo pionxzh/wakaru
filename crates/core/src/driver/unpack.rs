@@ -41,7 +41,10 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
     let _enter = span.enter();
 
     match detect_bundle(source, &options.filename)? {
-        Some(result) => unpack_unpack_result(result, options),
+        Some(result) => {
+            let result = maybe_split_scope_hoisted_modules(result, options.heuristic_split);
+            unpack_unpack_result(result, options)
+        }
         None if options.heuristic_split => match scope_hoist::split_scope_hoisted(source) {
             Some(result) if result.modules.len() > 1 => {
                 let mut opts = options.clone();
@@ -87,6 +90,7 @@ pub fn unpack_files(
     for input in inputs {
         match detect_bundle(&input.source, &input.filename)? {
             Some(result) => {
+                let result = maybe_split_scope_hoisted_modules(result, options.heuristic_split);
                 let chunk_ids = webpack5::detect_chunk_ids(&input.source);
                 let input_filename = input.filename.clone();
                 let allow_cycle_premerge = result.allow_cycle_premerge;
@@ -140,7 +144,12 @@ pub fn unpack_files(
 /// decompile rule pipeline are skipped.
 pub fn unpack_raw(source: &str, options: &DecompileOptions) -> Result<UnpackOutput> {
     let result = detect_bundle_raw(source, &options.filename)?
-        .map(|result| (result, false))
+        .map(|result| {
+            (
+                maybe_split_scope_hoisted_modules(result, options.heuristic_split),
+                false,
+            )
+        })
         .or_else(|| {
             if options.heuristic_split {
                 let r = scope_hoist::split_scope_hoisted(source)?;
@@ -253,6 +262,7 @@ pub fn unpack_files_raw(
 
         match result {
             Some(result) => {
+                let result = maybe_split_scope_hoisted_modules(result, options.heuristic_split);
                 let chunk_ids = webpack5::detect_chunk_ids(&input.source);
                 let allow_cycle_premerge = result.allow_cycle_premerge;
                 modules.extend(result.modules.into_iter().map(|module| {
@@ -980,6 +990,182 @@ fn unpack_unpack_result(result: UnpackResult, options: DecompileOptions) -> Resu
     unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options)
 }
 
+fn maybe_split_scope_hoisted_modules(result: UnpackResult, enabled: bool) -> UnpackResult {
+    if !enabled {
+        return result;
+    }
+
+    let mut modules = Vec::new();
+    let mut did_split = false;
+    let original_filenames: HashSet<String> = result
+        .modules
+        .iter()
+        .map(|module| module.filename.clone())
+        .collect();
+
+    for module in result.modules {
+        match scope_hoist::split_scope_hoisted(&module.code) {
+            Some(split) if split.modules.len() > 1 && has_nontrivial_scope_split_entry(&split) => {
+                let parent_filename = module.filename.clone();
+                let split_modules = namespace_scope_hoisted_split(&module, split.modules);
+                let mut available_filenames = original_filenames.clone();
+                available_filenames.remove(&parent_filename);
+                available_filenames
+                    .extend(split_modules.iter().map(|module| module.filename.clone()));
+                if scope_split_imports_resolve(&split_modules, &available_filenames) {
+                    did_split = true;
+                    modules.extend(split_modules);
+                } else {
+                    modules.push(module);
+                }
+            }
+            _ => modules.push(module),
+        }
+    }
+
+    UnpackResult {
+        modules,
+        allow_cycle_premerge: result.allow_cycle_premerge && !did_split,
+    }
+}
+
+fn has_nontrivial_scope_split_entry(split: &UnpackResult) -> bool {
+    split
+        .modules
+        .iter()
+        .find(|module| module.is_entry)
+        .is_some_and(|module| module.code.contains("from \"./"))
+}
+
+fn namespace_scope_hoisted_split(
+    parent: &UnpackedModule,
+    split_modules: Vec<UnpackedModule>,
+) -> Vec<UnpackedModule> {
+    let (parent_dir, parent_stem, parent_basename) = split_parent_path_parts(&parent.filename);
+    let child_dir = if parent_dir.is_empty() {
+        parent_stem.clone()
+    } else {
+        format!("{parent_dir}/{parent_stem}")
+    };
+    let entry_import_dir = parent_stem;
+    let child_filenames: HashSet<String> = split_modules
+        .iter()
+        .filter(|module| !module.is_entry)
+        .map(|module| module.filename.clone())
+        .collect();
+
+    let mut modules = Vec::with_capacity(split_modules.len());
+    for mut module in split_modules {
+        if module.is_entry {
+            module.id = parent.id.clone();
+            module.is_entry = parent.is_entry;
+            module.filename = parent.filename.clone();
+            module.code =
+                rewrite_scope_entry_imports(module.code, &entry_import_dir, &child_filenames);
+        } else {
+            module.id = format!("{}/{}", parent.id, module.id);
+            module.filename = format!("{child_dir}/{}", module.filename);
+            module.code = rewrite_scope_child_entry_imports(module.code, &parent_basename);
+        }
+        modules.push(module);
+    }
+    modules
+}
+
+fn split_parent_path_parts(filename: &str) -> (String, String, String) {
+    let normalized = filename.replace('\\', "/");
+    let (parent, basename) = normalized
+        .rsplit_once('/')
+        .map(|(parent, basename)| (parent.to_string(), basename))
+        .unwrap_or_else(|| (String::new(), normalized.as_str()));
+    let stem = basename
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("module")
+        .to_string();
+    (parent, stem, basename.to_string())
+}
+
+fn rewrite_scope_entry_imports(
+    mut code: String,
+    entry_import_dir: &str,
+    child_filenames: &HashSet<String>,
+) -> String {
+    for child_filename in child_filenames {
+        let old = format!("from \"./{child_filename}\"");
+        let new = format!("from \"./{entry_import_dir}/{child_filename}\"");
+        code = code.replace(&old, &new);
+    }
+    code
+}
+
+fn rewrite_scope_child_entry_imports(code: String, parent_basename: &str) -> String {
+    code.replace(
+        "from \"./entry.js\"",
+        &format!("from \"../{parent_basename}\""),
+    )
+}
+
+fn scope_split_imports_resolve(
+    modules: &[UnpackedModule],
+    available_filenames: &HashSet<String>,
+) -> bool {
+    modules.iter().all(|module| {
+        extract_static_relative_imports(&module.code)
+            .into_iter()
+            .all(|spec| {
+                resolve_relative_module_filename(&module.filename, &spec)
+                    .is_some_and(|filename| available_filenames.contains(&filename))
+            })
+    })
+}
+
+fn extract_static_relative_imports(code: &str) -> Vec<String> {
+    let mut imports = Vec::new();
+    for quote in ['"', '\''] {
+        let needle = format!("from {quote}");
+        let mut rest = code;
+        while let Some(start) = rest.find(&needle) {
+            let spec_start = start + needle.len();
+            rest = &rest[spec_start..];
+            let Some(end) = rest.find(quote) else {
+                break;
+            };
+            let spec = &rest[..end];
+            if spec.starts_with("./") || spec.starts_with("../") {
+                imports.push(spec.to_string());
+            }
+            rest = &rest[end + quote.len_utf8()..];
+        }
+    }
+    imports
+}
+
+fn resolve_relative_module_filename(current_filename: &str, specifier: &str) -> Option<String> {
+    let normalized_current = current_filename.replace('\\', "/");
+    let mut parts: Vec<&str> = normalized_current
+        .rsplit_once('/')
+        .map(|(parent, _)| parent.split('/').filter(|part| !part.is_empty()).collect())
+        .unwrap_or_default();
+
+    for part in specifier.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            part => parts.push(part),
+        }
+    }
+
+    let mut resolved = parts.join("/");
+    if !resolved.ends_with(".js") {
+        resolved.push_str(".js");
+    }
+    Some(resolved)
+}
+
 fn unpack_multi_module_with_plan(
     modules: Vec<PreparedUnpackModule>,
     numeric_rewrite_plan: NumericRewritePlan,
@@ -1339,6 +1525,63 @@ function load() {
         .expect("nested import-like code should still scan without parsing");
 
         assert!(deps.is_empty());
+    }
+
+    #[test]
+    fn namespace_scope_split_keeps_parent_filename_and_rewrites_entry_imports() {
+        let parent = UnpackedModule {
+            id: "3276".to_string(),
+            is_entry: false,
+            code: String::new(),
+            filename: "module-3276.js".to_string(),
+        };
+        let split_modules = vec![
+            UnpackedModule {
+                id: "entry".to_string(),
+                is_entry: true,
+                code: r#"import { value } from "./chunk_value.js";
+console.log(value);
+"#
+                .to_string(),
+                filename: "entry.js".to_string(),
+            },
+            UnpackedModule {
+                id: "chunk_value".to_string(),
+                is_entry: false,
+                code: r#"import { init } from "./entry.js";
+export const value = init + 1;
+"#
+                .to_string(),
+                filename: "chunk_value.js".to_string(),
+            },
+        ];
+
+        let modules = namespace_scope_hoisted_split(&parent, split_modules);
+        assert_eq!(modules[0].id, "3276");
+        assert_eq!(modules[0].filename, "module-3276.js");
+        assert!(
+            modules[0]
+                .code
+                .contains(r#"from "./module-3276/chunk_value.js""#),
+            "entry imports should target the namespaced child chunk:\n{}",
+            modules[0].code
+        );
+        assert_eq!(modules[1].id, "3276/chunk_value");
+        assert_eq!(modules[1].filename, "module-3276/chunk_value.js");
+        assert!(
+            modules[1].code.contains(r#"from "../module-3276.js""#),
+            "child imports of split entry should target the preserved parent filename:\n{}",
+            modules[1].code
+        );
+
+        let available: HashSet<String> = modules
+            .iter()
+            .map(|module| module.filename.clone())
+            .collect();
+        assert!(scope_split_imports_resolve(&modules, &available));
+
+        let missing_entry = HashSet::from(["module-3276/chunk_value.js".to_string()]);
+        assert!(!scope_split_imports_resolve(&modules, &missing_entry));
     }
 
     #[test]
