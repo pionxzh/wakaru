@@ -86,6 +86,13 @@ function defaultExpectedNeedles(snippet) {
   return Array.isArray(snippet.expected) ? snippet.expected : [snippet.expected];
 }
 
+function expectedNeedleGroups(snippet, expectedNeedles) {
+  if (snippet.expectedAny) {
+    return snippet.expectedAny.map((group) => (Array.isArray(group) ? group : [group]));
+  }
+  return [expectedNeedles(snippet)];
+}
+
 function collectShapes(snippet, transformers) {
   const groups = new Map();
   const shapes = [];
@@ -134,9 +141,12 @@ function runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles) {
     return { recovered: false, notes: `wakaru failed: ${error.message}` };
   }
 
-  const missing = expectedNeedles(snippet).filter((needle) => !recovered.includes(needle));
+  const missingGroups = expectedNeedleGroups(snippet, expectedNeedles).map((needles) =>
+    needles.filter((needle) => !recovered.includes(needle)),
+  );
+  const missing = missingGroups.reduce((best, next) => (next.length < best.length ? next : best));
   const leaked = (snippet.rejected ?? []).filter((needle) => recovered.includes(needle));
-  if (missing.length === 0 && leaked.length === 0) {
+  if (missingGroups.some((group) => group.length === 0) && leaked.length === 0) {
     return { recovered: true, notes: "expected syntax present" };
   }
   const loweredShape = summarize(shape.lowered);

@@ -28,6 +28,55 @@ fn render_default(source: &str) -> String {
     .code
 }
 
+#[test]
+fn unused_local_undefined_initializer_is_removed() {
+    let input = r#"
+function load_user(app_id) {
+  const response = fetch_user(app_id);
+  const data = undefined;
+  return response.json();
+}
+"#;
+    let expected = r#"
+function load_user(app_id) {
+  const response = fetch_user(app_id);
+  return response.json();
+}
+"#;
+    assert_eq_normalized(&render_default(input), expected.trim());
+}
+
+#[test]
+fn referenced_local_undefined_initializer_is_kept() {
+    let input = r#"
+function load_user(app_id) {
+  const data = undefined;
+  side(data);
+  return app_id;
+}
+"#;
+    let expected = r#"
+function load_user(app_id) {
+  side(undefined);
+  return app_id;
+}
+"#;
+    assert_eq_normalized(&render_default(input), expected.trim());
+}
+
+#[test]
+fn top_level_undefined_initializer_is_kept() {
+    let input = r#"
+const data = undefined;
+export const value = 1;
+"#;
+    let expected = r#"
+const data = undefined;
+export const value = 1;
+"#;
+    assert_eq_normalized(&render_default(input), expected.trim());
+}
+
 // ── Unreferenced function declarations ──────────────────────────
 
 #[test]

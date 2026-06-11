@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use swc_core::ecma::ast::{
-    ArrowExpr, BlockStmt, BlockStmtOrExpr, Class, Decl, Expr, Function, Ident, ImportDecl,
+    ArrowExpr, BlockStmt, BlockStmtOrExpr, Class, Decl, Expr, Function, Ident, ImportDecl, Lit,
     MemberProp, Module, ModuleItem, Pat, PropName, Stmt, VarDecl, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
@@ -42,8 +42,9 @@ impl VisitMut for DeadUninitializedDecls {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let facts = collect_binding_facts(module);
         let eval_protected = collect_eval_protected_uninitialized(module);
-        let unused_uninitialized = facts
-            .uninitialized
+        let mut candidates = facts.uninitialized;
+        candidates.extend(collect_local_undefined_initialized(module));
+        let unused_uninitialized = candidates
             .into_iter()
             .filter(|binding| !eval_protected.contains(binding))
             .filter(|binding| facts.references.get(binding).copied().unwrap_or(0) <= 1)
@@ -55,6 +56,46 @@ impl VisitMut for DeadUninitializedDecls {
         module.visit_mut_with(&mut UninitializedDeclStripper {
             dead: &unused_uninitialized,
         });
+    }
+}
+
+fn collect_local_undefined_initialized(module: &Module) -> HashSet<BindingId> {
+    let mut collector = LocalUndefinedInitCollector::default();
+    module.visit_with(&mut collector);
+    collector.bindings
+}
+
+#[derive(Default)]
+struct LocalUndefinedInitCollector {
+    bindings: HashSet<BindingId>,
+    function_depth: usize,
+}
+
+impl Visit for LocalUndefinedInitCollector {
+    fn visit_function(&mut self, function: &Function) {
+        self.function_depth += 1;
+        function.visit_children_with(self);
+        self.function_depth -= 1;
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.function_depth += 1;
+        arrow.visit_children_with(self);
+        self.function_depth -= 1;
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if self.function_depth > 0
+            && declarator
+                .init
+                .as_deref()
+                .is_some_and(is_undefined_initializer)
+        {
+            if let Pat::Ident(binding) = &declarator.name {
+                self.bindings.insert(binding_id(&binding.id));
+            }
+        }
+        declarator.visit_children_with(self);
     }
 }
 
@@ -194,11 +235,18 @@ impl Visit for EvalProtectedUninitializedCollector {
 #[derive(Default)]
 struct CurrentScopeUninitializedCollector {
     uninitialized: HashSet<BindingId>,
+    include_undefined_init: bool,
 }
 
 impl Visit for CurrentScopeUninitializedCollector {
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
-        if declarator.init.is_none() {
+        if declarator.init.is_none()
+            || (self.include_undefined_init
+                && declarator
+                    .init
+                    .as_deref()
+                    .is_some_and(is_undefined_initializer))
+        {
             if let Pat::Ident(binding) = &declarator.name {
                 self.uninitialized.insert(binding_id(&binding.id));
             }
@@ -222,7 +270,10 @@ fn collect_current_scope_uninitialized_from_module(module: &Module) -> HashSet<B
 }
 
 fn collect_current_scope_uninitialized_from_function(function: &Function) -> HashSet<BindingId> {
-    let mut collector = CurrentScopeUninitializedCollector::default();
+    let mut collector = CurrentScopeUninitializedCollector {
+        include_undefined_init: true,
+        ..Default::default()
+    };
     if let Some(body) = &function.body {
         collect_current_scope_uninitialized_from_block(body, &mut collector);
     }
@@ -230,7 +281,10 @@ fn collect_current_scope_uninitialized_from_function(function: &Function) -> Has
 }
 
 fn collect_current_scope_uninitialized_from_arrow(arrow: &ArrowExpr) -> HashSet<BindingId> {
-    let mut collector = CurrentScopeUninitializedCollector::default();
+    let mut collector = CurrentScopeUninitializedCollector {
+        include_undefined_init: true,
+        ..Default::default()
+    };
     match arrow.body.as_ref() {
         BlockStmtOrExpr::BlockStmt(body) => {
             collect_current_scope_uninitialized_from_block(body, &mut collector);
@@ -453,7 +507,7 @@ impl VisitMut for UninitializedDeclStripper<'_> {
 
 fn strip_unused_uninitialized_declarators(var_decl: &mut VarDecl, dead: &HashSet<BindingId>) {
     var_decl.decls.retain(|decl| {
-        if decl.init.is_some() {
+        if decl.init.is_some() && !decl.init.as_deref().is_some_and(is_undefined_initializer) {
             return true;
         }
         let Pat::Ident(ident) = &decl.name else {
@@ -461,4 +515,14 @@ fn strip_unused_uninitialized_declarators(var_decl: &mut VarDecl, dead: &HashSet
         };
         !dead.contains(&binding_id(&ident.id))
     });
+}
+
+fn is_undefined_initializer(expr: &Expr) -> bool {
+    matches!(strip_parens(expr), Expr::Ident(id) if id.sym.as_ref() == "undefined")
+        || matches!(
+            strip_parens(expr),
+            Expr::Unary(unary)
+                if unary.op == swc_core::ecma::ast::UnaryOp::Void
+                    && matches!(strip_parens(&unary.arg), Expr::Lit(Lit::Num(_)))
+        )
 }
