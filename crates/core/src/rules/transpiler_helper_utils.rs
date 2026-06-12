@@ -2261,7 +2261,7 @@ fn ts_private_helper_name_kind(name: &str, function: &Function) -> Option<TsHelp
 
 fn ts_generated_fn_helper_kind(ident: &Ident, function: &Function) -> Option<TsHelperKind> {
     if is_likely_generated_alias(ident.sym.as_ref())
-        && ts_function_matches_kind(function, TsHelperKind::Generator)
+        && ts_generated_generator_function_matches(function)
     {
         Some(TsHelperKind::Generator)
     } else {
@@ -2270,17 +2270,64 @@ fn ts_generated_fn_helper_kind(ident: &Ident, function: &Function) -> Option<TsH
 }
 
 fn ts_function_matches_kind(function: &Function, kind: TsHelperKind) -> bool {
+    match kind {
+        TsHelperKind::Generator => ts_generator_state_function_matches(function),
+        _ => false,
+    }
+}
+
+fn ts_generator_state_function_matches(function: &Function) -> bool {
     let Some(body) = &function.body else {
         return false;
     };
     let signals = collect_ts_helper_body_signals(&body.stmts);
-    match kind {
-        TsHelperKind::Generator => {
-            function.params.len() >= 2
-                && (signals.label_prop || signals.trys_prop || signals.ops_prop)
-        }
-        _ => false,
+    function.params.len() >= 2 && signals.label_prop && signals.trys_prop && signals.ops_prop
+}
+
+fn ts_generated_generator_function_matches(function: &Function) -> bool {
+    let Some(body) = &function.body else {
+        return false;
+    };
+    if !ts_generator_state_function_matches(function) {
+        return false;
     }
+    let Some(body_param) = function.params.get(1).and_then(|param| match &param.pat {
+        Pat::Ident(binding) => Some(binding_key(&binding.id)),
+        _ => None,
+    }) else {
+        return false;
+    };
+
+    struct BodyCallFinder {
+        body_param: BindingKey,
+        found: bool,
+    }
+
+    impl Visit for BodyCallFinder {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Expr::Member(member) = strip_parens(callee) {
+                    if matches!(static_member_prop_name(&member.prop), Some("call"))
+                        && matches!(
+                            member.obj.as_ref(),
+                            Expr::Ident(obj) if binding_key(obj) == self.body_param
+                        )
+                    {
+                        self.found = true;
+                        return;
+                    }
+                }
+            }
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = BodyCallFinder {
+        body_param,
+        found: false,
+    };
+    body.visit_with(&mut finder);
+    finder.found
 }
 
 fn expr_contains_tsc_private_helper_fn(expr: &Expr, kind: TsHelperKind) -> bool {
@@ -4370,6 +4417,34 @@ mod tests {
                 context
                     .tslib_namespaces()
                     .contains(&(Atom::from("tslib_1"), SyntaxContext::empty()))
+            );
+        });
+    }
+
+    #[test]
+    fn generated_function_with_label_property_is_not_ts_generator_helper() {
+        GLOBALS.set(&Globals::new(), || {
+            let module = parse_module(
+                r#"
+                function L(effect, parentEffectId, label = "", extra) {
+                    monitor.effectTriggered({
+                        effectId: id,
+                        parentEffectId,
+                        label,
+                        effect
+                    });
+                    use(effect, extra);
+                }
+                "#,
+            );
+            let context = LocalHelperContext::collect(&module);
+
+            assert!(
+                !context
+                    .ts_helpers_of_kind(TsHelperKind::Generator)
+                    .iter()
+                    .any(|(sym, _)| sym.as_ref() == "L"),
+                "ordinary generated-looking functions with a label property are not TS generator helpers"
             );
         });
     }
