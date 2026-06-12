@@ -65,6 +65,36 @@ const ctx = react.createContext(null);
 }
 
 #[test]
+fn exported_require_to_import_and_export_specifier() {
+    let input = r#"
+export const dep = require("./dep.js");
+export const value = dep.value;
+"#;
+    let expected = r#"
+import dep from "./dep.js";
+export { dep };
+export const value = dep.value;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn mixed_exported_require_declaration_preserves_other_exports() {
+    let input = r#"
+export const local = 1, dep = require("./dep.js"), value = dep.value;
+"#;
+    let expected = r#"
+import dep from "./dep.js";
+export const local = 1;
+export { dep };
+export const value = dep.value;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn destructure_require_to_named_import() {
     // var { a, b: c } = require('foo')
     // UnEsm produces: import { a, b as c } from "foo"

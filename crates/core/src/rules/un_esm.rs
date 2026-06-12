@@ -11,7 +11,7 @@ use swc_core::ecma::ast::{
     Prop, PropName, PropOrSpread, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, Str, UnaryOp,
     VarDecl, VarDeclKind, VarDeclarator,
 };
-use swc_core::ecma::utils::ExprFactory;
+use swc_core::ecma::utils::{find_pat_ids, ExprFactory};
 use swc_core::ecma::visit::{Visit, VisitMut, VisitWith};
 
 use crate::utils::paren::strip_parens;
@@ -137,6 +137,7 @@ impl VisitMut for UnEsm {
         //          `var s = expr; exports.X = s;`
         split_compound_exports(module, self.unresolved_mark);
         rewrite_webpack_export_getters(module, self.unresolved_mark);
+        lower_exported_cjs_requires(module, self.unresolved_mark);
         let all_declared_names = collect_all_declared_names(module);
 
         let items = std::mem::take(&mut module.body);
@@ -2167,6 +2168,91 @@ fn split_compound_exports(module: &mut Module, unresolved_mark: Mark) {
     module.body = new_body;
 }
 
+/// Lower `export const dep = require("dep")` into
+/// `const dep = require("dep"); export { dep };` so the normal require
+/// classifier can convert the declaration into an import while preserving the
+/// exported binding.
+fn lower_exported_cjs_requires(module: &mut Module, unresolved_mark: Mark) {
+    let mut new_body = Vec::with_capacity(module.body.len());
+    for item in std::mem::take(&mut module.body) {
+        let ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+            span,
+            decl: Decl::Var(var),
+        })) = item
+        else {
+            new_body.push(item);
+            continue;
+        };
+
+        let has_require_decl = var
+            .decls
+            .iter()
+            .any(|decl| try_classify_cjs_require_declarator(decl, unresolved_mark).is_some());
+        if !has_require_decl {
+            new_body.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                span,
+                decl: Decl::Var(var),
+            })));
+            continue;
+        }
+
+        let VarDecl {
+            span: var_span,
+            ctxt,
+            kind,
+            declare,
+            decls,
+        } = *var;
+
+        for decl in decls {
+            let single_decl = VarDecl {
+                span: var_span,
+                ctxt,
+                kind,
+                declare,
+                decls: vec![decl.clone()],
+            };
+            if try_classify_cjs_require_declarator(&decl, unresolved_mark).is_some() {
+                let specifiers = export_specifiers_for_pat(&decl.name);
+                new_body.push(ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(
+                    single_decl,
+                )))));
+                if !specifiers.is_empty() {
+                    new_body.push(ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(
+                        NamedExport {
+                            span: DUMMY_SP,
+                            specifiers,
+                            src: None,
+                            type_only: false,
+                            with: None,
+                        },
+                    )));
+                }
+            } else {
+                new_body.push(ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                    span,
+                    decl: Decl::Var(Box::new(single_decl)),
+                })));
+            }
+        }
+    }
+    module.body = new_body;
+}
+
+fn export_specifiers_for_pat(pat: &Pat) -> Vec<ExportSpecifier> {
+    find_pat_ids(pat)
+        .into_iter()
+        .map(|(sym, ctxt)| {
+            ExportSpecifier::Named(ExportNamedSpecifier {
+                span: DUMMY_SP,
+                orig: ModuleExportName::Ident(Ident::new(sym, DUMMY_SP, ctxt)),
+                exported: None,
+                is_type_only: false,
+            })
+        })
+        .collect()
+}
+
 /// Extract `exports.X` from `exports.X = expr`, returning `(X, expr)`.
 fn try_extract_exports_assign(expr: &Expr, unresolved_mark: Mark) -> Option<(Atom, Box<Expr>)> {
     let Expr::Assign(assign) = expr else {
@@ -2300,81 +2386,85 @@ fn try_classify_cjs_require(stmt: &Stmt, unresolved_mark: Mark) -> Option<CjsReq
             if var.decls.len() != 1 {
                 return None;
             }
-            let decl = &var.decls[0];
-            let Some(init) = &decl.init else { return None };
+            try_classify_cjs_require_declarator(&var.decls[0], unresolved_mark)
+        }
+        _ => None,
+    }
+}
 
-            match &decl.name {
-                Pat::Ident(binding) => {
-                    let local = binding.id.clone();
-                    // var foo = require('bar')
-                    if let Expr::Call(call) = init.as_ref() {
-                        if let Some(source) = is_require_call(call, unresolved_mark) {
-                            return Some(CjsRequireKind::Default { local, source });
+fn try_classify_cjs_require_declarator(
+    decl: &VarDeclarator,
+    unresolved_mark: Mark,
+) -> Option<CjsRequireKind> {
+    let Some(init) = &decl.init else { return None };
+
+    match &decl.name {
+        Pat::Ident(binding) => {
+            let local = binding.id.clone();
+            // var foo = require('bar')
+            if let Expr::Call(call) = init.as_ref() {
+                if let Some(source) = is_require_call(call, unresolved_mark) {
+                    return Some(CjsRequireKind::Default { local, source });
+                }
+            }
+            // var foo = require('bar').baz or require('bar').default
+            if let Expr::Member(member) = init.as_ref() {
+                if let Expr::Call(call) = member.obj.as_ref() {
+                    if let Some(source) = is_require_call(call, unresolved_mark) {
+                        if let Some(prop) = is_ident_prop(&member.prop) {
+                            if prop.as_ref() == "default" {
+                                return Some(CjsRequireKind::DefaultProp { local, source });
+                            } else {
+                                return Some(CjsRequireKind::NamedProp {
+                                    prop,
+                                    local,
+                                    source,
+                                });
+                            }
                         }
+                        // Invalid ident prop or bracket notation → skip
+                        return None;
                     }
-                    // var foo = require('bar').baz or require('bar').default
-                    if let Expr::Member(member) = init.as_ref() {
-                        if let Expr::Call(call) = member.obj.as_ref() {
-                            if let Some(source) = is_require_call(call, unresolved_mark) {
-                                if let Some(prop) = is_ident_prop(&member.prop) {
-                                    if prop.as_ref() == "default" {
-                                        return Some(CjsRequireKind::DefaultProp { local, source });
-                                    } else {
-                                        return Some(CjsRequireKind::NamedProp {
-                                            prop,
-                                            local,
-                                            source,
-                                        });
+                }
+            }
+            None
+        }
+        Pat::Object(obj_pat) => {
+            // var { a, b: c } = require('foo')
+            if let Expr::Call(call) = init.as_ref() {
+                if let Some(source) = is_require_call(call, unresolved_mark) {
+                    let mut specifiers: Vec<(Atom, Ident)> = Vec::new();
+                    for prop in &obj_pat.props {
+                        match prop {
+                            ObjectPatProp::KeyValue(kv) => {
+                                // { b: c } → import { b as c }
+                                let imported = match &kv.key {
+                                    swc_core::ecma::ast::PropName::Ident(i) => i.sym.clone(),
+                                    swc_core::ecma::ast::PropName::Str(s) => {
+                                        Atom::from(s.value.as_str().unwrap_or(""))
                                     }
-                                }
-                                // Invalid ident prop or bracket notation → skip
+                                    _ => return None,
+                                };
+                                let local = extract_binding_ident(&kv.value)?;
+                                specifiers.push((imported, local));
+                            }
+                            ObjectPatProp::Assign(a) => {
+                                // { foo } → import { foo }
+                                let ident = a.key.id.clone();
+                                let name = ident.sym.clone();
+                                specifiers.push((name, ident));
+                            }
+                            ObjectPatProp::Rest(_) => {
+                                // rest spread — skip transformation
                                 return None;
                             }
                         }
                     }
-                    None
+                    return Some(CjsRequireKind::Named { specifiers, source });
                 }
-                Pat::Object(obj_pat) => {
-                    // var { a, b: c } = require('foo')
-                    if let Expr::Call(call) = init.as_ref() {
-                        if let Some(source) = is_require_call(call, unresolved_mark) {
-                            let mut specifiers: Vec<(Atom, Ident)> = Vec::new();
-                            for prop in &obj_pat.props {
-                                match prop {
-                                    ObjectPatProp::KeyValue(kv) => {
-                                        // { b: c } → import { b as c }
-                                        let imported = match &kv.key {
-                                            swc_core::ecma::ast::PropName::Ident(i) => {
-                                                i.sym.clone()
-                                            }
-                                            swc_core::ecma::ast::PropName::Str(s) => {
-                                                Atom::from(s.value.as_str().unwrap_or(""))
-                                            }
-                                            _ => return None,
-                                        };
-                                        let local = extract_binding_ident(&kv.value)?;
-                                        specifiers.push((imported, local));
-                                    }
-                                    ObjectPatProp::Assign(a) => {
-                                        // { foo } → import { foo }
-                                        let ident = a.key.id.clone();
-                                        let name = ident.sym.clone();
-                                        specifiers.push((name, ident));
-                                    }
-                                    ObjectPatProp::Rest(_) => {
-                                        // rest spread — skip transformation
-                                        return None;
-                                    }
-                                }
-                            }
-                            return Some(CjsRequireKind::Named { specifiers, source });
-                        }
-                    }
-                    // var { bar } = require('foo').baz — complex, skip
-                    None
-                }
-                _ => None,
             }
+            // var { bar } = require('foo').baz — complex, skip
+            None
         }
         _ => None,
     }
