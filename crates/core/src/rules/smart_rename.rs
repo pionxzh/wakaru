@@ -1861,25 +1861,36 @@ fn key_as_ident_target(key: &PropName) -> Option<String> {
 // ============================================================
 
 const SENTRY_ATTR_NAMES: &[&str] = &["data-sentry-component", "dataSentryComponent"];
+const SENTRY_ELEMENT_ATTR_NAMES: &[&str] = &["data-sentry-element", "dataSentryElement"];
+const SENTRY_SOURCE_FILE_ATTR_NAMES: &[&str] = &["data-sentry-source-file", "dataSentrySourceFile"];
 
 fn sentry_component_rename_module(module: &mut Module) {
     let mut collector = SentryComponentCollector::default();
     module.visit_with(&mut collector);
-    if collector.candidates.is_empty() {
+    if collector.component_candidates.is_empty() && collector.element_candidates.is_empty() {
         return;
     }
 
     let mut used_names = collect_module_names(module);
-
-    let all_candidate_bids: HashSet<BindingId> = collector
-        .candidates
+    let component_candidate_bids: HashSet<BindingId> = collector
+        .component_candidates
         .iter()
         .map(|(bid, _)| bid.clone())
         .collect();
+    let mut candidates = collector.component_candidates;
+    candidates.extend(
+        collector
+            .element_candidates
+            .into_iter()
+            .filter(|(bid, _)| !component_candidate_bids.contains(bid)),
+    );
+
+    let all_candidate_bids: HashSet<BindingId> =
+        candidates.iter().map(|(bid, _)| bid.clone()).collect();
     let shadow_index = RenameShadowIndex::for_bindings(module, &all_candidate_bids);
 
     let mut renames = Vec::new();
-    for (bid, target) in collector.candidates {
+    for (bid, target) in candidates {
         if bid.0.as_ref() == target.as_str() {
             continue;
         }
@@ -1914,11 +1925,12 @@ fn sentry_component_rename_module(module: &mut Module) {
 #[derive(Default)]
 struct SentryComponentCollector {
     current_fn_binding: Option<BindingId>,
-    candidates: Vec<(BindingId, String)>,
+    component_candidates: Vec<(BindingId, String)>,
+    element_candidates: Vec<(BindingId, String)>,
 }
 
 impl SentryComponentCollector {
-    fn extract_sentry_component_name(attrs: &[JSXAttrOrSpread]) -> Option<String> {
+    fn extract_sentry_attr_value(attrs: &[JSXAttrOrSpread], names: &[&str]) -> Option<String> {
         for attr in attrs {
             let JSXAttrOrSpread::JSXAttr(JSXAttr {
                 name: JSXAttrName::Ident(name),
@@ -1928,7 +1940,7 @@ impl SentryComponentCollector {
             else {
                 continue;
             };
-            if SENTRY_ATTR_NAMES.contains(&name.sym.as_ref()) {
+            if names.contains(&name.sym.as_ref()) {
                 if let Some(val) = s.value.as_str() {
                     if !val.is_empty() {
                         return Some(val.to_string());
@@ -1937,6 +1949,39 @@ impl SentryComponentCollector {
             }
         }
         None
+    }
+
+    fn extract_sentry_component_name(attrs: &[JSXAttrOrSpread]) -> Option<String> {
+        Self::extract_sentry_attr_value(attrs, SENTRY_ATTR_NAMES)
+    }
+
+    fn extract_sentry_element_name(attrs: &[JSXAttrOrSpread]) -> Option<String> {
+        let name = Self::extract_sentry_attr_value(attrs, SENTRY_ELEMENT_ATTR_NAMES)?;
+        if let Some(source_file) =
+            Self::extract_sentry_attr_value(attrs, SENTRY_SOURCE_FILE_ATTR_NAMES)
+        {
+            let source_name = sentry_source_file_component_name(&source_file)?;
+            if source_name != name {
+                return None;
+            }
+        }
+        Some(name)
+    }
+}
+
+fn sentry_source_file_component_name(source_file: &str) -> Option<String> {
+    let file_name = source_file
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(source_file);
+    let stem = file_name
+        .rsplit_once('.')
+        .map_or(file_name, |(stem, _)| stem);
+    let name = pascalize(stem);
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
     }
 }
 
@@ -1972,7 +2017,9 @@ impl Visit for SentryComponentCollector {
     fn visit_jsx_opening_element(&mut self, elem: &swc_core::ecma::ast::JSXOpeningElement) {
         if let Some(bid) = &self.current_fn_binding {
             if let Some(name) = Self::extract_sentry_component_name(&elem.attrs) {
-                self.candidates.push((bid.clone(), name));
+                self.component_candidates.push((bid.clone(), name));
+            } else if let Some(name) = Self::extract_sentry_element_name(&elem.attrs) {
+                self.element_candidates.push((bid.clone(), name));
             }
         }
         elem.visit_children_with(self);
@@ -2226,7 +2273,7 @@ impl Visit for ReactFunctionBodyClassifier {
                 JSXAttrOrSpread::JSXAttr(JSXAttr {
                     name: JSXAttrName::Ident(name),
                     ..
-                }) if SENTRY_ATTR_NAMES.contains(&name.sym.as_ref())
+                }) if is_sentry_hint_attr_name(name.sym.as_ref())
             )
         }) {
             self.has_sentry_hint = true;
@@ -2241,6 +2288,12 @@ impl Visit for ReactFunctionBodyClassifier {
     fn visit_class_decl(&mut self, _: &ClassDecl) {}
 
     fn visit_class_expr(&mut self, _: &ClassExpr) {}
+}
+
+fn is_sentry_hint_attr_name(name: &str) -> bool {
+    SENTRY_ATTR_NAMES.contains(&name)
+        || SENTRY_ELEMENT_ATTR_NAMES.contains(&name)
+        || SENTRY_SOURCE_FILE_ATTR_NAMES.contains(&name)
 }
 
 fn callee_terminal_name(callee: &Callee) -> Option<String> {
