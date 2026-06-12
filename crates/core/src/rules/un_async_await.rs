@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, CatchClause, Expr, ExprStmt,
-    Function, Ident, MemberExpr, Module, Pat, Prop, PropName, SimpleAssignTarget, Stmt, SwitchCase,
-    TryStmt, YieldExpr,
+    AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BreakStmt, CatchClause, ContinueStmt,
+    Expr, ExprStmt, ForStmt, Function, Ident, MemberExpr, Module, Pat, Prop, PropName,
+    SimpleAssignTarget, Stmt, SwitchCase, TryStmt, UnaryExpr, UnaryOp, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -325,7 +325,7 @@ fn decode_state_machine(state_name: Atom, cases: Vec<SwitchCase>) -> Vec<Stmt> {
         label_stmts[idx].push(stmt);
     }
 
-    reconstruct_with_regions(label_stmts, &trys)
+    recover_index_loops(reconstruct_with_regions(label_stmts, &trys))
 }
 
 fn is_catch_label(label_idx: usize, trys: &[[Option<usize>; 4]]) -> bool {
@@ -780,6 +780,194 @@ fn reconstruct_with_regions(label_stmts: Vec<Vec<Stmt>>, trys: &[[Option<usize>;
     }
 
     result
+}
+
+fn recover_index_loops(stmts: Vec<Stmt>) -> Vec<Stmt> {
+    let mut result = Vec::new();
+    let mut index = 0usize;
+
+    while index < stmts.len() {
+        if let Some((loop_stmt, consumed)) = try_recover_index_loop(&stmts[index..]) {
+            result.push(loop_stmt);
+            index += consumed;
+        } else {
+            result.push(stmts[index].clone());
+            index += 1;
+        }
+    }
+
+    result
+}
+
+fn try_recover_index_loop(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
+    let (test, break_target) = loop_break_test(stmts.first()?)?;
+    let continue_target = break_target.checked_sub(1)?;
+    let final_return_idx = stmts
+        .iter()
+        .position(|stmt| return_value_stmt(stmt).is_some())?;
+    if final_return_idx < 3 {
+        return None;
+    }
+
+    let update_idx = final_return_idx.checked_sub(1)?;
+    let update = expr_stmt_expr(&stmts[update_idx])?;
+    let mut body_stmts = stmts[1..update_idx].to_vec();
+    if !convert_jump_returns(&mut body_stmts, break_target, continue_target)? {
+        return None;
+    }
+
+    Some((
+        Stmt::For(ForStmt {
+            span: DUMMY_SP,
+            init: None,
+            test: Some(test),
+            update: Some(update),
+            body: Box::new(Stmt::Block(BlockStmt {
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                stmts: body_stmts,
+            })),
+        }),
+        update_idx + 1,
+    ))
+}
+
+fn loop_break_test(stmt: &Stmt) -> Option<(Box<Expr>, usize)> {
+    let Stmt::If(if_stmt) = stmt else {
+        return None;
+    };
+    if if_stmt.alt.is_some() {
+        return None;
+    }
+    let target = jump_target_stmt(&if_stmt.cons)?;
+    Some((invert_condition(&if_stmt.test), target))
+}
+
+fn invert_condition(test: &Expr) -> Box<Expr> {
+    if let Expr::Unary(unary) = test {
+        if unary.op == UnaryOp::Bang {
+            return unary.arg.clone();
+        }
+    }
+
+    Box::new(Expr::Unary(UnaryExpr {
+        span: DUMMY_SP,
+        op: UnaryOp::Bang,
+        arg: Box::new(test.clone()),
+    }))
+}
+
+fn expr_stmt_expr(stmt: &Stmt) -> Option<Box<Expr>> {
+    let Stmt::Expr(expr_stmt) = stmt else {
+        return None;
+    };
+    Some(expr_stmt.expr.clone())
+}
+
+fn return_value_stmt(stmt: &Stmt) -> Option<&Stmt> {
+    let Stmt::Return(ret) = stmt else {
+        return None;
+    };
+    ret.arg.as_ref()?;
+    Some(stmt)
+}
+
+fn jump_target_stmt(stmt: &Stmt) -> Option<usize> {
+    match stmt {
+        Stmt::Return(_) => return_jump_target(stmt),
+        Stmt::Block(block) if block.stmts.len() == 1 => return_jump_target(&block.stmts[0]),
+        _ => None,
+    }
+}
+
+fn return_jump_target(stmt: &Stmt) -> Option<usize> {
+    let Stmt::Return(ret) = stmt else {
+        return None;
+    };
+    let Expr::Array(arr) = ret.arg.as_deref()? else {
+        return None;
+    };
+    if arr.elems.len() < 2 {
+        return None;
+    }
+    let opcode = number_array_elem(arr.elems.first()?)?;
+    if opcode != 3 {
+        return None;
+    }
+    Some(number_array_elem(arr.elems.get(1)?)? as usize)
+}
+
+fn number_array_elem(elem: &Option<swc_core::ecma::ast::ExprOrSpread>) -> Option<u32> {
+    let Expr::Lit(swc_core::ecma::ast::Lit::Num(num)) = elem.as_ref()?.expr.as_ref() else {
+        return None;
+    };
+    Some(num.value as u32)
+}
+
+fn convert_jump_returns(
+    stmts: &mut [Stmt],
+    break_target: usize,
+    continue_target: usize,
+) -> Option<bool> {
+    let mut changed = false;
+    for stmt in stmts {
+        changed |= convert_jump_return(stmt, break_target, continue_target)?;
+    }
+    Some(changed)
+}
+
+fn convert_jump_return(
+    stmt: &mut Stmt,
+    break_target: usize,
+    continue_target: usize,
+) -> Option<bool> {
+    match stmt {
+        Stmt::Return(_) => {
+            if let Some(target) = return_jump_target(stmt) {
+                if target == break_target {
+                    *stmt = Stmt::Break(BreakStmt {
+                        span: DUMMY_SP,
+                        label: None,
+                    });
+                } else if target == continue_target {
+                    *stmt = Stmt::Continue(ContinueStmt {
+                        span: DUMMY_SP,
+                        label: None,
+                    });
+                } else {
+                    return None;
+                }
+                return Some(true);
+            }
+            Some(false)
+        }
+        Stmt::If(if_stmt) => {
+            let mut changed =
+                convert_jump_return(&mut if_stmt.cons, break_target, continue_target)?;
+            if let Some(alt) = &mut if_stmt.alt {
+                changed |= convert_jump_return(alt, break_target, continue_target)?;
+            }
+            Some(changed)
+        }
+        Stmt::Block(block) => convert_jump_returns(&mut block.stmts, break_target, continue_target),
+        Stmt::Try(try_stmt) => {
+            let mut changed =
+                convert_jump_returns(&mut try_stmt.block.stmts, break_target, continue_target)?;
+            if let Some(handler) = &mut try_stmt.handler {
+                changed |=
+                    convert_jump_returns(&mut handler.body.stmts, break_target, continue_target)?;
+            }
+            if let Some(finalizer) = &mut try_stmt.finalizer {
+                changed |= convert_jump_returns(
+                    finalizer.stmts.as_mut_slice(),
+                    break_target,
+                    continue_target,
+                )?;
+            }
+            Some(changed)
+        }
+        _ => Some(false),
+    }
 }
 
 // ============================================================

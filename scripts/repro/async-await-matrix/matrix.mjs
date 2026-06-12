@@ -78,6 +78,17 @@ const snippets = [
         "await recover_item(item, error)",
         "return output",
       ],
+      [
+        "async function collect_enabled(items)",
+        "for(; index < items.length; index++)",
+        "item = items[index]",
+        "continue",
+        "try",
+        "await fetch_item(item.id)",
+        "catch",
+        "await recover_item(item, error",
+        "return output",
+      ],
     ],
   },
   {

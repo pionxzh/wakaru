@@ -677,3 +677,72 @@ async function func(x) {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn async_loop_try_catch_recovers_index_loop_jumps() {
+    let input = r#"
+function collect_enabled(items) {
+  return __awaiter(this, void 0, void 0, function () {
+    var output, index, item, _a, _b, error_1, _c, _d;
+    return __generator(this, function (_e) {
+      switch (_e.label) {
+        case 0:
+          output = [];
+          index = 0;
+          _e.label = 1;
+        case 1:
+          if (!(index < items.length)) return [3 /*break*/, 7];
+          item = items[index];
+          if (!item.enabled) {
+            return [3 /*break*/, 6];
+          }
+          _e.label = 2;
+        case 2:
+          _e.trys.push([2, 4, , 6]);
+          _b = (_a = output).push;
+          return [4 /*yield*/, fetch_item(item.id)];
+        case 3:
+          _b.apply(_a, [_e.sent()]);
+          return [3 /*break*/, 6];
+        case 4:
+          error_1 = _e.sent();
+          _d = (_c = output).push;
+          return [4 /*yield*/, recover_item(item, error_1)];
+        case 5:
+          _d.apply(_c, [_e.sent()]);
+          return [3 /*break*/, 6];
+        case 6:
+          index++;
+          return [3 /*break*/, 1];
+        case 7:
+          return [2 /*return*/, output];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+async function collect_enabled(items) {
+  var output, index, item, _a, _b, error_1, _c, _d;
+  output = [];
+  index = 0;
+  for (; index < items.length; index++) {
+    item = items[index];
+    if (!item.enabled) {
+      continue;
+    }
+    try {
+      _b = (_a = output).push;
+      _b.apply(_a, [await fetch_item(item.id)]);
+    } catch (error) {
+      error_1 = error;
+      _d = (_c = output).push;
+      _d.apply(_c, [await recover_item(item, error_1)]);
+    }
+  }
+  return output;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
