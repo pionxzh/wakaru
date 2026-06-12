@@ -1080,6 +1080,66 @@ use(run_pipeline);
 }
 
 #[test]
+fn babel_async_arrow_forwarding_iife_trampoline() {
+    let input = r#"
+const load_user = (() => {
+  const _load_user = async function _callee(app_id) {
+    return await fetch_user(app_id);
+  };
+  function load_user(_x) {
+    return _load_user.apply(this, arguments);
+  }
+  return load_user;
+})();
+use(load_user);
+"#;
+    let expected = r#"
+const load_user = async function(app_id) {
+  return await fetch_user(app_id);
+};
+use(load_user);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn babel_nested_async_arrow_forwarding_iife_trampoline() {
+    let input = r#"
+const run_pipeline = (() => {
+  const _run_pipeline = async function _callee(source) {
+    const steps = await load_steps(source);
+    return steps.map((step) => (() => {
+      const _callback = async function _callee2() {
+        return await step.run(source);
+      };
+      function callback(_x) {
+        return _callback.apply(this, arguments);
+      }
+      return callback;
+    })());
+  };
+  function run_pipeline(_x) {
+    return _run_pipeline.apply(this, arguments);
+  }
+  return run_pipeline;
+})();
+use(run_pipeline);
+"#;
+    let expected = r#"
+const run_pipeline = async function(source) {
+  const steps = await load_steps(source);
+  return steps.map((step) => async function() {
+    return await step.run(source);
+  });
+};
+use(run_pipeline);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn babel_async_arrow_sequence_trampoline() {
     let input = r#"
 _ref = async function _callee(app_id) {

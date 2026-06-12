@@ -2930,14 +2930,24 @@ fn try_collapse_async_trampoline_iife(expr: &Expr) -> Option<Expr> {
         _ => return None,
     };
 
-    let [decl_stmt, return_stmt] = body.stmts.as_slice() else {
-        return None;
-    };
-    let (binding, async_fn) = async_fn_binding_from_decl_stmt(decl_stmt)?;
-    if !return_stmt_applies_binding(return_stmt, &binding) {
-        return None;
+    match body.stmts.as_slice() {
+        [decl_stmt, return_stmt] => {
+            let (binding, async_fn) = async_fn_binding_from_decl_stmt(decl_stmt)?;
+            if !return_stmt_applies_binding(return_stmt, &binding) {
+                return None;
+            }
+            Some(anonymous_async_fn_expr(async_fn))
+        }
+        [private_decl, public_decl, return_stmt] => {
+            let (private_binding, async_fn) = async_fn_binding_from_decl_stmt(private_decl)?;
+            let public_binding = forwarding_fn_decl_binding(public_decl, &private_binding)?;
+            if !return_stmt_returns_binding(return_stmt, &public_binding) {
+                return None;
+            }
+            Some(anonymous_async_fn_expr(async_fn))
+        }
+        _ => None,
     }
-    Some(anonymous_async_fn_expr(async_fn))
 }
 
 fn collapse_async_trampoline_iifes(module: &mut Module) {
@@ -3092,6 +3102,30 @@ fn return_stmt_applies_binding(stmt: &Stmt, binding: &BindingKey) -> bool {
         return false;
     };
     expr_applies_binding(arg, binding)
+}
+
+fn return_stmt_returns_binding(stmt: &Stmt, binding: &BindingKey) -> bool {
+    let Stmt::Return(ret) = stmt else {
+        return false;
+    };
+    let Some(Expr::Ident(id)) = ret.arg.as_deref() else {
+        return false;
+    };
+    id.sym == binding.0 && id.ctxt == binding.1
+}
+
+fn forwarding_fn_decl_binding(stmt: &Stmt, target: &BindingKey) -> Option<BindingKey> {
+    let Stmt::Decl(Decl::Fn(fn_decl)) = stmt else {
+        return None;
+    };
+    let body = fn_decl.function.body.as_ref()?;
+    let [return_stmt] = body.stmts.as_slice() else {
+        return None;
+    };
+    if !return_stmt_applies_binding(return_stmt, target) {
+        return None;
+    }
+    Some((fn_decl.ident.sym.clone(), fn_decl.ident.ctxt))
 }
 
 fn var_item_init_applies_binding(item: &ModuleItem, binding: &BindingKey) -> bool {

@@ -132,6 +132,11 @@ const snippets = [
     name: "async-arrow",
     source: "const load_user = async (app_id) => await fetch_user(app_id);\nuse(load_user);\n",
     expected: ["async (app_id)", "await fetch_user(app_id)"],
+    expectedAny: [
+      ["async (app_id)", "await fetch_user(app_id)"],
+      ["async function(app_id)", "await fetch_user(app_id)"],
+      ["async function load_user(app_id)", "await fetch_user(app_id)"],
+    ],
   },
   {
     name: "async-arrow-nested-awaits",
@@ -154,6 +159,18 @@ const snippets = [
         "async (source)",
         "await load_steps(source)",
         ".map(async (step)",
+        "await step.run(source)",
+      ],
+      [
+        "async function(source)",
+        "await load_steps(source)",
+        ".map((step) => async function",
+        "await step.run(source)",
+      ],
+      [
+        "async function run_pipeline(source)",
+        "await load_steps(source)",
+        ".map((step) => async function",
         "await step.run(source)",
       ],
     ],
