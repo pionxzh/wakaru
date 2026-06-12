@@ -974,6 +974,66 @@ use(load_user);
 }
 
 #[test]
+fn babel_nested_async_callback_iife_trampoline() {
+    let input = r#"
+const run_pipeline = async function(source) {
+  const steps = await load_steps(source);
+  return steps.map(function () {
+    var _ref2 = async function _callee(step) {
+      return await step.run(source);
+    };
+    return function (_x2) {
+      return _ref2.apply(this, arguments);
+    };
+  }());
+};
+use(run_pipeline);
+"#;
+    let expected = r#"
+const run_pipeline = async function(source) {
+  const steps = await load_steps(source);
+  return steps.map(async function(step) {
+    return await step.run(source);
+  });
+};
+use(run_pipeline);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn babel_nested_async_callback_arrow_iife_trampoline() {
+    let input = r#"
+const run_pipeline = async (source)=>{
+  let steps;
+  steps = await load_steps(source);
+  return steps.map((()=>{
+    const _ref2 = async function _callee(step) {
+      return await step.run(source);
+    };
+    return function(_x2) {
+      return _ref2.apply(this, arguments);
+    };
+  })());
+};
+use(run_pipeline);
+"#;
+    let expected = r#"
+const run_pipeline = async (source)=>{
+  let steps;
+  steps = await load_steps(source);
+  return steps.map(async function(step) {
+    return await step.run(source);
+  });
+};
+use(run_pipeline);
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn babel_async_arrow_sequence_trampoline() {
     let input = r#"
 _ref = async function _callee(app_id) {

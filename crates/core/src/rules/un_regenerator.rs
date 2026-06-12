@@ -119,6 +119,7 @@ fn run_un_regenerator(
         consumed_marks: &mut consumed_marks,
     };
     module.visit_mut_with(&mut transformer);
+    collapse_async_trampoline_iifes(module);
     collapse_async_trampoline_sequences(module);
     collapse_async_trampoline_assignments(module);
 
@@ -2834,6 +2835,21 @@ fn try_collapse_async_trampoline_iife(expr: &Expr) -> Option<Expr> {
         return None;
     }
     Some(anonymous_async_fn_expr(async_fn))
+}
+
+fn collapse_async_trampoline_iifes(module: &mut Module) {
+    module.visit_mut_with(&mut AsyncTrampolineIifeCollapser);
+}
+
+struct AsyncTrampolineIifeCollapser;
+
+impl VisitMut for AsyncTrampolineIifeCollapser {
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+        if let Some(collapsed) = try_collapse_async_trampoline_iife(expr) {
+            *expr = collapsed;
+        }
+    }
 }
 
 fn collapse_async_trampoline_sequences(module: &mut Module) {
