@@ -1914,6 +1914,38 @@ async function collect_enabled(items) {
 }
 
 #[test]
+fn local_temp_member_call_keeps_later_temp_read() {
+    let input = r#"
+var _marked = regeneratorRuntime.mark(myGen);
+function myGen(receiver, arg) {
+  var _t;
+  return regeneratorRuntime.wrap(function(_context) {
+    while (true) {
+      switch (_context.prev = _context.next) {
+        case 0:
+          _t = receiver;
+          _t.method.call(_t, arg);
+          return _context.abrupt("return", _t);
+        case "end":
+          return _context.stop();
+      }
+    }
+  }, _marked, this);
+}
+"#;
+    let expected = r#"
+function* myGen(receiver, arg) {
+  var _t;
+  _t = receiver;
+  _t.method.call(_t, arg);
+  return _t;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn async_to_generator_expression_assignment_with_regenerator_try_catch() {
     let input = r#"
 const runtime = interop(require("./module-runtime.js"));

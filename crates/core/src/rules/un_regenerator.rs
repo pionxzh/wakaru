@@ -2774,6 +2774,9 @@ fn try_fold_state_temp_member_call(state_name: &Atom, stmts: &[Stmt]) -> Option<
 fn try_fold_local_temp_member_call(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
     let (receiver_key, receiver) = extract_local_temp_assign(stmts.first()?)?;
     let call = extract_bound_local_member_call(stmts.get(1)?, &receiver_key, receiver)?;
+    if local_temp_read_before_reassign(&stmts[2..], &receiver_key) {
+        return None;
+    }
     Some((
         Stmt::Expr(ExprStmt {
             span: DUMMY_SP,
@@ -2781,6 +2784,77 @@ fn try_fold_local_temp_member_call(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
         }),
         2,
     ))
+}
+
+fn local_temp_read_before_reassign(stmts: &[Stmt], key: &BindingKey) -> bool {
+    for stmt in stmts {
+        if let Some(rhs) = direct_local_temp_reassign_rhs(stmt, key) {
+            return expr_reads_local_temp(rhs, key);
+        }
+        if stmt_reads_local_temp(stmt, key) {
+            return true;
+        }
+    }
+    false
+}
+
+fn direct_local_temp_reassign_rhs<'a>(stmt: &'a Stmt, key: &BindingKey) -> Option<&'a Expr> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign || !assign_target_matches_local_temp(&assign.left, key) {
+        return None;
+    }
+    Some(&assign.right)
+}
+
+fn stmt_reads_local_temp(stmt: &Stmt, key: &BindingKey) -> bool {
+    let mut finder = LocalTempReadFinder { key, found: false };
+    stmt.visit_with(&mut finder);
+    finder.found
+}
+
+fn expr_reads_local_temp(expr: &Expr, key: &BindingKey) -> bool {
+    let mut finder = LocalTempReadFinder { key, found: false };
+    expr.visit_with(&mut finder);
+    finder.found
+}
+
+struct LocalTempReadFinder<'a> {
+    key: &'a BindingKey,
+    found: bool,
+}
+
+impl Visit for LocalTempReadFinder<'_> {
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        if let Some(init) = &decl.init {
+            init.visit_with(self);
+        }
+    }
+
+    fn visit_assign_expr(&mut self, assign: &AssignExpr) {
+        if !assign_target_matches_local_temp(&assign.left, self.key) {
+            assign.left.visit_with(self);
+        }
+        assign.right.visit_with(self);
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym == self.key.0 && ident.ctxt == self.key.1 {
+            self.found = true;
+        }
+    }
+}
+
+fn assign_target_matches_local_temp(target: &AssignTarget, key: &BindingKey) -> bool {
+    matches!(
+        target,
+        AssignTarget::Simple(SimpleAssignTarget::Ident(binding))
+            if binding.id.sym == key.0 && binding.id.ctxt == key.1
+    )
 }
 
 fn extract_local_temp_assign(stmt: &Stmt) -> Option<(BindingKey, Box<Expr>)> {
