@@ -3291,7 +3291,8 @@ fn collect_esbuild_async_helpers(module: &Module, unresolved_mark: Mark) -> Vec<
                     let Pat::Ident(binding) = &decl.name else {
                         return None;
                     };
-                    if binding.id.sym.as_ref() != "__async" {
+                    let name = binding.id.sym.as_ref();
+                    if name != "__async" && !is_likely_generated_alias(name) {
                         return None;
                     }
                     let init = decl.init.as_deref()?;

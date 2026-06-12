@@ -871,6 +871,52 @@ async function load_user(app_id) {
 }
 
 #[test]
+fn esbuild_mangled_async_helper_recovers_loop_try_catch() {
+    let input = r#"
+var e = (e, t, n) => new Promise((r, c) => {
+  var i = e => { try { o(n.next(e)); } catch (e) { c(e); } };
+  var l = e => { try { o(n.throw(e)); } catch (e) { c(e); } };
+  var o = e => e.done ? r(e.value) : Promise.resolve(e.value).then(i, l);
+  o((n = n.apply(e, t)).next());
+});
+function collect_enabled(items) {
+  return e(this, null, function*() {
+    const output = [];
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
+      if (item.enabled) {
+        try {
+          output.push(yield fetch_item(item.id));
+        } catch (error) {
+          output.push(yield recover_item(item, error));
+        }
+      }
+    }
+    return output;
+  });
+}
+"#;
+    let expected = r#"
+async function collect_enabled(items) {
+  const output = [];
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    if (item.enabled) {
+      try {
+        output.push(await fetch_item(item.id));
+      } catch (error) {
+        output.push(await recover_item(item, error));
+      }
+    }
+  }
+  return output;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn esbuild_yield_star_helper_is_unwrapped() {
     let input = r#"
 var __knownSymbol = (name, symbol) => (symbol = Symbol[name]) ? symbol : Symbol.for("Symbol." + name);
