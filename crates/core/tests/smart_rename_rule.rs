@@ -1212,6 +1212,69 @@ const NativeComponent = () => <div dataSentryComponent="NativeComponent" />;
 }
 
 #[test]
+fn sentry_component_wins_over_element_and_keeps_source_file_metadata() {
+    let input = r#"
+function K() {
+  return <div data-sentry-component="UserCard" data-sentry-element="IgnoredElement" data-sentry-source-file="UserCard.tsx" />;
+}
+"#;
+    let expected = r#"
+function UserCard() {
+  return <div data-sentry-component="UserCard" data-sentry-element="IgnoredElement" data-sentry-source-file="UserCard.tsx" />;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sentry_element_renames_function_when_component_absent() {
+    let input = r#"
+function a() {
+  return <div data-sentry-element="Sidebar" />;
+}
+"#;
+    let expected = r#"
+function Sidebar() {
+  return <div data-sentry-element="Sidebar" />;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sentry_element_camel_case_variant() {
+    let input = r#"
+const a = () => <div dataSentryElement="Sidebar" />;
+"#;
+    let expected = r#"
+const Sidebar = () => <div dataSentryElement="Sidebar" />;
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sentry_element_skips_lowercase_name_without_react_shape_fallback() {
+    let input = r#"
+function K() {
+  return <div data-sentry-element="div">Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn sentry_element_skips_conflict_without_react_shape_fallback() {
+    let input = r#"
+const Sidebar = "taken";
+function K() {
+  return <div data-sentry-element="Sidebar">Hello</div>;
+}
+use(Sidebar);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn sentry_component_nested_components() {
     let input = r#"
 function a() {
