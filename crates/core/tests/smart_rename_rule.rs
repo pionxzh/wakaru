@@ -1249,12 +1249,7 @@ function a() {
   return <><l data-sentry-element="Header" data-sentry-source-file="Sidebar.tsx" /></>;
 }
 "#;
-    let expected = r#"
-const Header = header;
-function a() {
-  return <><Header data-sentry-element="Header" data-sentry-source-file="Sidebar.tsx" /></>;
-}
-"#;
+    let expected = input;
     assert_eq_normalized(&apply(input), expected);
 }
 
