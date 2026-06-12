@@ -732,6 +732,32 @@ use(out);
 }
 
 #[test]
+fn detects_mangled_esbuild_object_spread_helpers() {
+    let input = r#"
+var e = Object.defineProperty,
+    r = Object.defineProperties,
+    t = Object.getOwnPropertyDescriptors,
+    o = Object.getOwnPropertySymbols,
+    n = Object.prototype.hasOwnProperty,
+    l = Object.prototype.propertyIsEnumerable,
+    i = (r, t, o) => t in r ? e(r, t, { enumerable: true, configurable: true, writable: true, value: o }) : r[t] = o,
+    s = (e, r) => {
+        for (var t in r || (r = {})) n.call(r, t) && i(e, t, r[t]);
+        if (o) for (var t of o(r)) l.call(r, t) && i(e, t, r[t]);
+        return e;
+    },
+    c = (e, o) => r(e, t(o));
+const out = c(s({}, rest), { session });
+use(out);
+"#;
+    let expected = r#"
+const out = { ...rest, session };
+use(out);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn detects_minified_extends() {
     let input = r#"
 function n() {
