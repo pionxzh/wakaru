@@ -4,9 +4,10 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BlockStmtOrExpr,
-    CatchClause, Decl, Expr, ExprStmt, FnDecl, FnExpr, Function, Ident, ImportSpecifier, Lit,
-    MemberExpr, MemberProp, Module, ModuleDecl, ModuleItem, Param, Pat, ReturnStmt,
-    SimpleAssignTarget, Stmt, SwitchCase, VarDeclarator, WhileStmt, YieldExpr,
+    BreakStmt, CallExpr, Callee, CatchClause, ContinueStmt, Decl, Expr, ExprOrSpread, ExprStmt,
+    FnDecl, FnExpr, ForStmt, Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleItem, Number, Param, Pat, ReturnStmt, SimpleAssignTarget, Stmt, SwitchCase,
+    UnaryExpr, UnaryOp, VarDeclarator, WhileStmt, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -810,11 +811,14 @@ fn has_nested_control_flow_in_stmt(stmt: &Stmt) -> bool {
     let Some((state_name, cases)) = cases else {
         return false;
     };
+    let supports_nested_loop = has_supported_nested_loop_state_machine(&state_name, cases);
     // Check each case's top-level statements for nested blocks that
     // contain state machine operations (_ctx.next or break)
     for case in cases {
         for stmt in &case.cons {
-            if has_state_ops_in_nested_block(&state_name, stmt) {
+            if has_state_ops_in_nested_block(&state_name, stmt)
+                && (!supports_nested_loop || !is_supported_nested_state_jump(&state_name, stmt))
+            {
                 return true;
             }
         }
@@ -829,6 +833,33 @@ fn has_nested_control_flow_in_stmt(stmt: &Stmt) -> bool {
         }
     }
     false
+}
+
+fn has_supported_nested_loop_state_machine(state_name: &Atom, cases: &[SwitchCase]) -> bool {
+    cases.iter().any(|case| {
+        let stmts = &case.cons;
+        stmts.iter().any(|stmt| {
+            matches!(stmt, Stmt::If(if_stmt) if if_stmt.alt.is_none() && extract_next_break_target(state_name, &if_stmt.cons).is_some())
+        }) && stmts.windows(2).any(|window| {
+            let Stmt::If(if_stmt) = &window[0] else {
+                return false;
+            };
+            if if_stmt.alt.is_some() || extract_next_break_target(state_name, &if_stmt.cons).is_none() {
+                return false;
+            }
+            extract_abrupt_continue_target(state_name, &window[1]).is_some()
+        })
+    })
+}
+
+fn is_supported_nested_state_jump(state_name: &Atom, stmt: &Stmt) -> bool {
+    let Stmt::If(if_stmt) = stmt else {
+        return false;
+    };
+    if if_stmt.alt.is_some() {
+        return false;
+    }
+    extract_next_break_target(state_name, &if_stmt.cons).is_some()
 }
 
 /// Check if a statement contains _ctx.next assignments or break statements
@@ -1296,6 +1327,12 @@ fn decode_babel_state_machine(
                 stmt.visit_mut_with(&mut replacer);
             }
 
+            if let Some((decoded, consumed)) = decode_nested_state_jump(state_name, &stmts[i..]) {
+                flat.push((idx, decoded));
+                i += consumed;
+                continue;
+            }
+
             // Handle return statements (yields, abrupt returns, stop)
             if let Stmt::Return(ret) = &stmt {
                 if let Some(decoded) = decode_return(state_name, ret) {
@@ -1490,7 +1527,8 @@ fn decode_babel_state_machine(
         }
     }
 
-    let mut result = reconstruct_with_regions(label_stmts, &trys);
+    let mut result = recover_index_loops(reconstruct_with_regions(label_stmts, &trys));
+    fold_state_temp_member_calls(state_name, &mut result);
 
     // Wrap in while(true) if we detected a back-edge to case 0
     if has_back_edge_to_zero && !result.is_empty() {
@@ -1535,6 +1573,113 @@ fn detect_back_edge_to_zero(state_name: &Atom, cases: &[SwitchCase]) -> bool {
         }
     }
     false
+}
+
+fn decode_nested_state_jump(state_name: &Atom, stmts: &[Stmt]) -> Option<(Stmt, usize)> {
+    let Stmt::If(if_stmt) = stmts.first()? else {
+        return None;
+    };
+    if if_stmt.alt.is_some() {
+        return None;
+    }
+    let goto_target = extract_next_break_target(state_name, &if_stmt.cons)?;
+
+    if let Some(continue_target) = stmts
+        .get(1)
+        .and_then(|stmt| extract_abrupt_continue_target(state_name, stmt))
+    {
+        if continue_target != goto_target {
+            return Some((
+                jump_if_stmt(invert_condition(&if_stmt.test), continue_target),
+                2,
+            ));
+        }
+    }
+
+    Some((jump_if_stmt(if_stmt.test.clone(), goto_target), 1))
+}
+
+fn extract_next_break_target(state_name: &Atom, stmt: &Stmt) -> Option<usize> {
+    let Stmt::Block(block) = stmt else {
+        return None;
+    };
+    if block.stmts.len() != 2 || !matches!(block.stmts[1], Stmt::Break(_)) {
+        return None;
+    }
+    extract_state_next_assign_target(state_name, &block.stmts[0])
+}
+
+fn extract_state_next_assign_target(state_name: &Atom, stmt: &Stmt) -> Option<usize> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let left_member = assign.left.as_simple().and_then(|s| s.as_member())?;
+    if !is_ident_with_name(&left_member.obj, state_name) || !is_next_prop(&left_member.prop) {
+        return None;
+    }
+    number_lit_usize(&assign.right)
+}
+
+fn extract_abrupt_continue_target(state_name: &Atom, stmt: &Stmt) -> Option<usize> {
+    let Stmt::Return(ret) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = ret.arg.as_deref()? else {
+        return None;
+    };
+    let callee = call.callee.as_expr()?;
+    let Expr::Member(member) = callee.as_ref() else {
+        return None;
+    };
+    if !is_ident_with_name(&member.obj, state_name) || !member_prop_name(&member.prop, "abrupt") {
+        return None;
+    }
+    let Expr::Lit(Lit::Str(kind)) = call.args.first()?.expr.as_ref() else {
+        return None;
+    };
+    if kind.value.as_str() != Some("continue") {
+        return None;
+    }
+    number_lit_usize(&call.args.get(1)?.expr)
+}
+
+fn jump_if_stmt(test: Box<Expr>, target: usize) -> Stmt {
+    Stmt::If(swc_core::ecma::ast::IfStmt {
+        span: DUMMY_SP,
+        test,
+        cons: Box::new(jump_return_stmt(target)),
+        alt: None,
+    })
+}
+
+fn jump_return_stmt(target: usize) -> Stmt {
+    Stmt::Return(ReturnStmt {
+        span: DUMMY_SP,
+        arg: Some(Box::new(Expr::Array(ArrayLit {
+            span: DUMMY_SP,
+            elems: vec![
+                Some(number_array_elem(3.0)),
+                Some(number_array_elem(target as f64)),
+            ],
+        }))),
+    })
+}
+
+fn number_array_elem(value: f64) -> ExprOrSpread {
+    ExprOrSpread {
+        spread: None,
+        expr: Box::new(Expr::Lit(Lit::Num(Number {
+            span: DUMMY_SP,
+            value,
+            raw: None,
+        }))),
+    }
 }
 
 fn infer_try_region_nexts(trys: &mut [[Option<usize>; 4]], cases: &[SwitchCase]) {
@@ -2283,6 +2428,380 @@ fn reconstruct_with_regions(label_stmts: Vec<Vec<Stmt>>, trys: &[[Option<usize>;
     }
 
     result
+}
+
+fn recover_index_loops(stmts: Vec<Stmt>) -> Vec<Stmt> {
+    let mut result = Vec::new();
+    let mut index = 0usize;
+
+    while index < stmts.len() {
+        if let Some((loop_stmt, consumed)) = try_recover_index_loop(&stmts[index..]) {
+            result.push(loop_stmt);
+            index += consumed;
+        } else {
+            result.push(stmts[index].clone());
+            index += 1;
+        }
+    }
+
+    result
+}
+
+fn try_recover_index_loop(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
+    let (test, break_target) = loop_break_test(stmts.first()?)?;
+    let final_return_idx = stmts
+        .iter()
+        .position(|stmt| return_value_stmt(stmt).is_some())?;
+    if final_return_idx < 3 {
+        return None;
+    }
+
+    let update_idx = final_return_idx.checked_sub(1)?;
+    let update = expr_stmt_expr(&stmts[update_idx])?;
+    let mut body_stmts = stmts[1..update_idx].to_vec();
+    let continue_target = single_continue_target(&body_stmts, break_target)?;
+    if !convert_jump_returns(&mut body_stmts, break_target, continue_target)? {
+        return None;
+    }
+
+    Some((
+        Stmt::For(ForStmt {
+            span: DUMMY_SP,
+            init: None,
+            test: Some(test),
+            update: Some(update),
+            body: Box::new(Stmt::Block(BlockStmt {
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                stmts: body_stmts,
+            })),
+        }),
+        update_idx + 1,
+    ))
+}
+
+fn single_continue_target(stmts: &[Stmt], break_target: usize) -> Option<usize> {
+    let mut targets = HashSet::new();
+    collect_jump_targets(stmts, &mut targets);
+    targets.remove(&break_target);
+    if targets.len() == 1 {
+        targets.into_iter().next()
+    } else {
+        None
+    }
+}
+
+fn collect_jump_targets(stmts: &[Stmt], targets: &mut HashSet<usize>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Return(_) => {
+                if let Some(target) = return_jump_target(stmt) {
+                    targets.insert(target);
+                }
+            }
+            Stmt::If(if_stmt) => {
+                collect_jump_target(&if_stmt.cons, targets);
+                if let Some(alt) = &if_stmt.alt {
+                    collect_jump_target(alt, targets);
+                }
+            }
+            Stmt::Block(block) => collect_jump_targets(&block.stmts, targets),
+            Stmt::Try(try_stmt) => {
+                collect_jump_targets(&try_stmt.block.stmts, targets);
+                if let Some(handler) = &try_stmt.handler {
+                    collect_jump_targets(&handler.body.stmts, targets);
+                }
+                if let Some(finalizer) = &try_stmt.finalizer {
+                    collect_jump_targets(&finalizer.stmts, targets);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_jump_target(stmt: &Stmt, targets: &mut HashSet<usize>) {
+    collect_jump_targets(std::slice::from_ref(stmt), targets);
+}
+
+fn loop_break_test(stmt: &Stmt) -> Option<(Box<Expr>, usize)> {
+    let Stmt::If(if_stmt) = stmt else {
+        return None;
+    };
+    if if_stmt.alt.is_some() {
+        return None;
+    }
+    let target = jump_target_stmt(&if_stmt.cons)?;
+    Some((invert_condition(&if_stmt.test), target))
+}
+
+fn invert_condition(test: &Expr) -> Box<Expr> {
+    if let Expr::Unary(unary) = test {
+        if unary.op == UnaryOp::Bang {
+            return unary.arg.clone();
+        }
+    }
+
+    Box::new(Expr::Unary(UnaryExpr {
+        span: DUMMY_SP,
+        op: UnaryOp::Bang,
+        arg: Box::new(test.clone()),
+    }))
+}
+
+fn expr_stmt_expr(stmt: &Stmt) -> Option<Box<Expr>> {
+    let Stmt::Expr(expr_stmt) = stmt else {
+        return None;
+    };
+    Some(expr_stmt.expr.clone())
+}
+
+fn return_value_stmt(stmt: &Stmt) -> Option<&Stmt> {
+    let Stmt::Return(ret) = stmt else {
+        return None;
+    };
+    ret.arg.as_ref()?;
+    Some(stmt)
+}
+
+fn jump_target_stmt(stmt: &Stmt) -> Option<usize> {
+    match stmt {
+        Stmt::Return(_) => return_jump_target(stmt),
+        Stmt::Block(block) if block.stmts.len() == 1 => return_jump_target(&block.stmts[0]),
+        _ => None,
+    }
+}
+
+fn return_jump_target(stmt: &Stmt) -> Option<usize> {
+    let Stmt::Return(ret) = stmt else {
+        return None;
+    };
+    let Expr::Array(arr) = ret.arg.as_deref()? else {
+        return None;
+    };
+    if arr.elems.len() < 2 {
+        return None;
+    }
+    let opcode = jump_array_elem_number(arr.elems.first()?)?;
+    if opcode != 3 {
+        return None;
+    }
+    Some(jump_array_elem_number(arr.elems.get(1)?)? as usize)
+}
+
+fn jump_array_elem_number(elem: &Option<ExprOrSpread>) -> Option<u32> {
+    let Expr::Lit(Lit::Num(num)) = elem.as_ref()?.expr.as_ref() else {
+        return None;
+    };
+    Some(num.value as u32)
+}
+
+fn convert_jump_returns(
+    stmts: &mut [Stmt],
+    break_target: usize,
+    continue_target: usize,
+) -> Option<bool> {
+    let mut changed = false;
+    for stmt in stmts {
+        changed |= convert_jump_return(stmt, break_target, continue_target)?;
+    }
+    Some(changed)
+}
+
+fn convert_jump_return(
+    stmt: &mut Stmt,
+    break_target: usize,
+    continue_target: usize,
+) -> Option<bool> {
+    match stmt {
+        Stmt::Return(_) => {
+            if let Some(target) = return_jump_target(stmt) {
+                if target == break_target {
+                    *stmt = Stmt::Break(BreakStmt {
+                        span: DUMMY_SP,
+                        label: None,
+                    });
+                } else if target == continue_target {
+                    *stmt = Stmt::Continue(ContinueStmt {
+                        span: DUMMY_SP,
+                        label: None,
+                    });
+                } else {
+                    return None;
+                }
+                return Some(true);
+            }
+            Some(false)
+        }
+        Stmt::If(if_stmt) => {
+            let mut changed =
+                convert_jump_return(&mut if_stmt.cons, break_target, continue_target)?;
+            if let Some(alt) = &mut if_stmt.alt {
+                changed |= convert_jump_return(alt, break_target, continue_target)?;
+            }
+            Some(changed)
+        }
+        Stmt::Block(block) => convert_jump_returns(&mut block.stmts, break_target, continue_target),
+        Stmt::Try(try_stmt) => {
+            let mut changed =
+                convert_jump_returns(&mut try_stmt.block.stmts, break_target, continue_target)?;
+            if let Some(handler) = &mut try_stmt.handler {
+                changed |=
+                    convert_jump_returns(&mut handler.body.stmts, break_target, continue_target)?;
+            }
+            if let Some(finalizer) = &mut try_stmt.finalizer {
+                changed |= convert_jump_returns(
+                    finalizer.stmts.as_mut_slice(),
+                    break_target,
+                    continue_target,
+                )?;
+            }
+            Some(changed)
+        }
+        _ => Some(false),
+    }
+}
+
+fn fold_state_temp_member_calls(state_name: &Atom, stmts: &mut Vec<Stmt>) {
+    let mut folded = Vec::new();
+    let mut index = 0usize;
+
+    while index < stmts.len() {
+        if let Some((stmt, consumed)) = try_fold_state_temp_member_call(state_name, &stmts[index..])
+        {
+            folded.push(stmt);
+            index += consumed;
+        } else {
+            let mut stmt = stmts[index].clone();
+            fold_state_temp_member_calls_in_stmt(state_name, &mut stmt);
+            folded.push(stmt);
+            index += 1;
+        }
+    }
+
+    *stmts = folded;
+}
+
+fn fold_state_temp_member_calls_in_stmt(state_name: &Atom, stmt: &mut Stmt) {
+    match stmt {
+        Stmt::Block(block) => fold_state_temp_member_calls(state_name, &mut block.stmts),
+        Stmt::For(for_stmt) => {
+            if let Stmt::Block(block) = for_stmt.body.as_mut() {
+                fold_state_temp_member_calls(state_name, &mut block.stmts);
+            }
+        }
+        Stmt::Try(try_stmt) => {
+            fold_state_temp_member_calls(state_name, &mut try_stmt.block.stmts);
+            if let Some(handler) = &mut try_stmt.handler {
+                fold_state_temp_member_calls(state_name, &mut handler.body.stmts);
+            }
+            if let Some(finalizer) = &mut try_stmt.finalizer {
+                fold_state_temp_member_calls(state_name, &mut finalizer.stmts);
+            }
+        }
+        Stmt::If(if_stmt) => {
+            fold_state_temp_member_calls_in_stmt(state_name, &mut if_stmt.cons);
+            if let Some(alt) = &mut if_stmt.alt {
+                fold_state_temp_member_calls_in_stmt(state_name, alt);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn try_fold_state_temp_member_call(state_name: &Atom, stmts: &[Stmt]) -> Option<(Stmt, usize)> {
+    let (receiver_key, receiver) = extract_state_member_assign(state_name, stmts.first()?)?;
+    let (arg_key, arg) = extract_state_member_assign(state_name, stmts.get(1)?)?;
+    let call = extract_bound_state_member_call(
+        state_name,
+        stmts.get(2)?,
+        &receiver_key,
+        receiver,
+        &arg_key,
+        arg,
+    )?;
+    Some((
+        Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Call(call)),
+        }),
+        3,
+    ))
+}
+
+fn extract_state_member_assign(state_name: &Atom, stmt: &Stmt) -> Option<(Atom, Box<Expr>)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let left_member = assign.left.as_simple().and_then(|s| s.as_member())?;
+    if !is_ident_with_name(&left_member.obj, state_name) {
+        return None;
+    }
+    let key = member_prop_atom(&left_member.prop)?;
+    Some((key, assign.right.clone()))
+}
+
+fn extract_bound_state_member_call(
+    state_name: &Atom,
+    stmt: &Stmt,
+    receiver_key: &Atom,
+    receiver: Box<Expr>,
+    arg_key: &Atom,
+    arg: Box<Expr>,
+) -> Option<CallExpr> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return None;
+    };
+    let callee = call.callee.as_expr()?;
+    let Expr::Member(call_member) = callee.as_ref() else {
+        return None;
+    };
+    if !member_prop_name(&call_member.prop, "call") {
+        return None;
+    }
+    let Expr::Member(method_member) = call_member.obj.as_ref() else {
+        return None;
+    };
+    if state_member_key(state_name, &method_member.obj).as_ref() != Some(receiver_key) {
+        return None;
+    }
+    if call.args.len() != 2
+        || state_member_key(state_name, &call.args[0].expr).as_ref() != Some(receiver_key)
+        || state_member_key(state_name, &call.args[1].expr).as_ref() != Some(arg_key)
+    {
+        return None;
+    }
+
+    let mut next = call.clone();
+    next.callee = Callee::Expr(Box::new(Expr::Member(MemberExpr {
+        span: DUMMY_SP,
+        obj: receiver,
+        prop: method_member.prop.clone(),
+    })));
+    next.args = vec![ExprOrSpread {
+        spread: None,
+        expr: arg,
+    }];
+    Some(next)
+}
+
+fn state_member_key(state_name: &Atom, expr: &Expr) -> Option<Atom> {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return None;
+    };
+    if !is_ident_with_name(&member.obj, state_name) {
+        return None;
+    }
+    member_prop_atom(&member.prop)
 }
 
 // ============================================================
