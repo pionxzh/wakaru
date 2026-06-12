@@ -220,6 +220,13 @@ const snippets = [
         "return await fetch_user(id, {",
         "...options",
       ],
+      [
+        "async function",
+        "await load_config()",
+        "await open_session(",
+        "return await fetch_user(",
+        "...",
+      ],
     ],
   },
   {

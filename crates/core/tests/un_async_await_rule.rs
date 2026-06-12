@@ -447,6 +447,42 @@ async function func() {
 }
 
 #[test]
+fn async_conditional_await_assignment_from_jump_state() {
+    let input = r#"
+function load_user(config) {
+  return __awaiter(this, void 0, void 0, function () {
+    var source, _tmp;
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          if (!(config == null)) return [3 /*break*/, 2];
+          return [4 /*yield*/, load_config()];
+        case 1:
+          _tmp = _a.sent();
+          return [3 /*break*/, 3];
+        case 2:
+          _tmp = config;
+        case 3:
+          source = _tmp;
+          return [2 /*return*/, source];
+      }
+    });
+  });
+}
+"#;
+    let expected = r#"
+async function load_user(config) {
+  var source, _tmp;
+  _tmp = !(config == null) ? config : await load_config();
+  source = _tmp;
+  return source;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn async_transform_preserves_non_matching_helper_calls_in_nested_callbacks() {
     let input = r#"
 function load(items) {
