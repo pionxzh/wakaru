@@ -126,6 +126,15 @@ const snippets = [
         "return {",
         "backup",
       ],
+      [
+        "async function normalize_user(input)",
+        "profile: { name }",
+        "tags: [primary, , backup]",
+        "await load_backup(id)",
+        "await load_meta(id)",
+        "return {",
+        "backup: resolved_backup",
+      ],
     ],
   },
   {

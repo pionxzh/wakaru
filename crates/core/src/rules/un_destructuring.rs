@@ -1,15 +1,17 @@
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayPat, AssignPat, AssignPatProp, BinaryOp, BindingIdent, BlockStmt, Bool, Decl, Expr,
-    ExprOrSpread, Function, Ident, IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
-    ModuleItem, Number, ObjectPat, ObjectPatProp, Param, Pat, PropName, RestPat, Stmt, VarDecl,
+    ArrayPat, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, AssignTargetPat,
+    BinaryOp, BindingIdent, BlockStmt, Bool, Callee, Decl, Expr, ExprOrSpread, ExprStmt, Function,
+    Ident, IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number,
+    ObjectPat, ObjectPatProp, Param, Pat, PropName, RestPat, SimpleAssignTarget, Stmt, VarDecl,
     VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::helper_matcher::{binding_key, BindingKey};
 use super::{expr_utils::is_unresolved_undefined, RewriteLevel};
+use crate::utils::paren::strip_parens;
 
 /// Reconstructs destructuring from compiler-lowered ref/temp declarations.
 ///
@@ -153,11 +155,339 @@ fn try_reconstruct_group(
     unresolved_mark: Mark,
     level: RewriteLevel,
 ) -> Option<(Stmt, usize)> {
-    try_reconstruct_ref_group(stmts, start, unresolved_mark).or_else(|| {
-        (level >= RewriteLevel::Aggressive)
-            .then(|| try_reconstruct_direct_array_group(stmts, start, unresolved_mark))
-            .flatten()
+    try_reconstruct_assignment_group(stmts, start, unresolved_mark)
+        .or_else(|| try_reconstruct_ref_group(stmts, start, unresolved_mark))
+        .or_else(|| {
+            (level >= RewriteLevel::Aggressive)
+                .then(|| try_reconstruct_direct_array_group(stmts, start, unresolved_mark))
+                .flatten()
+        })
+}
+
+fn try_reconstruct_assignment_group(
+    stmts: &[Stmt],
+    start: usize,
+    unresolved_mark: Mark,
+) -> Option<(Stmt, usize)> {
+    let first = try_extract_assignment_access(stmts, start, None, unresolved_mark)?;
+    let source = first.source;
+    let init = first.init;
+    let mut accesses = vec![first.access];
+    let mut removed_temps = first.removed_temps;
+
+    let mut i = start + first.consumed;
+    while i < stmts.len() {
+        if let Some(next) = try_extract_assignment_access(stmts, i, Some(&source), unresolved_mark)
+        {
+            accesses.push(next.access);
+            removed_temps.extend(next.removed_temps);
+            i += next.consumed;
+        } else {
+            break;
+        }
+    }
+
+    if accesses.is_empty() || !accesses.iter().any(is_rest_or_default_access) {
+        return None;
+    }
+
+    if accesses
+        .iter()
+        .any(|access| default_uses_any_removed_binding(access, &removed_temps))
+    {
+        return None;
+    }
+
+    for temp in &removed_temps {
+        if ident_used_in_stmts(&stmts[i..], temp) {
+            return None;
+        }
+    }
+
+    let stmt = build_assignment_destructuring_stmt(accesses, init)?;
+    Some((stmt, i - start))
+}
+
+struct AssignmentAccess {
+    source: Ident,
+    init: Box<Expr>,
+    access: Access,
+    consumed: usize,
+    removed_temps: Vec<BindingKey>,
+}
+
+fn try_extract_assignment_access(
+    stmts: &[Stmt],
+    index: usize,
+    expected_source: Option<&Ident>,
+    unresolved_mark: Mark,
+) -> Option<AssignmentAccess> {
+    if let Some(extracted) =
+        try_extract_assignment_sliced_default_access(stmts, index, expected_source, unresolved_mark)
+    {
+        return Some(extracted);
+    }
+
+    if let Some(extracted) =
+        try_extract_assignment_member_default_access(stmts, index, expected_source, unresolved_mark)
+    {
+        return Some(extracted);
+    }
+
+    if let Some(mut extracted) =
+        try_extract_assignment_default_access(stmts, index, expected_source, unresolved_mark)
+    {
+        if let Some((nested_pat, extra)) = try_nest_assignment_default_binding(
+            &extracted.access,
+            stmts,
+            index + extracted.consumed,
+            unresolved_mark,
+            &mut extracted.removed_temps,
+        ) {
+            replace_access_left(&mut extracted.access, nested_pat);
+            extracted.consumed += extra;
+        }
+        return Some(extracted);
+    }
+
+    let (binding, init) = extract_binding_assignment(stmts.get(index)?)?;
+    let (source, source_init, source_access) =
+        extract_assignment_source_access(init, expected_source)?;
+    let access = match source_access {
+        SourceAccess::ArrayIndex(index) => Access::Array {
+            index,
+            pat: Pat::Ident(binding),
+        },
+        SourceAccess::ObjectProp(key) => Access::Object {
+            key,
+            pat: Pat::Ident(binding),
+        },
+    };
+
+    Some(AssignmentAccess {
+        source,
+        init: source_init,
+        access,
+        consumed: 1,
+        removed_temps: Vec::new(),
     })
+}
+
+fn try_extract_assignment_member_default_access(
+    stmts: &[Stmt],
+    index: usize,
+    expected_source: Option<&Ident>,
+    unresolved_mark: Mark,
+) -> Option<AssignmentAccess> {
+    let (temp, temp_init) = extract_binding_assignment(stmts.get(index)?)?;
+    let (source, source_init, source_access) =
+        extract_assignment_source_access(temp_init, expected_source)?;
+
+    let (binding, binding_init) = extract_binding_assignment(stmts.get(index + 1)?)?;
+    let (default, nested_source_access) =
+        extract_default_member_access(binding_init, &temp.id, unresolved_mark)?;
+    let temp_key = binding_key(&temp.id);
+    if expr_uses_ident(&default, &temp_key) {
+        return None;
+    }
+
+    let nested_access = match nested_source_access {
+        SourceAccess::ArrayIndex(index) => Access::Array {
+            index,
+            pat: Pat::Ident(binding),
+        },
+        SourceAccess::ObjectProp(key) => Access::Object {
+            key,
+            pat: Pat::Ident(binding),
+        },
+    };
+    let nested_pat = build_pat_from_accesses(vec![nested_access])?;
+    let pat = Pat::Assign(AssignPat {
+        span: DUMMY_SP,
+        left: Box::new(nested_pat),
+        right: default,
+    });
+
+    let access = match source_access {
+        SourceAccess::ArrayIndex(index) => Access::Array { index, pat },
+        SourceAccess::ObjectProp(key) => Access::Object { key, pat },
+    };
+
+    Some(AssignmentAccess {
+        source,
+        init: source_init,
+        access,
+        consumed: 2,
+        removed_temps: vec![temp_key],
+    })
+}
+
+fn try_extract_assignment_sliced_default_access(
+    stmts: &[Stmt],
+    index: usize,
+    expected_source: Option<&Ident>,
+    unresolved_mark: Mark,
+) -> Option<AssignmentAccess> {
+    let (temp, temp_init) = extract_binding_assignment(stmts.get(index)?)?;
+    let (source, source_init, source_access) =
+        extract_assignment_source_access(temp_init, expected_source)?;
+
+    let (ref_binding, ref_init) = extract_binding_assignment(stmts.get(index + 1)?)?;
+    let Expr::Call(call) = strip_parens(ref_init) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    if !is_sliced_to_array_callee_name(callee.as_ref()) || call.args.len() != 2 {
+        return None;
+    }
+    let default = extract_default_value(call.args[0].expr.as_ref(), &temp.id, unresolved_mark)?;
+
+    let temp_key = binding_key(&temp.id);
+    let ref_key = binding_key(&ref_binding.id);
+    if expr_uses_ident(&default, &temp_key) {
+        return None;
+    }
+
+    let mut removed_temps = vec![temp_key, ref_key];
+    let collected = collect_assignment_accesses_on(
+        stmts,
+        index + 2,
+        &ref_binding.id,
+        unresolved_mark,
+        &mut removed_temps,
+    );
+    if collected.accesses.is_empty() {
+        return None;
+    }
+
+    let nested_pat = build_pat_from_accesses(collected.accesses)?;
+    let pat = Pat::Assign(AssignPat {
+        span: DUMMY_SP,
+        left: Box::new(nested_pat),
+        right: default,
+    });
+    let access = match source_access {
+        SourceAccess::ArrayIndex(index) => Access::Array { index, pat },
+        SourceAccess::ObjectProp(key) => Access::Object { key, pat },
+    };
+
+    Some(AssignmentAccess {
+        source,
+        init: source_init,
+        access,
+        consumed: 2 + collected.consumed,
+        removed_temps,
+    })
+}
+
+fn try_extract_assignment_default_access(
+    stmts: &[Stmt],
+    index: usize,
+    expected_source: Option<&Ident>,
+    unresolved_mark: Mark,
+) -> Option<AssignmentAccess> {
+    let (temp, temp_init) = extract_binding_assignment(stmts.get(index)?)?;
+    let (source, source_init, source_access) =
+        extract_assignment_source_access(temp_init, expected_source)?;
+
+    let (binding, binding_init) = extract_binding_assignment(stmts.get(index + 1)?)?;
+    let default = extract_default_value(binding_init, &temp.id, unresolved_mark)?;
+    let temp_key = binding_key(&temp.id);
+    if expr_uses_ident(&default, &temp_key) {
+        return None;
+    }
+
+    let pat = Pat::Assign(AssignPat {
+        span: DUMMY_SP,
+        left: Box::new(Pat::Ident(binding)),
+        right: default,
+    });
+
+    let access = match source_access {
+        SourceAccess::ArrayIndex(index) => Access::Array { index, pat },
+        SourceAccess::ObjectProp(key) => Access::Object { key, pat },
+    };
+
+    Some(AssignmentAccess {
+        source,
+        init: source_init,
+        access,
+        consumed: 2,
+        removed_temps: vec![temp_key],
+    })
+}
+
+fn try_nest_assignment_default_binding(
+    access: &Access,
+    stmts: &[Stmt],
+    nested_start: usize,
+    unresolved_mark: Mark,
+    removed_temps: &mut Vec<BindingKey>,
+) -> Option<(Pat, usize)> {
+    let default_binding = match access {
+        Access::Object { pat, .. } | Access::Array { pat, .. } => {
+            let Pat::Assign(assign) = pat else {
+                return None;
+            };
+            let Pat::Ident(binding) = assign.left.as_ref() else {
+                return None;
+            };
+            &binding.id
+        }
+        Access::ArrayRest { .. } => return None,
+    };
+
+    let collected = collect_assignment_accesses_on(
+        stmts,
+        nested_start,
+        default_binding,
+        unresolved_mark,
+        removed_temps,
+    );
+
+    if collected.accesses.is_empty() {
+        return None;
+    }
+
+    let after_nested = nested_start + collected.consumed;
+    let nested_key = binding_key(default_binding);
+    if ident_used_in_stmts(&stmts[after_nested..], &nested_key) {
+        return None;
+    }
+
+    removed_temps.push(nested_key);
+    let nested_pat = build_pat_from_accesses(collected.accesses)?;
+    Some((nested_pat, collected.consumed))
+}
+
+fn collect_assignment_accesses_on(
+    stmts: &[Stmt],
+    start: usize,
+    ref_ident: &Ident,
+    unresolved_mark: Mark,
+    removed_temps: &mut Vec<BindingKey>,
+) -> CollectedAccesses {
+    let mut accesses = Vec::new();
+    let mut i = start;
+
+    while i < stmts.len() {
+        if let Some(extracted) =
+            try_extract_assignment_access(stmts, i, Some(ref_ident), unresolved_mark)
+        {
+            accesses.push(extracted.access);
+            removed_temps.extend(extracted.removed_temps);
+            i += extracted.consumed;
+        } else {
+            break;
+        }
+    }
+
+    CollectedAccesses {
+        accesses,
+        consumed: i - start,
+    }
 }
 
 fn try_reconstruct_ref_group(
@@ -667,6 +997,22 @@ fn extract_binding_decl(stmt: &Stmt) -> Option<(BindingIdent, &Expr)> {
     Some((binding.clone(), decl.init.as_deref()?))
 }
 
+fn extract_binding_assignment(stmt: &Stmt) -> Option<(BindingIdent, &Expr)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = strip_parens(expr.as_ref()) else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left else {
+        return None;
+    };
+    Some((binding.clone(), strip_parens(assign.right.as_ref())))
+}
+
 fn extract_grouped_binding_decl(stmt: &Stmt) -> Option<(DeclGroup, BindingIdent, &Expr)> {
     let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
@@ -688,6 +1034,92 @@ fn extract_grouped_binding_decl(stmt: &Stmt) -> Option<(DeclGroup, BindingIdent,
         binding.clone(),
         decl.init.as_deref()?,
     ))
+}
+
+fn extract_assignment_source_access(
+    expr: &Expr,
+    expected_source: Option<&Ident>,
+) -> Option<(Ident, Box<Expr>, SourceAccess)> {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return None;
+    };
+    let (source, source_init) =
+        extract_assignment_source_expr(member.obj.as_ref(), expected_source)?;
+
+    let access = match &member.prop {
+        MemberProp::Ident(prop) => SourceAccess::ObjectProp(PropKey::Ident(prop.sym.clone())),
+        MemberProp::Computed(computed) => match strip_parens(computed.expr.as_ref()) {
+            Expr::Lit(Lit::Num(num)) => SourceAccess::ArrayIndex(numeric_index(num)?),
+            Expr::Lit(Lit::Str(s)) => {
+                SourceAccess::ObjectProp(PropKey::Str(s.value.as_str().map(Atom::from)?))
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+
+    Some((source, source_init, access))
+}
+
+fn extract_default_member_access(
+    expr: &Expr,
+    temp: &Ident,
+    unresolved_mark: Mark,
+) -> Option<(Box<Expr>, SourceAccess)> {
+    let Expr::Member(member) = strip_parens(expr) else {
+        return None;
+    };
+    let default = extract_default_value(strip_parens(member.obj.as_ref()), temp, unresolved_mark)?;
+    let access = source_access_from_member_prop(&member.prop)?;
+    Some((default, access))
+}
+
+fn source_access_from_member_prop(prop: &MemberProp) -> Option<SourceAccess> {
+    match prop {
+        MemberProp::Ident(prop) => Some(SourceAccess::ObjectProp(PropKey::Ident(prop.sym.clone()))),
+        MemberProp::Computed(computed) => match strip_parens(computed.expr.as_ref()) {
+            Expr::Lit(Lit::Num(num)) => numeric_index(num).map(SourceAccess::ArrayIndex),
+            Expr::Lit(Lit::Str(s)) => s
+                .value
+                .as_str()
+                .map(|value| SourceAccess::ObjectProp(PropKey::Str(value.into()))),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn is_sliced_to_array_callee_name(expr: &Expr) -> bool {
+    let Expr::Ident(callee) = strip_parens(expr) else {
+        return false;
+    };
+    matches!(
+        callee.sym.as_ref(),
+        "_sliced_to_array" | "_slicedToArray" | "_slicedToArrayLoose" | "_sliced_to_array_loose"
+    )
+}
+
+fn extract_assignment_source_expr(
+    expr: &Expr,
+    expected_source: Option<&Ident>,
+) -> Option<(Ident, Box<Expr>)> {
+    match strip_parens(expr) {
+        Expr::Ident(source) => {
+            if let Some(expected) = expected_source {
+                if source.sym != expected.sym || source.ctxt != expected.ctxt {
+                    return None;
+                }
+            }
+            Some((source.clone(), Box::new(Expr::Ident(source.clone()))))
+        }
+        Expr::Assign(assign) if expected_source.is_none() && assign.op == AssignOp::Assign => {
+            let AssignTarget::Simple(SimpleAssignTarget::Ident(source)) = &assign.left else {
+                return None;
+            };
+            Some((source.id.clone(), Box::new(Expr::Assign(assign.clone()))))
+        }
+        _ => None,
+    }
 }
 
 fn extract_source_access(expr: &Expr, ref_ident: &Ident) -> Option<SourceAccess> {
@@ -878,6 +1310,25 @@ fn build_direct_array_destructuring_stmt(
         pat,
         init,
     ))
+}
+
+fn build_assignment_destructuring_stmt(accesses: Vec<Access>, init: Box<Expr>) -> Option<Stmt> {
+    let pat = build_pat_from_accesses(accesses)?;
+    let left = match pat {
+        Pat::Array(array) => AssignTarget::Pat(AssignTargetPat::Array(array)),
+        Pat::Object(object) => AssignTarget::Pat(AssignTargetPat::Object(object)),
+        _ => return None,
+    };
+
+    Some(Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left,
+            right: init,
+        })),
+    }))
 }
 
 fn build_array_pat(accesses: Vec<Access>) -> Option<Pat> {

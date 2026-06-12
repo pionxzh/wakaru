@@ -375,6 +375,114 @@ use(result);
 }
 
 #[test]
+fn reconstructs_assignment_object_with_nested_defaults() {
+    let input = r#"
+let source;
+let id;
+let _b;
+let _c;
+let name;
+let _d;
+let _e;
+let primary;
+let backup;
+source = input;
+id = source.id;
+_b = source.profile;
+_c = _b === undefined ? {} : _b;
+name = _c.name;
+_d = source.tags;
+_e = _d === undefined ? [] : _d;
+primary = _e[0];
+backup = _e[2];
+use(id, name, primary, backup);
+"#;
+    let expected = r#"
+let source;
+let id;
+let _b;
+let _c;
+let name;
+let _d;
+let _e;
+let primary;
+let backup;
+source = input;
+({ id, profile: { name } = {}, tags: [primary, , backup] = [] } = source);
+use(id, name, primary, backup);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn reconstructs_assignment_object_from_member_default_access() {
+    let input = r#"
+let source;
+let tmp;
+let name;
+source = input;
+tmp = source.profile;
+name = (tmp === undefined ? {} : tmp).name;
+use(name);
+"#;
+    let expected = r#"
+let source;
+let tmp;
+let name;
+source = input;
+({ profile: { name } = {} } = source);
+use(name);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn reconstructs_assignment_array_from_sliced_default_access() {
+    let input = r#"
+let source;
+let tmp;
+let _ref;
+let primary;
+let backup;
+source = input;
+tmp = source.tags;
+_ref = _sliced_to_array(tmp === undefined ? [] : tmp, 3);
+primary = _ref[0];
+backup = _ref[2];
+use(primary, backup);
+"#;
+    let expected = r#"
+let source;
+let tmp;
+let _ref;
+let primary;
+let backup;
+source = input;
+({ tags: [primary, , backup] = [] } = source);
+use(primary, backup);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn rejects_assignment_object_when_removed_temp_is_used_later() {
+    let input = r#"
+let source;
+let id;
+let _b;
+let _c;
+let name;
+source = input;
+id = source.id;
+_b = source.profile;
+_c = _b === undefined ? {} : _b;
+name = _c.name;
+use(id, name, _b);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn nests_param_destructuring_default_babel() {
     let input = r#"
 function nested() {
