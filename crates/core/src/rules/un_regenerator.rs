@@ -848,7 +848,7 @@ fn has_supported_nested_loop_state_machine(state_name: &Atom, cases: &[SwitchCas
             if if_stmt.alt.is_some() || extract_next_break_target(state_name, &if_stmt.cons).is_none() {
                 return false;
             }
-            extract_abrupt_continue_target(state_name, &window[1]).is_some()
+            extract_continue_target(state_name, &window[1]).is_some()
         })
     })
 }
@@ -1587,7 +1587,7 @@ fn decode_nested_state_jump(state_name: &Atom, stmts: &[Stmt]) -> Option<(Stmt, 
 
     if let Some(continue_target) = stmts
         .get(1)
-        .and_then(|stmt| extract_abrupt_continue_target(state_name, stmt))
+        .and_then(|stmt| extract_continue_target(state_name, stmt))
     {
         if continue_target != goto_target {
             return Some((
@@ -1627,6 +1627,11 @@ fn extract_state_next_assign_target(state_name: &Atom, stmt: &Stmt) -> Option<us
     number_lit_usize(&assign.right)
 }
 
+fn extract_continue_target(state_name: &Atom, stmt: &Stmt) -> Option<usize> {
+    extract_abrupt_continue_target(state_name, stmt)
+        .or_else(|| extract_short_continue_target(state_name, stmt))
+}
+
 fn extract_abrupt_continue_target(state_name: &Atom, stmt: &Stmt) -> Option<usize> {
     let Stmt::Return(ret) = stmt else {
         return None;
@@ -1645,6 +1650,29 @@ fn extract_abrupt_continue_target(state_name: &Atom, stmt: &Stmt) -> Option<usiz
         return None;
     };
     if kind.value.as_str() != Some("continue") {
+        return None;
+    }
+    number_lit_usize(&call.args.get(1)?.expr)
+}
+
+fn extract_short_continue_target(state_name: &Atom, stmt: &Stmt) -> Option<usize> {
+    let Stmt::Return(ret) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = ret.arg.as_deref()? else {
+        return None;
+    };
+    let callee = call.callee.as_expr()?;
+    let Expr::Member(member) = callee.as_ref() else {
+        return None;
+    };
+    if !is_ident_with_name(&member.obj, state_name) || !member_prop_name(&member.prop, "a") {
+        return None;
+    }
+    let Expr::Lit(Lit::Num(kind)) = call.args.first()?.expr.as_ref() else {
+        return None;
+    };
+    if kind.value as u8 != 3 {
         return None;
     }
     number_lit_usize(&call.args.get(1)?.expr)
@@ -2669,6 +2697,7 @@ fn fold_state_temp_member_calls(state_name: &Atom, stmts: &mut Vec<Stmt>) {
 
     while index < stmts.len() {
         if let Some((stmt, consumed)) = try_fold_state_temp_member_call(state_name, &stmts[index..])
+            .or_else(|| try_fold_local_temp_member_call(&stmts[index..]))
         {
             folded.push(stmt);
             index += consumed;
@@ -2728,6 +2757,80 @@ fn try_fold_state_temp_member_call(state_name: &Atom, stmts: &[Stmt]) -> Option<
         }),
         3,
     ))
+}
+
+fn try_fold_local_temp_member_call(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
+    let (receiver_key, receiver) = extract_local_temp_assign(stmts.first()?)?;
+    let call = extract_bound_local_member_call(stmts.get(1)?, &receiver_key, receiver)?;
+    Some((
+        Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Call(call)),
+        }),
+        2,
+    ))
+}
+
+fn extract_local_temp_assign(stmt: &Stmt) -> Option<(BindingKey, Box<Expr>)> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let ident = assign.left.as_simple()?.as_ident()?;
+    if !is_likely_generated_alias(&ident.sym) {
+        return None;
+    }
+    Some(((ident.sym.clone(), ident.ctxt), assign.right.clone()))
+}
+
+fn extract_bound_local_member_call(
+    stmt: &Stmt,
+    receiver_key: &BindingKey,
+    receiver: Box<Expr>,
+) -> Option<CallExpr> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = expr.as_ref() else {
+        return None;
+    };
+    let callee = call.callee.as_expr()?;
+    let Expr::Member(call_member) = callee.as_ref() else {
+        return None;
+    };
+    if !member_prop_name(&call_member.prop, "call") {
+        return None;
+    }
+    let Expr::Member(method_member) = call_member.obj.as_ref() else {
+        return None;
+    };
+    if local_temp_key(&method_member.obj).as_ref() != Some(receiver_key) {
+        return None;
+    }
+    if call.args.is_empty() || local_temp_key(&call.args[0].expr).as_ref() != Some(receiver_key) {
+        return None;
+    }
+
+    let mut next = call.clone();
+    next.callee = Callee::Expr(Box::new(Expr::Member(MemberExpr {
+        span: DUMMY_SP,
+        obj: receiver,
+        prop: method_member.prop.clone(),
+    })));
+    next.args.remove(0);
+    Some(next)
+}
+
+fn local_temp_key(expr: &Expr) -> Option<BindingKey> {
+    let Expr::Ident(id) = strip_parens(expr) else {
+        return None;
+    };
+    Some((id.sym.clone(), id.ctxt))
 }
 
 fn extract_state_member_assign(state_name: &Atom, stmt: &Stmt) -> Option<(Atom, Box<Expr>)> {

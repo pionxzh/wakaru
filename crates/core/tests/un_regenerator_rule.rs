@@ -1652,6 +1652,95 @@ async function collect_enabled(items) {
 }
 
 #[test]
+fn async_to_generator_babel_728_loop_try_catch_recovers_index_loop() {
+    let input = r#"
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+function collect_enabled(_x) {
+  return _collect_enabled.apply(this, arguments);
+}
+function _collect_enabled() {
+  _collect_enabled = _asyncToGenerator(_regenerator().m(function _callee(items) {
+    var output, index, item, _t, _t2, _t3;
+    return _regenerator().w(function (_context) {
+      while (1) switch (_context.p = _context.n) {
+        case 0:
+          output = [];
+          index = 0;
+        case 1:
+          if (!(index < items.length)) {
+            _context.n = 7;
+            break;
+          }
+          item = items[index];
+          if (item.enabled) {
+            _context.n = 2;
+            break;
+          }
+          return _context.a(3, 6);
+        case 2:
+          _context.p = 2;
+          _t = output;
+          _context.n = 3;
+          return fetch_item(item.id);
+        case 3:
+          _t.push.call(_t, _context.v);
+          _context.n = 6;
+          break;
+        case 4:
+          _context.p = 4;
+          _t2 = _context.v;
+          _t3 = output;
+          _context.n = 5;
+          return recover_item(item, _t2);
+        case 5:
+          _t3.push.call(_t3, _context.v);
+        case 6:
+          index++;
+          _context.n = 1;
+          break;
+        case 7:
+          return _context.a(2, output);
+      }
+    }, _callee, null, [[2, 4]]);
+  }));
+  return _collect_enabled.apply(this, arguments);
+}
+"#;
+    let expected = r#"
+async function collect_enabled(items) {
+  var output, index, item, _t, _t2, _t3;
+  output = [];
+  index = 0;
+  for (; index < items.length; index++) {
+    item = items[index];
+    if (!item.enabled) continue;
+    try {
+      output.push(await fetch_item(item.id));
+    } catch (error) {
+      output.push(await recover_item(item, error));
+    }
+  }
+  return output;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn async_to_generator_expression_assignment_with_regenerator_try_catch() {
     let input = r#"
 const runtime = interop(require("./module-runtime.js"));
