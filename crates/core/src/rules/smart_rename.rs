@@ -1956,7 +1956,32 @@ impl SentryComponentCollector {
     }
 
     fn extract_sentry_element_name(attrs: &[JSXAttrOrSpread]) -> Option<String> {
-        Self::extract_sentry_attr_value(attrs, SENTRY_ELEMENT_ATTR_NAMES)
+        let name = Self::extract_sentry_attr_value(attrs, SENTRY_ELEMENT_ATTR_NAMES)?;
+        if let Some(source_file) =
+            Self::extract_sentry_attr_value(attrs, SENTRY_SOURCE_FILE_ATTR_NAMES)
+        {
+            let source_name = sentry_source_file_component_name(&source_file)?;
+            if source_name != name {
+                return None;
+            }
+        }
+        Some(name)
+    }
+}
+
+fn sentry_source_file_component_name(source_file: &str) -> Option<String> {
+    let file_name = source_file
+        .rsplit(|ch| ch == '/' || ch == '\\')
+        .next()
+        .unwrap_or(source_file);
+    let stem = file_name
+        .rsplit_once('.')
+        .map_or(file_name, |(stem, _)| stem);
+    let name = pascalize(stem);
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
     }
 }
 

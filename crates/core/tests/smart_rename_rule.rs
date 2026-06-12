@@ -1242,6 +1242,23 @@ function Sidebar() {
 }
 
 #[test]
+fn sentry_element_skips_child_name_when_source_file_differs() {
+    let input = r#"
+const l = header;
+function a() {
+  return <><l data-sentry-element="Header" data-sentry-source-file="Sidebar.tsx" /></>;
+}
+"#;
+    let expected = r#"
+const Header = header;
+function a() {
+  return <><Header data-sentry-element="Header" data-sentry-source-file="Sidebar.tsx" /></>;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
 fn sentry_element_camel_case_variant() {
     let input = r#"
 const a = () => <div dataSentryElement="Sidebar" />;
