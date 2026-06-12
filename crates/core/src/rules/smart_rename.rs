@@ -1971,7 +1971,7 @@ impl SentryComponentCollector {
 
 fn sentry_source_file_component_name(source_file: &str) -> Option<String> {
     let file_name = source_file
-        .rsplit(|ch| ch == '/' || ch == '\\')
+        .rsplit(['/', '\\'])
         .next()
         .unwrap_or(source_file);
     let stem = file_name
