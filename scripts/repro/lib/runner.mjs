@@ -40,7 +40,7 @@ export function runMatrix(config) {
     console.log(`# wakaru: ${wakaruDescription()}`);
     console.log(`# level: ${rewriteLevel}`);
     console.log("");
-    console.log("| snippet | shape | tools | recovered | notes |");
+    console.log("| snippet | shape | tools | status | notes |");
     console.log("|---|---:|---|---:|---|");
 
     for (const snippet of snippets) {
@@ -52,7 +52,7 @@ export function runMatrix(config) {
         }
         console.log(
           `| ${snippet.name} | ${shape.label} | ${escapeCell(shape.tools.join(", "))} | ${
-            result.recovered ? "yes" : "no"
+            result.status ?? (result.recovered ? "yes" : "no")
           } | ${escapeCell(result.notes)} |`,
         );
       }
@@ -132,14 +132,14 @@ function collectShapes(snippet, transformers) {
 
 function runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles, validateRecovered) {
   if (shape.transformError) {
-    return { recovered: false, notes: `transform failed: ${shape.transformError.message}` };
+    return { recovered: false, status: "transform-failed", notes: shape.transformError.message };
   }
 
   let recovered;
   try {
     recovered = runWakaru(shape.lowered, `${snippet.name}-${shape.label.replaceAll(" ", "-")}.js`, tmpRoot, rewriteLevel);
   } catch (error) {
-    return { recovered: false, notes: `wakaru failed: ${error.message}` };
+    return { recovered: false, status: "wakaru-failed", notes: error.message };
   }
 
   const missingGroups = expectedNeedleGroups(snippet, expectedNeedles).map((needles) =>
