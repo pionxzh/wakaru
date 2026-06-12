@@ -4,10 +4,11 @@ use swc_core::atoms::Atom;
 use swc_core::common::Mark;
 use swc_core::common::{SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignPat, AssignPatProp, BinaryOp, BindingIdent, BlockStmtOrExpr, Bool, CallExpr,
-    Callee, CondExpr, Decl, Expr, ExprStmt, FnExpr, Ident, JSXElementName, KeyValuePatProp, Lit,
-    MemberExpr, MemberProp, Module, ObjectPat, ObjectPatProp, Pat, PropName, PropOrSpread, RestPat,
-    Stmt, VarDecl, VarDeclKind, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, AssignTargetPat,
+    BinaryOp, BindingIdent, BlockStmtOrExpr, Bool, CallExpr, Callee, CondExpr, Decl, Expr,
+    ExprStmt, FnExpr, Ident, JSXElementName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module,
+    ObjectPat, ObjectPatProp, Pat, PropName, PropOrSpread, RestPat, SimpleAssignTarget, Stmt,
+    VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -240,6 +241,36 @@ fn run_un_object_rest(
             continue;
         }
 
+        if let Some((rest_binding, source, excluded_keys)) = try_extract_owp_named_assignment(
+            stmt,
+            &named_helpers,
+            tslib_namespaces,
+            &swc_numeric_helper_namespaces,
+            &cross_module_helpers.namespaces,
+            &exclusion_arrays,
+        ) {
+            let (absorbed, preceding_accesses) =
+                scan_preceding(&recent_stmts, &source, &excluded_keys, unresolved_mark);
+            let scope_names = collect_scope_names_module(&new_body);
+            if absorbed > 0 {
+                if let Some(new_stmt) = build_rest_assignment(
+                    &rest_binding,
+                    &source,
+                    &excluded_keys,
+                    &preceding_accesses,
+                    &scope_names,
+                ) {
+                    for _ in 0..absorbed {
+                        recent_stmts.pop();
+                        new_body.pop();
+                    }
+                    recent_stmts.push(new_stmt.clone());
+                    new_body.push(ModuleItem::Stmt(new_stmt));
+                    continue;
+                }
+            }
+        }
+
         collect_exclusion_arrays_from_stmt(stmt, &mut exclusion_arrays);
         recent_stmts.push(stmt.clone());
         new_body.push(item);
@@ -343,6 +374,34 @@ impl VisitMut for ObjectRestProcessor<'_> {
                     }))));
                 }
                 continue;
+            }
+
+            if let Some((rest_binding, source, excluded_keys)) = try_extract_owp_named_assignment(
+                stmt,
+                self.named_helpers,
+                self.tslib_namespaces,
+                self.swc_numeric_helper_namespaces,
+                self.cross_module_namespaces,
+                &exclusion_arrays,
+            ) {
+                let (absorbed, preceding_accesses) =
+                    scan_preceding(&new_stmts, &source, &excluded_keys, self.unresolved_mark);
+                let scope_names = collect_scope_names(&new_stmts);
+                if absorbed > 0 {
+                    if let Some(new_stmt) = build_rest_assignment(
+                        &rest_binding,
+                        &source,
+                        &excluded_keys,
+                        &preceding_accesses,
+                        &scope_names,
+                    ) {
+                        for _ in 0..absorbed {
+                            new_stmts.pop();
+                        }
+                        new_stmts.push(new_stmt);
+                        continue;
+                    }
+                }
             }
 
             collect_exclusion_arrays_from_stmt(stmt, &mut exclusion_arrays);
@@ -818,6 +877,45 @@ fn try_extract_owp_named_call(
     let before = var.decls[..owp_idx].to_vec();
     let after = var.decls[owp_idx + 1..].to_vec();
     Some((binding.clone(), source, excluded_keys, before, after))
+}
+
+fn try_extract_owp_named_assignment(
+    stmt: &Stmt,
+    helpers: &HashMap<BindingKey, TranspilerHelperKind>,
+    tslib_namespaces: &HashSet<BindingKey>,
+    swc_numeric_helper_namespaces: &HashSet<BindingKey>,
+    cross_module_namespaces: &HashMap<BindingKey, HashMap<String, TranspilerHelperKind>>,
+    exclusion_arrays: &HashMap<BindingKey, Vec<Atom>>,
+) -> Option<(BindingIdent, Box<Expr>, Vec<Atom>)> {
+    if helpers.is_empty()
+        && tslib_namespaces.is_empty()
+        && swc_numeric_helper_namespaces.is_empty()
+        && cross_module_namespaces.is_empty()
+    {
+        return None;
+    }
+
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(rest_binding)) = &assign.left else {
+        return None;
+    };
+    let (source, excluded_keys) = extract_named_owp_args(
+        &assign.right,
+        helpers,
+        tslib_namespaces,
+        swc_numeric_helper_namespaces,
+        cross_module_namespaces,
+        exclusion_arrays,
+    )?;
+    Some((rest_binding.clone(), source, excluded_keys))
 }
 
 /// Extract (source, excluded_keys) from a call to a known named OWP helper.
@@ -1458,7 +1556,32 @@ fn try_match_preceding(
         }
     }
 
-    // Case 3: source.prop; (bare expression statement)
+    // Case 3: x = source.prop
+    if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
+        if let Expr::Assign(assign) = expr.as_ref() {
+            if assign.op == AssignOp::Assign {
+                if let AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) = &assign.left {
+                    if let Expr::Member(MemberExpr { obj, prop, .. }) = assign.right.as_ref() {
+                        if let Expr::Ident(obj_id) = obj.as_ref() {
+                            if obj_id.sym == *source_name {
+                                if let Some(pname) = member_prop_atom(prop) {
+                                    if excluded_keys.contains(&pname) {
+                                        return Some(PrecedingAccess::PropAccess {
+                                            prop: pname,
+                                            binding: binding.id.sym.clone(),
+                                            ctxt: binding.id.ctxt,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Case 4: source.prop; (bare expression statement)
     if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
         if let Expr::Member(MemberExpr { obj, prop, .. }) = expr.as_ref() {
             if let Expr::Ident(obj_id) = obj.as_ref() {
@@ -1773,6 +1896,110 @@ fn build_rest_destructuring(
             definite: false,
         }],
     })))
+}
+
+fn build_rest_assignment(
+    rest_binding: &BindingIdent,
+    source: &Expr,
+    excluded_keys: &[Atom],
+    merged: &[PrecedingAccess],
+    scope_names: &std::collections::HashSet<Atom>,
+) -> Option<Stmt> {
+    let mut key_to_binding: std::collections::HashMap<Atom, (Atom, SyntaxContext)> =
+        std::collections::HashMap::new();
+    let mut key_to_default: std::collections::HashMap<Atom, Box<Expr>> =
+        std::collections::HashMap::new();
+    for access in merged {
+        match access {
+            PrecedingAccess::Destructuring(pairs) => {
+                for (key, binding, ctxt, default_value) in pairs {
+                    key_to_binding.insert(key.clone(), (binding.clone(), *ctxt));
+                    if let Some(default_value) = default_value {
+                        key_to_default.insert(key.clone(), default_value.clone());
+                    }
+                }
+            }
+            PrecedingAccess::PropAccess {
+                prop,
+                binding,
+                ctxt,
+            } => {
+                key_to_binding.insert(prop.clone(), (binding.clone(), *ctxt));
+            }
+            PrecedingAccess::PropAccessWithDefault {
+                prop,
+                binding,
+                ctxt,
+                default_value,
+            } => {
+                key_to_binding.insert(prop.clone(), (binding.clone(), *ctxt));
+                key_to_default.insert(prop.clone(), default_value.clone());
+            }
+            PrecedingAccess::BareAccess { .. } => {}
+        }
+    }
+
+    let mut props: Vec<ObjectPatProp> = Vec::new();
+    for key in excluded_keys {
+        let (binding, ctxt) = key_to_binding.get(key)?;
+        let default_expr = key_to_default.get(key);
+        let is_shorthand = *binding == *key && is_valid_ident(key);
+        if is_shorthand {
+            props.push(ObjectPatProp::Assign(AssignPatProp {
+                span: DUMMY_SP,
+                key: BindingIdent {
+                    id: Ident::new(key.clone(), DUMMY_SP, *ctxt),
+                    type_ann: None,
+                },
+                value: default_expr.cloned(),
+            }));
+        } else if let Some(def) = default_expr {
+            props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
+                key: make_prop_name(key),
+                value: Box::new(Pat::Assign(AssignPat {
+                    span: DUMMY_SP,
+                    left: Box::new(Pat::Ident(BindingIdent {
+                        id: Ident::new(binding.clone(), DUMMY_SP, *ctxt),
+                        type_ann: None,
+                    })),
+                    right: def.clone(),
+                })),
+            }));
+        } else {
+            props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
+                key: make_prop_name(key),
+                value: Box::new(Pat::Ident(BindingIdent {
+                    id: Ident::new(binding.clone(), DUMMY_SP, *ctxt),
+                    type_ann: None,
+                })),
+            }));
+        }
+    }
+
+    if !scope_names.contains(&rest_binding.id.sym) {
+        return None;
+    }
+    props.push(ObjectPatProp::Rest(RestPat {
+        span: DUMMY_SP,
+        dot3_token: DUMMY_SP,
+        arg: Box::new(Pat::Ident(rest_binding.clone())),
+        type_ann: None,
+    }));
+
+    Some(Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(AssignExpr {
+            span: DUMMY_SP,
+            op: AssignOp::Assign,
+            left: AssignTarget::Pat(AssignTargetPat::Object(ObjectPat {
+                span: DUMMY_SP,
+                props,
+                optional: false,
+                type_ann: None,
+            })),
+            right: Box::new((*source).clone()),
+        })),
+    }))
 }
 
 /// Verify the for-in body references `indexOf` and `hasOwnProperty` —

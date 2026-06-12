@@ -914,6 +914,38 @@ use(name, rest_info);
 }
 
 #[test]
+fn named_owp_helper_assignment_with_preceding_assignments() {
+    let input = r#"
+var __rest = (this && this.__rest) || function (s, e) {
+    var t = {};
+    for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+        t[p] = s[p];
+    if (s != null && typeof Object.getOwnPropertySymbols === "function")
+        for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
+            if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
+                t[p[i]] = s[p[i]];
+        }
+    return t;
+};
+let id;
+let token;
+let options;
+id = source.id;
+token = source.token;
+options = __rest(source, ["id", "token"]);
+use(id, token, options);
+"#;
+    let expected = r#"
+let id;
+let token;
+let options;
+({ id, token, ...options } = source);
+use(id, token, options);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn named_owp_helper_swc_rest_helper() {
     let input = r#"
 function _object_without_properties(source, excluded) {

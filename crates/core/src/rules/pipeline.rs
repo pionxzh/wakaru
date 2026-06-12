@@ -204,6 +204,11 @@ fn run_un_object_rest_late(module: &mut Module, ctx: RuleRunContext<'_>) {
     run_un_object_rest(module, ctx.clone());
 }
 
+fn run_un_object_rest_after_async(module: &mut Module, ctx: RuleRunContext<'_>) {
+    run_un_object_rest(module, ctx.clone());
+    ctx.invalidate_local_helpers();
+}
+
 fn run_un_sliced_to_array(module: &mut Module, ctx: RuleRunContext<'_>) {
     let local_helpers = ctx.local_helpers(module);
     UnSlicedToArray::run_with_helpers(
@@ -491,9 +496,13 @@ define_rule_registry! {
     ]),
     ("UnRegenerator", Complex, run_un_regenerator, always_enabled),
     ("UnAsyncAwait", Complex, run_un_async_await, always_enabled),
+    // Async/regenerator recovery can expose assignment-form object rest.
+    ("UnObjectRest3", Complex, run_un_object_rest_after_async, always_enabled, requires: [
+        "UnAsyncAwait"
+    ]),
     // Second pass: UnAsyncAwait can expose additional interop getter shapes.
     ("UnWebpackInterop2", Complex, run_un_webpack_interop, always_enabled, requires: [
-        "UnAsyncAwait"
+        "UnObjectRest3"
     ]),
     ("UnThenCatch", Modernization, run_un_then_catch, always_enabled),
     ("UnUndefinedInit", Modernization, run_un_undefined_init, always_enabled),

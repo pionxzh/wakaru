@@ -221,6 +221,14 @@ const snippets = [
         "...options",
       ],
       [
+        "const load_user = async (config)",
+        "{ id, token, ...options } = source",
+        "await load_config()",
+        "await open_session(token)",
+        "return await fetch_user(id, {",
+        "...options",
+      ],
+      [
         "async function",
         "await load_config()",
         "await open_session(",
