@@ -2220,6 +2220,10 @@ fn stmt_uses_sent(state_name: &Atom, stmt: &Stmt) -> bool {
         found: bool,
     }
     impl swc_core::ecma::visit::Visit for Finder {
+        fn visit_function(&mut self, _func: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+
         fn visit_member_expr(&mut self, member: &MemberExpr) {
             if is_ident_with_name(&member.obj, &self.state_name) && is_sent_prop(&member.prop) {
                 self.found = true;
@@ -2307,6 +2311,10 @@ struct CatchValueReplacer {
 }
 
 impl VisitMut for CatchValueReplacer {
+    fn visit_mut_function(&mut self, _func: &mut Function) {}
+
+    fn visit_mut_arrow_expr(&mut self, _arrow: &mut ArrowExpr) {}
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         if is_sent_access(&self.state_name, expr) {
             *expr = *self.replacement.clone();
@@ -2340,6 +2348,10 @@ impl VisitMut for CatchValueReplacer {
 }
 
 impl VisitMut for SentReplacer {
+    fn visit_mut_function(&mut self, _func: &mut Function) {}
+
+    fn visit_mut_arrow_expr(&mut self, _arrow: &mut ArrowExpr) {}
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         // Replace _ctx.sent property access
         if let Expr::Member(member) = expr {
@@ -3848,6 +3860,10 @@ fn extract_async_to_gen_body(
 fn replace_yield_with_await(stmts: &mut Vec<Stmt>) {
     struct YieldToAwait;
     impl VisitMut for YieldToAwait {
+        fn visit_mut_function(&mut self, _func: &mut Function) {}
+
+        fn visit_mut_arrow_expr(&mut self, _arrow: &mut ArrowExpr) {}
+
         fn visit_mut_expr(&mut self, expr: &mut Expr) {
             if let Expr::Yield(y) = expr {
                 let arg = y.arg.take().unwrap_or_else(|| {

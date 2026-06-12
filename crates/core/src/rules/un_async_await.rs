@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BreakStmt, CatchClause, ContinueStmt,
-    Expr, ExprStmt, ForStmt, Function, Ident, MemberExpr, Module, Pat, Prop, PropName,
-    SimpleAssignTarget, Stmt, SwitchCase, TryStmt, UnaryExpr, UnaryOp, YieldExpr,
+    ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BreakStmt, CatchClause,
+    ContinueStmt, Expr, ExprStmt, ForStmt, Function, Ident, MemberExpr, Module, Pat, Prop,
+    PropName, SimpleAssignTarget, Stmt, SwitchCase, TryStmt, UnaryExpr, UnaryOp, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -648,6 +648,10 @@ fn stmt_uses_sent(state_name: &Atom, stmt: &Stmt) -> bool {
         found: bool,
     }
     impl swc_core::ecma::visit::Visit for Finder {
+        fn visit_function(&mut self, _func: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+
         fn visit_call_expr(&mut self, call: &swc_core::ecma::ast::CallExpr) {
             if let Some(mem) = call.callee.as_expr().and_then(|e| e.as_member()) {
                 if let Expr::Ident(id) = mem.obj.as_ref() {
@@ -674,6 +678,10 @@ struct SentReplacer {
 }
 
 impl VisitMut for SentReplacer {
+    fn visit_mut_function(&mut self, _func: &mut Function) {}
+
+    fn visit_mut_arrow_expr(&mut self, _arrow: &mut ArrowExpr) {}
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         if let Expr::Call(call) = expr {
             if let Some(mem) = call.callee.as_expr().and_then(|e| e.as_member()) {
@@ -1035,6 +1043,10 @@ fn extract_awaiter_body(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<Vec<
 fn replace_yield_with_await(stmts: &mut Vec<Stmt>) {
     struct YieldToAwait;
     impl VisitMut for YieldToAwait {
+        fn visit_mut_function(&mut self, _func: &mut Function) {}
+
+        fn visit_mut_arrow_expr(&mut self, _arrow: &mut ArrowExpr) {}
+
         fn visit_mut_expr(&mut self, expr: &mut Expr) {
             if let Expr::Yield(y) = expr {
                 let arg = y.arg.take().unwrap_or_else(|| {

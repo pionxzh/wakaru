@@ -173,6 +173,11 @@ const snippets = [
         ".map((step) => async function",
         "await step.run(source)",
       ],
+      [
+        "async function run_pipeline(source)",
+        "await load_steps(source)",
+        ".map(async (step)=>await step.run(source)",
+      ],
     ],
   },
   {

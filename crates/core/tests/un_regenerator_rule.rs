@@ -824,6 +824,73 @@ function load_user(app_id) {
 }
 
 #[test]
+fn swc_nested_async_callback_keeps_inner_sent_scoped() {
+    let input = r#"
+function _async_to_generator(fn) {
+  return function() {
+    var self = this, args = arguments;
+    return new Promise(function(resolve, reject) {
+      var gen = fn.apply(self, args);
+      function _next(value) {
+        resolve(gen.next(value).value);
+      }
+      _next(undefined);
+    });
+  };
+}
+function _ts_generator(thisArg, body) {
+  var t, _ = {
+    label: 0,
+    sent: function() { return t[1]; },
+    trys: [],
+    ops: []
+  };
+}
+use(function run_pipeline(source) {
+  return _async_to_generator(function() {
+    var steps;
+    return _ts_generator(this, function(_state) {
+      switch (_state.label) {
+        case 0:
+          return [4, load_steps(source)];
+        case 1:
+          return [2, (steps = _state.sent()).map(function(step) {
+            return _async_to_generator(function() {
+              return _ts_generator(this, function(_state) {
+                switch (_state.label) {
+                  case 0:
+                    return [4, step.run(source)];
+                  case 1:
+                    return [2, _state.sent()];
+                }
+              });
+            })();
+          })];
+      }
+    });
+  })();
+});
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("use(async function run_pipeline(source)"),
+        "should restore outer SWC async wrapper, got:\n{output}"
+    );
+    assert!(
+        output.contains("return (steps = await load_steps(source)).map(async function(step)"),
+        "should keep the outer await result scoped to the outer state machine, got:\n{output}"
+    );
+    assert!(
+        output.contains("return await step.run(source)"),
+        "should preserve the nested callback return value, got:\n{output}"
+    );
+    assert!(
+        !output.contains("return await load_steps(source)"),
+        "outer sent replacement must not leak into nested callback, got:\n{output}"
+    );
+}
+
+#[test]
 fn esbuild_async_arrow_helper() {
     let input = r#"
 var __async = (__this, __arguments, generator) => {
