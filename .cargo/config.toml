@@ -1,2 +1,7 @@
 [env]
-INSTA_UPDATE = "always"
+# Snapshot drift FAILS the test and writes a .snap.new instead of being silently
+# accepted. Review the diff and accept intentional changes with `cargo insta
+# accept` (or `INSTA_UPDATE=always cargo test` for a one-off bulk accept).
+# Rationale: `always` made every run rewrite snapshots green, so a regression
+# could land unnoticed unless someone eyeballed the git diff.
+INSTA_UPDATE = "new"

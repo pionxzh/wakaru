@@ -17,7 +17,8 @@ cargo test --test my_rule_rule
 cargo test --test smart_inline_rule -- inline_single_use
 ```
 
-Snapshots auto-update on `cargo test` (via `.cargo/config.toml`).
+Snapshot drift fails the test and writes a `.snap.new` (via `INSTA_UPDATE=new`
+in `.cargo/config.toml`); accept intentional changes with `cargo insta accept`.
 
 For semantic round-trip coverage with Test262, see
 [Test262 Round-Trip](test262-roundtrip.md).
@@ -88,10 +89,11 @@ focused rule regression test as well.
    git status --short
    ```
 
-   Normal `cargo test` runs update `.snap` files directly because
-   `.cargo/config.toml` sets `INSTA_UPDATE=always`. If you override that with
-   `INSTA_UPDATE=new`, make sure no `.snap.new` files remain; review and accept
-   or remove them before committing.
+   `.cargo/config.toml` sets `INSTA_UPDATE=new`, so a changed snapshot **fails**
+   the test and leaves a `.snap.new` instead of being silently accepted. Review
+   each one, then accept intentional changes with `cargo insta accept` (or a
+   one-off `INSTA_UPDATE=always cargo test`). Make sure no `.snap.new` files
+   remain before committing.
 
 Review every snapshot diff before committing. A snapshot change is acceptable
 only when the output is semantically better or the test fixture expectation is
@@ -233,15 +235,16 @@ fn apply(input: &str) -> String {
 Tests use [insta](https://insta.rs/) for snapshot testing. Snapshots are
 committed as `.snap` files under `crates/core/tests/snapshots/`.
 
-Snapshots auto-update when you run `cargo test` — this is configured via
-`INSTA_UPDATE=always` in `.cargo/config.toml`. Review changes with `git diff`
-before committing.
+`.cargo/config.toml` sets `INSTA_UPDATE=new`, so a changed snapshot **fails** the
+test and writes a `.snap.new` (it is not silently accepted). This keeps a
+regression from landing green just because nobody eyeballed the `git diff`.
 
-To review snapshots interactively instead, install `cargo-insta` and run:
+To review and accept intentional changes, install `cargo-insta` and run:
 
 ```bash
-INSTA_UPDATE=new cargo test   # only write .snap.new files, don't auto-accept
-cargo insta review             # accept/reject each change
+cargo insta review            # accept/reject each pending .snap.new
+cargo insta accept            # accept all pending changes
+INSTA_UPDATE=always cargo test  # one-off: bulk-accept inline during a run
 ```
 
 **When snapshots change unexpectedly:** see the "Snapshot Layers" section in

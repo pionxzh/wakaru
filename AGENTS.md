@@ -35,7 +35,9 @@ cargo fmt --check                              # verify Rust formatting
 cargo clippy -p wakaru-core --all-targets -- -D warnings  # lint core changes
 ```
 
-Snapshots auto-update on `cargo test` (configured via `.cargo/config.toml`).
+Snapshot drift **fails** the test and writes a `.snap.new` (via `INSTA_UPDATE=new`
+in `.cargo/config.toml`). Review the diff, then accept intentional changes with
+`cargo insta accept` (or `INSTA_UPDATE=always cargo test` for a one-off bulk accept).
 See `docs/testing.md` for test helpers, patterns, and organization.
 
 ## Developing a Rule

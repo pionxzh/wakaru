@@ -24,6 +24,14 @@ swc_core = { version = "65", features = [
 ] }
 tracing = "0.1"
 
+# Dev/test iteration profile. Full DWARF is the dominant link cost across the
+# 90+ swc_core-linked test binaries; line-tables keep panic backtraces with
+# file:line while cutting debuginfo generation and link size. unpacked split
+# debuginfo stops the linker copying debug info into each binary.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
