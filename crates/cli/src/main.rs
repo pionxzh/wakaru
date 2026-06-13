@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{self, IsTerminal, Read};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -13,9 +13,13 @@ use wakaru_core::{
     UnpackInput,
 };
 
+mod discovery;
 mod formatter;
+mod output;
 
+use discovery::{scan_directory_for_unpack_inputs, DirectoryScanStats};
 use formatter::{format_cli_output, selected_formatter};
+use output::{canonicalize_output_dir, resolve_unpack_output_path, write_file, write_if_changed};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum CliRewriteLevel {
@@ -458,13 +462,6 @@ struct UnpackInputSet {
     scan_stats: Option<DirectoryScanStats>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct DirectoryScanStats {
-    scanned: usize,
-    detected: usize,
-    skipped: usize,
-}
-
 fn read_unpack_inputs(inputs: &[PathBuf], heuristic_split: bool) -> Result<UnpackInputSet> {
     if inputs.is_empty() {
         let (source, filename) = read_input(None)?;
@@ -486,20 +483,11 @@ fn read_unpack_inputs(inputs: &[PathBuf], heuristic_split: bool) -> Result<Unpac
         }
 
         saw_directory = true;
-        for path in collect_directory_js_inputs(input)? {
-            scan_stats.scanned += 1;
-            let source = fs::read_to_string(&path)
-                .with_context(|| format!("failed to read {}", path.display()))?;
-            if is_detected_unpack_input(&source, heuristic_split) {
-                scan_stats.detected += 1;
-                out.push(UnpackInput {
-                    filename: path.to_string_lossy().to_string(),
-                    source,
-                });
-            } else {
-                scan_stats.skipped += 1;
-            }
-        }
+        let (scanned_inputs, stats) = scan_directory_for_unpack_inputs(input, heuristic_split)?;
+        scan_stats.scanned += stats.scanned;
+        scan_stats.detected += stats.detected;
+        scan_stats.skipped += stats.skipped;
+        out.extend(scanned_inputs);
     }
 
     let scan_stats = if scan_stats.scanned > 0 {
@@ -516,60 +504,6 @@ fn read_unpack_inputs(inputs: &[PathBuf], heuristic_split: bool) -> Result<Unpac
         inputs: out,
         scan_stats,
     })
-}
-
-fn collect_directory_js_inputs(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut paths = Vec::new();
-    collect_directory_js_inputs_inner(root, &mut paths)?;
-    paths.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
-    Ok(paths)
-}
-
-fn collect_directory_js_inputs_inner(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
-    let mut entries = fs::read_dir(dir)
-        .with_context(|| format!("failed to read input directory {}", dir.display()))?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .with_context(|| format!("failed to read input directory {}", dir.display()))?;
-    entries.sort_by_key(|entry| entry.path());
-
-    for entry in entries {
-        let path = entry.path();
-        let file_name = entry.file_name();
-        let file_name = file_name.to_string_lossy();
-        let file_type = entry
-            .file_type()
-            .with_context(|| format!("failed to inspect {}", path.display()))?;
-
-        if file_type.is_dir() {
-            if is_hidden_name(&file_name) || file_name == "node_modules" {
-                continue;
-            }
-            collect_directory_js_inputs_inner(&path, paths)?;
-        } else if file_type.is_file() && !is_hidden_name(&file_name) && is_js_like_input(&path) {
-            paths.push(path);
-        }
-    }
-
-    Ok(())
-}
-
-fn is_detected_unpack_input(source: &str, heuristic_split: bool) -> bool {
-    matches!(
-        wakaru_core::unpacker::try_unpack_bundle(source),
-        Ok(Some(_))
-    ) || (heuristic_split
-        && wakaru_core::scope_hoist::split_scope_hoisted(source)
-            .is_some_and(|result| result.modules.len() > 1))
-}
-
-fn is_hidden_name(name: &str) -> bool {
-    name.starts_with('.')
-}
-
-fn is_js_like_input(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "js" | "mjs" | "cjs"))
 }
 
 fn ensure_output_file(path: &Path, force: bool) -> Result<()> {
@@ -611,153 +545,6 @@ fn ensure_output_dir(path: &PathBuf, force: bool) -> Result<bool> {
             .with_context(|| format!("failed to create output directory {}", path.display()))?;
     }
     Ok(false)
-}
-
-fn write_file(path: &Path, content: &str) -> Result<()> {
-    fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))
-}
-
-fn write_if_changed(path: &Path, content: &str) -> Result<()> {
-    if let Ok(metadata) = fs::metadata(path) {
-        if metadata.len() == content.len() as u64
-            && fs::read(path).is_ok_and(|existing| existing == content.as_bytes())
-        {
-            return Ok(());
-        }
-    }
-
-    write_file(path, content)
-}
-
-fn canonicalize_output_dir(path: &Path) -> Result<PathBuf> {
-    path.canonicalize()
-        .with_context(|| format!("failed to canonicalize output directory {}", path.display()))
-}
-
-fn resolve_unpack_output_path(
-    out_dir: &Path,
-    filename: &str,
-    seen: &mut std::collections::HashSet<String>,
-) -> Result<PathBuf> {
-    let relative = safe_relative_module_path(filename)?;
-    let lexical_path = deduplicate_path(&out_dir.join(relative), seen);
-    canonicalize_unpack_output_path(out_dir, &lexical_path, filename)
-}
-
-fn safe_relative_module_path(filename: &str) -> Result<PathBuf> {
-    let mut relative = PathBuf::new();
-    for component in Path::new(filename).components() {
-        match component {
-            Component::Normal(part) => relative.push(part),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                bail!("unsafe module filename {filename:?}: path escapes output directory")
-            }
-        }
-    }
-
-    if relative.as_os_str().is_empty() {
-        bail!("unsafe module filename {filename:?}: empty output path");
-    }
-
-    Ok(relative)
-}
-
-fn canonicalize_unpack_output_path(
-    out_dir: &Path,
-    lexical_path: &Path,
-    filename: &str,
-) -> Result<PathBuf> {
-    let relative = lexical_path.strip_prefix(out_dir).with_context(|| {
-        format!("unsafe module filename {filename:?}: path escapes output directory")
-    })?;
-    let Some(file_name) = relative.file_name() else {
-        bail!("unsafe module filename {filename:?}: empty output path");
-    };
-
-    let parent_relative = relative.parent().unwrap_or_else(|| Path::new(""));
-    let mut current = out_dir.to_path_buf();
-    for component in parent_relative.components() {
-        let Component::Normal(part) = component else {
-            bail!("unsafe module filename {filename:?}: path escapes output directory");
-        };
-        current.push(part);
-        if current.exists() {
-            let canonical = current.canonicalize().with_context(|| {
-                format!(
-                    "failed to canonicalize output directory {}",
-                    current.display()
-                )
-            })?;
-            ensure_path_inside_output_dir(out_dir, &canonical, filename)?;
-            if !canonical.is_dir() {
-                bail!(
-                    "output path {} exists and is not a directory",
-                    current.display()
-                );
-            }
-            current = canonical;
-        } else {
-            fs::create_dir(&current).with_context(|| {
-                format!("failed to create output directory {}", current.display())
-            })?;
-            let canonical = current.canonicalize().with_context(|| {
-                format!(
-                    "failed to canonicalize output directory {}",
-                    current.display()
-                )
-            })?;
-            ensure_path_inside_output_dir(out_dir, &canonical, filename)?;
-            current = canonical;
-        }
-    }
-
-    let candidate = current.join(file_name);
-    let target = if candidate.exists() {
-        candidate.canonicalize().with_context(|| {
-            format!("failed to canonicalize output file {}", candidate.display())
-        })?
-    } else {
-        candidate
-    };
-    ensure_path_inside_output_dir(out_dir, &target, filename)?;
-    Ok(target)
-}
-
-fn ensure_path_inside_output_dir(out_dir: &Path, path: &Path, filename: &str) -> Result<()> {
-    if path.starts_with(out_dir) {
-        Ok(())
-    } else {
-        bail!("unsafe module filename {filename:?}: path escapes output directory");
-    }
-}
-
-/// Return a path that hasn't been used yet, disambiguating case collisions.
-///
-/// `seen` stores the lowercased string representation of every path already
-/// claimed.  When a collision is detected the stem gets a numeric suffix:
-/// `foo.js` → `foo_2.js` → `foo_3.js` …
-fn deduplicate_path(path: &Path, seen: &mut std::collections::HashSet<String>) -> PathBuf {
-    let key = path.to_string_lossy().to_lowercase();
-    if seen.insert(key) {
-        return path.to_path_buf();
-    }
-    // Collision — append _N before the extension.
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("module");
-    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("js");
-    let parent = path.parent().unwrap_or(std::path::Path::new("."));
-    let mut n = 2u32;
-    loop {
-        let candidate = parent.join(format!("{stem}_{n}.{ext}"));
-        let candidate_key = candidate.to_string_lossy().to_lowercase();
-        if seen.insert(candidate_key) {
-            return candidate;
-        }
-        n += 1;
-    }
 }
 
 fn init_profile(
@@ -1048,132 +835,6 @@ mod tests {
     }
 
     #[test]
-    fn unpack_output_path_rejects_parent_dir_components() {
-        let dir = temp_test_dir("unpack-output-escape");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
-        let mut seen = std::collections::HashSet::new();
-
-        let err = resolve_unpack_output_path(
-            &out_dir,
-            "../node_modules/@wakaru/cli/bin/wakaru",
-            &mut seen,
-        )
-        .expect_err("parent path should be rejected");
-        assert!(
-            err.to_string().contains("path escapes output directory"),
-            "unexpected error: {err}"
-        );
-
-        fs::remove_dir_all(&dir).expect("remove temp dir");
-    }
-
-    #[test]
-    fn unpack_output_path_keeps_overlap_payload_inside_output_dir() {
-        let dir = temp_test_dir("unpack-output-overlap");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
-        let mut seen = std::collections::HashSet::new();
-
-        let path = resolve_unpack_output_path(
-            &out_dir,
-            "....//node_modules/@wakaru/cli/bin/wakaru",
-            &mut seen,
-        )
-        .expect("overlapping dots are an ordinary relative directory");
-        assert!(
-            path.starts_with(&out_dir),
-            "resolved path should stay in output dir: {}",
-            path.display()
-        );
-        assert!(path.ends_with("node_modules/@wakaru/cli/bin/wakaru"));
-
-        fs::remove_dir_all(&dir).expect("remove temp dir");
-    }
-
-    #[test]
-    fn unpack_output_path_rejects_absolute_paths() {
-        let dir = temp_test_dir("unpack-output-absolute");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
-        let mut seen = std::collections::HashSet::new();
-        let absolute = format!(
-            "{}tmp{}escape.js",
-            std::path::MAIN_SEPARATOR,
-            std::path::MAIN_SEPARATOR
-        );
-
-        let err = resolve_unpack_output_path(&out_dir, &absolute, &mut seen)
-            .expect_err("absolute module path should be rejected");
-        assert!(
-            err.to_string().contains("path escapes output directory"),
-            "unexpected error: {err}"
-        );
-
-        fs::remove_dir_all(&dir).expect("remove temp dir");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn unpack_output_path_rejects_windows_drive_prefixes() {
-        let dir = temp_test_dir("unpack-output-drive-prefix");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
-        let mut seen = std::collections::HashSet::new();
-
-        let err = resolve_unpack_output_path(&out_dir, r"C:\tmp\escape.js", &mut seen)
-            .expect_err("drive-prefixed module path should be rejected");
-        assert!(
-            err.to_string().contains("path escapes output directory"),
-            "unexpected error: {err}"
-        );
-
-        fs::remove_dir_all(&dir).expect("remove temp dir");
-    }
-
-    #[test]
-    fn unpack_output_path_rejects_parent_directory_that_is_file() {
-        let dir = temp_test_dir("unpack-output-file-parent");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        fs::write(dir.join("src"), "not a directory").expect("write file parent");
-        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
-        let mut seen = std::collections::HashSet::new();
-
-        let err = resolve_unpack_output_path(&out_dir, "src/index.js", &mut seen)
-            .expect_err("file parent should be rejected");
-        assert!(
-            err.to_string().contains("exists and is not a directory"),
-            "unexpected error: {err}"
-        );
-
-        fs::remove_dir_all(&dir).expect("remove temp dir");
-    }
-
-    #[test]
-    fn unpack_output_path_deduplicates_after_safety_checks() {
-        let dir = temp_test_dir("unpack-output-dedup");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let out_dir = canonicalize_output_dir(&dir).expect("canonicalize output dir");
-        let mut seen = std::collections::HashSet::new();
-
-        let first = resolve_unpack_output_path(&out_dir, "src/index.js", &mut seen)
-            .expect("first path should resolve");
-        let second = resolve_unpack_output_path(&out_dir, "src/index.js", &mut seen)
-            .expect("second path should resolve with suffix");
-
-        assert!(first.starts_with(&out_dir), "{}", first.display());
-        assert!(second.starts_with(&out_dir), "{}", second.display());
-        assert_ne!(first, second);
-        assert_eq!(first.file_name().and_then(|s| s.to_str()), Some("index.js"));
-        assert_eq!(
-            second.file_name().and_then(|s| s.to_str()),
-            Some("index_2.js")
-        );
-
-        fs::remove_dir_all(&dir).expect("remove temp dir");
-    }
-
-    #[test]
     fn unpack_cli_does_not_write_overlapping_dot_payload_outside_output_dir() {
         let dir = temp_test_dir("unpack-cli-overlap");
         let out_dir = dir.join("out");
@@ -1210,31 +871,6 @@ mod tests {
     }
 
     #[test]
-    fn unpack_output_path_rejects_symlink_parent_that_points_outside() {
-        let dir = temp_test_dir("unpack-output-symlink-parent");
-        let out_dir_raw = dir.join("out");
-        let external_dir = dir.join("external");
-        fs::create_dir_all(&out_dir_raw).expect("create output dir");
-        fs::create_dir_all(&external_dir).expect("create external dir");
-        let link_path = out_dir_raw.join("link");
-        if create_dir_symlink(&external_dir, &link_path).is_err() {
-            fs::remove_dir_all(&dir).expect("remove temp dir");
-            return;
-        }
-        let out_dir = canonicalize_output_dir(&out_dir_raw).expect("canonicalize output dir");
-        let mut seen = std::collections::HashSet::new();
-
-        let err = resolve_unpack_output_path(&out_dir, "link/pwn.js", &mut seen)
-            .expect_err("symlink parent escaping output dir should be rejected");
-        assert!(
-            err.to_string().contains("path escapes output directory"),
-            "unexpected error: {err}"
-        );
-
-        fs::remove_dir_all(&dir).expect("remove temp dir");
-    }
-
-    #[test]
     fn output_dir_reports_when_existing_writes_need_checks() {
         let empty_dir = temp_test_dir("output-dir-empty");
         fs::create_dir_all(&empty_dir).expect("create temp dir");
@@ -1261,56 +897,12 @@ mod tests {
         fs::remove_dir_all(&non_empty_dir).expect("remove non-empty temp dir");
     }
 
-    #[test]
-    fn write_if_changed_skips_identical_readonly_file() {
-        let dir = temp_test_dir("write-if-changed");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let path = dir.join("entry.js");
-        fs::write(&path, "same").expect("write temp file");
-
-        let original_permissions = fs::metadata(&path).expect("metadata").permissions();
-        let mut permissions = original_permissions.clone();
-        permissions.set_readonly(true);
-        fs::set_permissions(&path, permissions).expect("set readonly");
-
-        assert!(write_if_changed(&path, "same").is_ok());
-
-        fs::set_permissions(&path, original_permissions).expect("restore permissions");
-        fs::remove_dir_all(&dir).expect("remove temp dir");
-    }
-
-    #[test]
-    fn write_if_changed_overwrites_different_length_file() {
-        let dir = temp_test_dir("write-if-changed-length");
-        fs::create_dir_all(&dir).expect("create temp dir");
-        let path = dir.join("entry.js");
-        fs::write(&path, "short").expect("write temp file");
-
-        write_if_changed(&path, "longer content").expect("write changed file");
-
-        assert_eq!(
-            fs::read_to_string(&path).expect("read updated file"),
-            "longer content"
-        );
-        fs::remove_dir_all(&dir).expect("remove temp dir");
-    }
-
     fn temp_test_dir(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("wakaru-cli-test-{name}-{nanos}"))
-    }
-
-    #[cfg(windows)]
-    fn create_dir_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
-        std::os::windows::fs::symlink_dir(target, link)
-    }
-
-    #[cfg(unix)]
-    fn create_dir_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
-        std::os::unix::fs::symlink(target, link)
     }
 
     fn webpack5_chunk_source() -> &'static str {

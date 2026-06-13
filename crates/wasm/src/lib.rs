@@ -106,11 +106,7 @@ pub fn rule_names() -> JsValue {
 }
 
 fn parse_level(level: Option<&str>) -> wakaru_core::RewriteLevel {
-    match level {
-        Some("minimal") => wakaru_core::RewriteLevel::Minimal,
-        Some("aggressive") => wakaru_core::RewriteLevel::Aggressive,
-        _ => wakaru_core::RewriteLevel::Standard,
-    }
+    wakaru_core::RewriteLevel::from_str_or_default(level)
 }
 
 fn parse_formatter(formatter: Option<bool>) -> CodeFormatter {

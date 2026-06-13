@@ -262,6 +262,8 @@ crates/
         unpack.rs                   — unpack(), unpack_raw(), and multi-module pipeline
         trace.rs                    — rule trace orchestration and formatting
         diagnostics.rs              — post-transform diagnostic warning collection
+        discovery.rs                — recursive input-directory scan + bundle detection
+        output.rs                   — output-path safety, dedup, write-if-changed
         io.rs                       — parse/print helpers
         types.rs                    — driver options, outputs, and warning types
       facts.rs                      — post-Stage-2 cross-module fact extraction

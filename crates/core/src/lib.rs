@@ -18,9 +18,10 @@ pub mod unpacker;
 pub mod utils;
 
 pub use driver::{
-    decompile, format_trace_events, trace_rules, unpack, unpack_files, unpack_files_raw,
-    unpack_raw, DecompileOptions, DecompileOutput, RuleTraceEvent, RuleTraceOptions, UnpackInput,
-    UnpackOutput, UnpackWarning, UnpackWarningKind,
+    decompile, deduplicate_path, format_trace_events, is_detected_unpack_input,
+    safe_relative_module_path, trace_rules, unpack, unpack_files, unpack_files_raw, unpack_raw,
+    DecompileOptions, DecompileOutput, RuleTraceEvent, RuleTraceOptions, UnpackInput, UnpackOutput,
+    UnpackWarning, UnpackWarningKind,
 };
 pub use facts::{
     collect_module_facts, ExportFact, ExportKind, HelperExportFact, HelperKind, ImportFact,

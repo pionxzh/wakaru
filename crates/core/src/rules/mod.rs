@@ -91,6 +91,20 @@ pub enum RewriteLevel {
     Aggressive,
 }
 
+impl RewriteLevel {
+    /// Parse a rewrite level from its lowercase string form (`"minimal"`,
+    /// `"standard"`, `"aggressive"`). Any unrecognized or absent value falls
+    /// back to [`RewriteLevel::Standard`]. Shared by the CLI and wasm edges so
+    /// level-string handling stays identical across both.
+    pub fn from_str_or_default(level: Option<&str>) -> Self {
+        match level {
+            Some("minimal") => Self::Minimal,
+            Some("aggressive") => Self::Aggressive,
+            _ => Self::Standard,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RewriteAssumptions {
     pub no_document_all: bool,
