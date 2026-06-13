@@ -602,16 +602,16 @@ mod tests {
             "./module-11111/chunk_value.js"
         );
         assert_eq!(
-            relative_import_specifier("module-22222/chunk_a.js", "module-44444.js"),
+            relative_import_specifier("module-22222/chunk_value.js", "module-44444.js"),
             "../module-44444.js"
         );
         assert_eq!(
-            relative_import_specifier("module-22222/chunk_a.js", "module-22222/chunk_b.js"),
-            "./chunk_b.js"
+            relative_import_specifier("module-22222/chunk_value.js", "module-22222/chunk_other.js"),
+            "./chunk_other.js"
         );
         assert_eq!(
-            relative_import_specifier("module-22222/chunk_a.js", "module-33333/chunk_c.js"),
-            "../module-33333/chunk_c.js"
+            relative_import_specifier("module-22222/chunk_value.js", "module-33333/chunk_extra.js"),
+            "../module-33333/chunk_extra.js"
         );
     }
 

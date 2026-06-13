@@ -130,29 +130,25 @@ fn webpack5_chunk_heuristic_skips_scope_split_without_import_bearing_entry() {
 fn webpack5_chunk_unpacks_modules() {
     let source = r#"
 (self.webpackChunk_N_E = self.webpackChunk_N_E || []).push([
-  [888],
+  [123],
   {
-    2189: function(module, exports, require) {
+    11111: function(module, exports, require) {
       "use strict";
       require.r(exports);
       require.d(exports, {
         M: function() { return i; },
         u: function() { return o; }
       });
-      var r = require(7294);
-      var o = r.createContext({ isButtonGroup: false });
-      var i = function() { return "hello"; };
+      var o = 1;
+      var i = 2;
     },
-    5432: function(module, exports, require) {
+    22222: function(module, exports, require) {
       "use strict";
       require.r(exports);
       require.d(exports, {
         Z: function() { return s; }
       });
-      var n = require(7294);
-      function s(props) {
-        return n.createElement("div", null, props.children);
-      }
+      function s() { return 0; }
     }
   }
 ]);
@@ -170,13 +166,13 @@ fn webpack5_chunk_unpacks_modules() {
     // Check module IDs are used as filenames
     let filenames: Vec<&str> = pairs.iter().map(|(name, _)| name.as_str()).collect();
     assert!(
-        filenames.contains(&"module-2189.js"),
-        "expected module-2189.js, got {:?}",
+        filenames.contains(&"module-11111.js"),
+        "expected module-11111.js, got {:?}",
         filenames
     );
     assert!(
-        filenames.contains(&"module-5432.js"),
-        "expected module-5432.js, got {:?}",
+        filenames.contains(&"module-22222.js"),
+        "expected module-22222.js, got {:?}",
         filenames
     );
 
