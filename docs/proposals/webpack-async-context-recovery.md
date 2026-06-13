@@ -33,8 +33,6 @@ load.id = 68494;
 export default load;
 ```
 
-This appears in `wakaru-fixtures/outputs/issue-52/*/module-68494.js`.
-
 ## Why It Is Deferred
 
 Unlike `require.d`, `require.n`, `require.r`, and static property reads from `require.t(value, 2)`, this pattern is not a local expression rewrite:
