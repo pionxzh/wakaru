@@ -1,0 +1,643 @@
+//! Two-phase multi-module pipeline: fact collection (Phase 1) and output
+//! decompilation with the cross-module late pass (Phase 2).
+
+use anyhow::Result;
+use rayon::prelude::*;
+use swc_core::common::{sync::Lrc, Globals, Mark, SourceMap, GLOBALS};
+use swc_core::ecma::ast::Module;
+use swc_core::ecma::transforms::base::{fixer::fixer, resolver};
+use swc_core::ecma::visit::VisitMutWith;
+
+use super::super::diagnostics::{
+    collect_duplicate_declaration_warnings, collect_input_parse_warnings, collect_tdz_warnings,
+    verify_output_parses,
+};
+use super::super::io::{parse_js, parse_js_with_recovery, print_js};
+use super::super::types::{DecompileOptions, UnpackOutput, UnpackWarning, UnpackWarningKind};
+use super::super::unpack_cleanup::{dedup_duplicate_exports, prune_stale_local_named_exports};
+use super::super::unpack_cycles::{collect_import_cycle_warnings, merge_import_cycles};
+use super::merge::{apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule};
+use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
+use crate::facts::{collect_module_facts, ModuleFactsMap};
+use crate::namespace_decomposition::run_namespace_decomposition;
+use crate::reexport_consolidation::run_reexport_consolidation;
+use crate::rules::{
+    apply_rules, ImportDedup, RewriteLevel, RulePipelineOptions, SimplifySequence,
+    UnAssignmentMerging, UnConditionals, UnConditionalsAssignmentOnly, UnImportRename,
+    UnOptionalChaining,
+};
+use crate::sourcemap_rename::{apply_sourcemap_renames, parse_sourcemap};
+
+struct Phase1PreparedModule {
+    globals: Globals,
+    module: Module,
+    unresolved_mark: Mark,
+}
+
+struct Phase1Module {
+    filename: String,
+    facts: crate::facts::ModuleFacts,
+    prepared: Option<Phase1PreparedModule>,
+    warning: Option<UnpackWarning>,
+}
+
+/// Multi-module unpack with cross-module late pass.
+///
+/// Phase 1: parse + through-UnEsm range + ESM recovery + collect facts (code discarded)
+/// Phase 2: parse + through-UnEsm range + late pass + UnTemplateLiteral-through-UnReturn range
+///
+/// The through-UnEsm range runs twice per module — once for fact collection, once
+/// for the real output pipeline. This is necessary because SWC's SyntaxContext
+/// must remain continuous within the emitted module pipeline; reusing a Phase 1
+/// AST after a separate parse would break rename rules.
+///
+/// # Best-effort semantics
+///
+/// Individual extracted modules that fail to parse are preserved as raw code
+/// rather than aborting the entire unpack. The extraction process can
+/// produce module bodies that are not valid standalone JS (e.g. incomplete
+/// slicing, runtime wrapper residue). Hard-failing on those would discard
+/// all other successfully extracted modules, which is worse for both
+/// interactive and automated users. Failures are reported via
+/// `UnpackOutput::warnings` so callers can surface them without silent
+/// swallowing.
+///
+/// Both phases run via rayon. On targets without threading support, Rayon falls
+/// back to sequential execution.
+#[cfg(test)]
+pub(super) fn unpack_multi_module(
+    modules: Vec<crate::unpacker::UnpackedModule>,
+    options: DecompileOptions,
+) -> Result<UnpackOutput> {
+    let modules = modules
+        .into_iter()
+        .map(PreparedUnpackModule::plain)
+        .collect();
+    unpack_multi_module_with_plan(modules, NumericRewritePlan::default(), options)
+}
+
+pub(super) fn unpack_multi_module_with_plan(
+    modules: Vec<PreparedUnpackModule>,
+    numeric_rewrite_plan: NumericRewritePlan,
+    options: DecompileOptions,
+) -> Result<UnpackOutput> {
+    let span = tracing::info_span!("unpack_multi_module", count = modules.len());
+    let _enter = span.enter();
+    let report_import_cycle_warnings = modules.iter().all(|module| module.allow_cycle_premerge);
+    let (modules, cycle_warnings) =
+        if numeric_rewrite_plan.is_empty() && should_premerge_import_cycles(&modules) {
+            let (modules, warnings) = merge_import_cycles(
+                modules
+                    .into_iter()
+                    .map(|prepared| prepared.module)
+                    .collect(),
+            );
+            (
+                modules
+                    .into_iter()
+                    .map(PreparedUnpackModule::plain)
+                    .collect(),
+                warnings,
+            )
+        } else {
+            // Numeric rewrite context is per original input group. A merged cycle
+            // could contain members from different groups, but the later AST
+            // pipeline accepts only one context per output module. Keep those
+            // modules split so numeric require ids are rewritten in their original
+            // context and source strings stay untouched until the normal pipeline.
+            (modules, Vec::new())
+        };
+
+    // Parse the sourcemap once before the loop.
+    let parsed_sourcemap = options
+        .sourcemap
+        .as_deref()
+        .map(parse_sourcemap)
+        .transpose()?;
+    let can_reuse_phase1_ast = parsed_sourcemap.is_none();
+
+    // Phase 1: collect facts. Run the through-UnEsm normalization range on each
+    // module and extract import/export facts. For normal unpacking, keep that
+    // normalized AST so Phase 2 can resume after the facts barrier. Source-map
+    // mode still reparses in Phase 2 because sourcemap renaming depends on the
+    // original parser SourceMap.
+    let collect_facts = |unpacked: &PreparedUnpackModule| -> Phase1Module {
+        let globals = Globals::new();
+        let (facts, prepared_parts, warning) = GLOBALS.set(&globals, || {
+            let cm: Lrc<SourceMap> = Default::default();
+            let mut module =
+                match parse_js(&unpacked.module.code, &unpacked.module.filename, cm.clone()) {
+                    Ok(module) => module,
+                    Err(e) => {
+                        return (
+                            crate::facts::ModuleFacts::default(),
+                            None,
+                            Some(UnpackWarning::new(
+                                unpacked.module.filename.clone(),
+                                UnpackWarningKind::FactCollectionParseFailed,
+                                format!(
+                                    "parse failed during fact collection, using empty facts: {e}"
+                                ),
+                            )),
+                        );
+                    }
+                };
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+            module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+            apply_numeric_rewrites(
+                &mut module,
+                unresolved_mark,
+                unpacked.numeric_rewrite.as_ref(),
+                &numeric_rewrite_plan,
+            );
+            apply_rules(
+                &mut module,
+                unresolved_mark,
+                RulePipelineOptions::until("UnEsm"),
+            );
+            // ESM recovery mutates the AST heavily (UnIife, factory-IIFE
+            // rewrites, renames) to expose import/export declarations that
+            // `collect_module_facts` reads. Phase 2 resumes from the
+            // *pre-recovery* through-UnEsm barrier state and runs its own
+            // recovery later at `options.level`, so it needs the unmodified
+            // `module`. When the AST will be reused (no-sourcemap path), clone
+            // before recovering for facts. When it won't be reused (sourcemap
+            // path discards `module`), recover in place and skip the clone.
+            let (facts, prepared) = if can_reuse_phase1_ast {
+                let mut facts_module = module.clone();
+                recover_late_esm_from_factory_iifes(
+                    &mut facts_module,
+                    unresolved_mark,
+                    RewriteLevel::Standard,
+                    LateEsmRecoveryOptions::default(),
+                );
+                let facts = collect_module_facts(&facts_module);
+                (facts, Some((module, unresolved_mark)))
+            } else {
+                recover_late_esm_from_factory_iifes(
+                    &mut module,
+                    unresolved_mark,
+                    RewriteLevel::Standard,
+                    LateEsmRecoveryOptions::default(),
+                );
+                let facts = collect_module_facts(&module);
+                (facts, None)
+            };
+            (facts, prepared, None)
+        });
+        let prepared = prepared_parts.map(|(module, unresolved_mark)| Phase1PreparedModule {
+            globals,
+            module,
+            unresolved_mark,
+        });
+        Phase1Module {
+            filename: unpacked.module.filename.clone(),
+            facts,
+            prepared,
+            warning,
+        }
+    };
+
+    let phase1: Vec<_> = {
+        let span = tracing::info_span!("phase1_collect_facts");
+        let _enter = span.enter();
+        modules.par_iter().map(collect_facts).collect()
+    };
+
+    let mut module_facts = ModuleFactsMap::new();
+    let mut prepared_modules = Vec::with_capacity(phase1.len());
+    let mut warnings = Vec::new();
+    if options.diagnostics {
+        warnings.extend(cycle_warnings);
+    }
+    for phase1_module in phase1 {
+        module_facts.insert(&phase1_module.filename, phase1_module.facts);
+        prepared_modules.push(phase1_module.prepared);
+        if let Some(w) = phase1_module.warning {
+            warnings.push(w);
+        }
+    }
+
+    // Phase 2: output pipeline with late pass. Each module is parsed from
+    // the original source only when Phase 1 failed to prepare an AST; otherwise
+    // it continues from the Phase 1 normalized AST after the facts barrier.
+    let facts_ref = &module_facts;
+    let sm_ref = &parsed_sourcemap;
+    let phase2_inputs: Vec<_> = modules.into_iter().zip(prepared_modules).collect();
+
+    let decompile_module = |(unpacked, prepared): (
+        PreparedUnpackModule,
+        Option<Phase1PreparedModule>,
+    )|
+     -> (String, String, Vec<UnpackWarning>) {
+        let run_phase2_tail = |mut module: Module,
+                               cm: Lrc<SourceMap>,
+                               unresolved_mark: Mark,
+                               input_parse_warnings: Vec<UnpackWarning>|
+         -> Result<(String, Vec<UnpackWarning>)> {
+            // Late pass at the barrier
+            run_reexport_consolidation(&mut module, facts_ref);
+            run_namespace_decomposition(&mut module, facts_ref);
+            // Late helper-through-UnReturn range.
+            apply_rules(
+                &mut module,
+                unresolved_mark,
+                RulePipelineOptions::between("UnObjectSpread2", "UnReturn")
+                    .with_dead_code_elimination(options.dead_code_elimination)
+                    .with_rewrite_level(options.level)
+                    .with_module_facts(facts_ref),
+            );
+            // Later rules can expose sequence expressions. The old unpack
+            // path cleaned those by running a second full module pipeline;
+            // keep only the syntax cleanup needed after the split.
+            module.visit_mut_with(&mut SimplifySequence::new_with_level(
+                unresolved_mark,
+                options.level,
+            ));
+            module.visit_mut_with(&mut UnAssignmentMerging);
+            // UnIife2 can expose webpack export helpers that were hidden in
+            // factory wrappers at the Stage 2 barrier. Recover just that ESM
+            // shape without restoring the old full second pass.
+            recover_late_esm_from_factory_iifes(
+                &mut module,
+                unresolved_mark,
+                options.level,
+                LateEsmRecoveryOptions::default(),
+            );
+            module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
+            module.visit_mut_with(&mut UnConditionalsAssignmentOnly);
+            module.visit_mut_with(&mut UnConditionals);
+            prune_stale_local_named_exports(&mut module);
+            dedup_duplicate_exports(&mut module);
+
+            // Source-map-enhanced passes
+            if let Some(sm) = sm_ref {
+                module.visit_mut_with(&mut ImportDedup);
+                apply_sourcemap_renames(&mut module, sm, &cm, unresolved_mark);
+                module.visit_mut_with(&mut UnImportRename::new(unresolved_mark));
+            }
+
+            let mut diag_warnings = if options.diagnostics {
+                let mut warnings = input_parse_warnings;
+                warnings.extend(collect_tdz_warnings(&module, &unpacked.module.filename));
+                warnings.extend(collect_duplicate_declaration_warnings(
+                    &module,
+                    &unpacked.module.filename,
+                ));
+                warnings
+            } else {
+                Vec::new()
+            };
+
+            module.visit_mut_with(&mut fixer(None));
+            let code = print_js(&module, cm)?;
+
+            if options.diagnostics {
+                diag_warnings.extend(verify_output_parses(&code, &unpacked.module.filename));
+            }
+
+            Ok((code, diag_warnings))
+        };
+
+        let result = if let Some(prepared) = prepared {
+            let Phase1PreparedModule {
+                globals,
+                module,
+                unresolved_mark,
+            } = prepared;
+            GLOBALS.set(&globals, || {
+                let cm: Lrc<SourceMap> = Default::default();
+                run_phase2_tail(module, cm, unresolved_mark, Vec::new())
+            })
+        } else {
+            GLOBALS.set(&Default::default(), || {
+                let cm: Lrc<SourceMap> = Default::default();
+                let parsed = parse_js_with_recovery(
+                    &unpacked.module.code,
+                    &unpacked.module.filename,
+                    cm.clone(),
+                )?;
+                let mut module = parsed.module;
+                let unresolved_mark = Mark::new();
+                let top_level_mark = Mark::new();
+                module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+                apply_numeric_rewrites(
+                    &mut module,
+                    unresolved_mark,
+                    unpacked.numeric_rewrite.as_ref(),
+                    &numeric_rewrite_plan,
+                );
+
+                // Through-UnEsm range.
+                apply_rules(
+                    &mut module,
+                    unresolved_mark,
+                    RulePipelineOptions::until("UnEsm"),
+                );
+
+                let input_parse_warnings = if options.diagnostics {
+                    collect_input_parse_warnings(&parsed.recoverable_errors)
+                } else {
+                    Vec::new()
+                };
+                run_phase2_tail(module, cm, unresolved_mark, input_parse_warnings)
+            })
+        };
+
+        match result {
+            Ok((code, diag_warnings)) => (unpacked.module.filename, code, diag_warnings),
+            Err(e) => (
+                unpacked.module.filename.clone(),
+                unpacked.module.code,
+                vec![UnpackWarning::new(
+                    unpacked.module.filename,
+                    UnpackWarningKind::DecompileFailed,
+                    format!("decompile failed, preserving raw code: {e}"),
+                )],
+            ),
+        }
+    };
+
+    let triples: Vec<_> = {
+        let span = tracing::info_span!("phase2_decompile_modules");
+        let _enter = span.enter();
+        phase2_inputs
+            .into_par_iter()
+            .map(decompile_module)
+            .collect()
+    };
+
+    let mut modules = Vec::with_capacity(triples.len());
+    for (filename, code, module_warnings) in triples {
+        modules.push((filename, code));
+        warnings.extend(module_warnings);
+    }
+    if options.diagnostics && report_import_cycle_warnings {
+        warnings.extend(collect_import_cycle_warnings(&modules));
+    }
+
+    Ok(UnpackOutput { modules, warnings })
+}
+
+fn should_premerge_import_cycles(_modules: &[PreparedUnpackModule]) -> bool {
+    // Keep the pre-merge hook available for a future static validator, but do
+    // not merge only because a local import SCC exists. Native ESM cycles are
+    // often valid, while concatenating SCCs reduces split fidelity and can hide
+    // import-synthesis bugs. Remaining cycles are reported by diagnostics for
+    // non-scope-hoisted outputs.
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::should_merge_raw_import_cycles;
+    use super::*;
+    use crate::unpacker::UnpackedModule;
+
+    #[test]
+    fn import_cycle_premerge_is_currently_disabled() {
+        let modules: Vec<PreparedUnpackModule> = (0..1025)
+            .map(|index| {
+                PreparedUnpackModule::plain(UnpackedModule {
+                    id: format!("m{index}"),
+                    is_entry: index == 0,
+                    code: format!("export const m{index} = {index};"),
+                    filename: if index == 0 {
+                        "entry.js".to_string()
+                    } else {
+                        format!("m{index}.js")
+                    },
+                })
+            })
+            .collect();
+
+        assert!(
+            !should_premerge_import_cycles(&modules),
+            "huge detector/split outputs should not pay for pre-merge repair"
+        );
+        assert!(
+            !should_premerge_import_cycles(&modules[..1024]),
+            "cycle pre-merge is currently disabled even for normal-sized outputs"
+        );
+
+        let mut scope_split_modules: Vec<_> = modules[..3]
+            .iter()
+            .map(|module| {
+                PreparedUnpackModule::with_cycle_premerge(
+                    UnpackedModule {
+                        id: module.module.id.clone(),
+                        is_entry: module.module.is_entry,
+                        code: module.module.code.clone(),
+                        filename: module.module.filename.clone(),
+                    },
+                    false,
+                )
+            })
+            .collect();
+        assert!(
+            !should_premerge_import_cycles(&scope_split_modules),
+            "scope-hoisted esbuild/Bun splits opt out even when small"
+        );
+        scope_split_modules[0].allow_cycle_premerge = true;
+        assert!(
+            !should_premerge_import_cycles(&scope_split_modules),
+            "all modules in the output must opt in before premerge runs"
+        );
+
+        let raw_modules: Vec<UnpackedModule> = modules
+            .iter()
+            .take(2)
+            .map(|module| UnpackedModule {
+                id: module.module.id.clone(),
+                is_entry: module.module.is_entry,
+                code: module.module.code.clone(),
+                filename: module.module.filename.clone(),
+            })
+            .collect();
+        assert!(
+            !should_merge_raw_import_cycles(&raw_modules),
+            "raw cycle merging is also kept disabled behind its gate"
+        );
+    }
+
+    #[test]
+    fn scope_split_cycles_do_not_emit_diagnostic_warnings() {
+        let modules = vec![
+            PreparedUnpackModule::with_cycle_premerge(
+                UnpackedModule {
+                    id: "a".to_string(),
+                    is_entry: true,
+                    code: r#"import { b } from "./b.js"; export const a = b + 1;"#.to_string(),
+                    filename: "entry.js".to_string(),
+                },
+                false,
+            ),
+            PreparedUnpackModule::with_cycle_premerge(
+                UnpackedModule {
+                    id: "b".to_string(),
+                    is_entry: false,
+                    code: r#"import { a } from "./entry.js"; export const b = a + 1;"#.to_string(),
+                    filename: "b.js".to_string(),
+                },
+                false,
+            ),
+        ];
+
+        let output = unpack_multi_module_with_plan(
+            modules,
+            NumericRewritePlan::default(),
+            DecompileOptions {
+                diagnostics: true,
+                ..Default::default()
+            },
+        )
+        .expect("scope split cycle should decompile");
+
+        assert!(
+            output.warnings.is_empty(),
+            "native ESM cycles from scope splits should not produce stderr warnings: {:?}",
+            output.warnings
+        );
+    }
+
+    #[test]
+    fn multi_module_split_sequence_uses_member_name_for_assignment_temp() {
+        let modules = vec![UnpackedModule {
+            id: "1".to_string(),
+            is_entry: false,
+            code: r#"var i, a, o;
+module.exports = (a = (i = require("./module-2.js")).lib, o = a.WordArray, i.SHA1);
+"#
+            .to_string(),
+            filename: "module-1.js".to_string(),
+        }];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("fixture should decompile");
+        let code = &output.modules[0].1;
+        assert!(
+            code.contains("const lib ="),
+            "expected temp binding to use member name:\n{code}"
+        );
+        assert!(
+            !code.contains("const _a ="),
+            "should not synthesize the fallback assignment name:\n{code}"
+        );
+    }
+
+    #[test]
+    fn multi_module_preserves_lowered_interop_binding_read_until_import_recovery() {
+        let modules = vec![UnpackedModule {
+            id: "1".to_string(),
+            is_entry: false,
+            code: r#""use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+var a = require("./module-2.js"), o = (r(a), r(require("./module-3.js")));
+function r(e) {
+    return e && e.__esModule ? e : {
+        default: e
+    };
+}
+class l extends a.Component {}
+exports.default = o.default(l);
+"#
+            .to_string(),
+            filename: "module-1.js".to_string(),
+        }];
+
+        let output = unpack_multi_module(modules, DecompileOptions::default())
+            .expect("fixture should decompile");
+        let code = &output.modules[0].1;
+        assert!(
+            code.contains("import a from \"./module-2.js\";"),
+            "expected require binding to become an import:\n{code}"
+        );
+        assert!(
+            code.contains("import o from \"./module-3.js\";"),
+            "expected interop require to become an import:\n{code}"
+        );
+        assert!(
+            code.contains("a;\nclass l extends a.Component"),
+            "expected lowered interop binding read to survive until import recovery:\n{code}"
+        );
+    }
+
+    #[test]
+    fn unpack_prunes_exports_for_inlined_local_aliases() {
+        let modules = vec![UnpackedModule {
+            id: "helper".to_string(),
+            is_entry: false,
+            code: r#"
+var create = Object.create;
+function wrap(value) {
+    return create(value);
+}
+export { create, wrap };
+"#
+            .to_string(),
+            filename: "helper.js".to_string(),
+        }];
+
+        let output = unpack_multi_module(
+            modules,
+            DecompileOptions {
+                level: RewriteLevel::Standard,
+                ..Default::default()
+            },
+        )
+        .expect("module should decompile");
+        let code = &output.modules[0].1;
+
+        assert!(
+            !code.contains("create }") && !code.contains("create,"),
+            "inlined alias should not remain exported:\n{code}"
+        );
+        assert!(
+            code.contains("wrap"),
+            "live export should be preserved:\n{code}"
+        );
+    }
+
+    #[test]
+    fn normal_unpack_phase_preserves_helper_declaration_order() {
+        let modules = vec![UnpackedModule {
+            id: "entry".to_string(),
+            is_entry: true,
+            code: r#"
+setup();
+const { defineProperty } = Object;
+var helper = (target) => defineProperty({}, "x", { value: target });
+function setup() {
+    return helper;
+}
+export { helper };
+"#
+            .to_string(),
+            filename: "entry.js".to_string(),
+        }];
+
+        let output = unpack_multi_module(
+            modules,
+            DecompileOptions {
+                level: RewriteLevel::Minimal,
+                dead_code_elimination: false,
+                ..Default::default()
+            },
+        )
+        .expect("module should decompile");
+        let code = &output.modules[0].1;
+        let setup_call = code.find("setup()").expect("setup call should remain");
+        let define_property = code
+            .find("defineProperty } = Object")
+            .expect("Object destructuring helper should remain");
+        let helper = code.find("helper =").expect("helper binding should remain");
+
+        assert!(
+            setup_call < define_property && define_property < helper,
+            "normal unpack should preserve declaration order; raw runnable cleanup owns helper hoisting:\n{code}"
+        );
+    }
+}
