@@ -1,0 +1,9 @@
+# cargo-nextest configuration. https://nexte.st/docs/configuration/
+#
+# Local runs use the default profile. CI uses `--profile ci`.
+
+[profile.ci]
+# Run the whole suite and report every failure, instead of stopping at the first.
+fail-fast = false
+# Guard against a hung test wedging CI: SIGTERM after 60s, force-kill after 3 tries.
+slow-timeout = { period = "60s", terminate-after = 3 }

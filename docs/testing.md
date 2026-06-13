@@ -7,15 +7,20 @@ ordering.
 ## Running Tests
 
 ```bash
-# Run all tests
-cargo test
+# Run the full suite — prefer nextest (one global parallel pool; ~25x faster
+# than `cargo test`, which runs the 90+ test binaries sequentially)
+cargo nextest run -p wakaru-core      # core suite
+cargo nextest run --workspace         # everything
 
-# Run a specific test file
+# cargo test still works for everything, and for single-file / single-test focus
 cargo test --test my_rule_rule
-
-# Run a specific test within a file
 cargo test --test smart_inline_rule -- inline_single_use
 ```
+
+Install nextest once with `cargo install cargo-nextest --locked` (or the
+prebuilt binary from <https://get.nexte.st>). CI runs `cargo nextest run
+--workspace --profile ci` (see `.config/nextest.toml`). nextest does not run
+doctests; there are none today, but CI keeps a `cargo test --doc` guard.
 
 Snapshot drift fails the test and writes a `.snap.new` (via `INSTA_UPDATE=new`
 in `.cargo/config.toml`); accept intentional changes with `cargo insta accept`.

@@ -28,12 +28,19 @@ cargo run -p wakaru-cli -- --trace-rules path/to/module.js  # debug: per-rule di
 ## Testing
 
 ```bash
-cargo test                                     # all tests
+cargo nextest run -p wakaru-core               # full core suite (~25x faster than cargo test)
+cargo nextest run --workspace                  # everything
 cargo test -p wakaru-core --test my_rule_rule  # one test file
 cargo test -p wakaru-core --test smart_inline_rule -- inline_single_use  # one test
 cargo fmt --check                              # verify Rust formatting
 cargo clippy -p wakaru-core --all-targets -- -D warnings  # lint core changes
 ```
+
+The full suite runs much faster under [nextest](https://nexte.st) (one global
+parallel pool vs. `cargo test`'s sequential per-binary runs). Install once with
+`cargo install cargo-nextest --locked` (or `curl -LsSf https://get.nexte.st/latest/<os> | tar zxf - -C $HOME/.cargo/bin`).
+`cargo test` still works for everything; nextest does not run doctests (there
+are none today — use `cargo test --doc` if that changes).
 
 Snapshot drift **fails** the test and writes a `.snap.new` (via `INSTA_UPDATE=new`
 in `.cargo/config.toml`). Review the diff, then accept intentional changes with
