@@ -1,5 +1,14 @@
 # Helper Detection Design
 
+> **Before proposing a generic matcher to "reduce the LOC" here, read
+> [learnings/helper-detection-pattern-engine.md](learnings/helper-detection-pattern-engine.md).**
+> Replacing bespoke detection with a corpus matcher / ast-grep-style DSL /
+> skeleton-pattern engine was built, measured against real bundles, and
+> reverted: ~93% of detection is marker-based or stateful and can't be
+> expressed as a fixed pattern, and the migratable remainder is too small for a
+> shared engine to pay off. The size is the cost of the problem, not a missing
+> abstraction. Keep matchers bespoke.
+
 Design notes for detecting and restoring transpiler runtime helpers in wakaru.
 See [architecture.md](architecture.md) for overall pipeline structure and
 [rule-dependency-inventory.md](rule-dependency-inventory.md) for where helper
