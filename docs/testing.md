@@ -77,15 +77,18 @@ focused rule regression test as well.
 
 5. Fixtures, when the change can affect decompile output, unpacking, bundler
    behavior, rule ordering, helper detection, or CLI behavior. Run this only
-   if you have the sibling `wakaru-fixtures` repository checked out:
-
-   ```powershell
-   ..\wakaru-fixtures\run.ps1
-   ```
+   if you have the sibling `wakaru-fixtures` repository checked out. Run it from
+   your worktree — it auto-detects and builds this checkout, decompiles every
+   fixture into a scratch dir, and diffs against the committed reference without
+   touching the working tree:
 
    ```bash
-   ../wakaru-fixtures/run.sh
+   ../wakaru-fixtures/run.sh --check     # exits non-zero on output drift
    ```
+
+   On Windows, run the same script from Git Bash (it auto-detects `wakaru.exe`).
+   To accept a deliberate, reviewed output improvement into the reference, run
+   `../wakaru-fixtures/run.sh --update` and commit the `outputs/` change.
 
 6. Final cleanliness checks:
 
@@ -109,51 +112,42 @@ intentionally changing.
 All Cargo commands should be run from the wakaru worktree that contains the
 changes you are validating, not from the main checkout by habit. The worktree
 root is the directory that contains this repo's `Cargo.toml` and `docs/`
-directory.
+directory. (On Windows, use Git Bash so the same commands work.)
 
-```powershell
-cd ..\wakaru-my-worktree
-cargo test -p wakaru-core --test my_rule_rule
+```bash
+cd ../wakaru-my-worktree
+cargo nextest run -p wakaru-core
 cargo clippy -p wakaru-core --all-targets -- -D warnings
 ```
 
 When a reproduction matrix needs a `WAKARU` binary, build and point to the
 binary in the same worktree:
 
-```powershell
-cd ..\wakaru-my-worktree
+```bash
+cd ../wakaru-my-worktree
 cargo build --profile dev-release -p wakaru-cli
-$env:WAKARU = "$PWD\target\dev-release\wakaru.exe"
-node scripts\repro\array-spread-rest-matrix\matrix.mjs --details
+export WAKARU="$PWD/target/dev-release/wakaru"   # wakaru.exe on Windows
+node scripts/repro/array-spread-rest-matrix/matrix.mjs --details
 ```
 
-Do not reuse `target\dev-release\wakaru.exe` from another checkout unless you
-are intentionally comparing against that checkout. A stale binary from `main`
-can make a matrix pass or fail for the wrong code.
+Do not reuse a `target/dev-release/wakaru` binary from another checkout unless
+you are intentionally comparing against that checkout. A stale binary from
+`main` can make a matrix pass or fail for the wrong code.
 
-Fixture runs are launched from the wakaru worktree under test, but they write
-outputs and `report.txt` in the sibling `wakaru-fixtures` repository:
-
-```powershell
-cd ..\wakaru-my-worktree
-..\wakaru-fixtures\run.ps1
-```
+Fixtures are validated from the wakaru worktree under test. `run.sh`
+auto-detects the worktree you launch it from and builds *that* checkout, so you
+do not need to set `WAKARU` or worry about a stale binary:
 
 ```bash
 cd ../wakaru-my-worktree
-../wakaru-fixtures/run.sh
+../wakaru-fixtures/run.sh --check
 ```
 
-After fixtures finish, check both repositories:
-
-```powershell
-git -C ..\wakaru-my-worktree status --short
-git -C ..\wakaru-fixtures status --short
-```
-
-If `wakaru-fixtures\report.txt` changed only because of timestamp, commit hash,
-or timing noise and the fixture run reported no output diff, restore it instead
-of committing run metadata.
+By default this writes to a scratch dir and diffs against the committed reference,
+leaving both working trees clean — so it is safe to run from several worktrees
+at once. It only modifies `wakaru-fixtures/outputs/` (and `report.txt`) when you
+pass `--update` to accept a reviewed output improvement; commit that change in
+the fixtures repo.
 
 ## Test Organization
 
