@@ -1,15 +1,15 @@
 use std::collections::HashSet;
 
 use swc_core::ecma::ast::{
-    ArrowExpr, AssignTarget, BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, FnExpr, Lit,
-    MemberExpr, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget, Stmt, VarDeclarator,
+    AssignTarget, Callee, Decl, Expr, Lit, MemberProp, Module, ModuleItem, Pat, SimpleAssignTarget,
+    Stmt, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::transpiler_helper_utils::{
-    remove_helper_declarations, BindingKey, LocalHelperContext, TranspilerHelperKind,
+    classify_inline_helper_call, remove_helper_declarations, BindingKey, LocalHelperContext,
+    TranspilerHelperKind,
 };
-use crate::utils::paren::strip_parens;
 
 /// Detects and unwraps `interopRequireDefault` helper calls.
 ///
@@ -232,204 +232,26 @@ fn unwrap_inline_interop_iifes(module: &mut Module, affected: &mut HashSet<Bindi
             let Some(init) = &declarator.init else {
                 continue;
             };
-            if let Some((inner_arg, kind)) = extract_inline_interop_arg_with_kind(init) {
-                // Only strip `.default` for the default interop, not wildcard
-                if kind == InteropKind::Default {
+            let Expr::Call(call) = init.as_ref() else {
+                continue;
+            };
+            let Some((kind, inner_arg)) = classify_inline_helper_call(call) else {
+                continue;
+            };
+            // Only strip `.default` for the default interop, not wildcard.
+            match kind {
+                TranspilerHelperKind::InteropRequireDefault => {
                     let key = (binding.id.sym.clone(), binding.id.ctxt);
                     affected.insert(key);
                 }
-                declarator.init = Some(inner_arg);
+                TranspilerHelperKind::InteropRequireWildcard => {}
+                // Other helper IIFEs are handled by their own rules.
+                _ => continue,
             }
+            let inner_arg = Box::new(inner_arg.clone());
+            declarator.init = Some(inner_arg);
         }
     }
-}
-
-/// Extract the IIFE argument and interop kind from an inline interop expression.
-fn extract_inline_interop_arg_with_kind(expr: &Expr) -> Option<(Box<Expr>, InteropKind)> {
-    let Expr::Call(CallExpr {
-        callee: Callee::Expr(callee),
-        args,
-        ..
-    }) = expr
-    else {
-        return None;
-    };
-    if args.len() != 1 || args[0].spread.is_some() {
-        return None;
-    }
-
-    // Unwrap parens around the callee
-    let callee = strip_parens(callee);
-
-    match callee {
-        Expr::Arrow(ArrowExpr { body, params, .. }) if params.len() == 1 => match &**body {
-            BlockStmtOrExpr::BlockStmt(block) => {
-                let kind = classify_interop_body(&block.stmts)?;
-                Some((args[0].expr.clone(), kind))
-            }
-            BlockStmtOrExpr::Expr(expr) => {
-                let kind = classify_interop_expr(expr)?;
-                Some((args[0].expr.clone(), kind))
-            }
-        },
-        Expr::Fn(FnExpr { function, .. }) if function.params.len() == 1 => {
-            let stmts = function.body.as_ref()?.stmts.as_slice();
-            let kind = classify_interop_body(stmts)?;
-            Some((args[0].expr.clone(), kind))
-        }
-        _ => None,
-    }
-}
-
-#[derive(PartialEq)]
-enum InteropKind {
-    /// `if (e.__esModule) return e; return { default: e }` — strips `.default`
-    Default,
-    /// `if (e.__esModule) return e; ... t.default = e; return t` — namespace import, no `.default` strip
-    Wildcard,
-}
-
-/// Check if an expression matches the ternary interop pattern:
-/// `e && e.__esModule ? e : { default: e }`
-fn classify_interop_expr(expr: &Expr) -> Option<InteropKind> {
-    let Expr::Cond(cond) = expr else {
-        return None;
-    };
-    if is_esmodule_check(&cond.test) && is_default_object_expr(&cond.alt) {
-        return Some(InteropKind::Default);
-    }
-    None
-}
-
-/// Check if the function body matches an __esModule interop pattern.
-fn classify_interop_body(stmts: &[Stmt]) -> Option<InteropKind> {
-    if stmts.is_empty() {
-        return None;
-    }
-
-    // Ternary form (1 stmt): return e && e.__esModule ? e : { default: e }
-    if stmts.len() == 1 {
-        let Stmt::Return(ret) = &stmts[0] else {
-            return None;
-        };
-        let Some(arg) = &ret.arg else {
-            return None;
-        };
-        let Expr::Cond(cond) = &**arg else {
-            return None;
-        };
-        if is_esmodule_check(&cond.test) && is_default_object_expr(&cond.alt) {
-            return Some(InteropKind::Default);
-        }
-        return None;
-    }
-
-    // First statement must be: if (e && e.__esModule) { return e; }
-    let Stmt::If(if_stmt) = &stmts[0] else {
-        return None;
-    };
-    if !is_esmodule_check(&if_stmt.test) {
-        return None;
-    }
-
-    if stmts.len() == 2 {
-        // Default pattern: return { default: e }
-        let Stmt::Return(ret) = &stmts[1] else {
-            return None;
-        };
-        let Some(arg) = &ret.arg else {
-            return None;
-        };
-        let Expr::Object(obj) = &**arg else {
-            return None;
-        };
-        if obj.props.len() != 1 {
-            return None;
-        }
-        let swc_core::ecma::ast::PropOrSpread::Prop(prop) = &obj.props[0] else {
-            return None;
-        };
-        let swc_core::ecma::ast::Prop::KeyValue(kv) = &**prop else {
-            return None;
-        };
-        if matches!(&kv.key, swc_core::ecma::ast::PropName::Ident(id) if id.sym.as_ref() == "default")
-        {
-            return Some(InteropKind::Default);
-        }
-        return None;
-    }
-
-    // Wildcard pattern (3+ stmts): copies all props, sets .default, returns namespace object.
-    // Require: penultimate stmt is `t.default = e` (the defining feature of wildcard interop).
-    if stmts.len() >= 3 {
-        let Stmt::Return(ret) = stmts.last()? else {
-            return None;
-        };
-        ret.arg.as_ref()?;
-        // Check penultimate: must be `X.default = Y`
-        let penultimate = &stmts[stmts.len() - 2];
-        if is_default_assignment(penultimate) {
-            return Some(InteropKind::Wildcard);
-        }
-    }
-
-    None
-}
-
-/// Check if expression matches `e && e.__esModule`
-fn is_esmodule_check(expr: &Expr) -> bool {
-    let Expr::Bin(bin) = expr else {
-        return false;
-    };
-    if bin.op != swc_core::ecma::ast::BinaryOp::LogicalAnd {
-        return false;
-    }
-    // right must be X.__esModule
-    let Expr::Member(MemberExpr {
-        prop: MemberProp::Ident(prop),
-        ..
-    }) = &*bin.right
-    else {
-        return false;
-    };
-    prop.sym.as_ref() == "__esModule"
-}
-
-/// Check if a statement is `X.default = Y` (the wildcard interop's namespace default assignment).
-fn is_default_assignment(stmt: &Stmt) -> bool {
-    let Stmt::Expr(swc_core::ecma::ast::ExprStmt { expr, .. }) = stmt else {
-        return false;
-    };
-    let Expr::Assign(assign) = &**expr else {
-        return false;
-    };
-    let swc_core::ecma::ast::AssignTarget::Simple(swc_core::ecma::ast::SimpleAssignTarget::Member(
-        member,
-    )) = &assign.left
-    else {
-        return false;
-    };
-    is_default_prop(&member.prop)
-}
-
-/// Check if expression matches `{ default: <anything> }`
-fn is_default_object_expr(expr: &Expr) -> bool {
-    let Expr::Object(obj) = expr else {
-        return false;
-    };
-    if obj.props.len() != 1 {
-        return false;
-    }
-    let swc_core::ecma::ast::PropOrSpread::Prop(prop) = &obj.props[0] else {
-        return false;
-    };
-    let swc_core::ecma::ast::Prop::KeyValue(kv) = &**prop else {
-        return false;
-    };
-    matches!(
-        &kv.key,
-        swc_core::ecma::ast::PropName::Ident(id) if id.sym.as_ref() == "default"
-    )
 }
 
 fn is_default_prop(prop: &MemberProp) -> bool {

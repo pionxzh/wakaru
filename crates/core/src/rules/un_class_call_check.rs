@@ -1,11 +1,11 @@
-use swc_core::ecma::ast::{
-    ArrowExpr, BinaryOp, BlockStmtOrExpr, Callee, Expr, FnExpr, Module, ModuleItem, Stmt, UnaryOp,
-};
+use swc_core::ecma::ast::{Callee, Expr, Module, ModuleItem, Stmt, UnaryOp};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::transpiler_helper_utils::{
-    remove_helpers_without_remaining_refs, BindingKey, LocalHelperContext, TranspilerHelperKind,
+    classify_inline_callable, remove_helpers_without_remaining_refs, BindingKey,
+    LocalHelperContext, TranspilerHelperKind,
 };
+use crate::utils::paren::strip_parens;
 
 /// Removes `_classCallCheck(this, Foo)` calls and equivalent inline IIFEs.
 ///
@@ -120,6 +120,10 @@ impl VisitMut for InlineIifeRemover {
 /// - `!((e, t) => { if (!(e instanceof t)) throw TypeError(...) })(this, Foo)`
 /// - `((e, t) => { if (!(e instanceof t)) throw TypeError(...) })(this, Foo)`
 /// - Same with `function` expression instead of arrow
+///
+/// The body-shape recognition is delegated to the shared helper-detection
+/// module ([`classify_inline_callable`]); this function only validates the
+/// call-site framing (optional `!`, two args, first is `this`).
 fn is_inline_class_call_check(stmt: &Stmt) -> bool {
     let Stmt::Expr(expr_stmt) = stmt else {
         return false;
@@ -144,95 +148,11 @@ fn is_inline_class_call_check(stmt: &Stmt) -> bool {
         return false;
     }
 
-    // Callee must be a paren-wrapped arrow or function expression
-    let callee_expr = match &call.callee {
-        Callee::Expr(e) => e.as_ref(),
-        _ => return false,
-    };
-
-    // Strip optional Paren wrapper
-    let callee_inner = match callee_expr {
-        Expr::Paren(p) => p.expr.as_ref(),
-        other => other,
-    };
-
-    match callee_inner {
-        Expr::Arrow(arrow) => is_class_call_check_arrow_body(arrow),
-        Expr::Fn(fn_expr) => is_class_call_check_fn_body(fn_expr),
-        _ => false,
-    }
-}
-
-/// Check if an arrow function body matches the classCallCheck pattern:
-/// `(e, t) => { if (!(e instanceof t)) { throw new TypeError("...") } }`
-fn is_class_call_check_arrow_body(arrow: &ArrowExpr) -> bool {
-    if arrow.params.len() != 2 {
-        return false;
-    }
-    match &*arrow.body {
-        BlockStmtOrExpr::BlockStmt(block) => is_class_call_check_stmts(&block.stmts),
-        _ => false,
-    }
-}
-
-/// Check if a function expression body matches the classCallCheck pattern.
-fn is_class_call_check_fn_body(fn_expr: &FnExpr) -> bool {
-    if fn_expr.function.params.len() != 2 {
-        return false;
-    }
-    let Some(body) = &fn_expr.function.body else {
-        return false;
-    };
-    is_class_call_check_stmts(&body.stmts)
-}
-
-/// Check if statements match: `if (!(e instanceof t)) { throw new TypeError("...") }`
-fn is_class_call_check_stmts(stmts: &[Stmt]) -> bool {
-    if stmts.len() != 1 {
-        return false;
-    }
-    let Stmt::If(if_stmt) = &stmts[0] else {
+    // Callee must be a paren-wrapped arrow or function expression whose body
+    // matches the classCallCheck shape.
+    let Callee::Expr(callee) = &call.callee else {
         return false;
     };
 
-    // Test: !(e instanceof t)
-    let Expr::Unary(unary) = if_stmt.test.as_ref() else {
-        return false;
-    };
-    if unary.op != UnaryOp::Bang {
-        return false;
-    }
-    // May be wrapped in parens
-    let inner = match unary.arg.as_ref() {
-        Expr::Paren(p) => p.expr.as_ref(),
-        other => other,
-    };
-    if !matches!(inner, Expr::Bin(bin) if bin.op == BinaryOp::InstanceOf) {
-        return false;
-    }
-
-    // Consequent must contain a throw with TypeError
-    has_throw_type_error(&if_stmt.cons)
-}
-
-/// Check if a statement (or block) contains `throw new TypeError(...)`.
-fn has_throw_type_error(stmt: &Stmt) -> bool {
-    match stmt {
-        Stmt::Throw(throw) => is_new_type_error(&throw.arg),
-        Stmt::Block(block) => {
-            block.stmts.len() == 1
-                && matches!(&block.stmts[0], Stmt::Throw(t) if is_new_type_error(&t.arg))
-        }
-        _ => false,
-    }
-}
-
-fn is_new_type_error(expr: &Expr) -> bool {
-    let Expr::New(new_expr) = expr else {
-        return false;
-    };
-    let Expr::Ident(id) = new_expr.callee.as_ref() else {
-        return false;
-    };
-    id.sym.as_ref() == "TypeError"
+    classify_inline_callable(strip_parens(callee)) == Some(TranspilerHelperKind::ClassCallCheck)
 }

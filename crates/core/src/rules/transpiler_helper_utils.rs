@@ -1420,6 +1420,94 @@ fn prop_name_ident(key: &PropName) -> Option<Atom> {
     }
 }
 
+/// Build an equivalent [`Function`] from a single inline callable expression
+/// (`function(...) {...}` or `(...) => {...}`) so the body-shape matchers used
+/// for declaration scanning can be reused at expression sites.
+///
+/// Returns `None` for arrows with an expression body — callers that need to
+/// match those handle the expression form separately (see
+/// [`classify_inline_helper_call`]).
+fn function_from_inline_callable(expr: &Expr) -> Option<Function> {
+    match strip_parens(expr) {
+        Expr::Fn(fn_expr) => Some((*fn_expr.function).clone()),
+        Expr::Arrow(arrow) => {
+            let BlockStmtOrExpr::BlockStmt(block) = arrow.body.as_ref() else {
+                return None;
+            };
+            Some(Function {
+                params: arrow
+                    .params
+                    .iter()
+                    .map(|p| swc_core::ecma::ast::Param {
+                        span: DUMMY_SP,
+                        decorators: vec![],
+                        pat: p.clone(),
+                    })
+                    .collect(),
+                decorators: vec![],
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                body: Some(block.clone()),
+                is_generator: arrow.is_generator,
+                is_async: arrow.is_async,
+                type_params: None,
+                return_type: None,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Classify an inline helper IIFE such as
+/// `((e) => e && e.__esModule ? e : { default: e })(x)` by the shape of its
+/// callee, reusing the same body-shape matchers that detect module-level
+/// helper declarations.
+///
+/// Returns the detected [`TranspilerHelperKind`] together with the single
+/// argument the IIFE is applied to, when the call has exactly one non-spread
+/// argument. The body-shape recognition lives in one place and is shared
+/// between declaration scanning and inline-expression detection.
+pub(crate) fn classify_inline_helper_call(
+    call: &CallExpr,
+) -> Option<(TranspilerHelperKind, &Expr)> {
+    if call.args.len() != 1 || call.args[0].spread.is_some() {
+        return None;
+    }
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let kind = classify_inline_callable(strip_parens(callee))?;
+    Some((kind, call.args[0].expr.as_ref()))
+}
+
+/// Classify a single inline callable expression (arrow or function expression)
+/// by helper body shape. Inline helpers are self-contained at the call site
+/// and never dispatch to sibling Babel sub-helpers, so sub-helper dispatch
+/// chains are not accepted here (`has_sub_helpers = false`).
+pub(crate) fn classify_inline_callable(callee: &Expr) -> Option<TranspilerHelperKind> {
+    // Arrow expression bodies (e.g. `(e) => e && e.__esModule ? e : {default: e}`)
+    // are only used by interopRequireDefault; reuse the same matcher path the
+    // declaration scanner uses for arrow expression bodies.
+    if let Expr::Arrow(arrow) = callee {
+        if let BlockStmtOrExpr::Expr(expr) = arrow.body.as_ref() {
+            if arrow.params.len() == 1 {
+                if let Pat::Ident(param) = &arrow.params[0] {
+                    let mut ctx = MatchContext::new();
+                    let param_key = binding_key(&param.id);
+                    ctx.declare("obj", param_key.0, param_key.1);
+                    if matches_ternary_expr(expr, &ctx) {
+                        return Some(TranspilerHelperKind::InteropRequireDefault);
+                    }
+                }
+            }
+            return None;
+        }
+    }
+
+    let func = function_from_inline_callable(callee)?;
+    detect_helper_from_fn(&func, false)
+}
+
 fn detect_helper_from_arrow(
     arrow: &swc_core::ecma::ast::ArrowExpr,
     has_sub_helpers: bool,
@@ -4857,6 +4945,197 @@ mod tests {
                 }"#,
             );
             assert!(is_object_without_properties_fn(&f));
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Inline (expression-site) helper detection
+    //
+    // These exercise `classify_inline_helper_call` directly so the shared
+    // body-shape recognition is unit-tested independent of the rules that
+    // consume it. Each test wraps a helper body in an IIFE: `(<callee>)(arg)`.
+    // -----------------------------------------------------------------------
+
+    /// Parse `var x = <call>;` and return the init call expression.
+    fn parse_first_call(code: &str) -> CallExpr {
+        let module = parse_module(code);
+        for item in &module.body {
+            if let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item {
+                if let Some(Expr::Call(call)) = var.decls.first().and_then(|d| d.init.as_deref()) {
+                    return call.clone();
+                }
+            }
+        }
+        panic!("no call expression found in source");
+    }
+
+    fn classify_first_call(code: &str) -> Option<TranspilerHelperKind> {
+        let call = parse_first_call(code);
+        classify_inline_helper_call(&call).map(|(kind, _)| kind)
+    }
+
+    /// Classify the callee of the first call expression directly, regardless of
+    /// argument count. Mirrors how multi-argument call sites (classCallCheck,
+    /// objectWithoutProperties) invoke the shared API.
+    fn classify_first_callee(code: &str) -> Option<TranspilerHelperKind> {
+        let call = parse_first_call(code);
+        let Callee::Expr(callee) = &call.callee else {
+            panic!("expected expression callee");
+        };
+        classify_inline_callable(strip_parens(callee))
+    }
+
+    #[test]
+    fn inline_interop_default_ternary_arrow() {
+        GLOBALS.set(&Globals::new(), || {
+            assert_eq!(
+                classify_first_call(
+                    r#"var x = ((e) => e && e.__esModule ? e : { default: e })(req);"#
+                ),
+                Some(TranspilerHelperKind::InteropRequireDefault)
+            );
+        });
+    }
+
+    #[test]
+    fn inline_interop_default_ternary_return_block() {
+        GLOBALS.set(&Globals::new(), || {
+            assert_eq!(
+                classify_first_call(
+                    r#"var x = (function(e) {
+                        return e && e.__esModule ? e : { default: e };
+                    })(req);"#
+                ),
+                Some(TranspilerHelperKind::InteropRequireDefault)
+            );
+        });
+    }
+
+    #[test]
+    fn inline_interop_default_if_return_arrow() {
+        GLOBALS.set(&Globals::new(), || {
+            assert_eq!(
+                classify_first_call(
+                    r#"var x = ((e) => {
+                        if (e && e.__esModule) { return e; }
+                        return { default: e };
+                    })(req);"#
+                ),
+                Some(TranspilerHelperKind::InteropRequireDefault)
+            );
+        });
+    }
+
+    #[test]
+    fn inline_interop_wildcard() {
+        GLOBALS.set(&Globals::new(), || {
+            assert_eq!(
+                classify_first_call(
+                    r#"var x = ((e) => {
+                        if (e && e.__esModule) { return e; }
+                        var t = {};
+                        if (e != null) {
+                            for (var n in e) {
+                                if (Object.prototype.hasOwnProperty.call(e, n)) { t[n] = e[n]; }
+                            }
+                        }
+                        t.default = e;
+                        return t;
+                    })(req);"#
+                ),
+                Some(TranspilerHelperKind::InteropRequireWildcard)
+            );
+        });
+    }
+
+    #[test]
+    fn inline_class_call_check_arrow() {
+        GLOBALS.set(&Globals::new(), || {
+            assert_eq!(
+                classify_first_callee(
+                    r#"var x = ((e, t) => {
+                        if (!(e instanceof t)) { throw new TypeError("Cannot call a class as a function"); }
+                    })(this, Foo);"#
+                ),
+                Some(TranspilerHelperKind::ClassCallCheck)
+            );
+        });
+    }
+
+    #[test]
+    fn inline_class_call_check_fn_expr() {
+        GLOBALS.set(&Globals::new(), || {
+            assert_eq!(
+                classify_first_callee(
+                    r#"var x = (function(e, t) {
+                        if (!(e instanceof t)) { throw new TypeError("nope"); }
+                    })(this, Foo);"#
+                ),
+                Some(TranspilerHelperKind::ClassCallCheck)
+            );
+        });
+    }
+
+    #[test]
+    fn inline_object_without_properties() {
+        GLOBALS.set(&Globals::new(), || {
+            assert_eq!(
+                classify_first_callee(
+                    r#"var x = ((e, t) => {
+                        var n = {};
+                        for (var r in e) {
+                            t.indexOf(r) >= 0 || Object.prototype.hasOwnProperty.call(e, r) && (n[r] = e[r]);
+                        }
+                        return n;
+                    })(obj, ["a", "b"]);"#
+                ),
+                Some(TranspilerHelperKind::ObjectWithoutProperties)
+            );
+        });
+    }
+
+    #[test]
+    fn inline_helper_rejects_non_helper_iife() {
+        GLOBALS.set(&Globals::new(), || {
+            // __esModule guard with side effects + fallback is NOT an interop helper.
+            assert_eq!(
+                classify_first_call(
+                    r#"var x = ((e) => {
+                        if (e && e.__esModule) { return e; }
+                        sideEffect(e);
+                        return fallback;
+                    })(input);"#
+                ),
+                None
+            );
+            // Ordinary arithmetic IIFE.
+            assert_eq!(
+                classify_first_call(r#"var x = ((e) => { var a = e + 1; return a * 2; })(42);"#),
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn inline_helper_rejects_multiple_args() {
+        GLOBALS.set(&Globals::new(), || {
+            // classify_inline_helper_call requires exactly one argument; the
+            // two-arg classCallCheck/OWP framing is validated by the call sites.
+            let call = parse_first_call(
+                r#"var x = ((e, t) => {
+                    if (!(e instanceof t)) { throw new TypeError("nope"); }
+                })(this, Foo);"#,
+            );
+            assert!(classify_inline_helper_call(&call).is_none());
+            // ...but classifying the callable directly still recognizes the shape.
+            if let Callee::Expr(callee) = &call.callee {
+                assert_eq!(
+                    classify_inline_callable(strip_parens(callee)),
+                    Some(TranspilerHelperKind::ClassCallCheck)
+                );
+            } else {
+                panic!("expected expression callee");
+            }
         });
     }
 }
