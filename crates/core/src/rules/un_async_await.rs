@@ -9,7 +9,7 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::helper_matcher::binding_key;
+use super::helper_matcher::{binding_key, ident_matches_binding};
 use super::rename_utils::BindingId;
 use super::transpiler_helper_utils::{BindingKey, LocalHelperContext, TsHelperKind};
 use crate::js_names::is_likely_generated_alias;
@@ -57,6 +57,7 @@ impl VisitMut for UnAsyncAwaitWithHelpers<'_> {
 struct AsyncHelperContext {
     awaiter_helpers: HashSet<BindingKey>,
     generator_helpers: HashSet<BindingKey>,
+    values_helpers: HashSet<BindingKey>,
     unresolved_mark: Option<Mark>,
 }
 
@@ -68,6 +69,7 @@ impl AsyncHelperContext {
         Self {
             awaiter_helpers: local_helpers.ts_helpers_of_kind(TsHelperKind::Awaiter),
             generator_helpers: local_helpers.ts_helpers_of_kind(TsHelperKind::Generator),
+            values_helpers: local_helpers.ts_helpers_of_kind(TsHelperKind::Values),
             unresolved_mark,
         }
     }
@@ -135,6 +137,7 @@ pub(crate) fn try_transform_ts_generator_body(
     let helpers = AsyncHelperContext {
         awaiter_helpers: HashSet::new(),
         generator_helpers: generator_helpers.iter().cloned().collect(),
+        values_helpers: HashSet::new(),
         unresolved_mark: None,
     };
     try_transform_generator(body, &helpers)
@@ -201,10 +204,14 @@ fn extract_generator_stmts(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<V
     let mut stmts = body.stmts.into_iter();
     let first = stmts.next()?;
     if let Stmt::Switch(sw) = first {
-        return Some(decode_state_machine(state_name, sw.cases));
+        return Some(decode_state_machine(
+            state_name,
+            sw.cases,
+            &helpers.values_helpers,
+        ));
     }
     if stmts.next().is_none() {
-        if let Some(decoded) = decode_return_opcode(&first) {
+        if let Some(decoded) = decode_return_opcode(&first, &helpers.values_helpers) {
             return Some(decoded.into_iter().collect());
         }
     }
@@ -219,7 +226,11 @@ fn extract_generator_stmts(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<V
 ///   - `v = _a.sent()` → pop prev `yield X;`, push `v = yield X;`
 ///
 /// Phase 3: Group by label and reconstruct try/catch/finally blocks.
-fn decode_state_machine(state_name: Atom, cases: Vec<SwitchCase>) -> Vec<Stmt> {
+fn decode_state_machine(
+    state_name: Atom,
+    cases: Vec<SwitchCase>,
+    values_helpers: &HashSet<BindingKey>,
+) -> Vec<Stmt> {
     let mut trys: Vec<[Option<usize>; 4]> = Vec::new();
     // (label_idx, stmt) pairs
     let mut flat: Vec<(usize, Stmt)> = Vec::new();
@@ -239,7 +250,7 @@ fn decode_state_machine(state_name: Atom, cases: Vec<SwitchCase>) -> Vec<Stmt> {
                 continue;
             }
 
-            if let Some(decoded) = decode_return_opcode(stmt) {
+            if let Some(decoded) = decode_return_opcode(stmt, values_helpers) {
                 if let Some(s) = decoded {
                     flat.push((idx, s));
                 }
@@ -252,25 +263,38 @@ fn decode_state_machine(state_name: Atom, cases: Vec<SwitchCase>) -> Vec<Stmt> {
 
     // Phase 2: merge _a.sent() with previous yield
     let mut output: Vec<(usize, Stmt)> = Vec::new();
+    // Catch-region temps. TSC lowers `catch (error)` to a function-scoped temp
+    // assigned from `_a.sent()` (`error_1 = _a.sent(); use(error_1)`). We fold
+    // that alias back into the synthesized `error` catch binding.
+    let mut catch_aliases: Vec<BindingKey> = Vec::new();
     for (idx, stmt) in flat {
         if is_standalone_sent(&state_name, &stmt) {
             // Standalone _a.sent(); — the caller discards the yielded value. Drop.
             continue;
         }
-        if stmt_uses_sent(&state_name, &stmt) {
-            if is_catch_label(idx, &trys) {
-                let mut replacer = SentReplacer {
-                    state_name: state_name.clone(),
-                    replacement: Box::new(Expr::Ident(Ident::new_no_ctxt(
-                        "error".into(),
-                        DUMMY_SP,
-                    ))),
-                };
-                let mut s = stmt;
-                s.visit_mut_with(&mut replacer);
-                output.push((idx, s));
+        let in_catch = is_catch_label(idx, &trys);
+        if !in_catch {
+            catch_aliases.clear();
+        }
+        if in_catch {
+            // `error_1 = _a.sent()` aliases the caught value. Record it and drop
+            // the assignment; later references resolve to the `error` binding.
+            if let Some(alias) = catch_sent_alias(&state_name, &stmt) {
+                catch_aliases.push(alias);
                 continue;
             }
+            // Rewrite both `_a.sent()` and any recorded alias to `error`.
+            let mut replacer = CatchValueReplacer {
+                state_name: state_name.clone(),
+                aliases: catch_aliases.clone(),
+                replacement: Box::new(Expr::Ident(Ident::new_no_ctxt("error".into(), DUMMY_SP))),
+            };
+            let mut s = stmt;
+            s.visit_mut_with(&mut replacer);
+            output.push((idx, s));
+            continue;
+        }
+        if stmt_uses_sent(&state_name, &stmt) {
             if let Some((_, prev)) = output.last() {
                 if let Some(split) = split_sent_consuming_stmt(&state_name, &stmt, prev) {
                     output.pop();
@@ -564,6 +588,23 @@ fn is_sent_call(state_name: &Atom, expr: &Expr) -> bool {
         && is_ident_prop(&mem.prop, "sent")
 }
 
+/// Match `ident = _a.sent()` inside a catch region, returning the aliased
+/// local binding. TSC stores the caught value in a function-scoped temp before
+/// using it; we fold that temp into the reconstructed catch binding.
+fn catch_sent_alias(state_name: &Atom, stmt: &Stmt) -> Option<BindingKey> {
+    let Stmt::Expr(ExprStmt { expr, .. }) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign || !is_sent_call(state_name, &assign.right) {
+        return None;
+    }
+    let ident = assign.left.as_simple()?.as_ident()?;
+    Some(binding_key(&ident.id))
+}
+
 fn is_standalone_sent(state_name: &Atom, stmt: &Stmt) -> bool {
     if let Stmt::Expr(ExprStmt { expr, .. }) = stmt {
         if let Expr::Call(call) = expr.as_ref() {
@@ -653,7 +694,7 @@ fn is_state_label_assign(state_name: &Atom, stmt: &Stmt) -> bool {
 
 /// Returns `Some(Some(stmt))` if an opcode-based return was decoded,
 /// `Some(None)` to drop the statement, or `None` if not a return opcode.
-fn decode_return_opcode(stmt: &Stmt) -> Option<Option<Stmt>> {
+fn decode_return_opcode(stmt: &Stmt, values_helpers: &HashSet<BindingKey>) -> Option<Option<Stmt>> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = ret.arg.as_ref()?;
     let Expr::Array(arr) = arg.as_ref() else {
@@ -702,12 +743,14 @@ fn decode_return_opcode(stmt: &Stmt) -> Option<Option<Stmt>> {
         }
         5 => {
             // yield*(value)
-            let expr = argument.map(unwrap_ts_values).unwrap_or_else(|| {
-                Box::new(Expr::Ident(Ident::new_no_ctxt(
-                    "undefined".into(),
-                    DUMMY_SP,
-                )))
-            });
+            let expr = argument
+                .map(|a| unwrap_ts_values(a, values_helpers))
+                .unwrap_or_else(|| {
+                    Box::new(Expr::Ident(Ident::new_no_ctxt(
+                        "undefined".into(),
+                        DUMMY_SP,
+                    )))
+                });
             Some(Some(Stmt::Expr(ExprStmt {
                 span: DUMMY_SP,
                 expr: Box::new(Expr::Yield(YieldExpr {
@@ -722,7 +765,7 @@ fn decode_return_opcode(stmt: &Stmt) -> Option<Option<Stmt>> {
     }
 }
 
-fn unwrap_ts_values(expr: Box<Expr>) -> Box<Expr> {
+fn unwrap_ts_values(expr: Box<Expr>, values_helpers: &HashSet<BindingKey>) -> Box<Expr> {
     let Expr::Call(call) = expr.as_ref() else {
         return expr;
     };
@@ -732,7 +775,11 @@ fn unwrap_ts_values(expr: Box<Expr>) -> Box<Expr> {
     let Expr::Ident(id) = callee.as_ref() else {
         return expr;
     };
-    if matches!(id.sym.as_ref(), "__values" | "_ts_values") {
+    // Match either a detected `__values` / `_ts_values` binding (robust to
+    // minified aliases) or the canonical helper names.
+    let is_values_helper = values_helpers.contains(&binding_key(id))
+        || matches!(id.sym.as_ref(), "__values" | "_ts_values");
+    if is_values_helper {
         return call
             .args
             .first()
@@ -791,6 +838,44 @@ impl VisitMut for SentReplacer {
                         return;
                     }
                 }
+            }
+        }
+        expr.visit_mut_children_with(self);
+    }
+}
+
+/// Replaces `_a.sent()` and any recorded catch-temp aliases with the catch
+/// binding inside a reconstructed catch body.
+struct CatchValueReplacer {
+    state_name: Atom,
+    aliases: Vec<BindingKey>,
+    replacement: Box<Expr>,
+}
+
+impl VisitMut for CatchValueReplacer {
+    fn visit_mut_function(&mut self, _func: &mut Function) {}
+
+    fn visit_mut_arrow_expr(&mut self, _arrow: &mut ArrowExpr) {}
+
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if let Expr::Call(call) = expr {
+            if let Some(mem) = call.callee.as_expr().and_then(|e| e.as_member()) {
+                if let Expr::Ident(id) = mem.obj.as_ref() {
+                    if id.sym == self.state_name && is_ident_prop(&mem.prop, "sent") {
+                        *expr = *self.replacement.clone();
+                        return;
+                    }
+                }
+            }
+        }
+        if let Expr::Ident(id) = expr {
+            if self
+                .aliases
+                .iter()
+                .any(|key| ident_matches_binding(id, key))
+            {
+                *expr = *self.replacement.clone();
+                return;
             }
         }
         expr.visit_mut_children_with(self);
@@ -1174,8 +1259,14 @@ fn remove_unused_inline_async_helpers(
     module: &mut swc_core::ecma::ast::Module,
     local_helpers: &LocalHelperContext,
 ) {
-    local_helpers
-        .remove_unused_inline_ts_helpers(module, &[TsHelperKind::Awaiter, TsHelperKind::Generator]);
+    local_helpers.remove_unused_inline_ts_helpers(
+        module,
+        &[
+            TsHelperKind::Awaiter,
+            TsHelperKind::Generator,
+            TsHelperKind::Values,
+        ],
+    );
 }
 
 fn collect_awaiter_param_hints(

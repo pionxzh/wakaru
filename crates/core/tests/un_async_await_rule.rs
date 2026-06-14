@@ -92,6 +92,52 @@ function* read_all(source) {
 }
 
 #[test]
+fn generator_yield_star_unwraps_minified_values_helper() {
+    // After minification the `__values` / `_ts_values` wrapper loses its name,
+    // but the helper body shape (single iterable param, `Symbol.iterator`,
+    // `TypeError`) is preserved. The delegate-yield opcode must still strip it
+    // and the now-dead helper must be removed.
+    let input = r#"
+function v(o) {
+  var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
+  if (m) return m.call(o);
+  if (o && typeof o.length === "number") return {
+    next: function() {
+      if (o && i >= o.length) o = void 0;
+      return { value: o && o[i++], done: !o };
+    }
+  };
+  throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+}
+function read_all(source) {
+  return __generator(this, function (_a) {
+    switch (_a.label) {
+      case 0:
+        return [4 /*yield*/, start_read(source)];
+      case 1:
+        _a.sent();
+        return [5 /*yield**/, v(read_chunks(source))];
+      case 2:
+        _a.sent();
+        return [4 /*yield*/, finish_read(source)];
+      case 3:
+        return [2 /*return*/, _a.sent()];
+    }
+  });
+}
+"#;
+    let expected = r#"
+function* read_all(source) {
+  yield start_read(source);
+  yield* read_chunks(source);
+  return yield finish_read(source);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn minified_ts_generator_function_decl_is_detected_by_shape() {
     let input = r#"
 function e(thisArg, body) {
@@ -155,6 +201,51 @@ function* func() {
   x = yield foo;
   y = yield bar;
   return y;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn generator_try_catch_recovers_catch_binding() {
+    // TSC lowers `catch (error)` to a function-scoped temp assigned from
+    // `_a.sent()` inside the catch state: `error_1 = _a.sent(); handle(error_1)`.
+    // The decoder must fold that alias back into the catch binding instead of
+    // emitting `error_1 = error; handle(error_1)`.
+    let input = r#"
+function fetch_items(source) {
+  var error_1;
+  return __generator(this, function (_a) {
+    switch (_a.label) {
+      case 0:
+        _a.trys.push([0, 3, , 4]);
+        return [4 /*yield*/, start_fetch(source)];
+      case 1:
+        _a.sent();
+        return [4 /*yield*/, finish_fetch(source)];
+      case 2:
+        _a.sent();
+        return [3 /*break*/, 4];
+      case 3:
+        error_1 = _a.sent();
+        handle(error_1);
+        return [3 /*break*/, 4];
+      case 4:
+        return [2 /*return*/];
+    }
+  });
+}
+"#;
+    let expected = r#"
+function* fetch_items(source) {
+  var error_1;
+  try {
+    yield start_fetch(source);
+    yield finish_fetch(source);
+  } catch (error) {
+    handle(error);
+  }
 }
 "#;
     let output = apply(input);
@@ -694,8 +785,7 @@ async function func(x) {
     console.log(1);
     await x;
   } catch (error) {
-    e_1 = error;
-    console.error(e_1, 2);
+    console.error(error, 2);
   } finally {
     console.log("finally");
   }
@@ -705,8 +795,7 @@ async function func(x) {
     console.log(4);
     await x;
   } catch (error) {
-    e_2 = error;
-    console.error(e_2, 5);
+    console.error(error, 5);
   }
 }
 "#;
@@ -771,9 +860,8 @@ async function collect_enabled(items) {
       _b = (_a = output).push;
       _b.apply(_a, [await fetch_item(item.id)]);
     } catch (error) {
-      error_1 = error;
       _d = (_c = output).push;
-      _d.apply(_c, [await recover_item(item, error_1)]);
+      _d.apply(_c, [await recover_item(item, error)]);
     }
   }
   return output;

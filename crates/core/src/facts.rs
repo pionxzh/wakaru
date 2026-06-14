@@ -90,6 +90,7 @@ pub enum HelperKind {
 pub enum TypeScriptHelperKind {
     Awaiter,
     Generator,
+    Values,
     Assign,
     Rest,
     Extends,
@@ -280,6 +281,7 @@ impl fmt::Display for TypeScriptHelperKind {
         match self {
             TypeScriptHelperKind::Awaiter => write!(f, "ts:awaiter"),
             TypeScriptHelperKind::Generator => write!(f, "ts:generator"),
+            TypeScriptHelperKind::Values => write!(f, "ts:values"),
             TypeScriptHelperKind::Assign => write!(f, "ts:assign"),
             TypeScriptHelperKind::Rest => write!(f, "ts:rest"),
             TypeScriptHelperKind::Extends => write!(f, "ts:extends"),
@@ -709,6 +711,7 @@ fn helper_kind_from_ts(kind: TsHelperKind) -> TypeScriptHelperKind {
     match kind {
         TsHelperKind::Awaiter => TypeScriptHelperKind::Awaiter,
         TsHelperKind::Generator => TypeScriptHelperKind::Generator,
+        TsHelperKind::Values => TypeScriptHelperKind::Values,
         TsHelperKind::Assign => TypeScriptHelperKind::Assign,
         TsHelperKind::Rest => TypeScriptHelperKind::Rest,
         TsHelperKind::Extends => TypeScriptHelperKind::Extends,

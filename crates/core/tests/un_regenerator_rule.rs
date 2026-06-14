@@ -573,6 +573,67 @@ function* read_all(source) {
 }
 
 #[test]
+fn generator_short_delegate_yield_restored_with_minified_values_helper() {
+    // Top-level mangling renames `_regeneratorValues` to a short alias. The
+    // delegate-yield wrapper must still be stripped (matched by body shape) and
+    // the now-dead helper removed.
+    let input = r#"
+function v(o) {
+  if (o != null) {
+    var s = o["function" == typeof Symbol && Symbol.iterator || "@@iterator"], n = 0;
+    if (s) return s.call(o);
+    if ("function" == typeof o.next) return o;
+    if (!isNaN(o.length)) return {
+      next: function () {
+        return o && n >= o.length && (o = void 0), { value: o && o[n++], done: !o };
+      }
+    };
+  }
+  throw new TypeError(typeof o + " is not iterable");
+}
+var _marked = _regenerator().m(read_all);
+function read_all(source) {
+  return _regenerator().w(function(_context) {
+    while (1) switch (_context.p = _context.n) {
+      case 0:
+        _context.p = 0;
+        _context.n = 1;
+        return start_read(source);
+      case 1:
+        return _context.d(v(read_chunks(source)), 2);
+      case 2:
+        _context.n = 3;
+        return finish_read(source);
+      case 3:
+        return _context.a(2, _context.v);
+      case 4:
+        _context.p = 4;
+        _context.n = 5;
+        return close_reader(source);
+      case 5:
+        return _context.f(4);
+      case 6:
+        return _context.a(2);
+    }
+  }, _marked, null, [[0,, 4, 6]]);
+}
+"#;
+    let expected = r#"
+function* read_all(source) {
+  try {
+    yield start_read(source);
+    yield* read_chunks(source);
+    return yield finish_read(source);
+  } finally {
+    yield close_reader(source);
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
 fn generator_delegate_yield_result_is_restored() {
     let input = r#"
 var _marked = regeneratorRuntime.mark(read_all);

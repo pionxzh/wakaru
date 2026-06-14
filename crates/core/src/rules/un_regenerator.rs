@@ -14,7 +14,7 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::facts::{HelperKind, ModuleFactsMap};
 
 use super::helper_matcher::{
-    count_binding_refs, member_prop_name, remove_fn_decls_by_binding,
+    binding_key, count_binding_refs, member_prop_name, remove_fn_decls_by_binding,
     remove_var_declarators_by_binding,
 };
 use super::transpiler_helper_utils::{
@@ -122,6 +122,18 @@ fn run_un_regenerator(
     collapse_async_trampoline_iifes(module);
     collapse_async_trampoline_sequences(module);
     collapse_async_trampoline_assignments(module);
+
+    // Post-pass: strip the `_regeneratorValues` iterator wrapper from recovered
+    // `yield*` delegations. Decode already handles the canonical name, but
+    // top-level mangling renames the helper, so match the detected binding too.
+    let regenerator_values_helpers = collect_regenerator_values_helpers(module);
+    if !regenerator_values_helpers.is_empty() {
+        let mut unwrapper = RegeneratorValuesUnwrapper {
+            helpers: &regenerator_values_helpers,
+        };
+        module.visit_mut_with(&mut unwrapper);
+        remove_unused_helper_decls(module, &regenerator_values_helpers);
+    }
 
     // Phase 3: Remove only the mark declarations that were consumed
     remove_consumed_mark_declarations(module, &consumed_marks);
@@ -1863,7 +1875,9 @@ fn decode_delegate_yield(state_name: &Atom, expr: &Expr) -> Option<DecodedReturn
     };
     let next_loc = next_arg.and_then(|arg| number_lit_usize(&arg.expr));
     Some(DecodedReturn::DelegateYield {
-        expr: unwrap_regenerator_values(arg),
+        // Name-based unwrap during decode; the post-pass handles minified
+        // aliases via detected helper bindings.
+        expr: unwrap_regenerator_values(arg, &[]),
         result_name,
         next_loc,
     })
@@ -1950,7 +1964,7 @@ fn is_state_result_expr(state_name: &Atom, expr: &Expr, result_name: &Atom) -> b
         && member_prop_atom(&member.prop).as_ref() == Some(result_name)
 }
 
-fn unwrap_regenerator_values(expr: Box<Expr>) -> Box<Expr> {
+fn unwrap_regenerator_values(expr: Box<Expr>, helpers: &[BindingKey]) -> Box<Expr> {
     let Expr::Call(call) = expr.as_ref() else {
         return expr;
     };
@@ -1960,7 +1974,13 @@ fn unwrap_regenerator_values(expr: Box<Expr>) -> Box<Expr> {
     let Expr::Ident(id) = callee.as_ref() else {
         return expr;
     };
-    if id.sym.as_ref().contains("regeneratorValues") {
+    // Match the canonical `_regeneratorValues` name, or a detected helper
+    // binding (robust to minified/top-level-mangled aliases).
+    let is_values_helper = id.sym.as_ref().contains("regeneratorValues")
+        || helpers
+            .iter()
+            .any(|(sym, ctxt)| id.sym == *sym && id.ctxt == *ctxt);
+    if is_values_helper {
         return call
             .args
             .first()
@@ -3287,6 +3307,128 @@ impl Visit for BindingRefCounter {
 // ============================================================
 // esbuild __async → async function
 // ============================================================
+
+/// Strips a `_regeneratorValues(...)` wrapper from `yield*` delegations whose
+/// callee is a detected values-helper binding (post-decode, mangle-safe).
+struct RegeneratorValuesUnwrapper<'a> {
+    helpers: &'a [BindingKey],
+}
+
+impl VisitMut for RegeneratorValuesUnwrapper<'_> {
+    fn visit_mut_yield_expr(&mut self, yield_expr: &mut YieldExpr) {
+        yield_expr.visit_mut_children_with(self);
+        if !yield_expr.delegate {
+            return;
+        }
+        if let Some(arg) = yield_expr.arg.take() {
+            yield_expr.arg = Some(unwrap_regenerator_values(arg, self.helpers));
+        }
+    }
+}
+
+/// Collect top-level `_regeneratorValues` helper bindings by canonical name or
+/// by body shape (single iterable param, `Symbol.iterator` / `@@iterator`
+/// lookup, `TypeError` on non-iterable), which survives minification.
+fn collect_regenerator_values_helpers(module: &Module) -> Vec<BindingKey> {
+    let mut helpers = Vec::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
+                let name = fn_decl.ident.sym.as_ref();
+                if (name.contains("regeneratorValues") || is_likely_generated_alias(name))
+                    && fn_is_regenerator_values_helper(&fn_decl.function)
+                {
+                    helpers.push(binding_key(&fn_decl.ident));
+                }
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
+                for decl in &var.decls {
+                    let Pat::Ident(binding) = &decl.name else {
+                        continue;
+                    };
+                    let name = binding.id.sym.as_ref();
+                    if !name.contains("regeneratorValues") && !is_likely_generated_alias(name) {
+                        continue;
+                    }
+                    if decl
+                        .init
+                        .as_deref()
+                        .is_some_and(is_regenerator_values_helper_expr)
+                    {
+                        helpers.push(binding_key(&binding.id));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    helpers
+}
+
+fn is_regenerator_values_helper_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Fn(fn_expr) => fn_is_regenerator_values_helper(&fn_expr.function),
+        Expr::Arrow(arrow) => {
+            if arrow.params.len() != 1 {
+                return false;
+            }
+            let mut finder = RegeneratorValuesHelperFinder::default();
+            arrow.body.visit_with(&mut finder);
+            finder.has_shape()
+        }
+        _ => false,
+    }
+}
+
+fn fn_is_regenerator_values_helper(function: &Function) -> bool {
+    if function.params.len() != 1 {
+        return false;
+    }
+    let Some(body) = &function.body else {
+        return false;
+    };
+    let mut finder = RegeneratorValuesHelperFinder::default();
+    body.visit_with(&mut finder);
+    finder.has_shape()
+}
+
+#[derive(Default)]
+struct RegeneratorValuesHelperFinder {
+    found_symbol_iterator: bool,
+    found_at_iterator: bool,
+    found_type_error: bool,
+}
+
+impl RegeneratorValuesHelperFinder {
+    fn has_shape(&self) -> bool {
+        self.found_symbol_iterator && self.found_at_iterator && self.found_type_error
+    }
+}
+
+impl Visit for RegeneratorValuesHelperFinder {
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if let Expr::Ident(obj) = member.obj.as_ref() {
+            if obj.sym.as_ref() == "Symbol" && member_prop_name(&member.prop, "iterator") {
+                self.found_symbol_iterator = true;
+            }
+        }
+        member.visit_children_with(self);
+    }
+
+    fn visit_ident(&mut self, ident: &Ident) {
+        if ident.sym.as_ref() == "TypeError" {
+            self.found_type_error = true;
+        }
+    }
+
+    fn visit_lit(&mut self, lit: &Lit) {
+        if let Lit::Str(str_lit) = lit {
+            if str_lit.value.as_str() == Some("@@iterator") {
+                self.found_at_iterator = true;
+            }
+        }
+    }
+}
 
 fn collect_esbuild_yield_star_helpers(module: &Module) -> Vec<BindingKey> {
     module

@@ -66,6 +66,7 @@ pub(crate) enum TranspilerHelperKind {
 pub(crate) enum TsHelperKind {
     Awaiter,
     Generator,
+    Values,
     Assign,
     Rest,
     Extends,
@@ -772,6 +773,7 @@ fn ts_helper_name_kind(name: &str) -> Option<TsHelperKind> {
     match name {
         "__awaiter" => Some(TsHelperKind::Awaiter),
         "__generator" => Some(TsHelperKind::Generator),
+        "__values" | "_ts_values" => Some(TsHelperKind::Values),
         "__assign" => Some(TsHelperKind::Assign),
         "__rest" => Some(TsHelperKind::Rest),
         "__extends" => Some(TsHelperKind::Extends),
@@ -1748,6 +1750,9 @@ fn ts_inline_helper_fallback_matches(expr: &Expr, kind: TsHelperKind) -> bool {
         TsHelperKind::Generator => {
             param_len >= 2 && (signals.label_prop || signals.trys_prop || signals.ops_prop)
         }
+        // `__values` / `_ts_values`: single iterable param, grabs `Symbol.iterator`,
+        // throws `TypeError` when the value is not iterable.
+        TsHelperKind::Values => param_len == 1 && signals.symbol_iterator && signals.type_error,
         TsHelperKind::Assign => {
             signals.object_assign || (signals.arguments_ref && signals.has_own_property)
         }
@@ -1816,7 +1821,9 @@ struct TsHelperBodySignals {
     proto_prop: bool,
     prototype_prop: bool,
     set_module_default_call: bool,
+    symbol_iterator: bool,
     trys_prop: bool,
+    type_error: bool,
 }
 
 fn collect_ts_helper_body_signals(stmts: &[Stmt]) -> TsHelperBodySignals {
@@ -1830,11 +1837,15 @@ fn collect_ts_helper_body_signals(stmts: &[Stmt]) -> TsHelperBodySignals {
                 "arguments" => self.signals.arguments_ref = true,
                 "__createBinding" => self.signals.create_binding_call = true,
                 "__setModuleDefault" => self.signals.set_module_default_call = true,
+                "TypeError" => self.signals.type_error = true,
                 _ => {}
             }
         }
 
         fn visit_member_expr(&mut self, member: &MemberExpr) {
+            if is_symbol_member(member, "iterator") {
+                self.signals.symbol_iterator = true;
+            }
             if is_object_member(member, "assign") {
                 self.signals.object_assign = true;
             }
@@ -1930,6 +1941,13 @@ fn is_object_member(member: &MemberExpr, prop: &str) -> bool {
         return false;
     };
     obj.sym.as_ref() == "Object" && member_prop_name(&member.prop, prop)
+}
+
+fn is_symbol_member(member: &MemberExpr, prop: &str) -> bool {
+    let Expr::Ident(obj) = member.obj.as_ref() else {
+        return false;
+    };
+    obj.sym.as_ref() == "Symbol" && member_prop_name(&member.prop, prop)
 }
 
 fn is_member_call(expr: &Expr, prop: &str) -> bool {
@@ -2337,21 +2355,29 @@ fn ts_private_helper_decl_kind(name: &str, init: &Expr) -> Option<TsHelperKind> 
 fn ts_private_helper_name_kind(name: &str, function: &Function) -> Option<TsHelperKind> {
     let kind = match name {
         "_ts_generator" => TsHelperKind::Generator,
+        "_ts_values" | "__values" => TsHelperKind::Values,
         "__classPrivateFieldGet" => TsHelperKind::ClassPrivateFieldGet,
         "__classPrivateFieldSet" => TsHelperKind::ClassPrivateFieldSet,
         _ => return None,
     };
     match kind {
-        TsHelperKind::Generator => ts_function_matches_kind(function, kind).then_some(kind),
+        TsHelperKind::Generator | TsHelperKind::Values => {
+            ts_function_matches_kind(function, kind).then_some(kind)
+        }
         _ => is_tsc_private_helper_fn(function, kind).then_some(kind),
     }
 }
 
 fn ts_generated_fn_helper_kind(ident: &Ident, function: &Function) -> Option<TsHelperKind> {
-    if is_likely_generated_alias(ident.sym.as_ref())
-        && ts_generated_generator_function_matches(function)
-    {
+    if !is_likely_generated_alias(ident.sym.as_ref()) {
+        return None;
+    }
+    if ts_generated_generator_function_matches(function) {
         Some(TsHelperKind::Generator)
+    } else if ts_values_function_matches(function) {
+        // Minifiers strip the `_ts_values` / `__values` name, but the body shape
+        // (single iterable param, `Symbol.iterator`, `TypeError`) is preserved.
+        Some(TsHelperKind::Values)
     } else {
         None
     }
@@ -2360,8 +2386,17 @@ fn ts_generated_fn_helper_kind(ident: &Ident, function: &Function) -> Option<TsH
 fn ts_function_matches_kind(function: &Function, kind: TsHelperKind) -> bool {
     match kind {
         TsHelperKind::Generator => ts_generator_state_function_matches(function),
+        TsHelperKind::Values => ts_values_function_matches(function),
         _ => false,
     }
+}
+
+fn ts_values_function_matches(function: &Function) -> bool {
+    let Some(body) = &function.body else {
+        return false;
+    };
+    let signals = collect_ts_helper_body_signals(&body.stmts);
+    function.params.len() == 1 && signals.symbol_iterator && signals.type_error
 }
 
 fn ts_generator_state_function_matches(function: &Function) -> bool {
