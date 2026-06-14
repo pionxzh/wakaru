@@ -44,6 +44,7 @@ async function runMatrixAsync(config) {
   } = config;
   const showDetails = process.argv.includes("--details");
   const jsonMode = process.argv.includes("--json");
+  const clusterMode = process.argv.includes("--cluster");
   const rewriteLevel = readOption("--level", "standard");
   if (!["minimal", "standard", "aggressive"].includes(rewriteLevel)) {
     throw new Error(`unsupported --level ${rewriteLevel}`);
@@ -124,8 +125,25 @@ async function runMatrixAsync(config) {
         if (status === "yes") countYes++;
         else if (status === "no") countNo++;
         else countError++;
-        rows.push({ snippet: snippet.name, shape: shape.label, tools: shape.tools, status, notes: result.notes });
+        rows.push({
+          snippet: snippet.name,
+          shape: shape.label,
+          tools: shape.tools,
+          status,
+          notes: result.notes,
+          // Full diagnostic payload so failure triage is `jq` over data, not
+          // regex over the truncated markdown note.
+          lowered: result.lowered,
+          recovered: result.code,
+          missing: result.missing,
+          leaked: result.leaked && result.leaked.length ? result.leaked : undefined,
+        });
       }
+    }
+
+    if (clusterMode) {
+      await printFailureClusters(name, rewriteLevel, rows);
+      return;
     }
 
     if (jsonMode) {
@@ -288,7 +306,7 @@ function runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles, valida
   try {
     recovered = runWakaru(shape.lowered, `${snippet.name}-${shape.label.replaceAll(" ", "-")}.js`, tmpRoot, rewriteLevel);
   } catch (error) {
-    return { recovered: false, status: "wakaru-failed", notes: error.message };
+    return { recovered: false, status: "wakaru-failed", notes: error.message, lowered: shape.lowered };
   }
 
   const missingGroups = expectedNeedleGroups(snippet, expectedNeedles).map((needles) =>
@@ -297,7 +315,7 @@ function runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles, valida
   const missing = missingGroups.reduce((best, next) => (next.length < best.length ? next : best));
   const leaked = (snippet.rejected ?? []).filter((needle) => recovered.includes(needle));
   if (missingGroups.some((group) => group.length === 0) && leaked.length === 0) {
-    return { recovered: true, notes: "expected syntax present" };
+    return { recovered: true, notes: "expected syntax present", code: recovered, lowered: shape.lowered };
   }
 
   const customResult = validateRecovered?.({
@@ -309,23 +327,89 @@ function runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles, valida
     runWakaru,
   });
   if (customResult?.recovered && leaked.length === 0) {
-    return customResult;
+    return { ...customResult, code: recovered, lowered: shape.lowered };
   }
 
   const loweredShape = summarize(shape.lowered);
   const recoveredShape = summarize(recovered);
-  if (missing.length === 0 && leaked.length > 0) {
-    return {
-      recovered: false,
-      notes: `leaked ${leaked.join(", ")}; lowered: ${loweredShape}; wakaru: ${recoveredShape}`,
-      failure: { snippet: snippet.name, shape: shape.label, tools: shape.tools, lowered: shape.lowered, recovered },
-    };
-  }
-  return {
-    recovered: false,
-    notes: `missing ${missing.join(", ")}; lowered: ${loweredShape}; wakaru: ${recoveredShape}`,
+  const detail = {
+    code: recovered,
+    lowered: shape.lowered,
+    missing,
+    leaked,
     failure: { snippet: snippet.name, shape: shape.label, tools: shape.tools, lowered: shape.lowered, recovered },
   };
+  if (missing.length === 0 && leaked.length > 0) {
+    return { recovered: false, notes: `leaked ${leaked.join(", ")}; lowered: ${loweredShape}; wakaru: ${recoveredShape}`, ...detail };
+  }
+  return { recovered: false, notes: `missing ${missing.join(", ")}; lowered: ${loweredShape}; wakaru: ${recoveredShape}`, ...detail };
+}
+
+// --cluster: group failing shapes by the structure of their recovered output
+// (alpha-renamed canonical form) so "30 identical state machines" collapse to a
+// single cluster, separating real distinct failures from repeats. This is the
+// built-in version of the ad-hoc dedupe scripts used during rule development.
+async function printFailureClusters(name, rewriteLevel, rows) {
+  const failing = rows.filter((row) => row.status !== "yes");
+  const distinctCode = [...new Set(failing.filter((r) => r.status === "no" && r.recovered).map((r) => r.recovered))];
+  const normalized = new Map();
+  await runPool(distinctCode, async (code) => {
+    let key;
+    try {
+      key = (await runWakaruArgsAsync(["debug", "normalize", "--rename", "-"], { input: code })).trim();
+    } catch {
+      key = "";
+    }
+    // Fall back to whitespace-collapsed text if the output doesn't parse.
+    normalized.set(code, key || code.replace(/\s+/g, " ").trim());
+  });
+
+  const clusters = new Map();
+  for (const row of failing) {
+    let key;
+    if (row.status !== "no") key = `<${row.status}>`;
+    else if (row.recovered) key = normalized.get(row.recovered);
+    else key = "<no-output>";
+    let cluster = clusters.get(key);
+    if (!cluster) {
+      cluster = { key, representative: row, rows: [] };
+      clusters.set(key, cluster);
+    }
+    cluster.rows.push(row);
+  }
+
+  const sorted = [...clusters.values()].sort((a, b) => b.rows.length - a.rows.length);
+  const shapeCount = failing.reduce((sum, row) => sum + row.tools.length, 0);
+  console.log(`# ${name} failure clusters`);
+  console.log(`# level: ${rewriteLevel}`);
+  console.log(`# ${failing.length} failing shapes (${shapeCount} tool variants) in ${sorted.length} clusters`);
+  console.log("");
+
+  sorted.forEach((cluster, index) => {
+    const rep = cluster.representative;
+    console.log(`## cluster ${index + 1} — ${cluster.rows.length} shape${cluster.rows.length === 1 ? "" : "s"}`);
+    if (cluster.key.startsWith("<")) {
+      console.log(`kind: ${cluster.key}`);
+    } else {
+      console.log(`representative: ${rep.snippet} / ${rep.shape} (${rep.tools[0]})`);
+    }
+    const sample = rep.recovered ?? rep.notes ?? "";
+    const lines = sample.split("\n");
+    console.log("```js");
+    console.log(lines.slice(0, 12).join("\n").trim());
+    if (lines.length > 12) console.log("// …");
+    console.log("```");
+    const bySnippet = new Map();
+    for (const row of cluster.rows) {
+      if (!bySnippet.has(row.snippet)) bySnippet.set(row.snippet, []);
+      bySnippet.get(row.snippet).push(row.shape);
+    }
+    console.log("members:");
+    for (const [snippet, shapes] of bySnippet) {
+      console.log(`  ${snippet}: ${shapes.join(", ")}`);
+    }
+    console.log("");
+  });
 }
 
 function runWakaru(source, name, tmpRoot, rewriteLevel) {

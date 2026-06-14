@@ -71,7 +71,20 @@ node scripts/repro/async-await-matrix/matrix.mjs --level standard --snippet asyn
 
 # Dump full lowered input + wakaru output for one snippet × tool
 node scripts/repro/async-await-matrix/matrix.mjs --level standard --dump async-simple-loop tsc-es5-terser-compress
+
+# Structured output for triage: every row carries full lowered + recovered code
+# and (for failures) the missing/leaked needles. Pipe to jq.
+node scripts/repro/async-await-matrix/matrix.mjs --level standard --json | jq '.rows[] | select(.status=="no")'
+
+# Cluster failing shapes by the structure of their recovered output (alpha-
+# renamed), so repeats (e.g. identical unrecovered state machines) collapse and
+# genuinely distinct failures stand out.
+node scripts/repro/async-await-matrix/matrix.mjs --level standard --cluster
 ```
+
+These flags are shared by every matrix (they live in `../lib/runner.mjs`). The
+structural comparison and `--cluster` keys are produced by `wakaru debug
+normalize --rename`; see `../lib/compare.mjs`.
 
 The script installs transformer and minifier packages under
 `target/repro-tools/`, so those downloads are cached outside the source tree.
