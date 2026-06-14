@@ -32,28 +32,53 @@ export function runMatrix(config) {
     throw new Error(`unsupported --level ${rewriteLevel}`);
   }
 
+  const snippetFilter = readOption("--snippet");
+  const dumpShape = readOption("--dump");
+
+  const filteredSnippets = snippetFilter
+    ? snippets.filter((s) => s.name === snippetFilter || s.name.includes(snippetFilter))
+    : snippets;
+
+  if (filteredSnippets.length === 0) {
+    const available = snippets.map((s) => s.name).join(", ");
+    throw new Error(`no snippets match --snippet ${snippetFilter} (available: ${available})`);
+  }
+
   const tmpRoot = mkdtempSync(join(tmpdir(), `wakaru-${name}-`));
   const failures = [];
+  let countYes = 0;
+  let countNo = 0;
+  let countError = 0;
 
   try {
+    // --dump <snippet> <tool>: print full lowered + recovered for one shape
+    if (dumpShape) {
+      const dumpTool = process.argv[process.argv.indexOf("--dump") + 2] ?? "";
+      dumpSingleShape(filteredSnippets, transformers, tmpRoot, rewriteLevel, dumpShape, dumpTool);
+      return;
+    }
+
     console.log(`# ${name} reproduction matrix`);
     console.log(`# wakaru: ${wakaruDescription()}`);
     console.log(`# level: ${rewriteLevel}`);
+    if (snippetFilter) console.log(`# filter: ${snippetFilter}`);
     console.log("");
     console.log("| snippet | shape | tools | status | notes |");
     console.log("|---|---:|---|---:|---|");
 
-    for (const snippet of snippets) {
+    for (const snippet of filteredSnippets) {
       const shapes = collectShapes(snippet, transformers);
       for (const shape of shapes) {
         const result = runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles, validateRecovered);
         if (!result.recovered && result.failure) {
           failures.push(result.failure);
         }
+        const status = result.status ?? (result.recovered ? "yes" : "no");
+        if (status === "yes") countYes++;
+        else if (status === "no") countNo++;
+        else countError++;
         console.log(
-          `| ${snippet.name} | ${shape.label} | ${escapeCell(shape.tools.join(", "))} | ${
-            result.status ?? (result.recovered ? "yes" : "no")
-          } | ${escapeCell(result.notes)} |`,
+          `| ${snippet.name} | ${shape.label} | ${escapeCell(shape.tools.join(", "))} | ${status} | ${escapeCell(result.notes)} |`,
         );
       }
     }
@@ -78,8 +103,59 @@ export function runMatrix(config) {
         console.log("```");
       }
     }
+
+    const total = countYes + countNo;
+    const pct = total > 0 ? ((countYes / total) * 100).toFixed(1) : "0.0";
+    console.log("");
+    console.log(
+      `# ${countYes} yes / ${countNo} no` +
+        (countError > 0 ? ` / ${countError} error` : "") +
+        ` (${pct}%)`,
+    );
   } finally {
     rmSync(tmpRoot, { recursive: true, force: true });
+  }
+}
+
+function dumpSingleShape(snippets, transformers, tmpRoot, rewriteLevel, snippetName, toolHint) {
+  const snippet = snippets.find((s) => s.name === snippetName || s.name.includes(snippetName));
+  if (!snippet) {
+    const available = snippets.map((s) => s.name).join(", ");
+    throw new Error(`no snippet matches "${snippetName}" (available: ${available})`);
+  }
+
+  const shapes = collectShapes(snippet, transformers);
+  const matching = toolHint
+    ? shapes.filter((s) => s.tools.some((t) => t.includes(toolHint)))
+    : shapes;
+
+  if (matching.length === 0) {
+    const available = shapes.flatMap((s) => s.tools).join(", ");
+    throw new Error(`no shape matches tool "${toolHint}" for ${snippet.name} (available: ${available})`);
+  }
+
+  for (const shape of matching) {
+    console.log(`=== ${snippet.name} / ${shape.label} ===`);
+    console.log(`Tools: ${shape.tools.join(", ")}`);
+    if (shape.transformError) {
+      console.log(`Transform error: ${shape.transformError.message}`);
+      continue;
+    }
+    console.log("");
+    console.log("--- lowered ---");
+    console.log(shape.lowered);
+    console.log("--- wakaru ---");
+    try {
+      const recovered = runWakaru(
+        shape.lowered,
+        `${snippet.name}-dump.js`,
+        tmpRoot,
+        rewriteLevel,
+      );
+      console.log(recovered);
+    } catch (error) {
+      console.log(`Wakaru error: ${error.message}`);
+    }
   }
 }
 

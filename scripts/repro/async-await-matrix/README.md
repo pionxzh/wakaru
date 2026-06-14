@@ -35,8 +35,17 @@ shape is still preserved while duplicate tool outputs are collapsed.
 Run from the repo root:
 
 ```bash
+# Full matrix
 node scripts/repro/async-await-matrix/matrix.mjs --level standard
+
+# Full matrix with failure details (lowered + recovered code blocks)
 node scripts/repro/async-await-matrix/matrix.mjs --level standard --details
+
+# Single snippet (exact or substring match)
+node scripts/repro/async-await-matrix/matrix.mjs --level standard --snippet async-iife
+
+# Dump full lowered input + wakaru output for one snippet × tool
+node scripts/repro/async-await-matrix/matrix.mjs --level standard --dump async-simple-loop tsc-es5-terser-compress
 ```
 
 The script installs transformer and minifier packages under
