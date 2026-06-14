@@ -16,6 +16,7 @@ use super::super::io::{parse_js, parse_js_with_recovery, print_js};
 use super::super::types::{DecompileOptions, UnpackOutput, UnpackWarning, UnpackWarningKind};
 use super::super::unpack_cleanup::{dedup_duplicate_exports, prune_stale_local_named_exports};
 use super::super::unpack_cycles::{collect_import_cycle_warnings, merge_import_cycles};
+use super::dead_module::{collect_import_report, eliminate_dead_helper_modules, ImportReport};
 use super::filename_recovery::{
     build_rename_map, harvest_suggested_filename, rewrite_import_sources,
 };
@@ -125,6 +126,11 @@ pub(super) fn unpack_multi_module_with_plan(
     // Filename recovery from provenance markers is a readability rewrite, gated
     // to standard+ like other speculative recovery.
     let recover_filenames = !matches!(options.level, RewriteLevel::Minimal);
+    // Dead helper-module elimination is dead-code cleanup: it relies on the
+    // binding->side-effect import downgrade that only runs when DCE is on, and
+    // dropping a module is structural, so gate it to standard+ as well.
+    let eliminate_dead_modules =
+        options.dead_code_elimination && !matches!(options.level, RewriteLevel::Minimal);
 
     // Phase 1: collect facts. Run the through-UnEsm normalization range on each
     // module and extract import/export facts. For normal unpacking, keep that
@@ -266,82 +272,102 @@ pub(super) fn unpack_multi_module_with_plan(
         PreparedUnpackModule,
         Option<Phase1PreparedModule>,
     )|
-     -> (String, String, Vec<UnpackWarning>) {
-        let run_phase2_tail = |mut module: Module,
-                               cm: Lrc<SourceMap>,
-                               unresolved_mark: Mark,
-                               input_parse_warnings: Vec<UnpackWarning>|
-         -> Result<(String, Vec<UnpackWarning>)> {
-            // Late pass at the barrier
-            run_reexport_consolidation(&mut module, facts_ref);
-            run_namespace_decomposition(&mut module, facts_ref);
-            // Late helper-through-UnReturn range.
-            apply_rules(
-                &mut module,
-                unresolved_mark,
-                RulePipelineOptions::between("UnObjectSpread2", "UnReturn")
-                    .with_dead_code_elimination(options.dead_code_elimination)
-                    .with_rewrite_level(options.level)
-                    .with_module_facts(facts_ref),
-            );
-            // Later rules can expose sequence expressions. The old unpack
-            // path cleaned those by running a second full module pipeline;
-            // keep only the syntax cleanup needed after the split.
-            module.visit_mut_with(&mut SimplifySequence::new_with_level(
-                unresolved_mark,
-                options.level,
-            ));
-            module.visit_mut_with(&mut UnAssignmentMerging);
-            // UnIife2 can expose webpack export helpers that were hidden in
-            // factory wrappers at the Stage 2 barrier. Recover just that ESM
-            // shape without restoring the old full second pass.
-            recover_late_esm_from_factory_iifes(
-                &mut module,
-                unresolved_mark,
-                options.level,
-                LateEsmRecoveryOptions::default(),
-            );
-            module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
-            module.visit_mut_with(&mut UnConditionalsAssignmentOnly);
-            module.visit_mut_with(&mut UnConditionals);
-            prune_stale_local_named_exports(&mut module);
-            dedup_duplicate_exports(&mut module);
-
-            // Source-map-enhanced passes
-            if let Some(sm) = sm_ref {
-                module.visit_mut_with(&mut ImportDedup);
-                apply_sourcemap_renames(&mut module, sm, &cm, unresolved_mark);
-                module.visit_mut_with(&mut UnImportRename::new(unresolved_mark));
-            }
-
-            let mut diag_warnings = if options.diagnostics {
-                let mut warnings = input_parse_warnings;
-                warnings.extend(collect_tdz_warnings(&module, &unpacked.module.filename));
-                warnings.extend(collect_duplicate_declaration_warnings(
-                    &module,
-                    &unpacked.module.filename,
+     -> (String, String, Vec<UnpackWarning>, Option<ImportReport>) {
+        let run_phase2_tail =
+            |mut module: Module,
+             cm: Lrc<SourceMap>,
+             unresolved_mark: Mark,
+             input_parse_warnings: Vec<UnpackWarning>|
+             -> Result<(String, Vec<UnpackWarning>, Option<ImportReport>)> {
+                // Late pass at the barrier
+                run_reexport_consolidation(&mut module, facts_ref);
+                run_namespace_decomposition(&mut module, facts_ref);
+                // Late helper-through-UnReturn range.
+                apply_rules(
+                    &mut module,
+                    unresolved_mark,
+                    RulePipelineOptions::between("UnObjectSpread2", "UnReturn")
+                        .with_dead_code_elimination(options.dead_code_elimination)
+                        .with_rewrite_level(options.level)
+                        .with_module_facts(facts_ref),
+                );
+                // Later rules can expose sequence expressions. The old unpack
+                // path cleaned those by running a second full module pipeline;
+                // keep only the syntax cleanup needed after the split.
+                module.visit_mut_with(&mut SimplifySequence::new_with_level(
+                    unresolved_mark,
+                    options.level,
                 ));
-                warnings
-            } else {
-                Vec::new()
+                module.visit_mut_with(&mut UnAssignmentMerging);
+                // UnIife2 can expose webpack export helpers that were hidden in
+                // factory wrappers at the Stage 2 barrier. Recover just that ESM
+                // shape without restoring the old full second pass.
+                recover_late_esm_from_factory_iifes(
+                    &mut module,
+                    unresolved_mark,
+                    options.level,
+                    LateEsmRecoveryOptions::default(),
+                );
+                module.visit_mut_with(&mut UnOptionalChaining::new(unresolved_mark, options.level));
+                module.visit_mut_with(&mut UnConditionalsAssignmentOnly);
+                module.visit_mut_with(&mut UnConditionals);
+                prune_stale_local_named_exports(&mut module);
+                dedup_duplicate_exports(&mut module);
+
+                // Source-map-enhanced passes
+                if let Some(sm) = sm_ref {
+                    module.visit_mut_with(&mut ImportDedup);
+                    apply_sourcemap_renames(&mut module, sm, &cm, unresolved_mark);
+                    module.visit_mut_with(&mut UnImportRename::new(unresolved_mark));
+                }
+
+                let mut diag_warnings = if options.diagnostics {
+                    let mut warnings = input_parse_warnings;
+                    warnings.extend(collect_tdz_warnings(&module, &unpacked.module.filename));
+                    warnings.extend(collect_duplicate_declaration_warnings(
+                        &module,
+                        &unpacked.module.filename,
+                    ));
+                    warnings
+                } else {
+                    Vec::new()
+                };
+
+                // Final, isolated remap: rewrite import-source strings that point
+                // at modules renamed via recovered filenames. Runs after every
+                // fact-driven pass so the fact map stays keyed by provisional names.
+                if !rename_ref.is_empty() {
+                    rewrite_import_sources(&mut module, &unpacked.module.filename, rename_ref);
+                }
+
+                // Collect the dead-module-elimination report from the final AST
+                // (sources are in recovered-name space after the remap above).
+                let report = if eliminate_dead_modules {
+                    let is_helper = facts_ref
+                        .get(&unpacked.module.filename)
+                        .is_some_and(|facts| {
+                            !facts.helper_exports.is_empty()
+                                || !facts.default_object_helper_exports.is_empty()
+                                || !facts.ts_helper_exports.is_empty()
+                        });
+                    Some(collect_import_report(
+                        &module,
+                        unpacked.module.is_entry,
+                        is_helper,
+                    ))
+                } else {
+                    None
+                };
+
+                module.visit_mut_with(&mut fixer(None));
+                let code = print_js(&module, cm)?;
+
+                if options.diagnostics {
+                    diag_warnings.extend(verify_output_parses(&code, &unpacked.module.filename));
+                }
+
+                Ok((code, diag_warnings, report))
             };
-
-            // Final, isolated remap: rewrite import-source strings that point
-            // at modules renamed via recovered filenames. Runs after every
-            // fact-driven pass so the fact map stays keyed by provisional names.
-            if !rename_ref.is_empty() {
-                rewrite_import_sources(&mut module, &unpacked.module.filename, rename_ref);
-            }
-
-            module.visit_mut_with(&mut fixer(None));
-            let code = print_js(&module, cm)?;
-
-            if options.diagnostics {
-                diag_warnings.extend(verify_output_parses(&code, &unpacked.module.filename));
-            }
-
-            Ok((code, diag_warnings))
-        };
 
         let result = if let Some(prepared) = prepared {
             let Phase1PreparedModule {
@@ -389,12 +415,12 @@ pub(super) fn unpack_multi_module_with_plan(
         };
 
         match result {
-            Ok((code, diag_warnings)) => {
+            Ok((code, diag_warnings, report)) => {
                 let out_filename = rename_ref
                     .get(&unpacked.module.filename)
                     .cloned()
                     .unwrap_or(unpacked.module.filename);
-                (out_filename, code, diag_warnings)
+                (out_filename, code, diag_warnings, report)
             }
             Err(e) => (
                 unpacked.module.filename.clone(),
@@ -404,6 +430,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     UnpackWarningKind::DecompileFailed,
                     format!("decompile failed, preserving raw code: {e}"),
                 )],
+                None,
             ),
         }
     };
@@ -418,9 +445,17 @@ pub(super) fn unpack_multi_module_with_plan(
     };
 
     let mut modules = Vec::with_capacity(triples.len());
-    for (filename, code, module_warnings) in triples {
-        modules.push((filename, code));
+    if eliminate_dead_modules {
+        // Post-Phase-2 barrier: drop dead helper modules and strip the vacuous
+        // side-effect imports their consumers were left with.
+        let (kept, module_warnings) = eliminate_dead_helper_modules(triples);
+        modules = kept;
         warnings.extend(module_warnings);
+    } else {
+        for (filename, code, module_warnings, _report) in triples {
+            modules.push((filename, code));
+            warnings.extend(module_warnings);
+        }
     }
     if options.diagnostics && report_import_cycle_warnings {
         warnings.extend(collect_import_cycle_warnings(&modules));
