@@ -16,6 +16,13 @@ const snippets = [
     name: "async-return-value",
     source:
       "async function load_user(app_id) {\n  const response = await fetch_user(app_id);\n  const data = await response.json();\n  return data;\n}\n",
+    // Clean mangle recoveries: single-use temp inlined as a trailing
+    // `return await`, or the hoisted temps merged into their first assignment
+    // (MergeDeclarationInit; stays `let` since it runs after const-promotion).
+    acceptForms: [
+      "async function load_user(app_id) {\n  const response = await fetch_user(app_id);\n  return await response.json();\n}\n",
+      "async function load_user(app_id) {\n  let response = await fetch_user(app_id);\n  let data = await response.json();\n  return data;\n}\n",
+    ],
     expected: ["async function load_user(app_id)", "await fetch_user(app_id)", "await response.json()", "return data"],
     expectedAny: [
       ["async function load_user(app_id)", "await fetch_user(app_id)", "await response.json()", "return data"],
@@ -33,6 +40,11 @@ const snippets = [
     name: "async-try-finally-await",
     source:
       "async function save_record(record) {\n  const lock = await acquire_lock(record.id);\n  try {\n    const payload = await prepare_record(record);\n    return await commit_record(payload);\n  } finally {\n    await lock.release();\n  }\n}\n",
+    acceptForms: [
+      // lock merged into its first assignment; payload stays a bare `let`
+      // because it is assigned inside the try (a different statement list).
+      "async function save_record(record) {\n  let payload;\n  let lock = await acquire_lock(record.id);\n  try {\n    payload = await prepare_record(record);\n    return await commit_record(payload);\n  } finally {\n    await lock.release();\n  }\n}\n",
+    ],
     expected: [
       "async function save_record(record)",
       "await acquire_lock(record.id)",
@@ -94,6 +106,9 @@ const snippets = [
     acceptForms: [
       "async function collect_enabled(items) {\n  const output = [];\n  for (const item of items) {\n    if (!item.enabled) { continue; }\n    try { output.push(await fetch_item(item.id)); }\n    catch (error) { output.push(await recover_item(item, error)); }\n  }\n  return output;\n}\n",
       "async function collect_enabled(items) {\n  const output = [];\n  for (const item of items) {\n    if (item.enabled) {\n      try { output.push(await fetch_item(item.id)); }\n      catch (error) { output.push(await recover_item(item, error)); }\n    }\n  }\n  return output;\n}\n",
+      // C-style loop preserved; hoisted output/index merged into their inits,
+      // the item temp folded into the loop guard.
+      "async function collect_enabled(items) {\n  let item;\n  let output = [];\n  let index = 0;\n  for (; index < items.length; index++) {\n    if (!(item = items[index]).enabled) continue;\n    try { output.push(await fetch_item(item.id)); }\n    catch (error) { output.push(await recover_item(item, error)); }\n  }\n  return output;\n}\n",
     ],
     expected: [
       "async function collect_enabled(items)",
@@ -214,6 +229,8 @@ const snippets = [
     // call.
     acceptForms: [
       "const run_pipeline = async (source) => {\n  return (await load_steps(source)).map(async (step) => await step.run(source));\n};\nuse(run_pipeline);\n",
+      // steps temp merged into its first assignment.
+      "const run_pipeline = async (source) => {\n  let steps = await load_steps(source);\n  return steps.map(async (step) => await step.run(source));\n};\nuse(run_pipeline);\n",
     ],
     expected: [
       "const run_pipeline = async (source)",
@@ -355,6 +372,11 @@ const snippets = [
       ["function* iter_items(items)", "for (let index = 0", "yield items[index]"],
       ["function* iter_items(items)", "for(;", "yield items["],
       ["function*", "for", "yield items["],
+    ],
+    // Mangle recovery: C-style loop with the index hoisted and merged into its
+    // init (`let index = 0; for (; …)`).
+    acceptForms: [
+      "function* iter_items(items) {\n  let index = 0;\n  for (; index < items.length; index++) {\n    yield items[index];\n  }\n}\n",
     ],
   },
   {

@@ -23,9 +23,13 @@ machines and Babel lazy-init helper artifacts were reported as recovered. Those
 now correctly show as `no`. Remaining `no` rows fall into three honest buckets:
 
 - **state-machine** — wakaru leaves a Terser-compressed regenerator runtime intact.
-- **degraded** — a helper artifact leaks (`__rest` inlined, `const x = undefined`).
-- **split-decl** — correct but non-idiomatic `let x; x = await …` instead of
-  `let x = await …` (wakaru has no declaration/first-assignment merge rule yet).
+- **degraded** — a helper artifact leaks (`__rest` inlined, `const x = undefined`,
+  `push.apply(...)` not recovered).
+
+The hoisted `let x; … x = await …` split is folded back to `let x = await …` by
+the `MergeDeclarationInit` rule, so those shapes recover; the `acceptForms`
+above capture the resulting `let`-form (it stays `let`, not `const`, because the
+merge runs after const-promotion).
 
 Each Babel/TypeScript/SWC/esbuild output is checked in three Terser variants:
 

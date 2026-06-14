@@ -30,8 +30,7 @@ export function createProvider(e = "store") {
             this[e] = n.store;
         }
         getChildContext() {
-            let t;
-            t = {};
+            let t = {};
             t[e] = this[e];
             t[n] = null;
             return t;
@@ -122,17 +121,14 @@ const T = forwardRef !== undefined;
 let S = 0;
 const O = {};
 function C() {}
-export function connectAdvanced(e, t = {}) {
-    let n;
-    let r;
-    const { getDisplayName = (e)=>`ConnectAdvanced(${e})`, methodName = "connectAdvanced", renderCountProp, shouldHandleStateChanges = true, storeKey = "store", withRef = false, ...rest } = t;
+export function connectAdvanced(e, { getDisplayName = (e)=>`ConnectAdvanced(${e})`, methodName = "connectAdvanced", renderCountProp, shouldHandleStateChanges = true, storeKey = "store", withRef = false, ...rest } = {}) {
     const M = `${storeKey}Subscription`;
     const A = S++;
-    n = {};
+    let n = {};
     n[storeKey] = s;
     n[M] = c;
     const L = n;
-    r = {};
+    let r = {};
     r[M] = c;
     const I = r;
     return function(T1) {
@@ -165,9 +161,8 @@ export function connectAdvanced(e, t = {}) {
                 this.initSubscription();
             }
             getChildContext() {
-                let e;
                 const t = this.propsMode ? null : this.subscription;
-                e = {};
+                let e = {};
                 e[M] = t || this.context[M];
                 return e;
             }

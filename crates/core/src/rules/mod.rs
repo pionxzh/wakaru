@@ -14,6 +14,7 @@ mod flip_comparisons;
 pub(crate) mod helper_matcher;
 mod import_dedup;
 pub(crate) mod match_context;
+mod merge_declaration_init;
 mod obj_method_shorthand;
 mod obj_shorthand;
 mod object_assign_spread;
@@ -160,6 +161,7 @@ pub use extract_inlined_function::{
 };
 pub use flip_comparisons::FlipComparisons;
 pub use import_dedup::ImportDedup;
+pub use merge_declaration_init::MergeDeclarationInit;
 pub use obj_method_shorthand::ObjMethodShorthand;
 pub use obj_shorthand::ObjShorthand;
 pub use object_assign_spread::ObjectAssignSpread;

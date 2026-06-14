@@ -21,8 +21,7 @@ const b = "GET_CONTEXT";
 const g = "SET_CONTEXT";
 const w = "\n(HINT: if you are getting this errors in tests, consider using createMockTask from redux-saga/utils)";
 const E = (e, t)=>{
-    let n;
-    n = {};
+    let n = {};
     n[o] = true;
     n[e] = t;
     return n;

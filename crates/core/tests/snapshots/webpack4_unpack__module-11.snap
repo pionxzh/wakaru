@@ -17,7 +17,6 @@ function u(e) {
     return Object.getPrototypeOf(e) === t;
 }
 export function createStore(e, t, n) {
-    let a;
     if (typeof t === "function" && n === undefined) {
         n = t;
         t = undefined;
@@ -93,7 +92,7 @@ export function createStore(e, t, n) {
     v({
         type: __DO_NOT_USE__ActionTypes.INIT
     });
-    a = {
+    let a = {
         dispatch: v,
         subscribe: y,
         getState: m,
@@ -108,9 +107,8 @@ export function createStore(e, t, n) {
         }
     };
     a[a_1] = ()=>{
-        let e;
         const t = y;
-        e = {
+        let e = {
             subscribe (e) {
                 if ((e === undefined ? "undefined" : typeof e) !== "object" || e === null) {
                     throw new TypeError("Expected the observer to be an object.");
