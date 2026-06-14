@@ -1,10 +1,15 @@
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpus, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
+
+// Decompile results keyed by `${level}\0${source}`, populated in parallel before
+// the (synchronous) comparison loop so each shape's wakaru run is amortized.
+const decompileCache = new Map();
+const decompileKey = (level, source) => `${level}\0${source}`;
 
 export function readOption(name, fallback) {
   const equalsArg = process.argv.find((arg) => arg.startsWith(`${name}=`));
@@ -18,7 +23,17 @@ export function readOption(name, fallback) {
   return fallback;
 }
 
+// Sync-callable entry point. The body is async (it decompiles all shapes in
+// parallel before comparing), so errors are caught here to keep call sites
+// simple: `runMatrix({...})` as the last statement of a matrix needs no await.
 export function runMatrix(config) {
+  return runMatrixAsync(config).catch((error) => {
+    console.error(error?.stack ?? String(error));
+    process.exitCode = 1;
+  });
+}
+
+async function runMatrixAsync(config) {
   const {
     name,
     snippets,
@@ -27,6 +42,7 @@ export function runMatrix(config) {
     validateRecovered,
   } = config;
   const showDetails = process.argv.includes("--details");
+  const jsonMode = process.argv.includes("--json");
   const rewriteLevel = readOption("--level", "standard");
   if (!["minimal", "standard", "aggressive"].includes(rewriteLevel)) {
     throw new Error(`unsupported --level ${rewriteLevel}`);
@@ -46,6 +62,7 @@ export function runMatrix(config) {
 
   const tmpRoot = mkdtempSync(join(tmpdir(), `wakaru-${name}-`));
   const failures = [];
+  const rows = [];
   let countYes = 0;
   let countNo = 0;
   let countError = 0;
@@ -58,17 +75,21 @@ export function runMatrix(config) {
       return;
     }
 
-    console.log(`# ${name} reproduction matrix`);
-    console.log(`# wakaru: ${wakaruDescription()}`);
-    console.log(`# level: ${rewriteLevel}`);
-    if (snippetFilter) console.log(`# filter: ${snippetFilter}`);
-    console.log("");
-    console.log("| snippet | shape | tools | status | notes |");
-    console.log("|---|---:|---|---:|---|");
-
+    // Collect every shape up front, then decompile all of them in parallel so
+    // the comparison loop below reads from the cache instead of spawning serially.
+    const shapesBySnippet = new Map();
+    const allLowered = [];
     for (const snippet of filteredSnippets) {
       const shapes = collectShapes(snippet, transformers);
+      shapesBySnippet.set(snippet, shapes);
       for (const shape of shapes) {
+        if (!shape.transformError) allLowered.push(shape.lowered);
+      }
+    }
+    await decompileAll(allLowered, rewriteLevel);
+
+    for (const snippet of filteredSnippets) {
+      for (const shape of shapesBySnippet.get(snippet)) {
         const result = runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles, validateRecovered);
         if (!result.recovered && result.failure) {
           failures.push(result.failure);
@@ -77,10 +98,36 @@ export function runMatrix(config) {
         if (status === "yes") countYes++;
         else if (status === "no") countNo++;
         else countError++;
-        console.log(
-          `| ${snippet.name} | ${shape.label} | ${escapeCell(shape.tools.join(", "))} | ${status} | ${escapeCell(result.notes)} |`,
-        );
+        rows.push({ snippet: snippet.name, shape: shape.label, tools: shape.tools, status, notes: result.notes });
       }
+    }
+
+    if (jsonMode) {
+      const total = countYes + countNo;
+      console.log(JSON.stringify(
+        {
+          name,
+          level: rewriteLevel,
+          summary: { yes: countYes, no: countNo, error: countError, pct: total > 0 ? +((countYes / total) * 100).toFixed(1) : 0 },
+          rows,
+        },
+        null,
+        2,
+      ));
+      return;
+    }
+
+    console.log(`# ${name} reproduction matrix`);
+    console.log(`# wakaru: ${wakaruDescription()}`);
+    console.log(`# level: ${rewriteLevel}`);
+    if (snippetFilter) console.log(`# filter: ${snippetFilter}`);
+    console.log("");
+    console.log("| snippet | shape | tools | status | notes |");
+    console.log("|---|---:|---|---:|---|");
+    for (const row of rows) {
+      console.log(
+        `| ${row.snippet} | ${row.shape} | ${escapeCell(row.tools.join(", "))} | ${row.status} | ${escapeCell(row.notes)} |`,
+      );
     }
 
     if (showDetails && failures.length > 0) {
@@ -256,25 +303,80 @@ function runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles, valida
 }
 
 function runWakaru(source, name, tmpRoot, rewriteLevel) {
+  const cached = decompileCache.get(decompileKey(rewriteLevel, source));
+  if (cached !== undefined) {
+    if (cached instanceof Error) throw cached;
+    return cached;
+  }
+  // Uncached fallback (e.g. the synchronous --dump path).
   const input = join(tmpRoot, name);
   writeFileSync(input, source);
-  const configured = process.env.WAKARU;
-  if (configured) {
-    return runChecked(configured, ["--level", rewriteLevel, input]);
+  return runWakaruArgs(["--level", rewriteLevel, input]);
+}
+
+// Decompile every (unique) source concurrently and fill decompileCache, so the
+// comparison loop runs against in-memory results instead of serial spawns.
+async function decompileAll(sources, rewriteLevel) {
+  const { command, prefix } = resolveWakaruCmd();
+  const pending = [...new Set(sources)].filter(
+    (source) => !decompileCache.has(decompileKey(rewriteLevel, source)),
+  );
+  const concurrency = Math.max(1, Math.min(16, (cpus().length || 4) - 2));
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < pending.length) {
+      const source = pending[cursor++];
+      const key = decompileKey(rewriteLevel, source);
+      try {
+        decompileCache.set(key, await spawnCapture(command, [...prefix, "--level", rewriteLevel, "-"], source));
+      } catch (error) {
+        decompileCache.set(key, error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, worker));
+}
+
+function spawnCapture(command, args, input) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, args, { cwd: repoRoot });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (code) =>
+      code === 0
+        ? resolvePromise(stdout)
+        : reject(new Error(`${basename(command)} exited ${code}: ${stderr.trim() || stdout.trim()}`)),
+    );
+    child.stdin.end(input);
+  });
+}
+
+// Resolve how to invoke the wakaru CLI once: $WAKARU override → debug build →
+// `cargo run` fallback. Returns the command plus any argument prefix.
+function resolveWakaruCmd() {
+  if (process.env.WAKARU) {
+    return { command: process.env.WAKARU, prefix: [] };
   }
   const debugBinary = join(repoRoot, "target", "debug", process.platform === "win32" ? "wakaru.exe" : "wakaru");
-  try {
-    return runChecked(debugBinary, ["--level", rewriteLevel, input]);
-  } catch {
-    return runChecked("cargo", ["run", "-q", "-p", "wakaru-cli", "--", "--level", rewriteLevel, input], { cwd: repoRoot });
+  if (existsSync(debugBinary)) {
+    return { command: debugBinary, prefix: [] };
   }
+  return { command: "cargo", prefix: ["run", "-q", "-p", "wakaru-cli", "--"] };
+}
+
+// Invoke the wakaru CLI synchronously with arbitrary args. `options.input` is
+// piped to stdin (use the `-` arg to make wakaru read it).
+export function runWakaruArgs(args, options = {}) {
+  const runOptions = options.input !== undefined ? { input: options.input } : {};
+  const { command, prefix } = resolveWakaruCmd();
+  return runChecked(command, [...prefix, ...args], { ...runOptions, cwd: repoRoot });
 }
 
 function wakaruDescription() {
-  if (process.env.WAKARU) {
-    return process.env.WAKARU;
-  }
-  return join(repoRoot, "target", "debug", process.platform === "win32" ? "wakaru.exe" : "wakaru");
+  return resolveWakaruCmd().command;
 }
 
 function summarize(code) {

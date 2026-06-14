@@ -6,6 +6,27 @@ destructuring/default, object-rest, nested async callback, and generator
 delegation snippets through Babel, TypeScript, SWC, and esbuild, then runs
 wakaru over each generated shape.
 
+## Comparison model
+
+Non-mangled shapes are checked with substring needles (`expected` /
+`expectedAny`). Mangled shapes can't be — every local binding is renamed — so
+they are compared **structurally**: `wakaru debug normalize --rename` alpha-
+renames all local bindings to canonical names and reprints, so an alpha-
+equivalent recovery normalizes to byte-identical source. A mangled shape passes
+when its normalized output equals the normalized `source` or any entry in the
+snippet's `acceptForms` (genuinely distinct idiomatic recoveries, e.g. a C-style
+loop recovered as `for…of`). See `../lib/compare.mjs`.
+
+This replaced an earlier regex name-stripping normalizer that was lossy and
+**false-passed** unrecovered output: Terser-compressed regenerator state
+machines and Babel lazy-init helper artifacts were reported as recovered. Those
+now correctly show as `no`. Remaining `no` rows fall into three honest buckets:
+
+- **state-machine** — wakaru leaves a Terser-compressed regenerator runtime intact.
+- **degraded** — a helper artifact leaks (`__rest` inlined, `const x = undefined`).
+- **split-decl** — correct but non-idiomatic `let x; x = await …` instead of
+  `let x = await …` (wakaru has no declaration/first-assignment merge rule yet).
+
 Each Babel/TypeScript/SWC/esbuild output is checked in three Terser variants:
 
 - raw compiler output
