@@ -4,8 +4,9 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BreakStmt, CatchClause,
-    CondExpr, ContinueStmt, Expr, ExprStmt, ForStmt, Function, Ident, MemberExpr, Module, Pat,
-    Prop, PropName, SimpleAssignTarget, Stmt, SwitchCase, TryStmt, UnaryExpr, UnaryOp, YieldExpr,
+    CondExpr, ContinueStmt, Expr, ExprStmt, ForStmt, Function, Ident, IfStmt, MemberExpr, Module,
+    Pat, Prop, PropName, ReturnStmt, SeqExpr, SimpleAssignTarget, Stmt, SwitchCase, TryStmt,
+    UnaryExpr, UnaryOp, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -231,6 +232,202 @@ fn extract_generator_stmts(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<V
     None
 }
 
+/// Expand Terser-compressed case body statements back into the form the
+/// decoder expects. Terser merges individual statements into comma sequences
+/// and folds conditional branches into ternary returns:
+///
+///   `a, b, _a.label = 1;`    →  `a; b; _a.label = 1;`
+///   `return index++, [3, 1]` →  `index++; return [3, 1];`
+///   `return t ? [4, X] : [3, N]` →  `if (!t) return [3, N]; return [4, X];`
+fn expand_terser_case_stmts(stmts: &[Stmt]) -> Vec<Stmt> {
+    let mut result = Vec::new();
+    let mut i = 0;
+    while i < stmts.len() {
+        if let Some(consumed) = try_rearrange_if_goto_pair(&stmts[i..], &mut result) {
+            i += consumed;
+        } else {
+            expand_one_stmt(&mut result, &stmts[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
+/// Rearrange `if (test) { return [opcode, X]; } return [3, N];` into
+/// `if (!test) return [3, N]; return [opcode, X];` so the goto ends up in
+/// the if-body where `loop_break_test` can detect it. `SimplifySequence`
+/// produces this pattern from `return test ? [opcode, X] : [3, N]`.
+fn try_rearrange_if_goto_pair(stmts: &[Stmt], result: &mut Vec<Stmt>) -> Option<usize> {
+    if stmts.len() < 2 {
+        return None;
+    }
+    let Stmt::If(if_stmt) = &stmts[0] else {
+        return None;
+    };
+    if if_stmt.alt.is_some() {
+        return None;
+    }
+    if !if_body_has_opcode_return(&if_stmt.cons) {
+        return None;
+    }
+    let Stmt::Return(ret) = &stmts[1] else {
+        return None;
+    };
+    if !is_goto_opcode_return(ret) {
+        return None;
+    }
+    result.push(Stmt::If(IfStmt {
+        span: DUMMY_SP,
+        test: invert_condition(&if_stmt.test),
+        cons: Box::new(stmts[1].clone()),
+        alt: None,
+    }));
+    flatten_if_cons_into(result, &if_stmt.cons);
+    Some(2)
+}
+
+fn if_body_has_opcode_return(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Return(ret) => ret
+            .arg
+            .as_deref()
+            .is_some_and(|a| is_opcode_like(strip_parens(a))),
+        Stmt::Block(block) if block.stmts.len() == 1 => if_body_has_opcode_return(&block.stmts[0]),
+        _ => false,
+    }
+}
+
+fn is_goto_opcode_return(ret: &ReturnStmt) -> bool {
+    let Some(arg) = ret.arg.as_deref() else {
+        return false;
+    };
+    let Expr::Array(arr) = strip_parens(arg) else {
+        return false;
+    };
+    arr.elems.first().and_then(|e| e.as_ref()).is_some_and(|e| {
+        matches!(
+            e.expr.as_ref(),
+            Expr::Lit(swc_core::ecma::ast::Lit::Num(n)) if n.value as u32 == 3
+        )
+    })
+}
+
+fn flatten_if_cons_into(result: &mut Vec<Stmt>, stmt: &Stmt) {
+    match stmt {
+        Stmt::Block(block) => {
+            for s in &block.stmts {
+                expand_one_stmt(result, s);
+            }
+        }
+        _ => expand_one_stmt(result, stmt),
+    }
+}
+
+fn expand_one_stmt(result: &mut Vec<Stmt>, stmt: &Stmt) {
+    if let Stmt::Return(ret) = stmt {
+        if let Some(Expr::Paren(paren)) = ret.arg.as_deref() {
+            return expand_one_stmt(
+                result,
+                &Stmt::Return(ReturnStmt {
+                    span: DUMMY_SP,
+                    arg: Some(paren.expr.clone()),
+                }),
+            );
+        }
+    }
+    match stmt {
+        Stmt::Expr(ExprStmt { expr, .. }) if matches!(expr.as_ref(), Expr::Seq(_)) => {
+            let Expr::Seq(seq) = expr.as_ref() else {
+                unreachable!()
+            };
+            for sub in &seq.exprs {
+                result.push(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: sub.clone(),
+                }));
+            }
+        }
+        Stmt::Return(ret)
+            if ret
+                .arg
+                .as_deref()
+                .is_some_and(|a| matches!(a, Expr::Seq(_))) =>
+        {
+            let Expr::Seq(seq) = ret.arg.as_ref().unwrap().as_ref() else {
+                unreachable!()
+            };
+            for sub in &seq.exprs[..seq.exprs.len() - 1] {
+                result.push(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: sub.clone(),
+                }));
+            }
+            expand_one_stmt(
+                result,
+                &Stmt::Return(ReturnStmt {
+                    span: DUMMY_SP,
+                    arg: Some(seq.exprs.last().unwrap().clone()),
+                }),
+            );
+        }
+        Stmt::Return(ret)
+            if ret
+                .arg
+                .as_deref()
+                .is_some_and(|a| matches!(a, Expr::Cond(_))) =>
+        {
+            let Expr::Cond(cond) = ret.arg.as_ref().unwrap().as_ref() else {
+                unreachable!()
+            };
+            if is_opcode_like(&cond.cons) || is_opcode_like(&cond.alt) {
+                result.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: invert_condition(&cond.test),
+                    cons: Box::new(Stmt::Return(ReturnStmt {
+                        span: DUMMY_SP,
+                        arg: Some(cond.alt.clone()),
+                    })),
+                    alt: None,
+                }));
+                expand_one_stmt(
+                    result,
+                    &Stmt::Return(ReturnStmt {
+                        span: DUMMY_SP,
+                        arg: Some(cond.cons.clone()),
+                    }),
+                );
+            } else {
+                result.push(stmt.clone());
+            }
+        }
+        _ => result.push(stmt.clone()),
+    }
+}
+
+fn is_opcode_like(expr: &Expr) -> bool {
+    let inner = unwrap_seq_last(strip_parens(expr));
+    if let Expr::Array(arr) = inner {
+        arr.elems
+            .first()
+            .and_then(|e| e.as_ref())
+            .is_some_and(|e| matches!(e.expr.as_ref(), Expr::Lit(swc_core::ecma::ast::Lit::Num(_))))
+    } else {
+        false
+    }
+}
+
+fn unwrap_seq_last(expr: &Expr) -> &Expr {
+    let expr = strip_parens(expr);
+    if let Expr::Seq(SeqExpr { exprs, .. }) = expr {
+        exprs
+            .last()
+            .map(|e| strip_parens(e.as_ref()))
+            .unwrap_or(expr)
+    } else {
+        expr
+    }
+}
+
 /// Decode the state machine into a flat list of statements.
 ///
 /// Phase 1: Collect (label_idx, Stmt) pairs in case order, decoding opcodes.
@@ -254,7 +451,8 @@ fn decode_state_machine(
             None => continue,
         };
 
-        for stmt in &case.cons {
+        let expanded = expand_terser_case_stmts(&case.cons);
+        for stmt in &expanded {
             if let Some(region) = extract_trys_push(&state_name, stmt) {
                 trys.push(region);
                 continue;
