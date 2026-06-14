@@ -459,7 +459,8 @@ fn try_extract_assignment_sliced_default_access(
     if !is_sliced_to_array_callee_name(callee.as_ref()) || call.args.len() != 2 {
         return None;
     }
-    let default = extract_default_value(call.args[0].expr.as_ref(), &temp.id, unresolved_mark)?;
+    let (default, fused_temp) =
+        extract_sliced_default_arg(call.args[0].expr.as_ref(), &temp.id, unresolved_mark)?;
 
     let temp_key = binding_key(&temp.id);
     let ref_key = binding_key(&ref_binding.id);
@@ -468,6 +469,7 @@ fn try_extract_assignment_sliced_default_access(
     }
 
     let mut removed_temps = vec![temp_key, ref_key];
+    removed_temps.extend(fused_temp.map(|id| binding_key(&id)));
     let collected = collect_assignment_accesses_on(
         stmts,
         index + 2,
@@ -684,6 +686,11 @@ fn collect_assignment_accesses_on(
             accesses.push(extracted.access);
             removed_temps.extend(extracted.removed_temps);
             i += extracted.consumed;
+        } else if let Some((nested, consumed)) =
+            try_expand_sliced_to_array_accesses(stmts, i, ref_ident, unresolved_mark, removed_temps)
+        {
+            accesses.extend(nested);
+            i += consumed;
         } else {
             break;
         }
@@ -693,6 +700,56 @@ fn collect_assignment_accesses_on(
         accesses,
         consumed: i - start,
     }
+}
+
+/// When we encounter `ref = _slicedToArray(expected_source, N)` followed by
+/// `binding = ref[i]` assignments, expand the `_slicedToArray` transparently:
+/// collect the index accesses on `ref` and return them as direct array accesses
+/// on `expected_source`. This lets `UnDestructuring` fold
+/// `tags: temp = []; ref = _slicedToArray(temp, 3); a = ref[0]; c = ref[2]`
+/// into `tags: [a, , c] = []`.
+fn try_expand_sliced_to_array_accesses(
+    stmts: &[Stmt],
+    index: usize,
+    expected_source: &Ident,
+    unresolved_mark: Mark,
+    removed_temps: &mut Vec<BindingKey>,
+) -> Option<(Vec<Access>, usize)> {
+    let (ref_binding, ref_init) = extract_binding_assignment(stmts.get(index)?)?;
+    let Expr::Call(call) = strip_parens(ref_init) else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    if !is_sliced_to_array_callee_name(callee.as_ref()) || call.args.len() != 2 {
+        return None;
+    }
+    let source_arg = strip_parens(call.args[0].expr.as_ref());
+    let Expr::Ident(source_ident) = source_arg else {
+        return None;
+    };
+    if source_ident.sym != expected_source.sym || source_ident.ctxt != expected_source.ctxt {
+        return None;
+    }
+
+    let ref_key = binding_key(&ref_binding.id);
+    removed_temps.push(ref_key);
+    let collected = collect_assignment_accesses_on(
+        stmts,
+        index + 1,
+        &ref_binding.id,
+        unresolved_mark,
+        removed_temps,
+    );
+    if collected.accesses.is_empty() {
+        return None;
+    }
+    let after = index + 1 + collected.consumed;
+    if ident_used_in_stmts(&stmts[after..], &binding_key(&ref_binding.id)) {
+        return None;
+    }
+    Some((collected.accesses, 1 + collected.consumed))
 }
 
 fn try_reconstruct_ref_group(
@@ -1408,6 +1465,29 @@ fn numeric_index(num: &Number) -> Option<usize> {
         return None;
     }
     Some(num.value as usize)
+}
+
+/// Extract the default value from the first argument of `_slicedToArray()`.
+fn extract_sliced_default_arg(
+    expr: &Expr,
+    temp: &Ident,
+    unresolved_mark: Mark,
+) -> Option<(Box<Expr>, Option<Ident>)> {
+    if let Some(default) = extract_default_value(expr, temp, unresolved_mark) {
+        return Some((default, None));
+    }
+    let Expr::Assign(assign) = strip_parens(expr) else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(fused_binding)) = &assign.left else {
+        return None;
+    };
+    let default =
+        extract_default_value(strip_parens(assign.right.as_ref()), temp, unresolved_mark)?;
+    Some((default, Some(fused_binding.id.clone())))
 }
 
 fn extract_default_value(expr: &Expr, temp: &Ident, unresolved_mark: Mark) -> Option<Box<Expr>> {

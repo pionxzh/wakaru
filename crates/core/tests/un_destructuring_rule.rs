@@ -664,3 +664,28 @@ function nested({ outer: { value = fallbackValue } = {} } = {}) {
         expected,
     );
 }
+
+#[test]
+fn sliced_to_array_folded_into_object_destructuring_assignment() {
+    let input = r#"
+source = _t;
+id = source.id;
+_source$profile = source.profile;
+_source$profile2 = _source$profile === void 0 ? {} : _source$profile;
+name = _source$profile2.name;
+_source$tags = source.tags;
+_source$tags2 = _source$tags === void 0 ? [] : _source$tags;
+_source$tags3 = _slicedToArray(_source$tags2, 3);
+primary = _source$tags3[0];
+backup = _source$tags3[2];
+"#;
+    let expected = r#"
+source = _t;
+({
+  id,
+  profile: { name } = {},
+  tags: [primary, , backup] = []
+} = source);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
