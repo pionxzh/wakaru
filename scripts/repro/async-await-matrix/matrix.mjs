@@ -512,9 +512,97 @@ function topLevelAssignIndex(text) {
 }
 
 function collectBindingNames(pattern) {
+  const trimmed = pattern.trim();
+  if (trimmed.startsWith("{")) {
+    return collectObjectPatternBindings(trimmed);
+  }
+  if (trimmed.startsWith("[")) {
+    return collectArrayPatternBindings(trimmed);
+  }
   return [...pattern.matchAll(/[A-Za-z_$][\w$]*/g)]
     .map((match) => match[0])
     .filter((name) => !RESERVED_WORDS.has(name));
+}
+
+function collectObjectPatternBindings(pattern) {
+  const inner = pattern.slice(1, pattern.length - findMatchingClose(pattern, 0));
+  const names = [];
+  for (const prop of splitAtTopLevel(inner, ",")) {
+    const colonIdx = topLevelIndexOf(prop, ":");
+    if (colonIdx !== -1) {
+      // key: value — only value is a binding
+      const value = prop.slice(colonIdx + 1).trim();
+      names.push(...collectBindingNames(stripDefault(value)));
+    } else {
+      // shorthand { name } or rest ...name
+      const clean = prop.replace(/^\.\.\./, "").trim();
+      const stripped = stripDefault(clean);
+      names.push(...collectSimpleBindingNames(stripped));
+    }
+  }
+  return names;
+}
+
+function collectArrayPatternBindings(pattern) {
+  const inner = pattern.slice(1, pattern.length - findMatchingClose(pattern, 0));
+  const names = [];
+  for (const elem of splitAtTopLevel(inner, ",")) {
+    const clean = elem.replace(/^\.\.\./, "").trim();
+    if (!clean) continue;
+    names.push(...collectBindingNames(stripDefault(clean)));
+  }
+  return names;
+}
+
+function collectSimpleBindingNames(text) {
+  return [...text.matchAll(/[A-Za-z_$][\w$]*/g)]
+    .map((m) => m[0])
+    .filter((n) => !RESERVED_WORDS.has(n));
+}
+
+function stripDefault(text) {
+  const eq = topLevelAssignIndex(text);
+  return eq === -1 ? text : text.slice(0, eq).trim();
+}
+
+function findMatchingClose(text, openIdx) {
+  let depth = 0;
+  const open = text[openIdx];
+  const close = open === "{" ? "}" : open === "[" ? "]" : ")";
+  for (let i = openIdx; i < text.length; i++) {
+    if (text[i] === open) depth++;
+    else if (text[i] === close) { depth--; if (depth === 0) return text.length - i; }
+  }
+  return 1;
+}
+
+function splitAtTopLevel(text, sep) {
+  const parts = [];
+  let current = "";
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === "{" || ch === "[" || ch === "(") depth++;
+    if (ch === "}" || ch === "]" || ch === ")") depth = Math.max(0, depth - 1);
+    if (ch === sep && depth === 0) {
+      parts.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  parts.push(current);
+  return parts;
+}
+
+function topLevelIndexOf(text, ch) {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "{" || c === "[" || c === "(") depth++;
+    if (c === "}" || c === "]" || c === ")") depth = Math.max(0, depth - 1);
+    if (c === ch && depth === 0) return i;
+  }
+  return -1;
 }
 
 function normalizeIdentifiers(code, mapping) {
@@ -532,7 +620,15 @@ function isPropertyName(code, offset) {
   if (code[index] === "." && code[index - 1] === "." && code[index - 2] === ".") {
     return false;
   }
-  return code[index] === ".";
+  if (code[index] === ".") return true;
+  // Check if this is an object/destructuring key: `ident:` (but not `ident::`)
+  const match = code.slice(offset).match(/^[A-Za-z_$][\w$]*/);
+  if (match) {
+    let after = offset + match[0].length;
+    while (after < code.length && /\s/.test(code[after])) after++;
+    if (code[after] === ":" && code[after + 1] !== ":") return true;
+  }
+  return false;
 }
 
 function normalizeCode(code, mapping) {
