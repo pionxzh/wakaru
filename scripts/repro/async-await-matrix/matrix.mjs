@@ -43,6 +43,47 @@ const snippets = [
     ],
   },
   {
+    name: "async-double-await",
+    source: "async function resolve_deep(promise) {\n  return await await promise;\n}\n",
+    expected: ["async function resolve_deep(promise)", "await await promise"],
+    expectedAny: [
+      ["async function resolve_deep(promise)", "await await promise"],
+      ["async function resolve_deep(promise)", "return await await promise"],
+      ["async function", "await await"],
+    ],
+  },
+  {
+    name: "async-simple-loop",
+    source:
+      "async function process_items(items) {\n  const results = [];\n  for (let index = 0; index < items.length; index++) {\n    results.push(await transform_item(items[index]));\n  }\n  return results;\n}\n",
+    expected: [
+      "async function process_items(items)",
+      "for",
+      "await transform_item(",
+      "return results",
+    ],
+    expectedAny: [
+      [
+        "async function process_items(items)",
+        "for (let index = 0",
+        "await transform_item(items[index])",
+        "return results",
+      ],
+      [
+        "async function process_items(items)",
+        "for(;",
+        "await transform_item(",
+        "return results",
+      ],
+      [
+        "async function",
+        "for",
+        "await transform_item(",
+        "return",
+      ],
+    ],
+  },
+  {
     name: "async-loop-try-catch",
     source:
       "async function collect_enabled(items) {\n  const output = [];\n  for (let index = 0; index < items.length; index++) {\n    const item = items[index];\n    if (!item.enabled) {\n      continue;\n    }\n    try {\n      output.push(await fetch_item(item.id));\n    } catch (error) {\n      output.push(await recover_item(item, error));\n    }\n  }\n  return output;\n}\n",
@@ -190,6 +231,16 @@ const snippets = [
     ],
   },
   {
+    name: "async-iife",
+    source: "(async function() {\n  await setup();\n  await run();\n})();\n",
+    expected: ["async", "await setup()", "await run()"],
+    expectedAny: [
+      ["(async function()", "await setup()", "await run()"],
+      ["async function()", "await setup()", "await run()"],
+      ["async", "await setup()", "await run()"],
+    ],
+  },
+  {
     name: "async-arrow-object-rest",
     source:
       "const load_user = async (config) => {\n  const source = config == null ? await load_config() : config;\n  const { id, token, ...options } = source;\n  const session = await open_session(token);\n  return await fetch_user(id, { ...options, session });\n};\nuse(load_user);\n",
@@ -263,6 +314,21 @@ const snippets = [
     name: "generator-basic",
     source: "function* read_items(items) {\n  yield first_item(items);\n  yield second_item(items);\n}\n",
     expected: ["function* read_items(items)", "yield first_item(items)", "yield second_item(items)"],
+  },
+  {
+    name: "generator-simple-loop",
+    source:
+      "function* iter_items(items) {\n  for (let index = 0; index < items.length; index++) {\n    yield items[index];\n  }\n}\n",
+    expected: [
+      "function* iter_items(items)",
+      "for",
+      "yield items[index]",
+    ],
+    expectedAny: [
+      ["function* iter_items(items)", "for (let index = 0", "yield items[index]"],
+      ["function* iter_items(items)", "for(;", "yield items["],
+      ["function*", "for", "yield items["],
+    ],
   },
   {
     name: "generator-try-catch",

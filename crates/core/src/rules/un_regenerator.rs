@@ -6,8 +6,8 @@ use swc_core::ecma::ast::{
     ArrayLit, ArrowExpr, AssignExpr, AssignOp, AssignTarget, AwaitExpr, BlockStmt, BlockStmtOrExpr,
     BreakStmt, CallExpr, Callee, CatchClause, ContinueStmt, Decl, Expr, ExprOrSpread, ExprStmt,
     FnDecl, FnExpr, ForStmt, Function, Ident, ImportSpecifier, Lit, MemberExpr, MemberProp, Module,
-    ModuleDecl, ModuleItem, Number, Param, Pat, ReturnStmt, SimpleAssignTarget, Stmt, SwitchCase,
-    UnaryExpr, UnaryOp, VarDeclarator, WhileStmt, YieldExpr,
+    ModuleDecl, ModuleItem, Number, Param, ParenExpr, Pat, ReturnStmt, SimpleAssignTarget, Stmt,
+    SwitchCase, UnaryExpr, UnaryOp, VarDeclarator, WhileStmt, YieldExpr,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -721,6 +721,35 @@ impl VisitMut for FunctionTransformer<'_> {
         arrow.visit_mut_children_with(self);
     }
 
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+
+        if let Expr::Call(outer_call) = expr {
+            if !outer_call.args.is_empty() {
+                return;
+            }
+            let Callee::Expr(callee_expr) = &mut outer_call.callee else {
+                return;
+            };
+            if !is_paramless_async_to_gen_iife(callee_expr, self.async_to_gen_callees) {
+                return;
+            }
+            if let Some((transformed, mark_key)) = try_transform_async_to_generator_expr(
+                callee_expr.as_ref().clone(),
+                self.async_to_gen_callees,
+                self.generator_helpers,
+            ) {
+                **callee_expr = Expr::Paren(ParenExpr {
+                    span: DUMMY_SP,
+                    expr: Box::new(transformed),
+                });
+                if let Some(mark_key) = mark_key {
+                    self.consumed_marks.push(mark_key);
+                }
+            }
+        }
+    }
+
     fn visit_mut_yield_expr(&mut self, yield_expr: &mut YieldExpr) {
         yield_expr.visit_mut_children_with(self);
 
@@ -1317,8 +1346,19 @@ fn decode_babel_state_machine(
                 continue;
             }
 
-            // Skip _ctx.next = N assignments (state transitions)
+            // Detect _ctx.next = N; break; pairs. When N < idx (a back-edge),
+            // preserve the goto as `return [3, N]` so `recover_index_loops`
+            // can reconstruct for-loops. Forward/fallthrough gotos are dropped.
             if is_next_assign(state_name, stmt) {
+                if let Some(target) = extract_state_next_assign_target(state_name, stmt) {
+                    if i + 1 < stmts.len() && matches!(stmts[i + 1], Stmt::Break(_)) {
+                        if target > 0 && target < idx {
+                            flat.push((idx, jump_return_stmt(target)));
+                        }
+                        i += 2;
+                        continue;
+                    }
+                }
                 i += 1;
                 continue;
             }
@@ -1555,6 +1595,11 @@ fn decode_babel_state_machine(
     // conditional jumps (`if (test) [3, T]`) selecting between a fallthrough
     // assignment and the assignment at the jump target.
     let output = recover_conditional_assignments(output);
+
+    // Phase 3b: Resolve remaining forward jumps into if-blocks. At this stage
+    // we still have `(label_idx, stmt)` pairs, so we can determine which
+    // stmts fall before and after the jump target.
+    let output = resolve_labeled_forward_jumps(output);
 
     // Phase 3: Detect infinite loops (case 0 → ... → goto 0 pattern)
     let has_back_edge_to_zero = detect_back_edge_to_zero(state_name, &cases);
@@ -2538,9 +2583,7 @@ fn recover_index_loops(stmts: Vec<Stmt>) -> Vec<Stmt> {
 
 fn try_recover_index_loop(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
     let (test, break_target) = loop_break_test(stmts.first()?)?;
-    let final_return_idx = stmts
-        .iter()
-        .position(|stmt| return_value_stmt(stmt).is_some())?;
+    let final_return_idx = find_loop_boundary(stmts)?;
     if final_return_idx < 3 {
         return None;
     }
@@ -2548,11 +2591,16 @@ fn try_recover_index_loop(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
     let update_idx = final_return_idx.checked_sub(1)?;
     let update = expr_stmt_expr(&stmts[update_idx])?;
     let mut body_stmts = stmts[1..update_idx].to_vec();
-    let continue_target = single_continue_target(&body_stmts, break_target)?;
-    if !convert_jump_returns(&mut body_stmts, break_target, continue_target)? {
-        return None;
-    }
+    let continue_target = single_continue_target(&body_stmts, break_target).or_else(|| {
+        return_jump_target(&stmts[final_return_idx]).filter(|target| *target < break_target)
+    })?;
+    convert_jump_returns(&mut body_stmts, break_target, continue_target)?;
 
+    let consumed = if return_jump_target(&stmts[final_return_idx]).is_some() {
+        final_return_idx + 1
+    } else {
+        update_idx + 1
+    };
     Some((
         Stmt::For(ForStmt {
             span: DUMMY_SP,
@@ -2565,7 +2613,7 @@ fn try_recover_index_loop(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
                 stmts: body_stmts,
             })),
         }),
-        update_idx + 1,
+        consumed,
     ))
 }
 
@@ -2613,6 +2661,69 @@ fn collect_jump_target(stmt: &Stmt, targets: &mut HashSet<usize>) {
     collect_jump_targets(std::slice::from_ref(stmt), targets);
 }
 
+/// Resolve forward jumps of the form `if (test) { return [3, N]; }` using
+/// label-index pairs. Stmts between the jump and label N become the "then"
+/// body; stmts at label N+ continue after the if-block. Only resolves jumps
+/// where the body (between jump and target) is opcode-free.
+fn resolve_labeled_forward_jumps(stmts: Vec<(usize, Stmt)>) -> Vec<(usize, Stmt)> {
+    let mut result = Vec::new();
+    let mut index = 0;
+    while index < stmts.len() {
+        if let Some((recovered_label, recovered, consumed)) =
+            try_resolve_labeled_forward_jump(&stmts[index..])
+        {
+            result.push((recovered_label, recovered));
+            index += consumed;
+        } else {
+            result.push(stmts[index].clone());
+            index += 1;
+        }
+    }
+    result
+}
+
+fn try_resolve_labeled_forward_jump(stmts: &[(usize, Stmt)]) -> Option<(usize, Stmt, usize)> {
+    let (start_label, first_stmt) = stmts.first()?;
+    let Stmt::If(if_stmt) = first_stmt else {
+        return None;
+    };
+    if if_stmt.alt.is_some() {
+        return None;
+    }
+    let target = jump_target_stmt(&if_stmt.cons)?;
+    if target <= *start_label {
+        return None;
+    }
+
+    // Only resolve when the target is at or past all remaining content.
+    // If stmts exist at the target label, the jump creates an if/else branch
+    // which requires full control-flow analysis to resolve correctly.
+    let max_remaining_label = stmts[1..].iter().map(|(l, _)| *l).max().unwrap_or(0);
+    if target <= max_remaining_label {
+        return None;
+    }
+
+    let body_stmts: Vec<Stmt> = stmts[1..].iter().map(|(_, s)| s.clone()).collect();
+    if body_stmts.is_empty() || stmts_contain_state_opcode_return(&body_stmts) {
+        return None;
+    }
+
+    Some((
+        *start_label,
+        Stmt::If(swc_core::ecma::ast::IfStmt {
+            span: DUMMY_SP,
+            test: invert_condition(&if_stmt.test),
+            cons: Box::new(Stmt::Block(BlockStmt {
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                stmts: body_stmts,
+            })),
+            alt: None,
+        }),
+        stmts.len(),
+    ))
+}
+
 fn loop_break_test(stmt: &Stmt) -> Option<(Box<Expr>, usize)> {
     let Stmt::If(if_stmt) = stmt else {
         return None;
@@ -2622,6 +2733,24 @@ fn loop_break_test(stmt: &Stmt) -> Option<(Box<Expr>, usize)> {
     }
     let target = jump_target_stmt(&if_stmt.cons)?;
     Some((invert_condition(&if_stmt.test), target))
+}
+
+/// Find the loop boundary return. A top-level back-edge goto (`return [3, N]`)
+/// takes precedence when present, because it marks the end of the loop body.
+/// Falls back to the first top-level return with an argument (the value return
+/// after the loop). Skips jump returns nested inside if-blocks or try/catch,
+/// which are internal control flow (continue/break), not loop boundaries.
+fn find_loop_boundary(stmts: &[Stmt]) -> Option<usize> {
+    for (i, stmt) in stmts.iter().enumerate() {
+        if let Stmt::Return(_) = stmt {
+            if return_jump_target(stmt).is_some() {
+                return Some(i);
+            }
+        }
+    }
+    stmts
+        .iter()
+        .position(|stmt| return_value_stmt(stmt).is_some())
 }
 
 fn invert_condition(test: &Expr) -> Box<Expr> {
@@ -3776,6 +3905,37 @@ fn is_esbuild_async_callee(expr: &Expr, esbuild_async_helpers: &[BindingKey]) ->
 // _asyncToGenerator → async function
 // ============================================================
 
+fn is_paramless_async_to_gen_iife(expr: &Expr, async_to_gen_callees: &AsyncToGenCallees) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    if call.args.len() != 1 {
+        return false;
+    }
+    let Some(callee) = call.callee.as_expr() else {
+        return false;
+    };
+    if !is_async_to_gen_callee(callee, async_to_gen_callees) {
+        return false;
+    }
+    match call.args[0].expr.as_ref() {
+        Expr::Fn(fn_expr) => fn_expr.function.params.is_empty(),
+        Expr::Call(mark_call) => {
+            let Some(callee_expr) = mark_call.callee.as_expr() else {
+                return false;
+            };
+            let Expr::Member(member) = callee_expr.as_ref() else {
+                return false;
+            };
+            if !is_mark_prop(&member.prop) || mark_call.args.len() != 1 {
+                return false;
+            }
+            matches!(mark_call.args[0].expr.as_ref(), Expr::Fn(fn_expr) if fn_expr.function.params.is_empty())
+        }
+        _ => false,
+    }
+}
+
 fn try_transform_async_to_generator_expr(
     expr: Expr,
     async_to_gen_callees: &AsyncToGenCallees,
@@ -4120,6 +4280,7 @@ fn replace_yield_with_await(stmts: &mut Vec<Stmt>) {
                     span: DUMMY_SP,
                     arg,
                 });
+                expr.visit_mut_children_with(self);
                 return;
             }
             expr.visit_mut_children_with(self);

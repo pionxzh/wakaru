@@ -250,7 +250,7 @@ fn decode_state_machine(
                 continue;
             }
 
-            if let Some(decoded) = decode_return_opcode(stmt, values_helpers) {
+            if let Some(decoded) = decode_return_opcode_with_backedge(stmt, values_helpers, idx) {
                 if let Some(s) = decoded {
                     flat.push((idx, s));
                 }
@@ -343,6 +343,8 @@ fn decode_state_machine(
     }
 
     let output = recover_conditional_assignments(output);
+
+    let output = resolve_labeled_forward_jumps(output);
 
     // Phase 3: group by label index
     let max_label = output.iter().map(|(i, _)| *i).max().unwrap_or(0);
@@ -699,6 +701,17 @@ fn is_state_label_assign(state_name: &Atom, stmt: &Stmt) -> bool {
 /// Returns `Some(Some(stmt))` if an opcode-based return was decoded,
 /// `Some(None)` to drop the statement, or `None` if not a return opcode.
 fn decode_return_opcode(stmt: &Stmt, values_helpers: &HashSet<BindingKey>) -> Option<Option<Stmt>> {
+    decode_return_opcode_with_backedge(stmt, values_helpers, 0)
+}
+
+/// Like `decode_return_opcode`, but preserves back-edge goto opcodes
+/// (`return [3, N]` where N > 0 and N < current_case) so that
+/// `recover_index_loops` can reconstruct for-loops.
+fn decode_return_opcode_with_backedge(
+    stmt: &Stmt,
+    values_helpers: &HashSet<BindingKey>,
+    current_case: usize,
+) -> Option<Option<Stmt>> {
     let Stmt::Return(ret) = stmt else { return None };
     let arg = ret.arg.as_ref()?;
     let Expr::Array(arr) = arg.as_ref() else {
@@ -727,6 +740,21 @@ fn decode_return_opcode(stmt: &Stmt, values_helpers: &HashSet<BindingKey>) -> Op
                 })
             });
             Some(s)
+        }
+        3 => {
+            // goto(label) — preserve back-edges for loop recovery
+            if let Some(target) = argument.as_deref().and_then(|e| {
+                if let Expr::Lit(swc_core::ecma::ast::Lit::Num(n)) = e {
+                    Some(n.value as usize)
+                } else {
+                    None
+                }
+            }) {
+                if target > 0 && target < current_case {
+                    return Some(Some(stmt.clone()));
+                }
+            }
+            Some(None)
         }
         4 => {
             // yield(value)
@@ -764,7 +792,7 @@ fn decode_return_opcode(stmt: &Stmt, values_helpers: &HashSet<BindingKey>) -> Op
                 })),
             })))
         }
-        0 | 1 | 3 | 6 | 7 => Some(None), // skip
+        0 | 1 | 6 | 7 => Some(None), // skip
         _ => Some(Some(stmt.clone())),
     }
 }
@@ -998,10 +1026,7 @@ fn recover_index_loops(stmts: Vec<Stmt>) -> Vec<Stmt> {
 
 fn try_recover_index_loop(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
     let (test, break_target) = loop_break_test(stmts.first()?)?;
-    let continue_target = break_target.checked_sub(1)?;
-    let final_return_idx = stmts
-        .iter()
-        .position(|stmt| return_value_stmt(stmt).is_some())?;
+    let final_return_idx = find_loop_boundary(stmts)?;
     if final_return_idx < 3 {
         return None;
     }
@@ -1009,10 +1034,22 @@ fn try_recover_index_loop(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
     let update_idx = final_return_idx.checked_sub(1)?;
     let update = expr_stmt_expr(&stmts[update_idx])?;
     let mut body_stmts = stmts[1..update_idx].to_vec();
-    if !convert_jump_returns(&mut body_stmts, break_target, continue_target)? {
-        return None;
-    }
+    let body_has_jump_returns = body_stmts.iter().any(|s| {
+        convert_jump_return(&mut s.clone(), break_target, break_target.saturating_sub(1))
+            .is_some_and(|changed| changed)
+    });
+    let continue_target = if body_has_jump_returns {
+        break_target.checked_sub(1).filter(|ct| *ct > 0)?
+    } else {
+        return_jump_target(&stmts[final_return_idx]).filter(|target| *target < break_target)?
+    };
+    convert_jump_returns(&mut body_stmts, break_target, continue_target)?;
 
+    let consumed = if return_jump_target(&stmts[final_return_idx]).is_some() {
+        final_return_idx + 1
+    } else {
+        update_idx + 1
+    };
     Some((
         Stmt::For(ForStmt {
             span: DUMMY_SP,
@@ -1025,8 +1062,104 @@ fn try_recover_index_loop(stmts: &[Stmt]) -> Option<(Stmt, usize)> {
                 stmts: body_stmts,
             })),
         }),
-        update_idx + 1,
+        consumed,
     ))
+}
+
+fn find_loop_boundary(stmts: &[Stmt]) -> Option<usize> {
+    for (i, stmt) in stmts.iter().enumerate() {
+        if let Stmt::Return(_) = stmt {
+            if return_jump_target(stmt).is_some() {
+                return Some(i);
+            }
+        }
+    }
+    stmts
+        .iter()
+        .position(|stmt| return_value_stmt(stmt).is_some())
+}
+
+fn resolve_labeled_forward_jumps(stmts: Vec<(usize, Stmt)>) -> Vec<(usize, Stmt)> {
+    let mut result = Vec::new();
+    let mut index = 0;
+    while index < stmts.len() {
+        if let Some((label, recovered, consumed)) =
+            try_resolve_labeled_forward_jump(&stmts[index..])
+        {
+            result.push((label, recovered));
+            index += consumed;
+        } else {
+            result.push(stmts[index].clone());
+            index += 1;
+        }
+    }
+    result
+}
+
+fn try_resolve_labeled_forward_jump(stmts: &[(usize, Stmt)]) -> Option<(usize, Stmt, usize)> {
+    let (start_label, first_stmt) = stmts.first()?;
+    let Stmt::If(if_stmt) = first_stmt else {
+        return None;
+    };
+    if if_stmt.alt.is_some() {
+        return None;
+    }
+    let target = jump_target_stmt(&if_stmt.cons)?;
+    if target <= *start_label {
+        return None;
+    }
+
+    let max_remaining_label = stmts[1..].iter().map(|(l, _)| *l).max().unwrap_or(0);
+    if target <= max_remaining_label {
+        return None;
+    }
+
+    let body_stmts: Vec<Stmt> = stmts[1..].iter().map(|(_, s)| s.clone()).collect();
+    if body_stmts.is_empty() || stmts_contain_state_opcode_return(&body_stmts) {
+        return None;
+    }
+
+    Some((
+        *start_label,
+        Stmt::If(swc_core::ecma::ast::IfStmt {
+            span: DUMMY_SP,
+            test: invert_condition(&if_stmt.test),
+            cons: Box::new(Stmt::Block(BlockStmt {
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                stmts: body_stmts,
+            })),
+            alt: None,
+        }),
+        stmts.len(),
+    ))
+}
+
+fn stmts_contain_state_opcode_return(stmts: &[Stmt]) -> bool {
+    struct Finder {
+        found: bool,
+    }
+    impl swc_core::ecma::visit::Visit for Finder {
+        fn visit_return_stmt(&mut self, ret: &swc_core::ecma::ast::ReturnStmt) {
+            if let Some(Expr::Array(arr)) = ret.arg.as_deref() {
+                if arr.elems.first().and_then(|e| e.as_ref()).is_some_and(|e| {
+                    matches!(e.expr.as_ref(), Expr::Lit(swc_core::ecma::ast::Lit::Num(_)))
+                }) {
+                    self.found = true;
+                    return;
+                }
+            }
+            ret.visit_children_with(self);
+        }
+    }
+    let mut f = Finder { found: false };
+    for stmt in stmts {
+        swc_core::ecma::visit::VisitWith::visit_with(stmt, &mut f);
+        if f.found {
+            return true;
+        }
+    }
+    false
 }
 
 fn loop_break_test(stmt: &Stmt) -> Option<(Box<Expr>, usize)> {
@@ -1248,6 +1381,7 @@ fn replace_yield_with_await(stmts: &mut Vec<Stmt>) {
                     span: DUMMY_SP,
                     arg,
                 });
+                expr.visit_mut_children_with(self);
                 return;
             }
             expr.visit_mut_children_with(self);

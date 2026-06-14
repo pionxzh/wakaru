@@ -2426,3 +2426,143 @@ function normal() {
         "unrelated .mark() calls must not be removed, got:\n{output}"
     );
 }
+
+#[test]
+fn generator_simple_for_loop_with_forward_jump() {
+    let input = r#"
+var _marked = regeneratorRuntime.mark(iter);
+function iter(items) {
+  var i;
+  return regeneratorRuntime.wrap(function iter$(_context) {
+    while (1) switch (_context.prev = _context.next) {
+      case 0:
+        i = 0;
+      case 1:
+        if (!(i < items.length)) {
+          _context.next = 7;
+          break;
+        }
+        _context.next = 4;
+        return items[i];
+      case 4:
+        i++;
+        _context.next = 1;
+        break;
+      case 7:
+      case "end":
+        return _context.stop();
+    }
+  }, _marked);
+}
+"#;
+    let expected = r#"
+function* iter(items) {
+  var i;
+  i = 0;
+  for (; i < items.length; i++) {
+    yield items[i];
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn generator_simple_conditional_skip_to_end() {
+    let input = r#"
+var _marked = regeneratorRuntime.mark(myGen);
+function myGen(cond) {
+  return regeneratorRuntime.wrap(function(_ctx) {
+    while (true) {
+      switch (_ctx.prev = _ctx.next) {
+        case 0:
+          if (!cond) {
+            _ctx.next = 3;
+            break;
+          }
+          _ctx.next = 2;
+          return doA();
+        case 2:
+        case 3:
+        case "end":
+          return _ctx.stop();
+      }
+    }
+  }, _marked);
+}
+"#;
+    let expected = r#"
+function* myGen(cond) {
+  if (cond) {
+    yield doA();
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn async_to_generator_double_await() {
+    let input = r#"
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+function fn_name() {
+  return _fn_name.apply(this, arguments);
+}
+function _fn_name() {
+  _fn_name = _asyncToGenerator(function* () {
+    yield yield 1;
+  });
+  return _fn_name.apply(this, arguments);
+}
+"#;
+    let expected = r#"
+async function fn_name() {
+  await await 1;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn async_to_generator_standalone_iife() {
+    let input = r#"
+function _asyncToGenerator(fn) {
+  return function() {
+    var gen = fn.apply(this, arguments);
+    return new Promise(function(resolve, reject) {
+      function step(key, arg) {
+        var info = gen[key](arg);
+        if (info.done) { resolve(info.value); } else { Promise.resolve(info.value).then(_next, _throw); }
+      }
+      function _next(value) { step("next", value); }
+      function _throw(err) { step("throw", err); }
+      _next(undefined);
+    });
+  };
+}
+_asyncToGenerator(function*() { yield fetch("/api"); })();
+"#;
+    let expected = r#"
+(async function() {
+  await fetch("/api");
+})();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

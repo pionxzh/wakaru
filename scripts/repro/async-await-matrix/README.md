@@ -1,9 +1,10 @@
 # Async/Await Matrix
 
-This matrix generates async function, async arrow, try/catch/finally, loop
-control flow, destructuring/default, object-rest, nested async callback, and
-generator delegation snippets through Babel, TypeScript, SWC, and esbuild, then
-runs wakaru over each generated shape.
+This matrix generates async function, async arrow, async IIFE, double-await,
+try/catch/finally, loop control flow (with and without internal continue),
+destructuring/default, object-rest, nested async callback, and generator
+delegation snippets through Babel, TypeScript, SWC, and esbuild, then runs
+wakaru over each generated shape.
 
 Each Babel/TypeScript/SWC/esbuild output is checked in three Terser variants:
 

@@ -870,3 +870,57 @@ async function collect_enabled(items) {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn awaiter_wrapping_double_yield_becomes_double_await() {
+    let input = r#"
+function func() {
+  return __awaiter(this, void 0, void 0, function* () {
+    yield yield 1;
+  });
+}
+"#;
+    let expected = r#"
+async function func() {
+  await await 1;
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn generator_simple_for_loop_via_ts_state_machine() {
+    let input = r#"
+function iter(items) {
+  var i;
+  return __generator(this, function (_a) {
+    switch (_a.label) {
+      case 0:
+        i = 0;
+      case 1:
+        if (!(i < items.length)) return [3 /*break*/, 4];
+        return [4 /*yield*/, items[i]];
+      case 2:
+        _a.sent();
+        i++;
+        return [3 /*break*/, 1];
+      case 3:
+      case 4:
+        return [2 /*return*/];
+    }
+  });
+}
+"#;
+    let expected = r#"
+function* iter(items) {
+  var i;
+  i = 0;
+  for (; i < items.length; i++) {
+    yield items[i];
+  }
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
