@@ -345,11 +345,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 let report = if eliminate_dead_modules {
                     let is_helper = facts_ref
                         .get(&unpacked.module.filename)
-                        .is_some_and(|facts| {
-                            !facts.helper_exports.is_empty()
-                                || !facts.default_object_helper_exports.is_empty()
-                                || !facts.ts_helper_exports.is_empty()
-                        });
+                        .is_some_and(|facts| facts.is_helper_module);
                     Some(collect_import_report(
                         &module,
                         unpacked.module.is_entry,

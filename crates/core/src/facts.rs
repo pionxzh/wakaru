@@ -138,6 +138,11 @@ pub struct ModuleFacts {
     /// If this module is a passthrough re-export (`export default require("./X.js")`),
     /// this is the target module specifier. Importers can be redirected to the target.
     pub passthrough_target: Option<Atom>,
+    /// True when the module exports a recognized transpiler helper (Babel/tslib),
+    /// including helper-dependency kinds with no rewrite mapping (e.g.
+    /// `_defineProperty`). Used by dead-module elimination to treat the module as
+    /// removable boilerplate.
+    pub is_helper_module: bool,
 }
 
 /// Cross-module fact storage with normalized module key lookup.
@@ -548,21 +553,35 @@ pub fn collect_module_facts(module: &Module) -> ModuleFacts {
     }
 
     facts.passthrough_target = detect_passthrough(module);
-    facts.helper_exports = collect_helper_exports(module, &facts.exports);
+    let (helper_exports, exports_any_helper) = collect_helper_exports(module, &facts.exports);
+    facts.helper_exports = helper_exports;
     facts.default_object_helper_exports = collect_default_object_helper_exports(module);
     facts.ts_helper_exports = collect_ts_helper_exports(module, &facts.exports);
+    facts.is_helper_module = exports_any_helper
+        || !facts.default_object_helper_exports.is_empty()
+        || !facts.ts_helper_exports.is_empty();
     facts
 }
 
-fn collect_helper_exports(module: &Module, exports: &[ExportFact]) -> Vec<HelperExportFact> {
+/// Returns the rewrite-relevant helper exports plus whether the module exports
+/// *any* recognized transpiler helper. The second value also covers helper kinds
+/// that have no rewrite mapping (`DefineProperty`, `Typeof`, `HelperDependency`),
+/// so a helper-dependency module like `_defineProperty` — which other helpers
+/// import — is still identifiable as helper boilerplate.
+fn collect_helper_exports(
+    module: &Module,
+    exports: &[ExportFact],
+) -> (Vec<HelperExportFact>, bool) {
     let local_helpers = collect_transpiler_helpers(module);
     let mut helper_exports = Vec::new();
+    let mut exports_any_helper = false;
 
     for export in exports {
         let Some(local) = &export.local else {
             continue;
         };
 
+        let matches_transpiler = local_helpers.iter().any(|((sym, _), _)| sym == local);
         let kind = local_helpers
             .iter()
             .find_map(|((sym, _), kind)| {
@@ -575,6 +594,9 @@ fn collect_helper_exports(module: &Module, exports: &[ExportFact]) -> Vec<Helper
                     .then_some(HelperKind::RegeneratorRuntime)
             });
 
+        if matches_transpiler || kind.is_some() {
+            exports_any_helper = true;
+        }
         if let Some(kind) = kind {
             helper_exports.push(HelperExportFact {
                 exported: export.exported.clone(),
@@ -584,7 +606,7 @@ fn collect_helper_exports(module: &Module, exports: &[ExportFact]) -> Vec<Helper
         }
     }
 
-    helper_exports
+    (helper_exports, exports_any_helper)
 }
 
 fn collect_ts_helper_exports(

@@ -4,9 +4,12 @@
 //! module and every consumer rewrites away its usage, the consumer's binding
 //! import is downgraded by `DeadImports` to a side-effect import
 //! `import "./helper.js";`. The helper module then has zero *binding* importers.
-//! If it is also a self-contained, side-effect-free helper module, evaluating it
-//! does nothing observable, so it is safe to drop — and the now-vacuous
-//! side-effect imports in its consumers can be stripped.
+//! If it is also transitively pure (its own body is side-effect-free and every
+//! module it eagerly imports is pure too), evaluating it does nothing
+//! observable, so it is safe to drop — and the now-vacuous side-effect imports
+//! in its consumers can be stripped. A helper that imports a pure
+//! helper-dependency (e.g. `_objectSpread2` -> `_defineProperty`) drops together
+//! with its dependency via a cascade.
 //!
 //! This is a post-Phase-2 pass: the binding->side-effect downgrade only happens
 //! during Phase 2, so the decision needs every module's final import shape. Each
@@ -37,8 +40,10 @@ pub(super) struct ImportReport {
     /// Sources referenced via dynamic `import("<src>")` / `require("<src>")`.
     /// These bind a value, so they keep their target alive.
     dynamic_refs: Vec<String>,
-    /// Body contains only declarations + exports and no imports of its own.
-    pure_self_contained: bool,
+    /// The module's own top-level code is side-effect-free (only declarations +
+    /// exports). Imports are allowed — whether the imported modules are also pure
+    /// is decided transitively at the barrier.
+    own_body_pure: bool,
     is_entry: bool,
     /// Phase-1 facts proved this module exports a transpiler helper.
     is_helper: bool,
@@ -65,7 +70,7 @@ pub(super) fn collect_import_report(
     ImportReport {
         static_imports,
         dynamic_refs: dyn_collector.refs,
-        pure_self_contained: is_pure_self_contained(module),
+        own_body_pure: is_own_body_pure(module),
         is_entry,
         is_helper,
     }
@@ -73,43 +78,29 @@ pub(super) fn collect_import_report(
 
 /// Eliminate dead helper modules from the Phase-2 output.
 ///
-/// Drops a module `H` iff it is a recognized helper, its body is pure and
-/// self-contained, it is not an entry, and no module imports a binding from it
-/// (statically or dynamically). Consumers' now-vacuous side-effect imports of
-/// dropped modules are stripped.
+/// Drops a module `H` iff it is a recognized helper, transitively pure (its own
+/// body is side-effect-free and every module it eagerly imports is also pure),
+/// not an entry, and every module that binding-imports it is itself dropped
+/// (cascade). This lets a helper that imports a pure helper-dependency (e.g.
+/// `_objectSpread2` -> `_defineProperty`) be dropped together with its
+/// dependency. Consumers' now-vacuous side-effect imports of dropped modules are
+/// stripped.
 pub(super) fn eliminate_dead_helper_modules(
     triples: Vec<(String, String, Vec<UnpackWarning>, Option<ImportReport>)>,
 ) -> (Vec<(String, String)>, Vec<UnpackWarning>) {
-    // Targets reached by a binding (static specifier import or dynamic ref) must
-    // be kept. Resolution is in final-name space (Part-1 rename already applied).
-    let mut binding_targets: HashSet<String> = HashSet::new();
-    for (filename, _, _, report) in &triples {
-        let Some(report) = report else { continue };
-        for (src, has_binding) in &report.static_imports {
-            if *has_binding {
-                if let Some(target) = resolve_relative_specifier(filename, src) {
-                    binding_targets.insert(target);
-                }
-            }
+    // A module that failed to decompile has no report, so we cannot see its
+    // references and cannot prove another module is unused. Bail conservatively.
+    if triples.iter().any(|(_, _, _, report)| report.is_none()) {
+        let mut modules = Vec::with_capacity(triples.len());
+        let mut warnings = Vec::new();
+        for (filename, code, module_warnings, _) in triples {
+            modules.push((filename, code));
+            warnings.extend(module_warnings);
         }
-        for src in &report.dynamic_refs {
-            if let Some(target) = resolve_relative_specifier(filename, src) {
-                binding_targets.insert(target);
-            }
-        }
+        return (modules, warnings);
     }
 
-    let dropped: HashSet<String> = triples
-        .iter()
-        .filter_map(|(filename, _, _, report)| {
-            let report = report.as_ref()?;
-            (report.is_helper
-                && report.pure_self_contained
-                && !report.is_entry
-                && !binding_targets.contains(filename))
-            .then(|| filename.clone())
-        })
-        .collect();
+    let dropped = compute_dropped(&triples);
 
     let mut modules = Vec::with_capacity(triples.len());
     let mut warnings = Vec::new();
@@ -142,6 +133,116 @@ pub(super) fn eliminate_dead_helper_modules(
     (modules, warnings)
 }
 
+/// Compute the set of module filenames to drop, via two fixpoints over the
+/// module graph (all reports are present — callers bail on missing ones).
+fn compute_dropped(
+    triples: &[(String, String, Vec<UnpackWarning>, Option<ImportReport>)],
+) -> HashSet<String> {
+    let report_of = |filename: &str| -> &ImportReport {
+        triples
+            .iter()
+            .find(|(name, ..)| name == filename)
+            .and_then(|(_, _, _, report)| report.as_ref())
+            .expect("reports are present")
+    };
+    let all: HashSet<&str> = triples.iter().map(|(name, ..)| name.as_str()).collect();
+
+    // Per-module: eager in-set import deps, an external-dep flag (any import that
+    // is bare or resolves outside the bundle), and the binding-importer edges.
+    let mut in_deps: std::collections::HashMap<&str, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut has_external: HashSet<&str> = HashSet::new();
+    let mut binding_importers: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for (filename, _, _, report) in triples {
+        let report = report.as_ref().expect("reports are present");
+        let mut deps = Vec::new();
+        for (src, has_binding) in &report.static_imports {
+            match resolve_relative_specifier(filename, src) {
+                Some(target) if all.contains(target.as_str()) => {
+                    if *has_binding {
+                        binding_importers
+                            .entry(target.clone())
+                            .or_default()
+                            .push(filename.clone());
+                    }
+                    deps.push(target);
+                }
+                // Bare or out-of-bundle import: an eager dependency we cannot
+                // prove pure, so the module is not transitively pure.
+                _ => {
+                    has_external.insert(filename.as_str());
+                }
+            }
+        }
+        for src in &report.dynamic_refs {
+            if let Some(target) = resolve_relative_specifier(filename, src) {
+                if all.contains(target.as_str()) {
+                    binding_importers
+                        .entry(target)
+                        .or_default()
+                        .push(filename.clone());
+                }
+            }
+        }
+        in_deps.insert(filename.as_str(), deps);
+    }
+
+    // Fixpoint 1 — transitive purity: a module is pure iff its own body is pure,
+    // it has no external eager dep, and every in-bundle eager dep is also pure.
+    let mut pure: HashSet<String> = triples
+        .iter()
+        .filter(|(name, ..)| report_of(name).own_body_pure && !has_external.contains(name.as_str()))
+        .map(|(name, ..)| name.clone())
+        .collect();
+    loop {
+        let remove: Vec<String> = pure
+            .iter()
+            .filter(|name| in_deps[name.as_str()].iter().any(|dep| !pure.contains(dep)))
+            .cloned()
+            .collect();
+        if remove.is_empty() {
+            break;
+        }
+        for name in remove {
+            pure.remove(&name);
+        }
+    }
+
+    // Fixpoint 2 — cascade: start from droppable candidates (recognized helper,
+    // transitively pure, non-entry), then remove any whose binding-importer is
+    // still live (not itself dropped). Dropping a helper removes its own binding
+    // imports, so a helper-dependency whose only binding importer is dropped
+    // becomes droppable too.
+    let mut candidate: HashSet<String> = triples
+        .iter()
+        .filter(|(name, ..)| {
+            let report = report_of(name);
+            report.is_helper && !report.is_entry && pure.contains(name.as_str())
+        })
+        .map(|(name, ..)| name.clone())
+        .collect();
+    loop {
+        let remove: Vec<String> = candidate
+            .iter()
+            .filter(|name| {
+                binding_importers
+                    .get(name.as_str())
+                    .is_some_and(|importers| importers.iter().any(|m| !candidate.contains(m)))
+            })
+            .cloned()
+            .collect();
+        if remove.is_empty() {
+            break;
+        }
+        for name in remove {
+            candidate.remove(&name);
+        }
+    }
+
+    candidate
+}
+
 /// Re-parse `code` and remove side-effect imports whose source resolves to a
 /// dropped module, then reprint.
 fn strip_side_effect_imports(
@@ -169,16 +270,18 @@ fn strip_side_effect_imports(
     })
 }
 
-/// True when every top-level item is a declaration or export and the module has
-/// no imports of its own (so evaluating it has no observable side effect and no
-/// dependency on another module's evaluation).
-fn is_pure_self_contained(module: &Module) -> bool {
+/// True when the module's own top-level code has no side effects: every item is
+/// a declaration, a plain import, or a local export. Imports are allowed (an
+/// import declaration runs no code here); whether the imported modules are
+/// themselves pure is decided transitively at the barrier. Re-exports with a
+/// source (`export ... from "x"`, `export *`) are treated conservatively as
+/// disqualifying, so the only eager dependencies to reason about are imports.
+fn is_own_body_pure(module: &Module) -> bool {
     module.body.iter().all(|item| match item {
         ModuleItem::Stmt(Stmt::Decl(decl)) => is_pure_decl(decl),
         ModuleItem::ModuleDecl(decl) => match decl {
-            // Any import (static or re-export with a source) makes the module
-            // depend on another module's evaluation, so it is not self-contained.
-            ModuleDecl::Import(_) | ModuleDecl::ExportAll(_) => false,
+            ModuleDecl::Import(_) => true,
+            ModuleDecl::ExportAll(_) => false,
             ModuleDecl::ExportNamed(named) => named.src.is_none(),
             ModuleDecl::ExportDecl(export) => is_pure_decl(&export.decl),
             ModuleDecl::ExportDefaultDecl(_) => true,
@@ -260,7 +363,7 @@ mod tests {
     fn report(
         static_imports: Vec<(&str, bool)>,
         dynamic_refs: Vec<&str>,
-        pure_self_contained: bool,
+        own_body_pure: bool,
         is_entry: bool,
         is_helper: bool,
     ) -> Option<ImportReport> {
@@ -270,7 +373,7 @@ mod tests {
                 .map(|(s, b)| (s.to_string(), b))
                 .collect(),
             dynamic_refs: dynamic_refs.into_iter().map(str::to_string).collect(),
-            pure_self_contained,
+            own_body_pure,
             is_entry,
             is_helper,
         })
@@ -281,31 +384,28 @@ mod tests {
     }
 
     #[test]
-    fn pure_helper_is_self_contained() {
-        assert!(is_pure_self_contained(&parse(
+    fn pure_helper_body_is_pure() {
+        assert!(is_own_body_pure(&parse(
             "function _x() { return 1; } export default _x;"
         )));
     }
 
     #[test]
-    fn module_with_import_is_not_self_contained() {
-        assert!(!is_pure_self_contained(&parse(
+    fn import_alone_does_not_make_body_impure() {
+        // own-body purity allows imports; whether the dep is pure is transitive.
+        assert!(is_own_body_pure(&parse(
             "import a from \"./a.js\"; export const x = a;"
         )));
     }
 
     #[test]
-    fn top_level_side_effect_is_not_self_contained() {
-        assert!(!is_pure_self_contained(&parse(
-            "doThing(); export const x = 1;"
-        )));
+    fn top_level_side_effect_is_not_pure() {
+        assert!(!is_own_body_pure(&parse("doThing(); export const x = 1;")));
     }
 
     #[test]
-    fn reexport_from_source_is_not_self_contained() {
-        assert!(!is_pure_self_contained(&parse(
-            "export { y } from \"./y.js\";"
-        )));
+    fn reexport_from_source_is_not_pure() {
+        assert!(!is_own_body_pure(&parse("export { y } from \"./y.js\";")));
     }
 
     #[test]
@@ -427,6 +527,55 @@ mod tests {
                 "const m = import(\"./helper.js\");".to_string(),
                 vec![],
                 report(vec![], vec!["./helper.js"], false, false, false),
+            ),
+        ];
+        let (modules, _) = eliminate_dead_helper_modules(triples);
+        assert!(names(&modules).contains(&"helper.js"));
+    }
+
+    #[test]
+    fn drops_helper_chain_via_transitive_purity_and_cascade() {
+        // objectSpread2 binding-imports defineProperty; the consumer only keeps a
+        // side-effect import of objectSpread2. Both helpers are pure, so both drop.
+        let triples = vec![
+            (
+                "defineProperty.js".to_string(),
+                "export default function _dp() {}".to_string(),
+                vec![],
+                report(vec![], vec![], true, false, true),
+            ),
+            (
+                "objectSpread2.js".to_string(),
+                "import dp from \"./defineProperty.js\";\nexport default function _os() { return dp; }".to_string(),
+                vec![],
+                report(vec![("./defineProperty.js", true)], vec![], true, false, true),
+            ),
+            (
+                "consumer.js".to_string(),
+                "import \"./objectSpread2.js\";\nexport const x = 1;".to_string(),
+                vec![],
+                report(vec![("./objectSpread2.js", false)], vec![], false, false, false),
+            ),
+        ];
+        let (modules, _) = eliminate_dead_helper_modules(triples);
+        assert_eq!(names(&modules), vec!["consumer.js"]);
+    }
+
+    #[test]
+    fn keeps_helper_with_external_dependency() {
+        // helper imports an out-of-bundle module, so it is not transitively pure.
+        let triples = vec![
+            (
+                "helper.js".to_string(),
+                "import x from \"react\";\nexport default function _h() { return x; }".to_string(),
+                vec![],
+                report(vec![("react", true)], vec![], true, false, true),
+            ),
+            (
+                "consumer.js".to_string(),
+                "import \"./helper.js\";".to_string(),
+                vec![],
+                report(vec![("./helper.js", false)], vec![], false, false, false),
             ),
         ];
         let (modules, _) = eliminate_dead_helper_modules(triples);

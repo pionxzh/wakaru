@@ -597,3 +597,63 @@ fn side_effect_import_produces_no_bindings() {
     // No specifiers → no import facts
     assert!(facts.imports.is_empty());
 }
+
+#[test]
+fn is_helper_module_true_for_mapped_helper_export() {
+    let facts = collect_facts(
+        r#"
+function _extends() {
+    _extends = Object.assign || function(target) {
+        for (var i = 1; i < arguments.length; i++) {
+            var source = arguments[i];
+            for (var key in source) {
+                if (Object.prototype.hasOwnProperty.call(source, key)) {
+                    target[key] = source[key];
+                }
+            }
+        }
+        return target;
+    };
+    return _extends.apply(this, arguments);
+}
+export default _extends;
+"#,
+    );
+    assert!(!facts.helper_exports.is_empty());
+    assert!(facts.is_helper_module);
+}
+
+#[test]
+fn is_helper_module_true_for_unmapped_helper_dependency() {
+    // `_defineProperty` is a recognized transpiler helper but maps to no rewrite
+    // HelperKind, so it never appears in `helper_exports`. It must still be
+    // flagged as a helper module so dead-module elimination can treat it as
+    // removable boilerplate.
+    let facts = collect_facts(
+        r#"
+function _defineProperty(obj, key, value) {
+    if (key in obj) {
+        Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true });
+    } else {
+        obj[key] = value;
+    }
+    return obj;
+}
+export default _defineProperty;
+"#,
+    );
+    assert!(
+        facts.helper_exports.is_empty(),
+        "defineProperty has no rewrite-mapped helper export"
+    );
+    assert!(
+        facts.is_helper_module,
+        "defineProperty should still be recognized as a helper module"
+    );
+}
+
+#[test]
+fn is_helper_module_false_for_plain_module() {
+    let facts = collect_facts(r#"export const value = compute();"#);
+    assert!(!facts.is_helper_module);
+}
