@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
 import {
-  runMatrix, batchRunner, tscBatch, swcBatch,
-  esbuildBatch, withTerserVariants, ensureNodeTool,
+  runMatrix, batchRunner, withTerserVariants, ensureNodeTool, standardLowerers,
 } from "../lib/runner.mjs";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
@@ -136,48 +135,6 @@ process.stdout.write(JSON.stringify(results));
 
 const allSources = snippets.map((s) => s.source);
 
-// Custom SWC batch with externalHelpers option
-function swcExternalHelpersBatch(sources) {
-  const toolDir = ensureNodeTool("swc", ["@swc/core@1"]);
-  const helper = join(toolDir, "swc-external-batch.cjs");
-  writeFileSync(
-    helper,
-    `
-const fs = require("node:fs");
-const swc = require("@swc/core");
-const sources = JSON.parse(fs.readFileSync(0, "utf8"));
-const results = sources.map(source => {
-  try {
-    return { code: swc.transformSync(source, {
-      filename: "input.js",
-      jsc: {
-        target: "es5",
-        externalHelpers: true,
-        parser: { syntax: "ecmascript" },
-      },
-      module: { type: "es6" },
-    }).code };
-  } catch (e) { return { error: e.message }; }
-});
-process.stdout.write(JSON.stringify(results));
-`,
-  );
-  const result = spawnSync("node", [helper], {
-    cwd: toolDir,
-    input: JSON.stringify(sources),
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024 * 50,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`swc batch exited ${result.status}: ${result.stderr}`);
-  const outputs = JSON.parse(result.stdout);
-  const map = new Map();
-  for (let i = 0; i < sources.length; i++) {
-    map.set(sources[i], outputs[i].error ? new Error(outputs[i].error) : outputs[i].code);
-  }
-  return map;
-}
-
 const transformers = [
   ...babelProfiles.flatMap((profile) =>
     profile.modes.flatMap((mode) =>
@@ -188,11 +145,7 @@ const transformers = [
       ),
     ),
   ),
-  ...withTerserVariants("tsc-es5", allSources, batchRunner(() => tscBatch(allSources))),
-  ...withTerserVariants("swc-es5", allSources, batchRunner(() => swcBatch(allSources))),
-  ...withTerserVariants("swc-es5-external", allSources, batchRunner(() => swcExternalHelpersBatch(allSources))),
-  ...withTerserVariants("esbuild-es2017", allSources, batchRunner(() => esbuildBatch(allSources, { target: "es2017" }))),
-  ...withTerserVariants("source", allSources, (source) => source, { includeRaw: false }),
+  ...standardLowerers(allSources, { esbuildTarget: "es2017", swcExternalHelpers: true }),
 ];
 
 runMatrix({

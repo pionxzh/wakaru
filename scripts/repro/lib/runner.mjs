@@ -682,8 +682,13 @@ process.stdout.write(JSON.stringify(results));
 export function swcBatch(sources, options = {}) {
   const target = options.target ?? "es5";
   const minify = options.minify ?? false;
+  const externalHelpers = options.externalHelpers ?? false;
   const toolDir = ensureNodeTool("swc", ["@swc/core@1"]);
-  const helper = join(toolDir, minify ? "swc-minify-batch.cjs" : "swc-batch.cjs");
+  const variant = minify ? "minify" : externalHelpers ? "external" : "base";
+  const helper = join(toolDir, variant === "base" ? "swc-batch.cjs" : `swc-${variant}-batch.cjs`);
+  const jscExtra =
+    (externalHelpers ? ", externalHelpers: true" : "") +
+    (minify ? ", minify: { compress: true, mangle: true }" : "");
   writeFileSync(
     helper,
     `
@@ -695,7 +700,7 @@ const results = sources.map(source => {
   try {
     return { code: swc.transformSync(source, {
       filename: "input.js",
-      jsc: { target, parser: { syntax: "ecmascript" }${minify ? ", minify: { compress: true, mangle: true }" : ""} },
+      jsc: { target, parser: { syntax: "ecmascript" }${jscExtra} },
       module: { type: "es6" },
       minify: ${minify},
     }).code };
@@ -820,6 +825,7 @@ export function standardLowerers(allSources, options = {}) {
   const {
     esbuildTarget = "es2015",
     includeSource = true,
+    swcExternalHelpers = false,
     tsc = (sources) => tscBatch(sources),
     swc = (sources) => swcBatch(sources),
     esbuild = (sources) => esbuildBatch(sources, { target: esbuildTarget }),
@@ -827,8 +833,22 @@ export function standardLowerers(allSources, options = {}) {
   const variants = [
     ...withTerserVariants("tsc-es5", allSources, batchRunner(() => tsc(allSources))),
     ...withTerserVariants("swc-es5", allSources, batchRunner(() => swc(allSources))),
-    ...withTerserVariants(`esbuild-${esbuildTarget}`, allSources, batchRunner(() => esbuild(allSources))),
   ];
+  // swc with externalHelpers emits `@swc/helpers` *imports* instead of inline
+  // helper definitions — a distinct shape for helper-import recovery. Only worth
+  // enabling for features swc actually lowers via a helper (spread family).
+  if (swcExternalHelpers) {
+    variants.push(
+      ...withTerserVariants(
+        "swc-es5-external",
+        allSources,
+        batchRunner(() => swcBatch(allSources, { externalHelpers: true })),
+      ),
+    );
+  }
+  variants.push(
+    ...withTerserVariants(`esbuild-${esbuildTarget}`, allSources, batchRunner(() => esbuild(allSources))),
+  );
   if (includeSource) {
     variants.push(...withTerserVariants("source", allSources, (source) => source, { includeRaw: false }));
   }

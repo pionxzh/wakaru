@@ -269,7 +269,7 @@ const transformers = [
       ),
     ),
   ),
-  ...standardLowerers(allSources),
+  ...standardLowerers(allSources, { swcExternalHelpers: true }),
 ];
 
 // Extra per-snippet transformer for terser-inline on array-destructure-tuple
