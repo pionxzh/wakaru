@@ -25,6 +25,7 @@ impl UnAsyncAwait {
     ) {
         let helpers = AsyncHelperContext::from_local_helpers(local_helpers, Some(unresolved_mark));
         module.visit_mut_with(&mut UnAsyncAwaitWithHelpers { helpers: &helpers });
+        module.visit_mut_with(&mut AwaiterIifeTransformer { helpers: &helpers });
         remove_unused_inline_async_helpers(module, local_helpers);
     }
 }
@@ -34,6 +35,7 @@ impl VisitMut for UnAsyncAwait {
         let local_helpers = LocalHelperContext::collect(module);
         let helpers = AsyncHelperContext::from_local_helpers(&local_helpers, None);
         module.visit_mut_with(&mut UnAsyncAwaitWithHelpers { helpers: &helpers });
+        module.visit_mut_with(&mut AwaiterIifeTransformer { helpers: &helpers });
         remove_unused_inline_async_helpers(module, &local_helpers);
     }
 
@@ -50,6 +52,21 @@ struct UnAsyncAwaitWithHelpers<'a> {
 impl VisitMut for UnAsyncAwaitWithHelpers<'_> {
     fn visit_mut_function(&mut self, func: &mut Function) {
         visit_mut_function_with_helpers(func, self.helpers);
+    }
+}
+
+struct AwaiterIifeTransformer<'a> {
+    helpers: &'a AsyncHelperContext,
+}
+
+impl VisitMut for AwaiterIifeTransformer<'_> {
+    fn visit_mut_function(&mut self, _func: &mut Function) {}
+
+    fn visit_mut_arrow_expr(&mut self, _arrow: &mut ArrowExpr) {}
+
+    fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        expr.visit_mut_children_with(self);
+        try_transform_awaiter_iife(expr, self.helpers);
     }
 }
 
@@ -1360,6 +1377,59 @@ fn extract_awaiter_body(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<Vec<
     };
     let body = fn_expr.function.body?;
     Some(body.stmts)
+}
+
+/// Transform a standalone `__awaiter(this, void0, void0, function*() {…})`
+/// expression into `(async function() {…})()`. Handles the IIFE pattern where
+/// `__awaiter(…)` appears at expression level rather than inside a function body.
+fn try_transform_awaiter_iife(expr: &mut Expr, helpers: &AsyncHelperContext) {
+    let Expr::Call(call) = expr else { return };
+    if !helpers.is_awaiter_call(call) || call.args.len() < 4 {
+        return;
+    }
+    let Expr::Fn(fn_expr) = call.args[3].expr.as_ref() else {
+        return;
+    };
+    if !fn_expr.function.params.is_empty() {
+        return;
+    }
+    let Some(body) = &fn_expr.function.body else {
+        return;
+    };
+
+    let mut stmts = body.stmts.clone();
+    replace_yield_with_await(&mut stmts);
+
+    let async_fn = Expr::Fn(swc_core::ecma::ast::FnExpr {
+        ident: None,
+        function: Box::new(Function {
+            params: vec![],
+            decorators: vec![],
+            span: DUMMY_SP,
+            ctxt: Default::default(),
+            body: Some(BlockStmt {
+                span: DUMMY_SP,
+                ctxt: Default::default(),
+                stmts,
+            }),
+            is_generator: false,
+            is_async: true,
+            type_params: None,
+            return_type: None,
+        }),
+    });
+    *expr = Expr::Call(swc_core::ecma::ast::CallExpr {
+        span: DUMMY_SP,
+        ctxt: Default::default(),
+        callee: swc_core::ecma::ast::Callee::Expr(Box::new(Expr::Paren(
+            swc_core::ecma::ast::ParenExpr {
+                span: DUMMY_SP,
+                expr: Box::new(async_fn),
+            },
+        ))),
+        args: vec![],
+        type_args: None,
+    });
 }
 
 fn replace_yield_with_await(stmts: &mut Vec<Stmt>) {

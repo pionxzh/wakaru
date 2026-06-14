@@ -724,28 +724,61 @@ impl VisitMut for FunctionTransformer<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
-        if let Expr::Call(outer_call) = expr {
-            if !outer_call.args.is_empty() {
-                return;
-            }
-            let Callee::Expr(callee_expr) = &mut outer_call.callee else {
-                return;
-            };
-            if !is_paramless_async_to_gen_iife(callee_expr, self.async_to_gen_callees) {
-                return;
-            }
-            if let Some((transformed, mark_key)) = try_transform_async_to_generator_expr(
-                callee_expr.as_ref().clone(),
-                self.async_to_gen_callees,
-                self.generator_helpers,
-            ) {
-                **callee_expr = Expr::Paren(ParenExpr {
-                    span: DUMMY_SP,
-                    expr: Box::new(transformed),
-                });
-                if let Some(mark_key) = mark_key {
-                    self.consumed_marks.push(mark_key);
+        if let Expr::Call(call) = expr {
+            // _asyncToGenerator(fn)() IIFE
+            if call.args.is_empty() {
+                if let Callee::Expr(callee_expr) = &mut call.callee {
+                    if is_paramless_async_to_gen_iife(callee_expr, self.async_to_gen_callees) {
+                        if let Some((transformed, mark_key)) = try_transform_async_to_generator_expr(
+                            callee_expr.as_ref().clone(),
+                            self.async_to_gen_callees,
+                            self.generator_helpers,
+                        ) {
+                            **callee_expr = Expr::Paren(ParenExpr {
+                                span: DUMMY_SP,
+                                expr: Box::new(transformed),
+                            });
+                            if let Some(mark_key) = mark_key {
+                                self.consumed_marks.push(mark_key);
+                            }
+                        }
+                        return;
+                    }
                 }
+            }
+
+            // __async(this, null, fn*(){…}) standalone expression
+            if let Some(mut stmts) =
+                extract_esbuild_async_call_body(expr, self.esbuild_async_helpers)
+            {
+                replace_yield_with_await(&mut stmts);
+                *expr = Expr::Call(CallExpr {
+                    span: DUMMY_SP,
+                    ctxt: Default::default(),
+                    callee: Callee::Expr(Box::new(Expr::Paren(ParenExpr {
+                        span: DUMMY_SP,
+                        expr: Box::new(Expr::Fn(FnExpr {
+                            ident: None,
+                            function: Box::new(Function {
+                                params: vec![],
+                                decorators: vec![],
+                                span: DUMMY_SP,
+                                ctxt: Default::default(),
+                                body: Some(BlockStmt {
+                                    span: DUMMY_SP,
+                                    ctxt: Default::default(),
+                                    stmts,
+                                }),
+                                is_generator: false,
+                                is_async: true,
+                                type_params: None,
+                                return_type: None,
+                            }),
+                        })),
+                    }))),
+                    args: vec![],
+                    type_args: None,
+                });
             }
         }
     }

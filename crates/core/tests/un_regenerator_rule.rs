@@ -2566,3 +2566,27 @@ _asyncToGenerator(function*() { yield fetch("/api"); })();
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn esbuild_async_standalone_iife() {
+    let input = r#"
+var __async = (__this, __arguments, generator) => {
+  return new Promise((resolve, reject) => {
+    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
+    step((generator = generator.apply(__this, __arguments)).next());
+  });
+};
+__async(null, null, function* () {
+  yield setup();
+  yield run();
+});
+"#;
+    let expected = r#"
+(async function() {
+  await setup();
+  await run();
+})();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}

@@ -924,3 +924,21 @@ function* iter(items) {
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
+
+#[test]
+fn awaiter_standalone_iife() {
+    let input = r#"
+__awaiter(this, void 0, void 0, function* () {
+  yield setup();
+  yield run();
+});
+"#;
+    let expected = r#"
+(async function() {
+  await setup();
+  await run();
+})();
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
