@@ -20,7 +20,7 @@ use super::helper_matcher::{
 use super::transpiler_helper_utils::{
     BindingKey, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
-use super::un_async_await::try_transform_ts_generator_body;
+use super::un_async_await::{recover_conditional_assignments, try_transform_ts_generator_body};
 
 use crate::js_names::is_likely_generated_alias;
 use crate::utils::paren::strip_parens;
@@ -757,12 +757,51 @@ fn try_transform_regenerator_wrap(body: &mut BlockStmt) -> Option<Option<Binding
     // Extract the mark binding key (2nd arg to .wrap()) before consuming
     let mark_name = extract_wrap_mark_key(&body.stmts[return_idx]);
 
-    let ret_stmt = body.stmts.remove(return_idx);
+    let ret_stmt = body.stmts[return_idx].clone();
     let (state_name, cases, try_regions) = extract_wrap_args(ret_stmt)?;
 
     let new_stmts = decode_babel_state_machine(&state_name, cases, try_regions);
+    // Safety net: if a forward conditional jump could not be structured, an
+    // opcode goto (`return [3, N]`) leaks into the output. Rather than emit
+    // broken control flow, leave the function un-recovered.
+    if stmts_contain_state_opcode_return(&new_stmts) {
+        return None;
+    }
+    body.stmts.remove(return_idx);
     body.stmts.splice(return_idx..return_idx, new_stmts);
     Some(mark_name)
+}
+
+/// Detects a leaked state-machine opcode return (`return [<num>, ...]`) anywhere
+/// in the decoded statements — a sign the control flow was not fully structured.
+fn stmts_contain_state_opcode_return(stmts: &[Stmt]) -> bool {
+    struct Finder {
+        found: bool,
+    }
+    impl swc_core::ecma::visit::Visit for Finder {
+        fn visit_return_stmt(&mut self, ret: &ReturnStmt) {
+            if let Some(Expr::Array(arr)) = ret.arg.as_deref() {
+                if arr
+                    .elems
+                    .first()
+                    .and_then(|e| e.as_ref())
+                    .is_some_and(|e| matches!(e.expr.as_ref(), Expr::Lit(Lit::Num(_))))
+                {
+                    self.found = true;
+                    return;
+                }
+            }
+            ret.visit_children_with(self);
+        }
+    }
+    let mut f = Finder { found: false };
+    for stmt in stmts {
+        swc_core::ecma::visit::VisitWith::visit_with(stmt, &mut f);
+        if f.found {
+            return true;
+        }
+    }
+    false
 }
 
 /// Extract the mark binding key (sym + ctxt) from the 2nd argument of .wrap(fn, markIdent, ...)
@@ -824,13 +863,14 @@ fn has_nested_control_flow_in_stmt(stmt: &Stmt) -> bool {
     let Some((state_name, cases)) = cases else {
         return false;
     };
-    let supports_nested_loop = has_supported_nested_loop_state_machine(&state_name, cases);
     // Check each case's top-level statements for nested blocks that
-    // contain state machine operations (_ctx.next or break)
+    // contain state machine operations (_ctx.next or break). A supported
+    // forward state-jump (`if (cond) { _ctx.next = N; break; }`) is decoded
+    // structurally, so it does not count as unsupported control flow.
     for case in cases {
         for stmt in &case.cons {
             if has_state_ops_in_nested_block(&state_name, stmt)
-                && (!supports_nested_loop || !is_supported_nested_state_jump(&state_name, stmt))
+                && !is_supported_nested_state_jump(&state_name, stmt)
             {
                 return true;
             }
@@ -846,23 +886,6 @@ fn has_nested_control_flow_in_stmt(stmt: &Stmt) -> bool {
         }
     }
     false
-}
-
-fn has_supported_nested_loop_state_machine(state_name: &Atom, cases: &[SwitchCase]) -> bool {
-    cases.iter().any(|case| {
-        let stmts = &case.cons;
-        stmts.iter().any(|stmt| {
-            matches!(stmt, Stmt::If(if_stmt) if if_stmt.alt.is_none() && extract_next_break_target(state_name, &if_stmt.cons).is_some())
-        }) && stmts.windows(2).any(|window| {
-            let Stmt::If(if_stmt) = &window[0] else {
-                return false;
-            };
-            if if_stmt.alt.is_some() || extract_next_break_target(state_name, &if_stmt.cons).is_none() {
-                return false;
-            }
-            extract_continue_target(state_name, &window[1]).is_some()
-        })
-    })
 }
 
 fn is_supported_nested_state_jump(state_name: &Atom, stmt: &Stmt) -> bool {
@@ -1527,6 +1550,11 @@ fn decode_babel_state_machine(
             output.push((idx, stmt));
         }
     }
+
+    // Phase 3a: Recover `left = test ? a : b` ternaries from forward
+    // conditional jumps (`if (test) [3, T]`) selecting between a fallthrough
+    // assignment and the assignment at the jump target.
+    let output = recover_conditional_assignments(output);
 
     // Phase 3: Detect infinite loops (case 0 → ... → goto 0 pattern)
     let has_back_edge_to_zero = detect_back_edge_to_zero(state_name, &cases);

@@ -573,6 +573,86 @@ function* read_all(source) {
 }
 
 #[test]
+fn generator_recovers_conditional_yield_default_via_forward_jump() {
+    // Babel 7.28+ `_regenerator().w` lowers `x == null ? yield f() : x` into a
+    // forward conditional jump: `if (!(x == null)) { _context.n = 2; break; }`
+    // selecting between the yield branch and the fallthrough. The decoder must
+    // structure that jump back into a ternary assignment.
+    let input = r#"
+var _marked = _regenerator().m(pick);
+function pick(input) {
+  var source, _t;
+  return _regenerator().w(function (_context) {
+    while (1) switch (_context.n) {
+      case 0:
+        if (!(input == null)) {
+          _context.n = 2;
+          break;
+        }
+        _context.n = 1;
+        return load_user();
+      case 1:
+        _t = _context.v;
+        _context.n = 3;
+        break;
+      case 2:
+        _t = input;
+      case 3:
+        source = _t;
+        return _context.a(2, source);
+    }
+  }, _marked);
+}
+"#;
+    let expected = r#"
+function* pick(input) {
+  var source, _t;
+  _t = !(input == null) ? input : yield load_user();
+  source = _t;
+  return source;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn generator_does_not_recover_unstructurable_forward_branch() {
+    // A forward jump whose branches are not a shared conditional assignment
+    // cannot be structured; rather than leak a `[3, N]` opcode goto, the
+    // function must be left un-recovered.
+    let input = r#"
+var _marked = _regenerator().m(pick);
+function pick(input) {
+  return _regenerator().w(function (_context) {
+    while (1) switch (_context.n) {
+      case 0:
+        if (!input) {
+          _context.n = 2;
+          break;
+        }
+        sideEffect();
+        _context.n = 3;
+        break;
+      case 2:
+        other();
+      case 3:
+        return _context.a(2);
+    }
+  }, _marked);
+}
+"#;
+    let output = apply(input);
+    assert!(
+        !output.contains("[3,") && !output.contains("[\n        3,"),
+        "must not leak an opcode goto into the output:\n{output}"
+    );
+    assert!(
+        !output.contains("function* pick"),
+        "unstructurable branch should leave the function un-recovered:\n{output}"
+    );
+}
+
+#[test]
 fn generator_short_delegate_yield_restored_with_minified_values_helper() {
     // Top-level mangling renames `_regeneratorValues` to a short alias. The
     // delegate-yield wrapper must still be stripped (matched by body shape) and

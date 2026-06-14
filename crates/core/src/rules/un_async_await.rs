@@ -354,7 +354,11 @@ fn decode_state_machine(
     recover_index_loops(reconstruct_with_regions(label_stmts, &trys))
 }
 
-fn recover_conditional_assignments(stmts: Vec<(usize, Stmt)>) -> Vec<(usize, Stmt)> {
+/// Recover `left = test ? a : b` ternaries from a decoded state-machine flat
+/// list where a forward `if (test) [goto T]` selects between a fallthrough
+/// assignment and the assignment at label T. Shared with the regenerator
+/// decoder, which lowers its conditional jumps to the same `[3, T]` opcode.
+pub(crate) fn recover_conditional_assignments(stmts: Vec<(usize, Stmt)>) -> Vec<(usize, Stmt)> {
     let mut result = Vec::new();
     let mut index = 0usize;
 
