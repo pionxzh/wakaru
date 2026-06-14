@@ -21,6 +21,7 @@ use crate::rules::{
 };
 use crate::unpacker::{scope_hoist, try_unpack_bundle, webpack5, UnpackResult, UnpackedModule};
 
+mod filename_recovery;
 mod merge;
 mod phases;
 mod scope_split;

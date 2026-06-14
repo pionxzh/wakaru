@@ -16,6 +16,9 @@ use super::super::io::{parse_js, parse_js_with_recovery, print_js};
 use super::super::types::{DecompileOptions, UnpackOutput, UnpackWarning, UnpackWarningKind};
 use super::super::unpack_cleanup::{dedup_duplicate_exports, prune_stale_local_named_exports};
 use super::super::unpack_cycles::{collect_import_cycle_warnings, merge_import_cycles};
+use super::filename_recovery::{
+    build_rename_map, harvest_suggested_filename, rewrite_import_sources,
+};
 use super::merge::{apply_numeric_rewrites, NumericRewritePlan, PreparedUnpackModule};
 use super::{recover_late_esm_from_factory_iifes, LateEsmRecoveryOptions};
 use crate::facts::{collect_module_facts, ModuleFactsMap};
@@ -39,6 +42,10 @@ struct Phase1Module {
     facts: crate::facts::ModuleFacts,
     prepared: Option<Phase1PreparedModule>,
     warning: Option<UnpackWarning>,
+    /// Original source filename recovered from provenance markers (Sentry
+    /// `data-sentry-source-file`), if any. Used at the barrier to rename the
+    /// module's output file and rewrite importers' references.
+    suggested_filename: Option<String>,
 }
 
 /// Multi-module unpack with cross-module late pass.
@@ -115,6 +122,9 @@ pub(super) fn unpack_multi_module_with_plan(
         .map(parse_sourcemap)
         .transpose()?;
     let can_reuse_phase1_ast = parsed_sourcemap.is_none();
+    // Filename recovery from provenance markers is a readability rewrite, gated
+    // to standard+ like other speculative recovery.
+    let recover_filenames = !matches!(options.level, RewriteLevel::Minimal);
 
     // Phase 1: collect facts. Run the through-UnEsm normalization range on each
     // module and extract import/export facts. For normal unpacking, keep that
@@ -123,7 +133,7 @@ pub(super) fn unpack_multi_module_with_plan(
     // original parser SourceMap.
     let collect_facts = |unpacked: &PreparedUnpackModule| -> Phase1Module {
         let globals = Globals::new();
-        let (facts, prepared_parts, warning) = GLOBALS.set(&globals, || {
+        let (facts, prepared_parts, warning, suggested_filename) = GLOBALS.set(&globals, || {
             let cm: Lrc<SourceMap> = Default::default();
             let mut module =
                 match parse_js(&unpacked.module.code, &unpacked.module.filename, cm.clone()) {
@@ -139,9 +149,18 @@ pub(super) fn unpack_multi_module_with_plan(
                                     "parse failed during fact collection, using empty facts: {e}"
                                 ),
                             )),
+                            None,
                         );
                     }
                 };
+            // Harvest the original filename from provenance markers before any
+            // rule mutates the AST. The marker is still a props-object property
+            // here (UnJsx has not run), so this does not depend on JSX recovery.
+            let suggested_filename = if recover_filenames {
+                harvest_suggested_filename(&module)
+            } else {
+                None
+            };
             let unresolved_mark = Mark::new();
             let top_level_mark = Mark::new();
             module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
@@ -184,7 +203,7 @@ pub(super) fn unpack_multi_module_with_plan(
                 let facts = collect_module_facts(&module);
                 (facts, None)
             };
-            (facts, prepared, None)
+            (facts, prepared, None, suggested_filename)
         });
         let prepared = prepared_parts.map(|(module, unresolved_mark)| Phase1PreparedModule {
             globals,
@@ -196,6 +215,7 @@ pub(super) fn unpack_multi_module_with_plan(
             facts,
             prepared,
             warning,
+            suggested_filename,
         }
     };
 
@@ -208,10 +228,15 @@ pub(super) fn unpack_multi_module_with_plan(
     let mut module_facts = ModuleFactsMap::new();
     let mut prepared_modules = Vec::with_capacity(phase1.len());
     let mut warnings = Vec::new();
+    let mut rename_entries = Vec::with_capacity(phase1.len());
     if options.diagnostics {
         warnings.extend(cycle_warnings);
     }
     for phase1_module in phase1 {
+        rename_entries.push((
+            phase1_module.filename.clone(),
+            phase1_module.suggested_filename,
+        ));
         module_facts.insert(&phase1_module.filename, phase1_module.facts);
         prepared_modules.push(phase1_module.prepared);
         if let Some(w) = phase1_module.warning {
@@ -219,11 +244,22 @@ pub(super) fn unpack_multi_module_with_plan(
         }
     }
 
+    // Cross-module barrier: resolve recovered filenames into a final rename
+    // table. Kept separate from the fact map so the pipeline (facts, numeric
+    // rewrites, namespace decomposition) keeps operating on provisional names;
+    // only the final emit step swaps names and rewrites import sources.
+    let rename_map = if recover_filenames {
+        build_rename_map(&rename_entries)
+    } else {
+        std::collections::HashMap::new()
+    };
+
     // Phase 2: output pipeline with late pass. Each module is parsed from
     // the original source only when Phase 1 failed to prepare an AST; otherwise
     // it continues from the Phase 1 normalized AST after the facts barrier.
     let facts_ref = &module_facts;
     let sm_ref = &parsed_sourcemap;
+    let rename_ref = &rename_map;
     let phase2_inputs: Vec<_> = modules.into_iter().zip(prepared_modules).collect();
 
     let decompile_module = |(unpacked, prepared): (
@@ -290,6 +326,13 @@ pub(super) fn unpack_multi_module_with_plan(
                 Vec::new()
             };
 
+            // Final, isolated remap: rewrite import-source strings that point
+            // at modules renamed via recovered filenames. Runs after every
+            // fact-driven pass so the fact map stays keyed by provisional names.
+            if !rename_ref.is_empty() {
+                rewrite_import_sources(&mut module, &unpacked.module.filename, rename_ref);
+            }
+
             module.visit_mut_with(&mut fixer(None));
             let code = print_js(&module, cm)?;
 
@@ -346,7 +389,13 @@ pub(super) fn unpack_multi_module_with_plan(
         };
 
         match result {
-            Ok((code, diag_warnings)) => (unpacked.module.filename, code, diag_warnings),
+            Ok((code, diag_warnings)) => {
+                let out_filename = rename_ref
+                    .get(&unpacked.module.filename)
+                    .cloned()
+                    .unwrap_or(unpacked.module.filename);
+                (out_filename, code, diag_warnings)
+            }
             Err(e) => (
                 unpacked.module.filename.clone(),
                 unpacked.module.code,

@@ -554,7 +554,31 @@ fn rewrite_numeric_arg_to_filename(arg: &mut ExprOrSpread, from_filename: &str, 
     }));
 }
 
-fn relative_import_specifier(from_filename: &str, target_filename: &str) -> String {
+/// Resolve a relative module specifier (`./x`, `../y/z.js`) written in
+/// `from_filename` to the normalized module key it points at. Returns `None`
+/// for bare/package specifiers (`react`, `fs`) that do not name a local module.
+pub(super) fn resolve_relative_specifier(from_filename: &str, spec: &str) -> Option<String> {
+    if !(spec.starts_with("./") || spec.starts_with("../")) {
+        return None;
+    }
+    let from = from_filename.replace('\\', "/");
+    let mut parts: Vec<&str> = from
+        .rsplit_once('/')
+        .map(|(dir, _)| dir.split('/').filter(|part| !part.is_empty()).collect())
+        .unwrap_or_default();
+    for part in spec.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    Some(parts.join("/"))
+}
+
+pub(super) fn relative_import_specifier(from_filename: &str, target_filename: &str) -> String {
     let from = from_filename.replace('\\', "/");
     let target = target_filename.replace('\\', "/");
     let from_dir: Vec<&str> = from
