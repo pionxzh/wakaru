@@ -415,9 +415,34 @@ function collectDeclaratorNames(text) {
 }
 
 function collectDeclaratorBindingNames(declarator) {
-  const eq = declarator.indexOf("=");
+  // Split at the declarator's init `=` (depth 0), not a nested destructuring
+  // default like `{ name } = {}` / `[a] = []` (depth > 0). Splitting at the
+  // first `=` would drop every binding after an earlier default from the
+  // rename map, breaking name normalization for mangled output.
+  const eq = topLevelAssignIndex(declarator);
   const left = eq === -1 ? declarator : declarator.slice(0, eq);
   return collectBindingNames(left);
+}
+
+function topLevelAssignIndex(text) {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "{" || ch === "[" || ch === "(") {
+      depth++;
+    } else if (ch === "}" || ch === "]" || ch === ")") {
+      depth = Math.max(0, depth - 1);
+    } else if (ch === "=" && depth === 0) {
+      const prev = text[i - 1];
+      const next = text[i + 1];
+      // Skip ==, ===, =>, !=, <=, >= so only a real assignment `=` matches.
+      if (next === "=" || next === ">" || prev === "=" || prev === "!" || prev === "<" || prev === ">") {
+        continue;
+      }
+      return i;
+    }
+  }
+  return -1;
 }
 
 function collectBindingNames(pattern) {
