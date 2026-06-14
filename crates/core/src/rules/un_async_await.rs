@@ -60,10 +60,6 @@ struct AwaiterIifeTransformer<'a> {
 }
 
 impl VisitMut for AwaiterIifeTransformer<'_> {
-    fn visit_mut_function(&mut self, _func: &mut Function) {}
-
-    fn visit_mut_arrow_expr(&mut self, _arrow: &mut ArrowExpr) {}
-
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
         try_transform_awaiter_iife(expr, self.helpers);
