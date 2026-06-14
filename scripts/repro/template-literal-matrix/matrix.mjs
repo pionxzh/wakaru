@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
 import {
-  runMatrix, batchRunner, babelBatch, tscBatch, swcBatch,
-  esbuildBatch, withTerserVariants,
+  runMatrix, batchRunner, babelBatch, withTerserVariants, standardLowerers,
 } from "../lib/runner.mjs";
 
 const snippets = [
@@ -121,10 +120,7 @@ const transformers = [
       ),
     ),
   ),
-  ...withTerserVariants("tsc-es5", allSources, batchRunner(() => tscBatch(allSources))),
-  ...withTerserVariants("swc-es5", allSources, batchRunner(() => swcBatch(allSources))),
-  ...withTerserVariants("esbuild-es5", allSources, batchRunner(() => esbuildBatch(allSources, { target: "es5" }))),
-  ...withTerserVariants("source", allSources, (source) => source, { includeRaw: false }),
+  ...standardLowerers(allSources, { esbuildTarget: "es5" }),
 ];
 
 function expectedNeedles(snippet) {

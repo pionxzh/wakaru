@@ -681,8 +681,9 @@ process.stdout.write(JSON.stringify(results));
 
 export function swcBatch(sources, options = {}) {
   const target = options.target ?? "es5";
+  const minify = options.minify ?? false;
   const toolDir = ensureNodeTool("swc", ["@swc/core@1"]);
-  const helper = join(toolDir, "swc-batch.cjs");
+  const helper = join(toolDir, minify ? "swc-minify-batch.cjs" : "swc-batch.cjs");
   writeFileSync(
     helper,
     `
@@ -694,8 +695,9 @@ const results = sources.map(source => {
   try {
     return { code: swc.transformSync(source, {
       filename: "input.js",
-      jsc: { target, parser: { syntax: "ecmascript" } },
+      jsc: { target, parser: { syntax: "ecmascript" }${minify ? ", minify: { compress: true, mangle: true }" : ""} },
       module: { type: "es6" },
+      minify: ${minify},
     }).code };
   } catch (e) { return { error: e.message }; }
 });
@@ -710,8 +712,9 @@ process.stdout.write(JSON.stringify(results));
 
 export function esbuildBatch(sources, options = {}) {
   const target = options.target ?? "es2015";
+  const minify = options.minify ?? false;
   const toolDir = ensureNodeTool("esbuild-0.28", ["esbuild@0.28.0"]);
-  const helper = join(toolDir, "esbuild-batch.cjs");
+  const helper = join(toolDir, minify ? "esbuild-minify-batch.cjs" : "esbuild-batch.cjs");
   writeFileSync(
     helper,
     `
@@ -722,7 +725,7 @@ const sources = JSON.parse(fs.readFileSync(0, "utf8"));
 const results = sources.map(source => {
   try {
     return { code: esbuild.transformSync(source, {
-      loader: "js", target, format: "esm", logLevel: "warning",
+      loader: "js", target, format: "esm", minify: ${minify}, logLevel: "warning",
     }).code };
   } catch (e) { return { error: e.message }; }
 });
@@ -797,6 +800,37 @@ export function withTerserVariants(name, allSources, runRaw, options = {}) {
   ];
   if (options.includeRaw === false) {
     return variants.slice(1);
+  }
+  return variants;
+}
+
+// The lowerer tail shared by most matrices: tsc + swc + esbuild, each in its
+// three Terser variants, plus a source-through-Terser pair. Spread it into a
+// matrix's transformer array and append any special-case lowerers explicitly:
+//
+//   const transformers = [
+//     ...babelProfiles.flatMap(...),       // feature-specific Babel block
+//     ...standardLowerers(allSources),     // the boring 80% overlap
+//   ];
+//
+// Overrides cover the small variations seen in practice: `esbuildTarget`
+// (es2015/es2017/es5), `includeSource`, and `tsc`/`swc`/`esbuild` to swap in a
+// matrix's own batch (e.g. a TypeScript-flavored swc).
+export function standardLowerers(allSources, options = {}) {
+  const {
+    esbuildTarget = "es2015",
+    includeSource = true,
+    tsc = (sources) => tscBatch(sources),
+    swc = (sources) => swcBatch(sources),
+    esbuild = (sources) => esbuildBatch(sources, { target: esbuildTarget }),
+  } = options;
+  const variants = [
+    ...withTerserVariants("tsc-es5", allSources, batchRunner(() => tsc(allSources))),
+    ...withTerserVariants("swc-es5", allSources, batchRunner(() => swc(allSources))),
+    ...withTerserVariants(`esbuild-${esbuildTarget}`, allSources, batchRunner(() => esbuild(allSources))),
+  ];
+  if (includeSource) {
+    variants.push(...withTerserVariants("source", allSources, (source) => source, { includeRaw: false }));
   }
   return variants;
 }

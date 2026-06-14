@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import {
-  runMatrix, batchRunner, tscBatch, swcBatch,
-  esbuildBatch, withTerserVariants, ensureNodeTool, readOption,
+  runMatrix, batchRunner, withTerserVariants,
+  ensureNodeTool, readOption, standardLowerers,
 } from "../lib/runner.mjs";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
@@ -205,10 +205,7 @@ const transformers = [
       ),
     ),
   ),
-  ...withTerserVariants("tsc-es5", allSources, batchRunner(() => tscBatch(allSources))),
-  ...withTerserVariants("swc-es5", allSources, batchRunner(() => swcBatch(allSources))),
-  ...withTerserVariants("esbuild-es2015", allSources, batchRunner(() => esbuildBatch(allSources))),
-  ...withTerserVariants("source", allSources, (source) => source, { includeRaw: false }),
+  ...standardLowerers(allSources),
 ];
 
 runMatrix({
