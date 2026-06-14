@@ -8,9 +8,9 @@ use rayon::prelude::*;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
 use wakaru_core::{
-    decompile, extract_source_entries, format_trace_events, parse_sourcemap, trace_rules, unpack,
-    unpack_files, unpack_files_raw, unpack_raw, DecompileOptions, RewriteLevel, RuleTraceOptions,
-    UnpackInput,
+    decompile, extract_source_entries, format_trace_events, normalize, parse_sourcemap,
+    trace_rules, unpack, unpack_files, unpack_files_raw, unpack_raw, DecompileOptions,
+    NormalizeOptions, RewriteLevel, RuleTraceOptions, UnpackInput,
 };
 
 mod discovery;
@@ -146,6 +146,27 @@ struct DebugArgs {
 enum DebugCommand {
     /// Trace the single-file rule pipeline and print per-rule before/after output.
     Trace(TraceArgs),
+
+    /// Canonicalize source for structure-only comparison (parse + reprint, with
+    /// optional scope-correct alpha-renaming of local bindings). Used by the
+    /// reproduction matrices to compare mangled/minified output structurally.
+    Normalize(NormalizeArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+struct NormalizeArgs {
+    /// Input JavaScript/TypeScript file. Use `-` or omit to read from stdin.
+    input: Option<PathBuf>,
+
+    /// Alpha-rename every local binding to a deterministic canonical name
+    /// (`$0`, `$1`, …), leaving free/global identifiers untouched. This makes
+    /// mangled and original code normalize to identical source.
+    #[arg(long)]
+    rename: bool,
+
+    /// Run the oxc formatter on the canonicalized output.
+    #[arg(long)]
+    format: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -380,7 +401,24 @@ fn run_extract(args: ExtractArgs, force: bool) -> Result<()> {
 fn run_debug(args: DebugArgs, force: bool) -> Result<()> {
     match args.command {
         DebugCommand::Trace(args) => run_trace(args, force),
+        DebugCommand::Normalize(args) => run_normalize(args),
     }
+}
+
+fn run_normalize(args: NormalizeArgs) -> Result<()> {
+    let (source, filename) = read_input(args.input.as_ref())?;
+    let options = NormalizeOptions {
+        rename_bindings: args.rename,
+        filename: filename.clone(),
+    };
+    let canonical = normalize(&source, &options)?;
+    let output = if args.format {
+        format_cli_output(canonical, &filename, selected_formatter(true))
+    } else {
+        canonical
+    };
+    print!("{output}");
+    Ok(())
 }
 
 fn run_trace(args: TraceArgs, force: bool) -> Result<()> {
@@ -633,6 +671,40 @@ mod tests {
             }
             other => panic!("expected debug trace command, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_debug_normalize_command() {
+        let cli = Cli::try_parse_from(["wakaru", "debug", "normalize", "input.js", "--rename"])
+            .expect("debug normalize command should parse");
+
+        match cli.command {
+            Some(Command::Debug(DebugArgs {
+                command: DebugCommand::Normalize(args),
+            })) => {
+                assert_eq!(args.input, Some(PathBuf::from("input.js")));
+                assert!(args.rename);
+                assert!(!args.format);
+            }
+            other => panic!("expected debug normalize command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalize_rename_then_format_canonicalizes_mangling() {
+        // Mirrors run_normalize's pipeline: alpha-rename via core, then format.
+        let opts = NormalizeOptions {
+            rename_bindings: true,
+            filename: "input.js".to_string(),
+        };
+        let fmt = |code: String| format_cli_output(code, "input.js", selected_formatter(true));
+        let original = fmt(normalize("function load(app_id){return get(app_id)}", &opts).unwrap());
+        let mangled = fmt(normalize("function l(e){return get(e)}", &opts).unwrap());
+        assert_eq!(
+            original, mangled,
+            "mangled output should normalize identically"
+        );
+        assert!(original.contains("get"), "global preserved: {original}");
     }
 
     #[test]

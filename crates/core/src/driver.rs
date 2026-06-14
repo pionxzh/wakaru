@@ -1,6 +1,7 @@
 mod diagnostics;
 mod discovery;
 mod io;
+mod normalize;
 mod output;
 mod single_file;
 mod trace;
@@ -10,6 +11,7 @@ mod unpack_cleanup;
 mod unpack_cycles;
 
 pub use discovery::is_detected_unpack_input;
+pub use normalize::{normalize, NormalizeOptions};
 pub use output::{deduplicate_path, safe_relative_module_path};
 pub use single_file::decompile;
 pub use trace::{format_trace_events, trace_rules, RuleTraceEvent, RuleTraceOptions};
