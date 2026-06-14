@@ -2,10 +2,10 @@ use swc_core::atoms::Atom;
 use swc_core::common::{Mark, Span, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrayPat, AssignExpr, AssignOp, AssignPat, AssignPatProp, AssignTarget, AssignTargetPat,
-    BinaryOp, BindingIdent, BlockStmt, Bool, Callee, Decl, Expr, ExprOrSpread, ExprStmt, Function,
-    Ident, IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleItem, Number,
-    ObjectPat, ObjectPatProp, Param, Pat, PropName, RestPat, SimpleAssignTarget, Stmt, VarDecl,
-    VarDeclKind, VarDeclarator,
+    BinaryOp, BindingIdent, BlockStmt, Bool, Callee, CondExpr, Decl, Expr, ExprOrSpread, ExprStmt,
+    Function, Ident, IdentName, KeyValuePatProp, Lit, MemberExpr, MemberProp, Module, ModuleItem,
+    Number, ObjectPat, ObjectPatProp, Param, Pat, PropName, RestPat, SimpleAssignTarget, Stmt,
+    VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
@@ -127,7 +127,7 @@ fn process_module_items(
 }
 
 fn process_stmts(stmts: Vec<Stmt>, unresolved_mark: Mark, level: RewriteLevel) -> Vec<Stmt> {
-    let mut stmts = stmts;
+    let mut stmts = hoist_conditional_test_assignments(stmts);
     let mut result = Vec::with_capacity(stmts.len());
     let mut i = 0;
 
@@ -147,6 +147,117 @@ fn process_stmts(stmts: Vec<Stmt>, unresolved_mark: Mark, level: RewriteLevel) -
     }
 
     result
+}
+
+/// Un-fuses minifier output that inlined an array/object extraction into the
+/// test of a conditional, e.g. `_f = (backup = _e[2]) != null ? backup : y`.
+/// The embedded `backup = _e[2]` assignment is hoisted to its own preceding
+/// statement so the surrounding destructuring group can pick it up. Restricted
+/// to member-access right-hand sides so it only targets the extraction pattern.
+fn hoist_conditional_test_assignments(stmts: Vec<Stmt>) -> Vec<Stmt> {
+    let mut result = Vec::with_capacity(stmts.len());
+    for mut stmt in stmts {
+        if let Some(hoisted) = take_hoistable_cond_test_assignment(&mut stmt) {
+            result.push(hoisted);
+        }
+        result.push(stmt);
+    }
+    result
+}
+
+fn take_hoistable_cond_test_assignment(stmt: &mut Stmt) -> Option<Stmt> {
+    let (outer_target, cond) = cond_value_of_stmt_mut(stmt)?;
+    let Expr::Bin(bin) = cond.test.as_mut() else {
+        return None;
+    };
+    if !matches!(
+        bin.op,
+        BinaryOp::EqEq | BinaryOp::NotEq | BinaryOp::EqEqEq | BinaryOp::NotEqEq
+    ) {
+        return None;
+    }
+    if let Some(hoisted) = take_member_assign_operand(&mut bin.left, &outer_target) {
+        return Some(hoisted);
+    }
+    take_member_assign_operand(&mut bin.right, &outer_target)
+}
+
+/// Returns the statement's outer assignment target (if any) and a mutable
+/// reference to a conditional it assigns/initializes.
+fn cond_value_of_stmt_mut(stmt: &mut Stmt) -> Option<(Option<BindingKey>, &mut CondExpr)> {
+    match stmt {
+        Stmt::Expr(ExprStmt { expr, .. }) => match expr.as_mut() {
+            Expr::Assign(assign) if assign.op == AssignOp::Assign => {
+                let target = match &assign.left {
+                    AssignTarget::Simple(SimpleAssignTarget::Ident(id)) => {
+                        Some(binding_key(&id.id))
+                    }
+                    _ => None,
+                };
+                match assign.right.as_mut() {
+                    Expr::Cond(cond) => Some((target, cond)),
+                    _ => None,
+                }
+            }
+            Expr::Cond(cond) => Some((None, cond)),
+            _ => None,
+        },
+        Stmt::Decl(Decl::Var(var)) if var.decls.len() == 1 => {
+            let target = match &var.decls[0].name {
+                Pat::Ident(id) => Some(binding_key(&id.id)),
+                _ => None,
+            };
+            match var.decls[0].init.as_deref_mut()? {
+                Expr::Cond(cond) => Some((target, cond)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// If `operand` is `ident = <member-access>`, replace it with `ident` and
+/// return the hoisted `ident = <member-access>;` statement. Skips the minifier
+/// self-assign idiom (`o = (o = x.y) != null ? ...`) where the inner target
+/// matches the outer one — there is no destructuring element to recover there.
+fn take_member_assign_operand(
+    operand: &mut Box<Expr>,
+    outer_target: &Option<BindingKey>,
+) -> Option<Stmt> {
+    let Expr::Assign(assign) = strip_parens(operand.as_ref()) else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(ident)) = &assign.left else {
+        return None;
+    };
+    // Only an extraction from a destructuring source: `ident = <obj>.<m>` where
+    // `<obj>` is a binding (`Z`) or an inline-established one (`(V = …)`).
+    // Excludes `ident = (a ?? {}).p` / `ident = a.b.c` where no destructuring
+    // group can form, which would split statements for no benefit.
+    let Expr::Member(member) = strip_parens(assign.right.as_ref()) else {
+        return None;
+    };
+    if !matches!(
+        strip_parens(member.obj.as_ref()),
+        Expr::Ident(_) | Expr::Assign(_)
+    ) {
+        return None;
+    }
+    if outer_target
+        .as_ref()
+        .is_some_and(|target| *target == binding_key(&ident.id))
+    {
+        return None;
+    }
+    let hoisted = Stmt::Expr(ExprStmt {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Assign(assign.clone())),
+    });
+    **operand = Expr::Ident(ident.id.clone());
+    Some(hoisted)
 }
 
 fn try_reconstruct_group(
@@ -230,6 +341,12 @@ fn try_extract_assignment_access(
 
     if let Some(extracted) =
         try_extract_assignment_member_default_access(stmts, index, expected_source, unresolved_mark)
+    {
+        return Some(extracted);
+    }
+
+    if let Some(extracted) =
+        try_extract_assignment_fused_default_access(stmts, index, expected_source, unresolved_mark)
     {
         return Some(extracted);
     }
@@ -378,6 +495,94 @@ fn try_extract_assignment_sliced_default_access(
         init: source_init,
         access,
         consumed: 2 + collected.consumed,
+        removed_temps,
+    })
+}
+
+/// Handles the minifier-fused form where the defaulted temp is assigned inline
+/// inside the first sub-access:
+/// `b = src.key; first = (ref = b === undefined ? DEFAULT : b).<m>; … = ref[…]`
+/// recovering `key: <nested-pat> = DEFAULT`. Covers both nested object members
+/// and array indices (with holes) on the shared `ref` binding.
+fn try_extract_assignment_fused_default_access(
+    stmts: &[Stmt],
+    index: usize,
+    expected_source: Option<&Ident>,
+    unresolved_mark: Mark,
+) -> Option<AssignmentAccess> {
+    let (temp, temp_init) = extract_binding_assignment(stmts.get(index)?)?;
+    let (source, source_init, source_access) =
+        extract_assignment_source_access(temp_init, expected_source)?;
+
+    // `first = (ref = temp === undefined ? DEFAULT : temp).<member|[idx]>`
+    let (first_binding, first_init) = extract_binding_assignment(stmts.get(index + 1)?)?;
+    let Expr::Member(member) = strip_parens(first_init) else {
+        return None;
+    };
+    let Expr::Assign(ref_assign) = strip_parens(member.obj.as_ref()) else {
+        return None;
+    };
+    if ref_assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(ref_binding)) = &ref_assign.left else {
+        return None;
+    };
+    let default = extract_default_value(
+        strip_parens(ref_assign.right.as_ref()),
+        &temp.id,
+        unresolved_mark,
+    )?;
+    let temp_key = binding_key(&temp.id);
+    if expr_uses_ident(&default, &temp_key) {
+        return None;
+    }
+    let ref_key = binding_key(&ref_binding.id);
+
+    let first_access = match source_access_from_member_prop(&member.prop)? {
+        SourceAccess::ObjectProp(key) => Access::Object {
+            key,
+            pat: Pat::Ident(first_binding),
+        },
+        SourceAccess::ArrayIndex(idx) => Access::Array {
+            index: idx,
+            pat: Pat::Ident(first_binding),
+        },
+    };
+
+    let mut accesses = vec![first_access];
+    let mut removed_temps = vec![temp_key, ref_key.clone()];
+    let collected = collect_assignment_accesses_on(
+        stmts,
+        index + 2,
+        &ref_binding.id,
+        unresolved_mark,
+        &mut removed_temps,
+    );
+    let consumed = 2 + collected.consumed;
+    accesses.extend(collected.accesses);
+
+    // The shared `ref` binding must be fully consumed by this group.
+    if ident_used_in_stmts(&stmts[index + consumed..], &ref_key) {
+        return None;
+    }
+
+    let nested_pat = build_pat_from_accesses(accesses)?;
+    let pat = Pat::Assign(AssignPat {
+        span: DUMMY_SP,
+        left: Box::new(nested_pat),
+        right: default,
+    });
+    let access = match source_access {
+        SourceAccess::ArrayIndex(idx) => Access::Array { index: idx, pat },
+        SourceAccess::ObjectProp(key) => Access::Object { key, pat },
+    };
+
+    Some(AssignmentAccess {
+        source,
+        init: source_init,
+        access,
+        consumed,
         removed_temps,
     })
 }

@@ -415,6 +415,147 @@ use(id, name, primary, backup);
 }
 
 #[test]
+fn reconstructs_assignment_object_with_fused_nested_defaults() {
+    // After terser-compress the defaulted temp is fused into the first access:
+    // `name = (_c = _b === undefined ? {} : _b).name` and
+    // `primary = (_e = _d === undefined ? [] : _d)[0]; backup = _e[2]`.
+    let input = r#"
+let source;
+let id;
+let _b;
+let _c;
+let name;
+let _d;
+let _e;
+let primary;
+let backup;
+source = input;
+id = source.id;
+_b = source.profile;
+name = (_c = _b === undefined ? {} : _b).name;
+_d = source.tags;
+primary = (_e = _d === undefined ? [] : _d)[0];
+backup = _e[2];
+use(id, name, primary, backup);
+"#;
+    let expected = r#"
+let source;
+let id;
+let _b;
+let _c;
+let name;
+let _d;
+let _e;
+let primary;
+let backup;
+source = input;
+({ id, profile: { name } = {}, tags: [primary, , backup] = [] } = source);
+use(id, name, primary, backup);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn reconstructs_assignment_object_from_fused_member_default_access() {
+    let input = r#"
+let source;
+let tmp;
+let _c;
+let name;
+source = input;
+tmp = source.profile;
+name = (_c = tmp === undefined ? {} : tmp).name;
+use(name);
+"#;
+    let expected = r#"
+let source;
+let tmp;
+let _c;
+let name;
+source = input;
+({ profile: { name } = {} } = source);
+use(name);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn reconstructs_array_when_tail_binding_fused_into_conditional() {
+    // Minifiers inline an extracted array element into its first use:
+    // `_f = (backup = _e[2]) != null ? backup : fallback()`. The embedded
+    // `backup = _e[2]` assignment is hoisted so the array pattern completes.
+    let input = r#"
+let source;
+let _d;
+let _e;
+let primary;
+let backup;
+let _f;
+source = input;
+_d = source.tags;
+primary = (_e = _d === undefined ? [] : _d)[0];
+_f = (backup = _e[2]) != null ? backup : fallback();
+use(primary, backup, _f);
+"#;
+    let expected = r#"
+let source;
+let _d;
+let _e;
+let primary;
+let backup;
+let _f;
+source = input;
+({ tags: [primary, , backup] = [] } = source);
+_f = backup != null ? backup : fallback();
+use(primary, backup, _f);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn reconstructs_object_default_with_inline_established_source() {
+    // The destructuring source is established inline inside the fused access:
+    // `J = (Z = (V = G ?? {}).link) === undefined ? def : Z` — the member
+    // object `(V = G ?? {})` is an assignment, so the hoist fires and the group
+    // destructures from `V`.
+    let input = r#"
+let J;
+let Z;
+let V;
+J = (Z = (V = G ?? {}).link) === undefined ? def : Z;
+use(J, V);
+"#;
+    let expected = r#"
+let J;
+let Z;
+let V;
+({ link: J = def } = V = G ?? {});
+use(J, V);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn does_not_hoist_conditional_test_assignment_without_destructuring_source() {
+    // The hoist must only fire when the member object is a binding (`Z`) or an
+    // inline-established one (`(V = ...)`). For an arbitrary expression there is
+    // no destructuring group to form, so splitting the statement would be churn.
+    // The self-assign idiom (`o = (o = t.state) ...`) is likewise left intact.
+    let input = r#"
+let x;
+let c;
+let o;
+let f;
+let g;
+f = (x = (a ?? {}).link) != null ? x : y;
+g = (c = e.opts.flag) === true ? p : q;
+o = (o = t.field) !== null ? o.value : null;
+use(f, g, o);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn reconstructs_assignment_object_from_member_default_access() {
     let input = r#"
 let source;
