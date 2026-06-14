@@ -69,6 +69,16 @@ async function runMatrixAsync(config) {
   let countError = 0;
 
   try {
+    // Prewarm all transformer batches concurrently before any shape collection
+    // (collectShapes calls transformer.run synchronously). The Babel/tsc/swc/
+    // esbuild batch processes are the dominant fixed cost; running them in
+    // parallel rather than lazily-serially is the main speedup. Sync custom
+    // batches are unaffected (they still trigger on first lookup).
+    await runPool(
+      transformers.filter((transformer) => typeof transformer.run?.prewarm === "function"),
+      (transformer) => transformer.run.prewarm(),
+    );
+
     // --dump <snippet> <tool>: print full lowered + recovered for one shape
     if (dumpShape) {
       const dumpTool = process.argv[process.argv.indexOf("--dump") + 2] ?? "";
@@ -425,37 +435,78 @@ function shapeKey(code) {
 
 // ── Batched tool runners ──────────────────────────────────────
 
+// Wrap a lazy batch (`() => Map` or `() => Promise<Map>`) into a memoized
+// source→result lookup. `lookup.prewarm()` runs the batch once, concurrently
+// with others, and is the way to use an async batch: after prewarming, the
+// synchronous `lookup(source)` reads the resolved result. A *synchronous* batch
+// still works without prewarming (it is triggered on first lookup), preserving
+// the old behavior. A batch that fails is remembered and re-thrown on lookup,
+// so the caller (collectShapes) records a transform-failed shape — exactly as
+// before, rather than aborting the whole run.
 export function batchRunner(lazyBatch) {
-  let cache;
-  return (source) => {
-    if (!cache) cache = lazyBatch();
-    const result = cache.get(source);
+  let resolved;
+  let pending;
+  let failure;
+  const lookup = (source) => {
+    if (failure) throw failure;
+    if (!resolved) {
+      const value = lazyBatch();
+      if (value && typeof value.then === "function") {
+        throw new Error("async batch used before prewarm(); call lookup.prewarm() first");
+      }
+      resolved = value;
+    }
+    const result = resolved.get(source);
     if (result === undefined) throw new Error("source not in batch");
     if (result instanceof Error) throw result;
     return result;
   };
+  lookup.prewarm = async () => {
+    if (resolved || failure) return;
+    if (!pending) pending = Promise.resolve().then(lazyBatch);
+    try {
+      resolved = await pending;
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+  };
+  return lookup;
 }
 
-function runBatchHelper(command, args, sources, options = {}) {
-  const result = spawnSync(command, args, {
-    cwd: options.cwd ?? repoRoot,
-    input: JSON.stringify(sources),
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024 * 50,
-    shell: options.shell ?? false,
-    env: { ...process.env, ...(options.env ?? {}) },
+// Spawns the tool process without blocking the event loop, so multiple batches
+// run concurrently under runPool. Pipes JSON sources on stdin, parses the JSON
+// results array on stdout into a source→(code|Error) map.
+function runBatchHelperAsync(command, args, sources, options = {}) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd ?? repoRoot,
+      shell: options.shell ?? false,
+      env: { ...process.env, ...(options.env ?? {}) },
+    });
+    const stdout = [];
+    let stderr = "";
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        const detail = [stderr.trim(), Buffer.concat(stdout).toString().trim()].filter(Boolean).join(" ");
+        reject(new Error(`${basename(command)} batch exited ${code}: ${detail}`));
+        return;
+      }
+      try {
+        const outputs = JSON.parse(Buffer.concat(stdout).toString());
+        const map = new Map();
+        for (let i = 0; i < sources.length; i++) {
+          map.set(sources[i], outputs[i].error ? new Error(outputs[i].error) : outputs[i].code);
+        }
+        resolvePromise(map);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    child.stdin.end(JSON.stringify(sources));
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    const detail = [result.stderr.trim(), result.stdout.trim()].filter(Boolean).join(" ");
-    throw new Error(`${basename(command)} batch exited ${result.status}: ${detail}`);
-  }
-  const outputs = JSON.parse(result.stdout);
-  const map = new Map();
-  for (let i = 0; i < sources.length; i++) {
-    map.set(sources[i], outputs[i].error ? new Error(outputs[i].error) : outputs[i].code);
-  }
-  return map;
 }
 
 export function ensureNodeTool(name, packages) {
@@ -530,7 +581,7 @@ const results = sources.map(source => {
 process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runBatchHelper("node", [helper], sources, {
+  return runBatchHelperAsync("node", [helper], sources, {
     cwd: toolDir,
     env: { MATRIX_BABEL_OPTIONS: JSON.stringify(babelOptions) },
   });
@@ -562,7 +613,7 @@ const results = sources.map(source => {
 process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runBatchHelper("node", [helper], sources, { cwd: toolDir, env });
+  return runBatchHelperAsync("node", [helper], sources, { cwd: toolDir, env });
 }
 
 export function babelPresetEnvBatch(sources, options = {}) {
@@ -595,7 +646,7 @@ const results = sources.map(source => {
 process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runBatchHelper("node", [helper], sources, {
+  return runBatchHelperAsync("node", [helper], sources, {
     cwd: toolDir,
     env: { MATRIX_TARGETS: JSON.stringify(targets) },
   });
@@ -622,7 +673,7 @@ const results = sources.map(source => {
 process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runBatchHelper("node", [helper], sources, {
+  return runBatchHelperAsync("node", [helper], sources, {
     cwd: toolDir,
     env: { MATRIX_TSC_TARGET: target },
   });
@@ -651,7 +702,7 @@ const results = sources.map(source => {
 process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runBatchHelper("node", [helper], sources, {
+  return runBatchHelperAsync("node", [helper], sources, {
     cwd: toolDir,
     env: { MATRIX_SWC_TARGET: target },
   });
@@ -678,7 +729,7 @@ const results = sources.map(source => {
 process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runBatchHelper("node", [helper], sources, {
+  return runBatchHelperAsync("node", [helper], sources, {
     cwd: toolDir,
     env: { MATRIX_ESBUILD_TARGET: target },
   });
@@ -711,32 +762,34 @@ for (const source of sources) {
 process.stdout.write(JSON.stringify(results));
 `,
   );
-  return runBatchHelper("node", [helper], sources, { cwd: toolDir });
+  return runBatchHelperAsync("node", [helper], sources, { cwd: toolDir });
 }
 
 export function withTerserVariants(name, allSources, runRaw, options = {}) {
-  const terserCompressCache = batchRunner(() => {
-    const rawOutputs = allSources.map((s) => { try { return runRaw(s); } catch { return null; } });
-    const valid = rawOutputs.filter((r) => r !== null);
-    if (valid.length === 0) return new Map();
-    const batchResult = terserBatch(valid, { mangle: false });
-    const map = new Map();
-    for (let i = 0; i < allSources.length; i++) {
-      if (rawOutputs[i] !== null) map.set(allSources[i], batchResult.get(rawOutputs[i]));
-    }
-    return map;
-  });
-  const terserMangleCache = batchRunner(() => {
-    const rawOutputs = allSources.map((s) => { try { return runRaw(s); } catch { return null; } });
-    const valid = rawOutputs.filter((r) => r !== null);
-    if (valid.length === 0) return new Map();
-    const batchResult = terserBatch(valid, { mangle: true });
-    const map = new Map();
-    for (let i = 0; i < allSources.length; i++) {
-      if (rawOutputs[i] !== null) map.set(allSources[i], batchResult.get(rawOutputs[i]));
-    }
-    return map;
-  });
+  // The terser variants run on top of `runRaw`'s output, so each first ensures
+  // the raw batch is prewarmed (idempotent/shared), then minifies. Returning an
+  // async lazy batch lets all of these prewarm concurrently with everything else.
+  const terserVariant = (mangle) =>
+    batchRunner(async () => {
+      await runRaw.prewarm?.();
+      const rawOutputs = allSources.map((s) => {
+        try {
+          return runRaw(s);
+        } catch {
+          return null;
+        }
+      });
+      const valid = rawOutputs.filter((r) => r !== null);
+      if (valid.length === 0) return new Map();
+      const batchResult = await terserBatch(valid, { mangle });
+      const map = new Map();
+      for (let i = 0; i < allSources.length; i++) {
+        if (rawOutputs[i] !== null) map.set(allSources[i], batchResult.get(rawOutputs[i]));
+      }
+      return map;
+    });
+  const terserCompressCache = terserVariant(false);
+  const terserMangleCache = terserVariant(true);
   const variants = [
     { name, run: runRaw },
     { name: `${name}-terser-compress`, run: terserCompressCache },
