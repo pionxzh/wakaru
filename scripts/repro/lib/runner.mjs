@@ -40,6 +40,7 @@ async function runMatrixAsync(config) {
     transformers,
     expectedNeedles = defaultExpectedNeedles,
     validateRecovered,
+    prewarm,
   } = config;
   const showDetails = process.argv.includes("--details");
   const jsonMode = process.argv.includes("--json");
@@ -87,6 +88,21 @@ async function runMatrixAsync(config) {
       }
     }
     await decompileAll(allLowered, rewriteLevel);
+
+    // Let the matrix prewarm any comparison-time work (e.g. structural
+    // normalization of recovered output) concurrently, before the synchronous
+    // comparison loop reads it from cache.
+    if (prewarm) {
+      const rows = [];
+      for (const snippet of filteredSnippets) {
+        for (const shape of shapesBySnippet.get(snippet)) {
+          if (shape.transformError) continue;
+          const recovered = decompileCache.get(decompileKey(rewriteLevel, shape.lowered));
+          rows.push({ snippet, shape, recovered: recovered instanceof Error ? null : recovered });
+        }
+      }
+      await prewarm(rows);
+    }
 
     for (const snippet of filteredSnippets) {
       for (const shape of shapesBySnippet.get(snippet)) {
@@ -314,6 +330,22 @@ function runWakaru(source, name, tmpRoot, rewriteLevel) {
   return runWakaruArgs(["--level", rewriteLevel, input]);
 }
 
+function defaultConcurrency() {
+  return Math.max(1, Math.min(16, (cpus().length || 4) - 2));
+}
+
+// Run `worker` over `items` with a bounded number of concurrent invocations.
+export async function runPool(items, worker, concurrency = defaultConcurrency()) {
+  let cursor = 0;
+  const run = async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      await worker(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, run));
+}
+
 // Decompile every (unique) source concurrently and fill decompileCache, so the
 // comparison loop runs against in-memory results instead of serial spawns.
 async function decompileAll(sources, rewriteLevel) {
@@ -321,20 +353,14 @@ async function decompileAll(sources, rewriteLevel) {
   const pending = [...new Set(sources)].filter(
     (source) => !decompileCache.has(decompileKey(rewriteLevel, source)),
   );
-  const concurrency = Math.max(1, Math.min(16, (cpus().length || 4) - 2));
-  let cursor = 0;
-  const worker = async () => {
-    while (cursor < pending.length) {
-      const source = pending[cursor++];
-      const key = decompileKey(rewriteLevel, source);
-      try {
-        decompileCache.set(key, await spawnCapture(command, [...prefix, "--level", rewriteLevel, "-"], source));
-      } catch (error) {
-        decompileCache.set(key, error instanceof Error ? error : new Error(String(error)));
-      }
+  await runPool(pending, async (source) => {
+    const key = decompileKey(rewriteLevel, source);
+    try {
+      decompileCache.set(key, await spawnCapture(command, [...prefix, "--level", rewriteLevel, "-"], source));
+    } catch (error) {
+      decompileCache.set(key, error instanceof Error ? error : new Error(String(error)));
     }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, worker));
+  });
 }
 
 function spawnCapture(command, args, input) {
@@ -373,6 +399,12 @@ export function runWakaruArgs(args, options = {}) {
   const runOptions = options.input !== undefined ? { input: options.input } : {};
   const { command, prefix } = resolveWakaruCmd();
   return runChecked(command, [...prefix, ...args], { ...runOptions, cwd: repoRoot });
+}
+
+// Async counterpart of runWakaruArgs, for concurrent prewarming via runPool.
+export async function runWakaruArgsAsync(args, options = {}) {
+  const { command, prefix } = resolveWakaruCmd();
+  return spawnCapture(command, [...prefix, ...args], options.input);
 }
 
 function wakaruDescription() {

@@ -4,7 +4,7 @@ import {
   runMatrix, batchRunner, babelMultiPluginBatch, babelPresetEnvBatch,
   tscBatch, swcBatch, esbuildBatch, withTerserVariants,
 } from "../lib/runner.mjs";
-import { matchesAnyForm } from "../lib/compare.mjs";
+import { matchesAnyForm, prewarmNormalize } from "../lib/compare.mjs";
 
 const snippets = [
   {
@@ -461,6 +461,18 @@ function validateRecovered({ snippet, shape, recovered }) {
   return undefined;
 }
 
+// Normalize every mangle shape's recovered output and its candidate forms
+// concurrently, so the synchronous validateRecovered calls are cache hits
+// instead of serial `wakaru debug normalize` spawns.
+async function prewarmComparison(rows) {
+  const codes = [];
+  for (const { snippet, shape, recovered } of rows) {
+    if (recovered == null || !shape.tools.some((tool) => tool.includes("mangle"))) continue;
+    codes.push(recovered, snippet.source, ...(snippet.acceptForms ?? []));
+  }
+  await prewarmNormalize(codes, { rename: true });
+}
+
 const babelProfiles = [
   {
     name: "babel-7.8",
@@ -522,4 +534,5 @@ runMatrix({
   snippets,
   transformers,
   validateRecovered,
+  prewarm: prewarmComparison,
 });

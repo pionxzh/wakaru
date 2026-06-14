@@ -12,12 +12,21 @@
 // distinct canonical names, so `load_meta(x)` and `load_backup(x)` never
 // collapse to the same shape).
 
-import { runWakaruArgs } from "./runner.mjs";
+import { runPool, runWakaruArgs, runWakaruArgsAsync } from "./runner.mjs";
 
 const cache = new Map();
+const cacheKey = (rename, code) => `${rename ? "R" : "F"}\0${code}`;
+
+function normalizeArgs(rename) {
+  const args = ["debug", "normalize"];
+  if (rename) args.push("--rename");
+  args.push("-");
+  return args;
+}
 
 /**
- * Canonicalize `code` via `wakaru debug normalize`.
+ * Canonicalize `code` via `wakaru debug normalize`. Reads from the cache, which
+ * may have been filled concurrently by {@link prewarmNormalize}.
  * @param {string} code
  * @param {{ rename?: boolean }} [options] rename: alpha-rename local bindings.
  * @returns {string} canonical source, or "" if normalization fails (e.g. the
@@ -25,17 +34,13 @@ const cache = new Map();
  */
 export function normalizeCode(code, options = {}) {
   const rename = options.rename ?? false;
-  const key = `${rename ? "R" : "F"}\0${code}`;
+  const key = cacheKey(rename, code);
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
 
-  const args = ["debug", "normalize"];
-  if (rename) args.push("--rename");
-  args.push("-");
-
   let result;
   try {
-    result = runWakaruArgs(args, { input: code }).trim();
+    result = runWakaruArgs(normalizeArgs(rename), { input: code }).trim();
   } catch {
     // Unparseable input/output: return a sentinel that can never match a
     // successful normalization, so callers treat it as "not equivalent".
@@ -43,6 +48,28 @@ export function normalizeCode(code, options = {}) {
   }
   cache.set(key, result);
   return result;
+}
+
+/**
+ * Normalize many sources concurrently and fill the cache, so later synchronous
+ * {@link normalizeCode} / {@link matchesAnyForm} calls are cache hits. Skips
+ * codes already cached. `null`/`undefined` entries are ignored.
+ */
+export async function prewarmNormalize(codes, options = {}) {
+  const rename = options.rename ?? false;
+  const args = normalizeArgs(rename);
+  const pending = [...new Set(codes)].filter(
+    (code) => code != null && !cache.has(cacheKey(rename, code)),
+  );
+  await runPool(pending, async (code) => {
+    let result;
+    try {
+      result = (await runWakaruArgsAsync(args, { input: code })).trim();
+    } catch {
+      result = "";
+    }
+    cache.set(cacheKey(rename, code), result);
+  });
 }
 
 /**
