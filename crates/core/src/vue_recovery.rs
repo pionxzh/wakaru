@@ -13,7 +13,7 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 
 use crate::driver::{decompile, DecompileOptions, DecompileOutput};
-use crate::vue_template::{VueAttr, VueElement, VueNode, VueSfc, VueTemplate};
+use crate::vue_template::{VueAttr, VueDirective, VueElement, VueNode, VueSfc, VueTemplate};
 
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
@@ -400,11 +400,13 @@ fn with_directive(
         VueNode::Element(element) => {
             element.attrs.insert(
                 0,
-                VueAttr::Directive {
+                VueAttr::Directive(VueDirective {
                     name: name.to_string(),
                     arg,
                     expr,
-                },
+                    modifiers: Vec::new(),
+                    dynamic_arg: false,
+                }),
             );
             node
         }
@@ -597,16 +599,20 @@ fn recover_directive_tuple(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Opti
         .transpose()?;
 
     match helper.as_str() {
-        helper if helper.starts_with("vModel") => Ok(Some(VueAttr::Directive {
+        helper if helper.starts_with("vModel") => Ok(Some(VueAttr::Directive(VueDirective {
             name: "model".to_string(),
             arg: None,
             expr,
-        })),
-        "vShow" => Ok(Some(VueAttr::Directive {
+            modifiers: Vec::new(),
+            dynamic_arg: false,
+        }))),
+        "vShow" => Ok(Some(VueAttr::Directive(VueDirective {
             name: "show".to_string(),
             arg: None,
             expr,
-        })),
+            modifiers: Vec::new(),
+            dynamic_arg: false,
+        }))),
         _ => Ok(None),
     }
 }
@@ -665,12 +671,12 @@ fn rename_attr_expr_prefix(attr: &mut VueAttr, from: &str, to: &str) {
         VueAttr::Bind { expr, .. }
         | VueAttr::On { expr, .. }
         | VueAttr::Spread(expr)
-        | VueAttr::Directive {
+        | VueAttr::Directive(VueDirective {
             expr: Some(expr), ..
-        } => {
+        }) => {
             *expr = rename_expr_prefix(expr, from, to);
         }
-        VueAttr::Static { .. } | VueAttr::Directive { expr: None, .. } => {}
+        VueAttr::Static { .. } | VueAttr::Directive(VueDirective { expr: None, .. }) => {}
     }
 }
 
