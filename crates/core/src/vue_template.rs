@@ -101,13 +101,9 @@ impl VueSfc {
 
 impl VueTemplate {
     pub fn print(&self) -> String {
-        let mut out = String::new();
-        out.push_str("<template>\n");
-        for child in &self.children {
-            print_node(child, 1, &mut out);
-        }
-        out.push_str("</template>\n");
-        out
+        let mut emitter = TemplateEmitter::new();
+        emitter.emit_template(self);
+        emitter.finish()
     }
 }
 
@@ -131,124 +127,175 @@ impl VueElement {
     }
 }
 
-fn print_node(node: &VueNode, depth: usize, out: &mut String) {
-    match node {
-        VueNode::Element(element) => print_element(element, depth, out),
-        VueNode::Fragment(children) => {
-            for child in children {
-                print_node(child, depth, out);
-            }
-        }
-        VueNode::Text(text) => {
-            indent(depth, out);
-            out.push_str(&escape_text(text));
-            out.push('\n');
-        }
-        VueNode::Interpolation(expr) => {
-            indent(depth, out);
-            out.push_str("{{ ");
-            out.push_str(expr.trim());
-            out.push_str(" }}\n");
-        }
-        VueNode::Comment(comment) => {
-            indent(depth, out);
-            out.push_str("<!-- ");
-            out.push_str(comment.trim());
-            out.push_str(" -->\n");
-        }
-        VueNode::RawExpr(expr) => {
-            indent(depth, out);
-            out.push_str("<!-- wakaru: ");
-            out.push_str(&escape_comment(expr.trim()));
-            out.push_str(" -->\n");
-        }
-    }
+struct TemplateEmitter {
+    out: String,
 }
 
-fn print_element(element: &VueElement, depth: usize, out: &mut String) {
-    indent(depth, out);
-    out.push('<');
-    out.push_str(&element.tag);
-    for attr in &element.attrs {
-        out.push(' ');
-        print_attr(attr, out);
+impl TemplateEmitter {
+    fn new() -> Self {
+        Self { out: String::new() }
     }
 
-    if element.children.is_empty() {
-        out.push_str(" />\n");
-        return;
+    fn finish(self) -> String {
+        self.out
     }
 
-    if is_inline_children(&element.children) {
-        out.push('>');
-        print_inline_children(&element.children, out);
-        out.push_str("</");
-        out.push_str(&element.tag);
-        out.push_str(">\n");
-        return;
-    }
-
-    out.push_str(">\n");
-    for child in &element.children {
-        print_node(child, depth + 1, out);
-    }
-    indent(depth, out);
-    out.push_str("</");
-    out.push_str(&element.tag);
-    out.push_str(">\n");
-}
-
-fn print_attr(attr: &VueAttr, out: &mut String) {
-    match attr {
-        VueAttr::Static { name, value } => {
-            out.push_str(name);
-            if let Some(value) = value {
-                out.push_str("=\"");
-                out.push_str(&escape_attr(value));
-                out.push('"');
-            }
+    fn emit_template(&mut self, template: &VueTemplate) {
+        self.out.push_str("<template>\n");
+        for child in &template.children {
+            self.emit_node(child, 1);
         }
-        VueAttr::Bind { name, expr } => {
-            out.push(':');
-            out.push_str(name);
-            out.push_str("=\"");
-            out.push_str(&escape_attr(expr.trim()));
-            out.push('"');
-        }
-        VueAttr::On { name, expr } => {
-            out.push('@');
-            out.push_str(name);
-            out.push_str("=\"");
-            out.push_str(&escape_attr(expr.trim()));
-            out.push('"');
-        }
-        VueAttr::Directive(directive) => {
-            out.push_str("v-");
-            out.push_str(&directive.name);
-            if let Some(arg) = &directive.arg {
-                if directive.dynamic_arg {
-                    out.push_str(":[");
-                    out.push_str(arg);
-                    out.push(']');
-                } else {
-                    out.push(':');
-                    out.push_str(arg);
+        self.out.push_str("</template>\n");
+    }
+
+    fn emit_node(&mut self, node: &VueNode, depth: usize) {
+        match node {
+            VueNode::Element(element) => self.emit_element(element, depth),
+            VueNode::Fragment(children) => {
+                for child in children {
+                    self.emit_node(child, depth);
                 }
             }
-            for modifier in &directive.modifiers {
-                out.push('.');
-                out.push_str(modifier);
+            VueNode::Text(text) => {
+                self.indent(depth);
+                self.out.push_str(&escape_text(text));
+                self.out.push('\n');
             }
-            if let Some(expr) = &directive.expr {
-                out.push_str("=\"");
-                out.push_str(&escape_attr(expr.trim()));
-                out.push('"');
+            VueNode::Interpolation(expr) => {
+                self.indent(depth);
+                self.out.push_str("{{ ");
+                self.out.push_str(expr.trim());
+                self.out.push_str(" }}\n");
+            }
+            VueNode::Comment(comment) => {
+                self.indent(depth);
+                self.out.push_str("<!-- ");
+                self.out.push_str(comment.trim());
+                self.out.push_str(" -->\n");
+            }
+            VueNode::RawExpr(expr) => {
+                self.indent(depth);
+                self.out.push_str("<!-- wakaru: ");
+                self.out.push_str(&escape_comment(expr.trim()));
+                self.out.push_str(" -->\n");
             }
         }
-        VueAttr::Spread(expr) => {
-            out.push_str("v-bind=\"");
-            out.push_str(&escape_attr(expr.trim()));
-            out.push('"');
+    }
+
+    fn emit_element(&mut self, element: &VueElement, depth: usize) {
+        self.indent(depth);
+        self.out.push('<');
+        self.out.push_str(&element.tag);
+        for attr in &element.attrs {
+            self.out.push(' ');
+            self.emit_attr(attr);
+        }
+
+        if element.children.is_empty() {
+            self.out.push_str(" />\n");
+            return;
+        }
+
+        if is_inline_children(&element.children) {
+            self.out.push('>');
+            self.emit_inline_children(&element.children);
+            self.out.push_str("</");
+            self.out.push_str(&element.tag);
+            self.out.push_str(">\n");
+            return;
+        }
+
+        self.out.push_str(">\n");
+        for child in &element.children {
+            self.emit_node(child, depth + 1);
+        }
+        self.indent(depth);
+        self.out.push_str("</");
+        self.out.push_str(&element.tag);
+        self.out.push_str(">\n");
+    }
+
+    fn emit_attr(&mut self, attr: &VueAttr) {
+        match attr {
+            VueAttr::Static { name, value } => {
+                self.out.push_str(name);
+                if let Some(value) = value {
+                    self.out.push_str("=\"");
+                    self.out.push_str(&escape_attr(value));
+                    self.out.push('"');
+                }
+            }
+            VueAttr::Bind { name, expr } => {
+                self.out.push(':');
+                self.out.push_str(name);
+                self.out.push_str("=\"");
+                self.out.push_str(&escape_attr(expr.trim()));
+                self.out.push('"');
+            }
+            VueAttr::On { name, expr } => {
+                self.out.push('@');
+                self.out.push_str(name);
+                self.out.push_str("=\"");
+                self.out.push_str(&escape_attr(expr.trim()));
+                self.out.push('"');
+            }
+            VueAttr::Directive(directive) => self.emit_directive(directive),
+            VueAttr::Spread(expr) => {
+                self.out.push_str("v-bind=\"");
+                self.out.push_str(&escape_attr(expr.trim()));
+                self.out.push('"');
+            }
+        }
+    }
+
+    fn emit_directive(&mut self, directive: &VueDirective) {
+        self.out.push_str("v-");
+        self.out.push_str(&directive.name);
+        if let Some(arg) = &directive.arg {
+            if directive.dynamic_arg {
+                self.out.push_str(":[");
+                self.out.push_str(arg);
+                self.out.push(']');
+            } else {
+                self.out.push(':');
+                self.out.push_str(arg);
+            }
+        }
+        for modifier in &directive.modifiers {
+            self.out.push('.');
+            self.out.push_str(modifier);
+        }
+        if let Some(expr) = &directive.expr {
+            self.out.push_str("=\"");
+            self.out.push_str(&escape_attr(expr.trim()));
+            self.out.push('"');
+        }
+    }
+
+    fn emit_inline_children(&mut self, children: &[VueNode]) {
+        for child in children {
+            match child {
+                VueNode::Text(text) => self.out.push_str(&escape_text(text)),
+                VueNode::Interpolation(expr) => {
+                    self.out.push_str("{{ ");
+                    self.out.push_str(expr.trim());
+                    self.out.push_str(" }}");
+                }
+                VueNode::RawExpr(expr) => {
+                    self.out.push_str("{{ ");
+                    self.out.push_str(expr.trim());
+                    self.out.push_str(" }}");
+                }
+                VueNode::Element(_) | VueNode::Fragment(_) | VueNode::Comment(_) => {
+                    unreachable!("checked by is_inline_children")
+                }
+            }
+        }
+    }
+
+    fn indent(&mut self, depth: usize) {
+        for _ in 0..depth {
+            self.out.push_str("  ");
         }
     }
 }
@@ -261,33 +308,6 @@ fn is_inline_children(children: &[VueNode]) -> bool {
                 VueNode::Text(_) | VueNode::Interpolation(_) | VueNode::RawExpr(_)
             )
         })
-}
-
-fn print_inline_children(children: &[VueNode], out: &mut String) {
-    for child in children {
-        match child {
-            VueNode::Text(text) => out.push_str(&escape_text(text)),
-            VueNode::Interpolation(expr) => {
-                out.push_str("{{ ");
-                out.push_str(expr.trim());
-                out.push_str(" }}");
-            }
-            VueNode::RawExpr(expr) => {
-                out.push_str("{{ ");
-                out.push_str(expr.trim());
-                out.push_str(" }}");
-            }
-            VueNode::Element(_) | VueNode::Fragment(_) | VueNode::Comment(_) => {
-                unreachable!("checked by is_inline_children")
-            }
-        }
-    }
-}
-
-fn indent(depth: usize, out: &mut String) {
-    for _ in 0..depth {
-        out.push_str("  ");
-    }
 }
 
 fn escape_text(value: &str) -> String {
