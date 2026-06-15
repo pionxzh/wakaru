@@ -372,6 +372,7 @@ runner!(run_un_export_rename, UnExportRename);
 runner!(run_un_destructuring, |ctx| {
     UnDestructuring::new_with_level(ctx.unresolved_mark, ctx.rewrite_level)
 });
+runner!(run_un_to_array, UnToArray);
 runner!(run_smart_inline, |ctx| SmartInline::new_with_mark(
     ctx.rewrite_level,
     ctx.unresolved_mark
@@ -538,6 +539,12 @@ define_rule_registry! {
     ("UnDestructuring", Cleanup, run_un_destructuring, standard_or_above, requires: [
         "UnImportRename",
         "UnExportRename"
+    ]),
+    // Strip the `toArray` helper around a recovered array-rest destructuring
+    // source (`[a, ...b] = _toArray(x)` -> `[a, ...b] = x`). Runs after
+    // UnDestructuring, which builds the `[a, ...b]` pattern this rule keys on.
+    ("UnToArray", Cleanup, run_un_to_array, standard_or_above, requires: [
+        "UnDestructuring"
     ]),
     // UnDestructuring can expose param === undefined ? {} : param initializers.
     ("UnParameters2", Cleanup, run_un_parameters, always_enabled, requires: [
