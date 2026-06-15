@@ -10,21 +10,51 @@ fn apply(input: &str) -> String {
 #[test]
 fn let_undefined_becomes_let() {
     let input = r#"let x = undefined"#;
-    let expected = r#"let x"#;
+    let expected = r#""#;
     assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
 fn let_void_0_becomes_let() {
     let input = r#"let x = void 0"#;
-    let expected = r#"let x"#;
+    let expected = r#""#;
     assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
 fn var_undefined_becomes_var() {
     let input = r#"var x = undefined"#;
-    let expected = r#"var x"#;
+    let expected = r#""#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn used_undefined_init_becomes_bare_decl() {
+    let input = r#"
+let x = undefined;
+use(x);
+"#;
+    let expected = r#"
+let x;
+use(x);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn eval_observable_undefined_init_becomes_bare_decl() {
+    let input = r#"
+function f() {
+  let x = undefined;
+  eval("x");
+}
+"#;
+    let expected = r#"
+function f() {
+  let x;
+  eval("x");
+}
+"#;
     assert_eq_normalized(&apply(input), expected);
 }
 
@@ -44,7 +74,7 @@ fn let_with_value_unchanged() {
 #[test]
 fn let_multiple_decls_partial() {
     let input = r#"let x = undefined, y = 42"#;
-    let expected = "let x, y = 42;";
+    let expected = "let y = 42;";
     assert_eq_normalized(&apply(input), expected);
 }
 
