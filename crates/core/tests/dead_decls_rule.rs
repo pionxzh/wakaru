@@ -207,7 +207,8 @@ export const value = read({});
 "#;
     let expected = r#"
 function read(options) {
-  let keep = options.other;
+  let keep;
+  keep = options.other;
   return options.value ?? keep;
 }
 export const value = read({});

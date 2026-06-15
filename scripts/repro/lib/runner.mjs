@@ -309,15 +309,7 @@ function runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles, valida
     return { recovered: false, status: "wakaru-failed", notes: error.message, lowered: shape.lowered };
   }
 
-  const missingGroups = expectedNeedleGroups(snippet, expectedNeedles).map((needles) =>
-    needles.filter((needle) => !recovered.includes(needle)),
-  );
-  const missing = missingGroups.reduce((best, next) => (next.length < best.length ? next : best));
   const leaked = (snippet.rejected ?? []).filter((needle) => recovered.includes(needle));
-  if (missingGroups.some((group) => group.length === 0) && leaked.length === 0) {
-    return { recovered: true, notes: "expected syntax present", code: recovered, lowered: shape.lowered };
-  }
-
   const customResult = validateRecovered?.({
     snippet,
     shape,
@@ -328,6 +320,22 @@ function runShape(snippet, shape, tmpRoot, rewriteLevel, expectedNeedles, valida
   });
   if (customResult?.recovered && leaked.length === 0) {
     return { ...customResult, code: recovered, lowered: shape.lowered };
+  }
+  if (customResult && customResult.recovered === false) {
+    return {
+      code: recovered,
+      lowered: shape.lowered,
+      failure: { snippet: snippet.name, shape: shape.label, tools: shape.tools, lowered: shape.lowered, recovered },
+      ...customResult,
+    };
+  }
+
+  const missingGroups = expectedNeedleGroups(snippet, expectedNeedles).map((needles) =>
+    needles.filter((needle) => !recovered.includes(needle)),
+  );
+  const missing = missingGroups.reduce((best, next) => (next.length < best.length ? next : best));
+  if (missingGroups.some((group) => group.length === 0) && leaked.length === 0) {
+    return { recovered: true, notes: "expected syntax present", code: recovered, lowered: shape.lowered };
   }
 
   const loweredShape = summarize(shape.lowered);

@@ -92,12 +92,14 @@ ${e.stack}`;
     const P = Object.create(s);
     M.cancel = o.u;
     const _ = ((e, t, n, r)=>{
+        let i;
+        let a;
         n._deferredEnd = null;
-        let i = {};
+        i = {};
         i[o.e] = true;
         i.id = e;
         i.name = t;
-        let a = {};
+        a = {};
         a.done = a.done || {};
         a.done.get = ()=>{
             if (n._deferredEnd) {
@@ -374,9 +376,10 @@ ${e.stack}`;
                                 n.cancel();
                                 n(u, true);
                             } else if (!i.e(u) && u !== d && u !== p) {
+                                let s;
                                 n.cancel();
                                 r = true;
-                                let s = {};
+                                s = {};
                                 s[t] = u;
                                 const f = s;
                                 n(q.array(e) ? Array.prototype.slice.call({

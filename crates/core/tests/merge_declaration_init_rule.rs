@@ -7,9 +7,13 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::visit::VisitMutWith;
-use wakaru_core::rules::MergeDeclarationInit;
+use wakaru_core::{rules::MergeDeclarationInit, RewriteLevel};
 
 fn apply(src: &str) -> String {
+    apply_with_level(src, RewriteLevel::Aggressive)
+}
+
+fn apply_with_level(src: &str, level: RewriteLevel) -> String {
     GLOBALS.set(&Default::default(), || {
         let cm: Lrc<SourceMap> = Default::default();
         let fm = cm.new_source_file(swc_core::common::FileName::Anon.into(), src.to_string());
@@ -23,7 +27,7 @@ fn apply(src: &str) -> String {
         let unresolved = Mark::new();
         let top = Mark::new();
         module.visit_mut_with(&mut resolver(unresolved, top, false));
-        module.visit_mut_with(&mut MergeDeclarationInit);
+        module.visit_mut_with(&mut MergeDeclarationInit::new(level));
         print(&module, cm)
     })
 }
@@ -55,12 +59,34 @@ fn merges_adjacent_let_and_assignment() {
 }
 
 #[test]
+fn standard_merges_inert_adjacent_object_literal() {
+    let out = apply_with_level(
+        "function f(){ let x; x = {}; x.ready = true; return x; }",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("let x = {};"), "got: {out}");
+}
+
+#[test]
+fn standard_does_not_merge_observable_call_rhs() {
+    let out = apply_with_level(
+        "function f(){ let x; x = g(); function g(){ return x; } return x; }",
+        RewriteLevel::Standard,
+    );
+    assert!(out.contains("let x;"), "bare decl must stay: {out}");
+    assert!(out.contains("x = g();"), "assignment must stay: {out}");
+}
+
+#[test]
 fn merges_hoisted_declarations() {
     let out = apply("function f(){ let a; let b; a = p(); b = q(a); return b; }");
     assert!(out.contains("let a = p();"), "got: {out}");
-    assert!(out.contains("let b = q(a);"), "got: {out}");
     assert!(!out.contains("let a;"), "got: {out}");
-    assert!(!out.contains("let b;"), "got: {out}");
+    assert!(
+        out.contains("let b;"),
+        "b must stay hoisted across a's initializer: {out}"
+    );
+    assert!(out.contains("b = q(a);"), "got: {out}");
 }
 
 #[test]
@@ -113,14 +139,29 @@ fn does_not_merge_when_closure_captures_binding_between() {
 }
 
 #[test]
+fn does_not_merge_across_intervening_call() {
+    // `g()` may read the hoisted declaration through a closure. Moving `let x`
+    // below the call would change an initialized-to-undefined read into TDZ.
+    let out = apply("function f(){ let x; g(); x = 1; function g(){ return x; } return x; }");
+    assert!(out.contains("let x;"), "bare decl must stay: {out}");
+    assert!(
+        !out.contains("let x = 1;"),
+        "init must not move past call: {out}"
+    );
+}
+
+#[test]
 fn inner_scope_binding_does_not_block_outer_merge() {
     // The inner `y` is a *separate* binding; it must not be treated as a
-    // reference to the outer one, so the outer merge still happens.
+    // reference to the outer one. The intervening function declaration still
+    // keeps the outer declaration in place because it can observe declaration
+    // timing if called before the assignment.
     let out = apply(
         "function f(){ let x; function g(){ let x = 1; return x; } x = top(); return g() + x; }",
     );
     assert!(
-        out.contains("let x = top();"),
-        "outer merge should happen: {out}"
+        out.contains("let x;"),
+        "outer declaration should stay hoisted: {out}"
     );
+    assert!(out.contains("x = top();"), "assignment should stay: {out}");
 }

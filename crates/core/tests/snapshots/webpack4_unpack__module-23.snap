@@ -122,13 +122,15 @@ let S = 0;
 const O = {};
 function C() {}
 export function connectAdvanced(e, { getDisplayName = (e)=>`ConnectAdvanced(${e})`, methodName = "connectAdvanced", renderCountProp, shouldHandleStateChanges = true, storeKey = "store", withRef = false, ...rest } = {}) {
+    let n;
+    let r;
     const M = `${storeKey}Subscription`;
     const A = S++;
-    let n = {};
+    n = {};
     n[storeKey] = s;
     n[M] = c;
     const L = n;
-    let r = {};
+    r = {};
     r[M] = c;
     const I = r;
     return function(T1) {
@@ -161,8 +163,9 @@ export function connectAdvanced(e, { getDisplayName = (e)=>`ConnectAdvanced(${e}
                 this.initSubscription();
             }
             getChildContext() {
+                let e;
                 const t = this.propsMode ? null : this.subscription;
-                let e = {};
+                e = {};
                 e[M] = t || this.context[M];
                 return e;
             }
@@ -421,13 +424,12 @@ const z = [
 function q(e, t, n, r) {
     return (o, i)=>n(e(o, i), t(r, i), i);
 }
-function U(e, t, n, r, o) {
+function U(e, t, n, r, { areStatesEqual, areOwnPropsEqual, areStatePropsEqual }) {
     let i;
     let a;
     let u;
     let l;
     let c;
-    const { areStatesEqual, areOwnPropsEqual, areStatePropsEqual } = o;
     let p = false;
     function h(o, p) {
         const h = !areOwnPropsEqual(p, a);

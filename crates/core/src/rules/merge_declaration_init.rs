@@ -9,8 +9,9 @@
 //! ```
 //!
 //! This rule folds the bare `let`/`var` declaration into its first
-//! statement-level assignment **in the same statement list**, recovering the
-//! idiomatic `let response = await fetch_user(id);`.
+//! statement-level assignment **in the same statement list**. In standard mode,
+//! it only folds inert right-hand sides. Aggressive mode also folds broader
+//! generated-code shapes such as `let response; response = await fetch_user(id);`.
 //!
 //! It runs late (after `UnDestructuring`/`SmartInline`) so it does not disturb
 //! the assignment-form temporaries those rules rely on. A consequence is that
@@ -22,14 +23,19 @@
 //!
 //! ## Safety
 //!
-//! The merge only fires when it cannot change behavior:
+//! The merge only fires when these structural guards pass:
 //! - the declaration is a single bare `let`/`var` binding (no initializer);
 //! - the first statement-level assignment to that binding is a simple `=` in the
 //!   same statement list (not nested in a branch/loop/closure);
-//! - the binding is not referenced anywhere between the declaration and that
-//!   assignment (a read of the still-`undefined` binding, or a closure capture,
-//!   would otherwise observe the difference / hit the TDZ once moved);
+//! - only other bare declarations appear between the declaration and that
+//!   assignment (calls, branches, function declarations, and initialized
+//!   declarations may observe declaration timing or closure state);
 //! - the assignment's right-hand side does not reference the binding itself.
+//!
+//! Standard mode additionally requires an inert right-hand side so the merge
+//! cannot change whether the binding is initialized while evaluating that RHS
+//! (for example through a call, `await`, or direct `eval`). Aggressive mode
+//! relaxes that RHS guard for readability.
 //!
 //! Matching is by [`BindingId`] (name + `SyntaxContext`), so same-named bindings
 //! in different scopes are never conflated.
@@ -41,18 +47,32 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-use super::decl_utils::BindingId;
+use super::{decl_utils::BindingId, RewriteLevel};
 
-pub struct MergeDeclarationInit;
+pub struct MergeDeclarationInit {
+    level: RewriteLevel,
+}
+
+impl MergeDeclarationInit {
+    pub fn new(level: RewriteLevel) -> Self {
+        Self { level }
+    }
+}
+
+impl Default for MergeDeclarationInit {
+    fn default() -> Self {
+        Self::new(RewriteLevel::Standard)
+    }
+}
 
 impl VisitMut for MergeDeclarationInit {
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
-        merge_stmt_list(stmts);
+        merge_stmt_list(stmts, self.level);
     }
 }
 
-fn merge_stmt_list(stmts: &mut Vec<Stmt>) {
+fn merge_stmt_list(stmts: &mut Vec<Stmt>, level: RewriteLevel) {
     let mut i = 0;
     while i < stmts.len() {
         let Some(id) = bare_decl_binding(&stmts[i]) else {
@@ -65,7 +85,13 @@ fn merge_stmt_list(stmts: &mut Vec<Stmt>) {
             i += 1;
             continue;
         };
-        if slice_references(&stmts[i + 1..j], &id) || assignment_rhs_references(&stmts[j], &id) {
+        let between = &stmts[i + 1..j];
+        if !only_bare_declarations(between)
+            || slice_references(between, &id)
+            || assignment_rhs_references(&stmts[j], &id)
+            || (level < RewriteLevel::Aggressive
+                && !assignment_rhs_is_standard_safe(&stmts[j]).unwrap_or(false))
+        {
             i += 1;
             continue;
         }
@@ -78,6 +104,10 @@ fn merge_stmt_list(stmts: &mut Vec<Stmt>) {
         // Elements shifted left by one; re-examine the same index. The merged
         // declaration now has an initializer, so it won't be matched again.
     }
+}
+
+fn only_bare_declarations(stmts: &[Stmt]) -> bool {
+    stmts.iter().all(|stmt| bare_decl_binding(stmt).is_some())
 }
 
 /// The binding of a bare `let`/`var X;` (single declarator, no initializer).
@@ -116,15 +146,36 @@ fn assignment_target(stmt: &Stmt) -> Option<BindingId> {
 }
 
 fn assignment_rhs_references(stmt: &Stmt, id: &BindingId) -> bool {
-    let Stmt::Expr(expr_stmt) = stmt else {
-        return false;
-    };
-    let Expr::Assign(assign) = &*expr_stmt.expr else {
+    let Some(rhs) = assignment_rhs(stmt) else {
         return false;
     };
     let mut finder = RefFinder { id, found: false };
-    assign.right.visit_with(&mut finder);
+    rhs.visit_with(&mut finder);
     finder.found
+}
+
+fn assignment_rhs_is_standard_safe(stmt: &Stmt) -> Option<bool> {
+    Some(expr_is_inert_initializer(assignment_rhs(stmt)?))
+}
+
+fn assignment_rhs(stmt: &Stmt) -> Option<&Expr> {
+    let Stmt::Expr(expr_stmt) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = &*expr_stmt.expr else {
+        return None;
+    };
+    Some(assign.right.as_ref())
+}
+
+fn expr_is_inert_initializer(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(_) | Expr::Fn(_) | Expr::Arrow(_) => true,
+        Expr::Object(obj) => obj.props.is_empty(),
+        Expr::Array(arr) => arr.elems.is_empty(),
+        Expr::Paren(paren) => expr_is_inert_initializer(&paren.expr),
+        _ => false,
+    }
 }
 
 /// Take the right-hand side out of a statement known to be `X = expr;`.

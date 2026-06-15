@@ -451,6 +451,16 @@ const snippets = [
 // programs — far fewer than the old per-name `expectedAny` groups, since
 // renaming already absorbs the name/whitespace variants.
 function validateRecovered({ snippet, shape, recovered }) {
+  const opcode = leakedStateOpcodeReturn(recovered);
+  if (opcode) {
+    return {
+      recovered: false,
+      notes: `leaked generator state opcode ${opcode}`,
+      leaked: [opcode],
+      missing: [],
+    };
+  }
+
   if (!shape.tools.some((tool) => tool.includes("mangle"))) {
     return undefined;
   }
@@ -459,6 +469,11 @@ function validateRecovered({ snippet, shape, recovered }) {
     return { recovered: true, notes: "structurally equivalent to source (mangle-insensitive)" };
   }
   return undefined;
+}
+
+function leakedStateOpcodeReturn(code) {
+  const match = code.match(/\breturn\s+(?:[^;\n]*,\s*)?\[\s*([34])\s*,/s);
+  return match ? `return [${match[1]}, ...]` : null;
 }
 
 // Normalize every mangle shape's recovered output and its candidate forms

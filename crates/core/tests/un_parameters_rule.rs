@@ -1017,6 +1017,42 @@ function foo(_ref) {
 }
 
 #[test]
+fn destructured_param_alias_after_bare_decls_becomes_param_pattern() {
+    let input = r#"
+function foo(_ref) {
+  let cache;
+  let state;
+  const { name, value = fallback } = _ref;
+  cache = {};
+  state = value;
+  return name;
+}
+"#;
+    let expected = r#"
+function foo({ name, value = fallback }) {
+  let cache;
+  let state;
+  cache = {};
+  state = value;
+  return name;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn destructured_param_alias_after_bare_decl_referencing_decl_stays_in_body() {
+    let input = r#"
+function foo(_ref) {
+  let fallback;
+  const { value = fallback } = _ref;
+  return value;
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
 fn destructured_param_alias_used_in_default_stays_in_body() {
     let input = r#"
 function foo(_ref) {

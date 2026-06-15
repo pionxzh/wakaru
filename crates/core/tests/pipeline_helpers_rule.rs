@@ -4,7 +4,8 @@ use common::{
     trace_pipeline,
 };
 use wakaru_core::{
-    format_trace_events, trace_rules, DecompileOptions, RuleTraceEvent, RuleTraceOptions,
+    format_trace_events, trace_rules, DecompileOptions, RewriteLevel, RuleTraceEvent,
+    RuleTraceOptions,
 };
 
 // ============================================================
@@ -335,13 +336,19 @@ fn rule_descriptors_expose_dependency_metadata() {
 
 #[test]
 fn rule_names_matches_trace_execution_order() {
-    let events = trace_pipeline(
+    let events = trace_rules(
         "const x = 1;",
+        DecompileOptions {
+            filename: "fixture.js".to_string(),
+            level: RewriteLevel::Aggressive,
+            ..Default::default()
+        },
         RuleTraceOptions {
             only_changed: false,
             ..Default::default()
         },
-    );
+    )
+    .expect("trace should succeed");
 
     let expected: Vec<&str> = wakaru_core::rule_names()
         .iter()

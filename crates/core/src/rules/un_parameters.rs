@@ -633,8 +633,11 @@ fn fold_destructured_param_aliases(
     unresolved_mark: Mark,
 ) {
     loop {
-        let Some((alias, destructured_pat, default_val)) =
-            extract_prefix_destructuring_alias(body, unresolved_mark)
+        let destructuring_idx = leading_bare_decl_count(&body.stmts);
+        let Some((alias, destructured_pat, default_val)) = body
+            .stmts
+            .get(destructuring_idx)
+            .and_then(|stmt| extract_destructuring_alias_stmt(stmt, unresolved_mark))
         else {
             break;
         };
@@ -643,8 +646,15 @@ fn fold_destructured_param_aliases(
         };
         if destructured_pat_references_alias(&destructured_pat, &alias)
             || destructured_pat_has_minified_alias(&destructured_pat)
-            || destructured_pat_references_later_decl_name(&destructured_pat, &body.stmts[1..])
-            || stmts_reference_ident(&body.stmts[1..], &alias)
+            || destructured_pat_references_later_decl_name(
+                &destructured_pat,
+                &body.stmts[..destructuring_idx],
+            )
+            || destructured_pat_references_later_decl_name(
+                &destructured_pat,
+                &body.stmts[destructuring_idx + 1..],
+            )
+            || stmts_reference_ident(&body.stmts[destructuring_idx + 1..], &alias)
             || destructured_pat_reuses_other_param_name(&destructured_pat, params, param_idx)
             || !replace_param_alias_pat(
                 &mut params[param_idx].pat,
@@ -655,8 +665,24 @@ fn fold_destructured_param_aliases(
         {
             break;
         }
-        body.stmts.remove(0);
+        body.stmts.remove(destructuring_idx);
     }
+}
+
+fn leading_bare_decl_count(stmts: &[Stmt]) -> usize {
+    stmts.iter().take_while(|stmt| is_bare_decl(stmt)).count()
+}
+
+fn is_bare_decl(stmt: &Stmt) -> bool {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
+        return false;
+    };
+    if var.kind == VarDeclKind::Const {
+        return false;
+    }
+    var.decls
+        .iter()
+        .all(|decl| decl.init.is_none() && matches!(decl.name, Pat::Ident(_)))
 }
 
 fn fold_object_property_param_aliases(
@@ -764,7 +790,14 @@ fn extract_prefix_destructuring_alias(
     body: &BlockStmt,
     unresolved_mark: Mark,
 ) -> Option<(Ident, Pat, Option<Box<Expr>>)> {
-    let Stmt::Decl(Decl::Var(var)) = body.stmts.first()? else {
+    extract_destructuring_alias_stmt(body.stmts.first()?, unresolved_mark)
+}
+
+fn extract_destructuring_alias_stmt(
+    stmt: &Stmt,
+    unresolved_mark: Mark,
+) -> Option<(Ident, Pat, Option<Box<Expr>>)> {
+    let Stmt::Decl(Decl::Var(var)) = stmt else {
         return None;
     };
     if var.decls.len() != 1 {

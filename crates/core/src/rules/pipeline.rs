@@ -343,7 +343,9 @@ runner!(run_un_then_catch, |ctx| UnThenCatch::new(
 runner!(run_un_undefined_init, |ctx| UnUndefinedInit::new(
     ctx.unresolved_mark
 ));
-runner!(run_merge_declaration_init, MergeDeclarationInit);
+runner!(run_merge_declaration_init, |ctx| MergeDeclarationInit::new(
+    ctx.rewrite_level
+));
 runner!(run_var_decl_to_let_const, |ctx| {
     VarDeclToLetConst::new_with_level(ctx.rewrite_level)
 });
@@ -543,7 +545,7 @@ define_rule_registry! {
     // Fold hoisted `let x; … x = e` (from async/regenerator lowering) back into
     // `let x = e`. Runs after UnDestructuring/SmartInline so it does not disturb
     // the assignment-form temps those rules rely on.
-    ("MergeDeclarationInit", Cleanup, run_merge_declaration_init, always_enabled, requires: [
+    ("MergeDeclarationInit", Cleanup, run_merge_declaration_init, standard_or_above, requires: [
         "SmartInline"
     ]),
     ("SmartRename", Cleanup, run_smart_rename, standard_or_above, requires: [

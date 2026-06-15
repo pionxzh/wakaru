@@ -130,10 +130,11 @@ export function m(e, t = true) {
     return r;
 }
 export function j() {
+    let e;
     let t = true;
     let n;
     let r;
-    let e = {};
+    e = {};
     e[a] = true;
     e.isRunning = ()=>t;
     e.result = ()=>n;

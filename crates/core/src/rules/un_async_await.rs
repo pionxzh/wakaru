@@ -218,11 +218,7 @@ fn extract_generator_stmts(stmt: Stmt, helpers: &AsyncHelperContext) -> Option<V
     let mut stmts = body.stmts.into_iter();
     let first = stmts.next()?;
     if let Stmt::Switch(sw) = first {
-        return Some(decode_state_machine(
-            state_name,
-            sw.cases,
-            &helpers.values_helpers,
-        ));
+        return decode_state_machine(state_name, sw.cases, &helpers.values_helpers);
     }
     if stmts.next().is_none() {
         if let Some(decoded) = decode_return_opcode(&first, &helpers.values_helpers) {
@@ -440,7 +436,7 @@ fn decode_state_machine(
     state_name: Atom,
     cases: Vec<SwitchCase>,
     values_helpers: &HashSet<BindingKey>,
-) -> Vec<Stmt> {
+) -> Option<Vec<Stmt>> {
     let mut trys: Vec<[Option<usize>; 4]> = Vec::new();
     // (label_idx, stmt) pairs
     let mut flat: Vec<(usize, Stmt)> = Vec::new();
@@ -564,7 +560,11 @@ fn decode_state_machine(
         label_stmts[idx].push(stmt);
     }
 
-    recover_index_loops(reconstruct_with_regions(label_stmts, &trys))
+    let recovered = recover_index_loops(reconstruct_with_regions(label_stmts, &trys));
+    if stmts_contain_state_opcode_return(&recovered) {
+        return None;
+    }
+    Some(recovered)
 }
 
 /// Recover `left = test ? a : b` ternaries from a decoded state-machine flat
@@ -1351,6 +1351,10 @@ fn stmts_contain_state_opcode_return(stmts: &[Stmt]) -> bool {
         found: bool,
     }
     impl swc_core::ecma::visit::Visit for Finder {
+        fn visit_function(&mut self, _func: &Function) {}
+
+        fn visit_arrow_expr(&mut self, _arrow: &ArrowExpr) {}
+
         fn visit_return_stmt(&mut self, ret: &swc_core::ecma::ast::ReturnStmt) {
             if let Some(Expr::Array(arr)) = ret.arg.as_deref() {
                 if arr.elems.first().and_then(|e| e.as_ref()).is_some_and(|e| {
