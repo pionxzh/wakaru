@@ -28,24 +28,54 @@ pub struct VueElement {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VueAttr {
-    Static {
-        name: String,
-        value: Option<String>,
-    },
-    Bind {
-        name: String,
-        expr: String,
-    },
-    On {
-        name: String,
-        expr: String,
-    },
-    Directive {
-        name: String,
-        arg: Option<String>,
-        expr: Option<String>,
-    },
+    Static { name: String, value: Option<String> },
+    Bind { name: String, expr: String },
+    On { name: String, expr: String },
+    Directive(VueDirective),
     Spread(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VueDirective {
+    pub name: String,
+    pub arg: Option<String>,
+    pub expr: Option<String>,
+    pub modifiers: Vec<String>,
+    pub dynamic_arg: bool,
+}
+
+impl VueDirective {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            arg: None,
+            expr: None,
+            modifiers: Vec::new(),
+            dynamic_arg: false,
+        }
+    }
+
+    pub fn with_arg(mut self, arg: impl Into<String>) -> Self {
+        self.arg = Some(arg.into());
+        self.dynamic_arg = false;
+        self
+    }
+
+    pub fn with_dynamic_arg(mut self, arg: impl Into<String>) -> Self {
+        self.arg = Some(arg.into());
+        self.dynamic_arg = true;
+        self
+    }
+
+    pub fn with_expr(mut self, expr: impl Into<String>) -> Self {
+        self.expr = Some(expr.into());
+        self
+    }
+
+    pub fn with_modifiers(mut self, modifiers: Vec<String>) -> Self {
+        self.modifiers = modifiers;
+        self
+    }
 }
 
 impl VueSfc {
@@ -192,14 +222,24 @@ fn print_attr(attr: &VueAttr, out: &mut String) {
             out.push_str(&escape_attr(expr.trim()));
             out.push('"');
         }
-        VueAttr::Directive { name, arg, expr } => {
+        VueAttr::Directive(directive) => {
             out.push_str("v-");
-            out.push_str(name);
-            if let Some(arg) = arg {
-                out.push(':');
-                out.push_str(arg);
+            out.push_str(&directive.name);
+            if let Some(arg) = &directive.arg {
+                if directive.dynamic_arg {
+                    out.push_str(":[");
+                    out.push_str(arg);
+                    out.push(']');
+                } else {
+                    out.push(':');
+                    out.push_str(arg);
+                }
             }
-            if let Some(expr) = expr {
+            for modifier in &directive.modifiers {
+                out.push('.');
+                out.push_str(modifier);
+            }
+            if let Some(expr) = &directive.expr {
                 out.push_str("=\"");
                 out.push_str(&escape_attr(expr.trim()));
                 out.push('"');
@@ -305,6 +345,12 @@ mod tests {
                             name: "click".into(),
                             expr: "increment".into(),
                         },
+                        VueAttr::Directive(
+                            VueDirective::new("slot")
+                                .with_dynamic_arg("slotName")
+                                .with_expr("{ item }")
+                                .with_modifiers(vec!["foo".into()]),
+                        ),
                     ])
                     .with_children(vec![VueNode::Element(
                         VueElement::new("span")
@@ -315,7 +361,7 @@ mod tests {
 
         assert_eq!(
             template.print(),
-            "<template>\n  <button class=\"counter\" :class=\"{ active: props.active }\" @click=\"increment\">\n    <span>{{ props.count }}</span>\n  </button>\n</template>\n"
+            "<template>\n  <button class=\"counter\" :class=\"{ active: props.active }\" @click=\"increment\" v-slot:[slotName].foo=\"{ item }\">\n    <span>{{ props.count }}</span>\n  </button>\n</template>\n"
         );
     }
 
