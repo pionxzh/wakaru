@@ -317,3 +317,46 @@ var out = __spreadArray([head], items, true);
         "non-helper __spreadArray call should be preserved as a call: {output}"
     );
 }
+
+#[test]
+fn handles_swc_external_to_consumable_array_import() {
+    // swc `externalHelpers: true` emits the helper as an aliased named import of
+    // the `_` export from a per-helper module.
+    let input = r#"
+import { _ as _to_consumable_array } from "@swc/helpers/_/_to_consumable_array";
+var x = _to_consumable_array(items);
+"#;
+    let expected = r#"
+const x = [...items];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn handles_swc_external_to_consumable_array_unaliased_import() {
+    // The named export is `_`; some emitters keep the bare `_` local binding.
+    let input = r#"
+import { _ } from "@swc/helpers/_/_to_consumable_array";
+var x = _(items);
+"#;
+    let expected = r#"
+const x = [...items];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn folds_swc_external_to_consumable_array_concat_spread() {
+    // The full real-world shape: swc lowers `[head, ...items, tail]` to a
+    // concat over the external helper. After the helper is recognized,
+    // UnArrayConcatSpread + UnSpreadArrayLiteral collapse the chain and the
+    // now-unused `@swc/helpers` import is dropped.
+    let input = r#"
+import { _ as _to_consumable_array } from "@swc/helpers/_/_to_consumable_array";
+var out = [head].concat(_to_consumable_array(items), [tail]);
+"#;
+    let expected = r#"
+const out = [head, ...items, tail];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}

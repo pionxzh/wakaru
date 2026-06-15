@@ -269,6 +269,7 @@ const INTEROP_WILDCARD_PATHS: &[&str] = &[
 const TO_CONSUMABLE_ARRAY_PATHS: &[&str] = &[
     "@babel/runtime/helpers/toConsumableArray",
     "@babel/runtime/helpers/esm/toConsumableArray",
+    "@swc/helpers/_/_to_consumable_array",
 ];
 
 const EXTENDS_PATHS: &[&str] = &[
