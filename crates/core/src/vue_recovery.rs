@@ -13,7 +13,9 @@ use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 
 use crate::driver::{decompile, DecompileOptions, DecompileOutput};
-use crate::vue_template::{VueAttr, VueDirective, VueElement, VueNode, VueSfc, VueTemplate};
+use crate::vue_template::{
+    VueAttr, VueDirective, VueElement, VueFor, VueIfBranch, VueNode, VueSfc, VueTemplate,
+};
 
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
@@ -206,7 +208,7 @@ fn recover_render_if_chain(render: &FnDecl, ctx: &VueRecoveryContext) -> Result<
     let Some(body) = render.function.body.as_ref() else {
         return Ok(None);
     };
-    let mut children = Vec::new();
+    let mut branches = Vec::new();
     let mut in_chain = false;
 
     for stmt in &body.stmts {
@@ -218,22 +220,22 @@ fn recover_render_if_chain(render: &FnDecl, ctx: &VueRecoveryContext) -> Result<
                 let Some(node) = recover_node(expr, ctx)? else {
                     continue;
                 };
-                let directive = if in_chain { "else-if" } else { "if" };
-                children.push(with_directive(
-                    node,
-                    directive,
-                    None,
-                    Some(clean_condition_expr(if_stmt.test.as_ref(), ctx)?),
-                ));
+                branches.push(VueIfBranch {
+                    condition: Some(clean_condition_expr(if_stmt.test.as_ref(), ctx)?),
+                    node: Box::new(node),
+                });
                 in_chain = true;
             }
             Stmt::Return(ReturnStmt {
                 arg: Some(expr), ..
             }) if in_chain => {
                 if let Some(node) = recover_node(expr.as_ref(), ctx)? {
-                    children.push(with_directive(node, "else", None, None));
+                    branches.push(VueIfBranch {
+                        condition: None,
+                        node: Box::new(node),
+                    });
                 }
-                return Ok(Some(VueNode::Fragment(children)));
+                return Ok(Some(VueNode::If(branches)));
             }
             _ if in_chain => return Ok(None),
             _ => {}
@@ -308,7 +310,6 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
             cond.test.as_ref(),
             cond.cons.as_ref(),
             cond.alt.as_ref(),
-            "if",
             ctx,
         )
         .map(Some),
@@ -353,17 +354,14 @@ fn recover_conditional_chain(
     test: &Expr,
     cons: &Expr,
     alt: &Expr,
-    first_directive: &str,
     ctx: &VueRecoveryContext,
 ) -> Result<VueNode> {
-    let mut children = Vec::new();
+    let mut branches = Vec::new();
     if let Some(node) = recover_node(cons, ctx)? {
-        children.push(with_directive(
-            node,
-            first_directive,
-            None,
-            Some(clean_condition_expr(test, ctx)?),
-        ));
+        branches.push(VueIfBranch {
+            condition: Some(clean_condition_expr(test, ctx)?),
+            node: Box::new(node),
+        });
     }
 
     match alt {
@@ -372,53 +370,27 @@ fn recover_conditional_chain(
                 cond.test.as_ref(),
                 cond.cons.as_ref(),
                 cond.alt.as_ref(),
-                "else-if",
                 ctx,
             )?;
             match node {
-                VueNode::Fragment(nodes) => children.extend(nodes),
-                node => children.push(node),
+                VueNode::If(mut nested_branches) => branches.append(&mut nested_branches),
+                node => branches.push(VueIfBranch {
+                    condition: None,
+                    node: Box::new(node),
+                }),
             }
         }
         _ => {
             if let Some(node) = recover_node(alt, ctx)? {
-                children.push(with_directive(node, "else", None, None));
+                branches.push(VueIfBranch {
+                    condition: None,
+                    node: Box::new(node),
+                });
             }
         }
     }
 
-    Ok(VueNode::Fragment(children))
-}
-
-fn with_directive(
-    mut node: VueNode,
-    name: &str,
-    arg: Option<String>,
-    expr: Option<String>,
-) -> VueNode {
-    match &mut node {
-        VueNode::Element(element) => {
-            element.attrs.insert(
-                0,
-                VueAttr::Directive(VueDirective {
-                    name: name.to_string(),
-                    arg,
-                    expr,
-                    modifiers: Vec::new(),
-                    dynamic_arg: false,
-                }),
-            );
-            node
-        }
-        VueNode::Fragment(children) => {
-            if let Some(first) = children.first_mut() {
-                let replacement = with_directive(first.clone(), name, arg.clone(), expr.clone());
-                *first = replacement;
-            }
-            node
-        }
-        _ => VueNode::Fragment(vec![VueNode::Comment(format!("wakaru: v-{name}")), node]),
-    }
+    Ok(VueNode::If(branches))
 }
 
 fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
@@ -466,12 +438,11 @@ fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Resul
     };
     rename_node_expr_prefix(&mut item_node, item_param.as_ref(), "item");
 
-    Ok(with_directive(
-        item_node,
-        "for",
-        None,
-        Some(format!("item in {source}")),
-    ))
+    Ok(VueNode::For(VueFor {
+        value: "item".to_string(),
+        source,
+        node: Box::new(item_node),
+    }))
 }
 
 fn recover_component_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
@@ -625,6 +596,12 @@ fn push_attr_to_node(node: &mut VueNode, attr: VueAttr) {
                 push_attr_to_node(first, attr);
             }
         }
+        VueNode::If(branches) => {
+            if let Some(first) = branches.first_mut() {
+                push_attr_to_node(&mut first.node, attr);
+            }
+        }
+        VueNode::For(for_node) => push_attr_to_node(&mut for_node.node, attr),
         VueNode::Text(_)
         | VueNode::Interpolation(_)
         | VueNode::Comment(_)
@@ -658,6 +635,18 @@ fn rename_node_expr_prefix(node: &mut VueNode, from: &str, to: &str) {
             for child in children {
                 rename_node_expr_prefix(child, from, to);
             }
+        }
+        VueNode::If(branches) => {
+            for branch in branches {
+                if let Some(condition) = &mut branch.condition {
+                    *condition = rename_expr_prefix(condition, from, to);
+                }
+                rename_node_expr_prefix(&mut branch.node, from, to);
+            }
+        }
+        VueNode::For(for_node) => {
+            for_node.source = rename_expr_prefix(&for_node.source, from, to);
+            rename_node_expr_prefix(&mut for_node.node, from, to);
         }
         VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
             *expr = rename_expr_prefix(expr, from, to);

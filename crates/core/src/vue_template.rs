@@ -13,10 +13,25 @@ pub struct VueTemplate {
 pub enum VueNode {
     Element(VueElement),
     Fragment(Vec<VueNode>),
+    If(Vec<VueIfBranch>),
+    For(VueFor),
     Text(String),
     Interpolation(String),
     Comment(String),
     RawExpr(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VueIfBranch {
+    pub condition: Option<String>,
+    pub node: Box<VueNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VueFor {
+    pub value: String,
+    pub source: String,
+    pub node: Box<VueNode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,6 +171,8 @@ impl TemplateEmitter {
                     self.emit_node(child, depth);
                 }
             }
+            VueNode::If(branches) => self.emit_if(branches, depth),
+            VueNode::For(for_node) => self.emit_for(for_node, depth),
             VueNode::Text(text) => {
                 self.indent(depth);
                 self.out.push_str(&escape_text(text));
@@ -183,9 +200,22 @@ impl TemplateEmitter {
     }
 
     fn emit_element(&mut self, element: &VueElement, depth: usize) {
+        self.emit_element_with_leading_attrs(element, depth, &[]);
+    }
+
+    fn emit_element_with_leading_attrs(
+        &mut self,
+        element: &VueElement,
+        depth: usize,
+        leading_attrs: &[VueAttr],
+    ) {
         self.indent(depth);
         self.out.push('<');
         self.out.push_str(&element.tag);
+        for attr in leading_attrs {
+            self.out.push(' ');
+            self.emit_attr(attr);
+        }
         for attr in &element.attrs {
             self.out.push(' ');
             self.emit_attr(attr);
@@ -213,6 +243,85 @@ impl TemplateEmitter {
         self.out.push_str("</");
         self.out.push_str(&element.tag);
         self.out.push_str(">\n");
+    }
+
+    fn emit_if(&mut self, branches: &[VueIfBranch], depth: usize) {
+        for (index, branch) in branches.iter().enumerate() {
+            let directive = match (&branch.condition, index) {
+                (Some(condition), 0) => VueDirective::new("if").with_expr(condition),
+                (Some(condition), _) => VueDirective::new("else-if").with_expr(condition),
+                (None, _) => VueDirective::new("else"),
+            };
+            let attr = VueAttr::Directive(directive);
+            self.emit_node_with_leading_attrs(&branch.node, depth, &[attr]);
+        }
+    }
+
+    fn emit_for(&mut self, for_node: &VueFor, depth: usize) {
+        let attr = VueAttr::Directive(
+            VueDirective::new("for")
+                .with_expr(format!("{} in {}", for_node.value, for_node.source)),
+        );
+        self.emit_node_with_leading_attrs(&for_node.node, depth, &[attr]);
+    }
+
+    fn emit_node_with_leading_attrs(
+        &mut self,
+        node: &VueNode,
+        depth: usize,
+        leading_attrs: &[VueAttr],
+    ) {
+        match node {
+            VueNode::Element(element) => {
+                self.emit_element_with_leading_attrs(element, depth, leading_attrs)
+            }
+            VueNode::Fragment(children) => {
+                if let Some((first, rest)) = children.split_first() {
+                    self.emit_node_with_leading_attrs(first, depth, leading_attrs);
+                    for child in rest {
+                        self.emit_node(child, depth);
+                    }
+                }
+            }
+            VueNode::If(branches) => {
+                for (index, branch) in branches.iter().enumerate() {
+                    let directive = match (&branch.condition, index) {
+                        (Some(condition), 0) => VueDirective::new("if").with_expr(condition),
+                        (Some(condition), _) => VueDirective::new("else-if").with_expr(condition),
+                        (None, _) => VueDirective::new("else"),
+                    };
+                    let mut attrs = leading_attrs.to_vec();
+                    attrs.push(VueAttr::Directive(directive));
+                    self.emit_node_with_leading_attrs(&branch.node, depth, &attrs);
+                }
+            }
+            VueNode::For(for_node) => {
+                let mut attrs = leading_attrs.to_vec();
+                attrs
+                    .push(VueAttr::Directive(VueDirective::new("for").with_expr(
+                        format!("{} in {}", for_node.value, for_node.source),
+                    )));
+                self.emit_node_with_leading_attrs(&for_node.node, depth, &attrs);
+            }
+            VueNode::Text(_)
+            | VueNode::Interpolation(_)
+            | VueNode::Comment(_)
+            | VueNode::RawExpr(_) => {
+                let directive_names = leading_attrs
+                    .iter()
+                    .filter_map(|attr| match attr {
+                        VueAttr::Directive(directive) => Some(format!("v-{}", directive.name)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                self.emit_node(
+                    &VueNode::Comment(format!("wakaru: {directive_names}")),
+                    depth,
+                );
+                self.emit_node(node, depth);
+            }
+        }
     }
 
     fn emit_attr(&mut self, attr: &VueAttr) {
@@ -289,6 +398,7 @@ impl TemplateEmitter {
                 VueNode::Element(_) | VueNode::Fragment(_) | VueNode::Comment(_) => {
                     unreachable!("checked by is_inline_children")
                 }
+                VueNode::If(_) | VueNode::For(_) => unreachable!("checked by is_inline_children"),
             }
         }
     }
@@ -382,6 +492,42 @@ mod tests {
         assert_eq!(
             template.print(),
             "<template>\n  <button class=\"counter\" :class=\"{ active: props.active }\" @click=\"increment\" v-slot:[slotName].foo=\"{ item }\">\n    <span>{{ props.count }}</span>\n  </button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn prints_control_flow_nodes() {
+        let template = VueTemplate {
+            children: vec![
+                VueNode::If(vec![
+                    VueIfBranch {
+                        condition: Some("status === 'loading'".into()),
+                        node: Box::new(VueNode::Element(
+                            VueElement::new("p")
+                                .with_children(vec![VueNode::Text("Loading".into())]),
+                        )),
+                    },
+                    VueIfBranch {
+                        condition: None,
+                        node: Box::new(VueNode::Element(
+                            VueElement::new("p").with_children(vec![VueNode::Text("Ready".into())]),
+                        )),
+                    },
+                ]),
+                VueNode::For(VueFor {
+                    value: "item".into(),
+                    source: "items".into(),
+                    node: Box::new(VueNode::Element(
+                        VueElement::new("span")
+                            .with_children(vec![VueNode::Interpolation("item.name".into())]),
+                    )),
+                }),
+            ],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  <p v-if=\"status === 'loading'\">Loading</p>\n  <p v-else>Ready</p>\n  <span v-for=\"item in items\">{{ item.name }}</span>\n</template>\n"
         );
     }
 
