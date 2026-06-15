@@ -115,6 +115,7 @@ const snippets = [
       "async function collect_enabled(items) {\n  let item;\n  let output = [];\n  let index = 0;\n  for (; index < items.length; index++) {\n    if (!(item = items[index]).enabled) continue;\n    try { output.push(await fetch_item(item.id)); }\n    catch (error) { output.push(await recover_item(item, error)); }\n  }\n  return output;\n}\n",
       // Same C-style recovery when the index initializer remains split.
       "async function collect_enabled(items) {\n  let index;\n  let item;\n  let output = [];\n  index = 0;\n  for (; index < items.length; index++) {\n    if (!(item = items[index]).enabled) continue;\n    try { output.push(await fetch_item(item.id)); }\n    catch (error) { output.push(await recover_item(item, error)); }\n  }\n  return output;\n}\n",
+      "async function collect_enabled(items) {\n  let index;\n  let item;\n  let output = [];\n  index = 0;\n  for (; index < items.length; index++) {\n    if (!(item = items[index]).enabled) { continue; }\n    try { output.push(await fetch_item(item.id)); }\n    catch (error) { output.push(await recover_item(item, error)); }\n  }\n  return output;\n}\n",
     ],
     expected: [
       "async function collect_enabled(items)",

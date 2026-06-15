@@ -10,6 +10,10 @@ use swc_core::ecma::ast::{
 use super::cross_module_helper_refs::{
     collect_cross_module_helper_refs, cross_module_member_helper_kind, CrossModuleHelperRefs,
 };
+use super::decl_utils::{
+    can_remove_prior_uninitialized_decls_by, remove_prior_uninitialized_decls_by,
+    UninitializedDeclKind,
+};
 use super::transpiler_helper_utils::{
     extract_inline_sliced_to_array_call, LocalHelperContext, TranspilerHelperKind,
 };
@@ -463,7 +467,12 @@ fn try_fold_sliced_to_array_stmt_assignment_access_group(
             _ => None,
         })
         .collect();
-    if !can_remove_prior_uninitialized_var_decls(&stmts[..start], &targets) {
+    if !can_remove_prior_uninitialized_decls_by(
+        &stmts[..start],
+        &targets,
+        UninitializedDeclKind::VarOnly,
+        same_sliced_ref_ident,
+    ) {
         return false;
     }
 
@@ -481,7 +490,13 @@ fn try_fold_sliced_to_array_stmt_assignment_access_group(
     });
     decl.init = Some(extraction.source);
     stmts.drain(start + 1..start + 1 + length);
-    remove_prior_uninitialized_decls(stmts, start, &targets);
+    remove_prior_uninitialized_decls_by(
+        stmts,
+        start,
+        &targets,
+        UninitializedDeclKind::VarOnly,
+        same_sliced_ref_ident,
+    );
     true
 }
 
@@ -517,7 +532,12 @@ fn try_fold_sliced_to_array_assignment_stmt_group(
     let first_id = first.id.clone();
     let second_id = second.id.clone();
     let targets = vec![ref_id, first_id, second_id];
-    if !can_remove_prior_uninitialized_var_decls(&stmts[..start], &targets) {
+    if !can_remove_prior_uninitialized_decls_by(
+        &stmts[..start],
+        &targets,
+        UninitializedDeclKind::VarOnly,
+        same_sliced_ref_ident,
+    ) {
         return false;
     }
 
@@ -539,7 +559,13 @@ fn try_fold_sliced_to_array_assignment_stmt_group(
         }],
     })));
     stmts.drain(start + 1..start + 2);
-    remove_prior_uninitialized_decls(stmts, start, &targets);
+    remove_prior_uninitialized_decls_by(
+        stmts,
+        start,
+        &targets,
+        UninitializedDeclKind::VarOnly,
+        same_sliced_ref_ident,
+    );
     true
 }
 
@@ -579,7 +605,12 @@ fn try_fold_sliced_to_array_ref_assignment_stmt_group(
         Some(Pat::Ident(binding)) => Some(binding.id.clone()),
         _ => None,
     }));
-    if !can_remove_prior_uninitialized_var_decls(&stmts[..start], &targets) {
+    if !can_remove_prior_uninitialized_decls_by(
+        &stmts[..start],
+        &targets,
+        UninitializedDeclKind::VarOnly,
+        same_sliced_ref_ident,
+    ) {
         return false;
     }
 
@@ -601,7 +632,13 @@ fn try_fold_sliced_to_array_ref_assignment_stmt_group(
         }],
     })));
     stmts.drain(start + 1..start + 1 + length);
-    remove_prior_uninitialized_decls(stmts, start, &targets);
+    remove_prior_uninitialized_decls_by(
+        stmts,
+        start,
+        &targets,
+        UninitializedDeclKind::VarOnly,
+        same_sliced_ref_ident,
+    );
     true
 }
 
@@ -974,62 +1011,6 @@ fn member_index(member: &MemberExpr) -> Option<usize> {
         return None;
     };
     numeric_length(num.value)
-}
-
-fn remove_prior_uninitialized_decls(
-    stmts: &mut Vec<Stmt>,
-    end: usize,
-    targets: &[swc_core::ecma::ast::Ident],
-) {
-    let end = end.min(stmts.len());
-    for stmt in &mut stmts[..end] {
-        let Stmt::Decl(Decl::Var(var)) = stmt else {
-            continue;
-        };
-        var.decls.retain(|decl| {
-            if decl.init.is_some() {
-                return true;
-            }
-            let Pat::Ident(binding) = &decl.name else {
-                return true;
-            };
-            !targets
-                .iter()
-                .any(|target| same_sliced_ref_ident(&binding.id, target))
-        });
-    }
-
-    stmts.retain(|stmt| !matches!(stmt, Stmt::Decl(Decl::Var(var)) if var.decls.is_empty()));
-}
-
-fn can_remove_prior_uninitialized_var_decls(
-    stmts: &[Stmt],
-    targets: &[swc_core::ecma::ast::Ident],
-) -> bool {
-    if targets
-        .iter()
-        .any(|target| ident_used_in_stmts(stmts, target))
-    {
-        return false;
-    }
-    targets
-        .iter()
-        .all(|target| has_prior_uninitialized_var_decl(stmts, target))
-}
-
-fn has_prior_uninitialized_var_decl(stmts: &[Stmt], target: &swc_core::ecma::ast::Ident) -> bool {
-    stmts.iter().any(|stmt| {
-        let Stmt::Decl(Decl::Var(var)) = stmt else {
-            return false;
-        };
-        if var.kind != VarDeclKind::Var {
-            return false;
-        }
-        var.decls.iter().any(|decl| {
-            decl.init.is_none()
-                && matches!(&decl.name, Pat::Ident(binding) if same_sliced_ref_ident(&binding.id, target))
-        })
-    })
 }
 
 fn try_unwrap_sliced_to_array(

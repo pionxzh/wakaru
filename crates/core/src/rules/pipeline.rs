@@ -503,6 +503,10 @@ define_rule_registry! {
     ("UnObjectRest3", Complex, run_un_object_rest_after_async, always_enabled, requires: [
         "UnAsyncAwait"
     ]),
+    // Async recovery can expose memoized `.apply(...)` argument-spread shapes.
+    ("UnArgumentSpread2", Complex, run_un_argument_spread, always_enabled, requires: [
+        "UnAsyncAwait"
+    ]),
     // Second pass: UnAsyncAwait can expose additional interop getter shapes.
     ("UnWebpackInterop2", Complex, run_un_webpack_interop, always_enabled, requires: [
         "UnObjectRest3"

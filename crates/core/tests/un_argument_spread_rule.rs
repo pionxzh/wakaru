@@ -201,6 +201,70 @@ const out = app_info.build(...[prefix, ...items, tail]);
 }
 
 #[test]
+fn converts_split_memoized_method_apply_with_same_receiver_temp() {
+    let input = r#"
+async function collect(output, item) {
+  let method;
+  let receiver;
+  method = (receiver = output).push;
+  method.apply(receiver, [await fetch_item(item.id)]);
+}
+"#;
+    let expected = r#"
+async function collect(output, item) {
+  output.push(await fetch_item(item.id));
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn converts_split_memoized_method_apply_with_direct_receiver() {
+    let input = r#"
+function collect(output, args) {
+  let method;
+  method = output.push;
+  method.apply(output, args);
+}
+"#;
+    let expected = r#"
+function collect(output, args) {
+  output.push(...args);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_split_memoized_method_apply_when_temps_are_used_later() {
+    let input = r#"
+function collect(output, args) {
+  let method;
+  let receiver;
+  method = (receiver = output).push;
+  method.apply(receiver, args);
+  observe(method, receiver);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
+fn preserves_split_memoized_method_apply_without_local_temp_decls() {
+    let input = r#"
+function collect(output, args) {
+  method = output.push;
+  method.apply(output, args);
+}
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, input);
+}
+
+#[test]
 fn preserves_memoized_method_apply_with_different_receiver_temp() {
     let input = r#"
 var _app_info;

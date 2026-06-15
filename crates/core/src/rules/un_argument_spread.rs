@@ -1,10 +1,14 @@
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprOrSpread, Lit, MemberProp,
-    SimpleAssignTarget,
+    AssignOp, AssignTarget, CallExpr, Callee, Expr, ExprOrSpread, ExprStmt, Ident, Lit, MemberExpr,
+    MemberProp, SimpleAssignTarget, Stmt,
 };
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
+use super::decl_utils::{
+    can_remove_prior_uninitialized_decls, ident_is_used_in_stmts_excluding_bindings,
+    remove_prior_uninitialized_decls, same_ident, UninitializedDeclKind,
+};
 use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::RewriteLevel;
 
@@ -31,6 +35,46 @@ impl Default for UnArgumentSpread {
 }
 
 impl VisitMut for UnArgumentSpread {
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        stmts.visit_mut_children_with(self);
+
+        if self.level < RewriteLevel::Standard {
+            return;
+        }
+
+        let old = std::mem::take(stmts);
+        let mut index = 0;
+        while index < old.len() {
+            if index + 1 < old.len() {
+                if let Some(rewrite) = try_convert_split_memoized_apply(
+                    &old[index],
+                    &old[index + 1],
+                    &old[index + 2..],
+                ) {
+                    if can_remove_prior_uninitialized_decls(
+                        stmts,
+                        &rewrite.removable_bindings,
+                        UninitializedDeclKind::Any,
+                    ) {
+                        let end = stmts.len();
+                        remove_prior_uninitialized_decls(
+                            stmts,
+                            end,
+                            &rewrite.removable_bindings,
+                            UninitializedDeclKind::Any,
+                        );
+                        stmts.push(rewrite.stmt);
+                        index += 2;
+                        continue;
+                    }
+                }
+            }
+
+            stmts.push(old[index].clone());
+            index += 1;
+        }
+    }
+
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
@@ -124,6 +168,127 @@ fn try_convert_apply(call: CallExpr, unresolved_mark: Mark) -> Result<Expr, Call
     }
 
     Err(call)
+}
+
+fn try_convert_split_memoized_apply(
+    method_stmt: &Stmt,
+    apply_stmt: &Stmt,
+    rest: &[Stmt],
+) -> Option<SplitMemoizedApplyRewrite> {
+    let (method_temp, memoized_member) = memoized_method_assignment(method_stmt)?;
+    let apply_call = expr_stmt_call(apply_stmt)?;
+
+    if apply_call.args.len() != 2
+        || apply_call.args[0].spread.is_some()
+        || apply_call.args[1].spread.is_some()
+    {
+        return None;
+    }
+
+    let apply_member = match &apply_call.callee {
+        Callee::Expr(callee) => match callee.as_ref() {
+            Expr::Member(member) => member,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if !matches!(&apply_member.prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "apply") {
+        return None;
+    }
+    if !matches!(apply_member.obj.as_ref(), Expr::Ident(id) if same_ident(id, &method_temp)) {
+        return None;
+    }
+
+    let first_arg = apply_call.args[0].expr.as_ref();
+    let mut removable_bindings = vec![method_temp.clone()];
+    let receiver = if exprs_structurally_equal(first_arg, &memoized_member.obj) {
+        memoized_member.obj.clone()
+    } else {
+        let receiver_temp = ident_expr(first_arg)?;
+        removable_bindings.push(receiver_temp.clone());
+        memoized_receiver_source(&memoized_member.obj, first_arg)?
+    };
+
+    if removable_bindings
+        .iter()
+        .any(|binding| ident_is_used_in_stmts_excluding_bindings(binding, rest))
+    {
+        return None;
+    }
+
+    let mut args = args_from_apply_arg(apply_call.args[1].expr.clone());
+    let callee = Expr::Member(MemberExpr {
+        span: memoized_member.span,
+        obj: receiver,
+        prop: memoized_member.prop.clone(),
+    });
+
+    Some(SplitMemoizedApplyRewrite {
+        stmt: Stmt::Expr(ExprStmt {
+            span: apply_call.span,
+            expr: Box::new(Expr::Call(CallExpr {
+                span: apply_call.span,
+                ctxt: apply_call.ctxt,
+                callee: Callee::Expr(Box::new(callee)),
+                args: std::mem::take(&mut args),
+                type_args: apply_call.type_args.clone(),
+            })),
+        }),
+        removable_bindings,
+    })
+}
+
+struct SplitMemoizedApplyRewrite {
+    stmt: Stmt,
+    removable_bindings: Vec<Ident>,
+}
+
+fn memoized_method_assignment(stmt: &Stmt) -> Option<(Ident, &MemberExpr)> {
+    let Stmt::Expr(expr_stmt) = stmt else {
+        return None;
+    };
+    let Expr::Assign(assign) = expr_stmt.expr.as_ref() else {
+        return None;
+    };
+    if assign.op != AssignOp::Assign {
+        return None;
+    }
+    let AssignTarget::Simple(SimpleAssignTarget::Ident(method_temp)) = &assign.left else {
+        return None;
+    };
+    let Expr::Member(member) = assign.right.as_ref() else {
+        return None;
+    };
+    Some((method_temp.id.clone(), member))
+}
+
+fn expr_stmt_call(stmt: &Stmt) -> Option<&CallExpr> {
+    let Stmt::Expr(expr_stmt) = stmt else {
+        return None;
+    };
+    let Expr::Call(call) = expr_stmt.expr.as_ref() else {
+        return None;
+    };
+    Some(call)
+}
+
+fn ident_expr(expr: &Expr) -> Option<&Ident> {
+    match expr {
+        Expr::Ident(ident) => Some(ident),
+        _ => None,
+    }
+}
+
+fn args_from_apply_arg(arg: Box<Expr>) -> Vec<ExprOrSpread> {
+    match *arg {
+        Expr::Array(array) if array.elems.iter().all(Option::is_some) => {
+            array.elems.into_iter().flatten().collect()
+        }
+        expr => vec![ExprOrSpread {
+            spread: Some(DUMMY_SP),
+            expr: Box::new(expr),
+        }],
+    }
 }
 
 /// Build `fn(...secondArg)` from the original `.apply(thisArg, secondArg)` call.

@@ -14,7 +14,10 @@ use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 use crate::js_names::is_stable_builtin_alias_root;
 use crate::utils::paren::strip_parens;
 
-use super::decl_utils::same_ident;
+use super::decl_utils::{
+    can_remove_prior_uninitialized_decls, remove_prior_uninitialized_decls, same_ident,
+    UninitializedDeclKind,
+};
 use super::helper_matcher::BindingKey;
 use super::RewriteLevel;
 
@@ -1461,10 +1464,19 @@ fn fold_use_state_assignment_tuple_reads(
         if let Some(folded) = try_fold_use_state_assignment_tuple_at(&stmts, i, use_state_bindings)
         {
             let rest = &stmts[i + folded.consumed..];
-            if can_remove_prior_uninitialized_decls(&result, &folded.removable_bindings)
-                && !bindings_written_in_stmts(&folded.recovered_bindings, rest)
+            if can_remove_prior_uninitialized_decls(
+                &result,
+                &folded.removable_bindings,
+                UninitializedDeclKind::Any,
+            ) && !bindings_written_in_stmts(&folded.recovered_bindings, rest)
             {
-                remove_prior_uninitialized_decls(&mut result, &folded.removable_bindings);
+                let end = result.len();
+                remove_prior_uninitialized_decls(
+                    &mut result,
+                    end,
+                    &folded.removable_bindings,
+                    UninitializedDeclKind::Any,
+                );
                 result.push(folded.stmt);
                 i += folded.consumed;
                 continue;
@@ -1686,77 +1698,6 @@ fn member_prop_index(prop: &MemberProp) -> Option<usize> {
         return None;
     }
     Some(*value as usize)
-}
-
-fn can_remove_prior_uninitialized_decls(stmts: &[Stmt], targets: &[Ident]) -> bool {
-    if targets
-        .iter()
-        .any(|target| ident_is_used_in_stmts_excluding_bindings(target, stmts))
-    {
-        return false;
-    }
-    targets
-        .iter()
-        .all(|target| has_uninitialized_decl(stmts, target))
-}
-
-fn ident_is_used_in_stmts_excluding_bindings(target: &Ident, stmts: &[Stmt]) -> bool {
-    struct UseFinder<'a> {
-        target: &'a Ident,
-        found: bool,
-    }
-
-    impl Visit for UseFinder<'_> {
-        fn visit_binding_ident(&mut self, _: &BindingIdent) {}
-
-        fn visit_ident(&mut self, ident: &Ident) {
-            if same_ident(ident, self.target) {
-                self.found = true;
-            }
-        }
-    }
-
-    let mut finder = UseFinder {
-        target,
-        found: false,
-    };
-    for stmt in stmts {
-        stmt.visit_with(&mut finder);
-        if finder.found {
-            return true;
-        }
-    }
-    false
-}
-
-fn has_uninitialized_decl(stmts: &[Stmt], target: &Ident) -> bool {
-    stmts.iter().any(|stmt| {
-        let Stmt::Decl(Decl::Var(var)) = stmt else {
-            return false;
-        };
-        var.decls.iter().any(|decl| {
-            decl.init.is_none()
-                && matches!(&decl.name, Pat::Ident(binding) if same_ident(&binding.id, target))
-        })
-    })
-}
-
-fn remove_prior_uninitialized_decls(stmts: &mut Vec<Stmt>, targets: &[Ident]) {
-    for stmt in stmts.iter_mut() {
-        let Stmt::Decl(Decl::Var(var)) = stmt else {
-            continue;
-        };
-        var.decls.retain(|decl| {
-            if decl.init.is_some() {
-                return true;
-            }
-            let Pat::Ident(binding) = &decl.name else {
-                return true;
-            };
-            !targets.iter().any(|target| same_ident(&binding.id, target))
-        });
-    }
-    stmts.retain(|stmt| !matches!(stmt, Stmt::Decl(Decl::Var(var)) if var.decls.is_empty()));
 }
 
 fn bindings_written_in_stmts(bindings: &[Ident], stmts: &[Stmt]) -> bool {
