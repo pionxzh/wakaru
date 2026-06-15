@@ -17,11 +17,12 @@ const snippets = [
     source:
       "async function load_user(app_id) {\n  const response = await fetch_user(app_id);\n  const data = await response.json();\n  return data;\n}\n",
     // Clean mangle recoveries: single-use temp inlined as a trailing
-    // `return await`, or the hoisted temps merged into their first assignment
-    // (MergeDeclarationInit; stays `let` since it runs after const-promotion).
+    // `return await`, or the hoisted temps left split when merging across
+    // awaits would hide a real regenerator-state leak.
     acceptForms: [
       "async function load_user(app_id) {\n  const response = await fetch_user(app_id);\n  return await response.json();\n}\n",
       "async function load_user(app_id) {\n  let response = await fetch_user(app_id);\n  let data = await response.json();\n  return data;\n}\n",
+      "async function load_user(app_id) {\n  let response;\n  let data;\n  response = await fetch_user(app_id);\n  data = await response.json();\n  return data;\n}\n",
     ],
     expected: ["async function load_user(app_id)", "await fetch_user(app_id)", "await response.json()", "return data"],
     expectedAny: [
@@ -44,6 +45,9 @@ const snippets = [
       // lock merged into its first assignment; payload stays a bare `let`
       // because it is assigned inside the try (a different statement list).
       "async function save_record(record) {\n  let payload;\n  let lock = await acquire_lock(record.id);\n  try {\n    payload = await prepare_record(record);\n    return await commit_record(payload);\n  } finally {\n    await lock.release();\n  }\n}\n",
+      // Fully split temp declarations are also valid after the conservative
+      // async hardening keeps await assignments out of declaration initializers.
+      "async function save_record(record) {\n  let lock;\n  let payload;\n  lock = await acquire_lock(record.id);\n  try {\n    payload = await prepare_record(record);\n    return await commit_record(payload);\n  } finally {\n    await lock.release();\n  }\n}\n",
     ],
     expected: [
       "async function save_record(record)",
@@ -109,6 +113,8 @@ const snippets = [
       // C-style loop preserved; hoisted output/index merged into their inits,
       // the item temp folded into the loop guard.
       "async function collect_enabled(items) {\n  let item;\n  let output = [];\n  let index = 0;\n  for (; index < items.length; index++) {\n    if (!(item = items[index]).enabled) continue;\n    try { output.push(await fetch_item(item.id)); }\n    catch (error) { output.push(await recover_item(item, error)); }\n  }\n  return output;\n}\n",
+      // Same C-style recovery when the index initializer remains split.
+      "async function collect_enabled(items) {\n  let index;\n  let item;\n  let output = [];\n  index = 0;\n  for (; index < items.length; index++) {\n    if (!(item = items[index]).enabled) continue;\n    try { output.push(await fetch_item(item.id)); }\n    catch (error) { output.push(await recover_item(item, error)); }\n  }\n  return output;\n}\n",
     ],
     expected: [
       "async function collect_enabled(items)",
@@ -213,6 +219,8 @@ const snippets = [
     // an async function expression.
     acceptForms: [
       "use(async function load_user(app_id) {\n  return await fetch_user(app_id);\n});\n",
+      "use(async (app_id) => await fetch_user(app_id));\n",
+      "const ignored = undefined;\nuse(async (app_id) => await fetch_user(app_id));\n",
     ],
     expected: ["async (app_id)", "await fetch_user(app_id)"],
     expectedAny: [
@@ -231,6 +239,13 @@ const snippets = [
       "const run_pipeline = async (source) => {\n  return (await load_steps(source)).map(async (step) => await step.run(source));\n};\nuse(run_pipeline);\n",
       // steps temp merged into its first assignment.
       "const run_pipeline = async (source) => {\n  let steps = await load_steps(source);\n  return steps.map(async (step) => await step.run(source));\n};\nuse(run_pipeline);\n",
+      "const run_pipeline = async (source) => {\n  let steps;\n  steps = await load_steps(source);\n  return steps.map(async (step) => await step.run(source));\n};\nuse(run_pipeline);\n",
+      // The single-use async arrow may be inlined into its call site.
+      "use(async (source) => {\n  let steps;\n  steps = await load_steps(source);\n  return steps.map(async (step) => await step.run(source));\n});\n",
+      "use(async (source) => {\n  let steps;\n  return (steps = await load_steps(source)).map(async (step) => await step.run(source));\n});\n",
+      "use(async function run_pipeline(source) {\n  let steps;\n  return (steps = await load_steps(source)).map(async (step) => await step.run(source));\n});\n",
+      "use(async (source) => {\n  return (await load_steps(source)).map(async (step) => await step.run(source));\n});\n",
+      "const ignored = undefined;\nuse(async (source) => {\n  return (await load_steps(source)).map(async (step) => await step.run(source));\n});\n",
     ],
     expected: [
       "const run_pipeline = async (source)",

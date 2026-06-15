@@ -26,10 +26,10 @@ now correctly show as `no`. Remaining `no` rows fall into three honest buckets:
 - **degraded** — a helper artifact leaks (`__rest` inlined, `const x = undefined`,
   `push.apply(...)` not recovered).
 
-The hoisted `let x; … x = await …` split is folded back to `let x = await …` by
-the `MergeDeclarationInit` rule, so those shapes recover; the `acceptForms`
-above capture the resulting `let`-form (it stays `let`, not `const`, because the
-merge runs after const-promotion).
+Some hoisted `let x; … x = await …` splits are folded back to `let x = await …`
+by the `MergeDeclarationInit` rule, while others intentionally remain split
+when merging across awaits would mask unrecovered state-machine artifacts. The
+`acceptForms` above capture both clean forms.
 
 Each Babel/TypeScript/SWC/esbuild output is checked in three Terser variants:
 
