@@ -9,6 +9,7 @@ use swc_core::ecma::utils::ExprFactory;
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::binding_facts::collect_binding_facts;
+use super::dead_decls::{extend_consumed_uninitialized_expr, remove_consumed_uninitialized_decls};
 use super::decl_utils::BindingId;
 pub(crate) use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::{RewriteLevel, RewritePolicy};
@@ -20,6 +21,7 @@ pub struct UnNullishCoalescing {
     policy: RewritePolicy,
     uninitialized_bindings: HashSet<BindingId>,
     binding_references: HashMap<BindingId, usize>,
+    consumed_uninitialized_bindings: HashSet<BindingId>,
 }
 
 impl UnNullishCoalescing {
@@ -29,6 +31,7 @@ impl UnNullishCoalescing {
             policy: RewritePolicy::from_level(level),
             uninitialized_bindings: HashSet::new(),
             binding_references: HashMap::new(),
+            consumed_uninitialized_bindings: HashSet::new(),
         }
     }
 }
@@ -38,7 +41,9 @@ impl VisitMut for UnNullishCoalescing {
         let facts = collect_binding_facts(module);
         self.uninitialized_bindings = facts.uninitialized;
         self.binding_references = facts.references;
+        self.consumed_uninitialized_bindings.clear();
         module.visit_mut_children_with(self);
+        remove_consumed_uninitialized_decls(module, &self.consumed_uninitialized_bindings);
     }
 
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
@@ -51,6 +56,13 @@ impl VisitMut for UnNullishCoalescing {
             &self.uninitialized_bindings,
             &self.binding_references,
         ) {
+            extend_consumed_uninitialized_expr(
+                &mut self.consumed_uninitialized_bindings,
+                expr,
+                &result,
+                &self.uninitialized_bindings,
+                &self.binding_references,
+            );
             *expr = result;
         }
     }

@@ -267,7 +267,6 @@ var _obj$method, _obj;
 const out = (_obj$method = (_obj = obj) == null ? void 0 : _obj.method == null ? void 0 : _obj.method(arg)) != null ? _obj$method : fallback;
 "#;
     let expected = r#"
-var _obj$method;
 const out = obj?.method?.(arg) ?? fallback;
 "#;
     let optional = apply_with_level(input, RewriteLevel::Aggressive);

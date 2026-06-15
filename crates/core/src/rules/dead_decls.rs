@@ -80,6 +80,75 @@ pub(crate) fn remove_consumed_uninitialized_decls(
     module.visit_mut_with(&mut UninitializedDeclStripper { dead: &removable });
 }
 
+pub(crate) fn extend_consumed_uninitialized_expr(
+    consumed: &mut HashSet<BindingId>,
+    before: &Expr,
+    after: &Expr,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) {
+    let before_refs = collect_uninitialized_refs(before, uninitialized_bindings);
+    let after_refs = collect_uninitialized_refs(after, uninitialized_bindings);
+    extend_consumed_uninitialized_refs(consumed, before_refs, after_refs, binding_references);
+}
+
+pub(crate) fn extend_consumed_uninitialized_stmt(
+    consumed: &mut HashSet<BindingId>,
+    before: &Stmt,
+    after: &Stmt,
+    uninitialized_bindings: &HashSet<BindingId>,
+    binding_references: &HashMap<BindingId, usize>,
+) {
+    let before_refs = collect_uninitialized_refs(before, uninitialized_bindings);
+    let after_refs = collect_uninitialized_refs(after, uninitialized_bindings);
+    extend_consumed_uninitialized_refs(consumed, before_refs, after_refs, binding_references);
+}
+
+fn extend_consumed_uninitialized_refs(
+    consumed: &mut HashSet<BindingId>,
+    before_refs: HashMap<BindingId, usize>,
+    after_refs: HashMap<BindingId, usize>,
+    binding_references: &HashMap<BindingId, usize>,
+) {
+    for (binding, before_count) in before_refs {
+        if after_refs.get(&binding).copied().unwrap_or(0) != 0 {
+            continue;
+        }
+        if binding_references.get(&binding).copied() == Some(before_count + 1) {
+            consumed.insert(binding);
+        }
+    }
+}
+
+fn collect_uninitialized_refs<'a, N>(
+    node: &N,
+    uninitialized_bindings: &'a HashSet<BindingId>,
+) -> HashMap<BindingId, usize>
+where
+    N: VisitWith<UninitializedRefCollector<'a>>,
+{
+    let mut collector = UninitializedRefCollector {
+        uninitialized_bindings,
+        references: HashMap::new(),
+    };
+    node.visit_with(&mut collector);
+    collector.references
+}
+
+struct UninitializedRefCollector<'a> {
+    uninitialized_bindings: &'a HashSet<BindingId>,
+    references: HashMap<BindingId, usize>,
+}
+
+impl Visit for UninitializedRefCollector<'_> {
+    fn visit_ident(&mut self, ident: &Ident) {
+        let binding = binding_id(ident);
+        if self.uninitialized_bindings.contains(&binding) {
+            *self.references.entry(binding).or_insert(0) += 1;
+        }
+    }
+}
+
 fn collect_local_undefined_initialized(module: &Module) -> HashSet<BindingId> {
     let mut collector = LocalUndefinedInitCollector::default();
     module.visit_with(&mut collector);

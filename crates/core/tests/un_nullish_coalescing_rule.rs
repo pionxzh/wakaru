@@ -41,8 +41,27 @@ fn transforms_null_or_undefined_ternary_flipped() {
 fn transforms_temp_variable_assignment_in_condition() {
     let input = r#"var _ref;
 (_ref = foo) !== null && _ref !== void 0 ? _ref : "bar""#;
-    let expected = r#"var _ref;
-foo ?? "bar""#;
+    let expected = r#"foo ?? "bar""#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_eval_observable_consumed_temp_decl() {
+    let input = r#"
+function f() {
+  var _ref;
+  eval("_ref");
+  return (_ref = foo) !== null && _ref !== void 0 ? _ref : "bar";
+}
+"#;
+    let expected = r#"
+function f() {
+  var _ref;
+  eval("_ref");
+  return foo ?? "bar";
+}
+"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
@@ -89,8 +108,7 @@ fn does_not_transform_loose_null_ternary_flipped_at_minimal() {
 fn transforms_loose_temp_variable_assignment_in_condition() {
     let input = r#"var _ref;
 (_ref = foo) != null ? _ref : "bar""#;
-    let expected = r#"var _ref;
-foo ?? "bar""#;
+    let expected = r#"foo ?? "bar""#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
@@ -122,8 +140,7 @@ fn transforms_or_chain_with_temp_var_to_nullish_true() {
     // (tmp = expr) === null || tmp === undefined || tmp  →  expr ?? true
     let input = r#"var G;
 (G = B.broadcast) === null || G === undefined || G"#;
-    let expected = r#"var G;
-B.broadcast ?? true"#;
+    let expected = r#"B.broadcast ?? true"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
@@ -134,8 +151,7 @@ fn transforms_or_chain_with_temp_var_at_minimal() {
     // repeated-read heuristic.
     let input = r#"var G;
 (G = B.broadcast) === null || G === undefined || G"#;
-    let expected = r#"var G;
-B.broadcast ?? true"#;
+    let expected = r#"B.broadcast ?? true"#;
     let output = apply_with_level(input, RewriteLevel::Minimal);
     assert_eq_normalized(&output, expected);
 }
@@ -186,8 +202,7 @@ fn transforms_or_chain_with_optional_chaining_assignment() {
     // Real-world esbuild pattern: (tmp = obj?.prop) === null || tmp === undefined || tmp
     let input = r#"var G;
 (G = B?.broadcast) === null || G === undefined || G"#;
-    let expected = r#"var G;
-B?.broadcast ?? true"#;
+    let expected = r#"B?.broadcast ?? true"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
@@ -197,8 +212,7 @@ fn transforms_negated_or_chain() {
     // Negated form: !((tmp = obj?.prop) === null || tmp === undefined || tmp)
     let input = r#"var G;
 !((G = B?.redirect) === null || G === undefined || G)"#;
-    let expected = r#"var G;
-!(B?.redirect ?? true)"#;
+    let expected = r#"!(B?.redirect ?? true)"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }
@@ -208,8 +222,7 @@ fn transforms_or_chain_flipped_comparisons() {
     // Exact shape from issue-52 after FlipComparisons: null on the left
     let input = r#"var G;
 null === (G = null == B ? void 0 : B.broadcast) || void 0 === G || G"#;
-    let expected = r#"var G;
-(null == B ? void 0 : B.broadcast) ?? true"#;
+    let expected = r#"(null == B ? void 0 : B.broadcast) ?? true"#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
 }

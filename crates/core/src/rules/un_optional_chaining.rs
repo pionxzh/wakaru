@@ -9,7 +9,10 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 use super::binding_facts::collect_binding_facts;
-use super::dead_decls::remove_consumed_uninitialized_decls;
+use super::dead_decls::{
+    extend_consumed_uninitialized_expr, extend_consumed_uninitialized_stmt,
+    remove_consumed_uninitialized_decls,
+};
 use super::decl_utils::{binding_id, BindingId};
 use super::expr_utils::{exprs_structurally_equal, is_unresolved_undefined};
 use super::{RewriteLevel, RewritePolicy};
@@ -128,68 +131,23 @@ impl VisitMut for UnOptionalChaining {
 
 impl UnOptionalChaining {
     fn record_consumed_expr_bindings(&mut self, before: &Expr, after: &Expr) {
-        let before_refs = collect_uninitialized_refs_in_expr(before, &self.uninitialized_bindings);
-        let after_refs = collect_uninitialized_refs_in_expr(after, &self.uninitialized_bindings);
-        self.record_consumed_bindings(before_refs, after_refs);
+        extend_consumed_uninitialized_expr(
+            &mut self.consumed_uninitialized_bindings,
+            before,
+            after,
+            &self.uninitialized_bindings,
+            &self.binding_references,
+        );
     }
 
     fn record_consumed_stmt_bindings(&mut self, before: &Stmt, after: &Stmt) {
-        let before_refs = collect_uninitialized_refs_in_stmt(before, &self.uninitialized_bindings);
-        let after_refs = collect_uninitialized_refs_in_stmt(after, &self.uninitialized_bindings);
-        self.record_consumed_bindings(before_refs, after_refs);
-    }
-
-    fn record_consumed_bindings(
-        &mut self,
-        before_refs: HashMap<BindingId, usize>,
-        after_refs: HashMap<BindingId, usize>,
-    ) {
-        for (binding, before_count) in before_refs {
-            if after_refs.get(&binding).copied().unwrap_or(0) != 0 {
-                continue;
-            }
-            if self.binding_references.get(&binding).copied() == Some(before_count + 1) {
-                self.consumed_uninitialized_bindings.insert(binding);
-            }
-        }
-    }
-}
-
-fn collect_uninitialized_refs_in_expr(
-    expr: &Expr,
-    uninitialized_bindings: &HashSet<BindingId>,
-) -> HashMap<BindingId, usize> {
-    let mut collector = UninitializedRefCollector {
-        uninitialized_bindings,
-        references: HashMap::new(),
-    };
-    expr.visit_with(&mut collector);
-    collector.references
-}
-
-fn collect_uninitialized_refs_in_stmt(
-    stmt: &Stmt,
-    uninitialized_bindings: &HashSet<BindingId>,
-) -> HashMap<BindingId, usize> {
-    let mut collector = UninitializedRefCollector {
-        uninitialized_bindings,
-        references: HashMap::new(),
-    };
-    stmt.visit_with(&mut collector);
-    collector.references
-}
-
-struct UninitializedRefCollector<'a> {
-    uninitialized_bindings: &'a HashSet<BindingId>,
-    references: HashMap<BindingId, usize>,
-}
-
-impl Visit for UninitializedRefCollector<'_> {
-    fn visit_ident(&mut self, ident: &Ident) {
-        let binding = binding_id(ident);
-        if self.uninitialized_bindings.contains(&binding) {
-            *self.references.entry(binding).or_insert(0) += 1;
-        }
+        extend_consumed_uninitialized_stmt(
+            &mut self.consumed_uninitialized_bindings,
+            before,
+            after,
+            &self.uninitialized_bindings,
+            &self.binding_references,
+        );
     }
 }
 
