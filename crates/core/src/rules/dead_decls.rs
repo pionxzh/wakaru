@@ -59,6 +59,27 @@ impl VisitMut for DeadUninitializedDecls {
     }
 }
 
+pub(crate) fn remove_consumed_uninitialized_decls(
+    module: &mut Module,
+    consumed: &HashSet<BindingId>,
+) {
+    if consumed.is_empty() {
+        return;
+    }
+
+    let eval_protected = collect_eval_protected_uninitialized(module);
+    let removable = consumed
+        .iter()
+        .filter(|binding| !eval_protected.contains(*binding))
+        .cloned()
+        .collect::<HashSet<_>>();
+    if removable.is_empty() {
+        return;
+    }
+
+    module.visit_mut_with(&mut UninitializedDeclStripper { dead: &removable });
+}
+
 fn collect_local_undefined_initialized(module: &Module) -> HashSet<BindingId> {
     let mut collector = LocalUndefinedInitCollector::default();
     module.visit_with(&mut collector);

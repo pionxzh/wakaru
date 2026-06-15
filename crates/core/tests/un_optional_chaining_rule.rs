@@ -154,8 +154,27 @@ let n;
 const x = (n = service.connection) === null || n === void 0 ? void 0 : n.status;
 "#;
     let expected = r#"
-let n;
 const x = service.connection?.status;
+"#;
+    let output = apply(input);
+    assert_eq_normalized(&output, expected);
+}
+
+#[test]
+fn preserves_eval_observable_consumed_temp_decl() {
+    let input = r#"
+function f() {
+  let n;
+  eval("n");
+  return (n = service.connection) === null || n === void 0 ? void 0 : n.status;
+}
+"#;
+    let expected = r#"
+function f() {
+  let n;
+  eval("n");
+  return service.connection?.status;
+}
 "#;
     let output = apply(input);
     assert_eq_normalized(&output, expected);
@@ -184,7 +203,7 @@ var _r$foo$bar, _r;
 const a = (_r = r) === null || _r === void 0 || (_r = _r.foo) === null || _r === void 0 || (_r = _r.bar) === null || _r === void 0 ? void 0 : _r.baz;
 "#;
     let expected = r#"
-var _r$foo$bar, _r;
+var _r$foo$bar;
 const a = r?.foo?.bar?.baz;
 "#;
     let output = apply(input);
@@ -248,7 +267,7 @@ var _obj$method, _obj;
 const out = (_obj$method = (_obj = obj) == null ? void 0 : _obj.method == null ? void 0 : _obj.method(arg)) != null ? _obj$method : fallback;
 "#;
     let expected = r#"
-var _obj$method, _obj;
+var _obj$method;
 const out = obj?.method?.(arg) ?? fallback;
 "#;
     let optional = apply_with_level(input, RewriteLevel::Aggressive);
@@ -265,7 +284,7 @@ var _r$foo$bar, _r;
 const a = (_r = r) == null || (_r = _r.foo) == null || (_r = _r.bar) == null ? void 0 : _r.baz;
 "#;
     let expected = r#"
-var _r$foo$bar, _r;
+var _r$foo$bar;
 const a = r?.foo?.bar?.baz;
 "#;
     let output = apply(input);
@@ -283,7 +302,6 @@ if ((_root = root) != null && (_root = _root[key]) != null && (_root = _root.gro
 }
 "#;
     let expected = r#"
-var _root, _root2;
 if (root?.[key]?.group?.items && root?.[key]?.group?.items.length) {
   sink("clear");
 } else {
@@ -305,7 +323,6 @@ if (root != null && (first = root[key]) !== null && first !== undefined && (firs
 }
 "#;
     let expected = r#"
-let first, firstGroup, second, secondGroup;
 if (root?.[key]?.group?.items && root?.[key]?.group?.items.length) {
   sink("clear");
 } else {
@@ -323,7 +340,6 @@ var _item;
 if ((_item = item) != null && (_item = _item.meta) != null && _item.enabled && item.kind != "alpha" && item.kind != "beta" && item.kind != "gamma") {}
 "#;
     let expected = r#"
-var _item;
 if (item?.meta?.enabled && item.kind != "alpha" && item.kind != "beta" && item.kind != "gamma") {}
 "#;
     let output = apply(input);
@@ -337,7 +353,6 @@ var _item;
 if ((_item = item) != null && (_item = _item.meta) != null && _item.enabled && item.kind !== "alpha" && item.kind !== "beta" && item.kind !== "gamma") {}
 "#;
     let expected = r#"
-var _item;
 if (item?.meta?.enabled && item.kind !== "alpha" && item.kind !== "beta" && item.kind !== "gamma") {}
 "#;
     let output = apply(input);
@@ -352,7 +367,6 @@ const blockedKinds = ["alpha", "beta", "gamma"];
 if ((_item = item) != null && (_item = _item.meta) != null && _item.enabled && !blockedKinds.includes(item.kind)) {}
 "#;
     let expected = r#"
-var _item;
 const blockedKinds = ["alpha", "beta", "gamma"];
 if (item?.meta?.enabled && !blockedKinds.includes(item.kind)) {}
 "#;
@@ -416,7 +430,6 @@ var _m, _o;
 const x = (_o = obj) === null || _o === void 0 || (_m = _o.method) === null || _m === void 0 ? void 0 : _m.call(_o, arg);
 "#;
     let expected = r#"
-var _m, _o;
 const x = obj?.method?.(arg);
 "#;
     let output = apply(input);
@@ -430,7 +443,6 @@ var _m, _p, _o;
 const x = (_o = obj) === null || _o === void 0 || (_p = _o.foo) === null || _p === void 0 || (_m = _p.method) === null || _m === void 0 ? void 0 : _m.call(_p, arg);
 "#;
     let expected = r#"
-var _m, _p, _o;
 const x = obj?.foo?.method?.(arg);
 "#;
     let output = apply(input);
@@ -444,7 +456,6 @@ var _m, _p, _o;
 const x = (_o = obj) == null || (_p = _o.foo) == null || (_m = _p.method) == null ? void 0 : _m.call(_p, arg);
 "#;
     let expected = r#"
-var _m, _p, _o;
 const x = obj?.foo?.method?.(arg);
 "#;
     let output = apply(input);
@@ -468,7 +479,6 @@ var _obj;
 const out = (_obj = obj) == null || _obj.method == null ? void 0 : _obj.method(arg);
 "#;
     let expected = r#"
-var _obj;
 const out = obj?.method?.(arg);
 "#;
     let output = apply_with_level(input, RewriteLevel::Aggressive);
@@ -492,7 +502,6 @@ var _obj;
 const out = (_obj = obj) == null ? void 0 : _obj.method == null ? void 0 : _obj.method(arg);
 "#;
     let expected = r#"
-var _obj;
 const out = obj?.method?.(arg);
 "#;
     let output = apply_with_level(input, RewriteLevel::Aggressive);
@@ -516,7 +525,6 @@ var _obj;
 const out = (_obj = obj) == null || (_obj = _obj.foo) == null || _obj.method == null ? void 0 : _obj.method(arg);
 "#;
     let expected = r#"
-var _obj;
 const out = obj?.foo?.method?.(arg);
 "#;
     let output = apply_with_level(input, RewriteLevel::Aggressive);
@@ -540,7 +548,6 @@ var _obj, _obj_foo;
 const out = (_obj = obj) == null ? void 0 : (_obj_foo = _obj.foo) == null ? void 0 : _obj_foo.method == null ? void 0 : _obj_foo.method(arg);
 "#;
     let expected = r#"
-var _obj, _obj_foo;
 const out = obj?.foo?.method?.(arg);
 "#;
     let output = apply_with_level(input, RewriteLevel::Aggressive);
@@ -575,7 +582,6 @@ var _r_foo_bar, _r_foo, _r;
 const a = (_r = r) === null || _r === void 0 ? void 0 : (_r_foo = _r.foo) === null || _r_foo === void 0 ? void 0 : (_r_foo_bar = _r_foo.bar) === null || _r_foo_bar === void 0 ? void 0 : _r_foo_bar.baz;
 "#;
     let expected = r#"
-var _r_foo_bar, _r_foo, _r;
 const a = r?.foo?.bar?.baz;
 "#;
     let output = apply(input);
@@ -589,7 +595,6 @@ var _obj_foo;
 const out = (_obj_foo = obj.foo) === null || _obj_foo === void 0 || (_obj_foo = _obj_foo.bar.baz) === null || _obj_foo === void 0 ? void 0 : _obj_foo.qux;
 "#;
     let expected = r#"
-var _obj_foo;
 const out = obj.foo?.bar.baz?.qux;
 "#;
     let output = apply(input);
@@ -603,7 +608,6 @@ var _a, _b;
 const out = (_b = (_a = obj.foo) === null || _a === void 0 ? void 0 : _a.bar.baz) === null || _b === void 0 ? void 0 : _b.qux;
 "#;
     let expected = r#"
-var _a, _b;
 const out = obj.foo?.bar.baz?.qux;
 "#;
     let output = apply(input);
@@ -617,7 +621,6 @@ var _a, _b;
 const out = (_b = (_a = obj.foo) == null ? void 0 : _a.bar.baz) == null ? void 0 : _b.qux;
 "#;
     let expected = r#"
-var _a, _b;
 const out = obj.foo?.bar.baz?.qux;
 "#;
     let output = apply(input);
@@ -631,7 +634,6 @@ var _obj_foo, _obj_foo_bar_baz;
 const out = (_obj_foo = obj.foo) == null ? void 0 : (_obj_foo_bar_baz = _obj_foo.bar.baz) == null ? void 0 : _obj_foo_bar_baz.qux;
 "#;
     let expected = r#"
-var _obj_foo, _obj_foo_bar_baz;
 const out = obj.foo?.bar.baz?.qux;
 "#;
     let output = apply(input);
@@ -645,7 +647,6 @@ var _a;
 const out = (_a = obj === null || obj === void 0 ? void 0 : obj.foo.bar) === null || _a === void 0 ? void 0 : _a.baz.qux;
 "#;
     let expected = r#"
-var _a;
 const out = obj?.foo.bar?.baz.qux;
 "#;
     let output = apply(input);
@@ -659,7 +660,6 @@ var _obj, _obj_foo_bar;
 const out = (_obj = obj) == null ? void 0 : (_obj_foo_bar = _obj.foo.bar) == null ? void 0 : _obj_foo_bar.baz.qux;
 "#;
     let expected = r#"
-var _obj, _obj_foo_bar;
 const out = obj?.foo.bar?.baz.qux;
 "#;
     let output = apply(input);
@@ -673,7 +673,6 @@ var _a;
 const out = (_a = obj == null ? void 0 : obj.foo.bar) == null ? void 0 : _a.baz.qux;
 "#;
     let expected = r#"
-var _a;
 const out = obj?.foo.bar?.baz.qux;
 "#;
     let output = apply(input);
@@ -700,7 +699,7 @@ var _obj_foo_method, _obj_foo, _obj;
 const out = (_obj = obj) === null || _obj === void 0 ? void 0 : (_obj_foo = _obj.foo) === null || _obj_foo === void 0 ? void 0 : (_obj_foo_method = _obj_foo.method) === null || _obj_foo_method === void 0 ? void 0 : _obj_foo_method.call(_obj_foo, arg);
 "#;
     let expected = r#"
-var _obj_foo_method, _obj_foo, _obj;
+var _obj_foo;
 const out = obj?.foo?.method?.(arg);
 "#;
     let output = apply(input);
@@ -841,7 +840,6 @@ var _;
 const x = (_ = K.unhoistableHeaders) == null ? undefined : _.has(A);
 "#;
     let expected = r#"
-var _;
 const x = K.unhoistableHeaders?.has(A);
 "#;
     let output = apply(input);
@@ -967,8 +965,6 @@ let i;
 const hidden = !(tt != null && (l = tt[bt]) !== null && l !== undefined && (i = l.blocks) !== null && i !== undefined && i.hideList.includes(t.name));
 "#;
     let expected = r#"
-let l;
-let i;
 const hidden = !tt?.[bt]?.blocks?.hideList.includes(t.name);
 "#;
     let output = apply(input);
@@ -982,7 +978,6 @@ let _b;
 const hidden = !((_b = settings?.role?.blocks) == null ? undefined : _b.hideList.includes(blockName));
 "#;
     let expected = r#"
-let _b;
 const hidden = !settings?.role?.blocks?.hideList.includes(blockName);
 "#;
     let output = apply(input);
@@ -998,7 +993,6 @@ var _settings, _settings$role, _settings$role$blocks;
 const hidden = !((_settings = settings) == null ? void 0 : (_settings$role = _settings.role) == null ? void 0 : (_settings$role$blocks = _settings$role.blocks) == null ? void 0 : _settings$role$blocks.hideList.includes(blockName));
 "#;
     let expected = r#"
-var _settings, _settings$role, _settings$role$blocks;
 const hidden = !settings?.role?.blocks?.hideList.includes(blockName);
 "#;
     let output = apply(input);
@@ -1015,8 +1009,6 @@ if (tt != null && (e = tt[bt]) !== null && e !== undefined && (l = e.blocks) !==
 }
 "#;
     let expected = r#"
-let e;
-let l;
 if (tt?.[bt]?.blocks?.hideList) {
     update();
 }
