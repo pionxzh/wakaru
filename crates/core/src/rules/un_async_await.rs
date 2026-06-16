@@ -133,10 +133,15 @@ fn visit_mut_function_with_helpers(func: &mut Function, helpers: &AsyncHelperCon
     // Try __awaiter transform (makes function async).
     // After extracting the inner body, also run the generator transform
     // in case the inner function was a __generator state machine.
+    let saved_stmts = body.stmts.clone();
     if try_transform_awaiter(body, helpers) {
         try_transform_generator(body, helpers);
-        func.is_async = true;
-        apply_unused_param_hints(func, awaiter_param_hints);
+        if stmts_contain_state_opcode_return(&body.stmts) {
+            body.stmts = saved_stmts;
+        } else {
+            func.is_async = true;
+            apply_unused_param_hints(func, awaiter_param_hints);
+        }
     }
 }
 

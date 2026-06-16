@@ -1045,3 +1045,48 @@ var __generator=this&&this.__generator||function(thisArg,body){var _={label:0,se
         "should recover a for-loop: {output}"
     );
 }
+
+#[test]
+fn awaiter_generator_with_unresolvable_forward_jumps_rolls_back() {
+    // When the __generator state machine contains forward jumps that the
+    // decoder cannot structure into if-blocks, opcodes like `return [3, N]`
+    // would leak into the async body. The fix: detect leaked opcodes and
+    // roll back the entire __awaiter transform, preserving the original form.
+    //
+    // This pattern has multiple conditional forward jumps interleaved with
+    // awaits — the decoder can't resolve them all into structured control flow.
+    let input = r#"
+function save(items) {
+  return __awaiter(this, void 0, void 0, function () {
+    return __generator(this, function (_a) {
+      switch (_a.label) {
+        case 0:
+          if (!(items.length > 0)) return [3 /*break*/, 3];
+          if (!useAsync) return [3 /*break*/, 2];
+          return [4 /*yield*/, writeAsync(items)];
+        case 1:
+          _a.sent();
+          return [3 /*break*/, 3];
+        case 2:
+          writeSync(items);
+          _a.label = 3;
+        case 3:
+          return [2 /*return*/];
+      }
+    });
+  });
+}
+"#;
+    let output = apply(input);
+    // If the generator decoder can't fully resolve this, the function should
+    // NOT be marked async with leaked opcodes. Either it recovers fully
+    // (async with clean control flow) or it stays unrecovered.
+    assert!(
+        !output.contains("return [3"),
+        "forward-jump opcodes must not leak into recovered output:\n{output}"
+    );
+    assert!(
+        !output.contains("return [2"),
+        "return opcodes must not leak into recovered output:\n{output}"
+    );
+}
