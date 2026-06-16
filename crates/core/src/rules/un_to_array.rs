@@ -7,9 +7,10 @@ use swc_core::ecma::ast::{
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::helper_matcher::{
-    binding_key, remaining_refs_outside_declarations, remove_fn_decls_by_binding,
+    binding_key, collect_refs, remaining_refs_outside_declarations, remove_fn_decls_by_binding,
     remove_import_specifiers_by_binding, remove_var_declarators_by_binding, BindingKey,
 };
+use super::transpiler_helper_utils::collect_maybe_array_like_bindings;
 
 /// Known import paths for the array-rest `toArray` helper.
 ///
@@ -79,22 +80,27 @@ impl VisitMut for UnToArray {
             }
         }
 
-        module.visit_mut_with(&mut MaybeArrayLikeUnwrapper);
+        let maybe_array_like = collect_maybe_array_like_bindings(module);
+        module.visit_mut_with(&mut MaybeArrayLikeUnwrapper {
+            maybe_array_like: &maybe_array_like,
+        });
 
         remove_dead_maybe_array_like_cluster(module);
     }
 }
 
-struct MaybeArrayLikeUnwrapper;
+struct MaybeArrayLikeUnwrapper<'a> {
+    maybe_array_like: &'a HashSet<BindingKey>,
+}
 
-impl VisitMut for MaybeArrayLikeUnwrapper {
+impl VisitMut for MaybeArrayLikeUnwrapper<'_> {
     fn visit_mut_var_declarator(&mut self, declarator: &mut VarDeclarator) {
         declarator.visit_mut_children_with(self);
         if !is_array_rest_pat(&declarator.name) {
             return;
         }
         if let Some(init) = &declarator.init {
-            if let Some(arg) = unwrap_maybe_array_like(init) {
+            if let Some(arg) = unwrap_maybe_array_like(init, self.maybe_array_like) {
                 declarator.init = Some(arg);
             }
         }
@@ -108,7 +114,7 @@ impl VisitMut for MaybeArrayLikeUnwrapper {
         if !is_array_rest_assign_target(&assign.left) {
             return;
         }
-        if let Some(arg) = unwrap_maybe_array_like(&assign.right) {
+        if let Some(arg) = unwrap_maybe_array_like(&assign.right, self.maybe_array_like) {
             assign.right = arg;
         }
     }
@@ -145,7 +151,10 @@ impl ToArrayUnwrapper<'_> {
 /// Babel emits this wrapper when the `arrayLikeIsIterable` assumption is on.
 /// The wrapper adds array-like tolerance that native destructuring doesn't need,
 /// so stripping it is safe under the same `rest_source_is_iterable` assumption.
-fn unwrap_maybe_array_like(expr: &Expr) -> Option<Box<Expr>> {
+fn unwrap_maybe_array_like(
+    expr: &Expr,
+    maybe_array_like: &HashSet<BindingKey>,
+) -> Option<Box<Expr>> {
     let Expr::Call(call) = expr else {
         return None;
     };
@@ -155,7 +164,7 @@ fn unwrap_maybe_array_like(expr: &Expr) -> Option<Box<Expr>> {
     let Expr::Ident(id) = callee.as_ref() else {
         return None;
     };
-    if !matches!(id.sym.as_ref(), "_maybeArrayLike" | "_maybe_array_like") {
+    if !maybe_array_like.contains(&binding_key(id)) {
         return None;
     }
     if call.args.len() != 2 || call.args.iter().any(|a| a.spread.is_some()) {
@@ -292,34 +301,73 @@ fn init_requires_to_array(init: &Expr) -> bool {
         .is_some_and(|path| TO_ARRAY_PATHS.contains(&path))
 }
 
-/// Remove `_maybeArrayLike` declarations and any top-level function/var
-/// declarations that become transitively unreferenced after both
+/// Remove `_maybeArrayLike` declarations and helper declarations that become
+/// transitively unreferenced after both
 /// `UnSlicedToArray` and `UnToArray` have unwrapped the call sites.
 fn remove_dead_maybe_array_like_cluster(module: &mut Module) {
-    let has_maybe_array_like = module.body.iter().any(|item| {
-        fn_decl_key(item)
-            .as_ref()
-            .is_some_and(|k| matches!(k.0.as_str(), "_maybeArrayLike" | "_maybe_array_like"))
-    });
-    if !has_maybe_array_like {
+    let maybe_array_like = collect_maybe_array_like_bindings(module);
+    if maybe_array_like.is_empty() {
         return;
     }
 
+    let candidate_decls = collect_candidate_decls(module);
+    let cluster = helper_dependency_closure(&maybe_array_like, &candidate_decls);
+    if cluster.is_empty() {
+        return;
+    }
+
+    let alive_roots = remaining_refs_outside_declarations(module, &cluster, &cluster);
+    let alive = helper_dependency_closure(&alive_roots, &candidate_decls);
+    let dead: HashSet<BindingKey> = cluster.difference(&alive).cloned().collect();
+    if !dead.is_empty() {
+        remove_fn_decls_by_binding(module, &dead);
+        remove_var_declarators_by_binding(&mut module.body, &dead);
+    }
+}
+
+fn collect_candidate_decls(module: &Module) -> Vec<(BindingKey, HashSet<BindingKey>)> {
     let candidates: HashSet<BindingKey> = module
         .body
         .iter()
         .filter_map(|item| fn_decl_key(item).or_else(|| undefined_var_decl_key(item)))
         .collect();
-    if candidates.is_empty() {
-        return;
+
+    module
+        .body
+        .iter()
+        .filter_map(|item| {
+            let key = fn_decl_key(item).or_else(|| undefined_var_decl_key(item))?;
+            let refs = collect_refs(item, &candidates);
+            Some((key, refs))
+        })
+        .collect()
+}
+
+fn helper_dependency_closure(
+    roots: &HashSet<BindingKey>,
+    candidate_decls: &[(BindingKey, HashSet<BindingKey>)],
+) -> HashSet<BindingKey> {
+    let mut reachable = HashSet::new();
+    let mut stack: Vec<_> = roots.iter().cloned().collect();
+
+    while let Some(key) = stack.pop() {
+        if !reachable.insert(key.clone()) {
+            continue;
+        }
+        let Some((_, refs)) = candidate_decls
+            .iter()
+            .find(|(candidate, _)| *candidate == key)
+        else {
+            continue;
+        };
+        for dep in refs {
+            if !reachable.contains(dep) {
+                stack.push(dep.clone());
+            }
+        }
     }
 
-    let alive = remaining_refs_outside_declarations(module, &candidates, &candidates);
-    let dead: HashSet<BindingKey> = candidates.difference(&alive).cloned().collect();
-    if !dead.is_empty() {
-        remove_fn_decls_by_binding(module, &dead);
-        remove_var_declarators_by_binding(&mut module.body, &dead);
-    }
+    reachable
 }
 
 fn fn_decl_key(item: &ModuleItem) -> Option<BindingKey> {

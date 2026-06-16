@@ -4369,6 +4369,119 @@ fn body_has_call_super_shape(body: &swc_core::ecma::ast::BlockStmt, ctx: &MatchC
     finder.has_reflect_construct_3 && finder.has_param2_apply_param1
 }
 
+// ---------------------------------------------------------------------------
+// maybeArrayLike body-shape matcher
+//
+// function _maybeArrayLike(orElse, arr, i) {
+//   if (arr && !Array.isArray(arr) && typeof arr.length === "number") {
+//     var len = arr.length;
+//     return _arrayLikeToArray(arr, i !== void 0 && i < len ? len : len);
+//   }
+//   return orElse(arr, i);
+// }
+//
+// Key signals: 3 params, body has !Array.isArray + typeof .length === "number",
+// and a `return param0(param1, ...)` that delegates to the first parameter.
+// ---------------------------------------------------------------------------
+
+fn is_maybe_array_like_fn(func: &Function) -> bool {
+    if func.params.len() != 3 {
+        return false;
+    }
+    let Some(body) = &func.body else {
+        return false;
+    };
+
+    let first_param = match &func.params[0].pat {
+        Pat::Ident(id) => &id.id,
+        _ => return false,
+    };
+
+    let mut markers = BodyMarkerState::default();
+    scan_stmts_for_markers(&body.stmts, &mut markers);
+
+    if !markers.has_array_is_array {
+        return false;
+    }
+
+    has_delegate_return(&body.stmts, first_param)
+}
+
+fn has_delegate_return(stmts: &[Stmt], first_param: &Ident) -> bool {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Return(ReturnStmt { arg: Some(arg), .. })
+                if is_call_to_ident(arg, first_param) =>
+            {
+                return true;
+            }
+            Stmt::If(if_stmt) => {
+                if let Some(alt) = &if_stmt.alt {
+                    if let Stmt::Return(ReturnStmt { arg: Some(arg), .. }) = alt.as_ref() {
+                        if is_call_to_ident(arg, first_param) {
+                            return true;
+                        }
+                    }
+                    if let Stmt::Block(block) = alt.as_ref() {
+                        if has_delegate_return(&block.stmts, first_param) {
+                            return true;
+                        }
+                    }
+                }
+                if let Stmt::Block(block) = if_stmt.cons.as_ref() {
+                    if has_delegate_return(&block.stmts, first_param) {
+                        return true;
+                    }
+                }
+            }
+            Stmt::Block(block) if has_delegate_return(&block.stmts, first_param) => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn is_call_to_ident(expr: &Expr, ident: &Ident) -> bool {
+    let Expr::Call(call) = expr else { return false };
+    let Callee::Expr(callee) = &call.callee else {
+        return false;
+    };
+    matches!(callee.as_ref(), Expr::Ident(id) if id.sym == ident.sym && id.ctxt == ident.ctxt)
+}
+
+/// Collect bindings for `_maybeArrayLike` declarations detected by body shape.
+pub(crate) fn collect_maybe_array_like_bindings(module: &Module) -> HashSet<BindingKey> {
+    use super::helper_matcher::binding_key;
+
+    let mut bindings = HashSet::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl)))
+                if is_maybe_array_like_fn(&fn_decl.function) =>
+            {
+                bindings.insert(binding_key(&fn_decl.ident));
+            }
+            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
+                for decl in &var_decl.decls {
+                    let Pat::Ident(binding) = &decl.name else {
+                        continue;
+                    };
+                    let Some(init) = &decl.init else { continue };
+                    if let Expr::Fn(fn_expr) = init.as_ref() {
+                        if is_maybe_array_like_fn(&fn_expr.function) {
+                            bindings.insert(binding_key(&binding.id));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    bindings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

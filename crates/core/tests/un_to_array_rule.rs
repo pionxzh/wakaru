@@ -132,6 +132,12 @@ use(first, rest_items);
 #[test]
 fn unwraps_maybe_array_like_to_array_on_rest_pattern() {
     let input = r#"
+function _maybeArrayLike(orElse, arr, i) {
+  if (arr && !Array.isArray(arr) && typeof arr.length === "number") {
+    return arr;
+  }
+  return orElse(arr, i);
+}
 var [first, ...rest] = _maybeArrayLike(_toArray, items);
 use(first, rest);
 "#;
@@ -149,4 +155,36 @@ var [a, b] = _maybeArrayLike(_slicedToArray, pair, 2);
 use(a, b);
 "#;
     assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_local_maybe_array_like_parameter() {
+    let input = r#"
+function f(_maybeArrayLike, _toArray, items) {
+  var [first, ...rest] = _maybeArrayLike(_toArray, items);
+  use(first, rest);
+}
+"#;
+    assert_eq_normalized(&apply(input), input);
+}
+
+#[test]
+fn preserves_unrelated_unused_function_when_maybe_array_like_is_present() {
+    let input = r#"
+function unrelated() {}
+function _maybeArrayLike(orElse, arr, i) {
+  if (arr && !Array.isArray(arr) && typeof arr.length === "number") {
+    return arr;
+  }
+  return orElse(arr, i);
+}
+var [first, ...rest] = _maybeArrayLike(_toArray, items);
+use(first, rest);
+"#;
+    let expected = r#"
+function unrelated() {}
+var [first, ...rest] = items;
+use(first, rest);
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }

@@ -11,8 +11,8 @@ use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 
 use super::helper_matcher::{binding_key, static_member_prop_name};
 use super::transpiler_helper_utils::{
-    is_tslib_spread_array_member, BindingKey, LocalHelperContext, TranspilerHelperKind,
-    TsHelperKind,
+    collect_maybe_array_like_bindings, is_tslib_spread_array_member, BindingKey,
+    LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
 
 /// Detects and replaces `_toConsumableArray(arr)` with `[...arr]`.
@@ -68,6 +68,8 @@ fn run_un_to_consumable_array(
         })
         .unwrap_or_default();
     let tslib_namespaces = local_helpers.tslib_namespaces();
+    let maybe_array_like = collect_maybe_array_like_bindings(module);
+
     if helpers.is_empty() {
         if ts_helpers.is_empty()
             && cross_module_ts_helpers.direct.is_empty()
@@ -79,6 +81,7 @@ fn run_un_to_consumable_array(
 
         let mut replacer = ToConsumableArrayReplacer {
             helpers: &helpers,
+            maybe_array_like: &maybe_array_like,
             ts_spread_array_helpers: &ts_helpers,
             cross_module_ts_spread_array_helpers: &cross_module_ts_helpers.direct,
             cross_module_ts_spread_array_namespaces: &cross_module_ts_helpers.namespaces,
@@ -92,6 +95,7 @@ fn run_un_to_consumable_array(
 
     let mut replacer = ToConsumableArrayReplacer {
         helpers: &helpers,
+        maybe_array_like: &maybe_array_like,
         ts_spread_array_helpers: &ts_helpers,
         cross_module_ts_spread_array_helpers: &cross_module_ts_helpers.direct,
         cross_module_ts_spread_array_namespaces: &cross_module_ts_helpers.namespaces,
@@ -108,6 +112,7 @@ fn run_un_to_consumable_array(
 
 struct ToConsumableArrayReplacer<'a> {
     helpers: &'a HashMap<BindingKey, TranspilerHelperKind>,
+    maybe_array_like: &'a HashSet<BindingKey>,
     ts_spread_array_helpers: &'a HashSet<BindingKey>,
     cross_module_ts_spread_array_helpers: &'a HashSet<BindingKey>,
     cross_module_ts_spread_array_namespaces: &'a HashMap<BindingKey, HashSet<String>>,
@@ -140,7 +145,8 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
             }
 
             // _maybeArrayLike(_toConsumableArray, arg) -> [...arg]
-            if matches!(id.sym.as_ref(), "_maybeArrayLike" | "_maybe_array_like")
+            if (matches!(id.sym.as_ref(), "_maybeArrayLike" | "_maybe_array_like")
+                || self.maybe_array_like.contains(&key))
                 && call.args.len() == 2
                 && call.args.iter().all(|a| a.spread.is_none())
             {
