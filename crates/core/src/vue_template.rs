@@ -43,9 +43,19 @@ pub struct VueElement {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VueAttr {
-    Static { name: String, value: Option<String> },
-    Bind { name: String, expr: String },
-    On { name: String, expr: String },
+    Static {
+        name: String,
+        value: Option<String>,
+    },
+    Bind {
+        name: String,
+        expr: String,
+    },
+    On {
+        name: String,
+        expr: String,
+        modifiers: Vec<String>,
+    },
     Directive(VueDirective),
     Spread(String),
 }
@@ -341,9 +351,17 @@ impl TemplateEmitter {
                 self.out.push_str(&escape_attr(expr.trim()));
                 self.out.push('"');
             }
-            VueAttr::On { name, expr } => {
+            VueAttr::On {
+                name,
+                expr,
+                modifiers,
+            } => {
                 self.out.push('@');
                 self.out.push_str(name);
+                for modifier in modifiers {
+                    self.out.push('.');
+                    self.out.push_str(modifier);
+                }
                 self.out.push_str("=\"");
                 self.out.push_str(&escape_attr(expr.trim()));
                 self.out.push('"');
@@ -474,6 +492,7 @@ mod tests {
                         VueAttr::On {
                             name: "click".into(),
                             expr: "increment".into(),
+                            modifiers: vec!["stop".into()],
                         },
                         VueAttr::Directive(
                             VueDirective::new("slot")
@@ -491,7 +510,7 @@ mod tests {
 
         assert_eq!(
             template.print(),
-            "<template>\n  <button class=\"counter\" :class=\"{ active: props.active }\" @click=\"increment\" v-slot:[slotName].foo=\"{ item }\">\n    <span>{{ props.count }}</span>\n  </button>\n</template>\n"
+            "<template>\n  <button class=\"counter\" :class=\"{ active: props.active }\" @click.stop=\"increment\" v-slot:[slotName].foo=\"{ item }\">\n    <span>{{ props.count }}</span>\n  </button>\n</template>\n"
         );
     }
 
