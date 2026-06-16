@@ -6,8 +6,8 @@ use swc_core::common::{sync::Lrc, FileName, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignOp, BinaryOp, BindingIdent, BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, Expr,
     ExprOrSpread, FnDecl, Ident, ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName,
-    ModuleItem, ObjectLit, Param, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, VarDecl,
-    VarDeclKind, VarDeclarator,
+    ModuleItem, ObjectLit, Param, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, UnaryOp,
+    VarDecl, VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
@@ -23,6 +23,7 @@ struct VueRecoveryContext {
     vue_helpers: HashMap<Atom, String>,
     object_bindings: HashMap<Atom, ObjectLit>,
     component_bindings: HashMap<Atom, String>,
+    directive_bindings: HashMap<Atom, String>,
     component_options: Option<ObjectLit>,
     render_context: Option<Atom>,
     cm: Lrc<SourceMap>,
@@ -152,11 +153,14 @@ fn collect_render_context(render: &FnDecl, ctx: &mut VueRecoveryContext) {
             let Some(init) = decl.init.as_deref() else {
                 continue;
             };
-            let Some(component) = resolve_component_name(init, ctx) else {
-                continue;
-            };
-            ctx.component_bindings
-                .insert(binding.id.sym.clone(), component);
+            if let Some(component) = resolve_component_name(init, ctx) {
+                ctx.component_bindings
+                    .insert(binding.id.sym.clone(), component);
+            }
+            if let Some(directive) = resolve_directive_name(init, ctx) {
+                ctx.directive_bindings
+                    .insert(binding.id.sym.clone(), directive);
+            }
         }
     }
 }
@@ -166,6 +170,18 @@ fn resolve_component_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<Strin
         return None;
     };
     if helper_name(&call.callee, ctx).as_deref() != Some("resolveComponent") {
+        return None;
+    }
+    call.args
+        .first()
+        .and_then(|arg| string_lit(arg.expr.as_ref()))
+}
+
+fn resolve_directive_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    if helper_name(&call.callee, ctx).as_deref() != Some("resolveDirective") {
         return None;
     }
     call.args
@@ -599,32 +615,134 @@ fn recover_directive_tuple(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Opti
     let Some(helper_expr) = tuple.elems.first().and_then(|elem| elem.as_ref()) else {
         return Ok(None);
     };
-    let Some(helper) = helper_ident_name(helper_expr.expr.as_ref(), ctx) else {
+    let Some(name) = directive_name(helper_expr.expr.as_ref(), ctx) else {
         return Ok(None);
     };
     let expr = tuple
         .elems
         .get(1)
         .and_then(|elem| elem.as_ref())
-        .map(|elem| print_expr(elem.expr.as_ref(), ctx).map(|expr| clean_attr_expr(&expr, ctx)))
-        .transpose()?;
+        .map(|elem| directive_expr(elem.expr.as_ref(), ctx))
+        .transpose()?
+        .flatten();
+    let arg = tuple
+        .elems
+        .get(2)
+        .and_then(|elem| elem.as_ref())
+        .map(|elem| directive_arg(elem.expr.as_ref(), ctx))
+        .transpose()?
+        .flatten();
+    let modifiers = tuple
+        .elems
+        .get(3)
+        .and_then(|elem| elem.as_ref())
+        .map(|elem| directive_modifiers(elem.expr.as_ref()))
+        .unwrap_or_default();
+    let (arg, dynamic_arg) = arg
+        .map(|arg| (Some(arg.value), arg.dynamic))
+        .unwrap_or((None, false));
 
-    match helper.as_str() {
-        helper if helper.starts_with("vModel") => Ok(Some(VueAttr::Directive(VueDirective {
-            name: "model".to_string(),
-            arg: None,
-            expr,
-            modifiers: Vec::new(),
-            dynamic_arg: false,
-        }))),
-        "vShow" => Ok(Some(VueAttr::Directive(VueDirective {
-            name: "show".to_string(),
-            arg: None,
-            expr,
-            modifiers: Vec::new(),
-            dynamic_arg: false,
-        }))),
-        _ => Ok(None),
+    Ok(Some(VueAttr::Directive(VueDirective {
+        name: name.name,
+        arg,
+        expr,
+        modifiers,
+        dynamic_arg,
+    })))
+}
+
+struct RecoveredDirectiveName {
+    name: String,
+}
+
+struct RecoveredDirectiveArg {
+    value: String,
+    dynamic: bool,
+}
+
+fn directive_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<RecoveredDirectiveName> {
+    match expr {
+        Expr::Ident(ident) => {
+            if let Some(helper) = ctx.vue_helpers.get(&ident.sym) {
+                if helper.starts_with("vModel") {
+                    return Some(RecoveredDirectiveName {
+                        name: "model".to_string(),
+                    });
+                }
+                if helper == "vShow" {
+                    return Some(RecoveredDirectiveName {
+                        name: "show".to_string(),
+                    });
+                }
+            }
+            ctx.directive_bindings
+                .get(&ident.sym)
+                .cloned()
+                .map(|name| RecoveredDirectiveName { name })
+        }
+        Expr::Call(_) => {
+            resolve_directive_name(expr, ctx).map(|name| RecoveredDirectiveName { name })
+        }
+        _ => None,
+    }
+}
+
+fn directive_arg(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<RecoveredDirectiveArg>> {
+    if is_absent_directive_value(expr) {
+        return Ok(None);
+    }
+    if let Some(value) = string_lit(expr) {
+        return Ok(Some(RecoveredDirectiveArg {
+            value,
+            dynamic: false,
+        }));
+    }
+    Ok(Some(RecoveredDirectiveArg {
+        value: clean_attr_expr(&print_expr(expr, ctx)?, ctx),
+        dynamic: true,
+    }))
+}
+
+fn directive_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    if is_absent_directive_value(expr) {
+        return Ok(None);
+    }
+    print_expr(expr, ctx).map(|expr| Some(clean_attr_expr(&expr, ctx)))
+}
+
+fn directive_modifiers(expr: &Expr) -> Vec<String> {
+    let Expr::Object(object) = expr else {
+        return Vec::new();
+    };
+    object
+        .props
+        .iter()
+        .filter_map(|prop| {
+            let PropOrSpread::Prop(prop) = prop else {
+                return None;
+            };
+            match prop.as_ref() {
+                Prop::KeyValue(key_value) => {
+                    if matches!(key_value.value.as_ref(), Expr::Lit(Lit::Bool(bool)) if !bool.value)
+                    {
+                        return None;
+                    }
+                    prop_name(&key_value.key)
+                }
+                Prop::Shorthand(ident) => Some(ident.sym.to_string()),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn is_absent_directive_value(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(Lit::Null(_)) => true,
+        Expr::Ident(ident) if ident.sym.as_ref() == "undefined" => true,
+        Expr::Unary(unary) if unary.op == UnaryOp::Void => true,
+        Expr::Paren(paren) => is_absent_directive_value(paren.expr.as_ref()),
+        _ => false,
     }
 }
 
@@ -1032,17 +1150,6 @@ fn helper_name(callee: &Callee, ctx: &VueRecoveryContext) -> Option<String> {
     }
 }
 
-fn helper_ident_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
-    match expr {
-        Expr::Ident(ident) => ctx
-            .vue_helpers
-            .get(&ident.sym)
-            .cloned()
-            .or_else(|| Some(ident.sym.to_string())),
-        _ => None,
-    }
-}
-
 fn component_script(options: &ObjectLit, ctx: &VueRecoveryContext) -> Result<Option<String>> {
     if options.props.is_empty() {
         return Ok(None);
@@ -1402,14 +1509,32 @@ export function render(_ctx, _cache) {
   return withDirectives((openBlock(), createElementBlock("input", {
     "onUpdate:modelValue": _cache[0] || (_cache[0] = $event => _ctx.value = $event)
   }, null, 512)), [
-    [vModelText, _ctx.value],
+    [vModelText, _ctx.value, void 0, { trim: true, number: true }],
     [vShow, _ctx.visible]
   ]);
 }
 "#;
 
         let output = recover_vue_sfc_source_from_js(input).unwrap().unwrap();
-        assert!(output.contains("v-model=\"value\""));
+        assert!(output.contains("v-model.trim.number=\"value\""));
         assert!(output.contains("v-show=\"visible\""));
+    }
+
+    #[test]
+    fn recovers_custom_directive_payload() {
+        let input = r#"
+import { resolveDirective, withDirectives, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  const _directive_focus = resolveDirective("focus");
+  return withDirectives((openBlock(), createElementBlock("div", null, null, 512)), [
+    [_directive_focus, _ctx.value, "current", { trim: true, deep: true }]
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <div v-focus:current.trim.deep=\"value\" />\n</template>\n"
+        );
     }
 }
