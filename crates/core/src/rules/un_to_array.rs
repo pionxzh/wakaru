@@ -292,9 +292,9 @@ fn init_requires_to_array(init: &Expr) -> bool {
         .is_some_and(|path| TO_ARRAY_PATHS.contains(&path))
 }
 
-/// Remove `_maybeArrayLike` declarations and any top-level function declarations
-/// that become transitively unreferenced after both `UnSlicedToArray` and
-/// `UnToArray` have unwrapped the call sites.
+/// Remove `_maybeArrayLike` declarations and any top-level function/var
+/// declarations that become transitively unreferenced after both
+/// `UnSlicedToArray` and `UnToArray` have unwrapped the call sites.
 fn remove_dead_maybe_array_like_cluster(module: &mut Module) {
     let has_maybe_array_like = module.body.iter().any(|item| {
         fn_decl_key(item)
@@ -305,21 +305,47 @@ fn remove_dead_maybe_array_like_cluster(module: &mut Module) {
         return;
     }
 
-    let all_fn_decls: HashSet<BindingKey> = module.body.iter().filter_map(fn_decl_key).collect();
-    if all_fn_decls.is_empty() {
+    let candidates: HashSet<BindingKey> = module
+        .body
+        .iter()
+        .filter_map(|item| fn_decl_key(item).or_else(|| undefined_var_decl_key(item)))
+        .collect();
+    if candidates.is_empty() {
         return;
     }
 
-    let alive = remaining_refs_outside_declarations(module, &all_fn_decls, &all_fn_decls);
-    let dead: HashSet<BindingKey> = all_fn_decls.difference(&alive).cloned().collect();
+    let alive = remaining_refs_outside_declarations(module, &candidates, &candidates);
+    let dead: HashSet<BindingKey> = candidates.difference(&alive).cloned().collect();
     if !dead.is_empty() {
         remove_fn_decls_by_binding(module, &dead);
+        remove_var_declarators_by_binding(&mut module.body, &dead);
     }
 }
 
 fn fn_decl_key(item: &ModuleItem) -> Option<BindingKey> {
     if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(f))) = item {
         Some(binding_key(&f.ident))
+    } else {
+        None
+    }
+}
+
+fn undefined_var_decl_key(item: &ModuleItem) -> Option<BindingKey> {
+    let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
+        return None;
+    };
+    if var.decls.len() != 1 {
+        return None;
+    }
+    let decl = &var.decls[0];
+    let Pat::Ident(binding) = &decl.name else {
+        return None;
+    };
+    let Some(init) = &decl.init else {
+        return None;
+    };
+    if matches!(init.as_ref(), Expr::Ident(id) if id.sym.as_ref() == "undefined") {
+        Some(binding_key(&binding.id))
     } else {
         None
     }
