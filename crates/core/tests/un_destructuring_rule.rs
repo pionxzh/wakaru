@@ -400,11 +400,7 @@ use(id, name, primary, backup);
     let expected = r#"
 let source;
 let id;
-let _b;
-let _c;
 let name;
-let _d;
-let _e;
 let primary;
 let backup;
 source = input;
@@ -441,11 +437,7 @@ use(id, name, primary, backup);
     let expected = r#"
 let source;
 let id;
-let _b;
-let _c;
 let name;
-let _d;
-let _e;
 let primary;
 let backup;
 source = input;
@@ -469,8 +461,6 @@ use(name);
 "#;
     let expected = r#"
 let source;
-let tmp;
-let _c;
 let name;
 source = input;
 ({ profile: { name } = {} } = source);
@@ -499,8 +489,6 @@ use(primary, backup, _f);
 "#;
     let expected = r#"
 let source;
-let _d;
-let _e;
 let primary;
 let backup;
 let _f;
@@ -527,7 +515,6 @@ use(J, V);
 "#;
     let expected = r#"
 let J;
-let Z;
 let V;
 ({ link: J = def } = V = G ?? {});
 use(J, V);
@@ -568,7 +555,6 @@ use(name);
 "#;
     let expected = r#"
 let source;
-let tmp;
 let name;
 source = input;
 ({ profile: { name } = {} } = source);
@@ -594,13 +580,35 @@ use(primary, backup);
 "#;
     let expected = r#"
 let source;
-let tmp;
-let _ref;
 let primary;
 let backup;
 source = input;
 ({ tags: [primary, , backup] = [] } = source);
 use(primary, backup);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn preserves_assignment_temp_decl_when_used_before_group() {
+    let input = r#"
+let source;
+let tmp;
+let name;
+use(tmp);
+source = input;
+tmp = source.profile;
+name = (tmp === undefined ? {} : tmp).name;
+use(name);
+"#;
+    let expected = r#"
+let source;
+let tmp;
+let name;
+use(tmp);
+source = input;
+({ profile: { name } = {} } = source);
+use(name);
 "#;
     assert_eq_normalized(&apply(input), expected);
 }

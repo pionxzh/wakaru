@@ -9,6 +9,10 @@ use swc_core::ecma::ast::{
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
+use super::decl_utils::{
+    can_remove_prior_uninitialized_decls_by, remove_prior_uninitialized_decls_by,
+    UninitializedDeclKind,
+};
 use super::helper_matcher::{binding_key, BindingKey};
 use super::{expr_utils::is_unresolved_undefined, RewriteLevel};
 use crate::utils::paren::strip_parens;
@@ -132,9 +136,13 @@ fn process_stmts(stmts: Vec<Stmt>, unresolved_mark: Mark, level: RewriteLevel) -
     let mut i = 0;
 
     while i < stmts.len() {
-        if let Some((stmt, consumed)) = try_reconstruct_group(&stmts, i, unresolved_mark, level) {
-            result.push(stmt);
-            i += consumed;
+        if let Some(group) = try_reconstruct_group(&stmts, i, unresolved_mark, level) {
+            remove_prior_uninitialized_decls_for_bindings(
+                &mut result,
+                &group.remove_prior_bindings,
+            );
+            result.push(group.stmt);
+            i += group.consumed;
         } else {
             result.push(std::mem::replace(
                 &mut stmts[i],
@@ -147,6 +155,43 @@ fn process_stmts(stmts: Vec<Stmt>, unresolved_mark: Mark, level: RewriteLevel) -
     }
 
     result
+}
+
+struct ReconstructedGroup {
+    stmt: Stmt,
+    consumed: usize,
+    remove_prior_bindings: Vec<BindingKey>,
+}
+
+fn remove_prior_uninitialized_decls_for_bindings(stmts: &mut Vec<Stmt>, bindings: &[BindingKey]) {
+    let removable: Vec<_> = bindings
+        .iter()
+        .map(|(sym, ctxt)| Ident::new(sym.clone(), DUMMY_SP, *ctxt))
+        .filter(|target| {
+            can_remove_prior_uninitialized_decls_by(
+                stmts,
+                std::slice::from_ref(target),
+                UninitializedDeclKind::Any,
+                same_binding_ident,
+            )
+        })
+        .collect();
+
+    if removable.is_empty() {
+        return;
+    }
+
+    remove_prior_uninitialized_decls_by(
+        stmts,
+        stmts.len(),
+        &removable,
+        UninitializedDeclKind::Any,
+        same_binding_ident,
+    );
+}
+
+fn same_binding_ident(left: &Ident, right: &Ident) -> bool {
+    left.sym == right.sym && left.ctxt == right.ctxt
 }
 
 /// Un-fuses minifier output that inlined an array/object extraction into the
@@ -265,7 +310,7 @@ fn try_reconstruct_group(
     start: usize,
     unresolved_mark: Mark,
     level: RewriteLevel,
-) -> Option<(Stmt, usize)> {
+) -> Option<ReconstructedGroup> {
     try_reconstruct_assignment_group(stmts, start, unresolved_mark)
         .or_else(|| try_reconstruct_ref_group(stmts, start, unresolved_mark))
         .or_else(|| {
@@ -279,7 +324,7 @@ fn try_reconstruct_assignment_group(
     stmts: &[Stmt],
     start: usize,
     unresolved_mark: Mark,
-) -> Option<(Stmt, usize)> {
+) -> Option<ReconstructedGroup> {
     let first = try_extract_assignment_access(stmts, start, None, unresolved_mark)?;
     let source = first.source;
     let init = first.init;
@@ -316,7 +361,11 @@ fn try_reconstruct_assignment_group(
     }
 
     let stmt = build_assignment_destructuring_stmt(accesses, init)?;
-    Some((stmt, i - start))
+    Some(ReconstructedGroup {
+        stmt,
+        consumed: i - start,
+        remove_prior_bindings: removed_temps,
+    })
 }
 
 struct AssignmentAccess {
@@ -756,7 +805,7 @@ fn try_reconstruct_ref_group(
     stmts: &[Stmt],
     start: usize,
     unresolved_mark: Mark,
-) -> Option<(Stmt, usize)> {
+) -> Option<ReconstructedGroup> {
     let ref_decl = extract_ref_decl(stmts.get(start)?)?;
     let ref_key = binding_key(&ref_decl.ident.id);
 
@@ -798,7 +847,11 @@ fn try_reconstruct_ref_group(
     }
 
     let stmt = build_destructuring_stmt(&ref_decl, collected.accesses)?;
-    Some((stmt, i - start))
+    Some(ReconstructedGroup {
+        stmt,
+        consumed: i - start,
+        remove_prior_bindings: Vec::new(),
+    })
 }
 
 struct CollectedAccesses {
@@ -852,7 +905,7 @@ fn try_reconstruct_direct_array_group(
     stmts: &[Stmt],
     start: usize,
     unresolved_mark: Mark,
-) -> Option<(Stmt, usize)> {
+) -> Option<ReconstructedGroup> {
     let (source, group, first_access, consumed, first_temp) =
         try_extract_direct_array_access(stmts, start, None, None, unresolved_mark)?;
 
@@ -913,7 +966,11 @@ fn try_reconstruct_direct_array_group(
 
     let stmt =
         build_direct_array_destructuring_stmt(group, accesses, Box::new(Expr::Ident(source)))?;
-    Some((stmt, i - start))
+    Some(ReconstructedGroup {
+        stmt,
+        consumed: i - start,
+        remove_prior_bindings: Vec::new(),
+    })
 }
 
 fn try_extract_direct_array_access(
