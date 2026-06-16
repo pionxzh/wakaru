@@ -779,3 +779,29 @@ var x = resolve(items, 2);
     let output = render(input);
     insta::assert_snapshot!(output);
 }
+
+#[test]
+fn unwraps_maybe_array_like_sliced_to_array() {
+    let input = r#"
+function _slicedToArray(r, e) {
+    return _arrayWithHoles(r) || _iterableToArrayLimit(r, e) || _nonIterableRest();
+}
+function _nonIterableRest() { throw new TypeError("Invalid attempt"); }
+function _iterableToArrayLimit(r, l) { return [].slice.call(r, 0, l); }
+function _arrayWithHoles(r) { if (Array.isArray(r)) return r; }
+const _pair = pair;
+const _pair2 = _maybeArrayLike(_slicedToArray, _pair, 2);
+const a = _pair2[0];
+const b = _pair2[1];
+use(a, b);
+"#;
+    let output = render(input);
+    assert!(
+        output.contains("const [a, b] = "),
+        "should recover tuple destructuring through _maybeArrayLike:\n{output}"
+    );
+    assert!(
+        !output.contains("_pair2[0]"),
+        "should not have indexed access:\n{output}"
+    );
+}

@@ -67,23 +67,48 @@ impl Default for UnToArray {
 impl VisitMut for UnToArray {
     fn visit_mut_module(&mut self, module: &mut Module) {
         let helpers = collect_to_array_bindings(module);
-        if helpers.is_empty() {
-            return;
+        if !helpers.is_empty() {
+            let mut replacer = ToArrayUnwrapper { helpers: &helpers };
+            module.visit_mut_with(&mut replacer);
+
+            let remaining = remaining_refs_outside_declarations(module, &helpers, &helpers);
+            let removable: HashSet<BindingKey> = helpers.difference(&remaining).cloned().collect();
+            if !removable.is_empty() {
+                remove_import_specifiers_by_binding(&mut module.body, &removable);
+                remove_fn_decls_by_binding(module, &removable);
+                remove_var_declarators_by_binding(&mut module.body, &removable);
+            }
         }
 
-        let mut replacer = ToArrayUnwrapper { helpers: &helpers };
-        module.visit_mut_with(&mut replacer);
+        module.visit_mut_with(&mut MaybeArrayLikeUnwrapper);
+    }
+}
 
-        // Drop the helper declaration/import once every call site has been
-        // unwrapped. `remaining_refs_outside_declarations` skips the helper's
-        // own declarations and import specifiers, so a binding only survives
-        // here if a real call site still references it.
-        let remaining = remaining_refs_outside_declarations(module, &helpers, &helpers);
-        let removable: HashSet<BindingKey> = helpers.difference(&remaining).cloned().collect();
-        if !removable.is_empty() {
-            remove_import_specifiers_by_binding(&mut module.body, &removable);
-            remove_fn_decls_by_binding(module, &removable);
-            remove_var_declarators_by_binding(&mut module.body, &removable);
+struct MaybeArrayLikeUnwrapper;
+
+impl VisitMut for MaybeArrayLikeUnwrapper {
+    fn visit_mut_var_declarator(&mut self, declarator: &mut VarDeclarator) {
+        declarator.visit_mut_children_with(self);
+        if !is_array_rest_pat(&declarator.name) {
+            return;
+        }
+        if let Some(init) = &declarator.init {
+            if let Some(arg) = unwrap_maybe_array_like(init) {
+                declarator.init = Some(arg);
+            }
+        }
+    }
+
+    fn visit_mut_assign_expr(&mut self, assign: &mut AssignExpr) {
+        assign.visit_mut_children_with(self);
+        if assign.op != AssignOp::Assign {
+            return;
+        }
+        if !is_array_rest_assign_target(&assign.left) {
+            return;
+        }
+        if let Some(arg) = unwrap_maybe_array_like(&assign.right) {
+            assign.right = arg;
         }
     }
 }
@@ -93,8 +118,7 @@ struct ToArrayUnwrapper<'a> {
 }
 
 impl ToArrayUnwrapper<'_> {
-    /// `_toArray(arg)` -> `arg`, when the callee is a known `toArray` helper
-    /// binding and the call has a single non-spread argument.
+    /// `_toArray(arg)` -> `arg`.
     fn unwrap(&self, expr: &Expr) -> Option<Box<Expr>> {
         let Expr::Call(call) = expr else {
             return None;
@@ -113,6 +137,33 @@ impl ToArrayUnwrapper<'_> {
         }
         Some(call.args[0].expr.clone())
     }
+}
+
+/// `_maybeArrayLike(helperRef, source)` -> `source` on an array-rest init.
+///
+/// Babel emits this wrapper when the `arrayLikeIsIterable` assumption is on.
+/// The wrapper adds array-like tolerance that native destructuring doesn't need,
+/// so stripping it is safe under the same `rest_source_is_iterable` assumption.
+fn unwrap_maybe_array_like(expr: &Expr) -> Option<Box<Expr>> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+    let Expr::Ident(id) = callee.as_ref() else {
+        return None;
+    };
+    if !matches!(id.sym.as_ref(), "_maybeArrayLike" | "_maybe_array_like") {
+        return None;
+    }
+    if call.args.len() != 2 || call.args.iter().any(|a| a.spread.is_some()) {
+        return None;
+    }
+    if !matches!(call.args[0].expr.as_ref(), Expr::Ident(_)) {
+        return None;
+    }
+    Some(call.args[1].expr.clone())
 }
 
 impl VisitMut for ToArrayUnwrapper<'_> {
@@ -142,6 +193,18 @@ impl VisitMut for ToArrayUnwrapper<'_> {
             assign.right = arg;
         }
     }
+}
+
+fn is_array_rest_pat(pat: &Pat) -> bool {
+    let Pat::Array(arr) = pat else { return false };
+    arr.elems.iter().any(|e| matches!(e, Some(Pat::Rest(_))))
+}
+
+fn is_array_rest_assign_target(target: &AssignTarget) -> bool {
+    let AssignTarget::Pat(AssignTargetPat::Array(arr)) = target else {
+        return false;
+    };
+    arr.elems.iter().any(|e| matches!(e, Some(Pat::Rest(_))))
 }
 
 fn collect_to_array_bindings(module: &Module) -> HashSet<BindingKey> {

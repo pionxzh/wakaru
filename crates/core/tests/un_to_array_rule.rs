@@ -128,3 +128,25 @@ use(first, rest_items);
 "#;
     assert_eq_normalized(&render(input), expected);
 }
+
+#[test]
+fn unwraps_maybe_array_like_to_array_on_rest_pattern() {
+    let input = r#"
+var [first, ...rest] = _maybeArrayLike(_toArray, items);
+use(first, rest);
+"#;
+    let expected = r#"
+var [first, ...rest] = items;
+use(first, rest);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn preserves_maybe_array_like_on_non_rest_pattern() {
+    let input = r#"
+var [a, b] = _maybeArrayLike(_slicedToArray, pair, 2);
+use(a, b);
+"#;
+    assert_eq_normalized(&apply(input), input);
+}

@@ -695,19 +695,9 @@ fn extract_sliced_to_array_assignment_stmt(
     let Expr::Call(call) = strip_parens(tuple_assign.right.as_ref()) else {
         return None;
     };
-    let Callee::Expr(callee) = &call.callee else {
-        return None;
-    };
-    if !is_sliced_to_array_callee(callee, local_helpers, cross_module_helpers) {
-        return None;
-    }
-    if call.args.len() != 2 {
-        return None;
-    }
-    let Expr::Lit(Lit::Num(num)) = call.args[1].expr.as_ref() else {
-        return None;
-    };
-    let length = numeric_length(num.value)?;
+
+    let (source, length_val) = extract_sliced_call_args(call, local_helpers, cross_module_helpers)?;
+    let length = numeric_length(length_val)?;
 
     Some((
         BindingIdent {
@@ -719,7 +709,7 @@ fn extract_sliced_to_array_assignment_stmt(
                 id: tuple,
                 type_ann: None,
             },
-            source: call.args[0].expr.clone(),
+            source: Box::new(source.clone()),
             source_ref: None,
             length: Some(length),
         },
@@ -741,26 +731,16 @@ fn extract_sliced_to_array_ref_assignment_stmt(
     let Expr::Call(call) = strip_parens(assign.right.as_ref()) else {
         return None;
     };
-    let Callee::Expr(callee) = &call.callee else {
-        return None;
-    };
-    if !is_sliced_to_array_callee(callee, local_helpers, cross_module_helpers) {
-        return None;
-    }
-    if call.args.len() != 2 {
-        return None;
-    }
-    let Expr::Lit(Lit::Num(num)) = call.args[1].expr.as_ref() else {
-        return None;
-    };
-    let length = numeric_length(num.value)?;
+
+    let (source, length_val) = extract_sliced_call_args(call, local_helpers, cross_module_helpers)?;
+    let length = numeric_length(length_val)?;
 
     Some(SlicedExtraction {
         ref_binding: BindingIdent {
             id: tuple,
             type_ann: None,
         },
-        source: call.args[0].expr.clone(),
+        source: Box::new(source.clone()),
         source_ref: None,
         length: Some(length),
     })
@@ -930,23 +910,12 @@ fn extract_sliced_to_array_decl(
             }
         });
     };
-    let Callee::Expr(callee) = &call.callee else {
-        return None;
-    };
 
-    if !is_sliced_to_array_callee(callee, local_helpers, cross_module_helpers) {
-        return None;
-    }
-    if call.args.len() != 2 {
-        return None;
-    }
-    let Expr::Lit(Lit::Num(num)) = call.args[1].expr.as_ref() else {
-        return None;
-    };
-    let length = numeric_length(num.value)?;
+    let (source, length_val) = extract_sliced_call_args(call, local_helpers, cross_module_helpers)?;
+    let length = numeric_length(length_val)?;
     Some(SlicedExtraction {
         ref_binding: binding.clone(),
-        source: call.args[0].expr.clone(),
+        source: Box::new(source.clone()),
         source_ref: None,
         length: Some(length),
     })
@@ -1022,39 +991,25 @@ fn try_unwrap_sliced_to_array(
     let Expr::Call(call) = init.as_ref() else {
         return;
     };
-    let Callee::Expr(callee) = &call.callee else {
+
+    let Some((source, length_val)) =
+        extract_sliced_call_args(call, local_helpers, cross_module_helpers)
+    else {
         return;
     };
-
-    if !is_sliced_to_array_callee(callee, local_helpers, cross_module_helpers) {
-        return;
-    }
-
-    // Must be exactly 2 args: (expr, numericLength)
-    if call.args.len() != 2 {
-        return;
-    }
-
-    let Expr::Lit(Lit::Num(num)) = call.args[1].expr.as_ref() else {
-        return;
-    };
-    let Some(length) = numeric_length(num.value) else {
+    let Some(length) = numeric_length(length_val) else {
         return;
     };
 
     if length == 0 {
-        // var [] = expr
         decl.name = Pat::Array(ArrayPat {
             span: DUMMY_SP,
             elems: vec![],
             optional: false,
             type_ann: None,
         });
-        decl.init = Some(call.args[0].expr.clone());
-    } else {
-        // var _ref = expr (unwrap the helper call, keep the binding)
-        decl.init = Some(call.args[0].expr.clone());
     }
+    decl.init = Some(Box::new(source.clone()));
 }
 
 fn is_sliced_to_array_callee(
@@ -1072,6 +1027,50 @@ fn is_sliced_to_array_callee(
         )
         || cross_module_member_helper_kind(callee, &cross_module_helpers.namespaces)
             == Some(TranspilerHelperKind::SlicedToArray)
+}
+
+/// Extract `(source, length)` from either `_slicedToArray(src, n)` or
+/// `_maybeArrayLike(_slicedToArray, src, n)`.
+fn extract_sliced_call_args<'a>(
+    call: &'a swc_core::ecma::ast::CallExpr,
+    local_helpers: &LocalHelperContext,
+    cross_module_helpers: &CrossModuleHelperRefs,
+) -> Option<(&'a Expr, f64)> {
+    let Callee::Expr(callee) = &call.callee else {
+        return None;
+    };
+
+    if is_sliced_to_array_callee(callee, local_helpers, cross_module_helpers)
+        && call.args.len() == 2
+    {
+        let Expr::Lit(Lit::Num(num)) = call.args[1].expr.as_ref() else {
+            return None;
+        };
+        return Some((call.args[0].expr.as_ref(), num.value));
+    }
+
+    if call.args.len() == 3
+        && is_maybe_array_like_callee(callee)
+        && is_sliced_to_array_callee(
+            call.args[0].expr.as_ref(),
+            local_helpers,
+            cross_module_helpers,
+        )
+    {
+        let Expr::Lit(Lit::Num(num)) = call.args[2].expr.as_ref() else {
+            return None;
+        };
+        return Some((call.args[1].expr.as_ref(), num.value));
+    }
+
+    None
+}
+
+fn is_maybe_array_like_callee(callee: &Expr) -> bool {
+    matches!(
+        callee,
+        Expr::Ident(id) if matches!(id.sym.as_ref(), "_maybeArrayLike" | "_maybe_array_like")
+    )
 }
 
 fn numeric_length(value: f64) -> Option<usize> {
