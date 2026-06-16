@@ -4,7 +4,7 @@ use common::assert_eq_normalized;
 use wakaru_core::{decompile, DecompileOptions, RewriteLevel};
 
 #[test]
-fn dead_code_elimination_can_be_disabled() {
+fn dce_mode_off_preserves_dead_code() {
     let input = r#"
 import unused from "./x.js";
 function helper() { return 1; }
@@ -15,7 +15,6 @@ export const value = 2;
         input,
         DecompileOptions {
             filename: "fixture.js".to_string(),
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -31,7 +30,7 @@ export const value = 2;
 }
 
 #[test]
-fn dead_code_elimination_is_off_by_default() {
+fn dce_mode_is_off_by_default() {
     let input = r#"
 import unused from "./x.js";
 function helper() { return 1; }
@@ -59,7 +58,7 @@ export const value = 2;
 }
 
 #[test]
-fn dead_code_elimination_opt_in_removes_dead_code() {
+fn dce_mode_full_removes_dead_code() {
     let input = r#"
 import unused from "./x.js";
 function helper() { return 1; }
@@ -70,7 +69,7 @@ export const value = 2;
         input,
         DecompileOptions {
             filename: "fixture.js".to_string(),
-            dead_code_elimination: true,
+            dce_mode: wakaru_core::DceMode::Full,
             ..Default::default()
         },
     )
@@ -272,7 +271,6 @@ const fn = function() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -295,7 +293,6 @@ const fn = function() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -379,7 +376,6 @@ bar(t);
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -409,7 +405,6 @@ function readBeforeInit() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -439,7 +434,6 @@ bar(t);
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -465,7 +459,6 @@ fn minimal_disables_iife_param_rewrites() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -489,7 +482,6 @@ fn standard_keeps_iife_param_rewrites() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -518,7 +510,6 @@ function fn() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -544,7 +535,6 @@ function fn() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -570,7 +560,6 @@ function fn() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -599,7 +588,6 @@ function fn() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Aggressive,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -624,7 +612,6 @@ fn minimal_disables_argument_spread_recovery() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -643,7 +630,6 @@ fn minimal_disables_array_concat_spread_recovery() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -662,7 +648,6 @@ fn standard_keeps_argument_spread_recovery() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -682,7 +667,6 @@ fn minimal_disables_array_concat_spread_recovery_for_call_args() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -701,7 +685,6 @@ fn standard_keeps_array_concat_spread_recovery() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -726,7 +709,6 @@ function foo(a) {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -756,7 +738,6 @@ function foo(a) {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -785,7 +766,6 @@ function foo(options) {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -809,7 +789,6 @@ function foo(options) {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -833,7 +812,6 @@ fn minimal_disables_esm_reconstruction() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -852,7 +830,6 @@ fn standard_keeps_esm_reconstruction() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -872,7 +849,6 @@ fn minimal_disables_type_constructor_recovery() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -891,7 +867,6 @@ fn standard_keeps_type_constructor_recovery() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -917,7 +892,6 @@ var User = (function () {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -949,7 +923,6 @@ var User = (function () {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -985,7 +958,6 @@ class Foo {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -1025,7 +997,6 @@ class Foo {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -1062,7 +1033,6 @@ class Foo {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -1099,7 +1069,6 @@ class Foo {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -1139,7 +1108,6 @@ _Foo_x = new WeakMap();
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -1177,7 +1145,6 @@ _Foo_x = new WeakMap();
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -1201,7 +1168,6 @@ function foo() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -1224,7 +1190,6 @@ function foo() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -1248,7 +1213,6 @@ fn minimal_disables_for_of_recovery() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Minimal,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )
@@ -1267,7 +1231,6 @@ fn standard_keeps_for_of_recovery() {
         DecompileOptions {
             filename: "fixture.js".to_string(),
             level: RewriteLevel::Standard,
-            dead_code_elimination: false,
             ..Default::default()
         },
     )

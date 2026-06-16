@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use swc_core::common::{BytePos, Span, DUMMY_SP};
 use swc_core::ecma::ast::{
     ArrowExpr, BlockStmt, BlockStmtOrExpr, Class, Decl, Expr, Function, Ident, ImportDecl, Lit,
     MemberProp, Module, ModuleItem, Pat, PropName, Stmt, VarDecl, VarDeclarator,
@@ -12,21 +13,48 @@ use super::eval_utils::{direct_eval_call_source, js_source_mentions_binding, Eva
 use super::helper_matcher::BindingKey;
 use crate::utils::paren::strip_parens;
 
-pub struct DeadDecls;
+pub struct DeadDecls {
+    pre_dead_spans: Option<HashSet<(BytePos, BytePos)>>,
+}
+
+impl DeadDecls {
+    pub fn full() -> Self {
+        Self {
+            pre_dead_spans: None,
+        }
+    }
+
+    pub fn delta(pre_dead_spans: &HashSet<(BytePos, BytePos)>) -> Self {
+        Self {
+            pre_dead_spans: Some(pre_dead_spans.clone()),
+        }
+    }
+}
 
 impl VisitMut for DeadDecls {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let candidates = collect_removable_bindings(module);
-        if candidates.is_empty() {
+        let candidates_with_spans = collect_removable_bindings_with_spans(module);
+        if candidates_with_spans.is_empty() {
             return;
         }
 
+        let candidates: HashSet<BindingKey> = candidates_with_spans.keys().cloned().collect();
         let alive = compute_alive(module, &candidates);
 
-        let dead: HashSet<BindingKey> = candidates
+        let mut dead: HashSet<BindingKey> = candidates
             .into_iter()
             .filter(|key| !alive.contains(key))
             .collect();
+
+        if let Some(pre_dead_spans) = &self.pre_dead_spans {
+            dead.retain(|key| {
+                let span = candidates_with_spans.get(key).copied().unwrap_or(DUMMY_SP);
+                if span == DUMMY_SP {
+                    return true;
+                }
+                !pre_dead_spans.contains(&(span.lo, span.hi))
+            });
+        }
 
         if dead.is_empty() {
             return;
@@ -499,15 +527,29 @@ fn is_helper_init(expr: &Expr) -> bool {
     matches!(expr, Expr::Fn(_) | Expr::Arrow(_))
 }
 
-fn collect_removable_bindings(module: &Module) -> HashSet<BindingKey> {
-    let mut bindings = HashSet::new();
+pub(crate) fn compute_pre_dead_decl_spans(module: &Module) -> HashSet<(BytePos, BytePos)> {
+    let candidates_with_spans = collect_removable_bindings_with_spans(module);
+    if candidates_with_spans.is_empty() {
+        return HashSet::new();
+    }
+    let candidates: HashSet<BindingKey> = candidates_with_spans.keys().cloned().collect();
+    let alive = compute_alive(module, &candidates);
+    candidates_with_spans
+        .into_iter()
+        .filter(|(key, span)| !alive.contains(key) && *span != DUMMY_SP)
+        .map(|(_, span)| (span.lo, span.hi))
+        .collect()
+}
+
+fn collect_removable_bindings_with_spans(module: &Module) -> HashMap<BindingKey, Span> {
+    let mut bindings = HashMap::new();
     let mut poisoned = HashSet::new();
     for item in &module.body {
         match item {
             ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => {
                 let key = (fn_decl.ident.sym.clone(), fn_decl.ident.ctxt);
                 if !poisoned.contains(&key) {
-                    bindings.insert(key);
+                    bindings.insert(key, fn_decl.ident.span);
                 }
             }
             ModuleItem::Stmt(Stmt::Decl(Decl::Var(var_decl))) => {
@@ -522,7 +564,7 @@ fn collect_removable_bindings(module: &Module) -> HashSet<BindingKey> {
                     };
                     if is_helper {
                         if !poisoned.contains(&key) {
-                            bindings.insert(key);
+                            bindings.insert(key, ident.span);
                         }
                     } else {
                         bindings.remove(&key);

@@ -17,27 +17,39 @@
 use std::collections::HashSet;
 
 use swc_core::atoms::Atom;
-use swc_core::common::SyntaxContext;
+use swc_core::common::{BytePos, SyntaxContext, DUMMY_SP};
 use swc_core::ecma::ast::{
     Ident, ImportDecl, ImportSpecifier, MemberProp, Module, ModuleDecl, ModuleItem, PropName, Str,
 };
 use swc_core::ecma::visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
-pub struct DeadImports;
+pub struct DeadImports {
+    pre_dead_spans: Option<HashSet<(BytePos, BytePos)>>,
+}
+
+impl DeadImports {
+    pub fn full() -> Self {
+        Self {
+            pre_dead_spans: None,
+        }
+    }
+
+    pub fn delta(pre_dead_spans: &HashSet<(BytePos, BytePos)>) -> Self {
+        Self {
+            pre_dead_spans: Some(pre_dead_spans.clone()),
+        }
+    }
+}
 
 impl VisitMut for DeadImports {
     fn visit_mut_module(&mut self, module: &mut Module) {
-        let mut collector = ReferenceCollector {
-            refs: HashSet::new(),
-        };
-        module.visit_with(&mut collector);
-        let referenced = collector.refs;
+        let referenced = collect_references(module);
 
         for item in &mut module.body {
             let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
                 continue;
             };
-            strip_unused_specifiers(import, &referenced);
+            strip_unused_specifiers(import, &referenced, self.pre_dead_spans.as_ref());
         }
         dedup_side_effect_imports(module);
 
@@ -45,14 +57,55 @@ impl VisitMut for DeadImports {
     }
 }
 
-fn strip_unused_specifiers(import: &mut ImportDecl, referenced: &HashSet<(Atom, SyntaxContext)>) {
-    import.specifiers.retain(|spec| {
-        let (sym, ctxt) = match spec {
-            ImportSpecifier::Default(s) => (s.local.sym.clone(), s.local.ctxt),
-            ImportSpecifier::Namespace(s) => (s.local.sym.clone(), s.local.ctxt),
-            ImportSpecifier::Named(s) => (s.local.sym.clone(), s.local.ctxt),
+fn collect_references(module: &Module) -> HashSet<(Atom, SyntaxContext)> {
+    let mut collector = ReferenceCollector {
+        refs: HashSet::new(),
+    };
+    module.visit_with(&mut collector);
+    collector.refs
+}
+
+pub(crate) fn compute_pre_dead_import_spans(module: &Module) -> HashSet<(BytePos, BytePos)> {
+    let referenced = collect_references(module);
+    let mut dead_spans = HashSet::new();
+    for item in &module.body {
+        let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+            continue;
         };
-        referenced.contains(&(sym, ctxt))
+        for spec in &import.specifiers {
+            let (sym, ctxt, span) = match spec {
+                ImportSpecifier::Default(s) => (s.local.sym.clone(), s.local.ctxt, s.local.span),
+                ImportSpecifier::Namespace(s) => (s.local.sym.clone(), s.local.ctxt, s.local.span),
+                ImportSpecifier::Named(s) => (s.local.sym.clone(), s.local.ctxt, s.local.span),
+            };
+            if !referenced.contains(&(sym, ctxt)) && span != DUMMY_SP {
+                dead_spans.insert((span.lo, span.hi));
+            }
+        }
+    }
+    dead_spans
+}
+
+fn strip_unused_specifiers(
+    import: &mut ImportDecl,
+    referenced: &HashSet<(Atom, SyntaxContext)>,
+    pre_dead_spans: Option<&HashSet<(BytePos, BytePos)>>,
+) {
+    import.specifiers.retain(|spec| {
+        let (sym, ctxt, span) = match spec {
+            ImportSpecifier::Default(s) => (s.local.sym.clone(), s.local.ctxt, s.local.span),
+            ImportSpecifier::Namespace(s) => (s.local.sym.clone(), s.local.ctxt, s.local.span),
+            ImportSpecifier::Named(s) => (s.local.sym.clone(), s.local.ctxt, s.local.span),
+        };
+        if referenced.contains(&(sym, ctxt)) {
+            return true;
+        }
+        if let Some(pre_dead) = pre_dead_spans {
+            if span != DUMMY_SP && pre_dead.contains(&(span.lo, span.hi)) {
+                return true;
+            }
+        }
+        false
     });
 }
 

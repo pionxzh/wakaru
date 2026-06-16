@@ -2,6 +2,24 @@ use std::fmt;
 
 use crate::rules::RewriteLevel;
 
+/// Controls how dead-code elimination behaves in the pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DceMode {
+    /// No dead-code cleanup.
+    Off,
+    /// Remove only transform-induced dead code: items that became dead because
+    /// of pipeline rewrites. Pre-existing dead code in the input is preserved.
+    TransformOnly,
+    /// Remove all dead code (full reachability sweep).
+    Full,
+}
+
+impl DceMode {
+    pub fn is_enabled(self) -> bool {
+        self != DceMode::Off
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DecompileOptions {
     pub filename: String,
@@ -9,10 +27,8 @@ pub struct DecompileOptions {
     /// - Import deduplication (merges repeated imports of the same specifier)
     /// - Source-map-driven identifier rename (recovers original variable names)
     pub sourcemap: Option<Vec<u8>>,
-    /// Run late dead-code-elimination cleanup (`DeadImports`, `DeadDecls`).
-    /// Disable this in tests that want to snapshot structural restoration
-    /// separately from cleanup.
-    pub dead_code_elimination: bool,
+    /// Controls late dead-code-elimination cleanup (`DeadImports`, `DeadDecls`).
+    pub dce_mode: DceMode,
     /// Controls how aggressively wakaru recovers likely original source patterns.
     pub level: RewriteLevel,
     /// When true, attempt heuristic splitting of scope-hoisted bundles
@@ -30,7 +46,7 @@ impl Default for DecompileOptions {
         Self {
             filename: String::new(),
             sourcemap: None,
-            dead_code_elimination: false,
+            dce_mode: DceMode::Off,
             level: RewriteLevel::Standard,
             heuristic_split: false,
             diagnostics: false,

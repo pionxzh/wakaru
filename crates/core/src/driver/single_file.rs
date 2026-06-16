@@ -40,7 +40,7 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOut
                 &mut module,
                 unresolved_mark,
                 RulePipelineOptions::default()
-                    .with_dead_code_elimination(options.dead_code_elimination)
+                    .with_dce_mode(options.dce_mode)
                     .with_rewrite_level(options.level),
             );
         }

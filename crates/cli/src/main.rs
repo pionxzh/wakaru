@@ -9,7 +9,7 @@ use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::prelude::*;
 use wakaru_core::{
     decompile, extract_source_entries, format_trace_events, normalize, parse_sourcemap,
-    trace_rules, unpack, unpack_files, unpack_files_raw, unpack_raw, DecompileOptions,
+    trace_rules, unpack, unpack_files, unpack_files_raw, unpack_raw, DceMode, DecompileOptions,
     NormalizeOptions, RewriteLevel, RuleTraceOptions, UnpackInput,
 };
 
@@ -94,6 +94,12 @@ struct Cli {
     /// Rewrite aggressiveness level.
     #[arg(long, default_value = "standard", value_enum)]
     level: CliRewriteLevel,
+
+    /// Remove all dead code (full reachability sweep). By default, only
+    /// transform-induced dead code is removed; pre-existing dead code in the
+    /// input is preserved.
+    #[arg(long)]
+    dce: bool,
 
     /// Run post-transform diagnostic checks and print results to stderr.
     #[arg(long)]
@@ -235,13 +241,18 @@ fn run_default(cli: Cli) -> Result<()> {
             .first()
             .map(|input| input.filename.clone())
             .unwrap_or_default();
+        let dce_mode = if cli.dce {
+            DceMode::Full
+        } else {
+            DceMode::TransformOnly
+        };
         let options = DecompileOptions {
             filename,
             sourcemap: sourcemap_bytes,
+            dce_mode,
             level: cli.level.into(),
             heuristic_split,
             diagnostics: cli.diagnostics,
-            ..Default::default()
         };
 
         let out_dir = cli.output.expect("checked above");
@@ -327,13 +338,18 @@ fn run_default(cli: Cli) -> Result<()> {
         let (input, filename) = read_input(cli.inputs.first())?;
         let output_filename = filename.clone();
         let sourcemap_bytes = read_sourcemap(cli.sourcemap.as_ref())?;
+        let dce_mode = if cli.dce {
+            DceMode::Full
+        } else {
+            DceMode::TransformOnly
+        };
         let options = DecompileOptions {
             filename,
             sourcemap: sourcemap_bytes,
+            dce_mode,
             level: cli.level.into(),
             heuristic_split,
             diagnostics: cli.diagnostics,
-            ..Default::default()
         };
         let output = decompile(&input, options)?;
 

@@ -8,7 +8,7 @@ fn render_with_dce(source: &str) -> String {
         source,
         DecompileOptions {
             filename: "fixture.js".to_string(),
-            dead_code_elimination: true,
+            dce_mode: wakaru_core::DceMode::Full,
             ..Default::default()
         },
     )

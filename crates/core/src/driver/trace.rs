@@ -95,7 +95,7 @@ pub fn trace_rules(
                 RulePipelineOptions {
                     start_from: trace_options.start_from.as_deref(),
                     stop_after: trace_options.stop_after.as_deref(),
-                    dead_code_elimination: options.dead_code_elimination,
+                    dce_mode: options.dce_mode,
                     rewrite_level: options.level,
                     module_facts: None,
                 },

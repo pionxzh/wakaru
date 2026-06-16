@@ -113,7 +113,6 @@ fn webpack4_unpack_snapshots() {
         &source,
         DecompileOptions {
             filename: source_path.to_string(),
-            dead_code_elimination: false,
             ..Default::default()
         },
     )

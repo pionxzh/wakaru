@@ -48,7 +48,7 @@ pub fn unpack(source: &str, options: DecompileOptions) -> Result<UnpackOutput> {
         None if options.heuristic_split => match scope_hoist::split_scope_hoisted(source) {
             Some(result) if result.modules.len() > 1 => {
                 let mut opts = options.clone();
-                opts.dead_code_elimination = false;
+                opts.dce_mode = super::types::DceMode::Off;
                 unpack_unpack_result(result, opts)
             }
             _ => {

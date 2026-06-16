@@ -6,7 +6,10 @@ use swc_core::ecma::ast::Module;
 use swc_core::ecma::visit::VisitMutWith;
 
 use crate::facts::ModuleFactsMap;
+use crate::DceMode;
 
+use super::dead_decls::compute_pre_dead_decl_spans;
+use super::dead_imports::compute_pre_dead_import_spans;
 use super::transpiler_helper_utils::LocalHelperContext;
 use super::*;
 
@@ -62,10 +65,18 @@ impl RuleDescriptor {
 struct RuleRunContext<'a> {
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
-    dead_code_elimination: bool,
+    dce_mode: DceMode,
     module_facts: Option<&'a ModuleFactsMap>,
     local_helpers: Rc<RefCell<Option<Rc<LocalHelperContext>>>>,
     extracted_function_names: SharedExtractedFunctionNames,
+    pre_dead: Option<Rc<PreDeadSet>>,
+}
+
+pub(super) struct PreDeadSet {
+    pub decl_spans:
+        std::collections::HashSet<(swc_core::common::BytePos, swc_core::common::BytePos)>,
+    pub import_spans:
+        std::collections::HashSet<(swc_core::common::BytePos, swc_core::common::BytePos)>,
 }
 
 impl RuleRunContext<'_> {
@@ -89,7 +100,7 @@ fn always_enabled(_: RuleRunContext<'_>) -> bool {
 }
 
 fn dead_code_elimination_enabled(ctx: RuleRunContext<'_>) -> bool {
-    ctx.dead_code_elimination
+    ctx.dce_mode.is_enabled()
 }
 
 fn standard_or_above(ctx: RuleRunContext<'_>) -> bool {
@@ -387,8 +398,30 @@ runner!(run_smart_rename_second_pass, |ctx| {
     )
 });
 runner!(run_dead_uninitialized_decls, DeadUninitializedDecls);
-runner!(run_dead_decls, DeadDecls);
-runner!(run_dead_imports, DeadImports);
+
+fn run_dead_decls(module: &mut Module, ctx: RuleRunContext<'_>) {
+    match ctx.dce_mode {
+        DceMode::Full => module.visit_mut_with(&mut DeadDecls::full()),
+        DceMode::TransformOnly => {
+            if let Some(pre_dead) = ctx.pre_dead.as_ref() {
+                module.visit_mut_with(&mut DeadDecls::delta(&pre_dead.decl_spans));
+            }
+        }
+        DceMode::Off => {}
+    }
+}
+
+fn run_dead_imports(module: &mut Module, ctx: RuleRunContext<'_>) {
+    match ctx.dce_mode {
+        DceMode::Full => module.visit_mut_with(&mut DeadImports::full()),
+        DceMode::TransformOnly => {
+            if let Some(pre_dead) = ctx.pre_dead.as_ref() {
+                module.visit_mut_with(&mut DeadImports::delta(&pre_dead.import_spans));
+            }
+        }
+        DceMode::Off => {}
+    }
+}
 runner!(run_un_return, UnReturn);
 
 define_rule_registry! {
@@ -628,7 +661,7 @@ define_rule_registry! {
 pub struct RulePipelineOptions<'a> {
     pub start_from: Option<&'a str>,
     pub stop_after: Option<&'a str>,
-    pub dead_code_elimination: bool,
+    pub dce_mode: DceMode,
     pub rewrite_level: RewriteLevel,
     pub module_facts: Option<&'a ModuleFactsMap>,
 }
@@ -638,7 +671,7 @@ impl Default for RulePipelineOptions<'_> {
         Self {
             start_from: None,
             stop_after: None,
-            dead_code_elimination: true,
+            dce_mode: DceMode::Full,
             rewrite_level: RewriteLevel::Standard,
             module_facts: None,
         }
@@ -661,8 +694,8 @@ impl<'a> RulePipelineOptions<'a> {
         }
     }
 
-    pub fn with_dead_code_elimination(mut self, dead_code_elimination: bool) -> Self {
-        self.dead_code_elimination = dead_code_elimination;
+    pub fn with_dce_mode(mut self, dce_mode: DceMode) -> Self {
+        self.dce_mode = dce_mode;
         self
     }
 
@@ -706,13 +739,22 @@ fn apply_rules_impl(
     options: RulePipelineOptions<'_>,
     mut observer: Option<&mut dyn FnMut(&'static str, &Module)>,
 ) {
+    let pre_dead = if options.dce_mode == DceMode::TransformOnly {
+        Some(Rc::new(PreDeadSet {
+            decl_spans: compute_pre_dead_decl_spans(module),
+            import_spans: compute_pre_dead_import_spans(module),
+        }))
+    } else {
+        None
+    };
     let ctx = RuleRunContext {
         unresolved_mark,
         rewrite_level: options.rewrite_level,
-        dead_code_elimination: options.dead_code_elimination,
+        dce_mode: options.dce_mode,
         module_facts: options.module_facts,
         local_helpers: Rc::new(RefCell::new(None)),
         extracted_function_names: Rc::new(RefCell::new(ExtractedFunctionNames::new())),
+        pre_dead,
     };
     let mut started = options.start_from.is_none();
 

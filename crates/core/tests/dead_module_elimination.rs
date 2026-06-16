@@ -44,10 +44,10 @@ export const x = _extends({}, app_info, base_info);
 }
 
 // Dead-module elimination is itself dead-code cleanup: the binding->side-effect
-// import downgrade it relies on only happens when `dead_code_elimination` is on.
+// import downgrade it relies on only happens when `dce_mode` is enabled.
 fn dce_options() -> DecompileOptions {
     DecompileOptions {
-        dead_code_elimination: true,
+        dce_mode: wakaru_core::DceMode::Full,
         ..Default::default()
     }
 }
@@ -159,7 +159,7 @@ fn minimal_level_keeps_helper_module() {
     let output = unpack_files(
         helper_and_consumer(),
         DecompileOptions {
-            dead_code_elimination: true,
+            dce_mode: wakaru_core::DceMode::Full,
             level: RewriteLevel::Minimal,
             ..Default::default()
         },

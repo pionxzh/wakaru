@@ -130,7 +130,7 @@ pub(super) fn unpack_multi_module_with_plan(
     // binding->side-effect import downgrade that only runs when DCE is on, and
     // dropping a module is structural, so gate it to standard+ as well.
     let eliminate_dead_modules =
-        options.dead_code_elimination && !matches!(options.level, RewriteLevel::Minimal);
+        options.dce_mode.is_enabled() && !matches!(options.level, RewriteLevel::Minimal);
 
     // Phase 1: collect facts. Run the through-UnEsm normalization range on each
     // module and extract import/export facts. For normal unpacking, keep that
@@ -287,7 +287,7 @@ pub(super) fn unpack_multi_module_with_plan(
                     &mut module,
                     unresolved_mark,
                     RulePipelineOptions::between("UnObjectSpread2", "UnReturn")
-                        .with_dead_code_elimination(options.dead_code_elimination)
+                        .with_dce_mode(options.dce_mode)
                         .with_rewrite_level(options.level)
                         .with_module_facts(facts_ref),
                 );
@@ -703,7 +703,6 @@ export { helper };
             modules,
             DecompileOptions {
                 level: RewriteLevel::Minimal,
-                dead_code_elimination: false,
                 ..Default::default()
             },
         )
