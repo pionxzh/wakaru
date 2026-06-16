@@ -167,6 +167,7 @@ impl LocalHelperContext {
         if !removable.is_empty() {
             remove_var_declarators_by_binding(&mut module.body, &removable);
             remove_fn_decls_from_body_by_binding(&mut module.body, &removable);
+            remove_import_specifiers_by_binding(&mut module.body, &removable);
         }
     }
 

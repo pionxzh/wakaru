@@ -5,8 +5,8 @@ use swc_core::ecma::ast::{Callee, Expr, Module, UnaryExpr, UnaryOp};
 use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::helper_matcher::{
-    binding_key, remaining_refs_outside_var_declarators, remove_var_declarators_by_binding,
-    BindingKey,
+    binding_key, remaining_refs_outside_var_declarators, remove_import_specifiers_by_binding,
+    remove_var_declarators_by_binding, BindingKey,
 };
 use super::transpiler_helper_utils::{LocalHelperContext, TranspilerHelperKind};
 
@@ -54,6 +54,7 @@ fn run_un_typeof_polyfill(module: &mut Module, local_helpers: &LocalHelperContex
     let safe_to_remove: HashSet<BindingKey> = helpers.difference(&remaining).cloned().collect();
     if !safe_to_remove.is_empty() {
         remove_var_declarators_by_binding(&mut module.body, &safe_to_remove);
+        remove_import_specifiers_by_binding(&mut module.body, &safe_to_remove);
     }
 }
 
