@@ -4,6 +4,7 @@ import {
   runMatrix, batchRunner, terserBatch, withTerserVariants,
   ensureNodeTool, standardLowerers,
 } from "../lib/runner.mjs";
+import { matchesAnyForm, prewarmNormalize } from "../lib/compare.mjs";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -306,8 +307,30 @@ if (tupleSnippet) {
   ];
 }
 
+function validateRecovered({ snippet, shape, recovered }) {
+  if (!shape.tools.some((tool) => tool.includes("mangle"))) {
+    return undefined;
+  }
+  const forms = [snippet.source, ...(snippet.acceptForms ?? [])];
+  if (matchesAnyForm(recovered, forms)) {
+    return { recovered: true, notes: "structurally equivalent to source (mangle-insensitive)" };
+  }
+  return undefined;
+}
+
+async function prewarmComparison(rows) {
+  const codes = [];
+  for (const { snippet, shape, recovered } of rows) {
+    if (recovered == null || !shape.tools.some((tool) => tool.includes("mangle"))) continue;
+    codes.push(recovered, snippet.source, ...(snippet.acceptForms ?? []));
+  }
+  await prewarmNormalize(codes, { rename: true });
+}
+
 runMatrix({
   name: "array-spread-rest",
   snippets,
   transformers,
+  validateRecovered,
+  prewarm: prewarmComparison,
 });
