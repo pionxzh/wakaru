@@ -937,10 +937,12 @@ fn attrs_from_key_value(
     value: &Expr,
     ctx: &VueRecoveryContext,
 ) -> Result<Vec<VueAttr>> {
-    if let Some(event) = name.strip_prefix("on").filter(|s| !s.is_empty()) {
+    if let Some(event_name) = name.strip_prefix("on").filter(|s| !s.is_empty()) {
+        let event = recover_event_expr(value, ctx)?;
         return Ok(vec![VueAttr::On {
-            name: lower_first(event),
-            expr: clean_event_expr(value, ctx)?,
+            name: lower_first(event_name),
+            expr: event.expr,
+            modifiers: event.modifiers,
         }]);
     }
 
@@ -1016,11 +1018,51 @@ fn class_attrs_from_helper(value: &Expr, ctx: &VueRecoveryContext) -> Result<Opt
     Ok(Some(attrs))
 }
 
-fn clean_event_expr(value: &Expr, ctx: &VueRecoveryContext) -> Result<String> {
-    if let Some(handler) = cached_event_handler_name(value, ctx)? {
-        return Ok(handler);
+struct RecoveredEventExpr {
+    expr: String,
+    modifiers: Vec<String>,
+}
+
+fn recover_event_expr(value: &Expr, ctx: &VueRecoveryContext) -> Result<RecoveredEventExpr> {
+    if let Expr::Call(call) = value {
+        if matches!(
+            helper_name(&call.callee, ctx).as_deref(),
+            Some("withModifiers" | "withKeys")
+        ) {
+            if let Some(handler) = call.args.first() {
+                let mut event = recover_event_expr(handler.expr.as_ref(), ctx)?;
+                if let Some(modifiers) = call.args.get(1) {
+                    let mut current = event_modifier_names(modifiers.expr.as_ref());
+                    current.append(&mut event.modifiers);
+                    event.modifiers = current;
+                }
+                return Ok(event);
+            }
+        }
     }
-    Ok(clean_attr_expr(&print_expr(value, ctx)?, ctx))
+
+    if let Some(handler) = cached_event_handler_name(value, ctx)? {
+        return Ok(RecoveredEventExpr {
+            expr: handler,
+            modifiers: Vec::new(),
+        });
+    }
+    Ok(RecoveredEventExpr {
+        expr: clean_attr_expr(&print_expr(value, ctx)?, ctx),
+        modifiers: Vec::new(),
+    })
+}
+
+fn event_modifier_names(expr: &Expr) -> Vec<String> {
+    let Expr::Array(array) = expr else {
+        return Vec::new();
+    };
+    array
+        .elems
+        .iter()
+        .flatten()
+        .filter_map(|elem| string_lit(elem.expr.as_ref()))
+        .collect()
 }
 
 fn cached_event_handler_name(value: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
@@ -1395,6 +1437,23 @@ export function render(_ctx, _cache) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <button :class=\"{ active: props.active }\" @click=\"increment\">{{ props.count }}</button>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_event_handler_modifiers() {
+        let input = r#"
+import { withKeys, withModifiers, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return (openBlock(), createElementBlock("input", {
+    onKeyup: withKeys(withModifiers(_cache[0] || (_cache[0] = (...args) => (_ctx.submit && _ctx.submit(...args))), ["stop", "prevent"]), ["enter"])
+  }, null, 40));
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <input @keyup.enter.stop.prevent=\"submit\" />\n</template>\n"
         );
     }
 
