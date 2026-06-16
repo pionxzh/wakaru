@@ -35,3 +35,4 @@ tsconfig.tsbuildinfo
 
 # Local workspace
 .claude/
+.agents/
