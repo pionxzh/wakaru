@@ -33,20 +33,23 @@ Supported shapes:
 - Static string children.
 - `toDisplayString(...)` text interpolation.
 - Basic static attributes, dynamic `:class` / `:style`, and `@event`
-  attributes, including cached event handlers.
+  attributes, including cached event handlers and `withModifiers(...)` /
+  `withKeys(...)` event modifiers.
 - `v-if` / `v-else-if` / `v-else` from Vue conditional render branches.
 - `v-for` from `renderList(...)` fragment children.
-- Component vnodes from `resolveComponent(...)` + `createVNode(...)`.
+- Component vnodes from `resolveComponent(...)` + `createVNode(...)`, including
+  default and named component `v-model` pairs from `prop` + `onUpdate:prop`.
 - Named slots with fallback text from `renderSlot(...)`.
-- Runtime directives from `withDirectives(...)`, including `v-model` text inputs
-  and `v-show`.
+- Runtime directives from `withDirectives(...)`, including `v-model` text
+  inputs, `v-show`, directive arguments, modifiers, and custom
+  `resolveDirective(...)` bindings.
 - Simple component option objects as `<script>export default ...</script>`.
 
 Known gaps:
 
 - Import reconstruction for recovered component dependencies in the `<script>`
   block.
-- Broader directive support beyond the covered `vModelText` / `vShow` shapes.
+- Component `v-model` modifier props such as `modelModifiers`.
 - Multiple roots and advanced slot scopes beyond the covered fallback case.
 - Strong source-name recovery after aggressive minification/mangling when the
   original public names are not present in the generated render code.
