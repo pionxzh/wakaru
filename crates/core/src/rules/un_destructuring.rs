@@ -133,10 +133,13 @@ fn process_module_items(
 fn process_stmts(stmts: Vec<Stmt>, unresolved_mark: Mark, level: RewriteLevel) -> Vec<Stmt> {
     let mut stmts = hoist_conditional_test_assignments(stmts);
     let mut result = Vec::with_capacity(stmts.len());
+    let mut consumed_helpers: Vec<BindingKey> = Vec::new();
     let mut i = 0;
 
     while i < stmts.len() {
-        if let Some(group) = try_reconstruct_group(&stmts, i, unresolved_mark, level) {
+        if let Some(group) =
+            try_reconstruct_group(&stmts, i, unresolved_mark, level, &mut consumed_helpers)
+        {
             remove_prior_uninitialized_decls_for_bindings(
                 &mut result,
                 &group.remove_prior_bindings,
@@ -152,6 +155,10 @@ fn process_stmts(stmts: Vec<Stmt>, unresolved_mark: Mark, level: RewriteLevel) -
             ));
             i += 1;
         }
+    }
+
+    if !consumed_helpers.is_empty() {
+        remove_unreferenced_helpers(&mut result, &consumed_helpers);
     }
 
     result
@@ -310,9 +317,10 @@ fn try_reconstruct_group(
     start: usize,
     unresolved_mark: Mark,
     level: RewriteLevel,
+    consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<ReconstructedGroup> {
     try_reconstruct_assignment_group(stmts, start, unresolved_mark)
-        .or_else(|| try_reconstruct_ref_group(stmts, start, unresolved_mark))
+        .or_else(|| try_reconstruct_ref_group(stmts, start, unresolved_mark, consumed_helpers))
         .or_else(|| {
             (level >= RewriteLevel::Aggressive)
                 .then(|| try_reconstruct_direct_array_group(stmts, start, unresolved_mark))
@@ -805,6 +813,7 @@ fn try_reconstruct_ref_group(
     stmts: &[Stmt],
     start: usize,
     unresolved_mark: Mark,
+    consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<ReconstructedGroup> {
     let ref_decl = extract_ref_decl(stmts.get(start)?)?;
     let ref_key = binding_key(&ref_decl.ident.id);
@@ -816,6 +825,7 @@ fn try_reconstruct_ref_group(
         &ref_decl.ident.id,
         unresolved_mark,
         &mut removed_temps,
+        consumed_helpers,
     );
 
     if collected.accesses.is_empty() {
@@ -865,14 +875,20 @@ fn collect_accesses_on(
     ref_ident: &Ident,
     unresolved_mark: Mark,
     removed_temps: &mut Vec<BindingKey>,
+    consumed_helpers: &mut Vec<BindingKey>,
 ) -> CollectedAccesses {
     let mut accesses = Vec::new();
     let mut i = start;
 
     while i < stmts.len() {
-        if let Some((access, consumed)) =
-            try_extract_access(stmts, i, ref_ident, unresolved_mark, removed_temps)
-        {
+        if let Some((access, consumed)) = try_extract_access(
+            stmts,
+            i,
+            ref_ident,
+            unresolved_mark,
+            removed_temps,
+            consumed_helpers,
+        ) {
             accesses.push(access);
             i += consumed;
         } else {
@@ -1181,6 +1197,7 @@ fn try_extract_access(
     ref_ident: &Ident,
     unresolved_mark: Mark,
     removed_temps: &mut Vec<BindingKey>,
+    consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<(Access, usize)> {
     if let Some((mut access, temp)) =
         try_extract_default_access(stmts, index, ref_ident, unresolved_mark)
@@ -1188,9 +1205,14 @@ fn try_extract_access(
         removed_temps.push(temp);
         let mut consumed = 2;
 
-        if let Some((nested_pat, extra)) =
-            try_nest_default_binding(&access, stmts, index + 2, unresolved_mark, removed_temps)
-        {
+        if let Some((nested_pat, extra)) = try_nest_default_binding(
+            &access,
+            stmts,
+            index + 2,
+            unresolved_mark,
+            removed_temps,
+            consumed_helpers,
+        ) {
             replace_access_left(&mut access, nested_pat);
             consumed += extra;
         }
@@ -1213,7 +1235,10 @@ fn try_extract_access(
         return Some((access, 1));
     }
 
-    if let Some((start, binding)) = extract_slice_rest(init, ref_ident, binding) {
+    if let Some((start, binding, helper_key)) = extract_slice_rest(init, ref_ident, binding) {
+        if let Some(key) = helper_key {
+            consumed_helpers.push(key);
+        }
         return Some((Access::ArrayRest { start, binding }, 1));
     }
 
@@ -1226,6 +1251,7 @@ fn try_nest_default_binding(
     nested_start: usize,
     unresolved_mark: Mark,
     removed_temps: &mut Vec<BindingKey>,
+    consumed_helpers: &mut Vec<BindingKey>,
 ) -> Option<(Pat, usize)> {
     let default_binding = match access {
         Access::Object { pat, .. } | Access::Array { pat, .. } => {
@@ -1246,6 +1272,7 @@ fn try_nest_default_binding(
         default_binding,
         unresolved_mark,
         removed_temps,
+        consumed_helpers,
     );
 
     if collected.accesses.is_empty() || !collected.accesses.iter().any(is_rest_or_default_access) {
@@ -1470,7 +1497,7 @@ fn extract_slice_rest(
     expr: &Expr,
     ref_ident: &Ident,
     binding: BindingIdent,
-) -> Option<(usize, BindingIdent)> {
+) -> Option<(usize, BindingIdent, Option<BindingKey>)> {
     let Expr::Call(call) = expr else {
         return None;
     };
@@ -1483,37 +1510,42 @@ fn extract_slice_rest(
     let Expr::Member(MemberExpr { obj, prop, .. }) = callee.as_ref() else {
         return None;
     };
-    if !is_ref_or_array_like_to_array_ref(obj, ref_ident) {
-        return None;
-    }
+    let helper_key = match_ref_or_array_like_to_array(obj, ref_ident)?;
     if !matches!(prop, MemberProp::Ident(prop) if prop.sym.as_ref() == "slice") {
         return None;
     }
     let Expr::Lit(Lit::Num(num)) = call.args[0].expr.as_ref() else {
         return None;
     };
-    Some((numeric_index(num)?, binding))
+    Some((numeric_index(num)?, binding, helper_key))
 }
 
-fn is_ref_or_array_like_to_array_ref(expr: &Expr, ref_ident: &Ident) -> bool {
+/// Checks whether `expr` is `ref_ident` or `_arrayLikeToArray(ref_ident)`.
+/// Returns `Some(helper_binding_key)` when the `_arrayLikeToArray` wrapper was
+/// matched, `Some(None)` for a direct ref match, or `None` on mismatch.
+fn match_ref_or_array_like_to_array(expr: &Expr, ref_ident: &Ident) -> Option<Option<BindingKey>> {
     match expr {
-        Expr::Ident(obj) => obj.sym == ref_ident.sym && obj.ctxt == ref_ident.ctxt,
+        Expr::Ident(obj) if obj.sym == ref_ident.sym && obj.ctxt == ref_ident.ctxt => Some(None),
         Expr::Call(call) => {
             if call.args.is_empty() || call.args[0].spread.is_some() {
-                return false;
+                return None;
             }
             let swc_core::ecma::ast::Callee::Expr(callee) = &call.callee else {
-                return false;
+                return None;
             };
             let Expr::Ident(helper) = callee.as_ref() else {
-                return false;
+                return None;
             };
-            matches!(
+            if !matches!(
                 helper.sym.as_ref(),
                 "_arrayLikeToArray" | "_array_like_to_array"
-            ) && is_ref_or_array_like_to_array_ref(call.args[0].expr.as_ref(), ref_ident)
+            ) {
+                return None;
+            }
+            match_ref_or_array_like_to_array(call.args[0].expr.as_ref(), ref_ident)?;
+            Some(Some(binding_key(helper)))
         }
-        _ => false,
+        _ => None,
     }
 }
 
@@ -1870,8 +1902,15 @@ fn nest_pat_destructuring(pat: &mut Pat, stmts: &mut Vec<Stmt>, unresolved_mark:
         };
 
         let mut removed_temps = Vec::new();
-        let collected =
-            collect_accesses_on(stmts, 0, &binding.id, unresolved_mark, &mut removed_temps);
+        let mut consumed_helpers = Vec::new();
+        let collected = collect_accesses_on(
+            stmts,
+            0,
+            &binding.id,
+            unresolved_mark,
+            &mut removed_temps,
+            &mut consumed_helpers,
+        );
 
         if collected.accesses.is_empty()
             || !collected.accesses.iter().any(is_rest_or_default_access)
@@ -1897,6 +1936,61 @@ fn nest_pat_destructuring(pat: &mut Pat, stmts: &mut Vec<Stmt>, unresolved_mark:
         stmts.drain(0..collected.consumed);
         return;
     }
+}
+
+/// Remove function/var declarations for helper bindings that are no longer
+/// referenced after destructuring reconstruction consumed their call sites.
+fn remove_unreferenced_helpers(stmts: &mut Vec<Stmt>, helpers: &[BindingKey]) {
+    use std::collections::HashSet;
+    let helper_set: HashSet<&BindingKey> = helpers.iter().collect();
+
+    // Collect which helpers are still referenced outside their own declaration.
+    let mut referenced: HashSet<&BindingKey> = HashSet::new();
+    for stmt in stmts.iter() {
+        let declaring = stmt_declares_binding(stmt);
+        for key in &helper_set {
+            if declaring.as_ref() == Some(*key) {
+                continue;
+            }
+            if stmt_uses_binding(stmt, key) {
+                referenced.insert(*key);
+            }
+        }
+    }
+
+    let dead: HashSet<&BindingKey> = helper_set.difference(&referenced).copied().collect();
+    if dead.is_empty() {
+        return;
+    }
+    stmts.retain(|stmt| {
+        if let Some(key) = stmt_declares_binding(stmt) {
+            !dead.contains(&key)
+        } else {
+            true
+        }
+    });
+}
+
+fn stmt_declares_binding(stmt: &Stmt) -> Option<BindingKey> {
+    match stmt {
+        Stmt::Decl(Decl::Fn(fn_decl)) => Some(binding_key(&fn_decl.ident)),
+        Stmt::Decl(Decl::Var(var_decl)) if var_decl.decls.len() == 1 => {
+            let Pat::Ident(ident) = &var_decl.decls[0].name else {
+                return None;
+            };
+            Some(binding_key(&ident.id))
+        }
+        _ => None,
+    }
+}
+
+fn stmt_uses_binding(stmt: &Stmt, key: &BindingKey) -> bool {
+    let mut finder = IdentUseFinder {
+        key: (*key).clone(),
+        found: false,
+    };
+    stmt.visit_with(&mut finder);
+    finder.found
 }
 
 fn ident_used_in_stmts(stmts: &[Stmt], key: &BindingKey) -> bool {

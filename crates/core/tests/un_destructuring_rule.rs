@@ -225,6 +225,67 @@ var [head, , third = fallback, ...tail] = arr;
 }
 
 #[test]
+fn removes_dead_array_like_to_array_after_rest_reconstruction() {
+    let input = r#"
+function _arrayLikeToArray(arr, len) {
+    if (len == null || len > arr.length) len = arr.length;
+    for (var i = 0, arr2 = new Array(len); i < len; i++) arr2[i] = arr[i];
+    return arr2;
+}
+var _ref = items;
+var first = _ref[0];
+var rest = _arrayLikeToArray(_ref).slice(1);
+use(first, rest);
+"#;
+    let expected = r#"
+var [first, ...rest] = items;
+use(first, rest);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn removes_dead_array_like_to_array_snake_case() {
+    let input = r#"
+function _array_like_to_array(arr, len) {
+    if (len == null || len > arr.length) len = arr.length;
+    for (var i = 0, arr2 = new Array(len); i < len; i++) arr2[i] = arr[i];
+    return arr2;
+}
+var _ref = items;
+var first = _ref[0];
+var rest = _array_like_to_array(_ref).slice(1);
+use(first, rest);
+"#;
+    let expected = r#"
+var [first, ...rest] = items;
+use(first, rest);
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn preserves_array_like_to_array_when_still_referenced() {
+    let input = r#"
+function _arrayLikeToArray(arr, len) {
+    if (len == null || len > arr.length) len = arr.length;
+    for (var i = 0, arr2 = new Array(len); i < len; i++) arr2[i] = arr[i];
+    return arr2;
+}
+var _ref = items;
+var first = _ref[0];
+var rest = _arrayLikeToArray(_ref).slice(1);
+var other = _arrayLikeToArray(something);
+use(first, rest, other);
+"#;
+    let output = apply(input);
+    assert!(
+        output.contains("_arrayLikeToArray"),
+        "should preserve _arrayLikeToArray when still referenced:\n{output}"
+    );
+}
+
+#[test]
 fn leaves_direct_loose_array_rest() {
     let input = r#"
 const head = values[0];
