@@ -895,10 +895,48 @@ fn recover_attrs(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueAttr>> 
 }
 
 fn recover_component_attrs(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueAttr>> {
-    Ok(collapse_component_model_attrs(recover_attrs(expr, ctx)?))
+    let model_modifiers = match expr {
+        Expr::Object(object) => component_model_modifiers(object),
+        _ => HashMap::new(),
+    };
+    Ok(collapse_component_model_attrs(
+        recover_attrs(expr, ctx)?,
+        &model_modifiers,
+    ))
 }
 
-fn collapse_component_model_attrs(attrs: Vec<VueAttr>) -> Vec<VueAttr> {
+fn component_model_modifiers(object: &ObjectLit) -> HashMap<String, Vec<String>> {
+    object
+        .props
+        .iter()
+        .filter_map(|prop| {
+            let PropOrSpread::Prop(prop) = prop else {
+                return None;
+            };
+            let Prop::KeyValue(key_value) = prop.as_ref() else {
+                return None;
+            };
+            let name = prop_name(&key_value.key)?;
+            let model_prop = component_model_prop_from_modifier_attr(&name)?;
+            let modifiers = directive_modifiers(key_value.value.as_ref());
+            (!modifiers.is_empty()).then_some((model_prop, modifiers))
+        })
+        .collect()
+}
+
+fn component_model_prop_from_modifier_attr(name: &str) -> Option<String> {
+    if name == "modelModifiers" {
+        return Some("modelValue".to_string());
+    }
+    name.strip_suffix("Modifiers")
+        .filter(|model_prop| !model_prop.is_empty())
+        .map(|model_prop| model_prop.to_string())
+}
+
+fn collapse_component_model_attrs(
+    attrs: Vec<VueAttr>,
+    model_modifiers: &HashMap<String, Vec<String>>,
+) -> Vec<VueAttr> {
     let bound_props = attrs
         .iter()
         .filter_map(|attr| match attr {
@@ -927,11 +965,12 @@ fn collapse_component_model_attrs(attrs: Vec<VueAttr>) -> Vec<VueAttr> {
     for attr in attrs {
         match attr {
             VueAttr::Bind { name, expr } if model_props.contains(&name) => {
+                let modifiers = model_modifiers.get(&name).cloned().unwrap_or_default();
                 collapsed.push(VueAttr::Directive(VueDirective {
                     name: "model".to_string(),
                     arg: (name != "modelValue").then_some(name),
                     expr: Some(expr),
-                    modifiers: Vec::new(),
+                    modifiers,
                     dynamic_arg: false,
                 }));
             }
@@ -939,6 +978,9 @@ fn collapse_component_model_attrs(attrs: Vec<VueAttr>) -> Vec<VueAttr> {
                 if name
                     .strip_prefix("update:")
                     .is_some_and(|prop_name| model_props.contains(prop_name)) => {}
+            VueAttr::Bind { name, .. } | VueAttr::Static { name, .. }
+                if component_model_prop_from_modifier_attr(&name)
+                    .is_some_and(|model_prop| model_props.contains(&model_prop)) => {}
             _ => collapsed.push(attr),
         }
     }
@@ -1622,8 +1664,10 @@ export function render(_ctx, _cache) {
     createVNode(_component_FormInput, {
       modelValue: _ctx.name,
       "onUpdate:modelValue": $event => _ctx.name = $event,
+      modelModifiers: { trim: true },
       filter: _ctx.filter,
       "onUpdate:filter": $event => _ctx.filter = $event,
+      filterModifiers: { number: true, lazy: true },
       label: "Name"
     }, null, 8, ["modelValue", "filter"])
   ]);
@@ -1632,7 +1676,7 @@ export function render(_ctx, _cache) {
 
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
-            "<template>\n  <section>\n    <FormInput v-model=\"name\" v-model:filter=\"filter\" label=\"Name\" />\n  </section>\n</template>\n"
+            "<template>\n  <section>\n    <FormInput v-model.trim=\"name\" v-model:filter.number.lazy=\"filter\" label=\"Name\" />\n  </section>\n</template>\n"
         );
     }
 

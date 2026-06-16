@@ -38,7 +38,8 @@ Supported shapes:
 - `v-if` / `v-else-if` / `v-else` from Vue conditional render branches.
 - `v-for` from `renderList(...)` fragment children.
 - Component vnodes from `resolveComponent(...)` + `createVNode(...)`, including
-  default and named component `v-model` pairs from `prop` + `onUpdate:prop`.
+  default and named component `v-model` pairs from `prop` + `onUpdate:prop`,
+  plus component model modifier props such as `modelModifiers`.
 - Named slots with fallback text from `renderSlot(...)`.
 - Runtime directives from `withDirectives(...)`, including `v-model` text
   inputs, `v-show`, directive arguments, modifiers, and custom
@@ -49,7 +50,7 @@ Known gaps:
 
 - Import reconstruction for recovered component dependencies in the `<script>`
   block.
-- Component `v-model` modifier props such as `modelModifiers`.
+- Dynamic component model arguments.
 - Multiple roots and advanced slot scopes beyond the covered fallback case.
 - Strong source-name recovery after aggressive minification/mangling when the
   original public names are not present in the generated render code.
