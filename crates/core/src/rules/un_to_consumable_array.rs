@@ -11,8 +11,8 @@ use crate::facts::{ModuleFactsMap, TypeScriptHelperKind};
 
 use super::helper_matcher::{binding_key, static_member_prop_name};
 use super::transpiler_helper_utils::{
-    is_tslib_spread_array_member, remove_helpers_without_remaining_refs, BindingKey,
-    LocalHelperContext, TranspilerHelperKind, TsHelperKind,
+    is_tslib_spread_array_member, BindingKey, LocalHelperContext, TranspilerHelperKind,
+    TsHelperKind,
 };
 
 /// Detects and replaces `_toConsumableArray(arr)` with `[...arr]`.
@@ -99,7 +99,10 @@ fn run_un_to_consumable_array(
     };
     module.visit_mut_with(&mut replacer);
 
-    remove_helpers_without_remaining_refs(module, helpers);
+    // Remove the helper and any inline sub-helpers it transitively pulled in
+    // (`_arrayWithoutHoles`, `_iterableToArray`, …) once the call sites are gone,
+    // so the non-external (inlined) lowering does not leave dead declarations.
+    local_helpers.remove_helpers_with_dependencies(module, helpers);
     local_helpers.remove_unused_ts_helper_bindings(module, TsHelperKind::SpreadArray);
 }
 
