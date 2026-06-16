@@ -312,8 +312,6 @@ var out = __spreadArray([head], items, true);
 
 #[test]
 fn handles_swc_external_to_consumable_array_import() {
-    // swc `externalHelpers: true` emits the helper as an aliased named import of
-    // the `_` export from a per-helper module.
     let input = r#"
 import { _ as _to_consumable_array } from "@swc/helpers/_/_to_consumable_array";
 var x = _to_consumable_array(items);
@@ -326,7 +324,6 @@ const x = [...items];
 
 #[test]
 fn handles_swc_external_to_consumable_array_unaliased_import() {
-    // The named export is `_`; some emitters keep the bare `_` local binding.
     let input = r#"
 import { _ } from "@swc/helpers/_/_to_consumable_array";
 var x = _(items);
@@ -339,16 +336,32 @@ const x = [...items];
 
 #[test]
 fn folds_swc_external_to_consumable_array_concat_spread() {
-    // The full real-world shape: swc lowers `[head, ...items, tail]` to a
-    // concat over the external helper. After the helper is recognized,
-    // UnArrayConcatSpread + UnSpreadArrayLiteral collapse the chain and the
-    // now-unused `@swc/helpers` import is dropped.
     let input = r#"
 import { _ as _to_consumable_array } from "@swc/helpers/_/_to_consumable_array";
 var out = [head].concat(_to_consumable_array(items), [tail]);
 "#;
     let expected = r#"
 const out = [head, ...items, tail];
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn unwraps_maybe_array_like_to_consumable_array() {
+    let input = r#"
+function _maybeArrayLike(r, a, e) { if (a && !Array.isArray(a) && "number" == typeof a.length) { var y = a.length; return _arrayLikeToArray(a, void 0 !== e && e < y ? e : y); } return r(a, e); }
+function _toConsumableArray(r) { return _arrayWithoutHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableSpread(); }
+function _nonIterableSpread() { throw new TypeError("Invalid attempt to spread non-iterable instance."); }
+function _unsupportedIterableToArray(r, a) { if (r) { if ("string" == typeof r) return _arrayLikeToArray(r, a); var t = {}.toString.call(r).slice(8, -1); return "Object" === t && r.constructor && (t = r.constructor.name), "Map" === t || "Set" === t ? Array.from(r) : "Arguments" === t || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t) ? _arrayLikeToArray(r, a) : void 0; } }
+function _iterableToArray(r) { if ("undefined" != typeof Symbol && null != r[Symbol.iterator] || null != r["@@iterator"]) return Array.from(r); }
+function _arrayWithoutHoles(r) { if (Array.isArray(r)) return _arrayLikeToArray(r); }
+function _arrayLikeToArray(r, a) { (null == a || a > r.length) && (a = r.length); for (var e = 0, n = Array(a); e < a; e++) n[e] = r[e]; return n; }
+const out = [head].concat(_maybeArrayLike(_toConsumableArray, items), [tail]);
+use(out);
+"#;
+    let expected = r#"
+const out = [head, ...items, tail];
+use(out);
 "#;
     assert_eq_normalized(&render(input), expected);
 }

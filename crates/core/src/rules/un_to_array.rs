@@ -305,11 +305,7 @@ fn remove_dead_maybe_array_like_cluster(module: &mut Module) {
         return;
     }
 
-    let all_fn_decls: HashSet<BindingKey> = module
-        .body
-        .iter()
-        .filter_map(fn_decl_key)
-        .collect();
+    let all_fn_decls: HashSet<BindingKey> = module.body.iter().filter_map(fn_decl_key).collect();
     if all_fn_decls.is_empty() {
         return;
     }

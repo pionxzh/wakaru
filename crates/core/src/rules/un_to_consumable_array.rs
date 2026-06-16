@@ -126,12 +126,9 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
         if let Expr::Ident(id) = callee.as_ref() {
             let key = binding_key(id);
             if self.helpers.contains_key(&key) {
-                // Only transform single-argument calls
                 if call.args.len() != 1 {
                     return;
                 }
-
-                // _toConsumableArray(arg) -> [...arg]
                 *expr = Expr::Array(ArrayLit {
                     span: DUMMY_SP,
                     elems: vec![Some(ExprOrSpread {
@@ -140,6 +137,25 @@ impl VisitMut for ToConsumableArrayReplacer<'_> {
                     })],
                 });
                 return;
+            }
+
+            // _maybeArrayLike(_toConsumableArray, arg) -> [...arg]
+            if matches!(id.sym.as_ref(), "_maybeArrayLike" | "_maybe_array_like")
+                && call.args.len() == 2
+                && call.args.iter().all(|a| a.spread.is_none())
+            {
+                if let Expr::Ident(inner) = call.args[0].expr.as_ref() {
+                    if self.helpers.contains_key(&binding_key(inner)) {
+                        *expr = Expr::Array(ArrayLit {
+                            span: DUMMY_SP,
+                            elems: vec![Some(ExprOrSpread {
+                                spread: Some(DUMMY_SP),
+                                expr: call.args[1].expr.clone(),
+                            })],
+                        });
+                        return;
+                    }
+                }
             }
 
             if self.ts_spread_array_helpers.contains(&key)
