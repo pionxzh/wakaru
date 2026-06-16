@@ -564,3 +564,43 @@ fn trace_accepts_un_parameters_second_pass() {
     )
     .expect("UnParameters2 should be accepted as a trace rule");
 }
+
+#[test]
+fn babel_maybe_array_like_rest_cleans_all_helpers() {
+    let input = r#"
+function _maybeArrayLike(r, a, e) { if (a && !Array.isArray(a) && "number" == typeof a.length) { var y = a.length; return _arrayLikeToArray(a, void 0 !== e && e < y ? e : y); } return r(a, e); }
+function _toArray(r) { return _arrayWithHoles(r) || _iterableToArray(r) || _unsupportedIterableToArray(r) || _nonIterableRest(); }
+function _nonIterableRest() { throw new TypeError("Invalid attempt to destructure non-iterable instance."); }
+function _unsupportedIterableToArray(r, a) { if (r) { if ("string" == typeof r) return _arrayLikeToArray(r, a); var t = {}.toString.call(r).slice(8, -1); return "Object" === t && r.constructor && (t = r.constructor.name), "Map" === t || "Set" === t ? Array.from(r) : "Arguments" === t || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t) ? _arrayLikeToArray(r, a) : void 0; } }
+function _arrayLikeToArray(r, a) { (null == a || a > r.length) && (a = r.length); for (var e = 0, n = Array(a); e < a; e++) n[e] = r[e]; return n; }
+function _iterableToArray(r) { if ("undefined" != typeof Symbol && null != r[Symbol.iterator] || null != r["@@iterator"]) return Array.from(r); }
+function _arrayWithHoles(r) { if (Array.isArray(r)) return r; }
+const _items = items;
+const _items2 = _maybeArrayLike(_toArray, _items);
+const first = _items2[0];
+const rest = _arrayLikeToArray(_items2).slice(1);
+use(first, rest);
+"#;
+    let expected = "const [first, ...rest] = items;\nuse(first, rest);\n";
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn babel_maybe_array_like_tuple_cleans_all_helpers() {
+    let input = r#"
+function _maybeArrayLike(r, a, e) { if (a && !Array.isArray(a) && "number" == typeof a.length) { var y = a.length; return _arrayLikeToArray(a, void 0 !== e && e < y ? e : y); } return r(a, e); }
+function _slicedToArray(r, e) { return _arrayWithHoles(r) || _iterableToArrayLimit(r, e) || _unsupportedIterableToArray(r, e) || _nonIterableRest(); }
+function _nonIterableRest() { throw new TypeError("Invalid attempt to destructure non-iterable instance."); }
+function _unsupportedIterableToArray(r, a) { if (r) { if ("string" == typeof r) return _arrayLikeToArray(r, a); var t = {}.toString.call(r).slice(8, -1); return "Object" === t && r.constructor && (t = r.constructor.name), "Map" === t || "Set" === t ? Array.from(r) : "Arguments" === t || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(t) ? _arrayLikeToArray(r, a) : void 0; } }
+function _arrayLikeToArray(r, a) { (null == a || a > r.length) && (a = r.length); for (var e = 0, n = Array(a); e < a; e++) n[e] = r[e]; return n; }
+function _iterableToArrayLimit(r, l) { var t = null == r ? null : "undefined" != typeof Symbol && r[Symbol.iterator] || r["@@iterator"]; if (null != t) { var e, n, i, u, a = [], f = !0, o = !1; try { if (i = (t = t.call(r)).next, 0 === l) { if (Object(t) !== t) return; f = !1; } else for (; !(f = (e = i.call(t)).done) && (a.push(e.value), a.length !== l); f = !0); } catch (r) { o = !0, n = r; } finally { try { if (!f && null != t.return && (u = t.return(), Object(u) !== u)) return; } finally { if (o) throw n; } } return a; } }
+function _arrayWithHoles(r) { if (Array.isArray(r)) return r; }
+const _pair = pair;
+const _pair2 = _maybeArrayLike(_slicedToArray, _pair, 2);
+const a = _pair2[0];
+const b = _pair2[1];
+use(a, b);
+"#;
+    let expected = "const [a, b] = pair;\nuse(a, b);\n";
+    assert_eq_normalized(&render(input), expected);
+}

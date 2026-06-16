@@ -8,9 +8,8 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith};
 
 use super::helper_matcher::{
     binding_key, remaining_refs_outside_declarations, remove_fn_decls_by_binding,
-    remove_import_specifiers_by_binding, remove_var_declarators_by_binding,
+    remove_import_specifiers_by_binding, remove_var_declarators_by_binding, BindingKey,
 };
-use super::transpiler_helper_utils::BindingKey;
 
 /// Known import paths for the array-rest `toArray` helper.
 ///
@@ -81,6 +80,8 @@ impl VisitMut for UnToArray {
         }
 
         module.visit_mut_with(&mut MaybeArrayLikeUnwrapper);
+
+        remove_dead_maybe_array_like_cluster(module);
     }
 }
 
@@ -289,4 +290,41 @@ fn init_requires_to_array(init: &Expr) -> bool {
     path.value
         .as_str()
         .is_some_and(|path| TO_ARRAY_PATHS.contains(&path))
+}
+
+/// Remove `_maybeArrayLike` declarations and any top-level function declarations
+/// that become transitively unreferenced after both `UnSlicedToArray` and
+/// `UnToArray` have unwrapped the call sites.
+fn remove_dead_maybe_array_like_cluster(module: &mut Module) {
+    let has_maybe_array_like = module.body.iter().any(|item| {
+        fn_decl_key(item)
+            .as_ref()
+            .is_some_and(|k| matches!(k.0.as_str(), "_maybeArrayLike" | "_maybe_array_like"))
+    });
+    if !has_maybe_array_like {
+        return;
+    }
+
+    let all_fn_decls: HashSet<BindingKey> = module
+        .body
+        .iter()
+        .filter_map(fn_decl_key)
+        .collect();
+    if all_fn_decls.is_empty() {
+        return;
+    }
+
+    let alive = remaining_refs_outside_declarations(module, &all_fn_decls, &all_fn_decls);
+    let dead: HashSet<BindingKey> = all_fn_decls.difference(&alive).cloned().collect();
+    if !dead.is_empty() {
+        remove_fn_decls_by_binding(module, &dead);
+    }
+}
+
+fn fn_decl_key(item: &ModuleItem) -> Option<BindingKey> {
+    if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(f))) = item {
+        Some(binding_key(&f.ident))
+    } else {
+        None
+    }
 }
