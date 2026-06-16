@@ -105,6 +105,7 @@ const snippets = [
       'import { useState } from "react";\nfunction Component() {\n  var current;\n  var setCurrent;\n  [current, setCurrent] = useState(value);\n  use(current, setCurrent);\n}\nComponent();\n',
     acceptForms: [
       'import { useState } from "react";\nfunction Component() {\n  const [current, setCurrent] = useState(value);\n  use(current, setCurrent);\n}\nComponent();\n',
+      'import { useState } from "react";\nfunction Component() {\n  let current;\n  let setCurrent;\n  [current, setCurrent] = useState(value);\n  use(current, setCurrent);\n}\nComponent();\n',
     ],
     expected: ["useState(value)", "use(current, setCurrent)"],
     rejected: [...ARRAY_HELPER_REJECTED, "[0]", "[1]"],
