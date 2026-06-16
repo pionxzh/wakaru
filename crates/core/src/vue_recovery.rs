@@ -4,13 +4,14 @@ use anyhow::{anyhow, Result};
 use swc_core::atoms::{Atom, Wtf8Atom};
 use swc_core::common::{sync::Lrc, FileName, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
-    AssignOp, BinaryOp, BindingIdent, BlockStmtOrExpr, Callee, Decl, ExportDecl, Expr,
+    AssignOp, BinaryOp, BindingIdent, BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, Expr,
     ExprOrSpread, FnDecl, Ident, ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName,
     ModuleItem, ObjectLit, Param, Pat, Prop, PropName, PropOrSpread, ReturnStmt, Stmt, VarDecl,
     VarDeclKind, VarDeclarator,
 };
 use swc_core::ecma::codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
+use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::driver::{decompile, DecompileOptions, DecompileOutput};
 use crate::vue_template::{
@@ -48,6 +49,9 @@ pub fn recover_vue_sfc_from_js(source: &str) -> Result<Option<VueSfc>> {
     };
     ctx.render_context = render_context_param(render);
     collect_render_context(render, &mut ctx);
+    if !render_uses_vue_helper(render, &ctx) {
+        return Ok(None);
+    }
     let Some(root) = recover_render_root(render, &ctx)? else {
         return Ok(None);
     };
@@ -192,6 +196,42 @@ fn find_render_fn(module: &Module) -> Option<&FnDecl> {
         }
     }
     None
+}
+
+fn render_uses_vue_helper(render: &FnDecl, ctx: &VueRecoveryContext) -> bool {
+    let Some(body) = render.function.body.as_ref() else {
+        return false;
+    };
+    if ctx.vue_helpers.is_empty() {
+        return false;
+    }
+
+    struct Finder<'a> {
+        helpers: &'a HashMap<Atom, String>,
+        found: bool,
+    }
+
+    impl Visit for Finder<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            if let Callee::Expr(callee) = &call.callee {
+                if let Expr::Ident(ident) = callee.as_ref() {
+                    if self.helpers.contains_key(&ident.sym) {
+                        self.found = true;
+                        return;
+                    }
+                }
+            }
+
+            call.visit_children_with(self);
+        }
+    }
+
+    let mut finder = Finder {
+        helpers: &ctx.vue_helpers,
+        found: false,
+    };
+    body.visit_with(&mut finder);
+    finder.found
 }
 
 fn recover_render_root(render: &FnDecl, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
@@ -1115,6 +1155,45 @@ fn wtf8_to_string(value: &Wtf8Atom) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ignores_plain_render_function_without_vue_signal() {
+        let input = r#"
+export function render() {
+  return "not a Vue render";
+}
+"#;
+
+        assert!(recover_vue_sfc_source_from_js(input).unwrap().is_none());
+    }
+
+    #[test]
+    fn ignores_vue_import_without_render_helper_call() {
+        let input = r#"
+import { ref } from "vue";
+const __sfc__ = { props: { msg: String } };
+export function render() {
+  return "not a Vue render";
+}
+"#;
+
+        assert!(recover_vue_sfc_source_from_js(input).unwrap().is_none());
+    }
+
+    #[test]
+    fn recovers_aliased_vue_helper_signal() {
+        let input = r#"
+import { openBlock as o, createElementBlock as h } from "vue";
+export function render(_ctx, _cache) {
+  return o(), h("main", null, "Aliased");
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <main>Aliased</main>\n</template>\n"
+        );
+    }
 
     #[test]
     fn decompiles_then_recovers_vue_sfc() {
