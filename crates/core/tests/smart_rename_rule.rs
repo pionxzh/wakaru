@@ -1115,7 +1115,7 @@ function a() {
 "#;
     let expected = r#"
 function MyComponent() {
-  return <div data-sentry-component="MyComponent">Hello</div>;
+  return <div>Hello</div>;
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
@@ -1127,7 +1127,7 @@ fn sentry_component_renames_arrow_in_const() {
 const a = () => <div data-sentry-component="MyComponent" />;
 "#;
     let expected = r#"
-const MyComponent = () => <div data-sentry-component="MyComponent" />;
+const MyComponent = () => <div />;
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
@@ -1141,7 +1141,7 @@ const a = function() {
 "#;
     let expected = r#"
 const MyComponent = function() {
-  return <div data-sentry-component="MyComponent" />;
+  return <div />;
 };
 "#;
     assert_eq_normalized(&apply(input), expected);
@@ -1154,7 +1154,12 @@ function MyComponent() {
   return <div data-sentry-component="MyComponent">Hello</div>;
 }
 "#;
-    assert_eq_normalized(&apply(input), input);
+    let expected = r#"
+function MyComponent() {
+  return <div>Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -1164,7 +1169,12 @@ function abc() {
   return <div data-sentry-component="MyComponent">Hello</div>;
 }
 "#;
-    assert_eq_normalized(&apply(input), input);
+    let expected = r#"
+function abc() {
+  return <div>Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -1176,7 +1186,14 @@ function a() {
 }
 use(MyComponent);
 "#;
-    assert_eq_normalized(&apply(input), input);
+    let expected = r#"
+const MyComponent = "taken";
+function AComponent() {
+  return <div>Hello</div>;
+}
+use(MyComponent);
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -1191,10 +1208,10 @@ function b() {
 "#;
     let expected = r#"
 function Shared() {
-  return <div data-sentry-component="Shared">Hello</div>;
+  return <div>Hello</div>;
 }
-function b() {
-  return <span data-sentry-component="Shared">World</span>;
+function BComponent() {
+  return <span>World</span>;
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
@@ -1206,7 +1223,7 @@ fn sentry_component_camel_case_variant() {
 const a = () => <div dataSentryComponent="NativeComponent" />;
 "#;
     let expected = r#"
-const NativeComponent = () => <div dataSentryComponent="NativeComponent" />;
+const NativeComponent = () => <div />;
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
@@ -1220,7 +1237,7 @@ function K() {
 "#;
     let expected = r#"
 function UserCard() {
-  return <div data-sentry-component="UserCard" data-sentry-element="IgnoredElement" data-sentry-source-file="UserCard.tsx" />;
+  return <div data-sentry-source-file="UserCard.tsx" />;
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
@@ -1235,7 +1252,7 @@ function a() {
 "#;
     let expected = r#"
 function Sidebar() {
-  return <div data-sentry-element="Sidebar" />;
+  return <div />;
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
@@ -1249,8 +1266,7 @@ function a() {
   return <><l data-sentry-element="Header" data-sentry-source-file="Sidebar.tsx" /></>;
 }
 "#;
-    let expected = input;
-    assert_eq_normalized(&apply(input), expected);
+    assert_eq_normalized(&apply(input), input);
 }
 
 #[test]
@@ -1259,7 +1275,7 @@ fn sentry_element_camel_case_variant() {
 const a = () => <div dataSentryElement="Sidebar" />;
 "#;
     let expected = r#"
-const Sidebar = () => <div dataSentryElement="Sidebar" />;
+const Sidebar = () => <div />;
 "#;
     assert_eq_normalized(&apply(input), expected);
 }
@@ -1271,7 +1287,12 @@ function K() {
   return <div data-sentry-element="div">Hello</div>;
 }
 "#;
-    assert_eq_normalized(&apply(input), input);
+    let expected = r#"
+function KComponent() {
+  return <div>Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -1283,7 +1304,14 @@ function K() {
 }
 use(Sidebar);
 "#;
-    assert_eq_normalized(&apply(input), input);
+    let expected = r#"
+const Sidebar = "taken";
+function KComponent() {
+  return <div>Hello</div>;
+}
+use(Sidebar);
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -1299,9 +1327,9 @@ function a() {
     let expected = r#"
 function Outer() {
   function Inner() {
-    return <span data-sentry-component="Inner">nested</span>;
+    return <span>nested</span>;
   }
-  return <div data-sentry-component="Outer">{Inner()}</div>;
+  return <div>{Inner()}</div>;
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
@@ -1316,7 +1344,7 @@ export default function a() {
 "#;
     let expected = r#"
 export default function MyPage() {
-  return <div data-sentry-component="MyPage" />;
+  return <div />;
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
@@ -1329,7 +1357,12 @@ function a() {
   return <div data-sentry-component="div">Hello</div>;
 }
 "#;
-    assert_eq_normalized(&apply(input), input);
+    let expected = r#"
+function AComponent() {
+  return <div>Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 #[test]
@@ -1339,7 +1372,12 @@ function a() {
   return <div data-sentry-component="my-component">Hello</div>;
 }
 "#;
-    assert_eq_normalized(&apply(input), input);
+    let expected = r#"
+function AComponent() {
+  return <div>Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
 }
 
 // ============================================================
@@ -1549,7 +1587,7 @@ function K() {
 "#;
     let expected = r#"
 function Toaster() {
-  return <div data-sentry-component="Toaster">Hello</div>;
+  return <div>Hello</div>;
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
@@ -1733,4 +1771,142 @@ const { setE: setE_1 } = props;
 console.log(setE, setE_1);
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+// ── Sentry marker stripping ────────────────────────────────────────────────
+
+#[test]
+fn sentry_component_and_element_attrs_stripped_after_rename() {
+    let input = r#"
+function K() {
+  return <div data-sentry-component="UserCard" data-sentry-element="UserCard" data-sentry-source-file="UserCard.tsx">Hello</div>;
+}
+"#;
+    let expected = r#"
+function UserCard() {
+  return <div data-sentry-source-file="UserCard.tsx">Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sentry_camel_case_attrs_also_stripped() {
+    let input = r#"
+function K() {
+  return <div dataSentryComponent="Card" dataSentryElement="Card">Hello</div>;
+}
+"#;
+    let expected = r#"
+function Card() {
+  return <div>Hello</div>;
+}
+"#;
+    assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn sentry_source_file_stripped_when_matches_filename() {
+    use swc_core::common::GLOBALS;
+    use wakaru_core::rules::strip_redundant_sentry_source_file;
+
+    GLOBALS.set(&Default::default(), || {
+        let source = r#"
+function UserCard() {
+  return <div data-sentry-source-file="UserCard.tsx">Hello</div>;
+}
+"#;
+        let cm: swc_core::common::sync::Lrc<swc_core::common::SourceMap> = Default::default();
+        let fm = cm.new_source_file(
+            swc_core::common::FileName::Custom("test.js".to_string()).into(),
+            source.to_string(),
+        );
+        let lexer = swc_core::ecma::parser::lexer::Lexer::new(
+            swc_core::ecma::parser::Syntax::Es(swc_core::ecma::parser::EsSyntax {
+                jsx: true,
+                ..Default::default()
+            }),
+            Default::default(),
+            swc_core::ecma::parser::StringInput::from(&*fm),
+            None,
+        );
+        let mut parser = swc_core::ecma::parser::Parser::new_from(lexer);
+        let mut module = parser.parse_module().expect("parse");
+
+        strip_redundant_sentry_source_file(&mut module, "UserCard.tsx");
+
+        let mut output = Vec::new();
+        {
+            let mut emitter = swc_core::ecma::codegen::Emitter {
+                cfg: swc_core::ecma::codegen::Config::default().with_minify(false),
+                cm: cm.clone(),
+                comments: None,
+                wr: swc_core::ecma::codegen::text_writer::JsWriter::new(
+                    cm,
+                    "\n",
+                    &mut output,
+                    None,
+                ),
+            };
+            emitter.emit_module(&module).expect("emit");
+        }
+        let result = String::from_utf8(output).expect("utf8");
+        assert!(
+            !result.contains("data-sentry-source-file"),
+            "source-file attr should be stripped when it matches the module filename:\n{result}"
+        );
+    });
+}
+
+#[test]
+fn sentry_source_file_kept_when_values_differ() {
+    use swc_core::common::GLOBALS;
+    use wakaru_core::rules::strip_redundant_sentry_source_file;
+
+    GLOBALS.set(&Default::default(), || {
+        let source = r#"
+function Header() {
+  return <div data-sentry-source-file="Header.tsx">H</div>;
+}
+function Footer() {
+  return <div data-sentry-source-file="Footer.tsx">F</div>;
+}
+"#;
+        let cm: swc_core::common::sync::Lrc<swc_core::common::SourceMap> = Default::default();
+        let fm = cm.new_source_file(
+            swc_core::common::FileName::Custom("test.js".to_string()).into(),
+            source.to_string(),
+        );
+        let lexer = swc_core::ecma::parser::lexer::Lexer::new(
+            swc_core::ecma::parser::Syntax::Es(swc_core::ecma::parser::EsSyntax {
+                jsx: true,
+                ..Default::default()
+            }),
+            Default::default(),
+            swc_core::ecma::parser::StringInput::from(&*fm),
+            None,
+        );
+        let mut parser = swc_core::ecma::parser::Parser::new_from(lexer);
+        let mut module = parser.parse_module().expect("parse");
+
+        strip_redundant_sentry_source_file(&mut module, "Header.tsx");
+
+        let mut output = Vec::new();
+        {
+            let mut emitter = swc_core::ecma::codegen::Emitter {
+                cfg: swc_core::ecma::codegen::Config::default().with_minify(false),
+                cm: cm.clone(),
+                comments: None,
+                wr: swc_core::ecma::codegen::text_writer::JsWriter::new(
+                    cm, "\n", &mut output, None,
+                ),
+            };
+            emitter.emit_module(&module).expect("emit");
+        }
+        let result = String::from_utf8(output).expect("utf8");
+        assert!(
+            result.contains("Header.tsx") && result.contains("Footer.tsx"),
+            "source-file attrs should be kept when values differ (scope-concatenated module):\n{result}"
+        );
+    });
 }

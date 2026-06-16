@@ -1920,6 +1920,105 @@ fn sentry_component_rename_module(module: &mut Module) {
     if !renames.is_empty() {
         rename_bindings_in_module(module, &renames);
     }
+
+    strip_sentry_rename_attrs(module);
+}
+
+/// Strip `data-sentry-component` and `data-sentry-element` attributes from
+/// JSX elements after SmartRename has consumed them. These are build-tool
+/// artifacts, not original source code.
+fn strip_sentry_rename_attrs(module: &mut Module) {
+    module.visit_mut_with(&mut SentryRenameAttrStripper);
+}
+
+struct SentryRenameAttrStripper;
+
+impl VisitMut for SentryRenameAttrStripper {
+    fn visit_mut_jsx_opening_element(&mut self, elem: &mut swc_core::ecma::ast::JSXOpeningElement) {
+        elem.attrs.retain(|attr| {
+            let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr else {
+                return true;
+            };
+            let JSXAttrName::Ident(name) = &jsx_attr.name else {
+                return true;
+            };
+            let n = name.sym.as_ref();
+            !SENTRY_ATTR_NAMES.contains(&n) && !SENTRY_ELEMENT_ATTR_NAMES.contains(&n)
+        });
+        elem.visit_mut_children_with(self);
+    }
+}
+
+/// Strip `data-sentry-source-file` from all JSX elements in the module, but
+/// only when every occurrence carries the same value AND that value matches
+/// the module's output filename (stem). When values differ — e.g. in a
+/// scope-concatenated module that merged multiple original files — the
+/// markers are kept as file-boundary hints for the reader.
+pub fn strip_redundant_sentry_source_file(module: &mut Module, filename: &str) {
+    let stem = filename_stem(filename);
+    let mut collector = SourceFileValueCollector::default();
+    module.visit_with(&mut collector);
+    if collector.values.is_empty() {
+        return;
+    }
+    if collector.values.len() != 1 {
+        return;
+    }
+    let sole_value = collector.values.into_iter().next().unwrap();
+    let marker_stem = filename_stem(&sole_value);
+    if marker_stem != stem {
+        return;
+    }
+    module.visit_mut_with(&mut SentrySourceFileStripper);
+}
+
+fn filename_stem(filename: &str) -> &str {
+    let base = filename.rsplit(['/', '\\']).next().unwrap_or(filename);
+    base.rsplit_once('.').map_or(base, |(stem, _)| stem)
+}
+
+#[derive(Default)]
+struct SourceFileValueCollector {
+    values: HashSet<String>,
+}
+
+impl Visit for SourceFileValueCollector {
+    fn visit_jsx_opening_element(&mut self, elem: &swc_core::ecma::ast::JSXOpeningElement) {
+        for attr in &elem.attrs {
+            let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr else {
+                continue;
+            };
+            let JSXAttrName::Ident(name) = &jsx_attr.name else {
+                continue;
+            };
+            if !SENTRY_SOURCE_FILE_ATTR_NAMES.contains(&name.sym.as_ref()) {
+                continue;
+            }
+            if let Some(JSXAttrValue::Str(s)) = &jsx_attr.value {
+                if let Some(val) = s.value.as_str() {
+                    self.values.insert(val.to_string());
+                }
+            }
+        }
+        elem.visit_children_with(self);
+    }
+}
+
+struct SentrySourceFileStripper;
+
+impl VisitMut for SentrySourceFileStripper {
+    fn visit_mut_jsx_opening_element(&mut self, elem: &mut swc_core::ecma::ast::JSXOpeningElement) {
+        elem.attrs.retain(|attr| {
+            let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr else {
+                return true;
+            };
+            let JSXAttrName::Ident(name) = &jsx_attr.name else {
+                return true;
+            };
+            !SENTRY_SOURCE_FILE_ATTR_NAMES.contains(&name.sym.as_ref())
+        });
+        elem.visit_mut_children_with(self);
+    }
 }
 
 #[derive(Default)]

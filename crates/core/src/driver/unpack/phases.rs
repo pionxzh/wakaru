@@ -355,6 +355,14 @@ pub(super) fn unpack_multi_module_with_plan(
                     None
                 };
 
+                if !matches!(options.level, RewriteLevel::Minimal) {
+                    let final_filename = rename_ref
+                        .get(&unpacked.module.filename)
+                        .map(|s| s.as_str())
+                        .unwrap_or(&unpacked.module.filename);
+                    crate::rules::strip_redundant_sentry_source_file(&mut module, final_filename);
+                }
+
                 module.visit_mut_with(&mut fixer(None));
                 let code = print_js(&module, cm)?;
 

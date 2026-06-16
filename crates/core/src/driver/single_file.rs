@@ -55,6 +55,10 @@ pub fn decompile(source: &str, options: DecompileOptions) -> Result<DecompileOut
             module.visit_mut_with(&mut UnImportRename::new(unresolved_mark));
         }
 
+        if options.level >= crate::rules::RewriteLevel::Standard {
+            crate::rules::strip_redundant_sentry_source_file(&mut module, &options.filename);
+        }
+
         let mut warnings = if options.diagnostics {
             let mut warnings = collect_input_parse_warnings(&parsed.recoverable_errors);
             warnings.extend(collect_tdz_warnings(&module, &options.filename));
