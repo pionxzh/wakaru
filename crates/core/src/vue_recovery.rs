@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
 use swc_core::atoms::{Atom, Wtf8Atom};
@@ -513,7 +513,7 @@ fn recover_component_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> R
     };
     let attrs = args
         .get(1)
-        .map(|arg| recover_attrs(arg.expr.as_ref(), ctx))
+        .map(|arg| recover_component_attrs(arg.expr.as_ref(), ctx))
         .transpose()?
         .unwrap_or_default();
     let children = args
@@ -892,6 +892,58 @@ fn recover_attrs(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueAttr>> 
             ctx,
         ))]),
     }
+}
+
+fn recover_component_attrs(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueAttr>> {
+    Ok(collapse_component_model_attrs(recover_attrs(expr, ctx)?))
+}
+
+fn collapse_component_model_attrs(attrs: Vec<VueAttr>) -> Vec<VueAttr> {
+    let bound_props = attrs
+        .iter()
+        .filter_map(|attr| match attr {
+            VueAttr::Bind { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let update_events = attrs
+        .iter()
+        .filter_map(|attr| match attr {
+            VueAttr::On { name, .. } => name
+                .strip_prefix("update:")
+                .map(|prop_name| prop_name.to_string()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let model_props = bound_props
+        .intersection(&update_events)
+        .cloned()
+        .collect::<HashSet<_>>();
+    if model_props.is_empty() {
+        return attrs;
+    }
+
+    let mut collapsed = Vec::new();
+    for attr in attrs {
+        match attr {
+            VueAttr::Bind { name, expr } if model_props.contains(&name) => {
+                collapsed.push(VueAttr::Directive(VueDirective {
+                    name: "model".to_string(),
+                    arg: (name != "modelValue").then_some(name),
+                    expr: Some(expr),
+                    modifiers: Vec::new(),
+                    dynamic_arg: false,
+                }));
+            }
+            VueAttr::On { name, .. }
+                if name
+                    .strip_prefix("update:")
+                    .is_some_and(|prop_name| model_props.contains(prop_name)) => {}
+            _ => collapsed.push(attr),
+        }
+    }
+
+    collapsed
 }
 
 fn recover_attrs_from_object(object: &ObjectLit, ctx: &VueRecoveryContext) -> Result<Vec<VueAttr>> {
@@ -1557,6 +1609,30 @@ export function render(_ctx, _cache) {
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <article>\n    <PanelHeader :title=\"title\" />\n    <slot name=\"body\">Empty</slot>\n  </article>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_component_v_model_pairs() {
+        let input = r#"
+import { resolveComponent, createVNode, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  const _component_FormInput = resolveComponent("FormInput");
+  return openBlock(), createElementBlock("section", null, [
+    createVNode(_component_FormInput, {
+      modelValue: _ctx.name,
+      "onUpdate:modelValue": $event => _ctx.name = $event,
+      filter: _ctx.filter,
+      "onUpdate:filter": $event => _ctx.filter = $event,
+      label: "Name"
+    }, null, 8, ["modelValue", "filter"])
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section>\n    <FormInput v-model=\"name\" v-model:filter=\"filter\" label=\"Name\" />\n  </section>\n</template>\n"
         );
     }
 
