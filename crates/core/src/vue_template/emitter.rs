@@ -80,6 +80,13 @@ impl TemplateEmitter {
                 self.out.push_str(comment.trim());
                 self.out.push_str(" -->\n");
             }
+            VueNode::RawHtml(html) => {
+                for line in html.lines() {
+                    self.indent(depth);
+                    self.out.push_str(line);
+                    self.out.push('\n');
+                }
+            }
             VueNode::RawExpr(expr) => {
                 self.indent(depth);
                 self.out.push_str("<!-- wakaru: ");
@@ -199,6 +206,7 @@ impl TemplateEmitter {
             VueNode::Text(_)
             | VueNode::Interpolation(_)
             | VueNode::Comment(_)
+            | VueNode::RawHtml(_)
             | VueNode::RawExpr(_) => {
                 self.emit_template_wrapper(depth, leading_attrs, std::slice::from_ref(node));
             }
@@ -302,7 +310,10 @@ impl TemplateEmitter {
                     self.out.push_str(expr.as_str().trim());
                     self.out.push_str(" }}");
                 }
-                VueNode::Element(_) | VueNode::Fragment(_) | VueNode::Comment(_) => {
+                VueNode::Element(_)
+                | VueNode::Fragment(_)
+                | VueNode::Comment(_)
+                | VueNode::RawHtml(_) => {
                     unreachable!("checked by is_inline_children")
                 }
                 VueNode::If(_) | VueNode::For(_) => unreachable!("checked by is_inline_children"),

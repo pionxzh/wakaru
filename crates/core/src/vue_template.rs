@@ -21,6 +21,7 @@ pub enum VueNode {
     Text(String),
     Interpolation(VueExpr),
     Comment(String),
+    RawHtml(String),
     RawExpr(VueExpr),
 }
 
@@ -299,6 +300,22 @@ mod tests {
         assert_eq!(
             template.print(),
             "<template>\n  <template v-if=\"visible\">\n    <span>A</span>\n    <strong>B</strong>\n  </template>\n  <template v-if=\"ready\">\n    {{ message }}\n  </template>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn prints_raw_static_html() {
+        let template = VueTemplate {
+            children: vec![VueNode::Element(VueElement::new("section").with_children(
+                vec![VueNode::RawHtml(
+                    "<svg viewBox=\"0 0 10 10\"><path d=\"M0 0h10v10H0z\"></path></svg>".into(),
+                )],
+            ))],
+        };
+
+        assert_eq!(
+            template.print(),
+            "<template>\n  <section>\n    <svg viewBox=\"0 0 10 10\"><path d=\"M0 0h10v10H0z\"></path></svg>\n  </section>\n</template>\n"
         );
     }
 

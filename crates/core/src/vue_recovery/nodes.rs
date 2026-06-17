@@ -129,6 +129,7 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
                     recover_component_vnode(&call.args, ctx).map(Some)
                 }
                 VueHelper::CreateCommentVNode => Ok(recover_comment_vnode(&call.args)),
+                VueHelper::CreateStaticVNode => recover_static_vnode(&call.args, ctx).map(Some),
                 VueHelper::CreateTextVNode => recover_text_vnode(&call.args, ctx).map(Some),
                 VueHelper::RenderSlot => recover_slot(&call.args, ctx).map(Some),
                 VueHelper::RenderList => recover_render_list(&call.args, ctx).map(Some),
@@ -657,6 +658,19 @@ fn recover_text_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result
     )))
 }
 
+fn recover_static_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
+    let Some(html_arg) = args.first() else {
+        return Ok(VueNode::RawExpr("createStaticVNode()".into()));
+    };
+    if let Some(html) = string_lit(html_arg.expr.as_ref()) {
+        return Ok(VueNode::RawHtml(html));
+    }
+    Ok(raw_expr(clean_expr(
+        &print_expr(html_arg.expr.as_ref(), ctx)?,
+        ctx,
+    )))
+}
+
 fn recover_comment_vnode(args: &[ExprOrSpread]) -> Option<VueNode> {
     let comment_arg = args.first()?;
     let comment = string_lit(comment_arg.expr.as_ref())?;
@@ -786,6 +800,7 @@ fn push_attr_to_node(node: &mut VueNode, attr: VueAttr) {
         VueNode::Text(_)
         | VueNode::Interpolation(_)
         | VueNode::Comment(_)
+        | VueNode::RawHtml(_)
         | VueNode::RawExpr(_) => {}
     }
 }
@@ -854,7 +869,7 @@ fn rename_node_expr_prefix(node: &mut VueNode, from: &str, to: &str) {
             rename_node_expr_prefix(&mut for_node.node, from, to);
         }
         VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => expr.replace_prefix(from, to),
-        VueNode::Text(_) | VueNode::Comment(_) => {}
+        VueNode::Text(_) | VueNode::Comment(_) | VueNode::RawHtml(_) => {}
     }
 }
 
