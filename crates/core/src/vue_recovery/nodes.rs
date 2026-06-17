@@ -132,6 +132,7 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
                 VueHelper::RenderSlot => recover_slot(&call.args, ctx).map(Some),
                 VueHelper::RenderList => recover_render_list(&call.args, ctx).map(Some),
                 VueHelper::WithDirectives => recover_with_directives(&call.args, ctx).map(Some),
+                VueHelper::WithMemo => recover_with_memo(&call.args, ctx).map(Some),
                 VueHelper::ToDisplayString => {
                     let Some(arg) = call.args.first() else {
                         return Ok(None);
@@ -585,6 +586,43 @@ fn recover_with_directives(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> R
         push_attr_to_node(&mut node, attr);
     }
 
+    Ok(node)
+}
+
+fn recover_with_memo(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
+    let Some(deps_arg) = args.first() else {
+        return Ok(VueNode::RawExpr("withMemo()".into()));
+    };
+    let Some(render_arg) = args.get(1) else {
+        return Ok(raw_expr(clean_expr(
+            &print_expr(deps_arg.expr.as_ref(), ctx)?,
+            ctx,
+        )));
+    };
+    let Expr::Arrow(render_fn) = render_arg.expr.as_ref() else {
+        return Ok(raw_expr(clean_expr(
+            &print_expr(render_arg.expr.as_ref(), ctx)?,
+            ctx,
+        )));
+    };
+    let Some(render_expr) = arrow_return_expr(&render_fn.body) else {
+        return Ok(raw_expr(clean_expr(
+            &print_expr(render_arg.expr.as_ref(), ctx)?,
+            ctx,
+        )));
+    };
+    let Some(mut node) = recover_node(render_expr, ctx)? else {
+        return Ok(raw_expr(clean_expr(&print_expr(render_expr, ctx)?, ctx)));
+    };
+    push_attr_to_node(
+        &mut node,
+        VueAttr::Directive(VueDirective {
+            name: "memo".to_string(),
+            arg: None,
+            expr: Some(printed_vue_expr(deps_arg.expr.as_ref(), ctx)?),
+            modifiers: Vec::new(),
+        }),
+    );
     Ok(node)
 }
 

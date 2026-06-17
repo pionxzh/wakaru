@@ -319,6 +319,23 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_with_memo_directive() {
+        let input = r#"
+import { withMemo, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return withMemo([_ctx.stakeDisplay, () => _ctx.i18n.locale], () => (
+    openBlock(), createElementBlock("input", { value: _ctx.stakeDisplay }, null, 8, ["value"])
+  ), _cache, 0);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <input :value=\"stakeDisplay\" v-memo=\"[ stakeDisplay, ()=>i18n.locale ]\" />\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_event_handler_modifiers() {
         let input = r#"
 import { withKeys, withModifiers, openBlock, createElementBlock } from "vue";
