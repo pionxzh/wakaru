@@ -5,8 +5,8 @@ use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, FileName, SourceMap, DUMMY_SP};
 use swc_core::ecma::ast::{
     AssignOp, BinaryOp, BlockStmtOrExpr, CallExpr, Callee, Decl, ExportDecl, Expr, ExprOrSpread,
-    FnDecl, ImportSpecifier, Lit, Module, ModuleDecl, ModuleItem, ObjectLit, Pat, Prop,
-    PropOrSpread, ReturnStmt, Stmt, UnaryOp, VarDeclKind,
+    FnDecl, Lit, Module, ModuleDecl, ModuleItem, ObjectLit, Prop, PropOrSpread, ReturnStmt, Stmt,
+    UnaryOp,
 };
 use swc_core::ecma::parser::{lexer::Lexer, EsSyntax, Parser, StringInput, Syntax};
 use swc_core::ecma::visit::{Visit, VisitWith};
@@ -17,18 +17,19 @@ use crate::vue_template::{
     VueSfc, VueTemplate,
 };
 
+mod context;
 mod expressions;
 mod helpers;
 mod syntax;
 
+use context::{
+    collect_context, collect_render_context, render_context_param, resolve_directive_name,
+};
 use expressions::{
     clean_attr_expr, clean_expr, clean_vue_expr, print_expr, printed_vue_expr, raw_expr,
 };
 use helpers::{helper_call_name, helper_name, is_fragment_tag, VueHelper};
-use syntax::{
-    module_export_name, param_binding_ident, pat_binding_ident, prop_name, string_lit,
-    wtf8_to_string,
-};
+use syntax::{pat_binding_ident, prop_name, string_lit, wtf8_to_string};
 
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
@@ -101,107 +102,6 @@ fn parse_module(source: &str, cm: Lrc<SourceMap>) -> Result<Module> {
     parser
         .parse_module()
         .map_err(|error| anyhow!("failed to parse decompiled Vue module: {error:?}"))
-}
-
-fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecoveryContext {
-    let mut ctx = VueRecoveryContext {
-        cm,
-        ..Default::default()
-    };
-    for item in &module.body {
-        match item {
-            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) if import.src.value == *"vue" => {
-                for specifier in &import.specifiers {
-                    if let ImportSpecifier::Named(named) = specifier {
-                        let imported = named
-                            .imported
-                            .as_ref()
-                            .map(module_export_name)
-                            .unwrap_or_else(|| named.local.sym.to_string());
-                        ctx.vue_helpers.insert(
-                            named.local.sym.clone(),
-                            VueHelper::from_imported_name(imported),
-                        );
-                    }
-                }
-            }
-            ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) => {
-                if !matches!(var.kind, VarDeclKind::Const | VarDeclKind::Var) {
-                    continue;
-                }
-                for decl in &var.decls {
-                    let Pat::Ident(binding) = &decl.name else {
-                        continue;
-                    };
-                    let Some(init) = decl.init.as_deref() else {
-                        continue;
-                    };
-                    if let Expr::Object(object) = init {
-                        ctx.object_bindings
-                            .insert(binding.id.sym.clone(), object.clone());
-                    }
-                    if binding.id.sym.as_ref() == "__sfc__" {
-                        if let Expr::Object(object) = init {
-                            ctx.component_options = Some(object.clone());
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    ctx
-}
-
-fn collect_render_context(render: &FnDecl, ctx: &mut VueRecoveryContext) {
-    let Some(body) = render.function.body.as_ref() else {
-        return;
-    };
-    for stmt in &body.stmts {
-        let Stmt::Decl(Decl::Var(var)) = stmt else {
-            continue;
-        };
-        for decl in &var.decls {
-            let Pat::Ident(binding) = &decl.name else {
-                continue;
-            };
-            let Some(init) = decl.init.as_deref() else {
-                continue;
-            };
-            if let Some(component) = resolve_component_name(init, ctx) {
-                ctx.component_bindings
-                    .insert(binding.id.sym.clone(), component);
-            }
-            if let Some(directive) = resolve_directive_name(init, ctx) {
-                ctx.directive_bindings
-                    .insert(binding.id.sym.clone(), directive);
-            }
-        }
-    }
-}
-
-fn resolve_component_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    if helper_name(&call.callee, ctx) != Some(VueHelper::ResolveComponent) {
-        return None;
-    }
-    call.args
-        .first()
-        .and_then(|arg| string_lit(arg.expr.as_ref()))
-}
-
-fn resolve_directive_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    if helper_name(&call.callee, ctx) != Some(VueHelper::ResolveDirective) {
-        return None;
-    }
-    call.args
-        .first()
-        .and_then(|arg| string_lit(arg.expr.as_ref()))
 }
 
 fn find_render_fn(module: &Module) -> Option<&FnDecl> {
@@ -335,15 +235,6 @@ fn find_render_return(render: &FnDecl) -> Option<&Expr> {
         }) => Some(expr.as_ref()),
         _ => None,
     })
-}
-
-fn render_context_param(render: &FnDecl) -> Option<Atom> {
-    render
-        .function
-        .params
-        .first()
-        .and_then(param_binding_ident)
-        .map(|ident| ident.sym.clone())
 }
 
 fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
