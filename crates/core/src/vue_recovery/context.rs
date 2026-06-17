@@ -89,16 +89,31 @@ pub(super) fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecover
 }
 
 fn vue_component_name_from_source(source: &str) -> Option<String> {
-    if !source.contains(".vue") {
-        return None;
-    }
     let file = source
         .rsplit(['/', '\\'])
         .next()
         .unwrap_or(source)
         .trim_start_matches("./");
-    let name = file.split(".vue").next()?;
-    (!name.is_empty()).then(|| name.to_string())
+    if source.contains(".vue") {
+        let name = file.split(".vue").next()?;
+        return (!name.is_empty()).then(|| name.to_string());
+    }
+
+    let stem = file
+        .strip_suffix(".mjs")
+        .or_else(|| file.strip_suffix(".js"))?;
+    let name = stem
+        .split('-')
+        .next()
+        .unwrap_or(stem)
+        .split('.')
+        .next()
+        .unwrap_or(stem);
+    let starts_with_uppercase = name
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_uppercase());
+    (starts_with_uppercase && !name.is_empty()).then(|| name.to_string())
 }
 
 pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecoveryContext) {
