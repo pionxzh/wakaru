@@ -15,7 +15,8 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::driver::{decompile, DecompileOptions, DecompileOutput};
 use crate::vue_template::{
-    VueAttr, VueDirective, VueElement, VueExpr, VueFor, VueIfBranch, VueNode, VueSfc, VueTemplate,
+    VueAttr, VueDirective, VueDirectiveArg, VueElement, VueExpr, VueFor, VueIfBranch, VueNode,
+    VueSfc, VueTemplate,
 };
 
 #[derive(Default, Clone)]
@@ -637,16 +638,17 @@ fn recover_directive_tuple(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Opti
         .and_then(|elem| elem.as_ref())
         .map(|elem| directive_modifiers(elem.expr.as_ref()))
         .unwrap_or_default();
-    let (arg, dynamic_arg) = arg
-        .map(|arg| (Some(arg.value), arg.dynamic))
-        .unwrap_or((None, false));
-
     Ok(Some(VueAttr::Directive(VueDirective {
         name: name.name,
-        arg,
+        arg: arg.map(|arg| {
+            if arg.dynamic {
+                VueDirectiveArg::Dynamic(VueExpr::new(arg.value))
+            } else {
+                VueDirectiveArg::Static(arg.value)
+            }
+        }),
         expr,
         modifiers,
-        dynamic_arg,
     })))
 }
 
@@ -957,10 +959,9 @@ fn collapse_component_model_attrs(
                 let modifiers = model_modifiers.get(&name).cloned().unwrap_or_default();
                 collapsed.push(VueAttr::Directive(VueDirective {
                     name: "model".to_string(),
-                    arg: (name != "modelValue").then_some(name),
+                    arg: (name != "modelValue").then_some(VueDirectiveArg::Static(name)),
                     expr: Some(expr),
                     modifiers,
-                    dynamic_arg: false,
                 }));
             }
             VueAttr::On { name, .. }
