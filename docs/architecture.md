@@ -167,9 +167,11 @@ Stage 6: Cleanup and renaming
 ```
 
 `DeadImports` and `DeadDecls` are an optional late cleanup phase controlled by
-`DecompileOptions.dead_code_elimination`. They stay enabled for normal
-decompilation output, but tests can disable them to snapshot structural
-restoration separately from dead-code cleanup.
+`DecompileOptions.dce_mode`. CLI output uses transform-only cleanup by default,
+preserving dead code that was already dead in the input while removing
+transform-induced leftovers; `--dce` opts into a full reachability sweep. Tests
+and API callers can set `DceMode::Off` to snapshot structural restoration
+separately from dead-code cleanup.
 
 `DecompileOptions.level` controls rewrite aggressiveness — `minimal` (high
 confidence, semantics-preserving), `standard` (default, readability-oriented),
