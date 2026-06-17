@@ -278,11 +278,46 @@ fn recover_component_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> R
 
 fn recover_component_children(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueNode>> {
     match expr {
+        Expr::Call(call) if helper_name(&call.callee, ctx) == Some(VueHelper::CreateSlots) => {
+            recover_create_slots(&call.args, ctx)?
+                .map(Ok)
+                .unwrap_or_else(|| recover_children(expr, ctx))
+        }
         Expr::Object(object) => recover_component_slots(object, ctx)?
             .map(Ok)
             .unwrap_or_else(|| recover_children(expr, ctx)),
         _ => recover_children(expr, ctx),
     }
+}
+
+fn recover_create_slots(
+    args: &[ExprOrSpread],
+    ctx: &VueRecoveryContext,
+) -> Result<Option<Vec<VueNode>>> {
+    let Some(base_arg) = args.first() else {
+        return Ok(None);
+    };
+    let Expr::Object(base_slots) = base_arg.expr.as_ref() else {
+        return Ok(None);
+    };
+    let Some(mut slots) = recover_component_slots(base_slots, ctx)? else {
+        return Ok(None);
+    };
+    let Some(dynamic_arg) = args.get(1) else {
+        return Ok(Some(slots));
+    };
+    let Expr::Array(dynamic_slots) = dynamic_arg.expr.as_ref() else {
+        return Ok(None);
+    };
+
+    for elem in dynamic_slots.elems.iter().flatten() {
+        let Some(slot) = recover_dynamic_slot(elem.expr.as_ref(), ctx)? else {
+            return Ok(None);
+        };
+        slots.push(slot);
+    }
+
+    Ok(Some(slots))
 }
 
 fn recover_component_slots(
@@ -309,6 +344,58 @@ fn recover_component_slots(
         slots.push(slot);
     }
     Ok(Some(slots))
+}
+
+fn recover_dynamic_slot(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
+    match expr {
+        Expr::Object(object) => recover_slot_descriptor(object, ctx),
+        Expr::Cond(cond) if is_undefined_expr(cond.alt.as_ref()) => {
+            let Some(slot) = recover_dynamic_slot(cond.cons.as_ref(), ctx)? else {
+                return Ok(None);
+            };
+            Ok(Some(VueNode::If(vec![VueIfBranch {
+                condition: Some(VueExpr::new(clean_condition_expr(cond.test.as_ref(), ctx)?)),
+                node: Box::new(slot),
+            }])))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn recover_slot_descriptor(
+    object: &ObjectLit,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<VueNode>> {
+    let mut slot_name = None;
+    let mut slot_fn = None;
+
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return Ok(None);
+        };
+        let Prop::KeyValue(key_value) = prop.as_ref() else {
+            return Ok(None);
+        };
+        let Some(name) = prop_name(&key_value.key) else {
+            return Ok(None);
+        };
+        match name.as_str() {
+            "name" => {
+                let Some(name) = string_lit(key_value.value.as_ref()) else {
+                    return Ok(None);
+                };
+                slot_name = Some(name);
+            }
+            "fn" => slot_fn = Some(key_value.value.as_ref()),
+            "key" => {}
+            _ => return Ok(None),
+        }
+    }
+
+    let (Some(slot_name), Some(slot_fn)) = (slot_name, slot_fn) else {
+        return Ok(None);
+    };
+    recover_component_slot(&slot_name, slot_fn, ctx)
 }
 
 fn recover_component_slot(
@@ -400,6 +487,15 @@ fn object_slot_pat_prop(prop: &ObjectPatProp, ctx: &VueRecoveryContext) -> Resul
             Pat::Ident(binding) => Ok(Some(format!("...{}", binding.id.sym))),
             _ => Ok(None),
         },
+    }
+}
+
+fn is_undefined_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ident(ident) if ident.sym.as_ref() == "undefined" => true,
+        Expr::Lit(Lit::Null(_)) => true,
+        Expr::Paren(paren) => is_undefined_expr(paren.expr.as_ref()),
+        _ => false,
     }
 }
 
