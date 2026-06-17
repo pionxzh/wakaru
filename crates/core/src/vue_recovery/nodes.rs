@@ -1,4 +1,5 @@
 use anyhow::Result;
+use swc_core::atoms::Atom;
 use swc_core::ecma::ast::{
     ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Expr, ExprOrSpread, FnDecl, Lit, ObjectLit,
     ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
@@ -8,7 +9,7 @@ use super::attrs::{recover_attrs, recover_component_attrs};
 use super::directives::recover_directive_tuple;
 use super::expressions::{clean_attr_expr, clean_expr, print_expr, printed_vue_expr, raw_expr};
 use super::helpers::{helper_name, is_fragment_tag, VueHelper};
-use super::syntax::{pat_binding_ident, prop_name, string_lit, wtf8_to_string};
+use super::syntax::{prop_name, string_lit, wtf8_to_string};
 use super::VueRecoveryContext;
 use crate::vue_template::{
     VueAttr, VueDirective, VueDirectiveArg, VueElement, VueExpr, VueFor, VueIfBranch, VueNode,
@@ -209,12 +210,7 @@ fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Resul
             ctx,
         )));
     };
-    let Some(item_param) = callback
-        .params
-        .first()
-        .and_then(pat_binding_ident)
-        .map(|ident| ident.sym.clone())
-    else {
+    let Some(for_params) = recover_for_params(&callback.params, "item", ctx)? else {
         return Ok(raw_expr(clean_expr(
             &print_expr(callback_arg.expr.as_ref(), ctx)?,
             ctx,
@@ -239,13 +235,92 @@ fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Resul
             &item_ctx,
         )));
     };
-    rename_node_expr_prefix(&mut item_node, item_param.as_ref(), "item");
+    apply_for_param_renames(&mut item_node, &for_params);
 
     Ok(VueNode::For(VueFor {
-        value: "item".to_string(),
+        value: for_params.value,
         source,
         node: Box::new(item_node),
     }))
+}
+
+struct RecoveredForParams {
+    value: String,
+    renames: Vec<(Atom, String)>,
+}
+
+fn recover_for_params(
+    params: &[Pat],
+    first_fallback: &'static str,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<RecoveredForParams>> {
+    if params.is_empty() {
+        return Ok(None);
+    }
+
+    let fallback_names = for_param_fallback_names(params.len(), first_fallback);
+    let mut values = Vec::new();
+    let mut renames = Vec::new();
+
+    for (param, fallback) in params.iter().take(3).zip(fallback_names) {
+        match param {
+            Pat::Ident(binding) => {
+                values.push(fallback.to_string());
+                renames.push((binding.id.sym.clone(), fallback.to_string()));
+            }
+            _ => {
+                let Some(value) = for_param_pat(param, ctx)? else {
+                    return Ok(None);
+                };
+                values.push(value);
+            }
+        }
+    }
+
+    let value = if values.len() == 1 {
+        values.remove(0)
+    } else {
+        format!("({})", values.join(", "))
+    };
+
+    Ok(Some(RecoveredForParams { value, renames }))
+}
+
+fn for_param_fallback_names(count: usize, first: &'static str) -> Vec<&'static str> {
+    match count {
+        0 => Vec::new(),
+        1 => vec![first],
+        2 => vec![first, "index"],
+        _ => vec![first, "key", "index"],
+    }
+}
+
+fn for_param_pat(pat: &Pat, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    match pat {
+        Pat::Array(array) => {
+            let mut elems = Vec::new();
+            for elem in &array.elems {
+                let Some(elem) = elem else {
+                    elems.push(String::new());
+                    continue;
+                };
+                let Some(value) = for_param_pat(elem, ctx)? else {
+                    return Ok(None);
+                };
+                elems.push(value);
+            }
+            Ok(Some(format!("[{}]", elems.join(", "))))
+        }
+        Pat::Object(_) => slot_pat(pat, ctx),
+        Pat::Ident(binding) => Ok(Some(binding.id.sym.to_string())),
+        _ => Ok(None),
+    }
+}
+
+fn apply_for_param_renames(node: &mut VueNode, params: &RecoveredForParams) {
+    for (from, to) in &params.renames {
+        rename_node_expr_prefix(node, from.as_ref(), to);
+    }
 }
 
 fn recover_component_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
@@ -387,12 +462,7 @@ fn recover_dynamic_slot_list(
     let Expr::Arrow(callback) = callback_arg.expr.as_ref() else {
         return Ok(None);
     };
-    let Some(item_param) = callback
-        .params
-        .first()
-        .and_then(pat_binding_ident)
-        .map(|ident| ident.sym.clone())
-    else {
+    let Some(for_params) = recover_for_params(&callback.params, "slot", ctx)? else {
         return Ok(None);
     };
     let Some(slot_expr) = arrow_return_expr(&callback.body) else {
@@ -404,10 +474,10 @@ fn recover_dynamic_slot_list(
     let Some(mut slot) = recover_dynamic_slot(slot_expr, &item_ctx)? else {
         return Ok(None);
     };
-    rename_node_expr_prefix(&mut slot, item_param.as_ref(), "slot");
+    apply_for_param_renames(&mut slot, &for_params);
 
     Ok(Some(VueNode::For(VueFor {
-        value: "slot".to_string(),
+        value: for_params.value,
         source: VueExpr::new(clean_attr_expr(
             &print_expr(source_arg.expr.as_ref(), ctx)?,
             ctx,
