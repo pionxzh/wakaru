@@ -4,6 +4,7 @@ use super::VueRecoveryContext;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum VueHelper {
+    Computed,
     CreateBlock,
     CreateCommentVNode,
     CreateElementBlock,
@@ -34,6 +35,7 @@ pub(super) enum VueHelper {
 impl VueHelper {
     pub(super) fn from_imported_name(name: String) -> Self {
         match name.as_str() {
+            "computed" => Self::Computed,
             "createBlock" => Self::CreateBlock,
             "createCommentVNode" => Self::CreateCommentVNode,
             "createElementBlock" => Self::CreateElementBlock,
