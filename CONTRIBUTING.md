@@ -15,6 +15,22 @@ Optionally install [cargo-insta](https://insta.rs/) for interactive snapshot rev
 cargo install cargo-insta
 ```
 
+### Optional: shallow-fetch git dependencies
+
+The formatter currently depends on several OXC crates from a pinned git
+revision. From a fresh Cargo cache, Cargo may need to fetch the OXC monorepo,
+which can be slow.
+
+If you use nightly Cargo, you can opt into Cargo's unstable shallow git fetch
+mode before building or testing:
+
+```bash
+cargo +nightly fetch -Zgit=shallow-deps
+```
+
+This is optional and not required for normal development. The default workflow
+uses stable Cargo.
+
 ## Checks
 
 Before submitting a PR, make sure all of the following pass:

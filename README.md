@@ -146,6 +146,8 @@ When reporting a bug, please include: the input code, the command you ran, the c
 3. Run `cargo test` to verify everything passes
 4. Make your changes and add tests
 
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for full setup notes.
+
 Before submitting a PR:
 
 ```bash
