@@ -447,6 +447,37 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_create_slots_dynamic_component_children() {
+        let input = r#"
+import { resolveComponent, createVNode, createSlots, withCtx, createElementVNode, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  const _component_Navbar = resolveComponent("Navbar");
+  return openBlock(), createElementBlock("section", null, [
+    createVNode(_component_Navbar, null, createSlots({
+      topRow: withCtx(() => [
+        createElementVNode("div", null, "Top")
+      ]),
+      _: 2
+    }, [
+      _ctx.showTitle ? {
+        name: "navbarTitle",
+        fn: withCtx(() => [
+          createElementVNode("strong", null, "Title")
+        ]),
+        key: "0"
+      } : undefined
+    ]), 1024)
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section>\n    <Navbar>\n      <template v-slot:topRow>\n        <div>Top</div>\n      </template>\n      <template v-if=\"showTitle\" v-slot:navbarTitle>\n        <strong>Title</strong>\n      </template>\n    </Navbar>\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_component_v_model_pairs() {
         let input = r#"
 import { resolveComponent, createVNode, openBlock, createElementBlock } from "vue";
