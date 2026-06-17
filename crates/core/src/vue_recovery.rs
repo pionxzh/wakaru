@@ -19,6 +19,10 @@ use crate::vue_template::{
     VueSfc, VueTemplate,
 };
 
+mod helpers;
+
+use helpers::{helper_call_name, helper_name, is_fragment_tag, VueHelper};
+
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
     vue_helpers: HashMap<Atom, VueHelper>,
@@ -28,53 +32,6 @@ struct VueRecoveryContext {
     component_options: Option<ObjectLit>,
     render_context: Option<Atom>,
     cm: Lrc<SourceMap>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum VueHelper {
-    CreateBlock,
-    CreateElementBlock,
-    CreateElementVNode,
-    CreateTextVNode,
-    CreateVNode,
-    Fragment,
-    RenderList,
-    RenderSlot,
-    ResolveComponent,
-    ResolveDirective,
-    ResolveDynamicComponent,
-    ToDisplayString,
-    VModel(String),
-    VShow,
-    WithDirectives,
-    WithKeys,
-    WithModifiers,
-    Other(String),
-}
-
-impl VueHelper {
-    fn from_imported_name(name: String) -> Self {
-        match name.as_str() {
-            "createBlock" => Self::CreateBlock,
-            "createElementBlock" => Self::CreateElementBlock,
-            "createElementVNode" => Self::CreateElementVNode,
-            "createTextVNode" => Self::CreateTextVNode,
-            "createVNode" => Self::CreateVNode,
-            "Fragment" => Self::Fragment,
-            "renderList" => Self::RenderList,
-            "renderSlot" => Self::RenderSlot,
-            "resolveComponent" => Self::ResolveComponent,
-            "resolveDirective" => Self::ResolveDirective,
-            "resolveDynamicComponent" => Self::ResolveDynamicComponent,
-            "toDisplayString" => Self::ToDisplayString,
-            "vShow" => Self::VShow,
-            "withDirectives" => Self::WithDirectives,
-            "withKeys" => Self::WithKeys,
-            "withModifiers" => Self::WithModifiers,
-            helper if helper.starts_with("vModel") => Self::VModel(name),
-            _ => Self::Other(name),
-        }
-    }
 }
 
 pub fn recover_vue_sfc_source_from_js(source: &str) -> Result<Option<String>> {
@@ -1284,24 +1241,6 @@ fn recover_children(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueNode
     }
 }
 
-fn helper_call_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<VueHelper> {
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    helper_name(&call.callee, ctx)
-}
-
-fn is_fragment_tag(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
-    match expr {
-        Expr::Ident(ident) => ctx
-            .vue_helpers
-            .get(&ident.sym)
-            .map(|helper| helper == &VueHelper::Fragment)
-            .unwrap_or_else(|| ident.sym.as_ref() == "Fragment"),
-        _ => false,
-    }
-}
-
 struct RecoveredComponentTag {
     tag: String,
     attrs: Vec<VueAttr>,
@@ -1347,16 +1286,6 @@ fn helper_first_arg_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String
         return Ok(clean_expr(&print_expr(expr, ctx)?, ctx));
     };
     Ok(clean_attr_expr(&print_expr(first.expr.as_ref(), ctx)?, ctx))
-}
-
-fn helper_name(callee: &Callee, ctx: &VueRecoveryContext) -> Option<VueHelper> {
-    let Callee::Expr(expr) = callee else {
-        return None;
-    };
-    match expr.as_ref() {
-        Expr::Ident(ident) => ctx.vue_helpers.get(&ident.sym).cloned(),
-        _ => None,
-    }
 }
 
 fn component_script(options: &ObjectLit, ctx: &VueRecoveryContext) -> Result<Option<String>> {
