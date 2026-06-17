@@ -319,6 +319,23 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_static_vnode_html() {
+        let input = r#"
+import { createStaticVNode, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("section", null, [
+    createStaticVNode('<svg viewBox="0 0 10 10"><path d="M0 0h10v10H0z"></path></svg>', 1)
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section>\n    <svg viewBox=\"0 0 10 10\"><path d=\"M0 0h10v10H0z\"></path></svg>\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_with_memo_directive() {
         let input = r#"
 import { withMemo, openBlock, createElementBlock } from "vue";
