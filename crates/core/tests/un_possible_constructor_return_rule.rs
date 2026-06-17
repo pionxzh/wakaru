@@ -114,6 +114,38 @@ var y = m(this, Other.call(this));
 }
 
 #[test]
+fn removes_babel_runtime_import_possible_constructor_return() {
+    let input = r#"
+var _possibleConstructorReturn = require("@babel/runtime/helpers/possibleConstructorReturn");
+export function Foo() {
+    var x = _possibleConstructorReturn(this, Parent.call(this, args));
+}
+"#;
+    let expected = r#"
+export function Foo() {
+    const x = Parent.call(this, args);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn removes_swc_external_possible_constructor_return() {
+    let input = r#"
+import { _ as _possible_constructor_return } from "@swc/helpers/_/_possible_constructor_return";
+export function Foo() {
+    var x = _possible_constructor_return(this, Parent.call(this, args));
+}
+"#;
+    let expected = r#"
+export function Foo() {
+    const x = Parent.call(this, args);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn preserves_non_matching_functions() {
     let input = r#"
 function validate(self, call) {

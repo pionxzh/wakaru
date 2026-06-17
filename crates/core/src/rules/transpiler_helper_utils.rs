@@ -347,6 +347,20 @@ const CLASS_CALL_CHECK_PATHS: &[&str] = &[
     "@swc/helpers/_/_class_call_check",
 ];
 
+const POSSIBLE_CONSTRUCTOR_RETURN_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/possibleConstructorReturn",
+    "@babel/runtime/helpers/esm/possibleConstructorReturn",
+    "@swc/helpers/_/_possible_constructor_return",
+];
+
+const ASSERT_THIS_INITIALIZED_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/assertThisInitialized",
+    "@babel/runtime/helpers/esm/assertThisInitialized",
+    "@swc/helpers/_/_assert_this_initialized",
+];
+
+const CALL_SUPER_PATHS: &[&str] = &["@swc/helpers/_/_call_super"];
+
 const TAGGED_TEMPLATE_LITERAL_PATHS: &[&str] = &["@swc/helpers/_/_tagged_template_literal"];
 
 /// Scan module-level declarations for helper functions.
@@ -1153,7 +1167,19 @@ pub(crate) fn detect_helper_from_path(path: &str) -> Option<TranspilerHelperKind
     if CLASS_CALL_CHECK_PATHS.contains(&path) {
         return Some(TranspilerHelperKind::ClassCallCheck);
     }
-    if path == "@swc/helpers/_/_array_with_holes" {
+    if POSSIBLE_CONSTRUCTOR_RETURN_PATHS.contains(&path) {
+        return Some(TranspilerHelperKind::PossibleConstructorReturn);
+    }
+    if ASSERT_THIS_INITIALIZED_PATHS.contains(&path) {
+        return Some(TranspilerHelperKind::AssertThisInitialized);
+    }
+    if CALL_SUPER_PATHS.contains(&path) {
+        return Some(TranspilerHelperKind::CallSuper);
+    }
+    if path == "@swc/helpers/_/_array_with_holes"
+        || path == "@swc/helpers/_/_set_prototype_of"
+        || path == "@swc/helpers/_/_create_class"
+    {
         return Some(TranspilerHelperKind::HelperDependency);
     }
     None

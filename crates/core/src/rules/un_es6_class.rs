@@ -117,8 +117,7 @@ impl Es6ClassHelperContext {
     }
 
     fn from_module_items(items: &[ModuleItem], unresolved_mark: Mark) -> Self {
-        let tslib_namespaces =
-            collect_tslib_namespaces_from_items(items, unresolved_mark);
+        let tslib_namespaces = collect_tslib_namespaces_from_items(items, unresolved_mark);
         let mut ts_extends_helpers = collect_ts_extends_helpers_from_items(items);
         ts_extends_helpers.extend(collect_tslib_extends_helpers_from_items(
             items,

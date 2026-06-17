@@ -122,6 +122,38 @@ export var x = validate(obj);
 }
 
 #[test]
+fn removes_babel_runtime_import_assert_this_initialized() {
+    let input = r#"
+var _assertThisInitialized = require("@babel/runtime/helpers/assertThisInitialized");
+export function Foo() {
+    this.method = this.method.bind(_assertThisInitialized(this));
+}
+"#;
+    let expected = r#"
+export function Foo() {
+    this.method = this.method.bind(this);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn removes_swc_external_assert_this_initialized() {
+    let input = r#"
+import { _ as _assert_this_initialized } from "@swc/helpers/_/_assert_this_initialized";
+export function Foo() {
+    this.method = this.method.bind(_assert_this_initialized(this));
+}
+"#;
+    let expected = r#"
+export function Foo() {
+    this.method = this.method.bind(this);
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn preserves_identifier_argument_guard() {
     let input = r#"
 function _assertThisInitialized(e) {
