@@ -66,10 +66,15 @@ pub enum VueAttr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VueDirective {
     pub name: String,
-    pub arg: Option<String>,
+    pub arg: Option<VueDirectiveArg>,
     pub expr: Option<VueExpr>,
     pub modifiers: Vec<String>,
-    pub dynamic_arg: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VueDirectiveArg {
+    Static(String),
+    Dynamic(VueExpr),
 }
 
 impl VueExpr {
@@ -117,19 +122,16 @@ impl VueDirective {
             arg: None,
             expr: None,
             modifiers: Vec::new(),
-            dynamic_arg: false,
         }
     }
 
     pub fn with_arg(mut self, arg: impl Into<String>) -> Self {
-        self.arg = Some(arg.into());
-        self.dynamic_arg = false;
+        self.arg = Some(VueDirectiveArg::Static(arg.into()));
         self
     }
 
-    pub fn with_dynamic_arg(mut self, arg: impl Into<String>) -> Self {
-        self.arg = Some(arg.into());
-        self.dynamic_arg = true;
+    pub fn with_dynamic_arg(mut self, arg: impl Into<VueExpr>) -> Self {
+        self.arg = Some(VueDirectiveArg::Dynamic(arg.into()));
         self
     }
 
@@ -420,13 +422,16 @@ impl TemplateEmitter {
         self.out.push_str("v-");
         self.out.push_str(&directive.name);
         if let Some(arg) = &directive.arg {
-            if directive.dynamic_arg {
-                self.out.push_str(":[");
-                self.out.push_str(arg);
-                self.out.push(']');
-            } else {
-                self.out.push(':');
-                self.out.push_str(arg);
+            match arg {
+                VueDirectiveArg::Static(arg) => {
+                    self.out.push(':');
+                    self.out.push_str(arg);
+                }
+                VueDirectiveArg::Dynamic(arg) => {
+                    self.out.push_str(":[");
+                    self.out.push_str(arg.as_str());
+                    self.out.push(']');
+                }
             }
         }
         for modifier in &directive.modifiers {
