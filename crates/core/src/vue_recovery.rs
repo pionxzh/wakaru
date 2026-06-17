@@ -22,7 +22,8 @@ mod nodes;
 mod syntax;
 
 use context::{
-    collect_context, collect_render_context, infer_render_helpers, render_context_param,
+    collect_context, collect_render_context, collect_setup_context, infer_render_helpers,
+    render_context_param,
 };
 use expressions::print_expr;
 use helpers::VueHelper;
@@ -34,6 +35,7 @@ struct VueRecoveryContext {
     vue_helpers: HashMap<Atom, VueHelper>,
     vue_helper_candidates: HashSet<Atom>,
     object_bindings: HashMap<Atom, ObjectLit>,
+    setup_value_bindings: HashMap<Atom, String>,
     component_bindings: HashMap<Atom, String>,
     directive_bindings: HashMap<Atom, String>,
     component_options: Option<ObjectLit>,
@@ -44,7 +46,10 @@ struct VueRecoveryContext {
 #[derive(Clone, Copy)]
 pub(super) enum RenderSource<'a> {
     Function(&'a FnDecl),
-    Arrow(&'a ArrowExpr),
+    SetupArrow {
+        render: &'a ArrowExpr,
+        setup_stmts: &'a [Stmt],
+    },
 }
 
 pub fn recover_vue_sfc_source_from_js(source: &str) -> Result<Option<String>> {
@@ -68,6 +73,7 @@ pub fn recover_vue_sfc_from_js(source: &str) -> Result<Option<VueSfc>> {
     };
     ctx.render_context = render_context_param(render);
     infer_render_helpers(render, &mut ctx);
+    collect_setup_context(render, &mut ctx)?;
     collect_render_context(render, &mut ctx);
     if !render_uses_vue_helper(render, &ctx) {
         return Ok(None);
@@ -113,7 +119,7 @@ fn parse_module(source: &str, cm: Lrc<SourceMap>) -> Result<Module> {
 fn find_render_source(module: &Module) -> Option<RenderSource<'_>> {
     find_render_fn(module)
         .map(RenderSource::Function)
-        .or_else(|| find_setup_render_arrow(module).map(RenderSource::Arrow))
+        .or_else(|| find_setup_render_source(module))
 }
 
 fn find_render_fn(module: &Module) -> Option<&FnDecl> {
@@ -134,13 +140,13 @@ fn find_render_fn(module: &Module) -> Option<&FnDecl> {
     None
 }
 
-fn find_setup_render_arrow(module: &Module) -> Option<&ArrowExpr> {
-    if let Some(render) = direct_exported_setup_render_arrow(module) {
+fn find_setup_render_source(module: &Module) -> Option<RenderSource<'_>> {
+    if let Some(render) = direct_exported_setup_render_source(module) {
         return Some(render);
     }
 
     for local in preferred_setup_export_names(module) {
-        if let Some(render) = setup_render_arrow_from_binding(module, &local) {
+        if let Some(render) = setup_render_source_from_binding(module, &local) {
             return Some(render);
         }
     }
@@ -148,7 +154,7 @@ fn find_setup_render_arrow(module: &Module) -> Option<&ArrowExpr> {
     for item in &module.body {
         match item {
             ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(export)) => {
-                if let Some(render) = setup_render_arrow_from_expr(export.expr.as_ref()) {
+                if let Some(render) = setup_render_source_from_expr(export.expr.as_ref()) {
                     return Some(render);
                 }
             }
@@ -158,7 +164,7 @@ fn find_setup_render_arrow(module: &Module) -> Option<&ArrowExpr> {
                         let Some(init) = decl.init.as_deref() else {
                             continue;
                         };
-                        if let Some(render) = setup_render_arrow_from_expr(init) {
+                        if let Some(render) = setup_render_source_from_expr(init) {
                             return Some(render);
                         }
                     }
@@ -169,7 +175,7 @@ fn find_setup_render_arrow(module: &Module) -> Option<&ArrowExpr> {
                     let Some(init) = decl.init.as_deref() else {
                         continue;
                     };
-                    if let Some(render) = setup_render_arrow_from_expr(init) {
+                    if let Some(render) = setup_render_source_from_expr(init) {
                         return Some(render);
                     }
                 }
@@ -180,7 +186,7 @@ fn find_setup_render_arrow(module: &Module) -> Option<&ArrowExpr> {
     None
 }
 
-fn direct_exported_setup_render_arrow(module: &Module) -> Option<&ArrowExpr> {
+fn direct_exported_setup_render_source(module: &Module) -> Option<RenderSource<'_>> {
     for preferred_name in ["_", "default"] {
         for item in &module.body {
             let ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) = item else {
@@ -199,7 +205,7 @@ fn direct_exported_setup_render_arrow(module: &Module) -> Option<&ArrowExpr> {
                 let Some(init) = decl.init.as_deref() else {
                     continue;
                 };
-                if let Some(render) = setup_render_arrow_from_expr(init) {
+                if let Some(render) = setup_render_source_from_expr(init) {
                     return Some(render);
                 }
             }
@@ -232,7 +238,10 @@ fn preferred_setup_export_names(module: &Module) -> Vec<String> {
     names
 }
 
-fn setup_render_arrow_from_binding<'a>(module: &'a Module, local: &str) -> Option<&'a ArrowExpr> {
+fn setup_render_source_from_binding<'a>(
+    module: &'a Module,
+    local: &str,
+) -> Option<RenderSource<'a>> {
     for item in &module.body {
         let ModuleItem::Stmt(Stmt::Decl(Decl::Var(var))) = item else {
             continue;
@@ -247,7 +256,7 @@ fn setup_render_arrow_from_binding<'a>(module: &'a Module, local: &str) -> Optio
             let Some(init) = decl.init.as_deref() else {
                 continue;
             };
-            if let Some(render) = setup_render_arrow_from_expr(init) {
+            if let Some(render) = setup_render_source_from_expr(init) {
                 return Some(render);
             }
         }
@@ -255,19 +264,19 @@ fn setup_render_arrow_from_binding<'a>(module: &'a Module, local: &str) -> Optio
     None
 }
 
-fn setup_render_arrow_from_expr(expr: &Expr) -> Option<&ArrowExpr> {
+fn setup_render_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
     match expr {
-        Expr::Paren(paren) => setup_render_arrow_from_expr(paren.expr.as_ref()),
+        Expr::Paren(paren) => setup_render_source_from_expr(paren.expr.as_ref()),
         Expr::Call(call) => call
             .args
             .first()
-            .and_then(|arg| setup_render_arrow_from_expr(arg.expr.as_ref())),
-        Expr::Object(object) => setup_render_arrow_from_options(object),
+            .and_then(|arg| setup_render_source_from_expr(arg.expr.as_ref())),
+        Expr::Object(object) => setup_render_source_from_options(object),
         _ => None,
     }
 }
 
-fn setup_render_arrow_from_options(object: &ObjectLit) -> Option<&ArrowExpr> {
+fn setup_render_source_from_options(object: &ObjectLit) -> Option<RenderSource<'_>> {
     for prop in &object.props {
         let PropOrSpread::Prop(prop) = prop else {
             continue;
@@ -278,11 +287,14 @@ fn setup_render_arrow_from_options(object: &ObjectLit) -> Option<&ArrowExpr> {
                     continue;
                 };
                 if let Some(render) = return_arrow_from_stmts(&body.stmts) {
-                    return Some(render);
+                    return Some(RenderSource::SetupArrow {
+                        render,
+                        setup_stmts: body.stmts.as_slice(),
+                    });
                 }
             }
             Prop::KeyValue(key_value) if prop_name(&key_value.key).as_deref() == Some("setup") => {
-                if let Some(render) = setup_return_arrow_from_expr(key_value.value.as_ref()) {
+                if let Some(render) = setup_return_source_from_expr(key_value.value.as_ref()) {
                     return Some(render);
                 }
             }
@@ -292,18 +304,29 @@ fn setup_render_arrow_from_options(object: &ObjectLit) -> Option<&ArrowExpr> {
     None
 }
 
-fn setup_return_arrow_from_expr(expr: &Expr) -> Option<&ArrowExpr> {
+fn setup_return_source_from_expr(expr: &Expr) -> Option<RenderSource<'_>> {
     match expr {
-        Expr::Paren(paren) => setup_return_arrow_from_expr(paren.expr.as_ref()),
+        Expr::Paren(paren) => setup_return_source_from_expr(paren.expr.as_ref()),
         Expr::Arrow(arrow) => match arrow.body.as_ref() {
-            BlockStmtOrExpr::BlockStmt(block) => return_arrow_from_stmts(&block.stmts),
-            BlockStmtOrExpr::Expr(expr) => arrow_expr(expr.as_ref()),
+            BlockStmtOrExpr::BlockStmt(block) => {
+                return_arrow_from_stmts(&block.stmts).map(|render| RenderSource::SetupArrow {
+                    render,
+                    setup_stmts: block.stmts.as_slice(),
+                })
+            }
+            BlockStmtOrExpr::Expr(expr) => {
+                arrow_expr(expr.as_ref()).map(|render| RenderSource::SetupArrow {
+                    render,
+                    setup_stmts: &[],
+                })
+            }
         },
-        Expr::Fn(fn_expr) => fn_expr
-            .function
-            .body
-            .as_ref()
-            .and_then(|body| return_arrow_from_stmts(&body.stmts)),
+        Expr::Fn(fn_expr) => fn_expr.function.body.as_ref().and_then(|body| {
+            return_arrow_from_stmts(&body.stmts).map(|render| RenderSource::SetupArrow {
+                render,
+                setup_stmts: body.stmts.as_slice(),
+            })
+        }),
         _ => None,
     }
 }
@@ -361,7 +384,7 @@ fn render_uses_vue_helper(render: RenderSource<'_>, ctx: &VueRecoveryContext) ->
             };
             body.visit_with(&mut finder);
         }
-        RenderSource::Arrow(render) => render.body.visit_with(&mut finder),
+        RenderSource::SetupArrow { render, .. } => render.body.visit_with(&mut finder),
     }
     finder.found
 }
@@ -725,6 +748,49 @@ export const _ = dc({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <Notice v-if=\"isLoaded\">\n    <template v-slot:default>\n      <span>{{ i18n.t(\"loaded\") }}</span>\n    </template>\n  </Notice>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_setup_computed_value_alias() {
+        let input = r#"
+import { defineComponent, computed, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "ComputedLabel",
+  setup() {
+    const label = computed(() => format(total.value));
+    return () => (
+      openBlock(), createElementBlock("span", { innerHTML: label.value }, null, 8, ["innerHTML"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <span v-html=\"format(total.value)\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vite_setup_computed_value_alias() {
+        let input = r#"
+import { d as dc, c as cp, q as ob, X as ce } from "./vendor-vue-C85wAS_L.js";
+export const _ = dc({
+  __name: "ComputedMessage",
+  setup() {
+    const formatted = cp(() => format(total.value));
+    const message = cp(() => t("max_payout_message", { value: formatted.value }));
+    return () => (
+      ob(), ce("span", { innerHTML: message.value }, null, 8, ["innerHTML"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <span v-html=\"t(&quot;max_payout_message&quot;, { value: (format(total.value)) })\" />\n</template>\n"
         );
     }
 

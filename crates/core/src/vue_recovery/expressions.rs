@@ -69,7 +69,125 @@ pub(super) fn clean_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
             cleaned = strip_callee_wrappers(&cleaned, local.as_ref());
         }
     }
+    cleaned = inline_setup_value_bindings(&cleaned, ctx);
     cleaned
+}
+
+fn inline_setup_value_bindings(input: &str, ctx: &VueRecoveryContext) -> String {
+    if ctx.setup_value_bindings.is_empty() {
+        return input.to_string();
+    }
+
+    let mut output = input.to_string();
+    for _ in 0..ctx.setup_value_bindings.len() {
+        let (next, changed) = replace_setup_value_bindings_once(&output, ctx);
+        output = next;
+        if !changed {
+            break;
+        }
+    }
+
+    strip_outer_parens(&output)
+}
+
+fn replace_setup_value_bindings_once(input: &str, ctx: &VueRecoveryContext) -> (String, bool) {
+    let mut output = String::new();
+    let mut cursor = 0;
+    let mut changed = false;
+    let mut quote = None;
+    let mut escaped = false;
+
+    while cursor < input.len() {
+        let Some(ch) = input[cursor..].chars().next() else {
+            break;
+        };
+        let ch_len = ch.len_utf8();
+
+        if let Some(current_quote) = quote {
+            output.push(ch);
+            cursor += ch_len;
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == current_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+            output.push(ch);
+            cursor += ch_len;
+            continue;
+        }
+
+        if is_ident_start(ch) && is_reference_start(input, cursor) {
+            let start = cursor;
+            cursor += ch_len;
+            while cursor < input.len() {
+                let Some(next) = input[cursor..].chars().next() else {
+                    break;
+                };
+                if !is_ident_continue(next) {
+                    break;
+                }
+                cursor += next.len_utf8();
+            }
+
+            let ident = &input[start..cursor];
+            if input[cursor..].starts_with(".value") {
+                if let Some(value) = ctx
+                    .setup_value_bindings
+                    .iter()
+                    .find_map(|(binding, value)| (binding.as_ref() == ident).then_some(value))
+                {
+                    output.push_str(&format!("({})", value.trim()));
+                    cursor += ".value".len();
+                    changed = true;
+                    continue;
+                }
+            }
+
+            output.push_str(&input[start..cursor]);
+            continue;
+        }
+
+        output.push(ch);
+        cursor += ch_len;
+    }
+
+    (output, changed)
+}
+
+fn is_reference_start(input: &str, cursor: usize) -> bool {
+    !input[..cursor]
+        .chars()
+        .next_back()
+        .is_some_and(|ch| is_ident_continue(ch) || ch == '.')
+}
+
+fn is_ident_start(ch: char) -> bool {
+    ch == '_' || ch == '$' || ch.is_ascii_alphabetic()
+}
+
+fn is_ident_continue(ch: char) -> bool {
+    is_ident_start(ch) || ch.is_ascii_digit()
+}
+
+fn strip_outer_parens(input: &str) -> String {
+    let mut trimmed = input.trim();
+    while trimmed.starts_with('(')
+        && matching_paren(trimmed, 0).is_some_and(|close| close == trimmed.len() - 1)
+    {
+        trimmed = trimmed[1..trimmed.len() - 1].trim();
+    }
+    trimmed.to_string()
 }
 
 fn strip_callee_wrappers(input: &str, callee: &str) -> String {

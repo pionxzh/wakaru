@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 
+use anyhow::Result;
 use swc_core::atoms::Atom;
 use swc_core::common::{sync::Lrc, SourceMap};
 use swc_core::ecma::ast::{
     BlockStmtOrExpr, CallExpr, Callee, Decl, Expr, ExprOrSpread, IfStmt, ImportSpecifier, Lit,
-    MemberExpr, Module, ModuleDecl, ModuleItem, Pat, Stmt, VarDeclKind,
+    MemberExpr, Module, ModuleDecl, ModuleItem, Pat, ReturnStmt, Stmt, VarDeclKind,
 };
 use swc_core::ecma::visit::{Visit, VisitWith};
 
+use super::expressions::{clean_expr, print_expr};
 use super::helpers::{helper_name, VueHelper};
 use super::syntax::{module_export_name, param_binding_ident, string_lit, wtf8_to_string};
 use super::{RenderSource, VueRecoveryContext};
@@ -131,7 +133,7 @@ pub(super) fn infer_render_helpers(render: RenderSource<'_>, ctx: &mut VueRecove
                 body.visit_with(&mut inference);
             }
         }
-        RenderSource::Arrow(render) => render.body.visit_with(&mut inference),
+        RenderSource::SetupArrow { render, .. } => render.body.visit_with(&mut inference),
     }
 
     for (local, helper) in inference.inferred {
@@ -381,6 +383,37 @@ pub(super) fn collect_render_context(render: RenderSource<'_>, ctx: &mut VueReco
     }
 }
 
+pub(super) fn collect_setup_context(
+    render: RenderSource<'_>,
+    ctx: &mut VueRecoveryContext,
+) -> Result<()> {
+    let RenderSource::SetupArrow { setup_stmts, .. } = render else {
+        return Ok(());
+    };
+
+    for stmt in setup_stmts {
+        let Stmt::Decl(Decl::Var(var)) = stmt else {
+            continue;
+        };
+        for decl in &var.decls {
+            let Pat::Ident(binding) = &decl.name else {
+                continue;
+            };
+            let Some(init) = decl.init.as_deref() else {
+                continue;
+            };
+            let Some(value_expr) = computed_value_expr(init, ctx) else {
+                continue;
+            };
+            let value = clean_expr(&print_expr(value_expr, ctx)?, ctx);
+            ctx.setup_value_bindings
+                .insert(binding.id.sym.clone(), value);
+        }
+    }
+
+    Ok(())
+}
+
 pub(super) fn render_context_param(render: RenderSource<'_>) -> Option<Atom> {
     match render {
         RenderSource::Function(render) => render
@@ -389,10 +422,12 @@ pub(super) fn render_context_param(render: RenderSource<'_>) -> Option<Atom> {
             .first()
             .and_then(param_binding_ident)
             .map(|ident| ident.sym.clone()),
-        RenderSource::Arrow(render) => render.params.first().and_then(|param| match param {
-            Pat::Ident(binding) => Some(binding.id.sym.clone()),
-            _ => None,
-        }),
+        RenderSource::SetupArrow { render, .. } => {
+            render.params.first().and_then(|param| match param {
+                Pat::Ident(binding) => Some(binding.id.sym.clone()),
+                _ => None,
+            })
+        }
     }
 }
 
@@ -403,10 +438,44 @@ fn render_stmts(render: RenderSource<'_>) -> Option<&[Stmt]> {
             .body
             .as_ref()
             .map(|body| body.stmts.as_slice()),
-        RenderSource::Arrow(render) => match render.body.as_ref() {
+        RenderSource::SetupArrow { render, .. } => match render.body.as_ref() {
             BlockStmtOrExpr::BlockStmt(block) => Some(block.stmts.as_slice()),
             BlockStmtOrExpr::Expr(_) => None,
         },
+    }
+}
+
+fn computed_value_expr<'a>(expr: &'a Expr, ctx: &VueRecoveryContext) -> Option<&'a Expr> {
+    let Expr::Call(call) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+    if !is_computed_call(call, ctx) {
+        return None;
+    }
+    call.args
+        .first()
+        .and_then(|arg| arrow_body_expr(arg.expr.as_ref()))
+}
+
+fn is_computed_call(call: &CallExpr, ctx: &VueRecoveryContext) -> bool {
+    if helper_name(&call.callee, ctx) == Some(VueHelper::Computed) {
+        return true;
+    }
+    call_callee_ident(call).is_some_and(|callee| ctx.vue_helper_candidates.contains(&callee.sym))
+}
+
+fn arrow_body_expr(expr: &Expr) -> Option<&Expr> {
+    let Expr::Arrow(arrow) = unwrap_paren_expr(expr) else {
+        return None;
+    };
+    match arrow.body.as_ref() {
+        BlockStmtOrExpr::Expr(expr) => Some(expr.as_ref()),
+        BlockStmtOrExpr::BlockStmt(block) => block.stmts.iter().rev().find_map(|stmt| match stmt {
+            Stmt::Return(ReturnStmt {
+                arg: Some(expr), ..
+            }) => Some(expr.as_ref()),
+            _ => None,
+        }),
     }
 }
 

@@ -78,7 +78,7 @@ fn render_stmts(render: RenderSource<'_>) -> Option<&[Stmt]> {
             .body
             .as_ref()
             .map(|body| body.stmts.as_slice()),
-        RenderSource::Arrow(render) => match render.body.as_ref() {
+        RenderSource::SetupArrow { render, .. } => match render.body.as_ref() {
             BlockStmtOrExpr::BlockStmt(block) => Some(block.stmts.as_slice()),
             BlockStmtOrExpr::Expr(_) => None,
         },
@@ -111,7 +111,7 @@ fn find_render_return(render: RenderSource<'_>) -> Option<&Expr> {
                 _ => None,
             })
         }
-        RenderSource::Arrow(render) => arrow_return_expr(&render.body),
+        RenderSource::SetupArrow { render, .. } => arrow_return_expr(&render.body),
     }
 }
 
