@@ -455,6 +455,10 @@ pub(super) fn collect_setup_context(
             let Some(init) = decl.init.as_deref() else {
                 continue;
             };
+            if is_setup_props_alias(init, ctx) {
+                ctx.setup_props_aliases.insert(binding.id.sym.clone());
+                continue;
+            }
             let Some(value_expr) = computed_value_expr(init, ctx) else {
                 continue;
             };
@@ -465,6 +469,16 @@ pub(super) fn collect_setup_context(
     }
 
     Ok(())
+}
+
+fn is_setup_props_alias(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
+    let Expr::Ident(ident) = unwrap_paren_expr(expr) else {
+        return false;
+    };
+    ctx.setup_props_context
+        .as_ref()
+        .is_some_and(|setup_props| setup_props == &ident.sym)
+        || ctx.setup_props_aliases.contains(&ident.sym)
 }
 
 pub(super) fn render_context_param(render: RenderSource<'_>) -> Option<Atom> {

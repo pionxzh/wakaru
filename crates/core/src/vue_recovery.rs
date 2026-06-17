@@ -41,6 +41,7 @@ struct VueRecoveryContext {
     component_options: Option<ObjectLit>,
     render_context: Option<Atom>,
     setup_props_context: Option<Atom>,
+    setup_props_aliases: HashSet<Atom>,
     cm: Lrc<SourceMap>,
 }
 
@@ -601,6 +602,27 @@ export default defineComponent({
         assert_eq!(
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <input :id=\"id\" :disabled=\"disabled\" @input=\"onChange($event.target.value)\" />\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_setup_props_alias_context() {
+        let input = r#"
+import { defineComponent, toDisplayString, openBlock, createElementBlock } from "vue";
+export default defineComponent({
+  __name: "PropsAlias",
+  setup(props) {
+    const p = props;
+    return (_ctx, _cache) => (
+      openBlock(), createElementBlock("span", { title: p.title }, toDisplayString(p.label), 9, ["title"])
+    );
+  }
+});
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <span :title=\"title\">{{ label }}</span>\n</template>\n"
         );
     }
 
