@@ -25,9 +25,7 @@ use crate::utils::paren::strip_parens;
 pub struct UnEs6Class {
     unresolved_mark: Mark,
     rewrite_level: RewriteLevel,
-    module_ts_extends_helpers: Option<HashSet<BindingKey>>,
-    module_tslib_namespaces: Option<HashSet<BindingKey>>,
-    module_inherits_helpers: Option<HashSet<BindingKey>>,
+    module_helper_context: Option<Es6ClassHelperContext>,
 }
 
 impl UnEs6Class {
@@ -39,9 +37,7 @@ impl UnEs6Class {
         Self {
             unresolved_mark,
             rewrite_level,
-            module_ts_extends_helpers: None,
-            module_tslib_namespaces: None,
-            module_inherits_helpers: None,
+            module_helper_context: None,
         }
     }
 
@@ -52,30 +48,22 @@ impl UnEs6Class {
         local_helpers: &LocalHelperContext,
     ) {
         let mut rule = Self::new_with_level(unresolved_mark, rewrite_level);
-        rule.module_ts_extends_helpers =
-            Some(local_helpers.ts_helpers_of_kind(TsHelperKind::Extends));
-        rule.module_tslib_namespaces = Some(local_helpers.tslib_namespaces().clone());
-        rule.module_inherits_helpers = Some(
-            local_helpers
-                .helpers_of_kind(TranspilerHelperKind::Inherits)
-                .into_keys()
-                .collect(),
-        );
+        rule.module_helper_context = Some(Es6ClassHelperContext::from_local_helpers(
+            &module.body,
+            unresolved_mark,
+            local_helpers,
+        ));
         module.visit_mut_with(&mut rule);
     }
 }
 
 impl VisitMut for UnEs6Class {
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
-        // Pre-scan for helpers at module level BEFORE visiting children,
-        // so nested scopes (function bodies) can also detect custom helper calls.
-        let helper_context = Es6ClassHelperContext::from_module_items(
-            items,
-            self.unresolved_mark,
-            self.module_ts_extends_helpers.take(),
-            self.module_tslib_namespaces.take(),
-            self.module_inherits_helpers.take(),
-        );
+        // Pipeline path: use pre-built context from LocalHelperContext.
+        // Standalone path (unit tests): full body-shape scan.
+        let helper_context = self.module_helper_context.take().unwrap_or_else(|| {
+            Es6ClassHelperContext::from_module_items(items, self.unresolved_mark)
+        });
         let mut inner =
             UnEs6ClassInner::new(helper_context, self.unresolved_mark, self.rewrite_level);
         items.visit_mut_with(&mut inner);
@@ -101,29 +89,44 @@ struct Es6ClassHelperContext {
 }
 
 impl Es6ClassHelperContext {
-    fn from_module_items(
+    fn from_local_helpers(
         items: &[ModuleItem],
         unresolved_mark: Mark,
-        cached_ts_extends_helpers: Option<HashSet<BindingKey>>,
-        cached_tslib_namespaces: Option<HashSet<BindingKey>>,
-        cached_inherits_helpers: Option<HashSet<BindingKey>>,
+        local_helpers: &LocalHelperContext,
     ) -> Self {
-        let tslib_namespaces = cached_tslib_namespaces
-            .unwrap_or_else(|| collect_tslib_namespaces_from_items(items, unresolved_mark));
-        let ts_extends_helpers = cached_ts_extends_helpers.unwrap_or_else(|| {
-            let mut helpers = collect_ts_extends_helpers_from_items(items);
-            helpers.extend(collect_tslib_extends_helpers_from_items(
-                items,
-                &tslib_namespaces,
-                unresolved_mark,
-            ));
-            helpers
-        });
+        let ts_extends_helpers = local_helpers.ts_helpers_of_kind(TsHelperKind::Extends);
+        let mut inherits_helpers: HashSet<BindingKey> = local_helpers
+            .helpers_of_kind(TranspilerHelperKind::Inherits)
+            .into_keys()
+            .collect();
+        inherits_helpers.extend(ts_extends_helpers.iter().cloned());
+        inherits_helpers.extend(collect_inherits_helpers_from_items(items));
+        let mut call_super_helpers: HashSet<BindingKey> = local_helpers
+            .helpers_of_kind(TranspilerHelperKind::CallSuper)
+            .into_keys()
+            .collect();
+        call_super_helpers.extend(collect_call_super_helpers_from_items(items));
+        Self {
+            inherits_helpers,
+            ts_extends_helpers,
+            tslib_namespaces: local_helpers.tslib_namespaces().clone(),
+            set_prototype_of_helpers: collect_set_prototype_of_helpers_from_items(items),
+            create_class_helpers: collect_create_class_helpers_from_items(items, unresolved_mark),
+            call_super_helpers,
+        }
+    }
+
+    fn from_module_items(items: &[ModuleItem], unresolved_mark: Mark) -> Self {
+        let tslib_namespaces =
+            collect_tslib_namespaces_from_items(items, unresolved_mark);
+        let mut ts_extends_helpers = collect_ts_extends_helpers_from_items(items);
+        ts_extends_helpers.extend(collect_tslib_extends_helpers_from_items(
+            items,
+            &tslib_namespaces,
+            unresolved_mark,
+        ));
         let mut inherits_helpers = collect_inherits_helpers_from_items(items);
         inherits_helpers.extend(ts_extends_helpers.iter().cloned());
-        if let Some(cached) = cached_inherits_helpers {
-            inherits_helpers.extend(cached);
-        }
 
         Self {
             inherits_helpers,
