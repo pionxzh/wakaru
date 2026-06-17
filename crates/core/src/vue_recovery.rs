@@ -421,6 +421,32 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_component_slot_object_children() {
+        let input = r#"
+import { resolveComponent, createVNode, withCtx, createElementVNode, toDisplayString, openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  const _component_DashboardCard = resolveComponent("DashboardCard");
+  return openBlock(), createElementBlock("section", null, [
+    createVNode(_component_DashboardCard, { title: _ctx.title }, {
+      header: withCtx(() => [
+        createElementVNode("h2", null, "Latest")
+      ]),
+      default: withCtx(({ item }) => [
+        createElementVNode("span", null, toDisplayString(item.name), 1)
+      ]),
+      _: 1
+    }, 8, ["title"])
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section>\n    <DashboardCard :title=\"title\">\n      <template v-slot:header>\n        <h2>Latest</h2>\n      </template>\n      <template v-slot:default=\"{ item }\">\n        <span>{{ item.name }}</span>\n      </template>\n    </DashboardCard>\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_component_v_model_pairs() {
         let input = r#"
 import { resolveComponent, createVNode, openBlock, createElementBlock } from "vue";

@@ -1,13 +1,14 @@
 use anyhow::Result;
 use swc_core::ecma::ast::{
-    AssignOp, BinaryOp, BlockStmtOrExpr, Expr, ExprOrSpread, FnDecl, Lit, ReturnStmt, Stmt,
+    ArrowExpr, AssignOp, BinaryOp, BlockStmtOrExpr, Expr, ExprOrSpread, FnDecl, Lit, ObjectLit,
+    ObjectPatProp, Pat, Prop, PropOrSpread, ReturnStmt, Stmt,
 };
 
 use super::attrs::{recover_attrs, recover_component_attrs};
 use super::directives::recover_directive_tuple;
 use super::expressions::{clean_attr_expr, clean_expr, print_expr, printed_vue_expr, raw_expr};
 use super::helpers::{helper_name, is_fragment_tag, VueHelper};
-use super::syntax::{pat_binding_ident, string_lit, wtf8_to_string};
+use super::syntax::{pat_binding_ident, prop_name, string_lit, wtf8_to_string};
 use super::VueRecoveryContext;
 use crate::vue_template::{
     VueAttr, VueDirective, VueElement, VueExpr, VueFor, VueIfBranch, VueNode,
@@ -264,7 +265,7 @@ fn recover_component_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> R
     );
     let children = args
         .get(2)
-        .map(|arg| recover_children(arg.expr.as_ref(), ctx))
+        .map(|arg| recover_component_children(arg.expr.as_ref(), ctx))
         .transpose()?
         .unwrap_or_default();
 
@@ -273,6 +274,133 @@ fn recover_component_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> R
             .with_attrs(attrs)
             .with_children(children),
     ))
+}
+
+fn recover_component_children(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueNode>> {
+    match expr {
+        Expr::Object(object) => recover_component_slots(object, ctx)?
+            .map(Ok)
+            .unwrap_or_else(|| recover_children(expr, ctx)),
+        _ => recover_children(expr, ctx),
+    }
+}
+
+fn recover_component_slots(
+    object: &ObjectLit,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<Vec<VueNode>>> {
+    let mut slots = Vec::new();
+    for prop in &object.props {
+        let PropOrSpread::Prop(prop) = prop else {
+            return Ok(None);
+        };
+        let Prop::KeyValue(key_value) = prop.as_ref() else {
+            return Ok(None);
+        };
+        let Some(slot_name) = prop_name(&key_value.key) else {
+            return Ok(None);
+        };
+        if slot_name == "_" {
+            continue;
+        }
+        let Some(slot) = recover_component_slot(&slot_name, key_value.value.as_ref(), ctx)? else {
+            return Ok(None);
+        };
+        slots.push(slot);
+    }
+    Ok(Some(slots))
+}
+
+fn recover_component_slot(
+    slot_name: &str,
+    expr: &Expr,
+    ctx: &VueRecoveryContext,
+) -> Result<Option<VueNode>> {
+    let Some(slot_fn) = slot_fn_expr(expr, ctx) else {
+        return Ok(None);
+    };
+    let Expr::Arrow(arrow) = slot_fn else {
+        return Ok(None);
+    };
+    let Some(children_expr) = arrow_return_expr(&arrow.body) else {
+        return Ok(None);
+    };
+    let mut directive = VueDirective::new("slot").with_arg(slot_name.to_string());
+    if let Some(scope) = slot_scope(arrow, ctx)? {
+        directive = directive.with_expr(scope);
+    }
+    Ok(Some(VueNode::Element(
+        VueElement::new("template")
+            .with_attrs(vec![VueAttr::Directive(directive)])
+            .with_children(recover_children(children_expr, ctx)?),
+    )))
+}
+
+fn slot_fn_expr<'a>(expr: &'a Expr, ctx: &VueRecoveryContext) -> Option<&'a Expr> {
+    let Expr::Call(call) = expr else {
+        return Some(expr);
+    };
+    if helper_name(&call.callee, ctx) != Some(VueHelper::WithCtx) {
+        return Some(expr);
+    }
+    call.args.first().map(|arg| arg.expr.as_ref())
+}
+
+fn slot_scope(arrow: &ArrowExpr, ctx: &VueRecoveryContext) -> Result<Option<VueExpr>> {
+    let Some(param) = arrow.params.first() else {
+        return Ok(None);
+    };
+    Ok(slot_pat(param, ctx)?.map(VueExpr::new))
+}
+
+fn slot_pat(pat: &Pat, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    match pat {
+        Pat::Ident(binding) => Ok(Some(binding.id.sym.to_string())),
+        Pat::Object(object) => {
+            let mut props = Vec::new();
+            for prop in &object.props {
+                let Some(prop) = object_slot_pat_prop(prop, ctx)? else {
+                    return Ok(None);
+                };
+                props.push(prop);
+            }
+            Ok(Some(format!("{{ {} }}", props.join(", "))))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn object_slot_pat_prop(prop: &ObjectPatProp, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+    match prop {
+        ObjectPatProp::Assign(assign) => {
+            let name = assign.key.sym.to_string();
+            if let Some(value) = &assign.value {
+                Ok(Some(format!(
+                    "{name} = {}",
+                    clean_attr_expr(&print_expr(value.as_ref(), ctx)?, ctx)
+                )))
+            } else {
+                Ok(Some(name))
+            }
+        }
+        ObjectPatProp::KeyValue(key_value) => {
+            let Some(name) = prop_name(&key_value.key) else {
+                return Ok(None);
+            };
+            let Some(value) = slot_pat(key_value.value.as_ref(), ctx)? else {
+                return Ok(None);
+            };
+            if value == name {
+                Ok(Some(name))
+            } else {
+                Ok(Some(format!("{name}: {value}")))
+            }
+        }
+        ObjectPatProp::Rest(rest) => match rest.arg.as_ref() {
+            Pat::Ident(binding) => Ok(Some(format!("...{}", binding.id.sym))),
+            _ => Ok(None),
+        },
+    }
 }
 
 fn recover_text_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<VueNode> {
