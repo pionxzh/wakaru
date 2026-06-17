@@ -55,6 +55,18 @@ const x = { ...app_info, ...base_info };
 }
 
 #[test]
+fn handles_swc_external_extends_import() {
+    let input = r#"
+import { _ as _extends } from "@swc/helpers/_/_extends";
+var x = _extends({}, app_info, base_info);
+"#;
+    let expected = r#"
+const x = { ...app_info, ...base_info };
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn handles_tslib_named_assign_import() {
     let input = r#"
 import { __assign } from "tslib";

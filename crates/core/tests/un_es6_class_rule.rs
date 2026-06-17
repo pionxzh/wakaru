@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render_pipeline_between, render_rule};
+use common::{assert_eq_normalized, render, render_pipeline_between, render_rule};
 use wakaru_core::rules::UnEs6Class;
 use wakaru_core::RewriteLevel;
 
@@ -489,6 +489,31 @@ class Child extends Base {
 }
 "#;
     assert_eq_normalized(&apply(input), expected);
+}
+
+#[test]
+fn swc_external_inherits_import() {
+    let input = r#"
+import { _ as _inherits } from "@swc/helpers/_/_inherits";
+var Child = (function(_super) {
+    _inherits(t, _super);
+    function t() {
+        _super.apply(this, arguments);
+    }
+    t.prototype.run = function run() {
+        return true;
+    };
+    return t;
+}(Base));
+"#;
+    let expected = r#"
+class Child extends Base {
+    run() {
+        return true;
+    }
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
 }
 
 #[test]
@@ -1405,8 +1430,6 @@ class Foo extends Base {
 // ============================================================
 // _createClass body-shape detection (minified helper name)
 // ============================================================
-
-use common::render;
 
 #[test]
 fn create_class_minified_helper_with_inline_inherits() {

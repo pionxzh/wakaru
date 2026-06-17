@@ -588,6 +588,32 @@ class Foo {
 }
 
 #[test]
+fn swc_external_define_property_import_promotes_to_fields() {
+    let input = r#"
+import { _ as _define_property } from "@swc/helpers/_/_define_property";
+class Foo {
+    constructor() {
+        _define_property(this, "value", 1);
+        _define_property(this, "other", this.value + 1);
+    }
+    method() {
+        return this.other;
+    }
+}
+"#;
+    let expected = r#"
+class Foo {
+    value = 1;
+    other = this.value + 1;
+    method() {
+        return this.other;
+    }
+}
+"#;
+    assert_eq_normalized(&render(input), expected.trim());
+}
+
+#[test]
 fn derived_constructor_assignments_are_not_instance_fields() {
     let input = r#"
 class Foo extends Base {

@@ -15,9 +15,9 @@ use swc_core::ecma::visit::{VisitMut, VisitMutWith, VisitWith};
 use super::expr_utils::is_unresolved_ident;
 use super::helper_matcher::{binding_key, BindingKey};
 use super::transpiler_helper_utils::{
-    is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn, is_tslib_path,
-    is_tslib_require_expr_with_mark, tslib_member_ts_helper_kind,
-    tslib_require_ts_helper_kind_with_mark, LocalHelperContext, TsHelperKind,
+    detect_helper_from_path, is_call_super_fn, is_inherits_fn, is_set_prototype_of_fn,
+    is_tslib_path, is_tslib_require_expr_with_mark, tslib_member_ts_helper_kind,
+    tslib_require_ts_helper_kind_with_mark, LocalHelperContext, TranspilerHelperKind, TsHelperKind,
 };
 use super::RewriteLevel;
 use crate::utils::paren::strip_parens;
@@ -27,6 +27,7 @@ pub struct UnEs6Class {
     rewrite_level: RewriteLevel,
     module_ts_extends_helpers: Option<HashSet<BindingKey>>,
     module_tslib_namespaces: Option<HashSet<BindingKey>>,
+    module_inherits_helpers: Option<HashSet<BindingKey>>,
 }
 
 impl UnEs6Class {
@@ -40,6 +41,7 @@ impl UnEs6Class {
             rewrite_level,
             module_ts_extends_helpers: None,
             module_tslib_namespaces: None,
+            module_inherits_helpers: None,
         }
     }
 
@@ -53,6 +55,12 @@ impl UnEs6Class {
         rule.module_ts_extends_helpers =
             Some(local_helpers.ts_helpers_of_kind(TsHelperKind::Extends));
         rule.module_tslib_namespaces = Some(local_helpers.tslib_namespaces().clone());
+        rule.module_inherits_helpers = Some(
+            local_helpers
+                .helpers_of_kind(TranspilerHelperKind::Inherits)
+                .into_keys()
+                .collect(),
+        );
         module.visit_mut_with(&mut rule);
     }
 }
@@ -66,6 +74,7 @@ impl VisitMut for UnEs6Class {
             self.unresolved_mark,
             self.module_ts_extends_helpers.take(),
             self.module_tslib_namespaces.take(),
+            self.module_inherits_helpers.take(),
         );
         let mut inner =
             UnEs6ClassInner::new(helper_context, self.unresolved_mark, self.rewrite_level);
@@ -97,6 +106,7 @@ impl Es6ClassHelperContext {
         unresolved_mark: Mark,
         cached_ts_extends_helpers: Option<HashSet<BindingKey>>,
         cached_tslib_namespaces: Option<HashSet<BindingKey>>,
+        cached_inherits_helpers: Option<HashSet<BindingKey>>,
     ) -> Self {
         let tslib_namespaces = cached_tslib_namespaces
             .unwrap_or_else(|| collect_tslib_namespaces_from_items(items, unresolved_mark));
@@ -111,6 +121,9 @@ impl Es6ClassHelperContext {
         });
         let mut inherits_helpers = collect_inherits_helpers_from_items(items);
         inherits_helpers.extend(ts_extends_helpers.iter().cloned());
+        if let Some(cached) = cached_inherits_helpers {
+            inherits_helpers.extend(cached);
+        }
 
         Self {
             inherits_helpers,
@@ -920,12 +933,23 @@ fn remove_orphaned_fn_helpers_stmts(stmts: &mut Vec<Stmt>, helpers: &HashSet<Bin
 }
 
 fn remove_orphaned_fn_helpers_module(items: &mut Vec<ModuleItem>, helpers: &HashSet<BindingKey>) {
-    remove_unreferenced_helpers(items, helpers, |item| {
-        if let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) = item {
-            Some(binding_key(&fn_decl.ident))
-        } else {
-            None
+    remove_unreferenced_helpers(items, helpers, |item| match item {
+        ModuleItem::Stmt(Stmt::Decl(Decl::Fn(fn_decl))) => Some(binding_key(&fn_decl.ident)),
+        ModuleItem::ModuleDecl(ModuleDecl::Import(import))
+            if import.specifiers.len() == 1
+                && import
+                    .src
+                    .value
+                    .as_str()
+                    .is_some_and(|p| detect_helper_from_path(p).is_some()) =>
+        {
+            match &import.specifiers[0] {
+                ImportSpecifier::Default(spec) => Some(binding_key(&spec.local)),
+                ImportSpecifier::Named(spec) => Some(binding_key(&spec.local)),
+                _ => None,
+            }
         }
+        _ => None,
     });
 }
 

@@ -274,15 +274,17 @@ impl LocalHelperContext {
     }
 }
 
-/// Known import paths for Babel runtime helpers.
+/// Known import paths for Babel runtime and SWC external helpers.
 const INTEROP_DEFAULT_PATHS: &[&str] = &[
     "@babel/runtime/helpers/interopRequireDefault",
     "@babel/runtime/helpers/esm/interopRequireDefault",
+    "@swc/helpers/_/_interop_require_default",
 ];
 
 const INTEROP_WILDCARD_PATHS: &[&str] = &[
     "@babel/runtime/helpers/interopRequireWildcard",
     "@babel/runtime/helpers/esm/interopRequireWildcard",
+    "@swc/helpers/_/_interop_require_wildcard",
 ];
 
 const TO_CONSUMABLE_ARRAY_PATHS: &[&str] = &[
@@ -294,6 +296,7 @@ const TO_CONSUMABLE_ARRAY_PATHS: &[&str] = &[
 const EXTENDS_PATHS: &[&str] = &[
     "@babel/runtime/helpers/extends",
     "@babel/runtime/helpers/esm/extends",
+    "@swc/helpers/_/_extends",
 ];
 
 const OBJECT_SPREAD_PATHS: &[&str] = &[
@@ -323,16 +326,25 @@ const OBJECT_WITHOUT_PROPERTIES_PATHS: &[&str] = &[
 const INHERITS_PATHS: &[&str] = &[
     "@babel/runtime/helpers/inherits",
     "@babel/runtime/helpers/esm/inherits",
+    "@swc/helpers/_/_inherits",
 ];
 
 const ASYNC_TO_GENERATOR_PATHS: &[&str] = &[
     "@babel/runtime/helpers/asyncToGenerator",
     "@babel/runtime/helpers/esm/asyncToGenerator",
+    "@swc/helpers/_/_async_to_generator",
 ];
 
 const DEFINE_PROPERTY_PATHS: &[&str] = &[
     "@babel/runtime/helpers/defineProperty",
     "@babel/runtime/helpers/esm/defineProperty",
+    "@swc/helpers/_/_define_property",
+];
+
+const CLASS_CALL_CHECK_PATHS: &[&str] = &[
+    "@babel/runtime/helpers/classCallCheck",
+    "@babel/runtime/helpers/esm/classCallCheck",
+    "@swc/helpers/_/_class_call_check",
 ];
 
 const TAGGED_TEMPLATE_LITERAL_PATHS: &[&str] = &["@swc/helpers/_/_tagged_template_literal"];
@@ -1137,6 +1149,12 @@ pub(crate) fn detect_helper_from_path(path: &str) -> Option<TranspilerHelperKind
     }
     if TAGGED_TEMPLATE_LITERAL_PATHS.contains(&path) {
         return Some(TranspilerHelperKind::TaggedTemplateLiteral);
+    }
+    if CLASS_CALL_CHECK_PATHS.contains(&path) {
+        return Some(TranspilerHelperKind::ClassCallCheck);
+    }
+    if path == "@swc/helpers/_/_array_with_holes" {
+        return Some(TranspilerHelperKind::HelperDependency);
     }
     None
 }

@@ -84,6 +84,40 @@ export function Foo() {
 }
 
 #[test]
+fn removes_babel_runtime_import_class_call_check() {
+    let input = r#"
+var _classCallCheck = require("@babel/runtime/helpers/classCallCheck");
+function Foo() {
+    _classCallCheck(this, Foo);
+    this.x = 1;
+}
+"#;
+    let expected = r#"
+function Foo() {
+    this.x = 1;
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
+fn removes_swc_external_class_call_check() {
+    let input = r#"
+import { _ as _class_call_check } from "@swc/helpers/_/_class_call_check";
+function Foo() {
+    _class_call_check(this, Foo);
+    this.x = 1;
+}
+"#;
+    let expected = r#"
+function Foo() {
+    this.x = 1;
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn preserves_non_class_call_check_iife() {
     // An IIFE that doesn't match the classCallCheck pattern should be preserved
     let input = r#"

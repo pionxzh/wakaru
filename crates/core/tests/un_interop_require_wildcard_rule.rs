@@ -30,6 +30,20 @@ console.log(_b);
 }
 
 #[test]
+fn unwraps_swc_external_interop_require_wildcard() {
+    let input = r#"
+import { _ as _interop_require_wildcard } from "@swc/helpers/_/_interop_require_wildcard";
+var _ns = _interop_require_wildcard(require("my-lib"));
+console.log(_ns);
+"#;
+    let expected = r#"
+import * as _ns from "my-lib";
+console.log(_ns);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn unwraps_tslib_namespace_import_star_require() {
     let input = r#"
 var tslib_1 = require("tslib");

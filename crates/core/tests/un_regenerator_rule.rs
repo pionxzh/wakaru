@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assert_eq_normalized, render_rule};
+use common::{assert_eq_normalized, render, render_rule};
 use wakaru_core::facts::{HelperExportFact, HelperKind, ModuleFacts, ModuleFactsMap};
 use wakaru_core::rules::UnRegenerator;
 
@@ -962,6 +962,26 @@ function load_user(app_id) {
             && output.contains("return data"),
         "should restore awaited SWC state-machine body, got:\n{output}"
     );
+}
+
+#[test]
+fn swc_external_async_to_generator_import() {
+    let input = r#"
+import { _ as _async_to_generator } from "@swc/helpers/_/_async_to_generator";
+function myAsync() {
+    return _async_to_generator(function*() {
+        yield fetch("/api");
+        yield process();
+    })();
+}
+"#;
+    let expected = r#"
+async function myAsync() {
+    await fetch("/api");
+    await process();
+}
+"#;
+    assert_eq_normalized(&render(input), expected);
 }
 
 #[test]

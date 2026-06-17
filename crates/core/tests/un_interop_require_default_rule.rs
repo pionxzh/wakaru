@@ -228,6 +228,20 @@ console.log(i);
 }
 
 #[test]
+fn unwraps_swc_external_interop_require_default() {
+    let input = r#"
+import { _ as _interop_require_default } from "@swc/helpers/_/_interop_require_default";
+var _a = _interop_require_default(require("a"));
+console.log(_a.default);
+"#;
+    let expected = r#"
+import _a from "a";
+console.log(_a);
+"#;
+    assert_eq_normalized(&render(input), expected);
+}
+
+#[test]
 fn unwraps_inline_ternary_arrow_iife() {
     // Same pattern but with arrow function syntax
     let input = r#"
