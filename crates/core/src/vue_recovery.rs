@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
 use swc_core::atoms::Atom;
@@ -21,7 +21,9 @@ mod helpers;
 mod nodes;
 mod syntax;
 
-use context::{collect_context, collect_render_context, render_context_param};
+use context::{
+    collect_context, collect_render_context, infer_render_helpers, render_context_param,
+};
 use expressions::print_expr;
 use helpers::VueHelper;
 use nodes::recover_render_root;
@@ -30,6 +32,7 @@ use syntax::prop_name;
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
     vue_helpers: HashMap<Atom, VueHelper>,
+    vue_helper_candidates: HashSet<Atom>,
     object_bindings: HashMap<Atom, ObjectLit>,
     component_bindings: HashMap<Atom, String>,
     directive_bindings: HashMap<Atom, String>,
@@ -64,6 +67,7 @@ pub fn recover_vue_sfc_from_js(source: &str) -> Result<Option<VueSfc>> {
         return Ok(None);
     };
     ctx.render_context = render_context_param(render);
+    infer_render_helpers(render, &mut ctx);
     collect_render_context(render, &mut ctx);
     if !render_uses_vue_helper(render, &ctx) {
         return Ok(None);
@@ -432,6 +436,68 @@ export default _sfc_main;
             recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
             "<template>\n  <Panel :title=\"title\" />\n</template>\n"
         );
+    }
+
+    #[test]
+    fn recovers_vite_vendor_vue_helper_aliases() {
+        let input = r#"
+import { d as dc, q as ob, X as ce, J as td } from "./vendor-vue-C85wAS_L.js";
+const _sfc_main = dc({
+  __name: "Greeting",
+  setup(__props) {
+    return (_ctx, _cache) => (
+      ob(), ce("h1", null, td(_ctx.title), 1)
+    );
+  }
+});
+export default _sfc_main;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <h1>{{ title }}</h1>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn recovers_vite_vendor_vue_component_slot_aliases() {
+        let input = r#"
+import { d as dc, a7 as rc, q as ob, C as cv, R as wc, X as ce, J as td } from "./vendor-vue-C85wAS_L.js";
+const _sfc_main = dc({
+  __name: "WrappedPanel",
+  setup(__props) {
+    return (_ctx, _cache) => {
+      const _component_Panel = rc("Panel");
+      return ob(), cv(_component_Panel, { title: _ctx.title }, {
+        default: wc(() => [
+          ce("span", null, td(_ctx.message), 1)
+        ]),
+        _: 1
+      }, 8, ["title"]);
+    };
+  }
+});
+export default _sfc_main;
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <Panel :title=\"title\">\n    <template v-slot:default>\n      <span>{{ message }}</span>\n    </template>\n  </Panel>\n</template>\n"
+        );
+    }
+
+    #[test]
+    fn ignores_setup_render_like_code_without_vue_import_signal() {
+        let input = r#"
+import { x as element } from "./render-helpers.js";
+export default {
+  setup() {
+    return () => element("h1", null, "Not Vue");
+  }
+};
+"#;
+
+        assert!(recover_vue_sfc_source_from_js(input).unwrap().is_none());
     }
 
     #[test]
