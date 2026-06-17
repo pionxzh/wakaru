@@ -15,7 +15,7 @@ use swc_core::ecma::visit::{Visit, VisitWith};
 
 use crate::driver::{decompile, DecompileOptions, DecompileOutput};
 use crate::vue_template::{
-    VueAttr, VueDirective, VueElement, VueFor, VueIfBranch, VueNode, VueSfc, VueTemplate,
+    VueAttr, VueDirective, VueElement, VueExpr, VueFor, VueIfBranch, VueNode, VueSfc, VueTemplate,
 };
 
 #[derive(Default, Clone)]
@@ -277,7 +277,10 @@ fn recover_render_if_chain(render: &FnDecl, ctx: &VueRecoveryContext) -> Result<
                     continue;
                 };
                 branches.push(VueIfBranch {
-                    condition: Some(clean_condition_expr(if_stmt.test.as_ref(), ctx)?),
+                    condition: Some(VueExpr::new(clean_condition_expr(
+                        if_stmt.test.as_ref(),
+                        ctx,
+                    )?)),
                     node: Box::new(node),
                 });
                 in_chain = true;
@@ -371,10 +374,7 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
         .map(Some),
         Expr::Call(call) => {
             let Some(helper) = helper_name(&call.callee, ctx) else {
-                return Ok(Some(VueNode::RawExpr(clean_expr(
-                    &print_expr(expr, ctx)?,
-                    ctx,
-                ))));
+                return Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx))));
             };
             match helper.as_str() {
                 "createElementBlock" | "createElementVNode" => recover_element(&call.args, ctx),
@@ -387,22 +387,16 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
                     let Some(arg) = call.args.first() else {
                         return Ok(None);
                     };
-                    Ok(Some(VueNode::Interpolation(clean_expr(
+                    Ok(Some(VueNode::Interpolation(VueExpr::new(clean_expr(
                         &print_expr(arg.expr.as_ref(), ctx)?,
                         ctx,
-                    ))))
+                    )))))
                 }
-                _ => Ok(Some(VueNode::RawExpr(clean_expr(
-                    &print_expr(expr, ctx)?,
-                    ctx,
-                )))),
+                _ => Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx)))),
             }
         }
         Expr::Lit(Lit::Str(str)) => Ok(Some(VueNode::Text(wtf8_to_string(&str.value)))),
-        _ => Ok(Some(VueNode::RawExpr(clean_expr(
-            &print_expr(expr, ctx)?,
-            ctx,
-        )))),
+        _ => Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx)))),
     }
 }
 
@@ -415,7 +409,7 @@ fn recover_conditional_chain(
     let mut branches = Vec::new();
     if let Some(node) = recover_node(cons, ctx)? {
         branches.push(VueIfBranch {
-            condition: Some(clean_condition_expr(test, ctx)?),
+            condition: Some(VueExpr::new(clean_condition_expr(test, ctx)?)),
             node: Box::new(node),
         });
     }
@@ -454,13 +448,13 @@ fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Resul
         return Ok(VueNode::RawExpr("renderList()".into()));
     };
     let Some(callback_arg) = args.get(1) else {
-        return Ok(VueNode::RawExpr(clean_expr(
+        return Ok(raw_expr(clean_expr(
             &print_expr(source_arg.expr.as_ref(), ctx)?,
             ctx,
         )));
     };
     let Expr::Arrow(callback) = callback_arg.expr.as_ref() else {
-        return Ok(VueNode::RawExpr(clean_expr(
+        return Ok(raw_expr(clean_expr(
             &print_expr(callback_arg.expr.as_ref(), ctx)?,
             ctx,
         )));
@@ -471,23 +465,26 @@ fn recover_render_list(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Resul
         .and_then(pat_binding_ident)
         .map(|ident| ident.sym.clone())
     else {
-        return Ok(VueNode::RawExpr(clean_expr(
+        return Ok(raw_expr(clean_expr(
             &print_expr(callback_arg.expr.as_ref(), ctx)?,
             ctx,
         )));
     };
     let Some(item_expr) = arrow_return_expr(&callback.body) else {
-        return Ok(VueNode::RawExpr(clean_expr(
+        return Ok(raw_expr(clean_expr(
             &print_expr(callback_arg.expr.as_ref(), ctx)?,
             ctx,
         )));
     };
 
-    let source = clean_attr_expr(&print_expr(source_arg.expr.as_ref(), ctx)?, ctx);
+    let source = VueExpr::new(clean_attr_expr(
+        &print_expr(source_arg.expr.as_ref(), ctx)?,
+        ctx,
+    ));
     let mut item_ctx = ctx.clone();
     item_ctx.render_context = None;
     let Some(mut item_node) = recover_node(item_expr, &item_ctx)? else {
-        return Ok(VueNode::RawExpr(clean_expr(
+        return Ok(raw_expr(clean_expr(
             &print_expr(item_expr, &item_ctx)?,
             &item_ctx,
         )));
@@ -506,7 +503,7 @@ fn recover_component_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> R
         return Ok(VueNode::RawExpr("createVNode()".into()));
     };
     let Some(component) = recover_component_tag(component_arg.expr.as_ref(), ctx)? else {
-        return Ok(VueNode::RawExpr(clean_expr(
+        return Ok(raw_expr(clean_expr(
             &print_expr(component_arg.expr.as_ref(), ctx)?,
             ctx,
         )));
@@ -538,7 +535,7 @@ fn recover_text_vnode(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result
     if let Some(text) = string_lit(text_arg.expr.as_ref()) {
         return Ok(VueNode::Text(text));
     }
-    Ok(VueNode::RawExpr(clean_expr(
+    Ok(raw_expr(clean_expr(
         &print_expr(text_arg.expr.as_ref(), ctx)?,
         ctx,
     )))
@@ -588,7 +585,7 @@ fn recover_with_directives(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> R
         return Ok(VueNode::RawExpr("withDirectives()".into()));
     };
     let Some(mut node) = recover_node(base_arg.expr.as_ref(), ctx)? else {
-        return Ok(VueNode::RawExpr(clean_expr(
+        return Ok(raw_expr(clean_expr(
             &print_expr(base_arg.expr.as_ref(), ctx)?,
             ctx,
         )));
@@ -705,11 +702,11 @@ fn directive_arg(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<Recover
     }))
 }
 
-fn directive_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<String>> {
+fn directive_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueExpr>> {
     if is_absent_directive_value(expr) {
         return Ok(None);
     }
-    print_expr(expr, ctx).map(|expr| Some(clean_attr_expr(&expr, ctx)))
+    print_expr(expr, ctx).map(|expr| Some(VueExpr::new(clean_attr_expr(&expr, ctx))))
 }
 
 fn directive_modifiers(expr: &Expr) -> Vec<String> {
@@ -799,18 +796,16 @@ fn rename_node_expr_prefix(node: &mut VueNode, from: &str, to: &str) {
         VueNode::If(branches) => {
             for branch in branches {
                 if let Some(condition) = &mut branch.condition {
-                    *condition = rename_expr_prefix(condition, from, to);
+                    condition.replace_prefix(from, to);
                 }
                 rename_node_expr_prefix(&mut branch.node, from, to);
             }
         }
         VueNode::For(for_node) => {
-            for_node.source = rename_expr_prefix(&for_node.source, from, to);
+            for_node.source.replace_prefix(from, to);
             rename_node_expr_prefix(&mut for_node.node, from, to);
         }
-        VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => {
-            *expr = rename_expr_prefix(expr, from, to);
-        }
+        VueNode::Interpolation(expr) | VueNode::RawExpr(expr) => expr.replace_prefix(from, to),
         VueNode::Text(_) | VueNode::Comment(_) => {}
     }
 }
@@ -823,18 +818,10 @@ fn rename_attr_expr_prefix(attr: &mut VueAttr, from: &str, to: &str) {
         | VueAttr::Directive(VueDirective {
             expr: Some(expr), ..
         }) => {
-            *expr = rename_expr_prefix(expr, from, to);
+            expr.replace_prefix(from, to);
         }
         VueAttr::Static { .. } | VueAttr::Directive(VueDirective { expr: None, .. }) => {}
     }
-}
-
-fn rename_expr_prefix(expr: &str, from: &str, to: &str) -> String {
-    let mut renamed = expr.replace(&format!("{from}."), &format!("{to}."));
-    if renamed == from {
-        renamed = to.to_string();
-    }
-    renamed
 }
 
 fn recover_element(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<Option<VueNode>> {
@@ -850,7 +837,7 @@ fn recover_element(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<Op
         return Ok(Some(VueNode::Fragment(children)));
     }
     let Some(tag) = string_lit(tag_arg.expr.as_ref()) else {
-        return Ok(Some(VueNode::RawExpr(clean_expr(
+        return Ok(Some(raw_expr(clean_expr(
             &format!("create element {}", print_expr(tag_arg.expr.as_ref(), ctx)?),
             ctx,
         ))));
@@ -883,13 +870,13 @@ fn recover_attrs(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueAttr>> 
             if let Some(object) = ctx.object_bindings.get(&ident.sym) {
                 recover_attrs_from_object(object, ctx)
             } else {
-                Ok(vec![VueAttr::Spread(clean_expr(
+                Ok(vec![VueAttr::Spread(clean_vue_expr(
                     &print_expr(expr, ctx)?,
                     ctx,
                 ))])
             }
         }
-        _ => Ok(vec![VueAttr::Spread(clean_expr(
+        _ => Ok(vec![VueAttr::Spread(clean_vue_expr(
             &print_expr(expr, ctx)?,
             ctx,
         ))]),
@@ -995,7 +982,7 @@ fn recover_attrs_from_object(object: &ObjectLit, ctx: &VueRecoveryContext) -> Re
     for prop in &object.props {
         match prop {
             PropOrSpread::Spread(spread) => {
-                attrs.push(VueAttr::Spread(clean_expr(
+                attrs.push(VueAttr::Spread(clean_vue_expr(
                     &print_expr(spread.expr.as_ref(), ctx)?,
                     ctx,
                 )));
@@ -1003,7 +990,7 @@ fn recover_attrs_from_object(object: &ObjectLit, ctx: &VueRecoveryContext) -> Re
             PropOrSpread::Prop(prop) => match prop.as_ref() {
                 Prop::KeyValue(key_value) => {
                     let Some(name) = prop_name(&key_value.key) else {
-                        attrs.push(VueAttr::Spread(clean_expr(
+                        attrs.push(VueAttr::Spread(clean_vue_expr(
                             &print_expr(
                                 &Expr::Object(ObjectLit {
                                     span: DUMMY_SP,
@@ -1019,7 +1006,7 @@ fn recover_attrs_from_object(object: &ObjectLit, ctx: &VueRecoveryContext) -> Re
                 }
                 Prop::Shorthand(ident) => attrs.push(VueAttr::Bind {
                     name: ident.sym.to_string(),
-                    expr: ident.sym.to_string(),
+                    expr: VueExpr::new(ident.sym.to_string()),
                 }),
                 _ => {}
             },
@@ -1051,7 +1038,7 @@ fn attrs_from_key_value(
     if name == "style" && helper_call_name(value, ctx).is_some() {
         return Ok(vec![VueAttr::Bind {
             name: name.to_string(),
-            expr: helper_first_arg_expr(value, ctx)?,
+            expr: VueExpr::new(helper_first_arg_expr(value, ctx)?),
         }]);
     }
 
@@ -1066,7 +1053,7 @@ fn attrs_from_key_value(
         }]),
         _ => Ok(vec![VueAttr::Bind {
             name: name.to_string(),
-            expr: clean_attr_expr(&print_expr(value, ctx)?, ctx),
+            expr: printed_vue_expr(value, ctx)?,
         }]),
     }
 }
@@ -1085,7 +1072,7 @@ fn class_attrs_from_helper(value: &Expr, ctx: &VueRecoveryContext) -> Result<Opt
     let Expr::Array(array) = first.expr.as_ref() else {
         return Ok(Some(vec![VueAttr::Bind {
             name: "class".to_string(),
-            expr: helper_first_arg_expr(value, ctx)?,
+            expr: VueExpr::new(helper_first_arg_expr(value, ctx)?),
         }]));
     };
 
@@ -1097,7 +1084,7 @@ fn class_attrs_from_helper(value: &Expr, ctx: &VueRecoveryContext) -> Result<Opt
         } else {
             attrs.push(VueAttr::Bind {
                 name: "class".to_string(),
-                expr: clean_attr_expr(&print_expr(elem.expr.as_ref(), ctx)?, ctx),
+                expr: printed_vue_expr(elem.expr.as_ref(), ctx)?,
             });
         }
     }
@@ -1115,7 +1102,7 @@ fn class_attrs_from_helper(value: &Expr, ctx: &VueRecoveryContext) -> Result<Opt
 }
 
 struct RecoveredEventExpr {
-    expr: String,
+    expr: VueExpr,
     modifiers: Vec<String>,
 }
 
@@ -1139,12 +1126,12 @@ fn recover_event_expr(value: &Expr, ctx: &VueRecoveryContext) -> Result<Recovere
 
     if let Some(handler) = cached_event_handler_name(value, ctx)? {
         return Ok(RecoveredEventExpr {
-            expr: handler,
+            expr: VueExpr::new(handler),
             modifiers: Vec::new(),
         });
     }
     Ok(RecoveredEventExpr {
-        expr: clean_attr_expr(&print_expr(value, ctx)?, ctx),
+        expr: printed_vue_expr(value, ctx)?,
         modifiers: Vec::new(),
     })
 }
@@ -1286,7 +1273,7 @@ fn recover_component_tag(
                 tag: "component".to_string(),
                 attrs: vec![VueAttr::Bind {
                     name: "is".to_string(),
-                    expr: clean_attr_expr(&print_expr(target.expr.as_ref(), ctx)?, ctx),
+                    expr: printed_vue_expr(target.expr.as_ref(), ctx)?,
                 }],
             }))
         }
@@ -1383,6 +1370,22 @@ fn clean_attr_expr(expr: &str, ctx: &VueRecoveryContext) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn clean_vue_expr(expr: &str, ctx: &VueRecoveryContext) -> VueExpr {
+    VueExpr::new(clean_expr(expr, ctx))
+}
+
+fn clean_attr_vue_expr(expr: &str, ctx: &VueRecoveryContext) -> VueExpr {
+    VueExpr::new(clean_attr_expr(expr, ctx))
+}
+
+fn printed_vue_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<VueExpr> {
+    Ok(clean_attr_vue_expr(&print_expr(expr, ctx)?, ctx))
+}
+
+fn raw_expr(expr: impl Into<String>) -> VueNode {
+    VueNode::RawExpr(VueExpr::new(expr))
 }
 
 fn prop_name(name: &PropName) -> Option<String> {

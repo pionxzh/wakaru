@@ -10,27 +10,30 @@ pub struct VueTemplate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VueExpr(String);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VueNode {
     Element(VueElement),
     Fragment(Vec<VueNode>),
     If(Vec<VueIfBranch>),
     For(VueFor),
     Text(String),
-    Interpolation(String),
+    Interpolation(VueExpr),
     Comment(String),
-    RawExpr(String),
+    RawExpr(VueExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VueIfBranch {
-    pub condition: Option<String>,
+    pub condition: Option<VueExpr>,
     pub node: Box<VueNode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VueFor {
     pub value: String,
-    pub source: String,
+    pub source: VueExpr,
     pub node: Box<VueNode>,
 }
 
@@ -49,24 +52,62 @@ pub enum VueAttr {
     },
     Bind {
         name: String,
-        expr: String,
+        expr: VueExpr,
     },
     On {
         name: String,
-        expr: String,
+        expr: VueExpr,
         modifiers: Vec<String>,
     },
     Directive(VueDirective),
-    Spread(String),
+    Spread(VueExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VueDirective {
     pub name: String,
     pub arg: Option<String>,
-    pub expr: Option<String>,
+    pub expr: Option<VueExpr>,
     pub modifiers: Vec<String>,
     pub dynamic_arg: bool,
+}
+
+impl VueExpr {
+    pub fn new(expr: impl Into<String>) -> Self {
+        Self(expr.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn replace_prefix(&mut self, from: &str, to: &str) {
+        self.0 = rename_expr_prefix(&self.0, from, to);
+    }
+}
+
+impl From<String> for VueExpr {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&str> for VueExpr {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&VueExpr> for VueExpr {
+    fn from(value: &VueExpr) -> Self {
+        value.clone()
+    }
+}
+
+impl std::fmt::Display for VueExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl VueDirective {
@@ -92,7 +133,7 @@ impl VueDirective {
         self
     }
 
-    pub fn with_expr(mut self, expr: impl Into<String>) -> Self {
+    pub fn with_expr(mut self, expr: impl Into<VueExpr>) -> Self {
         self.expr = Some(expr.into());
         self
     }
@@ -191,7 +232,7 @@ impl TemplateEmitter {
             VueNode::Interpolation(expr) => {
                 self.indent(depth);
                 self.out.push_str("{{ ");
-                self.out.push_str(expr.trim());
+                self.out.push_str(expr.as_str().trim());
                 self.out.push_str(" }}\n");
             }
             VueNode::Comment(comment) => {
@@ -203,7 +244,7 @@ impl TemplateEmitter {
             VueNode::RawExpr(expr) => {
                 self.indent(depth);
                 self.out.push_str("<!-- wakaru: ");
-                self.out.push_str(&escape_comment(expr.trim()));
+                self.out.push_str(&escape_comment(expr.as_str().trim()));
                 self.out.push_str(" -->\n");
             }
         }
@@ -348,7 +389,7 @@ impl TemplateEmitter {
                 self.out.push(':');
                 self.out.push_str(name);
                 self.out.push_str("=\"");
-                self.out.push_str(&escape_attr(expr.trim()));
+                self.out.push_str(&escape_attr(expr.as_str().trim()));
                 self.out.push('"');
             }
             VueAttr::On {
@@ -363,13 +404,13 @@ impl TemplateEmitter {
                     self.out.push_str(modifier);
                 }
                 self.out.push_str("=\"");
-                self.out.push_str(&escape_attr(expr.trim()));
+                self.out.push_str(&escape_attr(expr.as_str().trim()));
                 self.out.push('"');
             }
             VueAttr::Directive(directive) => self.emit_directive(directive),
             VueAttr::Spread(expr) => {
                 self.out.push_str("v-bind=\"");
-                self.out.push_str(&escape_attr(expr.trim()));
+                self.out.push_str(&escape_attr(expr.as_str().trim()));
                 self.out.push('"');
             }
         }
@@ -394,7 +435,7 @@ impl TemplateEmitter {
         }
         if let Some(expr) = &directive.expr {
             self.out.push_str("=\"");
-            self.out.push_str(&escape_attr(expr.trim()));
+            self.out.push_str(&escape_attr(expr.as_str().trim()));
             self.out.push('"');
         }
     }
@@ -405,12 +446,12 @@ impl TemplateEmitter {
                 VueNode::Text(text) => self.out.push_str(&escape_text(text)),
                 VueNode::Interpolation(expr) => {
                     self.out.push_str("{{ ");
-                    self.out.push_str(expr.trim());
+                    self.out.push_str(expr.as_str().trim());
                     self.out.push_str(" }}");
                 }
                 VueNode::RawExpr(expr) => {
                     self.out.push_str("{{ ");
-                    self.out.push_str(expr.trim());
+                    self.out.push_str(expr.as_str().trim());
                     self.out.push_str(" }}");
                 }
                 VueNode::Element(_) | VueNode::Fragment(_) | VueNode::Comment(_) => {
@@ -451,6 +492,14 @@ fn escape_attr(value: &str) -> String {
 
 fn escape_comment(value: &str) -> String {
     value.replace("--", "- -")
+}
+
+fn rename_expr_prefix(expr: &str, from: &str, to: &str) -> String {
+    let mut renamed = expr.replace(&format!("{from}."), &format!("{to}."));
+    if renamed == from {
+        renamed = to.to_string();
+    }
+    renamed
 }
 
 #[cfg(test)]
