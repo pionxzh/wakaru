@@ -603,9 +603,10 @@ export function render(_ctx, _cache) {
 }
 "#;
 
-        let output = recover_vue_sfc_source_from_js(input).unwrap().unwrap();
-        assert!(output.contains("v-model.trim.number=\"value\""));
-        assert!(output.contains("v-show=\"visible\""));
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <input v-model.trim.number=\"value\" v-show=\"visible\" />\n</template>\n"
+        );
     }
 
     #[test]

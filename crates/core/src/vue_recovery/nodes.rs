@@ -11,7 +11,7 @@ use super::helpers::{helper_name, is_fragment_tag, VueHelper};
 use super::syntax::{pat_binding_ident, prop_name, string_lit, wtf8_to_string};
 use super::VueRecoveryContext;
 use crate::vue_template::{
-    VueAttr, VueDirective, VueElement, VueExpr, VueFor, VueIfBranch, VueNode,
+    VueAttr, VueDirective, VueDirectiveArg, VueElement, VueExpr, VueFor, VueIfBranch, VueNode,
 };
 
 pub(super) fn recover_render_root(
@@ -628,7 +628,7 @@ fn recover_with_memo(args: &[ExprOrSpread], ctx: &VueRecoveryContext) -> Result<
 
 fn push_attr_to_node(node: &mut VueNode, attr: VueAttr) {
     match node {
-        VueNode::Element(element) => element.attrs.push(attr),
+        VueNode::Element(element) => push_attr_to_element(element, attr),
         VueNode::Fragment(children) => {
             if let Some(first) = children.first_mut() {
                 push_attr_to_node(first, attr);
@@ -644,6 +644,30 @@ fn push_attr_to_node(node: &mut VueNode, attr: VueAttr) {
         | VueNode::Interpolation(_)
         | VueNode::Comment(_)
         | VueNode::RawExpr(_) => {}
+    }
+}
+
+fn push_attr_to_element(element: &mut VueElement, attr: VueAttr) {
+    if let Some(model_prop) = model_directive_prop(&attr) {
+        let update_event = format!("update:{model_prop}");
+        element.attrs.retain(
+            |existing| !matches!(existing, VueAttr::On { name, .. } if name == &update_event),
+        );
+    }
+    element.attrs.push(attr);
+}
+
+fn model_directive_prop(attr: &VueAttr) -> Option<String> {
+    let VueAttr::Directive(VueDirective { name, arg, .. }) = attr else {
+        return None;
+    };
+    if name != "model" {
+        return None;
+    }
+    match arg {
+        Some(VueDirectiveArg::Static(arg)) => Some(arg.clone()),
+        Some(VueDirectiveArg::Dynamic(_)) => None,
+        None => Some("modelValue".to_string()),
     }
 }
 
