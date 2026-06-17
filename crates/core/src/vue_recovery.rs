@@ -301,6 +301,24 @@ export function render(_ctx, _cache) {
     }
 
     #[test]
+    fn recovers_html_and_text_directive_props() {
+        let input = r#"
+import { openBlock, createElementBlock } from "vue";
+export function render(_ctx, _cache) {
+  return openBlock(), createElementBlock("section", null, [
+    createElementBlock("span", { innerHTML: _ctx.message }, null, 8, ["innerHTML"]),
+    createElementBlock("p", { textContent: _ctx.label }, null, 8, ["textContent"])
+  ]);
+}
+"#;
+
+        assert_eq!(
+            recover_vue_sfc_source_from_js(input).unwrap().unwrap(),
+            "<template>\n  <section>\n    <span v-html=\"message\" />\n    <p v-text=\"label\" />\n  </section>\n</template>\n"
+        );
+    }
+
+    #[test]
     fn recovers_event_handler_modifiers() {
         let input = r#"
 import { withKeys, withModifiers, openBlock, createElementBlock } from "vue";
