@@ -21,13 +21,60 @@ use crate::vue_template::{
 
 #[derive(Default, Clone)]
 struct VueRecoveryContext {
-    vue_helpers: HashMap<Atom, String>,
+    vue_helpers: HashMap<Atom, VueHelper>,
     object_bindings: HashMap<Atom, ObjectLit>,
     component_bindings: HashMap<Atom, String>,
     directive_bindings: HashMap<Atom, String>,
     component_options: Option<ObjectLit>,
     render_context: Option<Atom>,
     cm: Lrc<SourceMap>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VueHelper {
+    CreateBlock,
+    CreateElementBlock,
+    CreateElementVNode,
+    CreateTextVNode,
+    CreateVNode,
+    Fragment,
+    RenderList,
+    RenderSlot,
+    ResolveComponent,
+    ResolveDirective,
+    ResolveDynamicComponent,
+    ToDisplayString,
+    VModel(String),
+    VShow,
+    WithDirectives,
+    WithKeys,
+    WithModifiers,
+    Other(String),
+}
+
+impl VueHelper {
+    fn from_imported_name(name: String) -> Self {
+        match name.as_str() {
+            "createBlock" => Self::CreateBlock,
+            "createElementBlock" => Self::CreateElementBlock,
+            "createElementVNode" => Self::CreateElementVNode,
+            "createTextVNode" => Self::CreateTextVNode,
+            "createVNode" => Self::CreateVNode,
+            "Fragment" => Self::Fragment,
+            "renderList" => Self::RenderList,
+            "renderSlot" => Self::RenderSlot,
+            "resolveComponent" => Self::ResolveComponent,
+            "resolveDirective" => Self::ResolveDirective,
+            "resolveDynamicComponent" => Self::ResolveDynamicComponent,
+            "toDisplayString" => Self::ToDisplayString,
+            "vShow" => Self::VShow,
+            "withDirectives" => Self::WithDirectives,
+            "withKeys" => Self::WithKeys,
+            "withModifiers" => Self::WithModifiers,
+            helper if helper.starts_with("vModel") => Self::VModel(name),
+            _ => Self::Other(name),
+        }
+    }
 }
 
 pub fn recover_vue_sfc_source_from_js(source: &str) -> Result<Option<String>> {
@@ -107,7 +154,10 @@ fn collect_context(module: &Module, cm: Lrc<SourceMap>) -> VueRecoveryContext {
                             .as_ref()
                             .map(module_export_name)
                             .unwrap_or_else(|| named.local.sym.to_string());
-                        ctx.vue_helpers.insert(named.local.sym.clone(), imported);
+                        ctx.vue_helpers.insert(
+                            named.local.sym.clone(),
+                            VueHelper::from_imported_name(imported),
+                        );
                     }
                 }
             }
@@ -170,7 +220,7 @@ fn resolve_component_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<Strin
     let Expr::Call(call) = expr else {
         return None;
     };
-    if helper_name(&call.callee, ctx).as_deref() != Some("resolveComponent") {
+    if helper_name(&call.callee, ctx) != Some(VueHelper::ResolveComponent) {
         return None;
     }
     call.args
@@ -182,7 +232,7 @@ fn resolve_directive_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<Strin
     let Expr::Call(call) = expr else {
         return None;
     };
-    if helper_name(&call.callee, ctx).as_deref() != Some("resolveDirective") {
+    if helper_name(&call.callee, ctx) != Some(VueHelper::ResolveDirective) {
         return None;
     }
     call.args
@@ -224,7 +274,7 @@ fn render_uses_vue_helper(render: &FnDecl, ctx: &VueRecoveryContext) -> bool {
     }
 
     struct Finder<'a> {
-        helpers: &'a HashMap<Atom, String>,
+        helpers: &'a HashMap<Atom, VueHelper>,
         found: bool,
     }
 
@@ -377,14 +427,18 @@ fn recover_node(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Option<VueNode>
             let Some(helper) = helper_name(&call.callee, ctx) else {
                 return Ok(Some(raw_expr(clean_expr(&print_expr(expr, ctx)?, ctx))));
             };
-            match helper.as_str() {
-                "createElementBlock" | "createElementVNode" => recover_element(&call.args, ctx),
-                "createBlock" | "createVNode" => recover_component_vnode(&call.args, ctx).map(Some),
-                "createTextVNode" => recover_text_vnode(&call.args, ctx).map(Some),
-                "renderSlot" => recover_slot(&call.args, ctx).map(Some),
-                "renderList" => recover_render_list(&call.args, ctx).map(Some),
-                "withDirectives" => recover_with_directives(&call.args, ctx).map(Some),
-                "toDisplayString" => {
+            match helper {
+                VueHelper::CreateElementBlock | VueHelper::CreateElementVNode => {
+                    recover_element(&call.args, ctx)
+                }
+                VueHelper::CreateBlock | VueHelper::CreateVNode => {
+                    recover_component_vnode(&call.args, ctx).map(Some)
+                }
+                VueHelper::CreateTextVNode => recover_text_vnode(&call.args, ctx).map(Some),
+                VueHelper::RenderSlot => recover_slot(&call.args, ctx).map(Some),
+                VueHelper::RenderList => recover_render_list(&call.args, ctx).map(Some),
+                VueHelper::WithDirectives => recover_with_directives(&call.args, ctx).map(Some),
+                VueHelper::ToDisplayString => {
                     let Some(arg) = call.args.first() else {
                         return Ok(None);
                     };
@@ -665,15 +719,18 @@ fn directive_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<RecoveredDire
     match expr {
         Expr::Ident(ident) => {
             if let Some(helper) = ctx.vue_helpers.get(&ident.sym) {
-                if helper.starts_with("vModel") {
-                    return Some(RecoveredDirectiveName {
-                        name: "model".to_string(),
-                    });
-                }
-                if helper == "vShow" {
-                    return Some(RecoveredDirectiveName {
-                        name: "show".to_string(),
-                    });
+                match helper {
+                    VueHelper::VModel(_) => {
+                        return Some(RecoveredDirectiveName {
+                            name: "model".to_string(),
+                        });
+                    }
+                    VueHelper::VShow => {
+                        return Some(RecoveredDirectiveName {
+                            name: "show".to_string(),
+                        });
+                    }
+                    _ => {}
                 }
             }
             ctx.directive_bindings
@@ -1110,8 +1167,8 @@ struct RecoveredEventExpr {
 fn recover_event_expr(value: &Expr, ctx: &VueRecoveryContext) -> Result<RecoveredEventExpr> {
     if let Expr::Call(call) = value {
         if matches!(
-            helper_name(&call.callee, ctx).as_deref(),
-            Some("withModifiers" | "withKeys")
+            helper_name(&call.callee, ctx),
+            Some(VueHelper::WithModifiers | VueHelper::WithKeys)
         ) {
             if let Some(handler) = call.args.first() {
                 let mut event = recover_event_expr(handler.expr.as_ref(), ctx)?;
@@ -1227,7 +1284,7 @@ fn recover_children(expr: &Expr, ctx: &VueRecoveryContext) -> Result<Vec<VueNode
     }
 }
 
-fn helper_call_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<String> {
+fn helper_call_name(expr: &Expr, ctx: &VueRecoveryContext) -> Option<VueHelper> {
     let Expr::Call(call) = expr else {
         return None;
     };
@@ -1239,7 +1296,7 @@ fn is_fragment_tag(expr: &Expr, ctx: &VueRecoveryContext) -> bool {
         Expr::Ident(ident) => ctx
             .vue_helpers
             .get(&ident.sym)
-            .map(|helper| helper == "Fragment")
+            .map(|helper| helper == &VueHelper::Fragment)
             .unwrap_or_else(|| ident.sym.as_ref() == "Fragment"),
         _ => false,
     }
@@ -1265,7 +1322,7 @@ fn recover_component_tag(
                 attrs: Vec::new(),
             })),
         Expr::Call(call)
-            if helper_name(&call.callee, ctx).as_deref() == Some("resolveDynamicComponent") =>
+            if helper_name(&call.callee, ctx) == Some(VueHelper::ResolveDynamicComponent) =>
         {
             let Some(target) = call.args.first() else {
                 return Ok(None);
@@ -1292,7 +1349,7 @@ fn helper_first_arg_expr(expr: &Expr, ctx: &VueRecoveryContext) -> Result<String
     Ok(clean_attr_expr(&print_expr(first.expr.as_ref(), ctx)?, ctx))
 }
 
-fn helper_name(callee: &Callee, ctx: &VueRecoveryContext) -> Option<String> {
+fn helper_name(callee: &Callee, ctx: &VueRecoveryContext) -> Option<VueHelper> {
     let Callee::Expr(expr) = callee else {
         return None;
     };
