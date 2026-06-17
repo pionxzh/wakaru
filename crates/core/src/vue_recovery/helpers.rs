@@ -23,6 +23,7 @@ pub(super) enum VueHelper {
     WithCtx,
     WithDirectives,
     WithKeys,
+    WithMemo,
     WithModifiers,
     Other(String),
 }
@@ -48,6 +49,7 @@ impl VueHelper {
             "withCtx" => Self::WithCtx,
             "withDirectives" => Self::WithDirectives,
             "withKeys" => Self::WithKeys,
+            "withMemo" => Self::WithMemo,
             "withModifiers" => Self::WithModifiers,
             helper if helper.starts_with("vModel") => Self::VModel(name),
             _ => Self::Other(name),

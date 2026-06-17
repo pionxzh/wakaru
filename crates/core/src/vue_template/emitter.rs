@@ -329,7 +329,10 @@ fn escape_text(value: &str) -> String {
 }
 
 fn escape_attr(value: &str) -> String {
-    escape_text(value).replace('"', "&quot;")
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('"', "&quot;")
 }
 
 fn escape_comment(value: &str) -> String {

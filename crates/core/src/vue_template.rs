@@ -291,7 +291,7 @@ mod tests {
 
         assert_eq!(
             template.print(),
-            "<template>\n  <div title=\"&quot;quoted&quot; &lt;tag&gt;\">Tom &amp; &lt;Jerry&gt;{{ a--b }}</div>\n</template>\n"
+            "<template>\n  <div title=\"&quot;quoted&quot; &lt;tag>\">Tom &amp; &lt;Jerry&gt;{{ a--b }}</div>\n</template>\n"
         );
     }
 }
